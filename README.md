@@ -60,9 +60,13 @@ backend/
 │   ├── models/                  persistence models (empty)
 │   ├── schemas/                 shared Pydantic schemas (empty)
 │   └── shared/                  cross-initiative helpers (empty)
+├── alembic/                     migrations (env.py reads DATABASE_URL from settings)
+├── alembic.ini                  sqlalchemy.url deliberately blank
 ├── tests/test_health.py
-├── requirements.txt             runtime dependencies
-├── requirements-dev.txt         + pytest / test client
+├── tests/test_db.py
+├── tests/test_storage.py        adapter-agnostic conformance suite
+├── tests/test_seed.py
+├── requirements.txt             runtime + test dependencies
 ├── pytest.ini
 ├── .env.example
 └── README.md
@@ -73,9 +77,20 @@ add modules in parallel without colliding.
 
 ## Requirements
 
-Python **3.11+** (developed and verified on 3.13).
+| | Version | Notes |
+| --- | --- | --- |
+| Python | 3.11+ | developed on 3.12 / 3.13 |
+| Podman or Docker | any current | runs Postgres locally |
+| Postgres | 18 | via `compose.yaml`, not installed on the host |
 
-## Setup and run
+You also need the **SAP data delivery** to seed the database — see step 5.
+
+## Setup, from a fresh clone
+
+Five steps. Steps 1–4 take a few minutes; step 5 takes about half an hour
+because it loads 3.4 million rows.
+
+### 1. Python environment
 
 ```bash
 cd backend
@@ -86,16 +101,91 @@ python -m venv .venv
 # Linux / macOS
 source .venv/bin/activate
 
-pip install -r requirements.txt          # add -r requirements-dev.txt to run tests
+pip install -r requirements.txt
+```
+
+On Windows you can skip activation entirely and call `.venv\Scripts\python.exe`
+directly — it avoids the PowerShell execution-policy prompt.
+
+### 2. Configuration
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and set these four. Everything else has a working default:
+
+| Variable | Example | Notes |
+| --- | --- | --- |
+| `POSTGRES_PASSWORD` | anything | read by `compose.yaml` when the container is first created |
+| `DATABASE_URL` | `postgresql+psycopg://postgres:<password>@127.0.0.1:5432/spares_ai` | must match the password above |
+| `STORAGE_URL` | path to the folder **containing** the delivery folders | see step 5 |
+
+**Use `127.0.0.1`, not `localhost`.** On Windows `localhost` resolves to IPv6
+`::1` first while the container forwards IPv4 only, so every connection stalls on
+the IPv6 attempt before falling back — measured here at ~19s per connect against
+0.34s, taking the test suite from 4m27s to 1.9s. It works either way, which is
+what makes it hard to spot.
+
+`.env` is gitignored. Never commit real credentials.
+
+### 3. Postgres
+
+```bash
+podman compose up -d --wait      # or: docker compose up -d --wait
+```
+
+`--wait` blocks until the healthcheck passes, so the next step cannot race it.
+The database `spares_ai` is created automatically on first start.
+
+No compose provider installed? The equivalent by hand:
+
+```bash
+podman run -d --name spares-postgres \
+  -e POSTGRES_PASSWORD=<password> -e POSTGRES_DB=spares_ai \
+  -p 127.0.0.1:5432:5432 -v spares_pgdata:/var/lib/postgresql/data \
+  docker.io/library/postgres:18
+```
+
+### 4. Schema and app
+
+```bash
+alembic upgrade head
+pytest                                    # 96 tests
 uvicorn app.main:app --reload --port 8000
 ```
 
-| What | URL |
-| --- | --- |
-| Service index | http://localhost:8000/ |
-| Swagger UI | http://localhost:8000/docs |
-| OpenAPI schema | http://localhost:8000/openapi.json |
-| Health check | http://localhost:8000/api/health |
+Verify:
+
+```bash
+curl http://localhost:8000/api/health     # 200 - liveness, no dependencies
+curl http://localhost:8000/api/ready      # 200 once the database is reachable
+```
+
+`/api/ready` reporting `503 not_configured` means `.env` was not picked up;
+`503 unavailable` means the container is not running or the password is wrong.
+
+### 5. Seed the real SAP data
+
+Point `STORAGE_URL` at the folder that **contains** both delivery folders:
+
+```
+<STORAGE_URL>/
+├── KPI 02 Data Extract/Tables/      24 SAP table extracts
+└── Resources Shared - Rohit/        ZMM065 x2 + 30 Day GR Report
+```
+
+```bash
+python -m app.seed --list    # checks every file is present; touches no database
+python -m app.seed --all     # ~30 minutes, 3.4M rows
+```
+
+`--list` marks anything it cannot find as `[MISSING]`, and `--all` runs the same
+check before touching a table — so a wrong `STORAGE_URL` costs a message, not a
+half-loaded database.
+
+See [Seeding](#seeding) for the layout rules and what the data does and does not
+cover.
 
 ## Configuration
 
@@ -115,7 +205,7 @@ cp .env.example .env
 | `FRONTEND_ORIGIN` | `http://localhost:3000` | Allowed CORS origin(s), comma-separated |
 
 Reserved and **not required for startup** — every one may be empty:
-`AZURE_SQL_CONNECTION_STRING`, `SAP_BASE_URL`, `SAP_CLIENT_ID`, `SAP_CLIENT_SECRET`,
+`DATABASE_URL`, `STORAGE_URL`, `SAP_BASE_URL`, `SAP_CLIENT_ID`, `SAP_CLIENT_SECRET`,
 `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`.
 
 `.env` is gitignored. Never commit real credentials.
@@ -191,11 +281,258 @@ the SAP/VZI team confirms it. The PR stub is therefore deliberately unauthentica
 ## Tests
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r requirements.txt
 pytest
 ```
 
 Covers `GET /api/health` → 200 / `status == "ok"` and `POST /api/events/pr` → 202.
+
+## Database
+
+Local Postgres stands in for the deployed database. `DATABASE_URL` is the only
+place either one is named, so switching environments is a config change.
+
+```bash
+# start Postgres (podman or docker)
+podman run -d --name Postgres -e POSTGRES_PASSWORD=<password> -p 5432:5432 postgres:18
+podman exec Postgres psql -U postgres -c "CREATE DATABASE spares_ai;"
+
+cp .env.example .env        # then set DATABASE_URL
+alembic upgrade head        # create the tables
+```
+
+**Use `127.0.0.1`, not `localhost`.** On Windows `localhost` resolves to IPv6
+`::1` first while podman/docker forwards IPv4 only, so every connection stalls
+on the IPv6 attempt before falling back. Measured here: ~19s per connect against
+`localhost`, 0.34s against `127.0.0.1` — the full test suite went from 4m27s to
+1.9s. It works either way, which is what makes it hard to spot.
+
+| Endpoint | Touches dependencies | Purpose |
+| --- | --- | --- |
+| `GET /api/health` | no | liveness — must work with nothing configured |
+| `GET /api/ready` | database + storage | readiness — `200` only when both are `ok` |
+
+`/api/ready` reports each dependency as `ok`, `not_configured` or `unavailable`,
+and checks both even when the first has already failed, so one request tells you
+everything that is wrong:
+
+```json
+{"status": "ready",     "database": "ok",             "storage": "ok"}
+{"status": "not_ready", "database": "ok",             "storage": "unavailable"}
+{"status": "not_ready", "database": "not_configured", "storage": "not_configured"}
+```
+
+Keep these separate. A platform probe pointed at a health check that touches the
+database will restart a healthy container over a database blip.
+
+### Rules for models
+
+- **Portable SQLAlchemy constructs only** — no `JSONB`, `ARRAY` or `ON CONFLICT`.
+  A Postgres-to-SQL-Server move is *not* config-only: dialect, driver and several
+  types differ. Portable models keep that swap small.
+- **Import every model in `app/models/__init__.py`.** Alembic autogenerate diffs
+  against `Base.metadata`; a model nothing imports silently never gets a migration.
+- **Raw SAP landing tables belong in `app/models/`**, the shared foundation — not
+  inside an initiative package. Three initiatives read the same extracts, and
+  three private copies of an MSEG table diverge within a week. Tables *derived*
+  from those belong to the initiative that derives them.
+
+### Migrations
+
+```bash
+alembic revision --autogenerate -m "what changed"   # review the file before committing
+alembic upgrade head
+alembic downgrade -1
+```
+
+`alembic.ini`'s `sqlalchemy.url` is blank on purpose — `alembic/env.py` supplies
+it from settings. Do not restore it: a URL there is a credential in a tracked file.
+
+## Storage
+
+A local folder stands in for cloud object storage. `STORAGE_URL` is the only
+place either is named, and the adapter is chosen from the URL scheme — so the
+cutover is one setting, with no environment branch in application code.
+
+```bash
+STORAGE_URL=D:/vzi-data/extracts                             # plain path
+STORAGE_URL=file:///D:/vzi-data/extracts                     # or a file:// URL
+STORAGE_URL=abfss://raw@acct.dfs.core.windows.net/extracts   # once the ADLS adapter exists
+```
+
+Plain paths are accepted deliberately: the SAP extract folder is
+`KPI 02 Data Extract/Tables`, and percent-encoding that into a URL buys nothing.
+
+**Do not copy the extracts into this repository.** They are ~800 MB, the tree is
+OneDrive-synced, and there is no ignore rule for a data directory. Point
+`STORAGE_URL` at wherever they already live.
+
+### Using it
+
+```python
+from app.core.storage import get_storage, sha256_of
+
+storage = get_storage()
+for key in storage.list("extracts"):
+    with storage.open_read(key) as handle:      # streamed, never materialised
+        ...
+```
+
+Reads and writes are **streaming file objects**, not `bytes`. Hashing the 56 MB
+`CDHDR1.XLSX` peaks at 2 MB resident; a `read() -> bytes` interface would have
+peaked at 56 MB locally and downloaded the whole blob from cloud storage before
+parsing a row. `openpyxl` accepts these handles directly.
+
+Writes are **atomic** — content goes to a temporary sibling and is renamed on
+success — so an interrupted seed run never leaves a truncated file that
+`exists()` then reports as present.
+
+### Keys
+
+Keys are strings with forward slashes: `extracts/MSEG_1.XLSX`. Never `Path`
+objects, never backslashes, never absolute. A `Path` leaking through the
+interface works on Windows and then silently creates wrongly-named blobs on
+Azure — so `..`, backslashes, leading slashes and empty segments are all
+refused rather than resolved.
+
+### Adding an adapter
+
+1. Implement `Storage` in `app/integrations/<platform>/`.
+2. Register its scheme in `app.core.storage.build_storage`.
+3. Add it to the `storage` fixture's `params` in `tests/test_storage.py`.
+
+Step 3 is the point: the conformance suite is written against the interface, so
+a new adapter inherits ~20 behavioural tests without a line of new test code.
+
+## Seeding
+
+Loads the July SAP extracts into the local database. This replaces
+`data-generator/` as the development data source -- no synthetic data.
+
+```bash
+python -m app.seed --list          # manifest + whether each source file is present
+python -m app.seed --all           # load everything
+python -m app.seed --table marc    # one table
+python -m app.seed --all --force   # reload even if nothing changed
+```
+
+Needs `DATABASE_URL` and `STORAGE_URL`. `--list` touches no database.
+
+### Two layers, and why
+
+```
+XLSX extract  ->  raw_<table>   mirrors the extract exactly, every column, text
+                      |
+                 normalise      translation map + MATNR padding  (NOT YET BUILT)
+                      v
+                  <table>       matches the OData contract; what initiatives read
+                      ^
+CPI live pull  -------+         same shape, different loader
+```
+
+Only the raw layer exists today. It is deliberately a faithful copy, because the
+extract and the OData projection are **not the same data**:
+
+| | Extract | OData |
+| --- | --- | --- |
+| MARA columns | 244 | 7 |
+| Column names | `Ext. Material Group` | `Extwg` (not exposed) |
+| Material number | `2000000131` | `000000008000000000` |
+
+So nothing joins the two automatically. The normalise step -- a reviewed
+business-label to SAP-field to OData-property map, plus MATNR zero-padding -- is
+the remaining work, and it is the layer initiatives should read. Building
+directly on `raw_*` means rewriting when the loader is swapped for a live pull.
+
+Worth knowing: the extract carries `Ext. Material Group` (EXTWG), the field the
+I07 and I13 FRSs both mark **BLOCKING** because CPI does not expose it. Its
+population is not yet measured, but the column is there.
+
+### Everything is text
+
+Every raw column is `text`. SAP keys are digit strings, and any numeric coercion
+at load time turns `000000008000000000` into `8e+15` irreversibly. Typing belongs
+in the normalise step, where it is reviewable.
+
+### Re-runs
+
+Each file's SHA-256 is recorded in `ingestion_run`. A second run whose sources
+are unchanged is skipped; `--force` overrides. Each table loads in one
+transaction -- drop, create, copy, record, commit -- so a failed table rolls back
+to its previous contents and the other 27 still load.
+
+### Two deliveries, one storage root
+
+`STORAGE_URL` points at the parent `Vedanta` folder and every key carries its
+delivery prefix — the same shape a cloud container has:
+
+```
+KPI 02 Data Extract/Tables/   24 SAP table extracts
+Resources Shared - Rohit/     ZMM065 (both plants) + the 30-day GR report
+```
+
+The reports are not table dumps. They are multi-sheet workbooks with title rows
+and pivots, so their manifest entries name a `sheet` and a `header_row`; the SAP
+extracts use the defaults (first sheet, row 1). Reading BMM's ZMM065 with the
+defaults would take a pivot table's first row as the header and produce a table
+of `column_1`, `column_2` labels — silently, which is why the override exists.
+
+`raw_zmm065_bmm` / `raw_zmm065_gb` also carry the **criticality tiers**
+(CRITICAL / IMPACT / INSURANCE / NORMAL / OBSOLETE) that the FRSs call the
+platform-side critical parts list (D3 interim). All three initiatives need them.
+
+### Handing this to someone else
+
+Only two things are machine-specific, and both live in `.env` (never committed):
+
+```
+DATABASE_URL=postgresql+psycopg://postgres:<password>@127.0.0.1:5432/spares_ai
+STORAGE_URL=<path to the folder CONTAINING both delivery folders>
+```
+
+The **folder layout must match**, because the manifest keys carry the delivery
+prefix:
+
+```
+<STORAGE_URL>/
+├── KPI 02 Data Extract/Tables/      24 SAP table extracts
+└── Resources Shared - Rohit/        ZMM065 x2 + 30 Day GR Report
+```
+
+`STORAGE_URL` points at the parent, not at either sub-folder. Anything else in
+that tree is ignored — the loader reads only the 27 files the manifest names.
+
+Run `python -m app.seed --list` first. It touches no database and marks any file
+it cannot find as `[MISSING]`. `--all` and `--table` preflight the same check and
+refuse to start if anything is absent, so a wrong `STORAGE_URL` costs a message
+rather than half a loaded database.
+
+Two portability notes: file names are matched **exactly**, so on a
+case-sensitive filesystem (CI, Linux, macOS) `Mara.XLSX` and `MSEG_2.XLSX` must
+keep their delivered casing. And the reports' sheet names (`Sheet1`, `Sheet2`,
+`GR REPORT`) are what SAP exported — a re-export could rename them, and the
+loader will say so by name rather than loading the wrong sheet.
+
+### Plant coverage — the gap to know about
+
+Two tables cover Black Mountain only, while everything around them is
+multi-plant. That asymmetry is what makes it easy to miss:
+
+| Table | Plants |
+| --- | --- |
+| `raw_marc` | 1300 (45,352), 1200 (57) — **Gamsberg 1500: zero rows** |
+| `raw_eban` | 1300 only (234,310) |
+| `raw_mard` | 1300, 3000, 2000, 1500, 1600 … |
+| `raw_resb` | 1300, 1500, 3000, 1200, 2000 … |
+| `raw_ekpo` | 13 plants, including 1500 (35,083) |
+
+MARC is the consequential one: it holds MRP type, reorder point and planned
+delivery time. **Every DISMM / OAR statistic derived from this data is a Black
+Mountain figure, not a business-wide one**, and I07 cannot recommend parameters
+for Gamsberg at all until MARC covers it. Stock and movements *look* complete,
+which is exactly the trap.
+
+Both are re-extraction requests, not code fixes.
 
 ## Logging
 

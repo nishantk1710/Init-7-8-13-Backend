@@ -1,0 +1,96 @@
+MATERIAL/MARC change items, 2026-09-09T13:20:32Z: 7221 rows in 15 page(s)
+
+Fname x Chngind:
+  KEY          I  2178
+  MMSTA        U  1008
+  PSTAT        U  902
+  LVORM        U  798
+  ZZSTYPE      U  562
+  LOSGR        U  164
+  AWSLS        U  159
+  QMATV        U  104
+  DISMM        U  79
+  BESKZ        U  68
+  DISPO        U  59
+  VERKZ        U  59
+  DISLS        U  57
+  SFCPF        U  53
+  FEVOR        U  52
+  MTVFP        U  50
+  FHORI        U  49
+  SSQSS        U  43
+  ABCIN        U  41
+  XCHPF        U  41
+  MINBE        U  40
+  LGFSB        U  39
+  QZGTP        U  38
+  SOBSL        U  35
+  LADGR        U  35
+  KZKUP        U  33
+  LGPRO        U  33
+  XCHAR        U  32
+  PRCTR        U  31
+  MABST        U  30
+  PLIFZ        U  30
+  MAABC        U  26
+  STRGR        U  25
+  DZEIT        U  23
+  RGEKZ        U  18
+  CCFIX        U  17
+  UEETK        U  16
+  AUTRU        U  15
+  INSMK        U  13
+  KAUTB        U  12
+  EKGRP        U  11
+  STDPD        U  11
+  CUOBJ        U  11
+  KORDB        U  11
+  WEBAZ        U  10
+  DISGR        U  9
+  ALTSL        U  9
+  BSTMI        U  8
+  MAXLZ        U  7
+  LZEIH        U  7
+  EISBE        U  6
+  EISLO        U  6
+  FABKZ        U  5
+  AUSME        U  5
+  SERNP        U  5
+  QSSYS        U  4
+  KZECH        U  4
+  CUOBV        U  4
+  KZDKZ        U  4
+  BSTMA        U  2
+  LAGPR        U  2
+  LOSFX        U  2
+  VINT1        U  1
+  VINT2        U  1
+  VRMOD        U  1
+  SCHGT        U  1
+  NCOST        U  1
+  SBDKZ        U  1
+  VBAMG        U  1
+  ZZPURCLASS   U  1
+  XMCNG        U  1
+  SOBSK        U  1
+  ZZCRITIC     U  1
+
+Planning-field changes (DISMM/EISBE/MINBE/MABST): 155
+DISMM transitions old -> new:
+  <blank> -> ND   19
+  <blank> -> PD   14
+  <blank> -> VB   11
+  <blank> -> V1   8
+  ND   -> PD   5
+  VB   -> V1   4
+  M0   -> PD   3
+  V1   -> PD   2
+  M0   -> V1   2
+  PD   -> V1   2
+  VB   -> PD   2
+  ND   -> V1   2
+  V1   -> VB   2
+  PD   -> ND   1
+  V1   -> ND   1
+  PD   -> VH   1
+Distinct materials (Objectid) with a planning-field change: 69

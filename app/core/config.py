@@ -32,9 +32,38 @@ class Settings(BaseSettings):
     # Browser origin(s) allowed to call this API. Comma-separated for multiple.
     frontend_origin: str = "http://localhost:3000"
 
+    # Database connection, as a SQLAlchemy URL. Empty by default so the app --
+    # and the liveness endpoint -- still start with no database present.
+    #
+    # This is the ONLY place the database is named. Local development points it
+    # at Postgres; the deployed environment points it at the managed database.
+    # Swapping environments is therefore a config change, never a code change:
+    # nothing below this line, and nothing in app/core/db.py, knows which
+    # engine it is talking to.
+    #
+    #   local:  postgresql+psycopg://postgres:<password>@localhost:5432/spares_ai
+    #
+    # NOTE: a Postgres-to-SQL-Server move is NOT config-only -- dialect, driver
+    # and several types differ. Keep models on portable SQLAlchemy constructs so
+    # that swap stays small. See README, "Database".
+    database_url: str = ""
+
+    # Echo every SQL statement to the log. Local debugging only.
+    database_echo: bool = False
+
+    # Object storage location. Like database_url, this is the ONLY place storage
+    # is named, and the adapter is chosen from the URL scheme -- so moving from a
+    # local folder to cloud storage is a config change, not a code change.
+    #
+    #   local:  D:/vzi-data/extracts        (a plain path is accepted)
+    #           file:///D:/vzi-data/extracts
+    #   cloud:  abfss://<container>@<account>.dfs.core.windows.net/<path>
+    #
+    # Empty by default so the app starts with no storage configured.
+    storage_url: str = ""
+
     # --- Reserved for future integrations. Not read by any code yet, and not
     # --- required for startup. See app/core/security.py and app/integrations/.
-    azure_sql_connection_string: str = ""
     sap_base_url: str = ""
     sap_client_id: str = ""
     sap_client_secret: str = ""
