@@ -1,0 +1,122 @@
+24 failed call(s). CPI entry point: https://vzicpinonprod.it-cpi021-rt.cfapps.in30.hana.ondemand.com/http/SAPECC/OdataConsumption
+SAP path = what CPI forwards to the ECC gateway; paste it into /IWFND/GW_CLIENT to reproduce.
+
+[1] HTTP 500 after 1.0s at 2026-09-09T13:19:42Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$top=1&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:19:41 GMT", "x-correlationid": "2f44da1c-385d-4e0c-668c-0e56e1f440cc, 2f44da1c-385d-4e0c-668c-0e56e1f440cc", "x-vcap-request-id": "2f44da1c-385d-4e0c-668c-0e56e1f440cc"}
+    body     : <empty - CPI did not forward the backend error>
+
+[2] HTTP 500 after 1.2s at 2026-09-09T13:19:45Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$top=1&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:19:44 GMT", "x-correlationid": "602bc998-f098-40cb-7430-e74a41202d4a, 602bc998-f098-40cb-7430-e74a41202d4a", "x-vcap-request-id": "602bc998-f098-40cb-7430-e74a41202d4a"}
+    body     : <empty - CPI did not forward the backend error>
+
+[3] HTTP 500 after 1.0s at 2026-09-09T13:19:58Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet?$top=1000&$skip=40000&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:19:57 GMT", "x-correlationid": "c058fb04-4018-42ff-4ab7-0c51d6a82ae6, c058fb04-4018-42ff-4ab7-0c51d6a82ae6", "x-vcap-request-id": "c058fb04-4018-42ff-4ab7-0c51d6a82ae6"}
+    body     : <empty - CPI did not forward the backend error>
+
+[4] HTTP 500 after 1.0s at 2026-09-09T13:20:01Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet?$orderby=Aedat desc&$top=3&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:20:00 GMT", "x-correlationid": "20989591-062d-4f33-7a2e-2e1198037da4, 20989591-062d-4f33-7a2e-2e1198037da4", "x-vcap-request-id": "20989591-062d-4f33-7a2e-2e1198037da4"}
+    body     : <empty - CPI did not forward the backend error>
+
+[5] HTTP 400 after 1.0s at 2026-09-09T13:20:07Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count?$filter=Dismm eq 'VB' and Minbe gt 0
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:20:05 GMT", "x-correlationid": "8de5acd7-429e-4cd1-51b6-a1c8da3cb1b6, 8de5acd7-429e-4cd1-51b6-a1c8da3cb1b6", "x-vcap-request-id": "8de5acd7-429e-4cd1-51b6-a1c8da3cb1b6"}
+    body     : <empty - CPI did not forward the backend error>
+
+[6] HTTP 400 after 0.9s at 2026-09-09T13:20:07Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count?$filter=(Dismm eq 'ND' or Dismm eq 'PD') and Minbe gt 0
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:20:06 GMT", "x-correlationid": "c1859a75-9c09-4943-7a9e-25ded60d7757, c1859a75-9c09-4943-7a9e-25ded60d7757", "x-vcap-request-id": "c1859a75-9c09-4943-7a9e-25ded60d7757"}
+    body     : <empty - CPI did not forward the backend error>
+
+[7] HTTP 500 after 1.0s at 2026-09-09T13:20:13Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$inlinecount=allpages&$top=1&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:20:11 GMT", "x-correlationid": "d0a7557d-fa43-497c-669c-e01efdd0588e, d0a7557d-fa43-497c-669c-e01efdd0588e", "x-vcap-request-id": "d0a7557d-fa43-497c-669c-e01efdd0588e"}
+    body     : <empty - CPI did not forward the backend error>
+
+[8] HTTP 500 after 1.2s at 2026-09-09T13:20:16Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$inlinecount=allpages&$top=1&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:20:15 GMT", "x-correlationid": "cbdfa9de-edf3-4c59-6091-1f77fc7bb3a3, cbdfa9de-edf3-4c59-6091-1f77fc7bb3a3", "x-vcap-request-id": "cbdfa9de-edf3-4c59-6091-1f77fc7bb3a3"}
+    body     : <empty - CPI did not forward the backend error>
+
+[9] HTTP 500 after 0.9s at 2026-09-09T13:20:47Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet?$filter=Bsart eq 'ZREP'&$top=500&$skip=0&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:20:46 GMT", "x-correlationid": "8d40f62a-84c4-4d65-6d62-5a41722002aa, 8d40f62a-84c4-4d65-6d62-5a41722002aa", "x-vcap-request-id": "8d40f62a-84c4-4d65-6d62-5a41722002aa"}
+    body     : <empty - CPI did not forward the backend error>
+
+[10] HTTP 500 after 1.0s at 2026-09-09T13:21:01Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count?$filter=Menge eq 'ZZ~NOPE'
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:21:00 GMT", "x-correlationid": "5de4ef85-5e0c-414b-63fa-392c45191a96, 5de4ef85-5e0c-414b-63fa-392c45191a96", "x-vcap-request-id": "5de4ef85-5e0c-414b-63fa-392c45191a96"}
+    body     : <empty - CPI did not forward the backend error>
+
+[11] HTTP 500 after 0.9s at 2026-09-09T13:21:02Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:21:01 GMT", "x-correlationid": "5e17c453-f681-4cc2-58ff-14e37dba893a, 5e17c453-f681-4cc2-58ff-14e37dba893a", "x-vcap-request-id": "5e17c453-f681-4cc2-58ff-14e37dba893a"}
+    body     : <empty - CPI did not forward the backend error>
+
+[12] HTTP 500 after 0.9s at 2026-09-09T13:21:04Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Preis eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:21:03 GMT", "x-correlationid": "871a1a4b-0ecf-4f1e-685f-a55ce5cab0a2, 871a1a4b-0ecf-4f1e-685f-a55ce5cab0a2", "x-vcap-request-id": "871a1a4b-0ecf-4f1e-685f-a55ce5cab0a2"}
+    body     : <empty - CPI did not forward the backend error>
+
+[13] HTTP 500 after 0.9s at 2026-09-09T13:21:05Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:21:04 GMT", "x-correlationid": "fc013651-3312-4855-45de-19cf6233d2f2, fc013651-3312-4855-45de-19cf6233d2f2", "x-vcap-request-id": "fc013651-3312-4855-45de-19cf6233d2f2"}
+    body     : <empty - CPI did not forward the backend error>
+
+[14] HTTP 500 after 1.0s at 2026-09-09T13:21:07Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Ebelp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:21:06 GMT", "x-correlationid": "7fce2820-dcf4-42bf-5e60-06f4f2c947f2, 7fce2820-dcf4-42bf-5e60-06f4f2c947f2", "x-vcap-request-id": "7fce2820-dcf4-42bf-5e60-06f4f2c947f2"}
+    body     : <empty - CPI did not forward the backend error>
+
+[15] HTTP 500 after 1.0s at 2026-09-09T13:21:08Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Bsmng eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:21:07 GMT", "x-correlationid": "785eb76f-a610-4c9f-4d1a-2f9b95ca2a36, 785eb76f-a610-4c9f-4d1a-2f9b95ca2a36", "x-vcap-request-id": "785eb76f-a610-4c9f-4d1a-2f9b95ca2a36"}
+    body     : <empty - CPI did not forward the backend error>
+
+[16] HTTP 500 after 1.0s at 2026-09-09T13:21:09Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Rsnum eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:21:08 GMT", "x-correlationid": "2d6cc51f-ec19-4a0d-6ca0-0eae6fc3f8fe, 2d6cc51f-ec19-4a0d-6ca0-0eae6fc3f8fe", "x-vcap-request-id": "2d6cc51f-ec19-4a0d-6ca0-0eae6fc3f8fe"}
+    body     : <empty - CPI did not forward the backend error>
+
+[17] HTTP 500 after 1.0s at 2026-09-09T13:22:09Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet/$count?$filter=Labst eq 'ZZ~NOPE'
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:22:08 GMT", "x-correlationid": "cf275693-6fa1-4888-6ceb-adfc090d8117, cf275693-6fa1-4888-6ceb-adfc090d8117", "x-vcap-request-id": "cf275693-6fa1-4888-6ceb-adfc090d8117"}
+    body     : <empty - CPI did not forward the backend error>
+
+[18] HTTP 500 after 1.0s at 2026-09-09T13:22:10Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet?$filter=Labst eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:22:09 GMT", "x-correlationid": "c3fca1e7-37f8-4c49-7cb9-5653ec99ac5e, c3fca1e7-37f8-4c49-7cb9-5653ec99ac5e", "x-vcap-request-id": "c3fca1e7-37f8-4c49-7cb9-5653ec99ac5e"}
+    body     : <empty - CPI did not forward the backend error>
+
+[19] HTTP 500 after 1.0s at 2026-09-09T13:22:11Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet?$filter=Insme eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:22:10 GMT", "x-correlationid": "ecefb4b1-fad2-4332-5bf6-906db0a64e4e, ecefb4b1-fad2-4332-5bf6-906db0a64e4e", "x-vcap-request-id": "ecefb4b1-fad2-4332-5bf6-906db0a64e4e"}
+    body     : <empty - CPI did not forward the backend error>
+
+[20] HTTP 500 after 1.0s at 2026-09-09T13:22:12Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet?$filter=Speme eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:22:11 GMT", "x-correlationid": "b9ffb07c-ead9-4e2a-6432-8b73099c2a97, b9ffb07c-ead9-4e2a-6432-8b73099c2a97", "x-vcap-request-id": "b9ffb07c-ead9-4e2a-6432-8b73099c2a97"}
+    body     : <empty - CPI did not forward the backend error>
+
+[21] HTTP 500 after 1.0s at 2026-09-09T13:22:31Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count?$filter=Meins eq 'ZZ~NOPE'
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:22:29 GMT", "x-correlationid": "277a9fe3-02c6-43ee-5fb7-4879f25bd063, 277a9fe3-02c6-43ee-5fb7-4879f25bd063", "x-vcap-request-id": "277a9fe3-02c6-43ee-5fb7-4879f25bd063"}
+    body     : <empty - CPI did not forward the backend error>
+
+[22] HTTP 500 after 1.1s at 2026-09-09T13:22:32Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet?$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:22:30 GMT", "x-correlationid": "ca316a65-ca52-4624-4ff0-b4c03b5aa809, ca316a65-ca52-4624-4ff0-b4c03b5aa809", "x-vcap-request-id": "ca316a65-ca52-4624-4ff0-b4c03b5aa809"}
+    body     : <empty - CPI did not forward the backend error>
+
+[23] HTTP 500 after 1.3s at 2026-09-09T13:22:34Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count?$filter=Bnfpo eq 'ZZ~NOPE'
+    headers  : {"content-type": "application/xml;charset=utf-8", "date": "Wed, 09 Sep 2026 13:22:33 GMT", "x-correlationid": "9ed81511-1f0c-4805-4c5a-efca51587e64, 9ed81511-1f0c-4805-4c5a-efca51587e64", "x-vcap-request-id": "9ed81511-1f0c-4805-4c5a-efca51587e64"}
+    body     : <empty - CPI did not forward the backend error>
+
+[24] HTTP 500 after 1.3s at 2026-09-09T13:22:36Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet?$filter=Bnfpo eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"content-type": "application/xml;charset=utf-8", "date": "Wed, 09 Sep 2026 13:22:34 GMT", "x-correlationid": "55a83d8a-2395-48de-4d93-732ad7ade34e, 55a83d8a-2395-48de-4d93-732ad7ade34e", "x-vcap-request-id": "55a83d8a-2395-48de-4d93-732ad7ade34e"}
+    body     : <empty - CPI did not forward the backend error>

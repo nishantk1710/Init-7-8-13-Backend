@@ -1,0 +1,8 @@
+ChangeDocItemSet key collapse check, 2026-09-09T13:20:23Z, sample = MATERIAL/MARC $top=500
+rows returned                     : 500
+distinct on declared key (3 cols)  : 500
+distinct on composite key (7 cols) : 500
+rows unaddressable under declared  : 0 (0%)
+
+Fields changed in sample (Fname -> rows):
+  KEY          500
