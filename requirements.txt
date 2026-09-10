@@ -1,0 +1,5 @@
+# Runtime dependencies. Keep this list minimal -- add a library only when the
+# code actually imports it.
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pydantic-settings==2.15.0

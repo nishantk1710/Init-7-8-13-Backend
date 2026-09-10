@@ -1,0 +1,286 @@
+exception_id,exception_type,Matnr,Werks,object_reference,detected_on,owner,status,detail
+EXC-000001,OVERDUE_USE,000000000030000003,1000,Rsnum 1000000010,2026-08-31,VZIINV02,AWAITING_REQUESTER,Received on 2026-05-13 against a planned use date of 2026-07-06; no goods issue after 14 days grace.
+EXC-000002,OVERDUE_USE,000000000030000004,4000,Rsnum 1000000015,2026-09-04,VZIINV02,AWAITING_REQUESTER,Received on 2026-04-15 against a planned use date of 2026-07-24; no goods issue after 14 days grace.
+EXC-000003,OVERDUE_USE,000000000030000005,3000,Rsnum 1000000016,2026-09-07,VZIINV02,AWAITING_REQUESTER,Received on 2025-12-05 against a planned use date of 2026-05-14; no goods issue after 14 days grace.
+EXC-000004,OVERDUE_USE,000000000030000005,3000,Rsnum 1000000017,2026-09-01,VZIINV01,OPEN,Received on 2026-05-11 against a planned use date of 2026-06-08; no goods issue after 14 days grace.
+EXC-000005,OVERDUE_USE,000000000030000006,2000,Rsnum 1000000018,2026-08-29,VZIINV01,OPEN,Received on 2026-07-13 against a planned use date of 2026-08-11; no goods issue after 14 days grace.
+EXC-000006,OVERDUE_USE,000000000030000010,4000,Rsnum 1000000028,2026-09-04,VZIINV02,AWAITING_REQUESTER,Received on 2025-11-28 against a planned use date of 2026-08-12; no goods issue after 14 days grace.
+EXC-000007,OVERDUE_USE,000000000030000011,1000,Rsnum 1000000029,2026-08-31,VZIINV02,OPEN,Received on 2026-05-05 against a planned use date of 2026-07-14; no goods issue after 14 days grace.
+EXC-000008,OVERDUE_USE,000000000030000011,1000,Rsnum 1000000031,2026-09-02,VZIINV02,CLOSED,Received on 2026-07-19 against a planned use date of 2026-05-23; no goods issue after 14 days grace.
+EXC-000009,NO_CONSUMPTION_PLAN,000000000030000014,1000,Rsnum 1000000040,2026-09-05,VZIINV02,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000010,NO_CONSUMPTION_PLAN,000000000030000016,1000,Rsnum 1000000044,2026-08-30,VZIINV01,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000011,OVERDUE_USE,000000000030000016,1000,Rsnum 1000000045,2026-09-06,VZIINV01,OPEN,Received on 2026-05-05 against a planned use date of 2026-07-07; no goods issue after 14 days grace.
+EXC-000012,OVERDUE_USE,000000000030000018,4000,Rsnum 1000000048,2026-09-06,VZIINV01,OPEN,Received on 2026-04-15 against a planned use date of 2026-06-07; no goods issue after 14 days grace.
+EXC-000013,OVERDUE_USE,000000000030000021,4000,Rsnum 1000000056,2026-09-03,VZIINV01,OPEN,Received on 2026-06-26 against a planned use date of 2026-08-02; no goods issue after 14 days grace.
+EXC-000014,OVERDUE_USE,000000000030000022,4000,Rsnum 1000000057,2026-08-31,VZIINV02,OPEN,Received on 2026-04-26 against a planned use date of 2026-07-09; no goods issue after 14 days grace.
+EXC-000015,OVERDUE_USE,000000000030000028,4000,Rsnum 1000000074,2026-09-06,VZIINV01,AWAITING_REQUESTER,Received on 2026-06-15 against a planned use date of 2026-06-19; no goods issue after 14 days grace.
+EXC-000016,OVERDUE_USE,000000000030000030,3000,Rsnum 1000000078,2026-09-07,VZIINV01,OPEN,Received on 2026-09-01 against a planned use date of 2026-05-31; no goods issue after 14 days grace.
+EXC-000017,OVERDUE_USE,000000000030000030,3000,Rsnum 1000000079,2026-09-06,VZIINV02,OPEN,Received on 2026-01-09 against a planned use date of 2026-06-08; no goods issue after 14 days grace.
+EXC-000018,OVERDUE_USE,000000000030000031,3000,Rsnum 1000000082,2026-09-06,VZIINV01,OPEN,Received on 2026-01-29 against a planned use date of 2026-05-24; no goods issue after 14 days grace.
+EXC-000019,OVERDUE_USE,000000000030000032,2000,Rsnum 1000000083,2026-08-31,VZIINV02,OPEN,Received on 2026-01-06 against a planned use date of 2026-05-08; no goods issue after 14 days grace.
+EXC-000020,OVERDUE_USE,000000000030000035,4000,Rsnum 1000000093,2026-09-07,VZIINV01,OPEN,Received on 2026-06-26 against a planned use date of 2026-06-20; no goods issue after 14 days grace.
+EXC-000021,NO_CONSUMPTION_PLAN,000000000030000037,4000,Rsnum 1000000098,2026-08-31,VZIINV02,AWAITING_REQUESTER,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000022,OVERDUE_USE,000000000030000039,1000,Rsnum 1000000104,2026-08-28,VZIINV01,CLOSED,Received on 2026-07-05 against a planned use date of 2026-08-18; no goods issue after 14 days grace.
+EXC-000023,NO_CONSUMPTION_PLAN,000000000030000039,1000,Rsnum 1000000105,2026-08-28,VZIINV01,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000024,OVERDUE_USE,000000000030000040,1000,Rsnum 1000000106,2026-09-04,VZIINV01,AWAITING_REQUESTER,Received on 2026-02-15 against a planned use date of 2026-05-02; no goods issue after 14 days grace.
+EXC-000025,OVERDUE_USE,000000000030000040,1000,Rsnum 1000000108,2026-09-07,VZIINV02,CLOSED,Received on 2026-08-12 against a planned use date of 2026-05-20; no goods issue after 14 days grace.
+EXC-000026,OVERDUE_USE,000000000030000043,3000,Rsnum 1000000112,2026-09-03,VZIINV02,CLOSED,Received on 2026-06-15 against a planned use date of 2026-06-19; no goods issue after 14 days grace.
+EXC-000027,OVERDUE_USE,000000000030000048,4000,Rsnum 1000000126,2026-09-01,VZIINV02,OPEN,Received on 2026-03-08 against a planned use date of 2026-07-12; no goods issue after 14 days grace.
+EXC-000028,OVERDUE_USE,000000000030000048,4000,Rsnum 1000000127,2026-09-06,VZIINV01,OPEN,Received on 2026-01-26 against a planned use date of 2026-05-12; no goods issue after 14 days grace.
+EXC-000029,OVERDUE_USE,000000000030000050,3000,Rsnum 1000000130,2026-09-02,VZIINV01,CLOSED,Received on 2026-06-13 against a planned use date of 2026-07-03; no goods issue after 14 days grace.
+EXC-000030,OVERDUE_USE,000000000030000052,1000,Rsnum 1000000136,2026-09-07,VZIINV01,CLOSED,Received on 2026-05-09 against a planned use date of 2026-08-13; no goods issue after 14 days grace.
+EXC-000031,OVERDUE_USE,000000000030000055,1000,Rsnum 1000000144,2026-08-29,VZIINV01,AWAITING_REQUESTER,Received on 2026-02-13 against a planned use date of 2026-06-06; no goods issue after 14 days grace.
+EXC-000032,NO_CONSUMPTION_PLAN,000000000030000056,2000,Rsnum 1000000147,2026-09-02,VZIINV02,AWAITING_REQUESTER,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000033,OVERDUE_USE,000000000030000058,2000,Rsnum 1000000153,2026-09-01,VZIINV02,OPEN,Received on 2025-11-27 against a planned use date of 2026-05-15; no goods issue after 14 days grace.
+EXC-000034,OVERDUE_USE,000000000030000060,3000,Rsnum 1000000157,2026-08-29,VZIINV02,OPEN,Received on 2025-11-11 against a planned use date of 2026-06-16; no goods issue after 14 days grace.
+EXC-000035,OVERDUE_USE,000000000030000060,3000,Rsnum 1000000158,2026-09-04,VZIINV01,AWAITING_REQUESTER,Received on 2026-05-20 against a planned use date of 2026-04-29; no goods issue after 14 days grace.
+EXC-000036,OVERDUE_USE,000000000030000061,4000,Rsnum 1000000160,2026-09-02,VZIINV02,OPEN,Received on 2025-11-28 against a planned use date of 2026-04-28; no goods issue after 14 days grace.
+EXC-000037,OVERDUE_USE,000000000030000061,4000,Rsnum 1000000161,2026-09-06,VZIINV02,OPEN,Received on 2025-12-19 against a planned use date of 2026-06-14; no goods issue after 14 days grace.
+EXC-000038,OVERDUE_USE,000000000030000064,4000,Rsnum 1000000165,2026-08-31,VZIINV01,OPEN,Received on 2026-03-23 against a planned use date of 2026-07-25; no goods issue after 14 days grace.
+EXC-000039,OVERDUE_USE,000000000030000064,1000,Rsnum 1000000169,2026-08-31,VZIINV01,OPEN,Received on 2026-06-04 against a planned use date of 2026-08-16; no goods issue after 14 days grace.
+EXC-000040,NO_CONSUMPTION_PLAN,000000000030000069,4000,Rsnum 1000000179,2026-08-31,VZIINV02,AWAITING_REQUESTER,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000041,OVERDUE_USE,000000000030000077,1000,Rsnum 1000000197,2026-08-29,VZIINV01,CLOSED,Received on 2026-06-24 against a planned use date of 2026-05-16; no goods issue after 14 days grace.
+EXC-000042,OVERDUE_USE,000000000030000079,4000,Rsnum 1000000200,2026-09-07,VZIINV01,CLOSED,Received on 2026-02-16 against a planned use date of 2026-07-21; no goods issue after 14 days grace.
+EXC-000043,NO_CONSUMPTION_PLAN,000000000030000080,4000,Rsnum 1000000203,2026-08-30,VZIINV01,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000044,NO_CONSUMPTION_PLAN,000000000030000081,4000,Rsnum 1000000206,2026-09-04,VZIINV01,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000045,OVERDUE_USE,000000000030000083,1000,Rsnum 1000000208,2026-08-30,VZIINV01,AWAITING_REQUESTER,Received on 2026-08-03 against a planned use date of 2026-07-18; no goods issue after 14 days grace.
+EXC-000046,NO_CONSUMPTION_PLAN,000000000030000084,4000,Rsnum 1000000211,2026-09-02,VZIINV01,CLOSED,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000047,OVERDUE_USE,000000000030000086,2000,Rsnum 1000000215,2026-09-02,VZIINV01,OPEN,Received on 2025-11-29 against a planned use date of 2026-05-29; no goods issue after 14 days grace.
+EXC-000048,OVERDUE_USE,000000000030000087,2000,Rsnum 1000000216,2026-09-02,VZIINV02,OPEN,Received on 2026-06-04 against a planned use date of 2026-08-10; no goods issue after 14 days grace.
+EXC-000049,OVERDUE_USE,000000000030000087,2000,Rsnum 1000000218,2026-08-31,VZIINV01,OPEN,Received on 2026-08-16 against a planned use date of 2026-08-02; no goods issue after 14 days grace.
+EXC-000050,OVERDUE_USE,000000000030000089,4000,Rsnum 1000000222,2026-09-02,VZIINV02,OPEN,Received on 2025-11-25 against a planned use date of 2026-07-05; no goods issue after 14 days grace.
+EXC-000051,OVERDUE_USE,000000000030000090,4000,Rsnum 1000000223,2026-09-05,VZIINV02,CLOSED,Received on 2026-08-27 against a planned use date of 2026-07-04; no goods issue after 14 days grace.
+EXC-000052,OVERDUE_USE,000000000030000090,3000,Rsnum 1000000224,2026-09-05,VZIINV01,CLOSED,Received on 2025-12-31 against a planned use date of 2026-05-12; no goods issue after 14 days grace.
+EXC-000053,NO_CONSUMPTION_PLAN,000000000030000092,2000,Rsnum 1000000229,2026-08-30,VZIINV01,CLOSED,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000054,OVERDUE_USE,000000000030000100,3000,Rsnum 1000000242,2026-09-01,VZIINV02,OPEN,Received on 2025-12-04 against a planned use date of 2026-08-11; no goods issue after 14 days grace.
+EXC-000055,OVERDUE_USE,000000000030000100,3000,Rsnum 1000000243,2026-09-04,VZIINV01,CLOSED,Received on 2026-02-07 against a planned use date of 2026-07-20; no goods issue after 14 days grace.
+EXC-000056,OVERDUE_USE,000000000030000101,4000,Rsnum 1000000244,2026-08-28,VZIINV02,OPEN,Received on 2026-05-22 against a planned use date of 2026-05-01; no goods issue after 14 days grace.
+EXC-000057,OVERDUE_USE,000000000030000102,4000,Rsnum 1000000249,2026-09-03,VZIINV01,OPEN,Received on 2026-02-20 against a planned use date of 2026-06-28; no goods issue after 14 days grace.
+EXC-000058,OVERDUE_USE,000000000030000105,3000,Rsnum 1000000254,2026-09-02,VZIINV01,OPEN,Received on 2026-01-17 against a planned use date of 2026-05-01; no goods issue after 14 days grace.
+EXC-000059,OVERDUE_USE,000000000030000108,2000,Rsnum 1000000263,2026-09-05,VZIINV02,OPEN,Received on 2026-01-20 against a planned use date of 2026-07-07; no goods issue after 14 days grace.
+EXC-000060,OVERDUE_USE,000000000030000108,1000,Rsnum 1000000265,2026-09-02,VZIINV02,OPEN,Received on 2026-08-14 against a planned use date of 2026-05-09; no goods issue after 14 days grace.
+EXC-000061,OVERDUE_USE,000000000030000109,1000,Rsnum 1000000268,2026-09-03,VZIINV01,AWAITING_REQUESTER,Received on 2026-07-30 against a planned use date of 2026-08-09; no goods issue after 14 days grace.
+EXC-000062,NO_CONSUMPTION_PLAN,000000000030000115,3000,Rsnum 1000000278,2026-09-02,VZIINV02,CLOSED,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000063,OVERDUE_USE,000000000030000116,1000,Rsnum 1000000282,2026-09-02,VZIINV01,OPEN,Received on 2026-01-06 against a planned use date of 2026-07-01; no goods issue after 14 days grace.
+EXC-000064,OVERDUE_USE,000000000030000120,3000,Rsnum 1000000290,2026-08-28,VZIINV02,CLOSED,Received on 2026-05-12 against a planned use date of 2026-06-18; no goods issue after 14 days grace.
+EXC-000065,OVERDUE_USE,000000000030000120,3000,Rsnum 1000000291,2026-09-07,VZIINV02,OPEN,Received on 2026-03-14 against a planned use date of 2026-06-17; no goods issue after 14 days grace.
+EXC-000066,NO_CONSUMPTION_PLAN,000000000030000123,1000,Rsnum 1000000295,2026-09-07,VZIINV01,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000067,NO_CONSUMPTION_PLAN,000000000030000123,1000,Rsnum 1000000296,2026-09-03,VZIINV02,AWAITING_REQUESTER,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000068,OVERDUE_USE,000000000030000127,2000,Rsnum 1000000306,2026-09-05,VZIINV02,AWAITING_REQUESTER,Received on 2025-12-14 against a planned use date of 2026-05-02; no goods issue after 14 days grace.
+EXC-000069,OVERDUE_USE,000000000030000128,3000,Rsnum 1000000308,2026-09-06,VZIINV01,AWAITING_REQUESTER,Received on 2025-11-15 against a planned use date of 2026-06-13; no goods issue after 14 days grace.
+EXC-000070,OVERDUE_USE,000000000030000130,4000,Rsnum 1000000314,2026-08-29,VZIINV01,CLOSED,Received on 2026-08-07 against a planned use date of 2026-08-06; no goods issue after 14 days grace.
+EXC-000071,OVERDUE_USE,000000000030000132,3000,Rsnum 1000000321,2026-09-03,VZIINV01,AWAITING_REQUESTER,Received on 2025-12-29 against a planned use date of 2026-08-13; no goods issue after 14 days grace.
+EXC-000072,OVERDUE_USE,000000000030000133,4000,Rsnum 1000000322,2026-09-01,VZIINV01,CLOSED,Received on 2025-12-02 against a planned use date of 2026-05-14; no goods issue after 14 days grace.
+EXC-000073,OVERDUE_USE,000000000030000133,4000,Rsnum 1000000323,2026-09-03,VZIINV01,AWAITING_REQUESTER,Received on 2026-02-07 against a planned use date of 2026-07-22; no goods issue after 14 days grace.
+EXC-000074,OVERDUE_USE,000000000030000136,3000,Rsnum 1000000327,2026-09-04,VZIINV01,OPEN,Received on 2026-04-23 against a planned use date of 2026-06-23; no goods issue after 14 days grace.
+EXC-000075,OVERDUE_USE,000000000030000139,3000,Rsnum 1000000331,2026-09-02,VZIINV02,OPEN,Received on 2026-08-24 against a planned use date of 2026-05-04; no goods issue after 14 days grace.
+EXC-000076,OVERDUE_USE,000000000030000144,3000,Rsnum 1000000345,2026-08-30,VZIINV01,AWAITING_REQUESTER,Received on 2026-05-04 against a planned use date of 2026-08-01; no goods issue after 14 days grace.
+EXC-000077,NO_CONSUMPTION_PLAN,000000000030000149,2000,Rsnum 1000000359,2026-08-28,VZIINV01,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000078,OVERDUE_USE,000000000030000151,3000,Rsnum 1000000365,2026-09-03,VZIINV01,AWAITING_REQUESTER,Received on 2025-10-31 against a planned use date of 2026-07-17; no goods issue after 14 days grace.
+EXC-000079,OVERDUE_USE,000000000030000152,3000,Rsnum 1000000370,2026-08-29,VZIINV02,AWAITING_REQUESTER,Received on 2026-06-25 against a planned use date of 2026-06-02; no goods issue after 14 days grace.
+EXC-000080,OVERDUE_USE,000000000030000152,3000,Rsnum 1000000371,2026-08-29,VZIINV01,AWAITING_REQUESTER,Received on 2026-07-19 against a planned use date of 2026-05-28; no goods issue after 14 days grace.
+EXC-000081,OVERDUE_USE,000000000030000153,4000,Rsnum 1000000378,2026-09-02,VZIINV02,OPEN,Received on 2026-07-04 against a planned use date of 2026-06-28; no goods issue after 14 days grace.
+EXC-000082,OVERDUE_USE,000000000030000154,2000,Rsnum 1000000380,2026-09-06,VZIINV01,AWAITING_REQUESTER,Received on 2026-08-16 against a planned use date of 2026-07-03; no goods issue after 14 days grace.
+EXC-000083,OVERDUE_USE,000000000030000154,2000,Rsnum 1000000381,2026-09-02,VZIINV01,AWAITING_REQUESTER,Received on 2026-02-14 against a planned use date of 2026-05-31; no goods issue after 14 days grace.
+EXC-000084,OVERDUE_USE,000000000030000155,2000,Rsnum 1000000382,2026-09-01,VZIINV01,AWAITING_REQUESTER,Received on 2026-03-24 against a planned use date of 2026-07-27; no goods issue after 14 days grace.
+EXC-000085,OVERDUE_USE,000000000030000155,2000,Rsnum 1000000384,2026-09-07,VZIINV01,CLOSED,Received on 2026-02-09 against a planned use date of 2026-05-25; no goods issue after 14 days grace.
+EXC-000086,NO_CONSUMPTION_PLAN,000000000030000159,1000,Rsnum 1000000395,2026-09-02,VZIINV01,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000087,OVERDUE_USE,000000000030000160,4000,Rsnum 1000000398,2026-09-05,VZIINV02,CLOSED,Received on 2026-05-28 against a planned use date of 2026-07-18; no goods issue after 14 days grace.
+EXC-000088,OVERDUE_USE,000000000030000161,2000,Rsnum 1000000399,2026-08-29,VZIINV01,OPEN,Received on 2026-04-01 against a planned use date of 2026-07-22; no goods issue after 14 days grace.
+EXC-000089,OVERDUE_USE,000000000030000162,1000,Rsnum 1000000402,2026-09-05,VZIINV01,OPEN,Received on 2026-03-24 against a planned use date of 2026-07-07; no goods issue after 14 days grace.
+EXC-000090,NO_CONSUMPTION_PLAN,000000000030000163,2000,Rsnum 1000000406,2026-09-06,VZIINV01,AWAITING_REQUESTER,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000091,OVERDUE_USE,000000000030000165,3000,Rsnum 1000000409,2026-09-03,VZIINV01,CLOSED,Received on 2026-06-17 against a planned use date of 2026-07-21; no goods issue after 14 days grace.
+EXC-000092,OVERDUE_USE,000000000030000165,3000,Rsnum 1000000411,2026-09-03,VZIINV01,CLOSED,Received on 2025-12-11 against a planned use date of 2026-05-10; no goods issue after 14 days grace.
+EXC-000093,OVERDUE_USE,000000000030000169,4000,Rsnum 1000000417,2026-08-30,VZIINV01,CLOSED,Received on 2026-08-03 against a planned use date of 2026-07-02; no goods issue after 14 days grace.
+EXC-000094,OVERDUE_USE,000000000030000169,1000,Rsnum 1000000420,2026-08-31,VZIINV02,CLOSED,Received on 2026-04-19 against a planned use date of 2026-05-05; no goods issue after 14 days grace.
+EXC-000095,OVERDUE_USE,000000000030000170,3000,Rsnum 1000000422,2026-09-01,VZIINV01,OPEN,Received on 2026-07-09 against a planned use date of 2026-06-04; no goods issue after 14 days grace.
+EXC-000096,OVERDUE_USE,000000000030000171,4000,Rsnum 1000000425,2026-08-29,VZIINV02,OPEN,Received on 2026-07-14 against a planned use date of 2026-07-18; no goods issue after 14 days grace.
+EXC-000097,NO_CONSUMPTION_PLAN,000000000030000172,1000,Rsnum 1000000426,2026-09-02,VZIINV02,CLOSED,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000098,OVERDUE_USE,000000000030000175,4000,Rsnum 1000000431,2026-08-30,VZIINV02,AWAITING_REQUESTER,Received on 2026-08-02 against a planned use date of 2026-05-02; no goods issue after 14 days grace.
+EXC-000099,NO_CONSUMPTION_PLAN,000000000030000175,3000,Rsnum 1000000434,2026-08-30,VZIINV01,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000100,OVERDUE_USE,000000000030000175,3000,Rsnum 1000000435,2026-09-03,VZIINV02,OPEN,Received on 2026-07-25 against a planned use date of 2026-04-26; no goods issue after 14 days grace.
+EXC-000101,OVERDUE_USE,000000000030000180,3000,Rsnum 1000000446,2026-08-29,VZIINV01,AWAITING_REQUESTER,Received on 2026-01-13 against a planned use date of 2026-06-11; no goods issue after 14 days grace.
+EXC-000102,OVERDUE_USE,000000000030000181,4000,Rsnum 1000000451,2026-09-02,VZIINV01,OPEN,Received on 2026-02-02 against a planned use date of 2026-07-07; no goods issue after 14 days grace.
+EXC-000103,OVERDUE_USE,000000000030000182,3000,Rsnum 1000000452,2026-08-29,VZIINV01,OPEN,Received on 2026-08-24 against a planned use date of 2026-07-23; no goods issue after 14 days grace.
+EXC-000104,NO_CONSUMPTION_PLAN,000000000030000183,1000,Rsnum 1000000453,2026-09-05,VZIINV02,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000105,OVERDUE_USE,000000000030000184,2000,Rsnum 1000000456,2026-09-04,VZIINV02,OPEN,Received on 2026-04-29 against a planned use date of 2026-06-23; no goods issue after 14 days grace.
+EXC-000106,OVERDUE_USE,000000000030000187,3000,Rsnum 1000000461,2026-09-05,VZIINV01,CLOSED,Received on 2026-01-03 against a planned use date of 2026-05-29; no goods issue after 14 days grace.
+EXC-000107,OVERDUE_USE,000000000030000189,3000,Rsnum 1000000471,2026-08-31,VZIINV01,OPEN,Received on 2026-01-24 against a planned use date of 2026-07-15; no goods issue after 14 days grace.
+EXC-000108,OVERDUE_USE,000000000030000193,1000,Rsnum 1000000482,2026-09-06,VZIINV01,AWAITING_REQUESTER,Received on 2026-07-26 against a planned use date of 2026-08-07; no goods issue after 14 days grace.
+EXC-000109,OVERDUE_USE,000000000030000196,3000,Rsnum 1000000489,2026-08-29,VZIINV02,AWAITING_REQUESTER,Received on 2025-11-30 against a planned use date of 2026-06-24; no goods issue after 14 days grace.
+EXC-000110,OVERDUE_USE,000000000030000197,3000,Rsnum 1000000491,2026-09-07,VZIINV01,OPEN,Received on 2026-05-20 against a planned use date of 2026-05-02; no goods issue after 14 days grace.
+EXC-000111,OVERDUE_USE,000000000030000198,2000,Rsnum 1000000496,2026-09-03,VZIINV01,OPEN,Received on 2026-03-16 against a planned use date of 2026-07-19; no goods issue after 14 days grace.
+EXC-000112,NO_CONSUMPTION_PLAN,000000000030000199,3000,Rsnum 1000000499,2026-09-06,VZIINV01,CLOSED,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000113,NO_CONSUMPTION_PLAN,000000000030000200,1000,Rsnum 1000000502,2026-09-01,VZIINV02,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000114,OVERDUE_USE,000000000030000204,3000,Rsnum 1000000510,2026-08-31,VZIINV01,AWAITING_REQUESTER,Received on 2026-02-10 against a planned use date of 2026-05-04; no goods issue after 14 days grace.
+EXC-000115,OVERDUE_USE,000000000030000206,3000,Rsnum 1000000515,2026-08-31,VZIINV02,OPEN,Received on 2026-07-19 against a planned use date of 2026-05-09; no goods issue after 14 days grace.
+EXC-000116,OVERDUE_USE,000000000030000208,1000,Rsnum 1000000518,2026-08-31,VZIINV01,CLOSED,Received on 2026-05-05 against a planned use date of 2026-06-29; no goods issue after 14 days grace.
+EXC-000117,OVERDUE_USE,000000000030000208,1000,Rsnum 1000000519,2026-09-03,VZIINV01,AWAITING_REQUESTER,Received on 2026-04-03 against a planned use date of 2026-05-08; no goods issue after 14 days grace.
+EXC-000118,OVERDUE_USE,000000000030000212,1000,Rsnum 1000000528,2026-09-02,VZIINV01,OPEN,Received on 2026-07-01 against a planned use date of 2026-08-11; no goods issue after 14 days grace.
+EXC-000119,OVERDUE_USE,000000000030000212,1000,Rsnum 1000000529,2026-09-04,VZIINV01,OPEN,Received on 2026-03-02 against a planned use date of 2026-06-23; no goods issue after 14 days grace.
+EXC-000120,OVERDUE_USE,000000000030000215,1000,Rsnum 1000000536,2026-09-04,VZIINV01,OPEN,Received on 2026-02-02 against a planned use date of 2026-06-03; no goods issue after 14 days grace.
+EXC-000121,OVERDUE_USE,000000000030000216,4000,Rsnum 1000000537,2026-08-31,VZIINV01,OPEN,Received on 2026-06-08 against a planned use date of 2026-05-02; no goods issue after 14 days grace.
+EXC-000122,OVERDUE_USE,000000000030000217,4000,Rsnum 1000000539,2026-09-03,VZIINV01,OPEN,Received on 2026-04-11 against a planned use date of 2026-08-11; no goods issue after 14 days grace.
+EXC-000123,OVERDUE_USE,000000000030000217,4000,Rsnum 1000000541,2026-09-02,VZIINV02,AWAITING_REQUESTER,Received on 2026-03-13 against a planned use date of 2026-04-28; no goods issue after 14 days grace.
+EXC-000124,OVERDUE_USE,000000000030000220,2000,Rsnum 1000000547,2026-09-04,VZIINV02,OPEN,Received on 2025-12-03 against a planned use date of 2026-06-17; no goods issue after 14 days grace.
+EXC-000125,OVERDUE_USE,000000000030000222,2000,Rsnum 1000000553,2026-09-07,VZIINV02,OPEN,Received on 2026-06-30 against a planned use date of 2026-06-06; no goods issue after 14 days grace.
+EXC-000126,OVERDUE_USE,000000000030000223,4000,Rsnum 1000000556,2026-09-05,VZIINV02,AWAITING_REQUESTER,Received on 2026-08-10 against a planned use date of 2026-06-02; no goods issue after 14 days grace.
+EXC-000127,OVERDUE_USE,000000000030000224,2000,Rsnum 1000000560,2026-09-05,VZIINV01,OPEN,Received on 2026-01-02 against a planned use date of 2026-05-24; no goods issue after 14 days grace.
+EXC-000128,OVERDUE_USE,000000000030000225,1000,Rsnum 1000000565,2026-08-30,VZIINV01,OPEN,Received on 2026-04-04 against a planned use date of 2026-07-23; no goods issue after 14 days grace.
+EXC-000129,OVERDUE_USE,000000000030000225,4000,Rsnum 1000000567,2026-09-06,VZIINV02,OPEN,Received on 2026-01-14 against a planned use date of 2026-06-16; no goods issue after 14 days grace.
+EXC-000130,NO_CONSUMPTION_PLAN,000000000030000226,1000,Rsnum 1000000570,2026-08-28,VZIINV02,CLOSED,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000131,OVERDUE_USE,000000000030000230,1000,Rsnum 1000000578,2026-08-31,VZIINV01,CLOSED,Received on 2026-01-02 against a planned use date of 2026-06-19; no goods issue after 14 days grace.
+EXC-000132,OVERDUE_USE,000000000030000230,4000,Rsnum 1000000580,2026-09-04,VZIINV01,OPEN,Received on 2026-02-01 against a planned use date of 2026-07-29; no goods issue after 14 days grace.
+EXC-000133,OVERDUE_USE,000000000030000233,1000,Rsnum 1000000586,2026-08-30,VZIINV02,OPEN,Received on 2026-05-02 against a planned use date of 2026-05-29; no goods issue after 14 days grace.
+EXC-000134,OVERDUE_USE,000000000030000236,2000,Rsnum 1000000594,2026-08-28,VZIINV01,CLOSED,Received on 2026-07-22 against a planned use date of 2026-06-29; no goods issue after 14 days grace.
+EXC-000135,OVERDUE_USE,000000000030000237,2000,Rsnum 1000000595,2026-09-07,VZIINV01,CLOSED,Received on 2026-06-27 against a planned use date of 2026-05-14; no goods issue after 14 days grace.
+EXC-000136,OVERDUE_USE,000000000030000242,4000,Rsnum 1000000604,2026-08-29,VZIINV02,OPEN,Received on 2026-05-14 against a planned use date of 2026-08-10; no goods issue after 14 days grace.
+EXC-000137,NO_CONSUMPTION_PLAN,000000000030000244,4000,Rsnum 1000000607,2026-09-04,VZIINV01,AWAITING_REQUESTER,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000138,OVERDUE_USE,000000000030000245,1000,Rsnum 1000000611,2026-09-03,VZIINV02,CLOSED,Received on 2026-06-15 against a planned use date of 2026-08-07; no goods issue after 14 days grace.
+EXC-000139,OVERDUE_USE,000000000030000245,1000,Rsnum 1000000612,2026-09-06,VZIINV01,OPEN,Received on 2026-05-21 against a planned use date of 2026-06-03; no goods issue after 14 days grace.
+EXC-000140,NO_CONSUMPTION_PLAN,000000000030000250,4000,Rsnum 1000000627,2026-09-03,VZIINV02,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000141,NO_CONSUMPTION_PLAN,000000000030000252,1000,Rsnum 1000000630,2026-09-01,VZIINV01,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000142,OVERDUE_USE,000000000030000254,3000,Rsnum 1000000634,2026-08-28,VZIINV01,CLOSED,Received on 2026-03-14 against a planned use date of 2026-05-01; no goods issue after 14 days grace.
+EXC-000143,OVERDUE_USE,000000000030000256,3000,Rsnum 1000000636,2026-09-04,VZIINV02,CLOSED,Received on 2026-04-15 against a planned use date of 2026-05-30; no goods issue after 14 days grace.
+EXC-000144,OVERDUE_USE,000000000030000261,2000,Rsnum 1000000648,2026-08-30,VZIINV01,CLOSED,Received on 2026-01-04 against a planned use date of 2026-07-03; no goods issue after 14 days grace.
+EXC-000145,NO_CONSUMPTION_PLAN,000000000030000263,4000,Rsnum 1000000652,2026-09-04,VZIINV01,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000146,NO_CONSUMPTION_PLAN,000000000030000266,1000,Rsnum 1000000658,2026-08-29,VZIINV02,AWAITING_REQUESTER,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000147,OVERDUE_USE,000000000030000268,3000,Rsnum 1000000661,2026-08-29,VZIINV02,OPEN,Received on 2025-12-16 against a planned use date of 2026-07-24; no goods issue after 14 days grace.
+EXC-000148,OVERDUE_USE,000000000030000268,3000,Rsnum 1000000663,2026-08-28,VZIINV02,AWAITING_REQUESTER,Received on 2026-01-01 against a planned use date of 2026-05-13; no goods issue after 14 days grace.
+EXC-000149,OVERDUE_USE,000000000030000268,1000,Rsnum 1000000664,2026-08-30,VZIINV01,AWAITING_REQUESTER,Received on 2026-07-01 against a planned use date of 2026-07-05; no goods issue after 14 days grace.
+EXC-000150,OVERDUE_USE,000000000030000269,3000,Rsnum 1000000667,2026-08-30,VZIINV01,OPEN,Received on 2025-12-15 against a planned use date of 2026-07-07; no goods issue after 14 days grace.
+EXC-000151,OVERDUE_USE,000000000030000272,1000,Rsnum 1000000672,2026-09-04,VZIINV01,AWAITING_REQUESTER,Received on 2026-07-13 against a planned use date of 2026-07-06; no goods issue after 14 days grace.
+EXC-000152,NO_CONSUMPTION_PLAN,000000000030000277,3000,Rsnum 1000000680,2026-09-01,VZIINV02,CLOSED,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000153,OVERDUE_USE,000000000030000280,2000,Rsnum 1000000683,2026-09-03,VZIINV02,OPEN,Received on 2026-06-19 against a planned use date of 2026-05-02; no goods issue after 14 days grace.
+EXC-000154,OVERDUE_USE,000000000030000280,2000,Rsnum 1000000684,2026-09-03,VZIINV01,OPEN,Received on 2026-06-29 against a planned use date of 2026-05-10; no goods issue after 14 days grace.
+EXC-000155,OVERDUE_USE,000000000030000282,1000,Rsnum 1000000687,2026-09-01,VZIINV02,AWAITING_REQUESTER,Received on 2026-01-06 against a planned use date of 2026-06-16; no goods issue after 14 days grace.
+EXC-000156,OVERDUE_USE,000000000030000282,1000,Rsnum 1000000688,2026-09-07,VZIINV01,CLOSED,Received on 2026-04-13 against a planned use date of 2026-08-13; no goods issue after 14 days grace.
+EXC-000157,NO_CONSUMPTION_PLAN,000000000030000283,1000,Rsnum 1000000694,2026-09-02,VZIINV02,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000158,OVERDUE_USE,000000000030000284,2000,Rsnum 1000000698,2026-09-02,VZIINV02,OPEN,Received on 2026-03-12 against a planned use date of 2026-05-29; no goods issue after 14 days grace.
+EXC-000159,NO_CONSUMPTION_PLAN,000000000030000286,1000,Rsnum 1000000701,2026-09-02,VZIINV01,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000160,OVERDUE_USE,000000000030000291,4000,Rsnum 1000000713,2026-08-29,VZIINV02,OPEN,Received on 2026-03-04 against a planned use date of 2026-07-17; no goods issue after 14 days grace.
+EXC-000161,NO_CONSUMPTION_PLAN,000000000030000293,2000,Rsnum 1000000719,2026-09-06,VZIINV02,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000162,NO_CONSUMPTION_PLAN,000000000030000293,2000,Rsnum 1000000721,2026-09-05,VZIINV02,CLOSED,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000163,OVERDUE_USE,000000000030000294,2000,Rsnum 1000000726,2026-09-07,VZIINV01,AWAITING_REQUESTER,Received on 2026-02-24 against a planned use date of 2026-07-13; no goods issue after 14 days grace.
+EXC-000164,OVERDUE_USE,000000000030000294,2000,Rsnum 1000000727,2026-08-30,VZIINV01,CLOSED,Received on 2026-01-15 against a planned use date of 2026-07-14; no goods issue after 14 days grace.
+EXC-000165,NO_CONSUMPTION_PLAN,000000000030000294,1000,Rsnum 1000000728,2026-08-30,VZIINV02,AWAITING_REQUESTER,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000166,OVERDUE_USE,000000000030000294,1000,Rsnum 1000000729,2026-08-29,VZIINV01,OPEN,Received on 2026-03-22 against a planned use date of 2026-06-01; no goods issue after 14 days grace.
+EXC-000167,OVERDUE_USE,000000000030000295,3000,Rsnum 1000000731,2026-09-04,VZIINV02,OPEN,Received on 2026-03-26 against a planned use date of 2026-06-24; no goods issue after 14 days grace.
+EXC-000168,OVERDUE_USE,000000000030000297,3000,Rsnum 1000000734,2026-09-01,VZIINV02,OPEN,Received on 2026-01-30 against a planned use date of 2026-05-20; no goods issue after 14 days grace.
+EXC-000169,OVERDUE_USE,000000000030000297,3000,Rsnum 1000000735,2026-09-01,VZIINV01,OPEN,Received on 2026-03-06 against a planned use date of 2026-05-16; no goods issue after 14 days grace.
+EXC-000170,OVERDUE_USE,000000000030000299,2000,Rsnum 1000000737,2026-08-28,VZIINV01,OPEN,Received on 2026-08-14 against a planned use date of 2026-06-05; no goods issue after 14 days grace.
+EXC-000171,OVERDUE_USE,000000000030000299,2000,Rsnum 1000000739,2026-09-02,VZIINV02,AWAITING_REQUESTER,Received on 2026-04-06 against a planned use date of 2026-06-17; no goods issue after 14 days grace.
+EXC-000172,NO_CONSUMPTION_PLAN,000000000030000302,1000,Rsnum 1000000745,2026-08-30,VZIINV02,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000173,OVERDUE_USE,000000000030000304,2000,Rsnum 1000000752,2026-09-01,VZIINV02,OPEN,Received on 2026-06-12 against a planned use date of 2026-07-04; no goods issue after 14 days grace.
+EXC-000174,OVERDUE_USE,000000000030000305,3000,Rsnum 1000000753,2026-08-30,VZIINV02,OPEN,Received on 2026-08-25 against a planned use date of 2026-06-15; no goods issue after 14 days grace.
+EXC-000175,OVERDUE_USE,000000000030000305,3000,Rsnum 1000000754,2026-08-30,VZIINV01,OPEN,Received on 2025-12-04 against a planned use date of 2026-06-29; no goods issue after 14 days grace.
+EXC-000176,NO_CONSUMPTION_PLAN,000000000030000306,2000,Rsnum 1000000756,2026-09-04,VZIINV02,CLOSED,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000177,NO_CONSUMPTION_PLAN,000000000030000312,3000,Rsnum 1000000772,2026-09-03,VZIINV01,OPEN,"OAR reservation carries no assistant session identifier, so no consumption plan was captured."
+EXC-000178,OVERDUE_USE,000000000030000313,1000,Rsnum 1000000775,2026-09-07,VZIINV02,OPEN,Received on 2025-12-05 against a planned use date of 2026-07-10; no goods issue after 14 days grace.
+EXC-000179,OVERDUE_REPAIR,000000000080000002,3000,PO 4500008488/00010,2026-08-29,VZIINV02,OPEN,"Promised back on 2026-06-11, which is 88 days ago, beyond the 7-day grace period."
+EXC-000180,MISSING_ATTESTATION,000000000080000003,4000,PO 4500008489/00010,2026-09-02,VZIINV02,CLOSED,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000181,OVERDUE_REPAIR,000000000080000004,2000,PO 4500008490/00010,2026-08-28,VZIINV02,OPEN,"Promised back on 2026-06-29, which is 70 days ago, beyond the 7-day grace period."
+EXC-000182,OVERDUE_REPAIR,000000000080000006,2000,PO 4500008493/00010,2026-09-04,VZIINV01,OPEN,"Promised back on 2026-08-25, which is 13 days ago, beyond the 7-day grace period."
+EXC-000183,MISSING_ATTESTATION,000000000080000012,3000,PO 4500008499/00010,2026-09-02,VZIINV01,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000184,MISSING_ATTESTATION,000000000080000015,3000,PO 4500008501/00010,2026-09-02,VZIINV02,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000185,MISSING_ATTESTATION,000000000080000017,2000,PO 4500008504/00010,2026-09-07,VZIINV02,CLOSED,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000186,OVERDUE_REPAIR,000000000080000018,3000,PO 4500008507/00010,2026-09-05,VZIINV02,OPEN,"Promised back on 2026-08-19, which is 19 days ago, beyond the 7-day grace period."
+EXC-000187,OVERDUE_REPAIR,000000000080000021,2000,PO 4500008511/00010,2026-08-31,VZIINV02,OPEN,"Promised back on 2026-06-17, which is 82 days ago, beyond the 7-day grace period."
+EXC-000188,MISSING_ATTESTATION,000000000080000021,2000,PO 4500008511/00010,2026-08-28,VZIINV01,CLOSED,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000189,MISSING_ATTESTATION,000000000080000021,3000,PO 4500008512/00010,2026-09-06,VZIINV01,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000190,MISSING_ATTESTATION,000000000080000023,3000,PO 4500008514/00010,2026-09-02,VZIINV01,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000191,MISSING_ATTESTATION,000000000080000024,2000,PO 4500008515/00010,2026-09-05,VZIINV02,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000192,MISSING_ATTESTATION,000000000080000025,3000,PO 4500008516/00010,2026-08-30,VZIINV02,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000193,MISSING_ATTESTATION,000000000080000025,4000,PO 4500008517/00010,2026-08-28,VZIINV01,CLOSED,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000194,MISSING_ATTESTATION,000000000080000029,4000,PO 4500008520/00010,2026-08-30,VZIINV02,CLOSED,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000195,OVERDUE_REPAIR,000000000080000033,4000,PO 4500008524/00010,2026-08-31,VZIINV02,OPEN,"Promised back on 2026-08-10, which is 28 days ago, beyond the 7-day grace period."
+EXC-000196,OVERDUE_REPAIR,000000000080000034,1000,PO 4500008525/00010,2026-08-28,VZIINV02,AWAITING_REQUESTER,"Promised back on 2026-07-29, which is 40 days ago, beyond the 7-day grace period."
+EXC-000197,MISSING_ATTESTATION,000000000080000034,1000,PO 4500008525/00010,2026-09-04,VZIINV01,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000198,OVERDUE_REPAIR,000000000080000037,2000,PO 4500008529/00010,2026-09-02,VZIINV02,CLOSED,"Promised back on 2026-08-18, which is 20 days ago, beyond the 7-day grace period."
+EXC-000199,OVERDUE_REPAIR,000000000080000037,1000,PO 4500008530/00010,2026-08-30,VZIINV02,CLOSED,"Promised back on 2026-08-01, which is 37 days ago, beyond the 7-day grace period."
+EXC-000200,MISSING_ATTESTATION,000000000080000037,1000,PO 4500008530/00010,2026-09-07,VZIINV01,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000201,OVERDUE_REPAIR,000000000080000040,1000,PO 4500008534/00010,2026-08-29,VZIINV01,CLOSED,"Promised back on 2026-07-03, which is 66 days ago, beyond the 7-day grace period."
+EXC-000202,OVERDUE_REPAIR,000000000080000041,1000,PO 4500008535/00010,2026-08-30,VZIINV02,OPEN,"Promised back on 2026-07-03, which is 66 days ago, beyond the 7-day grace period."
+EXC-000203,MISSING_ATTESTATION,000000000080000042,1000,PO 4500008537/00010,2026-09-01,VZIINV01,CLOSED,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000204,OVERDUE_REPAIR,000000000080000049,4000,PO 4500008544/00010,2026-09-01,VZIINV02,OPEN,"Promised back on 2026-06-28, which is 71 days ago, beyond the 7-day grace period."
+EXC-000205,MISSING_ATTESTATION,000000000080000056,3000,PO 4500008552/00010,2026-08-31,VZIINV02,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000206,OVERDUE_REPAIR,000000000080000059,4000,PO 4500008555/00010,2026-09-06,VZIINV02,CLOSED,"Promised back on 2026-06-22, which is 77 days ago, beyond the 7-day grace period."
+EXC-000207,MISSING_ATTESTATION,000000000080000061,2000,PO 4500008558/00010,2026-08-28,VZIINV01,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000208,OVERDUE_REPAIR,000000000080000066,1000,PO 4500008565/00010,2026-08-29,VZIINV01,OPEN,"Promised back on 2026-07-22, which is 47 days ago, beyond the 7-day grace period."
+EXC-000209,OVERDUE_REPAIR,000000000080000067,4000,PO 4500008566/00010,2026-09-05,VZIINV02,OPEN,"Promised back on 2026-06-07, which is 92 days ago, beyond the 7-day grace period."
+EXC-000210,OVERDUE_REPAIR,000000000080000070,2000,PO 4500008571/00010,2026-09-01,VZIINV01,OPEN,"Promised back on 2026-06-30, which is 69 days ago, beyond the 7-day grace period."
+EXC-000211,MISSING_ATTESTATION,000000000080000072,1000,PO 4500008574/00010,2026-08-28,VZIINV02,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000212,OVERDUE_REPAIR,000000000080000075,4000,PO 4500008577/00010,2026-09-07,VZIINV02,AWAITING_REQUESTER,"Promised back on 2026-08-01, which is 37 days ago, beyond the 7-day grace period."
+EXC-000213,OVERDUE_REPAIR,000000000080000079,2000,PO 4500008580/00010,2026-08-31,VZIINV01,OPEN,"Promised back on 2026-06-02, which is 97 days ago, beyond the 7-day grace period."
+EXC-000214,MISSING_ATTESTATION,000000000080000079,4000,PO 4500008581/00010,2026-09-04,VZIINV01,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000215,OVERDUE_REPAIR,000000000080000080,4000,PO 4500008582/00010,2026-09-06,VZIINV01,AWAITING_REQUESTER,"Promised back on 2026-08-08, which is 30 days ago, beyond the 7-day grace period."
+EXC-000216,OVERDUE_REPAIR,000000000080000081,3000,PO 4500008584/00010,2026-08-29,VZIINV02,OPEN,"Promised back on 2026-07-26, which is 43 days ago, beyond the 7-day grace period."
+EXC-000217,MISSING_ATTESTATION,000000000080000095,4000,PO 4500008599/00010,2026-09-02,VZIINV01,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000218,MISSING_ATTESTATION,000000000080000097,4000,PO 4500008603/00010,2026-09-04,VZIINV01,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000219,MISSING_ATTESTATION,000000000080000098,1000,PO 4500008604/00010,2026-09-02,VZIINV02,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000220,MISSING_ATTESTATION,000000000080000102,1000,PO 4500008609/00010,2026-09-07,VZIINV02,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000221,OVERDUE_REPAIR,000000000080000104,3000,PO 4500008611/00010,2026-09-05,VZIINV01,OPEN,"Promised back on 2026-06-24, which is 75 days ago, beyond the 7-day grace period."
+EXC-000222,OVERDUE_REPAIR,000000000080000109,3000,PO 4500008617/00010,2026-09-05,VZIINV02,OPEN,"Promised back on 2026-07-10, which is 59 days ago, beyond the 7-day grace period."
+EXC-000223,OVERDUE_REPAIR,000000000080000111,1000,PO 4500008619/00010,2026-09-03,VZIINV01,OPEN,"Promised back on 2026-06-23, which is 76 days ago, beyond the 7-day grace period."
+EXC-000224,OVERDUE_REPAIR,000000000080000122,2000,PO 4500008630/00010,2026-09-03,VZIINV01,OPEN,"Promised back on 2026-07-30, which is 39 days ago, beyond the 7-day grace period."
+EXC-000225,MISSING_ATTESTATION,000000000080000122,2000,PO 4500008630/00010,2026-09-01,VZIINV01,CLOSED,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000226,MISSING_ATTESTATION,000000000080000125,2000,PO 4500008634/00010,2026-09-06,VZIINV02,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000227,MISSING_ATTESTATION,000000000080000128,2000,PO 4500008636/00010,2026-08-29,VZIINV01,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000228,MISSING_ATTESTATION,000000000080000135,4000,PO 4500008645/00010,2026-09-01,VZIINV01,CLOSED,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000229,MISSING_ATTESTATION,000000000080000136,1000,PO 4500008646/00010,2026-08-31,VZIINV02,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000230,OVERDUE_REPAIR,000000000080000138,1000,PO 4500008649/00010,2026-09-03,VZIINV02,CLOSED,"Promised back on 2026-06-20, which is 79 days ago, beyond the 7-day grace period."
+EXC-000231,MISSING_ATTESTATION,000000000080000138,1000,PO 4500008649/00010,2026-09-01,VZIINV01,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000232,OVERDUE_REPAIR,000000000080000141,1000,PO 4500008652/00010,2026-09-03,VZIINV02,CLOSED,"Promised back on 2026-06-19, which is 80 days ago, beyond the 7-day grace period."
+EXC-000233,OVERDUE_REPAIR,000000000080000147,2000,PO 4500008659/00010,2026-09-03,VZIINV02,OPEN,"Promised back on 2026-08-21, which is 17 days ago, beyond the 7-day grace period."
+EXC-000234,MISSING_ATTESTATION,000000000080000154,4000,PO 4500008667/00010,2026-09-07,VZIINV01,CLOSED,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000235,OVERDUE_REPAIR,000000000080000157,4000,PO 4500008671/00010,2026-09-02,VZIINV01,OPEN,"Promised back on 2026-06-18, which is 81 days ago, beyond the 7-day grace period."
+EXC-000236,OVERDUE_REPAIR,000000000080000158,1000,PO 4500008673/00010,2026-09-03,VZIINV02,AWAITING_REQUESTER,"Promised back on 2026-08-03, which is 35 days ago, beyond the 7-day grace period."
+EXC-000237,OVERDUE_REPAIR,000000000080000159,3000,PO 4500008675/00010,2026-08-28,VZIINV02,OPEN,"Promised back on 2026-06-18, which is 81 days ago, beyond the 7-day grace period."
+EXC-000238,OVERDUE_REPAIR,000000000080000166,1000,PO 4500008683/00010,2026-09-07,VZIINV01,OPEN,"Promised back on 2026-06-21, which is 78 days ago, beyond the 7-day grace period."
+EXC-000239,MISSING_ATTESTATION,000000000080000166,1000,PO 4500008683/00010,2026-09-06,VZIINV01,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000240,OVERDUE_REPAIR,000000000080000167,2000,PO 4500008684/00010,2026-09-03,VZIINV02,OPEN,"Promised back on 2026-07-26, which is 43 days ago, beyond the 7-day grace period."
+EXC-000241,OVERDUE_REPAIR,000000000080000168,2000,PO 4500008685/00010,2026-09-05,VZIINV01,OPEN,"Promised back on 2026-07-31, which is 38 days ago, beyond the 7-day grace period."
+EXC-000242,OVERDUE_REPAIR,000000000080000169,1000,PO 4500008686/00010,2026-09-07,VZIINV01,OPEN,"Promised back on 2026-06-17, which is 82 days ago, beyond the 7-day grace period."
+EXC-000243,MISSING_ATTESTATION,000000000080000170,2000,PO 4500008687/00010,2026-09-05,VZIINV02,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000244,OVERDUE_REPAIR,000000000080000171,3000,PO 4500008689/00010,2026-09-01,VZIINV02,OPEN,"Promised back on 2026-07-19, which is 50 days ago, beyond the 7-day grace period."
+EXC-000245,MISSING_ATTESTATION,000000000080000175,4000,PO 4500008695/00010,2026-08-31,VZIINV01,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000246,OVERDUE_REPAIR,000000000080000176,3000,PO 4500008696/00010,2026-08-29,VZIINV02,CLOSED,"Promised back on 2026-06-02, which is 97 days ago, beyond the 7-day grace period."
+EXC-000247,MISSING_ATTESTATION,000000000080000176,2000,PO 4500008697/00010,2026-09-04,VZIINV01,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000248,MISSING_ATTESTATION,000000000080000177,2000,PO 4500008699/00010,2026-08-31,VZIINV02,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000249,OVERDUE_REPAIR,000000000080000182,1000,PO 4500008705/00010,2026-08-31,VZIINV02,AWAITING_REQUESTER,"Promised back on 2026-06-27, which is 72 days ago, beyond the 7-day grace period."
+EXC-000250,MISSING_ATTESTATION,000000000080000184,4000,PO 4500008707/00010,2026-08-31,VZIINV02,CLOSED,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000251,OVERDUE_REPAIR,000000000080000185,1000,PO 4500008708/00010,2026-09-03,VZIINV02,AWAITING_REQUESTER,"Promised back on 2026-08-10, which is 28 days ago, beyond the 7-day grace period."
+EXC-000252,MISSING_ATTESTATION,000000000080000185,1000,PO 4500008708/00010,2026-08-30,VZIINV02,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000253,MISSING_ATTESTATION,000000000080000186,3000,PO 4500008709/00010,2026-08-29,VZIINV01,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000254,MISSING_ATTESTATION,000000000080000187,3000,PO 4500008710/00010,2026-08-30,VZIINV01,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000255,OVERDUE_REPAIR,000000000080000189,2000,PO 4500008713/00010,2026-08-29,VZIINV02,OPEN,"Promised back on 2026-06-15, which is 84 days ago, beyond the 7-day grace period."
+EXC-000256,MISSING_ATTESTATION,000000000080000189,2000,PO 4500008713/00010,2026-09-07,VZIINV01,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000257,MISSING_ATTESTATION,000000000080000192,1000,PO 4500008716/00010,2026-09-02,VZIINV02,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000258,MISSING_ATTESTATION,000000000080000193,1000,PO 4500008717/00010,2026-08-30,VZIINV01,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000259,MISSING_ATTESTATION,000000000080000196,3000,PO 4500008721/00010,2026-08-31,VZIINV02,CLOSED,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000260,MISSING_ATTESTATION,000000000080000196,2000,PO 4500008722/00010,2026-08-31,VZIINV02,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000261,OVERDUE_REPAIR,000000000080000200,1000,PO 4500008726/00010,2026-09-05,VZIINV02,OPEN,"Promised back on 2026-08-27, which is 11 days ago, beyond the 7-day grace period."
+EXC-000262,MISSING_ATTESTATION,000000000080000202,2000,PO 4500008728/00010,2026-09-01,VZIINV02,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000263,OVERDUE_REPAIR,000000000080000209,3000,PO 4500008736/00010,2026-08-31,VZIINV01,CLOSED,"Promised back on 2026-07-12, which is 57 days ago, beyond the 7-day grace period."
+EXC-000264,OVERDUE_REPAIR,000000000080000214,1000,PO 4500008743/00010,2026-09-07,VZIINV01,OPEN,"Promised back on 2026-06-05, which is 94 days ago, beyond the 7-day grace period."
+EXC-000265,OVERDUE_REPAIR,000000000080000218,1000,PO 4500008749/00010,2026-09-02,VZIINV01,AWAITING_REQUESTER,"Promised back on 2026-08-08, which is 30 days ago, beyond the 7-day grace period."
+EXC-000266,OVERDUE_REPAIR,000000000080000219,2000,PO 4500008750/00010,2026-08-29,VZIINV01,OPEN,"Promised back on 2026-08-14, which is 24 days ago, beyond the 7-day grace period."
+EXC-000267,OVERDUE_REPAIR,000000000080000220,2000,PO 4500008751/00010,2026-08-30,VZIINV01,OPEN,"Promised back on 2026-08-13, which is 25 days ago, beyond the 7-day grace period."
+EXC-000268,OVERDUE_REPAIR,000000000080000223,1000,PO 4500008755/00010,2026-09-05,VZIINV02,OPEN,"Promised back on 2026-08-24, which is 14 days ago, beyond the 7-day grace period."
+EXC-000269,MISSING_ATTESTATION,000000000080000227,3000,PO 4500008758/00010,2026-08-31,VZIINV02,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000270,MISSING_ATTESTATION,000000000080000235,3000,PO 4500008768/00010,2026-08-28,VZIINV01,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000271,OVERDUE_REPAIR,000000000080000239,2000,PO 4500008772/00010,2026-08-28,VZIINV01,OPEN,"Promised back on 2026-07-08, which is 61 days ago, beyond the 7-day grace period."
+EXC-000272,MISSING_ATTESTATION,000000000080000241,1000,PO 4500008774/00010,2026-08-28,VZIINV01,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000273,MISSING_ATTESTATION,000000000080000242,3000,PO 4500008776/00010,2026-09-07,VZIINV02,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000274,OVERDUE_REPAIR,000000000080000246,4000,PO 4500008781/00010,2026-09-01,VZIINV02,CLOSED,"Promised back on 2026-07-05, which is 64 days ago, beyond the 7-day grace period."
+EXC-000275,MISSING_ATTESTATION,000000000080000251,2000,PO 4500008787/00010,2026-08-28,VZIINV02,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000276,MISSING_ATTESTATION,000000000080000252,1000,PO 4500008788/00010,2026-09-01,VZIINV01,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000277,OVERDUE_REPAIR,000000000080000253,3000,PO 4500008789/00010,2026-09-04,VZIINV01,AWAITING_REQUESTER,"Promised back on 2026-07-10, which is 59 days ago, beyond the 7-day grace period."
+EXC-000278,MISSING_ATTESTATION,000000000080000253,3000,PO 4500008789/00010,2026-09-03,VZIINV02,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000279,OVERDUE_REPAIR,000000000080000254,4000,PO 4500008790/00010,2026-09-07,VZIINV01,OPEN,"Promised back on 2026-06-24, which is 75 days ago, beyond the 7-day grace period."
+EXC-000280,MISSING_ATTESTATION,000000000080000256,1000,PO 4500008792/00010,2026-09-03,VZIINV01,OPEN,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000281,OVERDUE_REPAIR,000000000080000259,1000,PO 4500008796/00010,2026-08-31,VZIINV01,AWAITING_REQUESTER,"Promised back on 2026-06-28, which is 71 days ago, beyond the 7-day grace period."
+EXC-000282,MISSING_ATTESTATION,000000000080000260,4000,PO 4500008797/00010,2026-09-03,VZIINV01,AWAITING_REQUESTER,Repair purchase order raised with no condition-to-repair attestation.
+EXC-000283,OVERDUE_REPAIR,000000000080000262,2000,PO 4500008799/00010,2026-09-06,VZIINV02,AWAITING_REQUESTER,"Promised back on 2026-08-26, which is 12 days ago, beyond the 7-day grace period."
+EXC-000284,OVERDUE_REPAIR,000000000080000263,3000,PO 4500008801/00010,2026-09-07,VZIINV01,AWAITING_REQUESTER,"Promised back on 2026-06-12, which is 87 days ago, beyond the 7-day grace period."
+EXC-000285,MISSING_ATTESTATION,000000000080000264,4000,PO 4500008802/00010,2026-08-28,VZIINV02,CLOSED,Repair purchase order raised with no condition-to-repair attestation.

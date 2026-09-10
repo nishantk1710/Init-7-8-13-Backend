@@ -1,0 +1,1392 @@
+approval_id,recommendation_id,approver_role,approver_user,decision,decision_date,comment
+APR-000001,REC-000001,Commercial Head,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000002,REC-000002,Inventory Controller,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000003,REC-000003,Inventory Controller,VZIINV02,APPROVED,2026-07-12,Approved; to be applied in SAP by VZI.
+APR-000004,REC-000006,Engineering Head,VZIINV01,APPROVED,2026-06-17,Approved; to be applied in SAP by VZI.
+APR-000005,REC-000008,Inventory Controller,VZIINV02,APPROVED,2026-06-16,Approved; to be applied in SAP by VZI.
+APR-000006,REC-000009,Inventory Controller,VZIINV02,HELD,2026-08-07,Held pending further consumption evidence.
+APR-000007,REC-000010,Plant Head,VZIINV02,APPROVED,2026-07-13,Approved; to be applied in SAP by VZI.
+APR-000008,REC-000012,Engineering Head,VZIINV02,APPROVED,2026-05-24,Approved; to be applied in SAP by VZI.
+APR-000009,REC-000013,Engineering Head,VZIINV02,APPROVED,2026-06-22,Approved; to be applied in SAP by VZI.
+APR-000010,REC-000014,Plant Head,VZIINV02,REJECTED,2026-09-05,Consumption not considered representative.
+APR-000011,REC-000016,Engineering Head,VZIINV02,APPROVED,2026-08-31,Approved; to be applied in SAP by VZI.
+APR-000012,REC-000018,Engineering Head,VZIINV01,HELD,2026-06-03,Held pending further consumption evidence.
+APR-000013,REC-000019,Engineering Head,VZIINV02,REJECTED,2026-08-18,Consumption not considered representative.
+APR-000014,REC-000020,Engineering Head,VZIINV01,REJECTED,2026-08-06,Consumption not considered representative.
+APR-000015,REC-000021,Engineering Head,VZIINV02,REJECTED,2026-08-04,Consumption not considered representative.
+APR-000016,REC-000022,Inventory Controller,VZIINV02,APPROVED,2026-05-31,Approved; to be applied in SAP by VZI.
+APR-000017,REC-000024,Commercial Head,VZIINV02,APPROVED,2026-06-07,Approved; to be applied in SAP by VZI.
+APR-000018,REC-000026,Engineering Head,VZIINV02,APPROVED,2026-06-15,Approved; to be applied in SAP by VZI.
+APR-000019,REC-000027,Engineering Head,VZIINV01,APPROVED,2026-06-08,Approved; to be applied in SAP by VZI.
+APR-000020,REC-000028,Plant Head,VZIINV01,APPROVED,2026-08-01,Approved; to be applied in SAP by VZI.
+APR-000021,REC-000029,Engineering Head,VZIINV01,APPROVED,2026-06-15,Approved; to be applied in SAP by VZI.
+APR-000022,REC-000030,Inventory Controller,VZIINV02,APPROVED,2026-09-03,Approved; to be applied in SAP by VZI.
+APR-000023,REC-000031,Engineering Head,VZIINV02,APPROVED,2026-07-24,Approved; to be applied in SAP by VZI.
+APR-000024,REC-000032,Inventory Controller,VZIINV01,HELD,2026-06-28,Held pending further consumption evidence.
+APR-000025,REC-000033,Plant Head,VZIINV01,APPROVED,2026-08-30,Approved; to be applied in SAP by VZI.
+APR-000026,REC-000034,Commercial Head,VZIINV02,APPROVED,2026-05-26,Approved; to be applied in SAP by VZI.
+APR-000027,REC-000035,Inventory Controller,VZIINV02,APPROVED,2026-08-20,Approved; to be applied in SAP by VZI.
+APR-000028,REC-000036,Inventory Controller,VZIINV02,APPROVED,2026-07-04,Approved; to be applied in SAP by VZI.
+APR-000029,REC-000037,Inventory Controller,VZIINV01,HELD,2026-08-07,Held pending further consumption evidence.
+APR-000030,REC-000039,Engineering Head,VZIINV01,REJECTED,2026-09-05,Consumption not considered representative.
+APR-000031,REC-000040,Engineering Head,VZIINV01,HELD,2026-05-31,Held pending further consumption evidence.
+APR-000032,REC-000041,Commercial Head,VZIINV01,HELD,2026-08-26,Held pending further consumption evidence.
+APR-000033,REC-000042,Commercial Head,VZIINV01,APPROVED,2026-07-04,Approved; to be applied in SAP by VZI.
+APR-000034,REC-000043,Engineering Head,VZIINV02,APPROVED,2026-06-17,Approved; to be applied in SAP by VZI.
+APR-000035,REC-000044,Engineering Head,VZIINV02,HELD,2026-05-30,Held pending further consumption evidence.
+APR-000036,REC-000045,Plant Head,VZIINV02,APPROVED,2026-09-03,Approved; to be applied in SAP by VZI.
+APR-000037,REC-000046,Commercial Head,VZIINV02,APPROVED,2026-08-19,Approved; to be applied in SAP by VZI.
+APR-000038,REC-000048,Inventory Controller,VZIINV01,APPROVED,2026-08-19,Approved; to be applied in SAP by VZI.
+APR-000039,REC-000049,Inventory Controller,VZIINV02,APPROVED,2026-05-25,Approved; to be applied in SAP by VZI.
+APR-000040,REC-000051,Inventory Controller,VZIINV02,APPROVED,2026-07-21,Approved; to be applied in SAP by VZI.
+APR-000041,REC-000052,Inventory Controller,VZIINV02,APPROVED,2026-07-12,Approved; to be applied in SAP by VZI.
+APR-000042,REC-000054,Engineering Head,VZIINV01,REJECTED,2026-07-29,Consumption not considered representative.
+APR-000043,REC-000055,Plant Head,VZIINV02,APPROVED,2026-06-29,Approved; to be applied in SAP by VZI.
+APR-000044,REC-000056,Plant Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000045,REC-000057,Inventory Controller,VZIINV02,APPROVED,2026-07-22,Approved; to be applied in SAP by VZI.
+APR-000046,REC-000058,Engineering Head,VZIINV01,APPROVED,2026-06-26,Approved; to be applied in SAP by VZI.
+APR-000047,REC-000061,Plant Head,VZIINV01,APPROVED,2026-07-13,Approved; to be applied in SAP by VZI.
+APR-000048,REC-000063,Inventory Controller,VZIINV02,APPROVED,2026-06-15,Approved; to be applied in SAP by VZI.
+APR-000049,REC-000065,Engineering Head,VZIINV02,APPROVED,2026-07-18,Approved; to be applied in SAP by VZI.
+APR-000050,REC-000066,Engineering Head,VZIINV01,REJECTED,2026-08-17,Consumption not considered representative.
+APR-000051,REC-000067,Plant Head,VZIINV01,APPROVED,2026-07-18,Approved; to be applied in SAP by VZI.
+APR-000052,REC-000069,Engineering Head,VZIINV02,APPROVED,2026-05-16,Approved; to be applied in SAP by VZI.
+APR-000053,REC-000070,Engineering Head,VZIINV01,HELD,2026-08-02,Held pending further consumption evidence.
+APR-000054,REC-000073,Plant Head,VZIINV01,REJECTED,2026-08-20,Consumption not considered representative.
+APR-000055,REC-000075,Commercial Head,VZIINV02,REJECTED,2026-08-29,Consumption not considered representative.
+APR-000056,REC-000077,Inventory Controller,VZIINV02,HELD,2026-09-07,Held pending further consumption evidence.
+APR-000057,REC-000078,Inventory Controller,VZIINV02,APPROVED,2026-08-25,Approved; to be applied in SAP by VZI.
+APR-000058,REC-000079,Inventory Controller,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000059,REC-000080,Commercial Head,VZIINV02,APPROVED,2026-08-23,Approved; to be applied in SAP by VZI.
+APR-000060,REC-000082,Inventory Controller,VZIINV01,APPROVED,2026-07-01,Approved; to be applied in SAP by VZI.
+APR-000061,REC-000083,Engineering Head,VZIINV02,REJECTED,2026-07-01,Consumption not considered representative.
+APR-000062,REC-000085,Engineering Head,VZIINV01,HELD,2026-07-08,Held pending further consumption evidence.
+APR-000063,REC-000086,Engineering Head,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000064,REC-000087,Inventory Controller,VZIINV01,REJECTED,2026-08-01,Consumption not considered representative.
+APR-000065,REC-000088,Plant Head,VZIINV01,APPROVED,2026-07-05,Approved; to be applied in SAP by VZI.
+APR-000066,REC-000089,Engineering Head,VZIINV02,APPROVED,2026-06-23,Approved; to be applied in SAP by VZI.
+APR-000067,REC-000091,Engineering Head,VZIINV02,HELD,2026-08-04,Held pending further consumption evidence.
+APR-000068,REC-000095,Engineering Head,VZIINV02,APPROVED,2026-08-28,Approved; to be applied in SAP by VZI.
+APR-000069,REC-000097,Plant Head,VZIINV01,HELD,2026-06-16,Held pending further consumption evidence.
+APR-000070,REC-000102,Plant Head,VZIINV02,REJECTED,2026-08-17,Consumption not considered representative.
+APR-000071,REC-000103,Plant Head,VZIINV01,APPROVED,2026-09-06,Approved; to be applied in SAP by VZI.
+APR-000072,REC-000105,Inventory Controller,VZIINV02,APPROVED,2026-08-10,Approved; to be applied in SAP by VZI.
+APR-000073,REC-000106,Engineering Head,VZIINV02,APPROVED,2026-06-13,Approved; to be applied in SAP by VZI.
+APR-000074,REC-000107,Engineering Head,VZIINV01,APPROVED,2026-06-09,Approved; to be applied in SAP by VZI.
+APR-000075,REC-000108,Inventory Controller,VZIINV02,REJECTED,2026-06-01,Consumption not considered representative.
+APR-000076,REC-000110,Engineering Head,VZIINV01,REJECTED,2026-07-23,Consumption not considered representative.
+APR-000077,REC-000112,Engineering Head,VZIINV01,REJECTED,2026-06-03,Consumption not considered representative.
+APR-000078,REC-000114,Engineering Head,VZIINV02,HELD,2026-05-21,Held pending further consumption evidence.
+APR-000079,REC-000115,Engineering Head,VZIINV02,APPROVED,2026-07-12,Approved; to be applied in SAP by VZI.
+APR-000080,REC-000116,Engineering Head,VZIINV02,APPROVED,2026-09-04,Approved; to be applied in SAP by VZI.
+APR-000081,REC-000118,Commercial Head,VZIINV01,APPROVED,2026-06-20,Approved; to be applied in SAP by VZI.
+APR-000082,REC-000119,Inventory Controller,VZIINV01,REJECTED,2026-06-24,Consumption not considered representative.
+APR-000083,REC-000120,Inventory Controller,VZIINV02,HELD,2026-09-07,Held pending further consumption evidence.
+APR-000084,REC-000121,Engineering Head,VZIINV01,APPROVED,2026-06-12,Approved; to be applied in SAP by VZI.
+APR-000085,REC-000122,Engineering Head,VZIINV02,APPROVED,2026-05-23,Approved; to be applied in SAP by VZI.
+APR-000086,REC-000124,Engineering Head,VZIINV02,REJECTED,2026-08-03,Consumption not considered representative.
+APR-000087,REC-000125,Inventory Controller,VZIINV01,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-000088,REC-000127,Commercial Head,VZIINV02,APPROVED,2026-08-01,Approved; to be applied in SAP by VZI.
+APR-000089,REC-000128,Commercial Head,VZIINV01,REJECTED,2026-06-16,Consumption not considered representative.
+APR-000090,REC-000130,Inventory Controller,VZIINV02,APPROVED,2026-08-04,Approved; to be applied in SAP by VZI.
+APR-000091,REC-000131,Engineering Head,VZIINV01,REJECTED,2026-08-07,Consumption not considered representative.
+APR-000092,REC-000132,Engineering Head,VZIINV02,HELD,2026-07-02,Held pending further consumption evidence.
+APR-000093,REC-000133,Plant Head,VZIINV01,HELD,2026-08-26,Held pending further consumption evidence.
+APR-000094,REC-000135,Inventory Controller,VZIINV02,HELD,2026-06-13,Held pending further consumption evidence.
+APR-000095,REC-000136,Plant Head,VZIINV02,HELD,2026-08-01,Held pending further consumption evidence.
+APR-000096,REC-000137,Plant Head,VZIINV01,HELD,2026-07-23,Held pending further consumption evidence.
+APR-000097,REC-000138,Engineering Head,VZIINV02,APPROVED,2026-07-31,Approved; to be applied in SAP by VZI.
+APR-000098,REC-000140,Commercial Head,VZIINV02,REJECTED,2026-07-08,Consumption not considered representative.
+APR-000099,REC-000141,Commercial Head,VZIINV01,APPROVED,2026-08-22,Approved; to be applied in SAP by VZI.
+APR-000100,REC-000142,Plant Head,VZIINV02,APPROVED,2026-08-22,Approved; to be applied in SAP by VZI.
+APR-000101,REC-000144,Inventory Controller,VZIINV02,APPROVED,2026-07-07,Approved; to be applied in SAP by VZI.
+APR-000102,REC-000146,Plant Head,VZIINV02,APPROVED,2026-07-20,Approved; to be applied in SAP by VZI.
+APR-000103,REC-000147,Inventory Controller,VZIINV02,APPROVED,2026-08-15,Approved; to be applied in SAP by VZI.
+APR-000104,REC-000148,Inventory Controller,VZIINV02,APPROVED,2026-07-18,Approved; to be applied in SAP by VZI.
+APR-000105,REC-000149,Plant Head,VZIINV02,APPROVED,2026-06-14,Approved; to be applied in SAP by VZI.
+APR-000106,REC-000150,Engineering Head,VZIINV02,HELD,2026-08-01,Held pending further consumption evidence.
+APR-000107,REC-000153,Commercial Head,VZIINV01,HELD,2026-07-17,Held pending further consumption evidence.
+APR-000108,REC-000154,Inventory Controller,VZIINV02,APPROVED,2026-06-27,Approved; to be applied in SAP by VZI.
+APR-000109,REC-000155,Engineering Head,VZIINV02,REJECTED,2026-08-11,Consumption not considered representative.
+APR-000110,REC-000156,Plant Head,VZIINV02,REJECTED,2026-08-29,Consumption not considered representative.
+APR-000111,REC-000157,Commercial Head,VZIINV02,APPROVED,2026-09-04,Approved; to be applied in SAP by VZI.
+APR-000112,REC-000158,Engineering Head,VZIINV01,REJECTED,2026-07-19,Consumption not considered representative.
+APR-000113,REC-000159,Engineering Head,VZIINV01,REJECTED,2026-08-10,Consumption not considered representative.
+APR-000114,REC-000160,Inventory Controller,VZIINV01,REJECTED,2026-06-12,Consumption not considered representative.
+APR-000115,REC-000161,Plant Head,VZIINV01,REJECTED,2026-06-23,Consumption not considered representative.
+APR-000116,REC-000162,Engineering Head,VZIINV02,APPROVED,2026-06-17,Approved; to be applied in SAP by VZI.
+APR-000117,REC-000163,Inventory Controller,VZIINV02,APPROVED,2026-09-04,Approved; to be applied in SAP by VZI.
+APR-000118,REC-000164,Plant Head,VZIINV02,HELD,2026-07-30,Held pending further consumption evidence.
+APR-000119,REC-000165,Inventory Controller,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000120,REC-000166,Inventory Controller,VZIINV02,APPROVED,2026-08-12,Approved; to be applied in SAP by VZI.
+APR-000121,REC-000167,Plant Head,VZIINV02,APPROVED,2026-08-24,Approved; to be applied in SAP by VZI.
+APR-000122,REC-000168,Plant Head,VZIINV01,APPROVED,2026-06-16,Approved; to be applied in SAP by VZI.
+APR-000123,REC-000171,Plant Head,VZIINV02,REJECTED,2026-08-03,Consumption not considered representative.
+APR-000124,REC-000172,Commercial Head,VZIINV01,APPROVED,2026-05-27,Approved; to be applied in SAP by VZI.
+APR-000125,REC-000173,Commercial Head,VZIINV01,APPROVED,2026-08-09,Approved; to be applied in SAP by VZI.
+APR-000126,REC-000176,Inventory Controller,VZIINV01,APPROVED,2026-08-09,Approved; to be applied in SAP by VZI.
+APR-000127,REC-000177,Plant Head,VZIINV01,APPROVED,2026-06-03,Approved; to be applied in SAP by VZI.
+APR-000128,REC-000180,Inventory Controller,VZIINV02,HELD,2026-08-08,Held pending further consumption evidence.
+APR-000129,REC-000182,Engineering Head,VZIINV01,HELD,2026-06-22,Held pending further consumption evidence.
+APR-000130,REC-000183,Inventory Controller,VZIINV02,APPROVED,2026-08-13,Approved; to be applied in SAP by VZI.
+APR-000131,REC-000187,Inventory Controller,VZIINV02,HELD,2026-08-14,Held pending further consumption evidence.
+APR-000132,REC-000188,Plant Head,VZIINV01,REJECTED,2026-08-14,Consumption not considered representative.
+APR-000133,REC-000190,Plant Head,VZIINV01,APPROVED,2026-06-10,Approved; to be applied in SAP by VZI.
+APR-000134,REC-000191,Inventory Controller,VZIINV01,HELD,2026-06-13,Held pending further consumption evidence.
+APR-000135,REC-000192,Inventory Controller,VZIINV01,REJECTED,2026-05-27,Consumption not considered representative.
+APR-000136,REC-000193,Inventory Controller,VZIINV01,APPROVED,2026-07-31,Approved; to be applied in SAP by VZI.
+APR-000137,REC-000194,Commercial Head,VZIINV02,REJECTED,2026-08-13,Consumption not considered representative.
+APR-000138,REC-000195,Inventory Controller,VZIINV02,HELD,2026-07-01,Held pending further consumption evidence.
+APR-000139,REC-000196,Inventory Controller,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000140,REC-000198,Inventory Controller,VZIINV01,REJECTED,2026-06-21,Consumption not considered representative.
+APR-000141,REC-000199,Engineering Head,VZIINV02,APPROVED,2026-06-18,Approved; to be applied in SAP by VZI.
+APR-000142,REC-000201,Inventory Controller,VZIINV02,APPROVED,2026-06-15,Approved; to be applied in SAP by VZI.
+APR-000143,REC-000202,Engineering Head,VZIINV02,APPROVED,2026-07-27,Approved; to be applied in SAP by VZI.
+APR-000144,REC-000205,Inventory Controller,VZIINV02,APPROVED,2026-06-25,Approved; to be applied in SAP by VZI.
+APR-000145,REC-000209,Inventory Controller,VZIINV01,REJECTED,2026-09-02,Consumption not considered representative.
+APR-000146,REC-000210,Inventory Controller,VZIINV02,REJECTED,2026-08-10,Consumption not considered representative.
+APR-000147,REC-000215,Engineering Head,VZIINV01,APPROVED,2026-06-21,Approved; to be applied in SAP by VZI.
+APR-000148,REC-000216,Inventory Controller,VZIINV02,APPROVED,2026-07-20,Approved; to be applied in SAP by VZI.
+APR-000149,REC-000219,Plant Head,VZIINV02,REJECTED,2026-05-29,Consumption not considered representative.
+APR-000150,REC-000220,Plant Head,VZIINV01,APPROVED,2026-07-21,Approved; to be applied in SAP by VZI.
+APR-000151,REC-000221,Plant Head,VZIINV02,APPROVED,2026-05-29,Approved; to be applied in SAP by VZI.
+APR-000152,REC-000222,Commercial Head,VZIINV02,APPROVED,2026-05-15,Approved; to be applied in SAP by VZI.
+APR-000153,REC-000223,Engineering Head,VZIINV02,HELD,2026-08-28,Held pending further consumption evidence.
+APR-000154,REC-000227,Plant Head,VZIINV01,APPROVED,2026-05-28,Approved; to be applied in SAP by VZI.
+APR-000155,REC-000228,Inventory Controller,VZIINV01,REJECTED,2026-09-01,Consumption not considered representative.
+APR-000156,REC-000229,Engineering Head,VZIINV02,HELD,2026-07-26,Held pending further consumption evidence.
+APR-000157,REC-000230,Engineering Head,VZIINV01,APPROVED,2026-07-10,Approved; to be applied in SAP by VZI.
+APR-000158,REC-000231,Engineering Head,VZIINV02,HELD,2026-08-14,Held pending further consumption evidence.
+APR-000159,REC-000234,Engineering Head,VZIINV02,APPROVED,2026-07-07,Approved; to be applied in SAP by VZI.
+APR-000160,REC-000236,Engineering Head,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000161,REC-000237,Engineering Head,VZIINV02,HELD,2026-08-10,Held pending further consumption evidence.
+APR-000162,REC-000240,Commercial Head,VZIINV02,HELD,2026-07-21,Held pending further consumption evidence.
+APR-000163,REC-000241,Plant Head,VZIINV02,REJECTED,2026-06-30,Consumption not considered representative.
+APR-000164,REC-000242,Plant Head,VZIINV02,APPROVED,2026-06-27,Approved; to be applied in SAP by VZI.
+APR-000165,REC-000243,Plant Head,VZIINV02,APPROVED,2026-08-04,Approved; to be applied in SAP by VZI.
+APR-000166,REC-000249,Engineering Head,VZIINV02,HELD,2026-07-20,Held pending further consumption evidence.
+APR-000167,REC-000251,Inventory Controller,VZIINV01,APPROVED,2026-06-11,Approved; to be applied in SAP by VZI.
+APR-000168,REC-000252,Inventory Controller,VZIINV01,APPROVED,2026-06-28,Approved; to be applied in SAP by VZI.
+APR-000169,REC-000253,Plant Head,VZIINV02,APPROVED,2026-06-01,Approved; to be applied in SAP by VZI.
+APR-000170,REC-000254,Plant Head,VZIINV01,HELD,2026-08-05,Held pending further consumption evidence.
+APR-000171,REC-000255,Commercial Head,VZIINV02,HELD,2026-08-05,Held pending further consumption evidence.
+APR-000172,REC-000256,Plant Head,VZIINV01,APPROVED,2026-06-22,Approved; to be applied in SAP by VZI.
+APR-000173,REC-000258,Commercial Head,VZIINV01,APPROVED,2026-08-03,Approved; to be applied in SAP by VZI.
+APR-000174,REC-000259,Inventory Controller,VZIINV02,APPROVED,2026-05-22,Approved; to be applied in SAP by VZI.
+APR-000175,REC-000260,Inventory Controller,VZIINV01,APPROVED,2026-07-14,Approved; to be applied in SAP by VZI.
+APR-000176,REC-000261,Inventory Controller,VZIINV02,REJECTED,2026-08-21,Consumption not considered representative.
+APR-000177,REC-000262,Inventory Controller,VZIINV01,APPROVED,2026-05-20,Approved; to be applied in SAP by VZI.
+APR-000178,REC-000264,Inventory Controller,VZIINV02,APPROVED,2026-06-26,Approved; to be applied in SAP by VZI.
+APR-000179,REC-000265,Commercial Head,VZIINV02,HELD,2026-06-18,Held pending further consumption evidence.
+APR-000180,REC-000266,Engineering Head,VZIINV01,APPROVED,2026-08-22,Approved; to be applied in SAP by VZI.
+APR-000181,REC-000267,Engineering Head,VZIINV02,APPROVED,2026-07-27,Approved; to be applied in SAP by VZI.
+APR-000182,REC-000268,Plant Head,VZIINV02,APPROVED,2026-07-04,Approved; to be applied in SAP by VZI.
+APR-000183,REC-000270,Plant Head,VZIINV01,APPROVED,2026-08-05,Approved; to be applied in SAP by VZI.
+APR-000184,REC-000271,Plant Head,VZIINV02,APPROVED,2026-07-13,Approved; to be applied in SAP by VZI.
+APR-000185,REC-000272,Plant Head,VZIINV02,HELD,2026-07-08,Held pending further consumption evidence.
+APR-000186,REC-000274,Plant Head,VZIINV02,REJECTED,2026-05-14,Consumption not considered representative.
+APR-000187,REC-000275,Inventory Controller,VZIINV02,REJECTED,2026-06-16,Consumption not considered representative.
+APR-000188,REC-000276,Plant Head,VZIINV02,APPROVED,2026-08-08,Approved; to be applied in SAP by VZI.
+APR-000189,REC-000277,Plant Head,VZIINV02,APPROVED,2026-06-12,Approved; to be applied in SAP by VZI.
+APR-000190,REC-000279,Inventory Controller,VZIINV02,APPROVED,2026-08-28,Approved; to be applied in SAP by VZI.
+APR-000191,REC-000280,Inventory Controller,VZIINV01,HELD,2026-06-04,Held pending further consumption evidence.
+APR-000192,REC-000281,Inventory Controller,VZIINV01,HELD,2026-05-15,Held pending further consumption evidence.
+APR-000193,REC-000283,Plant Head,VZIINV01,REJECTED,2026-08-01,Consumption not considered representative.
+APR-000194,REC-000284,Plant Head,VZIINV01,APPROVED,2026-06-21,Approved; to be applied in SAP by VZI.
+APR-000195,REC-000286,Engineering Head,VZIINV02,APPROVED,2026-07-28,Approved; to be applied in SAP by VZI.
+APR-000196,REC-000287,Engineering Head,VZIINV02,REJECTED,2026-07-31,Consumption not considered representative.
+APR-000197,REC-000288,Inventory Controller,VZIINV02,APPROVED,2026-06-27,Approved; to be applied in SAP by VZI.
+APR-000198,REC-000289,Engineering Head,VZIINV02,REJECTED,2026-05-22,Consumption not considered representative.
+APR-000199,REC-000294,Inventory Controller,VZIINV02,APPROVED,2026-07-23,Approved; to be applied in SAP by VZI.
+APR-000200,REC-000297,Inventory Controller,VZIINV02,REJECTED,2026-08-16,Consumption not considered representative.
+APR-000201,REC-000299,Plant Head,VZIINV02,APPROVED,2026-07-23,Approved; to be applied in SAP by VZI.
+APR-000202,REC-000300,Engineering Head,VZIINV02,APPROVED,2026-05-22,Approved; to be applied in SAP by VZI.
+APR-000203,REC-000301,Inventory Controller,VZIINV02,REJECTED,2026-09-07,Consumption not considered representative.
+APR-000204,REC-000302,Plant Head,VZIINV02,HELD,2026-07-10,Held pending further consumption evidence.
+APR-000205,REC-000303,Engineering Head,VZIINV01,HELD,2026-09-07,Held pending further consumption evidence.
+APR-000206,REC-000304,Plant Head,VZIINV01,APPROVED,2026-08-28,Approved; to be applied in SAP by VZI.
+APR-000207,REC-000306,Inventory Controller,VZIINV01,APPROVED,2026-08-01,Approved; to be applied in SAP by VZI.
+APR-000208,REC-000307,Engineering Head,VZIINV01,APPROVED,2026-07-25,Approved; to be applied in SAP by VZI.
+APR-000209,REC-000309,Inventory Controller,VZIINV02,APPROVED,2026-09-03,Approved; to be applied in SAP by VZI.
+APR-000210,REC-000312,Plant Head,VZIINV02,REJECTED,2026-06-16,Consumption not considered representative.
+APR-000211,REC-000315,Inventory Controller,VZIINV01,APPROVED,2026-07-09,Approved; to be applied in SAP by VZI.
+APR-000212,REC-000316,Plant Head,VZIINV02,APPROVED,2026-07-25,Approved; to be applied in SAP by VZI.
+APR-000213,REC-000317,Inventory Controller,VZIINV02,APPROVED,2026-08-24,Approved; to be applied in SAP by VZI.
+APR-000214,REC-000318,Inventory Controller,VZIINV01,HELD,2026-07-25,Held pending further consumption evidence.
+APR-000215,REC-000319,Inventory Controller,VZIINV02,REJECTED,2026-05-29,Consumption not considered representative.
+APR-000216,REC-000320,Inventory Controller,VZIINV01,HELD,2026-06-06,Held pending further consumption evidence.
+APR-000217,REC-000321,Engineering Head,VZIINV01,APPROVED,2026-08-24,Approved; to be applied in SAP by VZI.
+APR-000218,REC-000325,Plant Head,VZIINV01,REJECTED,2026-07-29,Consumption not considered representative.
+APR-000219,REC-000326,Commercial Head,VZIINV02,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-000220,REC-000327,Engineering Head,VZIINV01,APPROVED,2026-08-27,Approved; to be applied in SAP by VZI.
+APR-000221,REC-000328,Engineering Head,VZIINV02,REJECTED,2026-08-05,Consumption not considered representative.
+APR-000222,REC-000329,Inventory Controller,VZIINV01,REJECTED,2026-08-05,Consumption not considered representative.
+APR-000223,REC-000331,Inventory Controller,VZIINV02,APPROVED,2026-07-21,Approved; to be applied in SAP by VZI.
+APR-000224,REC-000333,Plant Head,VZIINV02,REJECTED,2026-08-07,Consumption not considered representative.
+APR-000225,REC-000334,Plant Head,VZIINV02,APPROVED,2026-06-17,Approved; to be applied in SAP by VZI.
+APR-000226,REC-000336,Engineering Head,VZIINV01,APPROVED,2026-07-26,Approved; to be applied in SAP by VZI.
+APR-000227,REC-000338,Engineering Head,VZIINV02,APPROVED,2026-07-04,Approved; to be applied in SAP by VZI.
+APR-000228,REC-000339,Inventory Controller,VZIINV02,APPROVED,2026-07-01,Approved; to be applied in SAP by VZI.
+APR-000229,REC-000342,Inventory Controller,VZIINV01,APPROVED,2026-06-13,Approved; to be applied in SAP by VZI.
+APR-000230,REC-000344,Plant Head,VZIINV01,REJECTED,2026-08-25,Consumption not considered representative.
+APR-000231,REC-000345,Engineering Head,VZIINV02,APPROVED,2026-05-28,Approved; to be applied in SAP by VZI.
+APR-000232,REC-000348,Inventory Controller,VZIINV02,APPROVED,2026-07-06,Approved; to be applied in SAP by VZI.
+APR-000233,REC-000350,Plant Head,VZIINV02,APPROVED,2026-05-24,Approved; to be applied in SAP by VZI.
+APR-000234,REC-000351,Inventory Controller,VZIINV02,REJECTED,2026-06-13,Consumption not considered representative.
+APR-000235,REC-000352,Engineering Head,VZIINV02,APPROVED,2026-05-25,Approved; to be applied in SAP by VZI.
+APR-000236,REC-000353,Engineering Head,VZIINV01,REJECTED,2026-09-03,Consumption not considered representative.
+APR-000237,REC-000354,Inventory Controller,VZIINV02,APPROVED,2026-08-08,Approved; to be applied in SAP by VZI.
+APR-000238,REC-000355,Engineering Head,VZIINV01,REJECTED,2026-07-31,Consumption not considered representative.
+APR-000239,REC-000356,Inventory Controller,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000240,REC-000358,Engineering Head,VZIINV02,APPROVED,2026-09-03,Approved; to be applied in SAP by VZI.
+APR-000241,REC-000359,Engineering Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000242,REC-000360,Commercial Head,VZIINV02,APPROVED,2026-08-06,Approved; to be applied in SAP by VZI.
+APR-000243,REC-000362,Plant Head,VZIINV02,REJECTED,2026-07-21,Consumption not considered representative.
+APR-000244,REC-000363,Plant Head,VZIINV01,HELD,2026-07-22,Held pending further consumption evidence.
+APR-000245,REC-000364,Plant Head,VZIINV01,APPROVED,2026-05-31,Approved; to be applied in SAP by VZI.
+APR-000246,REC-000365,Inventory Controller,VZIINV01,HELD,2026-08-18,Held pending further consumption evidence.
+APR-000247,REC-000366,Plant Head,VZIINV01,APPROVED,2026-07-28,Approved; to be applied in SAP by VZI.
+APR-000248,REC-000367,Inventory Controller,VZIINV02,HELD,2026-08-22,Held pending further consumption evidence.
+APR-000249,REC-000368,Engineering Head,VZIINV02,APPROVED,2026-06-25,Approved; to be applied in SAP by VZI.
+APR-000250,REC-000369,Engineering Head,VZIINV01,APPROVED,2026-06-11,Approved; to be applied in SAP by VZI.
+APR-000251,REC-000370,Engineering Head,VZIINV02,HELD,2026-06-21,Held pending further consumption evidence.
+APR-000252,REC-000371,Plant Head,VZIINV02,REJECTED,2026-07-18,Consumption not considered representative.
+APR-000253,REC-000372,Engineering Head,VZIINV01,APPROVED,2026-08-09,Approved; to be applied in SAP by VZI.
+APR-000254,REC-000374,Commercial Head,VZIINV01,REJECTED,2026-06-18,Consumption not considered representative.
+APR-000255,REC-000375,Inventory Controller,VZIINV02,HELD,2026-06-18,Held pending further consumption evidence.
+APR-000256,REC-000376,Inventory Controller,VZIINV01,APPROVED,2026-08-28,Approved; to be applied in SAP by VZI.
+APR-000257,REC-000377,Commercial Head,VZIINV02,APPROVED,2026-06-01,Approved; to be applied in SAP by VZI.
+APR-000258,REC-000378,Plant Head,VZIINV01,HELD,2026-08-07,Held pending further consumption evidence.
+APR-000259,REC-000379,Inventory Controller,VZIINV01,APPROVED,2026-05-31,Approved; to be applied in SAP by VZI.
+APR-000260,REC-000381,Inventory Controller,VZIINV01,HELD,2026-08-07,Held pending further consumption evidence.
+APR-000261,REC-000383,Commercial Head,VZIINV01,APPROVED,2026-06-25,Approved; to be applied in SAP by VZI.
+APR-000262,REC-000384,Plant Head,VZIINV02,REJECTED,2026-07-06,Consumption not considered representative.
+APR-000263,REC-000386,Engineering Head,VZIINV01,APPROVED,2026-06-11,Approved; to be applied in SAP by VZI.
+APR-000264,REC-000388,Engineering Head,VZIINV02,REJECTED,2026-05-28,Consumption not considered representative.
+APR-000265,REC-000390,Inventory Controller,VZIINV01,APPROVED,2026-06-26,Approved; to be applied in SAP by VZI.
+APR-000266,REC-000391,Plant Head,VZIINV02,HELD,2026-08-27,Held pending further consumption evidence.
+APR-000267,REC-000392,Plant Head,VZIINV02,APPROVED,2026-08-10,Approved; to be applied in SAP by VZI.
+APR-000268,REC-000393,Plant Head,VZIINV01,APPROVED,2026-06-28,Approved; to be applied in SAP by VZI.
+APR-000269,REC-000394,Engineering Head,VZIINV01,APPROVED,2026-08-22,Approved; to be applied in SAP by VZI.
+APR-000270,REC-000399,Plant Head,VZIINV02,APPROVED,2026-06-25,Approved; to be applied in SAP by VZI.
+APR-000271,REC-000400,Plant Head,VZIINV01,APPROVED,2026-06-24,Approved; to be applied in SAP by VZI.
+APR-000272,REC-000402,Plant Head,VZIINV01,APPROVED,2026-05-21,Approved; to be applied in SAP by VZI.
+APR-000273,REC-000403,Commercial Head,VZIINV02,APPROVED,2026-06-19,Approved; to be applied in SAP by VZI.
+APR-000274,REC-000404,Inventory Controller,VZIINV01,APPROVED,2026-06-01,Approved; to be applied in SAP by VZI.
+APR-000275,REC-000405,Inventory Controller,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000276,REC-000407,Engineering Head,VZIINV02,HELD,2026-07-08,Held pending further consumption evidence.
+APR-000277,REC-000408,Plant Head,VZIINV01,REJECTED,2026-08-04,Consumption not considered representative.
+APR-000278,REC-000409,Plant Head,VZIINV01,APPROVED,2026-05-26,Approved; to be applied in SAP by VZI.
+APR-000279,REC-000410,Plant Head,VZIINV01,APPROVED,2026-05-22,Approved; to be applied in SAP by VZI.
+APR-000280,REC-000411,Plant Head,VZIINV01,HELD,2026-05-24,Held pending further consumption evidence.
+APR-000281,REC-000412,Engineering Head,VZIINV01,HELD,2026-08-04,Held pending further consumption evidence.
+APR-000282,REC-000413,Engineering Head,VZIINV01,APPROVED,2026-07-02,Approved; to be applied in SAP by VZI.
+APR-000283,REC-000415,Plant Head,VZIINV01,APPROVED,2026-06-30,Approved; to be applied in SAP by VZI.
+APR-000284,REC-000416,Commercial Head,VZIINV01,APPROVED,2026-07-06,Approved; to be applied in SAP by VZI.
+APR-000285,REC-000417,Commercial Head,VZIINV02,APPROVED,2026-08-22,Approved; to be applied in SAP by VZI.
+APR-000286,REC-000419,Inventory Controller,VZIINV01,HELD,2026-09-07,Held pending further consumption evidence.
+APR-000287,REC-000420,Plant Head,VZIINV01,APPROVED,2026-06-25,Approved; to be applied in SAP by VZI.
+APR-000288,REC-000421,Engineering Head,VZIINV01,APPROVED,2026-05-31,Approved; to be applied in SAP by VZI.
+APR-000289,REC-000422,Plant Head,VZIINV01,HELD,2026-07-21,Held pending further consumption evidence.
+APR-000290,REC-000426,Plant Head,VZIINV02,REJECTED,2026-07-14,Consumption not considered representative.
+APR-000291,REC-000427,Plant Head,VZIINV02,APPROVED,2026-06-10,Approved; to be applied in SAP by VZI.
+APR-000292,REC-000429,Inventory Controller,VZIINV01,APPROVED,2026-05-26,Approved; to be applied in SAP by VZI.
+APR-000293,REC-000430,Plant Head,VZIINV01,APPROVED,2026-08-03,Approved; to be applied in SAP by VZI.
+APR-000294,REC-000431,Inventory Controller,VZIINV02,REJECTED,2026-09-06,Consumption not considered representative.
+APR-000295,REC-000433,Engineering Head,VZIINV01,REJECTED,2026-08-02,Consumption not considered representative.
+APR-000296,REC-000434,Commercial Head,VZIINV02,REJECTED,2026-05-25,Consumption not considered representative.
+APR-000297,REC-000435,Plant Head,VZIINV02,REJECTED,2026-08-10,Consumption not considered representative.
+APR-000298,REC-000437,Plant Head,VZIINV02,APPROVED,2026-08-23,Approved; to be applied in SAP by VZI.
+APR-000299,REC-000438,Plant Head,VZIINV02,APPROVED,2026-07-06,Approved; to be applied in SAP by VZI.
+APR-000300,REC-000439,Inventory Controller,VZIINV02,REJECTED,2026-05-30,Consumption not considered representative.
+APR-000301,REC-000440,Inventory Controller,VZIINV02,HELD,2026-08-15,Held pending further consumption evidence.
+APR-000302,REC-000443,Commercial Head,VZIINV02,REJECTED,2026-08-08,Consumption not considered representative.
+APR-000303,REC-000445,Inventory Controller,VZIINV01,APPROVED,2026-08-27,Approved; to be applied in SAP by VZI.
+APR-000304,REC-000446,Inventory Controller,VZIINV01,REJECTED,2026-09-01,Consumption not considered representative.
+APR-000305,REC-000447,Inventory Controller,VZIINV02,APPROVED,2026-06-18,Approved; to be applied in SAP by VZI.
+APR-000306,REC-000449,Plant Head,VZIINV02,REJECTED,2026-08-03,Consumption not considered representative.
+APR-000307,REC-000450,Engineering Head,VZIINV02,APPROVED,2026-06-08,Approved; to be applied in SAP by VZI.
+APR-000308,REC-000451,Inventory Controller,VZIINV01,REJECTED,2026-09-03,Consumption not considered representative.
+APR-000309,REC-000453,Plant Head,VZIINV01,REJECTED,2026-06-08,Consumption not considered representative.
+APR-000310,REC-000454,Commercial Head,VZIINV02,HELD,2026-05-20,Held pending further consumption evidence.
+APR-000311,REC-000456,Inventory Controller,VZIINV02,APPROVED,2026-06-05,Approved; to be applied in SAP by VZI.
+APR-000312,REC-000458,Plant Head,VZIINV01,HELD,2026-09-07,Held pending further consumption evidence.
+APR-000313,REC-000460,Plant Head,VZIINV02,APPROVED,2026-09-04,Approved; to be applied in SAP by VZI.
+APR-000314,REC-000462,Plant Head,VZIINV02,APPROVED,2026-08-09,Approved; to be applied in SAP by VZI.
+APR-000315,REC-000465,Inventory Controller,VZIINV01,REJECTED,2026-07-23,Consumption not considered representative.
+APR-000316,REC-000466,Plant Head,VZIINV01,HELD,2026-06-17,Held pending further consumption evidence.
+APR-000317,REC-000467,Engineering Head,VZIINV01,REJECTED,2026-07-27,Consumption not considered representative.
+APR-000318,REC-000468,Plant Head,VZIINV02,REJECTED,2026-08-13,Consumption not considered representative.
+APR-000319,REC-000469,Plant Head,VZIINV01,APPROVED,2026-05-24,Approved; to be applied in SAP by VZI.
+APR-000320,REC-000471,Inventory Controller,VZIINV02,APPROVED,2026-06-06,Approved; to be applied in SAP by VZI.
+APR-000321,REC-000472,Commercial Head,VZIINV01,APPROVED,2026-06-11,Approved; to be applied in SAP by VZI.
+APR-000322,REC-000473,Commercial Head,VZIINV02,REJECTED,2026-06-25,Consumption not considered representative.
+APR-000323,REC-000475,Plant Head,VZIINV01,REJECTED,2026-05-31,Consumption not considered representative.
+APR-000324,REC-000476,Plant Head,VZIINV01,HELD,2026-08-11,Held pending further consumption evidence.
+APR-000325,REC-000477,Plant Head,VZIINV02,HELD,2026-07-10,Held pending further consumption evidence.
+APR-000326,REC-000478,Plant Head,VZIINV01,REJECTED,2026-08-23,Consumption not considered representative.
+APR-000327,REC-000479,Plant Head,VZIINV02,REJECTED,2026-05-17,Consumption not considered representative.
+APR-000328,REC-000480,Inventory Controller,VZIINV01,APPROVED,2026-08-12,Approved; to be applied in SAP by VZI.
+APR-000329,REC-000481,Inventory Controller,VZIINV02,APPROVED,2026-08-08,Approved; to be applied in SAP by VZI.
+APR-000330,REC-000482,Inventory Controller,VZIINV01,APPROVED,2026-06-25,Approved; to be applied in SAP by VZI.
+APR-000331,REC-000483,Inventory Controller,VZIINV01,APPROVED,2026-05-30,Approved; to be applied in SAP by VZI.
+APR-000332,REC-000486,Inventory Controller,VZIINV02,APPROVED,2026-08-17,Approved; to be applied in SAP by VZI.
+APR-000333,REC-000487,Inventory Controller,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000334,REC-000488,Engineering Head,VZIINV02,REJECTED,2026-06-30,Consumption not considered representative.
+APR-000335,REC-000489,Plant Head,VZIINV01,APPROVED,2026-08-16,Approved; to be applied in SAP by VZI.
+APR-000336,REC-000491,Inventory Controller,VZIINV02,APPROVED,2026-08-11,Approved; to be applied in SAP by VZI.
+APR-000337,REC-000493,Inventory Controller,VZIINV02,REJECTED,2026-06-09,Consumption not considered representative.
+APR-000338,REC-000494,Commercial Head,VZIINV02,APPROVED,2026-08-17,Approved; to be applied in SAP by VZI.
+APR-000339,REC-000495,Inventory Controller,VZIINV02,REJECTED,2026-07-06,Consumption not considered representative.
+APR-000340,REC-000497,Inventory Controller,VZIINV02,HELD,2026-06-02,Held pending further consumption evidence.
+APR-000341,REC-000498,Plant Head,VZIINV02,REJECTED,2026-09-07,Consumption not considered representative.
+APR-000342,REC-000499,Plant Head,VZIINV02,HELD,2026-06-29,Held pending further consumption evidence.
+APR-000343,REC-000501,Inventory Controller,VZIINV01,HELD,2026-08-13,Held pending further consumption evidence.
+APR-000344,REC-000503,Engineering Head,VZIINV02,REJECTED,2026-05-20,Consumption not considered representative.
+APR-000345,REC-000504,Engineering Head,VZIINV01,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-000346,REC-000505,Inventory Controller,VZIINV01,APPROVED,2026-08-11,Approved; to be applied in SAP by VZI.
+APR-000347,REC-000506,Inventory Controller,VZIINV01,HELD,2026-07-31,Held pending further consumption evidence.
+APR-000348,REC-000507,Inventory Controller,VZIINV01,APPROVED,2026-05-18,Approved; to be applied in SAP by VZI.
+APR-000349,REC-000508,Inventory Controller,VZIINV01,HELD,2026-06-25,Held pending further consumption evidence.
+APR-000350,REC-000509,Inventory Controller,VZIINV01,APPROVED,2026-09-06,Approved; to be applied in SAP by VZI.
+APR-000351,REC-000513,Commercial Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000352,REC-000517,Inventory Controller,VZIINV01,HELD,2026-07-29,Held pending further consumption evidence.
+APR-000353,REC-000518,Plant Head,VZIINV02,REJECTED,2026-06-22,Consumption not considered representative.
+APR-000354,REC-000519,Plant Head,VZIINV02,REJECTED,2026-06-26,Consumption not considered representative.
+APR-000355,REC-000520,Inventory Controller,VZIINV01,REJECTED,2026-07-18,Consumption not considered representative.
+APR-000356,REC-000521,Plant Head,VZIINV02,HELD,2026-08-16,Held pending further consumption evidence.
+APR-000357,REC-000522,Commercial Head,VZIINV02,REJECTED,2026-08-28,Consumption not considered representative.
+APR-000358,REC-000523,Plant Head,VZIINV01,APPROVED,2026-07-13,Approved; to be applied in SAP by VZI.
+APR-000359,REC-000527,Engineering Head,VZIINV01,APPROVED,2026-08-28,Approved; to be applied in SAP by VZI.
+APR-000360,REC-000528,Commercial Head,VZIINV01,REJECTED,2026-08-16,Consumption not considered representative.
+APR-000361,REC-000529,Plant Head,VZIINV02,APPROVED,2026-07-11,Approved; to be applied in SAP by VZI.
+APR-000362,REC-000530,Engineering Head,VZIINV01,APPROVED,2026-07-30,Approved; to be applied in SAP by VZI.
+APR-000363,REC-000533,Inventory Controller,VZIINV01,REJECTED,2026-08-03,Consumption not considered representative.
+APR-000364,REC-000537,Plant Head,VZIINV01,APPROVED,2026-07-11,Approved; to be applied in SAP by VZI.
+APR-000365,REC-000539,Plant Head,VZIINV02,REJECTED,2026-07-08,Consumption not considered representative.
+APR-000366,REC-000540,Engineering Head,VZIINV02,APPROVED,2026-07-09,Approved; to be applied in SAP by VZI.
+APR-000367,REC-000541,Inventory Controller,VZIINV01,REJECTED,2026-05-31,Consumption not considered representative.
+APR-000368,REC-000543,Plant Head,VZIINV01,APPROVED,2026-08-15,Approved; to be applied in SAP by VZI.
+APR-000369,REC-000544,Engineering Head,VZIINV01,HELD,2026-09-07,Held pending further consumption evidence.
+APR-000370,REC-000545,Engineering Head,VZIINV01,APPROVED,2026-06-08,Approved; to be applied in SAP by VZI.
+APR-000371,REC-000546,Commercial Head,VZIINV01,HELD,2026-07-02,Held pending further consumption evidence.
+APR-000372,REC-000548,Plant Head,VZIINV01,REJECTED,2026-07-19,Consumption not considered representative.
+APR-000373,REC-000549,Engineering Head,VZIINV02,HELD,2026-06-11,Held pending further consumption evidence.
+APR-000374,REC-000550,Engineering Head,VZIINV02,HELD,2026-05-28,Held pending further consumption evidence.
+APR-000375,REC-000553,Inventory Controller,VZIINV01,APPROVED,2026-09-01,Approved; to be applied in SAP by VZI.
+APR-000376,REC-000556,Inventory Controller,VZIINV01,REJECTED,2026-08-08,Consumption not considered representative.
+APR-000377,REC-000558,Engineering Head,VZIINV01,HELD,2026-06-24,Held pending further consumption evidence.
+APR-000378,REC-000559,Inventory Controller,VZIINV02,REJECTED,2026-07-13,Consumption not considered representative.
+APR-000379,REC-000560,Engineering Head,VZIINV02,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-000380,REC-000561,Plant Head,VZIINV02,HELD,2026-07-06,Held pending further consumption evidence.
+APR-000381,REC-000562,Commercial Head,VZIINV01,APPROVED,2026-07-18,Approved; to be applied in SAP by VZI.
+APR-000382,REC-000563,Inventory Controller,VZIINV02,APPROVED,2026-08-06,Approved; to be applied in SAP by VZI.
+APR-000383,REC-000565,Inventory Controller,VZIINV01,APPROVED,2026-05-14,Approved; to be applied in SAP by VZI.
+APR-000384,REC-000567,Inventory Controller,VZIINV02,APPROVED,2026-07-18,Approved; to be applied in SAP by VZI.
+APR-000385,REC-000568,Plant Head,VZIINV01,APPROVED,2026-06-07,Approved; to be applied in SAP by VZI.
+APR-000386,REC-000569,Plant Head,VZIINV01,HELD,2026-06-19,Held pending further consumption evidence.
+APR-000387,REC-000570,Plant Head,VZIINV02,REJECTED,2026-07-04,Consumption not considered representative.
+APR-000388,REC-000571,Inventory Controller,VZIINV01,APPROVED,2026-08-26,Approved; to be applied in SAP by VZI.
+APR-000389,REC-000572,Plant Head,VZIINV01,REJECTED,2026-05-19,Consumption not considered representative.
+APR-000390,REC-000573,Engineering Head,VZIINV01,APPROVED,2026-08-09,Approved; to be applied in SAP by VZI.
+APR-000391,REC-000574,Inventory Controller,VZIINV01,APPROVED,2026-08-09,Approved; to be applied in SAP by VZI.
+APR-000392,REC-000575,Engineering Head,VZIINV01,APPROVED,2026-06-23,Approved; to be applied in SAP by VZI.
+APR-000393,REC-000576,Engineering Head,VZIINV01,HELD,2026-06-07,Held pending further consumption evidence.
+APR-000394,REC-000577,Inventory Controller,VZIINV01,APPROVED,2026-06-14,Approved; to be applied in SAP by VZI.
+APR-000395,REC-000578,Inventory Controller,VZIINV02,HELD,2026-07-23,Held pending further consumption evidence.
+APR-000396,REC-000579,Engineering Head,VZIINV02,APPROVED,2026-06-02,Approved; to be applied in SAP by VZI.
+APR-000397,REC-000580,Plant Head,VZIINV01,APPROVED,2026-08-16,Approved; to be applied in SAP by VZI.
+APR-000398,REC-000583,Inventory Controller,VZIINV02,APPROVED,2026-09-03,Approved; to be applied in SAP by VZI.
+APR-000399,REC-000584,Engineering Head,VZIINV01,HELD,2026-08-19,Held pending further consumption evidence.
+APR-000400,REC-000585,Plant Head,VZIINV02,REJECTED,2026-06-19,Consumption not considered representative.
+APR-000401,REC-000587,Engineering Head,VZIINV01,APPROVED,2026-08-26,Approved; to be applied in SAP by VZI.
+APR-000402,REC-000588,Engineering Head,VZIINV01,APPROVED,2026-06-13,Approved; to be applied in SAP by VZI.
+APR-000403,REC-000589,Commercial Head,VZIINV02,APPROVED,2026-08-31,Approved; to be applied in SAP by VZI.
+APR-000404,REC-000591,Commercial Head,VZIINV01,HELD,2026-06-05,Held pending further consumption evidence.
+APR-000405,REC-000592,Plant Head,VZIINV01,APPROVED,2026-05-25,Approved; to be applied in SAP by VZI.
+APR-000406,REC-000593,Inventory Controller,VZIINV02,APPROVED,2026-07-08,Approved; to be applied in SAP by VZI.
+APR-000407,REC-000594,Engineering Head,VZIINV02,REJECTED,2026-09-07,Consumption not considered representative.
+APR-000408,REC-000599,Plant Head,VZIINV01,APPROVED,2026-06-12,Approved; to be applied in SAP by VZI.
+APR-000409,REC-000600,Plant Head,VZIINV02,APPROVED,2026-06-24,Approved; to be applied in SAP by VZI.
+APR-000410,REC-000606,Commercial Head,VZIINV01,APPROVED,2026-08-21,Approved; to be applied in SAP by VZI.
+APR-000411,REC-000607,Commercial Head,VZIINV01,APPROVED,2026-08-19,Approved; to be applied in SAP by VZI.
+APR-000412,REC-000608,Commercial Head,VZIINV02,HELD,2026-07-04,Held pending further consumption evidence.
+APR-000413,REC-000609,Commercial Head,VZIINV01,REJECTED,2026-07-09,Consumption not considered representative.
+APR-000414,REC-000610,Engineering Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000415,REC-000612,Inventory Controller,VZIINV01,REJECTED,2026-09-04,Consumption not considered representative.
+APR-000416,REC-000613,Inventory Controller,VZIINV01,REJECTED,2026-08-25,Consumption not considered representative.
+APR-000417,REC-000614,Commercial Head,VZIINV02,APPROVED,2026-06-26,Approved; to be applied in SAP by VZI.
+APR-000418,REC-000617,Commercial Head,VZIINV02,APPROVED,2026-08-09,Approved; to be applied in SAP by VZI.
+APR-000419,REC-000618,Commercial Head,VZIINV02,APPROVED,2026-06-10,Approved; to be applied in SAP by VZI.
+APR-000420,REC-000619,Inventory Controller,VZIINV01,REJECTED,2026-08-25,Consumption not considered representative.
+APR-000421,REC-000620,Engineering Head,VZIINV01,HELD,2026-07-27,Held pending further consumption evidence.
+APR-000422,REC-000621,Engineering Head,VZIINV02,APPROVED,2026-07-06,Approved; to be applied in SAP by VZI.
+APR-000423,REC-000623,Plant Head,VZIINV02,HELD,2026-08-06,Held pending further consumption evidence.
+APR-000424,REC-000625,Engineering Head,VZIINV02,APPROVED,2026-06-24,Approved; to be applied in SAP by VZI.
+APR-000425,REC-000626,Engineering Head,VZIINV02,APPROVED,2026-08-12,Approved; to be applied in SAP by VZI.
+APR-000426,REC-000627,Inventory Controller,VZIINV02,REJECTED,2026-05-29,Consumption not considered representative.
+APR-000427,REC-000628,Inventory Controller,VZIINV02,APPROVED,2026-06-02,Approved; to be applied in SAP by VZI.
+APR-000428,REC-000629,Inventory Controller,VZIINV01,APPROVED,2026-06-12,Approved; to be applied in SAP by VZI.
+APR-000429,REC-000630,Inventory Controller,VZIINV01,REJECTED,2026-07-17,Consumption not considered representative.
+APR-000430,REC-000631,Engineering Head,VZIINV01,HELD,2026-09-07,Held pending further consumption evidence.
+APR-000431,REC-000632,Engineering Head,VZIINV02,APPROVED,2026-08-12,Approved; to be applied in SAP by VZI.
+APR-000432,REC-000633,Plant Head,VZIINV01,APPROVED,2026-08-10,Approved; to be applied in SAP by VZI.
+APR-000433,REC-000634,Plant Head,VZIINV02,REJECTED,2026-07-01,Consumption not considered representative.
+APR-000434,REC-000637,Inventory Controller,VZIINV02,APPROVED,2026-09-04,Approved; to be applied in SAP by VZI.
+APR-000435,REC-000638,Inventory Controller,VZIINV02,REJECTED,2026-08-28,Consumption not considered representative.
+APR-000436,REC-000639,Inventory Controller,VZIINV01,APPROVED,2026-07-25,Approved; to be applied in SAP by VZI.
+APR-000437,REC-000640,Plant Head,VZIINV02,APPROVED,2026-08-18,Approved; to be applied in SAP by VZI.
+APR-000438,REC-000642,Commercial Head,VZIINV01,HELD,2026-05-22,Held pending further consumption evidence.
+APR-000439,REC-000647,Plant Head,VZIINV02,APPROVED,2026-07-14,Approved; to be applied in SAP by VZI.
+APR-000440,REC-000649,Commercial Head,VZIINV01,APPROVED,2026-06-10,Approved; to be applied in SAP by VZI.
+APR-000441,REC-000650,Inventory Controller,VZIINV01,REJECTED,2026-06-27,Consumption not considered representative.
+APR-000442,REC-000651,Engineering Head,VZIINV02,HELD,2026-06-22,Held pending further consumption evidence.
+APR-000443,REC-000653,Engineering Head,VZIINV01,REJECTED,2026-06-03,Consumption not considered representative.
+APR-000444,REC-000654,Engineering Head,VZIINV02,REJECTED,2026-06-17,Consumption not considered representative.
+APR-000445,REC-000655,Plant Head,VZIINV02,APPROVED,2026-06-19,Approved; to be applied in SAP by VZI.
+APR-000446,REC-000656,Inventory Controller,VZIINV02,APPROVED,2026-08-21,Approved; to be applied in SAP by VZI.
+APR-000447,REC-000657,Engineering Head,VZIINV02,HELD,2026-05-15,Held pending further consumption evidence.
+APR-000448,REC-000658,Plant Head,VZIINV01,APPROVED,2026-05-27,Approved; to be applied in SAP by VZI.
+APR-000449,REC-000659,Inventory Controller,VZIINV02,APPROVED,2026-08-01,Approved; to be applied in SAP by VZI.
+APR-000450,REC-000660,Inventory Controller,VZIINV02,APPROVED,2026-08-27,Approved; to be applied in SAP by VZI.
+APR-000451,REC-000662,Engineering Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000452,REC-000664,Inventory Controller,VZIINV01,APPROVED,2026-08-25,Approved; to be applied in SAP by VZI.
+APR-000453,REC-000666,Plant Head,VZIINV02,APPROVED,2026-08-26,Approved; to be applied in SAP by VZI.
+APR-000454,REC-000668,Inventory Controller,VZIINV01,APPROVED,2026-09-06,Approved; to be applied in SAP by VZI.
+APR-000455,REC-000670,Commercial Head,VZIINV02,HELD,2026-07-11,Held pending further consumption evidence.
+APR-000456,REC-000673,Engineering Head,VZIINV01,APPROVED,2026-07-17,Approved; to be applied in SAP by VZI.
+APR-000457,REC-000674,Engineering Head,VZIINV01,APPROVED,2026-06-18,Approved; to be applied in SAP by VZI.
+APR-000458,REC-000679,Plant Head,VZIINV02,APPROVED,2026-06-26,Approved; to be applied in SAP by VZI.
+APR-000459,REC-000681,Plant Head,VZIINV02,REJECTED,2026-08-03,Consumption not considered representative.
+APR-000460,REC-000682,Commercial Head,VZIINV02,HELD,2026-05-27,Held pending further consumption evidence.
+APR-000461,REC-000684,Inventory Controller,VZIINV02,APPROVED,2026-07-05,Approved; to be applied in SAP by VZI.
+APR-000462,REC-000685,Inventory Controller,VZIINV02,APPROVED,2026-06-06,Approved; to be applied in SAP by VZI.
+APR-000463,REC-000686,Plant Head,VZIINV01,APPROVED,2026-06-04,Approved; to be applied in SAP by VZI.
+APR-000464,REC-000687,Plant Head,VZIINV02,HELD,2026-09-01,Held pending further consumption evidence.
+APR-000465,REC-000689,Engineering Head,VZIINV01,APPROVED,2026-07-25,Approved; to be applied in SAP by VZI.
+APR-000466,REC-000691,Plant Head,VZIINV02,HELD,2026-09-02,Held pending further consumption evidence.
+APR-000467,REC-000692,Plant Head,VZIINV02,APPROVED,2026-06-12,Approved; to be applied in SAP by VZI.
+APR-000468,REC-000693,Plant Head,VZIINV02,APPROVED,2026-07-05,Approved; to be applied in SAP by VZI.
+APR-000469,REC-000694,Plant Head,VZIINV02,APPROVED,2026-05-31,Approved; to be applied in SAP by VZI.
+APR-000470,REC-000695,Plant Head,VZIINV02,APPROVED,2026-06-14,Approved; to be applied in SAP by VZI.
+APR-000471,REC-000696,Plant Head,VZIINV01,APPROVED,2026-06-17,Approved; to be applied in SAP by VZI.
+APR-000472,REC-000697,Inventory Controller,VZIINV01,REJECTED,2026-08-07,Consumption not considered representative.
+APR-000473,REC-000698,Commercial Head,VZIINV01,APPROVED,2026-06-05,Approved; to be applied in SAP by VZI.
+APR-000474,REC-000699,Plant Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000475,REC-000700,Engineering Head,VZIINV02,HELD,2026-06-16,Held pending further consumption evidence.
+APR-000476,REC-000701,Inventory Controller,VZIINV02,HELD,2026-07-13,Held pending further consumption evidence.
+APR-000477,REC-000702,Plant Head,VZIINV01,HELD,2026-07-02,Held pending further consumption evidence.
+APR-000478,REC-000703,Commercial Head,VZIINV01,APPROVED,2026-05-22,Approved; to be applied in SAP by VZI.
+APR-000479,REC-000704,Plant Head,VZIINV01,APPROVED,2026-05-19,Approved; to be applied in SAP by VZI.
+APR-000480,REC-000705,Plant Head,VZIINV01,REJECTED,2026-07-06,Consumption not considered representative.
+APR-000481,REC-000706,Plant Head,VZIINV01,HELD,2026-06-20,Held pending further consumption evidence.
+APR-000482,REC-000707,Plant Head,VZIINV02,REJECTED,2026-08-04,Consumption not considered representative.
+APR-000483,REC-000709,Inventory Controller,VZIINV01,APPROVED,2026-06-09,Approved; to be applied in SAP by VZI.
+APR-000484,REC-000710,Inventory Controller,VZIINV01,APPROVED,2026-08-04,Approved; to be applied in SAP by VZI.
+APR-000485,REC-000711,Inventory Controller,VZIINV01,APPROVED,2026-07-10,Approved; to be applied in SAP by VZI.
+APR-000486,REC-000714,Commercial Head,VZIINV02,APPROVED,2026-08-25,Approved; to be applied in SAP by VZI.
+APR-000487,REC-000717,Engineering Head,VZIINV02,APPROVED,2026-07-20,Approved; to be applied in SAP by VZI.
+APR-000488,REC-000718,Inventory Controller,VZIINV02,HELD,2026-08-01,Held pending further consumption evidence.
+APR-000489,REC-000719,Engineering Head,VZIINV01,APPROVED,2026-07-17,Approved; to be applied in SAP by VZI.
+APR-000490,REC-000720,Inventory Controller,VZIINV01,REJECTED,2026-06-06,Consumption not considered representative.
+APR-000491,REC-000721,Inventory Controller,VZIINV02,APPROVED,2026-05-29,Approved; to be applied in SAP by VZI.
+APR-000492,REC-000723,Plant Head,VZIINV02,HELD,2026-07-31,Held pending further consumption evidence.
+APR-000493,REC-000724,Plant Head,VZIINV01,REJECTED,2026-05-15,Consumption not considered representative.
+APR-000494,REC-000725,Engineering Head,VZIINV01,APPROVED,2026-08-05,Approved; to be applied in SAP by VZI.
+APR-000495,REC-000728,Plant Head,VZIINV01,REJECTED,2026-06-05,Consumption not considered representative.
+APR-000496,REC-000733,Commercial Head,VZIINV01,APPROVED,2026-08-24,Approved; to be applied in SAP by VZI.
+APR-000497,REC-000734,Inventory Controller,VZIINV01,REJECTED,2026-05-27,Consumption not considered representative.
+APR-000498,REC-000735,Engineering Head,VZIINV01,REJECTED,2026-05-17,Consumption not considered representative.
+APR-000499,REC-000736,Engineering Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000500,REC-000737,Plant Head,VZIINV02,HELD,2026-09-07,Held pending further consumption evidence.
+APR-000501,REC-000738,Inventory Controller,VZIINV02,REJECTED,2026-09-02,Consumption not considered representative.
+APR-000502,REC-000739,Inventory Controller,VZIINV01,HELD,2026-05-15,Held pending further consumption evidence.
+APR-000503,REC-000741,Commercial Head,VZIINV01,REJECTED,2026-07-18,Consumption not considered representative.
+APR-000504,REC-000742,Plant Head,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000505,REC-000743,Inventory Controller,VZIINV01,HELD,2026-08-02,Held pending further consumption evidence.
+APR-000506,REC-000744,Plant Head,VZIINV02,APPROVED,2026-07-20,Approved; to be applied in SAP by VZI.
+APR-000507,REC-000746,Inventory Controller,VZIINV02,HELD,2026-07-14,Held pending further consumption evidence.
+APR-000508,REC-000747,Inventory Controller,VZIINV02,REJECTED,2026-05-16,Consumption not considered representative.
+APR-000509,REC-000748,Inventory Controller,VZIINV02,APPROVED,2026-06-17,Approved; to be applied in SAP by VZI.
+APR-000510,REC-000749,Plant Head,VZIINV02,APPROVED,2026-07-14,Approved; to be applied in SAP by VZI.
+APR-000511,REC-000750,Plant Head,VZIINV02,HELD,2026-05-22,Held pending further consumption evidence.
+APR-000512,REC-000752,Plant Head,VZIINV01,REJECTED,2026-08-07,Consumption not considered representative.
+APR-000513,REC-000754,Commercial Head,VZIINV01,HELD,2026-07-22,Held pending further consumption evidence.
+APR-000514,REC-000756,Inventory Controller,VZIINV01,REJECTED,2026-09-07,Consumption not considered representative.
+APR-000515,REC-000758,Plant Head,VZIINV01,HELD,2026-07-11,Held pending further consumption evidence.
+APR-000516,REC-000759,Inventory Controller,VZIINV02,APPROVED,2026-08-06,Approved; to be applied in SAP by VZI.
+APR-000517,REC-000760,Engineering Head,VZIINV02,REJECTED,2026-07-04,Consumption not considered representative.
+APR-000518,REC-000761,Engineering Head,VZIINV02,APPROVED,2026-08-01,Approved; to be applied in SAP by VZI.
+APR-000519,REC-000762,Plant Head,VZIINV01,APPROVED,2026-09-05,Approved; to be applied in SAP by VZI.
+APR-000520,REC-000763,Plant Head,VZIINV02,HELD,2026-07-07,Held pending further consumption evidence.
+APR-000521,REC-000764,Engineering Head,VZIINV02,APPROVED,2026-05-25,Approved; to be applied in SAP by VZI.
+APR-000522,REC-000765,Inventory Controller,VZIINV02,HELD,2026-08-14,Held pending further consumption evidence.
+APR-000523,REC-000767,Commercial Head,VZIINV02,APPROVED,2026-08-16,Approved; to be applied in SAP by VZI.
+APR-000524,REC-000768,Inventory Controller,VZIINV02,REJECTED,2026-06-04,Consumption not considered representative.
+APR-000525,REC-000769,Engineering Head,VZIINV01,APPROVED,2026-08-19,Approved; to be applied in SAP by VZI.
+APR-000526,REC-000770,Commercial Head,VZIINV02,APPROVED,2026-08-26,Approved; to be applied in SAP by VZI.
+APR-000527,REC-000771,Engineering Head,VZIINV01,APPROVED,2026-07-26,Approved; to be applied in SAP by VZI.
+APR-000528,REC-000772,Commercial Head,VZIINV02,APPROVED,2026-08-18,Approved; to be applied in SAP by VZI.
+APR-000529,REC-000773,Engineering Head,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000530,REC-000774,Inventory Controller,VZIINV01,REJECTED,2026-07-31,Consumption not considered representative.
+APR-000531,REC-000776,Plant Head,VZIINV02,REJECTED,2026-06-20,Consumption not considered representative.
+APR-000532,REC-000777,Plant Head,VZIINV02,APPROVED,2026-08-12,Approved; to be applied in SAP by VZI.
+APR-000533,REC-000778,Plant Head,VZIINV02,APPROVED,2026-08-30,Approved; to be applied in SAP by VZI.
+APR-000534,REC-000779,Engineering Head,VZIINV02,HELD,2026-06-26,Held pending further consumption evidence.
+APR-000535,REC-000781,Engineering Head,VZIINV02,APPROVED,2026-06-22,Approved; to be applied in SAP by VZI.
+APR-000536,REC-000784,Plant Head,VZIINV01,APPROVED,2026-07-10,Approved; to be applied in SAP by VZI.
+APR-000537,REC-000787,Plant Head,VZIINV02,APPROVED,2026-08-01,Approved; to be applied in SAP by VZI.
+APR-000538,REC-000788,Commercial Head,VZIINV02,APPROVED,2026-07-07,Approved; to be applied in SAP by VZI.
+APR-000539,REC-000789,Commercial Head,VZIINV02,APPROVED,2026-08-15,Approved; to be applied in SAP by VZI.
+APR-000540,REC-000791,Plant Head,VZIINV02,REJECTED,2026-06-19,Consumption not considered representative.
+APR-000541,REC-000793,Engineering Head,VZIINV02,REJECTED,2026-06-29,Consumption not considered representative.
+APR-000542,REC-000794,Engineering Head,VZIINV02,REJECTED,2026-06-28,Consumption not considered representative.
+APR-000543,REC-000796,Plant Head,VZIINV01,REJECTED,2026-08-11,Consumption not considered representative.
+APR-000544,REC-000798,Engineering Head,VZIINV01,APPROVED,2026-06-04,Approved; to be applied in SAP by VZI.
+APR-000545,REC-000799,Plant Head,VZIINV01,HELD,2026-07-19,Held pending further consumption evidence.
+APR-000546,REC-000800,Inventory Controller,VZIINV02,REJECTED,2026-08-24,Consumption not considered representative.
+APR-000547,REC-000801,Inventory Controller,VZIINV01,REJECTED,2026-09-03,Consumption not considered representative.
+APR-000548,REC-000806,Inventory Controller,VZIINV01,REJECTED,2026-06-03,Consumption not considered representative.
+APR-000549,REC-000811,Engineering Head,VZIINV02,APPROVED,2026-08-05,Approved; to be applied in SAP by VZI.
+APR-000550,REC-000812,Engineering Head,VZIINV01,HELD,2026-07-27,Held pending further consumption evidence.
+APR-000551,REC-000817,Engineering Head,VZIINV02,REJECTED,2026-07-21,Consumption not considered representative.
+APR-000552,REC-000818,Commercial Head,VZIINV02,APPROVED,2026-06-15,Approved; to be applied in SAP by VZI.
+APR-000553,REC-000819,Commercial Head,VZIINV01,APPROVED,2026-08-09,Approved; to be applied in SAP by VZI.
+APR-000554,REC-000820,Plant Head,VZIINV01,REJECTED,2026-05-26,Consumption not considered representative.
+APR-000555,REC-000822,Engineering Head,VZIINV02,APPROVED,2026-08-28,Approved; to be applied in SAP by VZI.
+APR-000556,REC-000823,Commercial Head,VZIINV02,APPROVED,2026-07-25,Approved; to be applied in SAP by VZI.
+APR-000557,REC-000825,Plant Head,VZIINV02,APPROVED,2026-06-12,Approved; to be applied in SAP by VZI.
+APR-000558,REC-000826,Plant Head,VZIINV01,REJECTED,2026-08-13,Consumption not considered representative.
+APR-000559,REC-000827,Plant Head,VZIINV01,APPROVED,2026-08-07,Approved; to be applied in SAP by VZI.
+APR-000560,REC-000829,Plant Head,VZIINV02,REJECTED,2026-07-10,Consumption not considered representative.
+APR-000561,REC-000831,Engineering Head,VZIINV02,APPROVED,2026-07-08,Approved; to be applied in SAP by VZI.
+APR-000562,REC-000834,Plant Head,VZIINV02,HELD,2026-08-26,Held pending further consumption evidence.
+APR-000563,REC-000835,Plant Head,VZIINV01,REJECTED,2026-08-14,Consumption not considered representative.
+APR-000564,REC-000836,Plant Head,VZIINV02,APPROVED,2026-06-02,Approved; to be applied in SAP by VZI.
+APR-000565,REC-000837,Engineering Head,VZIINV02,REJECTED,2026-09-07,Consumption not considered representative.
+APR-000566,REC-000839,Plant Head,VZIINV02,APPROVED,2026-07-27,Approved; to be applied in SAP by VZI.
+APR-000567,REC-000842,Inventory Controller,VZIINV02,HELD,2026-05-24,Held pending further consumption evidence.
+APR-000568,REC-000844,Plant Head,VZIINV01,APPROVED,2026-08-14,Approved; to be applied in SAP by VZI.
+APR-000569,REC-000845,Plant Head,VZIINV01,APPROVED,2026-07-05,Approved; to be applied in SAP by VZI.
+APR-000570,REC-000846,Inventory Controller,VZIINV02,REJECTED,2026-07-03,Consumption not considered representative.
+APR-000571,REC-000847,Engineering Head,VZIINV02,HELD,2026-08-03,Held pending further consumption evidence.
+APR-000572,REC-000848,Plant Head,VZIINV01,REJECTED,2026-09-07,Consumption not considered representative.
+APR-000573,REC-000849,Inventory Controller,VZIINV01,APPROVED,2026-06-14,Approved; to be applied in SAP by VZI.
+APR-000574,REC-000850,Engineering Head,VZIINV02,APPROVED,2026-08-12,Approved; to be applied in SAP by VZI.
+APR-000575,REC-000853,Inventory Controller,VZIINV02,APPROVED,2026-07-31,Approved; to be applied in SAP by VZI.
+APR-000576,REC-000854,Engineering Head,VZIINV01,APPROVED,2026-08-16,Approved; to be applied in SAP by VZI.
+APR-000577,REC-000855,Engineering Head,VZIINV02,APPROVED,2026-06-03,Approved; to be applied in SAP by VZI.
+APR-000578,REC-000856,Inventory Controller,VZIINV02,APPROVED,2026-05-13,Approved; to be applied in SAP by VZI.
+APR-000579,REC-000857,Inventory Controller,VZIINV02,REJECTED,2026-07-29,Consumption not considered representative.
+APR-000580,REC-000858,Inventory Controller,VZIINV02,REJECTED,2026-08-26,Consumption not considered representative.
+APR-000581,REC-000859,Engineering Head,VZIINV02,APPROVED,2026-05-17,Approved; to be applied in SAP by VZI.
+APR-000582,REC-000860,Commercial Head,VZIINV02,APPROVED,2026-08-13,Approved; to be applied in SAP by VZI.
+APR-000583,REC-000862,Engineering Head,VZIINV02,APPROVED,2026-07-05,Approved; to be applied in SAP by VZI.
+APR-000584,REC-000863,Inventory Controller,VZIINV02,HELD,2026-06-05,Held pending further consumption evidence.
+APR-000585,REC-000864,Inventory Controller,VZIINV01,APPROVED,2026-06-06,Approved; to be applied in SAP by VZI.
+APR-000586,REC-000865,Plant Head,VZIINV01,APPROVED,2026-08-24,Approved; to be applied in SAP by VZI.
+APR-000587,REC-000868,Engineering Head,VZIINV01,APPROVED,2026-07-27,Approved; to be applied in SAP by VZI.
+APR-000588,REC-000869,Inventory Controller,VZIINV01,APPROVED,2026-06-30,Approved; to be applied in SAP by VZI.
+APR-000589,REC-000870,Engineering Head,VZIINV02,APPROVED,2026-08-28,Approved; to be applied in SAP by VZI.
+APR-000590,REC-000871,Engineering Head,VZIINV02,APPROVED,2026-08-17,Approved; to be applied in SAP by VZI.
+APR-000591,REC-000874,Inventory Controller,VZIINV02,APPROVED,2026-07-19,Approved; to be applied in SAP by VZI.
+APR-000592,REC-000875,Engineering Head,VZIINV01,HELD,2026-07-14,Held pending further consumption evidence.
+APR-000593,REC-000876,Commercial Head,VZIINV01,APPROVED,2026-06-05,Approved; to be applied in SAP by VZI.
+APR-000594,REC-000878,Engineering Head,VZIINV02,APPROVED,2026-05-16,Approved; to be applied in SAP by VZI.
+APR-000595,REC-000879,Engineering Head,VZIINV01,APPROVED,2026-08-10,Approved; to be applied in SAP by VZI.
+APR-000596,REC-000880,Inventory Controller,VZIINV02,REJECTED,2026-05-28,Consumption not considered representative.
+APR-000597,REC-000881,Plant Head,VZIINV01,APPROVED,2026-06-21,Approved; to be applied in SAP by VZI.
+APR-000598,REC-000882,Plant Head,VZIINV01,REJECTED,2026-08-09,Consumption not considered representative.
+APR-000599,REC-000884,Engineering Head,VZIINV01,APPROVED,2026-08-22,Approved; to be applied in SAP by VZI.
+APR-000600,REC-000885,Plant Head,VZIINV01,REJECTED,2026-09-07,Consumption not considered representative.
+APR-000601,REC-000886,Commercial Head,VZIINV01,HELD,2026-06-11,Held pending further consumption evidence.
+APR-000602,REC-000887,Commercial Head,VZIINV01,APPROVED,2026-06-11,Approved; to be applied in SAP by VZI.
+APR-000603,REC-000890,Plant Head,VZIINV01,REJECTED,2026-09-04,Consumption not considered representative.
+APR-000604,REC-000891,Plant Head,VZIINV01,APPROVED,2026-06-16,Approved; to be applied in SAP by VZI.
+APR-000605,REC-000893,Engineering Head,VZIINV01,REJECTED,2026-06-04,Consumption not considered representative.
+APR-000606,REC-000894,Inventory Controller,VZIINV02,APPROVED,2026-08-10,Approved; to be applied in SAP by VZI.
+APR-000607,REC-000895,Inventory Controller,VZIINV01,APPROVED,2026-06-16,Approved; to be applied in SAP by VZI.
+APR-000608,REC-000896,Engineering Head,VZIINV02,HELD,2026-08-25,Held pending further consumption evidence.
+APR-000609,REC-000897,Plant Head,VZIINV01,REJECTED,2026-06-27,Consumption not considered representative.
+APR-000610,REC-000900,Plant Head,VZIINV01,HELD,2026-06-02,Held pending further consumption evidence.
+APR-000611,REC-000901,Inventory Controller,VZIINV01,REJECTED,2026-08-03,Consumption not considered representative.
+APR-000612,REC-000902,Inventory Controller,VZIINV02,APPROVED,2026-05-26,Approved; to be applied in SAP by VZI.
+APR-000613,REC-000904,Inventory Controller,VZIINV01,REJECTED,2026-06-14,Consumption not considered representative.
+APR-000614,REC-000906,Engineering Head,VZIINV01,HELD,2026-06-16,Held pending further consumption evidence.
+APR-000615,REC-000908,Engineering Head,VZIINV02,REJECTED,2026-07-10,Consumption not considered representative.
+APR-000616,REC-000909,Plant Head,VZIINV02,REJECTED,2026-06-20,Consumption not considered representative.
+APR-000617,REC-000914,Commercial Head,VZIINV02,REJECTED,2026-08-12,Consumption not considered representative.
+APR-000618,REC-000917,Plant Head,VZIINV01,APPROVED,2026-07-08,Approved; to be applied in SAP by VZI.
+APR-000619,REC-000919,Inventory Controller,VZIINV01,APPROVED,2026-09-02,Approved; to be applied in SAP by VZI.
+APR-000620,REC-000920,Inventory Controller,VZIINV02,APPROVED,2026-08-15,Approved; to be applied in SAP by VZI.
+APR-000621,REC-000921,Plant Head,VZIINV02,REJECTED,2026-08-24,Consumption not considered representative.
+APR-000622,REC-000923,Plant Head,VZIINV02,APPROVED,2026-08-19,Approved; to be applied in SAP by VZI.
+APR-000623,REC-000925,Engineering Head,VZIINV02,APPROVED,2026-06-21,Approved; to be applied in SAP by VZI.
+APR-000624,REC-000926,Engineering Head,VZIINV01,APPROVED,2026-08-24,Approved; to be applied in SAP by VZI.
+APR-000625,REC-000927,Plant Head,VZIINV02,HELD,2026-06-25,Held pending further consumption evidence.
+APR-000626,REC-000928,Plant Head,VZIINV01,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-000627,REC-000929,Commercial Head,VZIINV01,APPROVED,2026-07-21,Approved; to be applied in SAP by VZI.
+APR-000628,REC-000930,Commercial Head,VZIINV01,APPROVED,2026-06-20,Approved; to be applied in SAP by VZI.
+APR-000629,REC-000931,Plant Head,VZIINV02,APPROVED,2026-07-05,Approved; to be applied in SAP by VZI.
+APR-000630,REC-000932,Plant Head,VZIINV01,APPROVED,2026-07-14,Approved; to be applied in SAP by VZI.
+APR-000631,REC-000933,Engineering Head,VZIINV01,APPROVED,2026-06-05,Approved; to be applied in SAP by VZI.
+APR-000632,REC-000935,Engineering Head,VZIINV02,REJECTED,2026-06-07,Consumption not considered representative.
+APR-000633,REC-000936,Plant Head,VZIINV01,REJECTED,2026-08-12,Consumption not considered representative.
+APR-000634,REC-000937,Plant Head,VZIINV01,HELD,2026-05-24,Held pending further consumption evidence.
+APR-000635,REC-000938,Commercial Head,VZIINV01,HELD,2026-06-14,Held pending further consumption evidence.
+APR-000636,REC-000939,Engineering Head,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000637,REC-000940,Plant Head,VZIINV02,APPROVED,2026-07-03,Approved; to be applied in SAP by VZI.
+APR-000638,REC-000941,Engineering Head,VZIINV02,HELD,2026-06-22,Held pending further consumption evidence.
+APR-000639,REC-000945,Plant Head,VZIINV02,HELD,2026-07-01,Held pending further consumption evidence.
+APR-000640,REC-000947,Plant Head,VZIINV01,APPROVED,2026-09-01,Approved; to be applied in SAP by VZI.
+APR-000641,REC-000948,Plant Head,VZIINV02,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-000642,REC-000949,Inventory Controller,VZIINV01,HELD,2026-07-04,Held pending further consumption evidence.
+APR-000643,REC-000950,Inventory Controller,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000644,REC-000951,Inventory Controller,VZIINV01,REJECTED,2026-06-26,Consumption not considered representative.
+APR-000645,REC-000953,Inventory Controller,VZIINV01,REJECTED,2026-06-25,Consumption not considered representative.
+APR-000646,REC-000954,Inventory Controller,VZIINV02,REJECTED,2026-08-20,Consumption not considered representative.
+APR-000647,REC-000955,Commercial Head,VZIINV02,REJECTED,2026-07-21,Consumption not considered representative.
+APR-000648,REC-000957,Inventory Controller,VZIINV01,HELD,2026-06-08,Held pending further consumption evidence.
+APR-000649,REC-000958,Plant Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000650,REC-000959,Plant Head,VZIINV01,APPROVED,2026-06-21,Approved; to be applied in SAP by VZI.
+APR-000651,REC-000960,Engineering Head,VZIINV02,HELD,2026-06-29,Held pending further consumption evidence.
+APR-000652,REC-000961,Engineering Head,VZIINV01,APPROVED,2026-05-25,Approved; to be applied in SAP by VZI.
+APR-000653,REC-000962,Plant Head,VZIINV01,APPROVED,2026-07-13,Approved; to be applied in SAP by VZI.
+APR-000654,REC-000963,Plant Head,VZIINV01,REJECTED,2026-06-14,Consumption not considered representative.
+APR-000655,REC-000967,Inventory Controller,VZIINV01,REJECTED,2026-05-26,Consumption not considered representative.
+APR-000656,REC-000971,Inventory Controller,VZIINV02,HELD,2026-06-23,Held pending further consumption evidence.
+APR-000657,REC-000975,Plant Head,VZIINV02,REJECTED,2026-07-17,Consumption not considered representative.
+APR-000658,REC-000976,Plant Head,VZIINV02,REJECTED,2026-06-06,Consumption not considered representative.
+APR-000659,REC-000977,Plant Head,VZIINV01,APPROVED,2026-05-25,Approved; to be applied in SAP by VZI.
+APR-000660,REC-000978,Plant Head,VZIINV01,APPROVED,2026-05-30,Approved; to be applied in SAP by VZI.
+APR-000661,REC-000979,Plant Head,VZIINV01,REJECTED,2026-08-05,Consumption not considered representative.
+APR-000662,REC-000980,Plant Head,VZIINV02,REJECTED,2026-08-24,Consumption not considered representative.
+APR-000663,REC-000981,Engineering Head,VZIINV02,REJECTED,2026-06-13,Consumption not considered representative.
+APR-000664,REC-000982,Inventory Controller,VZIINV02,APPROVED,2026-07-28,Approved; to be applied in SAP by VZI.
+APR-000665,REC-000984,Engineering Head,VZIINV01,APPROVED,2026-06-18,Approved; to be applied in SAP by VZI.
+APR-000666,REC-000986,Engineering Head,VZIINV01,APPROVED,2026-05-27,Approved; to be applied in SAP by VZI.
+APR-000667,REC-000987,Engineering Head,VZIINV02,APPROVED,2026-08-13,Approved; to be applied in SAP by VZI.
+APR-000668,REC-000988,Inventory Controller,VZIINV01,APPROVED,2026-06-14,Approved; to be applied in SAP by VZI.
+APR-000669,REC-000989,Plant Head,VZIINV02,APPROVED,2026-06-27,Approved; to be applied in SAP by VZI.
+APR-000670,REC-000990,Plant Head,VZIINV02,APPROVED,2026-07-12,Approved; to be applied in SAP by VZI.
+APR-000671,REC-000991,Inventory Controller,VZIINV01,HELD,2026-08-29,Held pending further consumption evidence.
+APR-000672,REC-000992,Plant Head,VZIINV02,HELD,2026-08-23,Held pending further consumption evidence.
+APR-000673,REC-000994,Engineering Head,VZIINV01,APPROVED,2026-08-20,Approved; to be applied in SAP by VZI.
+APR-000674,REC-000995,Engineering Head,VZIINV01,HELD,2026-07-04,Held pending further consumption evidence.
+APR-000675,REC-000996,Plant Head,VZIINV01,REJECTED,2026-05-22,Consumption not considered representative.
+APR-000676,REC-000997,Plant Head,VZIINV02,APPROVED,2026-08-14,Approved; to be applied in SAP by VZI.
+APR-000677,REC-000998,Engineering Head,VZIINV01,REJECTED,2026-08-03,Consumption not considered representative.
+APR-000678,REC-000999,Plant Head,VZIINV01,REJECTED,2026-08-09,Consumption not considered representative.
+APR-000679,REC-001000,Commercial Head,VZIINV02,APPROVED,2026-05-30,Approved; to be applied in SAP by VZI.
+APR-000680,REC-001002,Plant Head,VZIINV01,HELD,2026-06-18,Held pending further consumption evidence.
+APR-000681,REC-001004,Engineering Head,VZIINV02,APPROVED,2026-06-19,Approved; to be applied in SAP by VZI.
+APR-000682,REC-001005,Engineering Head,VZIINV02,REJECTED,2026-07-11,Consumption not considered representative.
+APR-000683,REC-001007,Plant Head,VZIINV01,APPROVED,2026-08-17,Approved; to be applied in SAP by VZI.
+APR-000684,REC-001008,Engineering Head,VZIINV01,HELD,2026-08-24,Held pending further consumption evidence.
+APR-000685,REC-001009,Plant Head,VZIINV01,APPROVED,2026-09-04,Approved; to be applied in SAP by VZI.
+APR-000686,REC-001010,Engineering Head,VZIINV02,APPROVED,2026-05-31,Approved; to be applied in SAP by VZI.
+APR-000687,REC-001011,Engineering Head,VZIINV01,APPROVED,2026-06-21,Approved; to be applied in SAP by VZI.
+APR-000688,REC-001012,Commercial Head,VZIINV02,APPROVED,2026-08-03,Approved; to be applied in SAP by VZI.
+APR-000689,REC-001013,Commercial Head,VZIINV02,HELD,2026-08-16,Held pending further consumption evidence.
+APR-000690,REC-001014,Plant Head,VZIINV01,REJECTED,2026-07-28,Consumption not considered representative.
+APR-000691,REC-001016,Plant Head,VZIINV01,REJECTED,2026-08-03,Consumption not considered representative.
+APR-000692,REC-001018,Engineering Head,VZIINV01,APPROVED,2026-08-21,Approved; to be applied in SAP by VZI.
+APR-000693,REC-001022,Inventory Controller,VZIINV01,REJECTED,2026-07-08,Consumption not considered representative.
+APR-000694,REC-001023,Inventory Controller,VZIINV01,REJECTED,2026-07-19,Consumption not considered representative.
+APR-000695,REC-001024,Inventory Controller,VZIINV01,APPROVED,2026-07-07,Approved; to be applied in SAP by VZI.
+APR-000696,REC-001025,Inventory Controller,VZIINV02,APPROVED,2026-07-04,Approved; to be applied in SAP by VZI.
+APR-000697,REC-001026,Commercial Head,VZIINV02,REJECTED,2026-06-03,Consumption not considered representative.
+APR-000698,REC-001027,Commercial Head,VZIINV02,HELD,2026-09-01,Held pending further consumption evidence.
+APR-000699,REC-001028,Plant Head,VZIINV02,HELD,2026-07-28,Held pending further consumption evidence.
+APR-000700,REC-001029,Engineering Head,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000701,REC-001031,Inventory Controller,VZIINV01,APPROVED,2026-06-01,Approved; to be applied in SAP by VZI.
+APR-000702,REC-001032,Plant Head,VZIINV02,REJECTED,2026-06-06,Consumption not considered representative.
+APR-000703,REC-001033,Plant Head,VZIINV02,HELD,2026-07-24,Held pending further consumption evidence.
+APR-000704,REC-001034,Inventory Controller,VZIINV01,REJECTED,2026-05-15,Consumption not considered representative.
+APR-000705,REC-001036,Plant Head,VZIINV02,APPROVED,2026-07-28,Approved; to be applied in SAP by VZI.
+APR-000706,REC-001037,Plant Head,VZIINV01,APPROVED,2026-05-26,Approved; to be applied in SAP by VZI.
+APR-000707,REC-001038,Plant Head,VZIINV01,APPROVED,2026-05-30,Approved; to be applied in SAP by VZI.
+APR-000708,REC-001039,Inventory Controller,VZIINV02,APPROVED,2026-09-02,Approved; to be applied in SAP by VZI.
+APR-000709,REC-001041,Plant Head,VZIINV01,REJECTED,2026-09-07,Consumption not considered representative.
+APR-000710,REC-001042,Commercial Head,VZIINV02,APPROVED,2026-07-31,Approved; to be applied in SAP by VZI.
+APR-000711,REC-001043,Plant Head,VZIINV02,APPROVED,2026-07-17,Approved; to be applied in SAP by VZI.
+APR-000712,REC-001044,Plant Head,VZIINV02,APPROVED,2026-05-23,Approved; to be applied in SAP by VZI.
+APR-000713,REC-001046,Engineering Head,VZIINV01,HELD,2026-06-29,Held pending further consumption evidence.
+APR-000714,REC-001047,Engineering Head,VZIINV01,REJECTED,2026-08-06,Consumption not considered representative.
+APR-000715,REC-001049,Plant Head,VZIINV01,APPROVED,2026-07-08,Approved; to be applied in SAP by VZI.
+APR-000716,REC-001050,Plant Head,VZIINV01,APPROVED,2026-06-08,Approved; to be applied in SAP by VZI.
+APR-000717,REC-001052,Inventory Controller,VZIINV02,REJECTED,2026-06-18,Consumption not considered representative.
+APR-000718,REC-001053,Inventory Controller,VZIINV02,HELD,2026-07-15,Held pending further consumption evidence.
+APR-000719,REC-001054,Inventory Controller,VZIINV02,APPROVED,2026-08-08,Approved; to be applied in SAP by VZI.
+APR-000720,REC-001056,Engineering Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000721,REC-001057,Engineering Head,VZIINV02,APPROVED,2026-07-01,Approved; to be applied in SAP by VZI.
+APR-000722,REC-001058,Inventory Controller,VZIINV02,HELD,2026-06-26,Held pending further consumption evidence.
+APR-000723,REC-001059,Inventory Controller,VZIINV01,HELD,2026-07-14,Held pending further consumption evidence.
+APR-000724,REC-001060,Plant Head,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000725,REC-001061,Engineering Head,VZIINV02,HELD,2026-07-01,Held pending further consumption evidence.
+APR-000726,REC-001063,Plant Head,VZIINV01,APPROVED,2026-08-09,Approved; to be applied in SAP by VZI.
+APR-000727,REC-001064,Inventory Controller,VZIINV01,APPROVED,2026-07-23,Approved; to be applied in SAP by VZI.
+APR-000728,REC-001065,Engineering Head,VZIINV01,APPROVED,2026-08-20,Approved; to be applied in SAP by VZI.
+APR-000729,REC-001066,Engineering Head,VZIINV02,REJECTED,2026-09-07,Consumption not considered representative.
+APR-000730,REC-001067,Commercial Head,VZIINV01,REJECTED,2026-09-03,Consumption not considered representative.
+APR-000731,REC-001072,Plant Head,VZIINV02,REJECTED,2026-05-27,Consumption not considered representative.
+APR-000732,REC-001073,Plant Head,VZIINV01,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-000733,REC-001074,Inventory Controller,VZIINV02,REJECTED,2026-06-02,Consumption not considered representative.
+APR-000734,REC-001075,Engineering Head,VZIINV02,APPROVED,2026-08-04,Approved; to be applied in SAP by VZI.
+APR-000735,REC-001076,Engineering Head,VZIINV01,APPROVED,2026-08-06,Approved; to be applied in SAP by VZI.
+APR-000736,REC-001078,Inventory Controller,VZIINV01,APPROVED,2026-07-28,Approved; to be applied in SAP by VZI.
+APR-000737,REC-001080,Engineering Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000738,REC-001081,Engineering Head,VZIINV01,APPROVED,2026-08-25,Approved; to be applied in SAP by VZI.
+APR-000739,REC-001082,Inventory Controller,VZIINV02,HELD,2026-06-02,Held pending further consumption evidence.
+APR-000740,REC-001083,Inventory Controller,VZIINV02,APPROVED,2026-05-17,Approved; to be applied in SAP by VZI.
+APR-000741,REC-001084,Engineering Head,VZIINV02,REJECTED,2026-07-31,Consumption not considered representative.
+APR-000742,REC-001086,Engineering Head,VZIINV02,APPROVED,2026-07-15,Approved; to be applied in SAP by VZI.
+APR-000743,REC-001087,Engineering Head,VZIINV01,APPROVED,2026-06-08,Approved; to be applied in SAP by VZI.
+APR-000744,REC-001088,Engineering Head,VZIINV02,REJECTED,2026-08-21,Consumption not considered representative.
+APR-000745,REC-001089,Engineering Head,VZIINV02,APPROVED,2026-06-24,Approved; to be applied in SAP by VZI.
+APR-000746,REC-001091,Inventory Controller,VZIINV01,APPROVED,2026-05-30,Approved; to be applied in SAP by VZI.
+APR-000747,REC-001092,Plant Head,VZIINV02,REJECTED,2026-09-07,Consumption not considered representative.
+APR-000748,REC-001094,Engineering Head,VZIINV02,APPROVED,2026-07-01,Approved; to be applied in SAP by VZI.
+APR-000749,REC-001096,Engineering Head,VZIINV01,APPROVED,2026-06-12,Approved; to be applied in SAP by VZI.
+APR-000750,REC-001097,Engineering Head,VZIINV02,APPROVED,2026-08-20,Approved; to be applied in SAP by VZI.
+APR-000751,REC-001098,Plant Head,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000752,REC-001099,Plant Head,VZIINV02,APPROVED,2026-07-07,Approved; to be applied in SAP by VZI.
+APR-000753,REC-001100,Plant Head,VZIINV02,APPROVED,2026-08-19,Approved; to be applied in SAP by VZI.
+APR-000754,REC-001101,Plant Head,VZIINV02,HELD,2026-09-07,Held pending further consumption evidence.
+APR-000755,REC-001102,Plant Head,VZIINV01,APPROVED,2026-08-28,Approved; to be applied in SAP by VZI.
+APR-000756,REC-001104,Plant Head,VZIINV01,REJECTED,2026-06-16,Consumption not considered representative.
+APR-000757,REC-001105,Engineering Head,VZIINV01,APPROVED,2026-08-23,Approved; to be applied in SAP by VZI.
+APR-000758,REC-001106,Inventory Controller,VZIINV02,REJECTED,2026-09-02,Consumption not considered representative.
+APR-000759,REC-001107,Inventory Controller,VZIINV01,HELD,2026-08-11,Held pending further consumption evidence.
+APR-000760,REC-001108,Inventory Controller,VZIINV02,APPROVED,2026-07-25,Approved; to be applied in SAP by VZI.
+APR-000761,REC-001109,Inventory Controller,VZIINV02,APPROVED,2026-06-12,Approved; to be applied in SAP by VZI.
+APR-000762,REC-001110,Plant Head,VZIINV02,APPROVED,2026-08-22,Approved; to be applied in SAP by VZI.
+APR-000763,REC-001111,Plant Head,VZIINV02,APPROVED,2026-07-26,Approved; to be applied in SAP by VZI.
+APR-000764,REC-001112,Plant Head,VZIINV02,HELD,2026-07-09,Held pending further consumption evidence.
+APR-000765,REC-001113,Commercial Head,VZIINV02,REJECTED,2026-07-15,Consumption not considered representative.
+APR-000766,REC-001114,Commercial Head,VZIINV02,APPROVED,2026-07-05,Approved; to be applied in SAP by VZI.
+APR-000767,REC-001115,Plant Head,VZIINV02,REJECTED,2026-05-16,Consumption not considered representative.
+APR-000768,REC-001116,Plant Head,VZIINV01,APPROVED,2026-06-21,Approved; to be applied in SAP by VZI.
+APR-000769,REC-001117,Inventory Controller,VZIINV01,HELD,2026-07-16,Held pending further consumption evidence.
+APR-000770,REC-001120,Inventory Controller,VZIINV01,APPROVED,2026-08-09,Approved; to be applied in SAP by VZI.
+APR-000771,REC-001122,Engineering Head,VZIINV02,HELD,2026-05-25,Held pending further consumption evidence.
+APR-000772,REC-001123,Inventory Controller,VZIINV02,APPROVED,2026-08-27,Approved; to be applied in SAP by VZI.
+APR-000773,REC-001124,Inventory Controller,VZIINV01,APPROVED,2026-08-17,Approved; to be applied in SAP by VZI.
+APR-000774,REC-001127,Inventory Controller,VZIINV02,REJECTED,2026-07-14,Consumption not considered representative.
+APR-000775,REC-001128,Engineering Head,VZIINV01,APPROVED,2026-08-27,Approved; to be applied in SAP by VZI.
+APR-000776,REC-001130,Inventory Controller,VZIINV02,APPROVED,2026-06-21,Approved; to be applied in SAP by VZI.
+APR-000777,REC-001131,Inventory Controller,VZIINV02,APPROVED,2026-06-11,Approved; to be applied in SAP by VZI.
+APR-000778,REC-001133,Plant Head,VZIINV01,HELD,2026-06-18,Held pending further consumption evidence.
+APR-000779,REC-001134,Plant Head,VZIINV02,APPROVED,2026-07-12,Approved; to be applied in SAP by VZI.
+APR-000780,REC-001135,Engineering Head,VZIINV01,APPROVED,2026-07-18,Approved; to be applied in SAP by VZI.
+APR-000781,REC-001136,Engineering Head,VZIINV01,APPROVED,2026-07-23,Approved; to be applied in SAP by VZI.
+APR-000782,REC-001137,Inventory Controller,VZIINV02,HELD,2026-07-02,Held pending further consumption evidence.
+APR-000783,REC-001138,Engineering Head,VZIINV02,APPROVED,2026-07-28,Approved; to be applied in SAP by VZI.
+APR-000784,REC-001139,Commercial Head,VZIINV01,REJECTED,2026-08-08,Consumption not considered representative.
+APR-000785,REC-001141,Plant Head,VZIINV02,HELD,2026-08-08,Held pending further consumption evidence.
+APR-000786,REC-001142,Inventory Controller,VZIINV01,REJECTED,2026-08-17,Consumption not considered representative.
+APR-000787,REC-001143,Plant Head,VZIINV01,HELD,2026-06-19,Held pending further consumption evidence.
+APR-000788,REC-001144,Engineering Head,VZIINV02,APPROVED,2026-08-09,Approved; to be applied in SAP by VZI.
+APR-000789,REC-001147,Plant Head,VZIINV02,HELD,2026-07-18,Held pending further consumption evidence.
+APR-000790,REC-001148,Plant Head,VZIINV01,APPROVED,2026-07-29,Approved; to be applied in SAP by VZI.
+APR-000791,REC-001149,Inventory Controller,VZIINV01,APPROVED,2026-07-23,Approved; to be applied in SAP by VZI.
+APR-000792,REC-001153,Commercial Head,VZIINV02,APPROVED,2026-08-08,Approved; to be applied in SAP by VZI.
+APR-000793,REC-001154,Commercial Head,VZIINV01,APPROVED,2026-09-02,Approved; to be applied in SAP by VZI.
+APR-000794,REC-001155,Plant Head,VZIINV02,APPROVED,2026-06-10,Approved; to be applied in SAP by VZI.
+APR-000795,REC-001157,Inventory Controller,VZIINV02,APPROVED,2026-06-02,Approved; to be applied in SAP by VZI.
+APR-000796,REC-001158,Engineering Head,VZIINV02,APPROVED,2026-05-30,Approved; to be applied in SAP by VZI.
+APR-000797,REC-001161,Inventory Controller,VZIINV01,APPROVED,2026-07-06,Approved; to be applied in SAP by VZI.
+APR-000798,REC-001163,Commercial Head,VZIINV01,APPROVED,2026-08-03,Approved; to be applied in SAP by VZI.
+APR-000799,REC-001164,Commercial Head,VZIINV01,APPROVED,2026-06-19,Approved; to be applied in SAP by VZI.
+APR-000800,REC-001165,Commercial Head,VZIINV01,REJECTED,2026-06-03,Consumption not considered representative.
+APR-000801,REC-001166,Plant Head,VZIINV01,APPROVED,2026-05-18,Approved; to be applied in SAP by VZI.
+APR-000802,REC-001167,Plant Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000803,REC-001169,Inventory Controller,VZIINV02,APPROVED,2026-08-21,Approved; to be applied in SAP by VZI.
+APR-000804,REC-001171,Plant Head,VZIINV01,REJECTED,2026-06-08,Consumption not considered representative.
+APR-000805,REC-001172,Plant Head,VZIINV01,HELD,2026-06-06,Held pending further consumption evidence.
+APR-000806,REC-001176,Engineering Head,VZIINV02,APPROVED,2026-05-17,Approved; to be applied in SAP by VZI.
+APR-000807,REC-001177,Inventory Controller,VZIINV02,HELD,2026-08-30,Held pending further consumption evidence.
+APR-000808,REC-001178,Plant Head,VZIINV02,APPROVED,2026-08-12,Approved; to be applied in SAP by VZI.
+APR-000809,REC-001180,Engineering Head,VZIINV01,APPROVED,2026-05-23,Approved; to be applied in SAP by VZI.
+APR-000810,REC-001182,Plant Head,VZIINV02,HELD,2026-07-23,Held pending further consumption evidence.
+APR-000811,REC-001185,Plant Head,VZIINV02,APPROVED,2026-06-21,Approved; to be applied in SAP by VZI.
+APR-000812,REC-001187,Inventory Controller,VZIINV02,HELD,2026-08-18,Held pending further consumption evidence.
+APR-000813,REC-001188,Plant Head,VZIINV01,APPROVED,2026-08-19,Approved; to be applied in SAP by VZI.
+APR-000814,REC-001189,Plant Head,VZIINV02,REJECTED,2026-07-30,Consumption not considered representative.
+APR-000815,REC-001191,Plant Head,VZIINV01,APPROVED,2026-09-01,Approved; to be applied in SAP by VZI.
+APR-000816,REC-001193,Engineering Head,VZIINV02,APPROVED,2026-05-25,Approved; to be applied in SAP by VZI.
+APR-000817,REC-001195,Plant Head,VZIINV02,HELD,2026-07-30,Held pending further consumption evidence.
+APR-000818,REC-001197,Commercial Head,VZIINV02,REJECTED,2026-06-08,Consumption not considered representative.
+APR-000819,REC-001198,Plant Head,VZIINV01,APPROVED,2026-07-11,Approved; to be applied in SAP by VZI.
+APR-000820,REC-001199,Inventory Controller,VZIINV02,HELD,2026-07-20,Held pending further consumption evidence.
+APR-000821,REC-001200,Inventory Controller,VZIINV02,REJECTED,2026-06-09,Consumption not considered representative.
+APR-000822,REC-001201,Engineering Head,VZIINV02,APPROVED,2026-09-02,Approved; to be applied in SAP by VZI.
+APR-000823,REC-001203,Plant Head,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000824,REC-001205,Engineering Head,VZIINV02,APPROVED,2026-06-16,Approved; to be applied in SAP by VZI.
+APR-000825,REC-001206,Inventory Controller,VZIINV02,APPROVED,2026-09-05,Approved; to be applied in SAP by VZI.
+APR-000826,REC-001207,Inventory Controller,VZIINV01,HELD,2026-08-21,Held pending further consumption evidence.
+APR-000827,REC-001208,Plant Head,VZIINV01,APPROVED,2026-07-01,Approved; to be applied in SAP by VZI.
+APR-000828,REC-001209,Inventory Controller,VZIINV02,REJECTED,2026-08-24,Consumption not considered representative.
+APR-000829,REC-001211,Plant Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000830,REC-001212,Plant Head,VZIINV02,REJECTED,2026-08-30,Consumption not considered representative.
+APR-000831,REC-001213,Engineering Head,VZIINV02,APPROVED,2026-07-05,Approved; to be applied in SAP by VZI.
+APR-000832,REC-001216,Plant Head,VZIINV02,APPROVED,2026-07-29,Approved; to be applied in SAP by VZI.
+APR-000833,REC-001217,Commercial Head,VZIINV01,REJECTED,2026-05-29,Consumption not considered representative.
+APR-000834,REC-001219,Commercial Head,VZIINV02,APPROVED,2026-06-23,Approved; to be applied in SAP by VZI.
+APR-000835,REC-001220,Inventory Controller,VZIINV02,APPROVED,2026-07-16,Approved; to be applied in SAP by VZI.
+APR-000836,REC-001221,Commercial Head,VZIINV01,HELD,2026-07-01,Held pending further consumption evidence.
+APR-000837,REC-001222,Engineering Head,VZIINV02,REJECTED,2026-09-03,Consumption not considered representative.
+APR-000838,REC-001223,Commercial Head,VZIINV01,APPROVED,2026-06-27,Approved; to be applied in SAP by VZI.
+APR-000839,REC-001224,Plant Head,VZIINV01,APPROVED,2026-07-05,Approved; to be applied in SAP by VZI.
+APR-000840,REC-001225,Inventory Controller,VZIINV02,HELD,2026-08-21,Held pending further consumption evidence.
+APR-000841,REC-001228,Engineering Head,VZIINV02,APPROVED,2026-08-06,Approved; to be applied in SAP by VZI.
+APR-000842,REC-001229,Inventory Controller,VZIINV01,REJECTED,2026-06-27,Consumption not considered representative.
+APR-000843,REC-001230,Engineering Head,VZIINV02,REJECTED,2026-08-05,Consumption not considered representative.
+APR-000844,REC-001231,Inventory Controller,VZIINV02,REJECTED,2026-06-05,Consumption not considered representative.
+APR-000845,REC-001232,Plant Head,VZIINV02,REJECTED,2026-09-03,Consumption not considered representative.
+APR-000846,REC-001233,Plant Head,VZIINV02,REJECTED,2026-07-11,Consumption not considered representative.
+APR-000847,REC-001235,Commercial Head,VZIINV02,APPROVED,2026-08-09,Approved; to be applied in SAP by VZI.
+APR-000848,REC-001236,Engineering Head,VZIINV01,HELD,2026-07-30,Held pending further consumption evidence.
+APR-000849,REC-001238,Inventory Controller,VZIINV01,REJECTED,2026-06-29,Consumption not considered representative.
+APR-000850,REC-001239,Inventory Controller,VZIINV01,APPROVED,2026-07-12,Approved; to be applied in SAP by VZI.
+APR-000851,REC-001240,Inventory Controller,VZIINV02,APPROVED,2026-08-24,Approved; to be applied in SAP by VZI.
+APR-000852,REC-001241,Plant Head,VZIINV01,HELD,2026-08-01,Held pending further consumption evidence.
+APR-000853,REC-001242,Plant Head,VZIINV01,REJECTED,2026-08-14,Consumption not considered representative.
+APR-000854,REC-001243,Plant Head,VZIINV02,REJECTED,2026-09-02,Consumption not considered representative.
+APR-000855,REC-001246,Inventory Controller,VZIINV01,HELD,2026-08-31,Held pending further consumption evidence.
+APR-000856,REC-001247,Inventory Controller,VZIINV01,APPROVED,2026-08-15,Approved; to be applied in SAP by VZI.
+APR-000857,REC-001249,Inventory Controller,VZIINV01,APPROVED,2026-07-03,Approved; to be applied in SAP by VZI.
+APR-000858,REC-001250,Plant Head,VZIINV02,APPROVED,2026-06-13,Approved; to be applied in SAP by VZI.
+APR-000859,REC-001251,Inventory Controller,VZIINV01,HELD,2026-08-07,Held pending further consumption evidence.
+APR-000860,REC-001252,Inventory Controller,VZIINV02,APPROVED,2026-07-15,Approved; to be applied in SAP by VZI.
+APR-000861,REC-001257,Engineering Head,VZIINV02,REJECTED,2026-08-24,Consumption not considered representative.
+APR-000862,REC-001258,Engineering Head,VZIINV02,REJECTED,2026-06-18,Consumption not considered representative.
+APR-000863,REC-001261,Plant Head,VZIINV02,REJECTED,2026-06-14,Consumption not considered representative.
+APR-000864,REC-001262,Plant Head,VZIINV02,HELD,2026-07-23,Held pending further consumption evidence.
+APR-000865,REC-001263,Plant Head,VZIINV02,APPROVED,2026-05-29,Approved; to be applied in SAP by VZI.
+APR-000866,REC-001264,Plant Head,VZIINV02,APPROVED,2026-07-18,Approved; to be applied in SAP by VZI.
+APR-000867,REC-001265,Inventory Controller,VZIINV02,HELD,2026-07-30,Held pending further consumption evidence.
+APR-000868,REC-001266,Engineering Head,VZIINV01,APPROVED,2026-05-28,Approved; to be applied in SAP by VZI.
+APR-000869,REC-001268,Inventory Controller,VZIINV02,APPROVED,2026-08-31,Approved; to be applied in SAP by VZI.
+APR-000870,REC-001270,Commercial Head,VZIINV01,APPROVED,2026-08-21,Approved; to be applied in SAP by VZI.
+APR-000871,REC-001271,Inventory Controller,VZIINV01,HELD,2026-06-19,Held pending further consumption evidence.
+APR-000872,REC-001275,Inventory Controller,VZIINV01,APPROVED,2026-06-25,Approved; to be applied in SAP by VZI.
+APR-000873,REC-001276,Inventory Controller,VZIINV02,APPROVED,2026-08-09,Approved; to be applied in SAP by VZI.
+APR-000874,REC-001277,Inventory Controller,VZIINV02,HELD,2026-08-26,Held pending further consumption evidence.
+APR-000875,REC-001278,Plant Head,VZIINV01,HELD,2026-08-28,Held pending further consumption evidence.
+APR-000876,REC-001279,Plant Head,VZIINV01,APPROVED,2026-05-23,Approved; to be applied in SAP by VZI.
+APR-000877,REC-001280,Plant Head,VZIINV01,APPROVED,2026-06-09,Approved; to be applied in SAP by VZI.
+APR-000878,REC-001282,Engineering Head,VZIINV02,HELD,2026-05-31,Held pending further consumption evidence.
+APR-000879,REC-001283,Engineering Head,VZIINV02,HELD,2026-05-24,Held pending further consumption evidence.
+APR-000880,REC-001284,Inventory Controller,VZIINV01,APPROVED,2026-07-10,Approved; to be applied in SAP by VZI.
+APR-000881,REC-001286,Inventory Controller,VZIINV02,REJECTED,2026-05-22,Consumption not considered representative.
+APR-000882,REC-001289,Plant Head,VZIINV02,REJECTED,2026-06-20,Consumption not considered representative.
+APR-000883,REC-001290,Engineering Head,VZIINV02,REJECTED,2026-08-27,Consumption not considered representative.
+APR-000884,REC-001292,Plant Head,VZIINV01,APPROVED,2026-05-27,Approved; to be applied in SAP by VZI.
+APR-000885,REC-001293,Plant Head,VZIINV01,REJECTED,2026-05-21,Consumption not considered representative.
+APR-000886,REC-001294,Commercial Head,VZIINV02,APPROVED,2026-08-08,Approved; to be applied in SAP by VZI.
+APR-000887,REC-001295,Commercial Head,VZIINV01,HELD,2026-05-24,Held pending further consumption evidence.
+APR-000888,REC-001296,Engineering Head,VZIINV02,HELD,2026-08-04,Held pending further consumption evidence.
+APR-000889,REC-001297,Commercial Head,VZIINV02,HELD,2026-06-30,Held pending further consumption evidence.
+APR-000890,REC-001299,Commercial Head,VZIINV02,REJECTED,2026-08-14,Consumption not considered representative.
+APR-000891,REC-001300,Inventory Controller,VZIINV02,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-000892,REC-001301,Plant Head,VZIINV02,APPROVED,2026-06-25,Approved; to be applied in SAP by VZI.
+APR-000893,REC-001302,Plant Head,VZIINV01,APPROVED,2026-06-06,Approved; to be applied in SAP by VZI.
+APR-000894,REC-001303,Engineering Head,VZIINV02,HELD,2026-06-21,Held pending further consumption evidence.
+APR-000895,REC-001306,Inventory Controller,VZIINV02,APPROVED,2026-05-29,Approved; to be applied in SAP by VZI.
+APR-000896,REC-001308,Plant Head,VZIINV02,APPROVED,2026-08-04,Approved; to be applied in SAP by VZI.
+APR-000897,REC-001311,Plant Head,VZIINV01,APPROVED,2026-08-06,Approved; to be applied in SAP by VZI.
+APR-000898,REC-001312,Plant Head,VZIINV02,REJECTED,2026-07-21,Consumption not considered representative.
+APR-000899,REC-001315,Plant Head,VZIINV01,APPROVED,2026-05-25,Approved; to be applied in SAP by VZI.
+APR-000900,REC-001316,Inventory Controller,VZIINV02,HELD,2026-06-24,Held pending further consumption evidence.
+APR-000901,REC-001318,Engineering Head,VZIINV02,APPROVED,2026-06-03,Approved; to be applied in SAP by VZI.
+APR-000902,REC-001320,Plant Head,VZIINV01,REJECTED,2026-07-12,Consumption not considered representative.
+APR-000903,REC-001321,Engineering Head,VZIINV02,APPROVED,2026-09-06,Approved; to be applied in SAP by VZI.
+APR-000904,REC-001322,Engineering Head,VZIINV01,APPROVED,2026-07-19,Approved; to be applied in SAP by VZI.
+APR-000905,REC-001323,Plant Head,VZIINV01,HELD,2026-08-28,Held pending further consumption evidence.
+APR-000906,REC-001324,Plant Head,VZIINV01,APPROVED,2026-06-22,Approved; to be applied in SAP by VZI.
+APR-000907,REC-001325,Inventory Controller,VZIINV02,APPROVED,2026-07-17,Approved; to be applied in SAP by VZI.
+APR-000908,REC-001326,Engineering Head,VZIINV02,REJECTED,2026-07-23,Consumption not considered representative.
+APR-000909,REC-001327,Inventory Controller,VZIINV02,APPROVED,2026-07-12,Approved; to be applied in SAP by VZI.
+APR-000910,REC-001329,Engineering Head,VZIINV02,REJECTED,2026-08-15,Consumption not considered representative.
+APR-000911,REC-001330,Inventory Controller,VZIINV02,REJECTED,2026-06-14,Consumption not considered representative.
+APR-000912,REC-001331,Inventory Controller,VZIINV01,APPROVED,2026-06-06,Approved; to be applied in SAP by VZI.
+APR-000913,REC-001332,Inventory Controller,VZIINV01,HELD,2026-08-15,Held pending further consumption evidence.
+APR-000914,REC-001333,Plant Head,VZIINV01,APPROVED,2026-06-26,Approved; to be applied in SAP by VZI.
+APR-000915,REC-001335,Engineering Head,VZIINV02,APPROVED,2026-06-13,Approved; to be applied in SAP by VZI.
+APR-000916,REC-001336,Engineering Head,VZIINV01,REJECTED,2026-07-31,Consumption not considered representative.
+APR-000917,REC-001337,Engineering Head,VZIINV01,HELD,2026-07-17,Held pending further consumption evidence.
+APR-000918,REC-001338,Commercial Head,VZIINV01,REJECTED,2026-05-24,Consumption not considered representative.
+APR-000919,REC-001341,Engineering Head,VZIINV01,APPROVED,2026-06-23,Approved; to be applied in SAP by VZI.
+APR-000920,REC-001343,Plant Head,VZIINV02,REJECTED,2026-07-20,Consumption not considered representative.
+APR-000921,REC-001346,Plant Head,VZIINV01,APPROVED,2026-07-04,Approved; to be applied in SAP by VZI.
+APR-000922,REC-001348,Inventory Controller,VZIINV02,APPROVED,2026-07-10,Approved; to be applied in SAP by VZI.
+APR-000923,REC-001350,Inventory Controller,VZIINV01,REJECTED,2026-09-07,Consumption not considered representative.
+APR-000924,REC-001351,Inventory Controller,VZIINV01,APPROVED,2026-05-30,Approved; to be applied in SAP by VZI.
+APR-000925,REC-001352,Inventory Controller,VZIINV01,HELD,2026-06-19,Held pending further consumption evidence.
+APR-000926,REC-001353,Inventory Controller,VZIINV01,HELD,2026-07-25,Held pending further consumption evidence.
+APR-000927,REC-001354,Inventory Controller,VZIINV02,APPROVED,2026-08-26,Approved; to be applied in SAP by VZI.
+APR-000928,REC-001355,Plant Head,VZIINV02,HELD,2026-08-17,Held pending further consumption evidence.
+APR-000929,REC-001356,Plant Head,VZIINV02,APPROVED,2026-06-13,Approved; to be applied in SAP by VZI.
+APR-000930,REC-001357,Plant Head,VZIINV01,APPROVED,2026-05-26,Approved; to be applied in SAP by VZI.
+APR-000931,REC-001358,Plant Head,VZIINV02,REJECTED,2026-08-26,Consumption not considered representative.
+APR-000932,REC-001359,Inventory Controller,VZIINV01,REJECTED,2026-06-03,Consumption not considered representative.
+APR-000933,REC-001360,Plant Head,VZIINV01,APPROVED,2026-06-19,Approved; to be applied in SAP by VZI.
+APR-000934,REC-001361,Plant Head,VZIINV01,APPROVED,2026-05-24,Approved; to be applied in SAP by VZI.
+APR-000935,REC-001365,Commercial Head,VZIINV02,APPROVED,2026-08-31,Approved; to be applied in SAP by VZI.
+APR-000936,REC-001366,Engineering Head,VZIINV01,HELD,2026-08-14,Held pending further consumption evidence.
+APR-000937,REC-001367,Engineering Head,VZIINV02,REJECTED,2026-07-20,Consumption not considered representative.
+APR-000938,REC-001368,Engineering Head,VZIINV02,REJECTED,2026-08-26,Consumption not considered representative.
+APR-000939,REC-001369,Inventory Controller,VZIINV01,HELD,2026-07-10,Held pending further consumption evidence.
+APR-000940,REC-001370,Inventory Controller,VZIINV01,HELD,2026-06-18,Held pending further consumption evidence.
+APR-000941,REC-001371,Inventory Controller,VZIINV01,HELD,2026-08-24,Held pending further consumption evidence.
+APR-000942,REC-001372,Engineering Head,VZIINV01,APPROVED,2026-08-21,Approved; to be applied in SAP by VZI.
+APR-000943,REC-001373,Inventory Controller,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000944,REC-001374,Commercial Head,VZIINV02,APPROVED,2026-05-25,Approved; to be applied in SAP by VZI.
+APR-000945,REC-001375,Commercial Head,VZIINV02,REJECTED,2026-06-04,Consumption not considered representative.
+APR-000946,REC-001376,Engineering Head,VZIINV01,APPROVED,2026-06-29,Approved; to be applied in SAP by VZI.
+APR-000947,REC-001377,Plant Head,VZIINV02,REJECTED,2026-08-08,Consumption not considered representative.
+APR-000948,REC-001380,Plant Head,VZIINV02,REJECTED,2026-07-01,Consumption not considered representative.
+APR-000949,REC-001381,Commercial Head,VZIINV02,HELD,2026-08-01,Held pending further consumption evidence.
+APR-000950,REC-001382,Commercial Head,VZIINV02,APPROVED,2026-09-04,Approved; to be applied in SAP by VZI.
+APR-000951,REC-001383,Engineering Head,VZIINV02,APPROVED,2026-07-29,Approved; to be applied in SAP by VZI.
+APR-000952,REC-001384,Commercial Head,VZIINV01,APPROVED,2026-08-20,Approved; to be applied in SAP by VZI.
+APR-000953,REC-001385,Engineering Head,VZIINV02,REJECTED,2026-06-29,Consumption not considered representative.
+APR-000954,REC-001387,Inventory Controller,VZIINV02,APPROVED,2026-08-22,Approved; to be applied in SAP by VZI.
+APR-000955,REC-001388,Plant Head,VZIINV02,APPROVED,2026-08-31,Approved; to be applied in SAP by VZI.
+APR-000956,REC-001390,Commercial Head,VZIINV02,APPROVED,2026-08-25,Approved; to be applied in SAP by VZI.
+APR-000957,REC-001391,Plant Head,VZIINV01,REJECTED,2026-06-17,Consumption not considered representative.
+APR-000958,REC-001392,Inventory Controller,VZIINV02,REJECTED,2026-07-27,Consumption not considered representative.
+APR-000959,REC-001393,Inventory Controller,VZIINV01,APPROVED,2026-05-31,Approved; to be applied in SAP by VZI.
+APR-000960,REC-001394,Commercial Head,VZIINV02,APPROVED,2026-06-12,Approved; to be applied in SAP by VZI.
+APR-000961,REC-001395,Commercial Head,VZIINV02,APPROVED,2026-08-20,Approved; to be applied in SAP by VZI.
+APR-000962,REC-001397,Inventory Controller,VZIINV01,APPROVED,2026-07-30,Approved; to be applied in SAP by VZI.
+APR-000963,REC-001398,Inventory Controller,VZIINV01,APPROVED,2026-07-24,Approved; to be applied in SAP by VZI.
+APR-000964,REC-001399,Plant Head,VZIINV01,APPROVED,2026-07-15,Approved; to be applied in SAP by VZI.
+APR-000965,REC-001402,Engineering Head,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000966,REC-001403,Commercial Head,VZIINV01,HELD,2026-06-08,Held pending further consumption evidence.
+APR-000967,REC-001404,Plant Head,VZIINV01,APPROVED,2026-07-10,Approved; to be applied in SAP by VZI.
+APR-000968,REC-001405,Plant Head,VZIINV02,APPROVED,2026-06-08,Approved; to be applied in SAP by VZI.
+APR-000969,REC-001408,Plant Head,VZIINV02,APPROVED,2026-09-02,Approved; to be applied in SAP by VZI.
+APR-000970,REC-001409,Engineering Head,VZIINV01,APPROVED,2026-08-01,Approved; to be applied in SAP by VZI.
+APR-000971,REC-001411,Plant Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000972,REC-001412,Plant Head,VZIINV02,APPROVED,2026-06-11,Approved; to be applied in SAP by VZI.
+APR-000973,REC-001413,Plant Head,VZIINV01,APPROVED,2026-06-10,Approved; to be applied in SAP by VZI.
+APR-000974,REC-001415,Commercial Head,VZIINV02,HELD,2026-07-21,Held pending further consumption evidence.
+APR-000975,REC-001416,Commercial Head,VZIINV01,APPROVED,2026-08-23,Approved; to be applied in SAP by VZI.
+APR-000976,REC-001417,Engineering Head,VZIINV01,REJECTED,2026-09-07,Consumption not considered representative.
+APR-000977,REC-001418,Engineering Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-000978,REC-001419,Engineering Head,VZIINV02,APPROVED,2026-06-28,Approved; to be applied in SAP by VZI.
+APR-000979,REC-001421,Plant Head,VZIINV02,HELD,2026-09-03,Held pending further consumption evidence.
+APR-000980,REC-001422,Commercial Head,VZIINV02,REJECTED,2026-08-04,Consumption not considered representative.
+APR-000981,REC-001423,Inventory Controller,VZIINV02,HELD,2026-08-30,Held pending further consumption evidence.
+APR-000982,REC-001425,Inventory Controller,VZIINV02,REJECTED,2026-07-29,Consumption not considered representative.
+APR-000983,REC-001427,Inventory Controller,VZIINV01,APPROVED,2026-07-11,Approved; to be applied in SAP by VZI.
+APR-000984,REC-001428,Plant Head,VZIINV01,APPROVED,2026-06-28,Approved; to be applied in SAP by VZI.
+APR-000985,REC-001430,Engineering Head,VZIINV02,APPROVED,2026-08-05,Approved; to be applied in SAP by VZI.
+APR-000986,REC-001431,Plant Head,VZIINV02,APPROVED,2026-08-18,Approved; to be applied in SAP by VZI.
+APR-000987,REC-001432,Commercial Head,VZIINV01,HELD,2026-08-31,Held pending further consumption evidence.
+APR-000988,REC-001436,Plant Head,VZIINV02,APPROVED,2026-05-12,Approved; to be applied in SAP by VZI.
+APR-000989,REC-001439,Commercial Head,VZIINV01,APPROVED,2026-06-18,Approved; to be applied in SAP by VZI.
+APR-000990,REC-001440,Commercial Head,VZIINV02,APPROVED,2026-05-24,Approved; to be applied in SAP by VZI.
+APR-000991,REC-001443,Engineering Head,VZIINV01,REJECTED,2026-07-07,Consumption not considered representative.
+APR-000992,REC-001444,Engineering Head,VZIINV01,APPROVED,2026-08-24,Approved; to be applied in SAP by VZI.
+APR-000993,REC-001445,Commercial Head,VZIINV02,APPROVED,2026-07-23,Approved; to be applied in SAP by VZI.
+APR-000994,REC-001446,Commercial Head,VZIINV01,APPROVED,2026-08-18,Approved; to be applied in SAP by VZI.
+APR-000995,REC-001447,Commercial Head,VZIINV02,APPROVED,2026-07-19,Approved; to be applied in SAP by VZI.
+APR-000996,REC-001448,Commercial Head,VZIINV01,APPROVED,2026-06-18,Approved; to be applied in SAP by VZI.
+APR-000997,REC-001449,Commercial Head,VZIINV01,APPROVED,2026-08-03,Approved; to be applied in SAP by VZI.
+APR-000998,REC-001450,Plant Head,VZIINV02,HELD,2026-08-16,Held pending further consumption evidence.
+APR-000999,REC-001451,Plant Head,VZIINV01,REJECTED,2026-07-23,Consumption not considered representative.
+APR-001000,REC-001452,Plant Head,VZIINV02,APPROVED,2026-06-18,Approved; to be applied in SAP by VZI.
+APR-001001,REC-001453,Engineering Head,VZIINV01,REJECTED,2026-06-06,Consumption not considered representative.
+APR-001002,REC-001454,Inventory Controller,VZIINV02,HELD,2026-08-01,Held pending further consumption evidence.
+APR-001003,REC-001455,Inventory Controller,VZIINV01,REJECTED,2026-07-15,Consumption not considered representative.
+APR-001004,REC-001456,Inventory Controller,VZIINV01,APPROVED,2026-05-29,Approved; to be applied in SAP by VZI.
+APR-001005,REC-001458,Inventory Controller,VZIINV01,HELD,2026-08-10,Held pending further consumption evidence.
+APR-001006,REC-001459,Plant Head,VZIINV02,REJECTED,2026-07-16,Consumption not considered representative.
+APR-001007,REC-001460,Inventory Controller,VZIINV01,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-001008,REC-001462,Plant Head,VZIINV01,REJECTED,2026-07-07,Consumption not considered representative.
+APR-001009,REC-001463,Engineering Head,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-001010,REC-001464,Plant Head,VZIINV02,HELD,2026-05-29,Held pending further consumption evidence.
+APR-001011,REC-001466,Plant Head,VZIINV02,APPROVED,2026-08-15,Approved; to be applied in SAP by VZI.
+APR-001012,REC-001469,Engineering Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-001013,REC-001470,Plant Head,VZIINV02,HELD,2026-06-17,Held pending further consumption evidence.
+APR-001014,REC-001471,Commercial Head,VZIINV02,HELD,2026-08-30,Held pending further consumption evidence.
+APR-001015,REC-001473,Inventory Controller,VZIINV02,APPROVED,2026-06-19,Approved; to be applied in SAP by VZI.
+APR-001016,REC-001474,Inventory Controller,VZIINV01,APPROVED,2026-08-21,Approved; to be applied in SAP by VZI.
+APR-001017,REC-001477,Engineering Head,VZIINV02,APPROVED,2026-06-20,Approved; to be applied in SAP by VZI.
+APR-001018,REC-001479,Plant Head,VZIINV01,APPROVED,2026-07-08,Approved; to be applied in SAP by VZI.
+APR-001019,REC-001480,Engineering Head,VZIINV01,APPROVED,2026-06-17,Approved; to be applied in SAP by VZI.
+APR-001020,REC-001482,Engineering Head,VZIINV02,APPROVED,2026-08-19,Approved; to be applied in SAP by VZI.
+APR-001021,REC-001483,Plant Head,VZIINV01,APPROVED,2026-07-02,Approved; to be applied in SAP by VZI.
+APR-001022,REC-001484,Plant Head,VZIINV02,REJECTED,2026-06-06,Consumption not considered representative.
+APR-001023,REC-001486,Commercial Head,VZIINV02,APPROVED,2026-06-22,Approved; to be applied in SAP by VZI.
+APR-001024,REC-001489,Plant Head,VZIINV02,REJECTED,2026-06-05,Consumption not considered representative.
+APR-001025,REC-001490,Plant Head,VZIINV02,APPROVED,2026-07-31,Approved; to be applied in SAP by VZI.
+APR-001026,REC-001494,Engineering Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-001027,REC-001495,Engineering Head,VZIINV02,APPROVED,2026-08-06,Approved; to be applied in SAP by VZI.
+APR-001028,REC-001497,Plant Head,VZIINV01,REJECTED,2026-08-13,Consumption not considered representative.
+APR-001029,REC-001498,Plant Head,VZIINV02,REJECTED,2026-05-20,Consumption not considered representative.
+APR-001030,REC-001499,Engineering Head,VZIINV02,HELD,2026-08-09,Held pending further consumption evidence.
+APR-001031,REC-001500,Inventory Controller,VZIINV02,APPROVED,2026-07-28,Approved; to be applied in SAP by VZI.
+APR-001032,REC-001501,Commercial Head,VZIINV02,APPROVED,2026-08-20,Approved; to be applied in SAP by VZI.
+APR-001033,REC-001502,Engineering Head,VZIINV02,APPROVED,2026-07-20,Approved; to be applied in SAP by VZI.
+APR-001034,REC-001503,Engineering Head,VZIINV02,APPROVED,2026-05-26,Approved; to be applied in SAP by VZI.
+APR-001035,REC-001504,Inventory Controller,VZIINV01,APPROVED,2026-07-03,Approved; to be applied in SAP by VZI.
+APR-001036,REC-001506,Inventory Controller,VZIINV02,APPROVED,2026-06-04,Approved; to be applied in SAP by VZI.
+APR-001037,REC-001508,Plant Head,VZIINV02,APPROVED,2026-06-05,Approved; to be applied in SAP by VZI.
+APR-001038,REC-001509,Inventory Controller,VZIINV02,HELD,2026-09-03,Held pending further consumption evidence.
+APR-001039,REC-001511,Commercial Head,VZIINV01,APPROVED,2026-06-25,Approved; to be applied in SAP by VZI.
+APR-001040,REC-001512,Plant Head,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-001041,REC-001513,Plant Head,VZIINV01,APPROVED,2026-06-28,Approved; to be applied in SAP by VZI.
+APR-001042,REC-001514,Inventory Controller,VZIINV02,APPROVED,2026-08-10,Approved; to be applied in SAP by VZI.
+APR-001043,REC-001516,Inventory Controller,VZIINV02,APPROVED,2026-06-07,Approved; to be applied in SAP by VZI.
+APR-001044,REC-001517,Inventory Controller,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-001045,REC-001518,Inventory Controller,VZIINV01,APPROVED,2026-08-12,Approved; to be applied in SAP by VZI.
+APR-001046,REC-001519,Plant Head,VZIINV01,REJECTED,2026-06-09,Consumption not considered representative.
+APR-001047,REC-001521,Engineering Head,VZIINV02,APPROVED,2026-05-27,Approved; to be applied in SAP by VZI.
+APR-001048,REC-001523,Engineering Head,VZIINV01,REJECTED,2026-07-05,Consumption not considered representative.
+APR-001049,REC-001524,Plant Head,VZIINV02,APPROVED,2026-07-06,Approved; to be applied in SAP by VZI.
+APR-001050,REC-001526,Plant Head,VZIINV02,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-001051,REC-001528,Engineering Head,VZIINV01,APPROVED,2026-06-09,Approved; to be applied in SAP by VZI.
+APR-001052,REC-001529,Plant Head,VZIINV01,APPROVED,2026-06-24,Approved; to be applied in SAP by VZI.
+APR-001053,REC-001534,Inventory Controller,VZIINV01,APPROVED,2026-06-22,Approved; to be applied in SAP by VZI.
+APR-001054,REC-001535,Engineering Head,VZIINV01,REJECTED,2026-08-27,Consumption not considered representative.
+APR-001055,REC-001536,Inventory Controller,VZIINV02,HELD,2026-07-06,Held pending further consumption evidence.
+APR-001056,REC-001539,Plant Head,VZIINV02,APPROVED,2026-08-07,Approved; to be applied in SAP by VZI.
+APR-001057,REC-001541,Inventory Controller,VZIINV02,APPROVED,2026-07-30,Approved; to be applied in SAP by VZI.
+APR-001058,REC-001543,Engineering Head,VZIINV01,APPROVED,2026-09-05,Approved; to be applied in SAP by VZI.
+APR-001059,REC-001544,Engineering Head,VZIINV01,APPROVED,2026-08-05,Approved; to be applied in SAP by VZI.
+APR-001060,REC-001546,Plant Head,VZIINV02,APPROVED,2026-08-18,Approved; to be applied in SAP by VZI.
+APR-001061,REC-001548,Plant Head,VZIINV01,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-001062,REC-001550,Engineering Head,VZIINV01,HELD,2026-09-07,Held pending further consumption evidence.
+APR-001063,REC-001552,Inventory Controller,VZIINV01,REJECTED,2026-07-20,Consumption not considered representative.
+APR-001064,REC-001553,Commercial Head,VZIINV01,HELD,2026-07-12,Held pending further consumption evidence.
+APR-001065,REC-001554,Plant Head,VZIINV02,HELD,2026-05-21,Held pending further consumption evidence.
+APR-001066,REC-001555,Plant Head,VZIINV01,REJECTED,2026-06-25,Consumption not considered representative.
+APR-001067,REC-001558,Plant Head,VZIINV01,APPROVED,2026-07-20,Approved; to be applied in SAP by VZI.
+APR-001068,REC-001559,Plant Head,VZIINV02,APPROVED,2026-08-21,Approved; to be applied in SAP by VZI.
+APR-001069,REC-001561,Plant Head,VZIINV01,REJECTED,2026-07-29,Consumption not considered representative.
+APR-001070,REC-001563,Plant Head,VZIINV02,APPROVED,2026-06-21,Approved; to be applied in SAP by VZI.
+APR-001071,REC-001564,Inventory Controller,VZIINV01,REJECTED,2026-09-07,Consumption not considered representative.
+APR-001072,REC-001565,Commercial Head,VZIINV02,REJECTED,2026-07-15,Consumption not considered representative.
+APR-001073,REC-001566,Commercial Head,VZIINV02,REJECTED,2026-08-29,Consumption not considered representative.
+APR-001074,REC-001567,Plant Head,VZIINV01,APPROVED,2026-05-30,Approved; to be applied in SAP by VZI.
+APR-001075,REC-001569,Inventory Controller,VZIINV01,APPROVED,2026-06-15,Approved; to be applied in SAP by VZI.
+APR-001076,REC-001570,Inventory Controller,VZIINV02,APPROVED,2026-07-08,Approved; to be applied in SAP by VZI.
+APR-001077,REC-001572,Commercial Head,VZIINV02,APPROVED,2026-08-19,Approved; to be applied in SAP by VZI.
+APR-001078,REC-001573,Inventory Controller,VZIINV01,APPROVED,2026-08-20,Approved; to be applied in SAP by VZI.
+APR-001079,REC-001574,Inventory Controller,VZIINV02,APPROVED,2026-05-22,Approved; to be applied in SAP by VZI.
+APR-001080,REC-001575,Inventory Controller,VZIINV01,APPROVED,2026-06-16,Approved; to be applied in SAP by VZI.
+APR-001081,REC-001576,Plant Head,VZIINV02,APPROVED,2026-08-09,Approved; to be applied in SAP by VZI.
+APR-001082,REC-001577,Plant Head,VZIINV01,HELD,2026-07-18,Held pending further consumption evidence.
+APR-001083,REC-001578,Plant Head,VZIINV02,APPROVED,2026-06-20,Approved; to be applied in SAP by VZI.
+APR-001084,REC-001580,Plant Head,VZIINV02,APPROVED,2026-06-29,Approved; to be applied in SAP by VZI.
+APR-001085,REC-001581,Plant Head,VZIINV02,REJECTED,2026-08-06,Consumption not considered representative.
+APR-001086,REC-001582,Plant Head,VZIINV01,APPROVED,2026-08-14,Approved; to be applied in SAP by VZI.
+APR-001087,REC-001583,Plant Head,VZIINV02,APPROVED,2026-07-20,Approved; to be applied in SAP by VZI.
+APR-001088,REC-001585,Inventory Controller,VZIINV02,APPROVED,2026-08-23,Approved; to be applied in SAP by VZI.
+APR-001089,REC-001586,Inventory Controller,VZIINV02,APPROVED,2026-05-24,Approved; to be applied in SAP by VZI.
+APR-001090,REC-001587,Engineering Head,VZIINV02,HELD,2026-07-08,Held pending further consumption evidence.
+APR-001091,REC-001589,Plant Head,VZIINV01,APPROVED,2026-08-05,Approved; to be applied in SAP by VZI.
+APR-001092,REC-001591,Engineering Head,VZIINV01,REJECTED,2026-05-23,Consumption not considered representative.
+APR-001093,REC-001592,Commercial Head,VZIINV01,REJECTED,2026-07-24,Consumption not considered representative.
+APR-001094,REC-001594,Plant Head,VZIINV02,APPROVED,2026-06-12,Approved; to be applied in SAP by VZI.
+APR-001095,REC-001595,Plant Head,VZIINV01,REJECTED,2026-09-07,Consumption not considered representative.
+APR-001096,REC-001596,Plant Head,VZIINV02,HELD,2026-07-10,Held pending further consumption evidence.
+APR-001097,REC-001597,Engineering Head,VZIINV02,HELD,2026-07-26,Held pending further consumption evidence.
+APR-001098,REC-001600,Plant Head,VZIINV02,HELD,2026-08-24,Held pending further consumption evidence.
+APR-001099,REC-001602,Inventory Controller,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-001100,REC-001603,Engineering Head,VZIINV01,APPROVED,2026-08-01,Approved; to be applied in SAP by VZI.
+APR-001101,REC-001604,Engineering Head,VZIINV01,APPROVED,2026-07-25,Approved; to be applied in SAP by VZI.
+APR-001102,REC-001605,Inventory Controller,VZIINV01,APPROVED,2026-08-11,Approved; to be applied in SAP by VZI.
+APR-001103,REC-001606,Plant Head,VZIINV02,APPROVED,2026-07-20,Approved; to be applied in SAP by VZI.
+APR-001104,REC-001607,Plant Head,VZIINV01,APPROVED,2026-07-20,Approved; to be applied in SAP by VZI.
+APR-001105,REC-001608,Plant Head,VZIINV02,APPROVED,2026-05-14,Approved; to be applied in SAP by VZI.
+APR-001106,REC-001609,Plant Head,VZIINV02,APPROVED,2026-06-20,Approved; to be applied in SAP by VZI.
+APR-001107,REC-001610,Engineering Head,VZIINV02,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-001108,REC-001615,Plant Head,VZIINV02,REJECTED,2026-06-20,Consumption not considered representative.
+APR-001109,REC-001616,Commercial Head,VZIINV01,APPROVED,2026-08-17,Approved; to be applied in SAP by VZI.
+APR-001110,REC-001617,Commercial Head,VZIINV01,REJECTED,2026-09-05,Consumption not considered representative.
+APR-001111,REC-001618,Commercial Head,VZIINV01,APPROVED,2026-05-19,Approved; to be applied in SAP by VZI.
+APR-001112,REC-001619,Commercial Head,VZIINV01,APPROVED,2026-06-21,Approved; to be applied in SAP by VZI.
+APR-001113,REC-001622,Commercial Head,VZIINV01,APPROVED,2026-07-02,Approved; to be applied in SAP by VZI.
+APR-001114,REC-001623,Engineering Head,VZIINV01,REJECTED,2026-06-02,Consumption not considered representative.
+APR-001115,REC-001624,Engineering Head,VZIINV01,REJECTED,2026-07-16,Consumption not considered representative.
+APR-001116,REC-001625,Commercial Head,VZIINV01,REJECTED,2026-08-18,Consumption not considered representative.
+APR-001117,REC-001628,Inventory Controller,VZIINV02,APPROVED,2026-07-24,Approved; to be applied in SAP by VZI.
+APR-001118,REC-001629,Inventory Controller,VZIINV02,APPROVED,2026-06-03,Approved; to be applied in SAP by VZI.
+APR-001119,REC-001631,Engineering Head,VZIINV02,APPROVED,2026-08-07,Approved; to be applied in SAP by VZI.
+APR-001120,REC-001632,Engineering Head,VZIINV02,APPROVED,2026-08-12,Approved; to be applied in SAP by VZI.
+APR-001121,REC-001633,Commercial Head,VZIINV01,APPROVED,2026-07-10,Approved; to be applied in SAP by VZI.
+APR-001122,REC-001634,Engineering Head,VZIINV02,APPROVED,2026-08-27,Approved; to be applied in SAP by VZI.
+APR-001123,REC-001635,Engineering Head,VZIINV02,REJECTED,2026-05-16,Consumption not considered representative.
+APR-001124,REC-001638,Engineering Head,VZIINV01,APPROVED,2026-05-24,Approved; to be applied in SAP by VZI.
+APR-001125,REC-001640,Inventory Controller,VZIINV01,REJECTED,2026-08-01,Consumption not considered representative.
+APR-001126,REC-001641,Engineering Head,VZIINV02,APPROVED,2026-05-26,Approved; to be applied in SAP by VZI.
+APR-001127,REC-001644,Inventory Controller,VZIINV01,HELD,2026-08-13,Held pending further consumption evidence.
+APR-001128,REC-001645,Inventory Controller,VZIINV01,APPROVED,2026-08-28,Approved; to be applied in SAP by VZI.
+APR-001129,REC-001646,Engineering Head,VZIINV01,REJECTED,2026-07-21,Consumption not considered representative.
+APR-001130,REC-001648,Engineering Head,VZIINV02,APPROVED,2026-08-18,Approved; to be applied in SAP by VZI.
+APR-001131,REC-001649,Plant Head,VZIINV02,REJECTED,2026-06-02,Consumption not considered representative.
+APR-001132,REC-001650,Plant Head,VZIINV02,REJECTED,2026-09-06,Consumption not considered representative.
+APR-001133,REC-001651,Inventory Controller,VZIINV01,HELD,2026-06-02,Held pending further consumption evidence.
+APR-001134,REC-001653,Plant Head,VZIINV01,APPROVED,2026-08-30,Approved; to be applied in SAP by VZI.
+APR-001135,REC-001654,Plant Head,VZIINV02,HELD,2026-08-03,Held pending further consumption evidence.
+APR-001136,REC-001656,Engineering Head,VZIINV02,APPROVED,2026-08-27,Approved; to be applied in SAP by VZI.
+APR-001137,REC-001657,Inventory Controller,VZIINV02,APPROVED,2026-08-30,Approved; to be applied in SAP by VZI.
+APR-001138,REC-001658,Inventory Controller,VZIINV02,APPROVED,2026-08-01,Approved; to be applied in SAP by VZI.
+APR-001139,REC-001659,Inventory Controller,VZIINV02,REJECTED,2026-06-19,Consumption not considered representative.
+APR-001140,REC-001664,Inventory Controller,VZIINV01,REJECTED,2026-07-23,Consumption not considered representative.
+APR-001141,REC-001665,Inventory Controller,VZIINV02,APPROVED,2026-08-21,Approved; to be applied in SAP by VZI.
+APR-001142,REC-001666,Inventory Controller,VZIINV02,APPROVED,2026-07-15,Approved; to be applied in SAP by VZI.
+APR-001143,REC-001667,Plant Head,VZIINV01,HELD,2026-07-01,Held pending further consumption evidence.
+APR-001144,REC-001669,Engineering Head,VZIINV01,APPROVED,2026-07-23,Approved; to be applied in SAP by VZI.
+APR-001145,REC-001670,Engineering Head,VZIINV01,APPROVED,2026-08-16,Approved; to be applied in SAP by VZI.
+APR-001146,REC-001672,Inventory Controller,VZIINV01,HELD,2026-09-05,Held pending further consumption evidence.
+APR-001147,REC-001674,Plant Head,VZIINV02,APPROVED,2026-08-20,Approved; to be applied in SAP by VZI.
+APR-001148,REC-001677,Engineering Head,VZIINV02,REJECTED,2026-08-31,Consumption not considered representative.
+APR-001149,REC-001678,Plant Head,VZIINV01,HELD,2026-08-17,Held pending further consumption evidence.
+APR-001150,REC-001679,Inventory Controller,VZIINV02,APPROVED,2026-07-30,Approved; to be applied in SAP by VZI.
+APR-001151,REC-001680,Commercial Head,VZIINV01,APPROVED,2026-06-10,Approved; to be applied in SAP by VZI.
+APR-001152,REC-001682,Inventory Controller,VZIINV01,APPROVED,2026-08-01,Approved; to be applied in SAP by VZI.
+APR-001153,REC-001683,Inventory Controller,VZIINV02,APPROVED,2026-07-29,Approved; to be applied in SAP by VZI.
+APR-001154,REC-001684,Plant Head,VZIINV02,HELD,2026-06-16,Held pending further consumption evidence.
+APR-001155,REC-001686,Plant Head,VZIINV01,REJECTED,2026-07-31,Consumption not considered representative.
+APR-001156,REC-001689,Plant Head,VZIINV02,APPROVED,2026-07-27,Approved; to be applied in SAP by VZI.
+APR-001157,REC-001691,Engineering Head,VZIINV02,HELD,2026-07-19,Held pending further consumption evidence.
+APR-001158,REC-001692,Commercial Head,VZIINV02,APPROVED,2026-08-26,Approved; to be applied in SAP by VZI.
+APR-001159,REC-001693,Plant Head,VZIINV02,HELD,2026-06-19,Held pending further consumption evidence.
+APR-001160,REC-001695,Plant Head,VZIINV01,HELD,2026-06-18,Held pending further consumption evidence.
+APR-001161,REC-001696,Plant Head,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-001162,REC-001697,Plant Head,VZIINV01,APPROVED,2026-08-03,Approved; to be applied in SAP by VZI.
+APR-001163,REC-001699,Engineering Head,VZIINV02,APPROVED,2026-07-13,Approved; to be applied in SAP by VZI.
+APR-001164,REC-001700,Engineering Head,VZIINV01,HELD,2026-07-01,Held pending further consumption evidence.
+APR-001165,REC-001701,Commercial Head,VZIINV02,REJECTED,2026-07-24,Consumption not considered representative.
+APR-001166,REC-001702,Engineering Head,VZIINV01,APPROVED,2026-07-16,Approved; to be applied in SAP by VZI.
+APR-001167,REC-001703,Inventory Controller,VZIINV01,APPROVED,2026-05-31,Approved; to be applied in SAP by VZI.
+APR-001168,REC-001705,Inventory Controller,VZIINV01,REJECTED,2026-09-06,Consumption not considered representative.
+APR-001169,REC-001706,Inventory Controller,VZIINV02,HELD,2026-07-06,Held pending further consumption evidence.
+APR-001170,REC-001707,Engineering Head,VZIINV02,REJECTED,2026-08-10,Consumption not considered representative.
+APR-001171,REC-001708,Inventory Controller,VZIINV01,HELD,2026-06-08,Held pending further consumption evidence.
+APR-001172,REC-001709,Inventory Controller,VZIINV01,APPROVED,2026-05-14,Approved; to be applied in SAP by VZI.
+APR-001173,REC-001712,Commercial Head,VZIINV01,REJECTED,2026-08-17,Consumption not considered representative.
+APR-001174,REC-001713,Commercial Head,VZIINV01,APPROVED,2026-09-05,Approved; to be applied in SAP by VZI.
+APR-001175,REC-001714,Inventory Controller,VZIINV01,REJECTED,2026-06-15,Consumption not considered representative.
+APR-001176,REC-001715,Commercial Head,VZIINV01,APPROVED,2026-05-22,Approved; to be applied in SAP by VZI.
+APR-001177,REC-001716,Inventory Controller,VZIINV02,REJECTED,2026-07-23,Consumption not considered representative.
+APR-001178,REC-001717,Plant Head,VZIINV01,APPROVED,2026-07-28,Approved; to be applied in SAP by VZI.
+APR-001179,REC-001718,Commercial Head,VZIINV01,APPROVED,2026-08-20,Approved; to be applied in SAP by VZI.
+APR-001180,REC-001719,Engineering Head,VZIINV01,REJECTED,2026-09-05,Consumption not considered representative.
+APR-001181,REC-001720,Commercial Head,VZIINV02,APPROVED,2026-08-11,Approved; to be applied in SAP by VZI.
+APR-001182,REC-001721,Inventory Controller,VZIINV02,REJECTED,2026-08-19,Consumption not considered representative.
+APR-001183,REC-001722,Plant Head,VZIINV02,HELD,2026-07-09,Held pending further consumption evidence.
+APR-001184,REC-001724,Plant Head,VZIINV02,APPROVED,2026-08-24,Approved; to be applied in SAP by VZI.
+APR-001185,REC-001725,Plant Head,VZIINV02,APPROVED,2026-05-18,Approved; to be applied in SAP by VZI.
+APR-001186,REC-001726,Inventory Controller,VZIINV01,APPROVED,2026-06-27,Approved; to be applied in SAP by VZI.
+APR-001187,REC-001727,Inventory Controller,VZIINV01,APPROVED,2026-07-06,Approved; to be applied in SAP by VZI.
+APR-001188,REC-001728,Commercial Head,VZIINV01,REJECTED,2026-06-15,Consumption not considered representative.
+APR-001189,REC-001731,Commercial Head,VZIINV01,APPROVED,2026-06-10,Approved; to be applied in SAP by VZI.
+APR-001190,REC-001732,Inventory Controller,VZIINV01,APPROVED,2026-08-16,Approved; to be applied in SAP by VZI.
+APR-001191,REC-001734,Plant Head,VZIINV02,APPROVED,2026-07-12,Approved; to be applied in SAP by VZI.
+APR-001192,REC-001735,Plant Head,VZIINV01,APPROVED,2026-07-19,Approved; to be applied in SAP by VZI.
+APR-001193,REC-001736,Inventory Controller,VZIINV01,APPROVED,2026-08-16,Approved; to be applied in SAP by VZI.
+APR-001194,REC-001738,Engineering Head,VZIINV02,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-001195,REC-001739,Inventory Controller,VZIINV01,REJECTED,2026-08-31,Consumption not considered representative.
+APR-001196,REC-001740,Inventory Controller,VZIINV02,REJECTED,2026-08-30,Consumption not considered representative.
+APR-001197,REC-001741,Inventory Controller,VZIINV02,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-001198,REC-001742,Inventory Controller,VZIINV02,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-001199,REC-001743,Inventory Controller,VZIINV01,APPROVED,2026-05-26,Approved; to be applied in SAP by VZI.
+APR-001200,REC-001744,Engineering Head,VZIINV02,HELD,2026-05-27,Held pending further consumption evidence.
+APR-001201,REC-001745,Engineering Head,VZIINV02,APPROVED,2026-05-27,Approved; to be applied in SAP by VZI.
+APR-001202,REC-001747,Inventory Controller,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-001203,REC-001748,Plant Head,VZIINV02,APPROVED,2026-06-23,Approved; to be applied in SAP by VZI.
+APR-001204,REC-001751,Plant Head,VZIINV01,REJECTED,2026-05-20,Consumption not considered representative.
+APR-001205,REC-001752,Plant Head,VZIINV01,REJECTED,2026-08-16,Consumption not considered representative.
+APR-001206,REC-001753,Commercial Head,VZIINV02,REJECTED,2026-08-24,Consumption not considered representative.
+APR-001207,REC-001754,Engineering Head,VZIINV01,APPROVED,2026-09-06,Approved; to be applied in SAP by VZI.
+APR-001208,REC-001755,Plant Head,VZIINV02,APPROVED,2026-08-22,Approved; to be applied in SAP by VZI.
+APR-001209,REC-001756,Plant Head,VZIINV02,REJECTED,2026-08-24,Consumption not considered representative.
+APR-001210,REC-001758,Inventory Controller,VZIINV02,HELD,2026-08-14,Held pending further consumption evidence.
+APR-001211,REC-001759,Inventory Controller,VZIINV02,APPROVED,2026-08-26,Approved; to be applied in SAP by VZI.
+APR-001212,REC-001760,Inventory Controller,VZIINV01,APPROVED,2026-06-22,Approved; to be applied in SAP by VZI.
+APR-001213,REC-001763,Plant Head,VZIINV02,HELD,2026-08-22,Held pending further consumption evidence.
+APR-001214,REC-001764,Inventory Controller,VZIINV01,APPROVED,2026-08-21,Approved; to be applied in SAP by VZI.
+APR-001215,REC-001767,Inventory Controller,VZIINV01,APPROVED,2026-07-21,Approved; to be applied in SAP by VZI.
+APR-001216,REC-001768,Plant Head,VZIINV02,APPROVED,2026-06-18,Approved; to be applied in SAP by VZI.
+APR-001217,REC-001769,Plant Head,VZIINV02,APPROVED,2026-08-17,Approved; to be applied in SAP by VZI.
+APR-001218,REC-001770,Plant Head,VZIINV01,REJECTED,2026-07-12,Consumption not considered representative.
+APR-001219,REC-001771,Plant Head,VZIINV01,REJECTED,2026-07-04,Consumption not considered representative.
+APR-001220,REC-001775,Inventory Controller,VZIINV01,APPROVED,2026-06-07,Approved; to be applied in SAP by VZI.
+APR-001221,REC-001776,Engineering Head,VZIINV02,REJECTED,2026-06-07,Consumption not considered representative.
+APR-001222,REC-001777,Plant Head,VZIINV02,APPROVED,2026-06-07,Approved; to be applied in SAP by VZI.
+APR-001223,REC-001778,Plant Head,VZIINV01,APPROVED,2026-06-26,Approved; to be applied in SAP by VZI.
+APR-001224,REC-001779,Inventory Controller,VZIINV01,REJECTED,2026-06-05,Consumption not considered representative.
+APR-001225,REC-001780,Inventory Controller,VZIINV01,HELD,2026-07-11,Held pending further consumption evidence.
+APR-001226,REC-001781,Commercial Head,VZIINV02,APPROVED,2026-08-17,Approved; to be applied in SAP by VZI.
+APR-001227,REC-001782,Plant Head,VZIINV02,APPROVED,2026-08-23,Approved; to be applied in SAP by VZI.
+APR-001228,REC-001785,Inventory Controller,VZIINV01,APPROVED,2026-06-01,Approved; to be applied in SAP by VZI.
+APR-001229,REC-001787,Commercial Head,VZIINV02,APPROVED,2026-06-12,Approved; to be applied in SAP by VZI.
+APR-001230,REC-001788,Commercial Head,VZIINV01,REJECTED,2026-08-12,Consumption not considered representative.
+APR-001231,REC-001789,Commercial Head,VZIINV01,APPROVED,2026-08-28,Approved; to be applied in SAP by VZI.
+APR-001232,REC-001790,Inventory Controller,VZIINV02,HELD,2026-09-02,Held pending further consumption evidence.
+APR-001233,REC-001791,Inventory Controller,VZIINV02,HELD,2026-07-14,Held pending further consumption evidence.
+APR-001234,REC-001792,Inventory Controller,VZIINV02,APPROVED,2026-07-08,Approved; to be applied in SAP by VZI.
+APR-001235,REC-001794,Commercial Head,VZIINV01,APPROVED,2026-08-08,Approved; to be applied in SAP by VZI.
+APR-001236,REC-001795,Inventory Controller,VZIINV01,APPROVED,2026-09-04,Approved; to be applied in SAP by VZI.
+APR-001237,REC-001797,Engineering Head,VZIINV02,REJECTED,2026-09-05,Consumption not considered representative.
+APR-001238,REC-001798,Engineering Head,VZIINV01,REJECTED,2026-07-14,Consumption not considered representative.
+APR-001239,REC-001799,Engineering Head,VZIINV02,APPROVED,2026-07-27,Approved; to be applied in SAP by VZI.
+APR-001240,REC-001801,Plant Head,VZIINV02,HELD,2026-06-07,Held pending further consumption evidence.
+APR-001241,REC-001802,Inventory Controller,VZIINV02,APPROVED,2026-07-17,Approved; to be applied in SAP by VZI.
+APR-001242,REC-001803,Engineering Head,VZIINV02,APPROVED,2026-08-10,Approved; to be applied in SAP by VZI.
+APR-001243,REC-001804,Inventory Controller,VZIINV02,APPROVED,2026-08-23,Approved; to be applied in SAP by VZI.
+APR-001244,REC-001805,Inventory Controller,VZIINV01,REJECTED,2026-06-16,Consumption not considered representative.
+APR-001245,REC-001810,Engineering Head,VZIINV01,HELD,2026-08-06,Held pending further consumption evidence.
+APR-001246,REC-001811,Commercial Head,VZIINV02,HELD,2026-09-07,Held pending further consumption evidence.
+APR-001247,REC-001812,Commercial Head,VZIINV02,APPROVED,2026-09-04,Approved; to be applied in SAP by VZI.
+APR-001248,REC-001813,Commercial Head,VZIINV01,APPROVED,2026-07-09,Approved; to be applied in SAP by VZI.
+APR-001249,REC-001814,Inventory Controller,VZIINV01,REJECTED,2026-07-02,Consumption not considered representative.
+APR-001250,REC-001815,Plant Head,VZIINV01,HELD,2026-07-23,Held pending further consumption evidence.
+APR-001251,REC-001816,Inventory Controller,VZIINV01,HELD,2026-09-06,Held pending further consumption evidence.
+APR-001252,REC-001817,Inventory Controller,VZIINV02,HELD,2026-08-21,Held pending further consumption evidence.
+APR-001253,REC-001818,Engineering Head,VZIINV01,APPROVED,2026-06-07,Approved; to be applied in SAP by VZI.
+APR-001254,REC-001819,Plant Head,VZIINV02,HELD,2026-08-24,Held pending further consumption evidence.
+APR-001255,REC-001821,Inventory Controller,VZIINV02,APPROVED,2026-06-26,Approved; to be applied in SAP by VZI.
+APR-001256,REC-001822,Inventory Controller,VZIINV01,APPROVED,2026-07-15,Approved; to be applied in SAP by VZI.
+APR-001257,REC-001824,Engineering Head,VZIINV02,REJECTED,2026-07-13,Consumption not considered representative.
+APR-001258,REC-001826,Plant Head,VZIINV02,REJECTED,2026-06-30,Consumption not considered representative.
+APR-001259,REC-001827,Plant Head,VZIINV01,APPROVED,2026-09-06,Approved; to be applied in SAP by VZI.
+APR-001260,REC-001828,Plant Head,VZIINV02,REJECTED,2026-06-08,Consumption not considered representative.
+APR-001261,REC-001832,Inventory Controller,VZIINV01,APPROVED,2026-06-21,Approved; to be applied in SAP by VZI.
+APR-001262,REC-001833,Commercial Head,VZIINV02,HELD,2026-06-02,Held pending further consumption evidence.
+APR-001263,REC-001835,Commercial Head,VZIINV01,REJECTED,2026-09-04,Consumption not considered representative.
+APR-001264,REC-001836,Engineering Head,VZIINV02,HELD,2026-06-18,Held pending further consumption evidence.
+APR-001265,REC-001837,Inventory Controller,VZIINV02,REJECTED,2026-08-30,Consumption not considered representative.
+APR-001266,REC-001838,Inventory Controller,VZIINV02,APPROVED,2026-08-27,Approved; to be applied in SAP by VZI.
+APR-001267,REC-001839,Plant Head,VZIINV01,REJECTED,2026-06-19,Consumption not considered representative.
+APR-001268,REC-001842,Inventory Controller,VZIINV01,REJECTED,2026-08-07,Consumption not considered representative.
+APR-001269,REC-001843,Inventory Controller,VZIINV02,APPROVED,2026-07-10,Approved; to be applied in SAP by VZI.
+APR-001270,REC-001844,Plant Head,VZIINV01,APPROVED,2026-08-03,Approved; to be applied in SAP by VZI.
+APR-001271,REC-001845,Engineering Head,VZIINV02,APPROVED,2026-08-01,Approved; to be applied in SAP by VZI.
+APR-001272,REC-001846,Plant Head,VZIINV01,APPROVED,2026-08-13,Approved; to be applied in SAP by VZI.
+APR-001273,REC-001848,Inventory Controller,VZIINV01,APPROVED,2026-07-05,Approved; to be applied in SAP by VZI.
+APR-001274,REC-001849,Plant Head,VZIINV01,APPROVED,2026-08-02,Approved; to be applied in SAP by VZI.
+APR-001275,REC-001850,Commercial Head,VZIINV01,APPROVED,2026-09-03,Approved; to be applied in SAP by VZI.
+APR-001276,REC-001852,Plant Head,VZIINV01,REJECTED,2026-06-18,Consumption not considered representative.
+APR-001277,REC-001853,Inventory Controller,VZIINV02,APPROVED,2026-07-17,Approved; to be applied in SAP by VZI.
+APR-001278,REC-001854,Inventory Controller,VZIINV02,APPROVED,2026-07-29,Approved; to be applied in SAP by VZI.
+APR-001279,REC-001855,Inventory Controller,VZIINV01,APPROVED,2026-07-11,Approved; to be applied in SAP by VZI.
+APR-001280,REC-001856,Inventory Controller,VZIINV02,HELD,2026-06-17,Held pending further consumption evidence.
+APR-001281,REC-001859,Inventory Controller,VZIINV01,APPROVED,2026-05-31,Approved; to be applied in SAP by VZI.
+APR-001282,REC-001861,Inventory Controller,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-001283,REC-001862,Inventory Controller,VZIINV01,HELD,2026-06-26,Held pending further consumption evidence.
+APR-001284,REC-001863,Plant Head,VZIINV01,HELD,2026-06-30,Held pending further consumption evidence.
+APR-001285,REC-001864,Inventory Controller,VZIINV01,APPROVED,2026-08-28,Approved; to be applied in SAP by VZI.
+APR-001286,REC-001867,Commercial Head,VZIINV01,APPROVED,2026-06-01,Approved; to be applied in SAP by VZI.
+APR-001287,REC-001869,Inventory Controller,VZIINV01,APPROVED,2026-06-14,Approved; to be applied in SAP by VZI.
+APR-001288,REC-001871,Plant Head,VZIINV02,APPROVED,2026-08-03,Approved; to be applied in SAP by VZI.
+APR-001289,REC-001875,Plant Head,VZIINV02,APPROVED,2026-05-25,Approved; to be applied in SAP by VZI.
+APR-001290,REC-001877,Inventory Controller,VZIINV02,REJECTED,2026-08-17,Consumption not considered representative.
+APR-001291,REC-001879,Inventory Controller,VZIINV02,APPROVED,2026-06-11,Approved; to be applied in SAP by VZI.
+APR-001292,REC-001880,Engineering Head,VZIINV01,REJECTED,2026-09-07,Consumption not considered representative.
+APR-001293,REC-001882,Engineering Head,VZIINV02,HELD,2026-07-18,Held pending further consumption evidence.
+APR-001294,REC-001883,Plant Head,VZIINV02,REJECTED,2026-08-06,Consumption not considered representative.
+APR-001295,REC-001884,Engineering Head,VZIINV02,APPROVED,2026-08-29,Approved; to be applied in SAP by VZI.
+APR-001296,REC-001885,Engineering Head,VZIINV02,APPROVED,2026-07-22,Approved; to be applied in SAP by VZI.
+APR-001297,REC-001888,Inventory Controller,VZIINV02,HELD,2026-08-30,Held pending further consumption evidence.
+APR-001298,REC-001890,Commercial Head,VZIINV02,REJECTED,2026-08-15,Consumption not considered representative.
+APR-001299,REC-001891,Engineering Head,VZIINV02,APPROVED,2026-06-26,Approved; to be applied in SAP by VZI.
+APR-001300,REC-001893,Plant Head,VZIINV02,APPROVED,2026-08-01,Approved; to be applied in SAP by VZI.
+APR-001301,REC-001894,Inventory Controller,VZIINV01,HELD,2026-05-16,Held pending further consumption evidence.
+APR-001302,REC-001896,Inventory Controller,VZIINV01,REJECTED,2026-06-30,Consumption not considered representative.
+APR-001303,REC-001897,Inventory Controller,VZIINV02,HELD,2026-08-29,Held pending further consumption evidence.
+APR-001304,REC-001898,Plant Head,VZIINV02,APPROVED,2026-07-24,Approved; to be applied in SAP by VZI.
+APR-001305,REC-001899,Plant Head,VZIINV02,APPROVED,2026-08-21,Approved; to be applied in SAP by VZI.
+APR-001306,REC-001900,Inventory Controller,VZIINV01,HELD,2026-05-22,Held pending further consumption evidence.
+APR-001307,REC-001901,Plant Head,VZIINV02,HELD,2026-06-07,Held pending further consumption evidence.
+APR-001308,REC-001902,Plant Head,VZIINV01,HELD,2026-06-09,Held pending further consumption evidence.
+APR-001309,REC-001906,Inventory Controller,VZIINV01,APPROVED,2026-06-18,Approved; to be applied in SAP by VZI.
+APR-001310,REC-001907,Inventory Controller,VZIINV02,APPROVED,2026-08-22,Approved; to be applied in SAP by VZI.
+APR-001311,REC-001908,Plant Head,VZIINV02,APPROVED,2026-05-28,Approved; to be applied in SAP by VZI.
+APR-001312,REC-001909,Engineering Head,VZIINV02,HELD,2026-06-11,Held pending further consumption evidence.
+APR-001313,REC-001910,Engineering Head,VZIINV02,APPROVED,2026-07-07,Approved; to be applied in SAP by VZI.
+APR-001314,REC-001912,Plant Head,VZIINV02,APPROVED,2026-06-07,Approved; to be applied in SAP by VZI.
+APR-001315,REC-001913,Inventory Controller,VZIINV02,APPROVED,2026-07-17,Approved; to be applied in SAP by VZI.
+APR-001316,REC-001916,Inventory Controller,VZIINV02,APPROVED,2026-06-16,Approved; to be applied in SAP by VZI.
+APR-001317,REC-001917,Inventory Controller,VZIINV02,REJECTED,2026-09-07,Consumption not considered representative.
+APR-001318,REC-001922,Inventory Controller,VZIINV02,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-001319,REC-001923,Engineering Head,VZIINV02,APPROVED,2026-06-03,Approved; to be applied in SAP by VZI.
+APR-001320,REC-001925,Inventory Controller,VZIINV01,APPROVED,2026-07-25,Approved; to be applied in SAP by VZI.
+APR-001321,REC-001926,Commercial Head,VZIINV02,REJECTED,2026-08-20,Consumption not considered representative.
+APR-001322,REC-001927,Commercial Head,VZIINV01,REJECTED,2026-08-14,Consumption not considered representative.
+APR-001323,REC-001928,Plant Head,VZIINV02,REJECTED,2026-06-14,Consumption not considered representative.
+APR-001324,REC-001929,Engineering Head,VZIINV02,APPROVED,2026-08-07,Approved; to be applied in SAP by VZI.
+APR-001325,REC-001930,Plant Head,VZIINV01,HELD,2026-06-12,Held pending further consumption evidence.
+APR-001326,REC-001931,Inventory Controller,VZIINV02,APPROVED,2026-06-25,Approved; to be applied in SAP by VZI.
+APR-001327,REC-001932,Commercial Head,VZIINV02,APPROVED,2026-07-24,Approved; to be applied in SAP by VZI.
+APR-001328,REC-001933,Commercial Head,VZIINV02,REJECTED,2026-08-27,Consumption not considered representative.
+APR-001329,REC-001934,Plant Head,VZIINV01,HELD,2026-07-03,Held pending further consumption evidence.
+APR-001330,REC-001935,Inventory Controller,VZIINV02,APPROVED,2026-08-19,Approved; to be applied in SAP by VZI.
+APR-001331,REC-001936,Inventory Controller,VZIINV01,APPROVED,2026-09-07,Approved; to be applied in SAP by VZI.
+APR-001332,REC-001937,Commercial Head,VZIINV01,APPROVED,2026-06-03,Approved; to be applied in SAP by VZI.
+APR-001333,REC-001940,Commercial Head,VZIINV01,APPROVED,2026-08-06,Approved; to be applied in SAP by VZI.
+APR-001334,REC-001941,Plant Head,VZIINV01,REJECTED,2026-06-11,Consumption not considered representative.
+APR-001335,REC-001942,Plant Head,VZIINV02,APPROVED,2026-06-09,Approved; to be applied in SAP by VZI.
+APR-001336,REC-001944,Plant Head,VZIINV02,HELD,2026-07-21,Held pending further consumption evidence.
+APR-001337,REC-001946,Inventory Controller,VZIINV01,APPROVED,2026-06-12,Approved; to be applied in SAP by VZI.
+APR-001338,REC-001948,Inventory Controller,VZIINV02,APPROVED,2026-07-06,Approved; to be applied in SAP by VZI.
+APR-001339,REC-001949,Plant Head,VZIINV02,APPROVED,2026-09-05,Approved; to be applied in SAP by VZI.
+APR-001340,REC-001951,Engineering Head,VZIINV02,REJECTED,2026-05-30,Consumption not considered representative.
+APR-001341,REC-001952,Plant Head,VZIINV01,APPROVED,2026-08-15,Approved; to be applied in SAP by VZI.
+APR-001342,REC-001953,Engineering Head,VZIINV02,APPROVED,2026-06-03,Approved; to be applied in SAP by VZI.
+APR-001343,REC-001956,Commercial Head,VZIINV01,APPROVED,2026-07-02,Approved; to be applied in SAP by VZI.
+APR-001344,REC-001957,Inventory Controller,VZIINV02,APPROVED,2026-08-04,Approved; to be applied in SAP by VZI.
+APR-001345,REC-001958,Plant Head,VZIINV01,APPROVED,2026-06-15,Approved; to be applied in SAP by VZI.
+APR-001346,REC-001959,Plant Head,VZIINV01,APPROVED,2026-09-04,Approved; to be applied in SAP by VZI.
+APR-001347,REC-001961,Plant Head,VZIINV02,HELD,2026-06-06,Held pending further consumption evidence.
+APR-001348,REC-001963,Engineering Head,VZIINV01,REJECTED,2026-05-26,Consumption not considered representative.
+APR-001349,REC-001965,Inventory Controller,VZIINV01,REJECTED,2026-09-07,Consumption not considered representative.
+APR-001350,REC-001967,Plant Head,VZIINV02,APPROVED,2026-09-01,Approved; to be applied in SAP by VZI.
+APR-001351,REC-001970,Inventory Controller,VZIINV02,APPROVED,2026-06-02,Approved; to be applied in SAP by VZI.
+APR-001352,REC-001973,Inventory Controller,VZIINV01,APPROVED,2026-08-11,Approved; to be applied in SAP by VZI.
+APR-001353,REC-001974,Plant Head,VZIINV01,APPROVED,2026-08-29,Approved; to be applied in SAP by VZI.
+APR-001354,REC-001975,Plant Head,VZIINV02,HELD,2026-08-06,Held pending further consumption evidence.
+APR-001355,REC-001976,Commercial Head,VZIINV01,APPROVED,2026-06-11,Approved; to be applied in SAP by VZI.
+APR-001356,REC-001977,Plant Head,VZIINV02,APPROVED,2026-08-10,Approved; to be applied in SAP by VZI.
+APR-001357,REC-001978,Inventory Controller,VZIINV01,REJECTED,2026-05-29,Consumption not considered representative.
+APR-001358,REC-001979,Plant Head,VZIINV02,REJECTED,2026-07-15,Consumption not considered representative.
+APR-001359,REC-001981,Commercial Head,VZIINV01,REJECTED,2026-06-06,Consumption not considered representative.
+APR-001360,REC-001982,Inventory Controller,VZIINV01,REJECTED,2026-08-12,Consumption not considered representative.
+APR-001361,REC-001983,Inventory Controller,VZIINV01,HELD,2026-06-01,Held pending further consumption evidence.
+APR-001362,REC-001985,Engineering Head,VZIINV01,HELD,2026-06-26,Held pending further consumption evidence.
+APR-001363,REC-001987,Commercial Head,VZIINV01,REJECTED,2026-07-21,Consumption not considered representative.
+APR-001364,REC-001988,Plant Head,VZIINV02,APPROVED,2026-08-04,Approved; to be applied in SAP by VZI.
+APR-001365,REC-001989,Plant Head,VZIINV01,APPROVED,2026-08-27,Approved; to be applied in SAP by VZI.
+APR-001366,REC-001990,Plant Head,VZIINV01,APPROVED,2026-05-16,Approved; to be applied in SAP by VZI.
+APR-001367,REC-001992,Inventory Controller,VZIINV02,HELD,2026-06-22,Held pending further consumption evidence.
+APR-001368,REC-001993,Engineering Head,VZIINV01,APPROVED,2026-08-16,Approved; to be applied in SAP by VZI.
+APR-001369,REC-001996,Plant Head,VZIINV01,APPROVED,2026-07-23,Approved; to be applied in SAP by VZI.
+APR-001370,REC-001999,Inventory Controller,VZIINV01,APPROVED,2026-06-27,Approved; to be applied in SAP by VZI.
+APR-001371,REC-002000,Engineering Head,VZIINV01,REJECTED,2026-07-24,Consumption not considered representative.
+APR-001372,REC-002001,Plant Head,VZIINV02,APPROVED,2026-07-09,Approved; to be applied in SAP by VZI.
+APR-001373,REC-002003,Engineering Head,VZIINV02,REJECTED,2026-07-15,Consumption not considered representative.
+APR-001374,REC-002004,Engineering Head,VZIINV02,APPROVED,2026-07-11,Approved; to be applied in SAP by VZI.
+APR-001375,REC-002006,Plant Head,VZIINV01,APPROVED,2026-06-22,Approved; to be applied in SAP by VZI.
+APR-001376,REC-002007,Inventory Controller,VZIINV02,APPROVED,2026-06-24,Approved; to be applied in SAP by VZI.
+APR-001377,REC-002009,Inventory Controller,VZIINV01,APPROVED,2026-06-24,Approved; to be applied in SAP by VZI.
+APR-001378,REC-002011,Inventory Controller,VZIINV01,HELD,2026-05-18,Held pending further consumption evidence.
+APR-001379,REC-002015,Inventory Controller,VZIINV01,APPROVED,2026-06-20,Approved; to be applied in SAP by VZI.
+APR-001380,REC-002016,Plant Head,VZIINV02,APPROVED,2026-07-31,Approved; to be applied in SAP by VZI.
+APR-001381,REC-002018,Engineering Head,VZIINV01,APPROVED,2026-05-18,Approved; to be applied in SAP by VZI.
+APR-001382,REC-002019,Engineering Head,VZIINV01,APPROVED,2026-06-11,Approved; to be applied in SAP by VZI.
+APR-001383,REC-002020,Engineering Head,VZIINV02,HELD,2026-08-22,Held pending further consumption evidence.
+APR-001384,REC-002021,Inventory Controller,VZIINV01,APPROVED,2026-07-07,Approved; to be applied in SAP by VZI.
+APR-001385,REC-002022,Inventory Controller,VZIINV01,APPROVED,2026-08-17,Approved; to be applied in SAP by VZI.
+APR-001386,REC-002025,Commercial Head,VZIINV01,HELD,2026-06-02,Held pending further consumption evidence.
+APR-001387,REC-002027,Inventory Controller,VZIINV02,HELD,2026-07-30,Held pending further consumption evidence.
+APR-001388,REC-002028,Plant Head,VZIINV02,HELD,2026-05-30,Held pending further consumption evidence.
+APR-001389,REC-002029,Plant Head,VZIINV02,APPROVED,2026-06-23,Approved; to be applied in SAP by VZI.
+APR-001390,REC-002031,Inventory Controller,VZIINV01,APPROVED,2026-06-18,Approved; to be applied in SAP by VZI.
+APR-001391,REC-002032,Plant Head,VZIINV02,REJECTED,2026-05-27,Consumption not considered representative.

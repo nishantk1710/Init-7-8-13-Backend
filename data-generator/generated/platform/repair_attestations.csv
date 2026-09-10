@@ -1,0 +1,229 @@
+attestation_id,session_id,Matnr,Werks,quantity,condition,fault_category,repairable,reason,user,timestamp,evidence_reference
+ATT-000001,SESS-000743,000000000080000000,3000,1.000,"Shaft journal grooved, runout beyond limit",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-01,EVD-000001
+ATT-000002,SESS-000744,000000000080000001,1000,1.000,"Outer race spalling, radial play beyond limit",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-03-20,EVD-000002
+ATT-000003,SESS-000745,000000000080000001,4000,1.000,"Seal faces scored, leaking under load",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-09,EVD-000003
+ATT-000004,SESS-000746,000000000080000002,3000,1.000,"Impeller vanes eroded, 30 percent material loss",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-04-24,EVD-000004
+ATT-000005,SESS-000748,000000000080000004,2000,1.000,"Impeller vanes eroded, 30 percent material loss",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-04-29,EVD-000005
+ATT-000006,SESS-000749,000000000080000005,4000,1.000,Stator winding insulation resistance failed at 500V,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-03,EVD-000006
+ATT-000007,SESS-000750,000000000080000005,2000,1.000,"Impeller vanes eroded, 30 percent material loss",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-27,EVD-000007
+ATT-000008,SESS-000751,000000000080000006,2000,1.000,"Seal faces scored, leaking under load",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-06-11,EVD-000008
+ATT-000009,SESS-000752,000000000080000007,1000,1.000,"Outer race spalling, radial play beyond limit",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-05-10,EVD-000009
+ATT-000010,SESS-000753,000000000080000009,1000,1.000,"Impeller vanes eroded, 30 percent material loss",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-07-18,EVD-000010
+ATT-000011,SESS-000754,000000000080000009,4000,1.000,"Outer race spalling, radial play beyond limit",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-06-27,EVD-000011
+ATT-000012,SESS-000755,000000000080000010,3000,1.000,Casing wear through at discharge throat,GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-04-17,EVD-000012
+ATT-000013,SESS-000756,000000000080000011,2000,1.000,"Input pinion tooth chipping, backlash high",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2025-12-29,EVD-000013
+ATT-000014,SESS-000760,000000000080000016,1000,1.000,"Shaft journal grooved, runout beyond limit",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-20,EVD-000014
+ATT-000015,SESS-000763,000000000080000017,3000,1.000,"Shaft journal grooved, runout beyond limit",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-13,EVD-000015
+ATT-000016,SESS-000764,000000000080000018,4000,1.000,Stator winding insulation resistance failed at 500V,WEAR,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-03-14,EVD-000016
+ATT-000017,SESS-000765,000000000080000018,3000,1.000,"Input pinion tooth chipping, backlash high",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-06-21,EVD-000017
+ATT-000018,SESS-000768,000000000080000020,1000,1.000,Casing wear through at discharge throat,BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-04-25,EVD-000018
+ATT-000019,SESS-000771,000000000080000022,3000,1.000,"Impeller vanes eroded, 30 percent material loss",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-06-29,EVD-000019
+ATT-000020,SESS-000776,000000000080000026,2000,1.000,Stator winding insulation resistance failed at 500V,GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-06-09,EVD-000020
+ATT-000021,SESS-000777,000000000080000027,1000,1.000,"Shaft journal grooved, runout beyond limit",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-02-23,EVD-000021
+ATT-000022,SESS-000779,000000000080000030,1000,1.000,"Input pinion tooth chipping, backlash high",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-04-20,EVD-000022
+ATT-000023,SESS-000780,000000000080000031,1000,1.000,"Impeller vanes eroded, 30 percent material loss",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-26,EVD-000023
+ATT-000024,SESS-000782,000000000080000033,4000,1.000,"Seal faces scored, leaking under load",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-04,EVD-000024
+ATT-000025,SESS-000784,000000000080000035,4000,1.000,"Shaft journal grooved, runout beyond limit",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-05-15,EVD-000025
+ATT-000026,SESS-000785,000000000080000035,2000,1.000,"Input pinion tooth chipping, backlash high",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2025-10-18,EVD-000026
+ATT-000027,SESS-000786,000000000080000036,3000,1.000,Stator winding insulation resistance failed at 500V,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-25,EVD-000027
+ATT-000028,SESS-000787,000000000080000037,2000,1.000,"Shaft journal grooved, runout beyond limit",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-06-11,EVD-000028
+ATT-000029,SESS-000791,000000000080000039,4000,1.000,"Outer race spalling, radial play beyond limit",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-04-26,EVD-000029
+ATT-000030,SESS-000792,000000000080000040,1000,1.000,"Seal faces scored, leaking under load",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-05-25,EVD-000030
+ATT-000031,SESS-000793,000000000080000041,1000,1.000,"Impeller vanes eroded, 30 percent material loss",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-05-22,EVD-000031
+ATT-000032,SESS-000794,000000000080000041,4000,1.000,"Seal faces scored, leaking under load",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT02,2025-11-29,EVD-000032
+ATT-000033,SESS-000796,000000000080000043,4000,1.000,"Shaft journal grooved, runout beyond limit",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-07-04,EVD-000033
+ATT-000034,SESS-000797,000000000080000044,1000,1.000,Casing wear through at discharge throat,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-27,EVD-000034
+ATT-000035,SESS-000798,000000000080000045,4000,1.000,"Seal faces scored, leaking under load",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-06,EVD-000035
+ATT-000036,SESS-000799,000000000080000046,4000,1.000,"Input pinion tooth chipping, backlash high",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-07-19,EVD-000036
+ATT-000037,SESS-000800,000000000080000047,2000,1.000,"Shaft journal grooved, runout beyond limit",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-05-20,EVD-000037
+ATT-000038,SESS-000802,000000000080000049,4000,1.000,"Shaft journal grooved, runout beyond limit",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-05-26,EVD-000038
+ATT-000039,SESS-000803,000000000080000050,2000,1.000,"Impeller vanes eroded, 30 percent material loss",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-07-27,EVD-000039
+ATT-000040,SESS-000804,000000000080000051,4000,1.000,Casing wear through at discharge throat,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-03-22,EVD-000040
+ATT-000041,SESS-000805,000000000080000052,3000,1.000,"Impeller vanes eroded, 30 percent material loss",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-06-15,EVD-000041
+ATT-000042,SESS-000806,000000000080000053,1000,1.000,"Shaft journal grooved, runout beyond limit",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-16,EVD-000042
+ATT-000043,SESS-000807,000000000080000054,2000,1.000,"Seal faces scored, leaking under load",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT01,2025-11-11,EVD-000043
+ATT-000044,SESS-000809,000000000080000055,3000,1.000,"Impeller vanes eroded, 30 percent material loss",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-02,EVD-000044
+ATT-000045,SESS-000811,000000000080000057,1000,1.000,"Shaft journal grooved, runout beyond limit",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-09,EVD-000045
+ATT-000046,SESS-000812,000000000080000058,2000,1.000,Casing wear through at discharge throat,WEAR,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-23,EVD-000046
+ATT-000047,SESS-000813,000000000080000059,4000,1.000,"Input pinion tooth chipping, backlash high",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-03-16,EVD-000047
+ATT-000048,SESS-000814,000000000080000060,2000,1.000,"Outer race spalling, radial play beyond limit",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-20,EVD-000048
+ATT-000049,SESS-000815,000000000080000060,3000,1.000,Stator winding insulation resistance failed at 500V,WEAR,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-06-06,EVD-000049
+ATT-000050,SESS-000817,000000000080000062,1000,1.000,"Shaft journal grooved, runout beyond limit",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-03-30,EVD-000050
+ATT-000051,SESS-000818,000000000080000063,1000,1.000,Casing wear through at discharge throat,GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-11,EVD-000051
+ATT-000052,SESS-000819,000000000080000063,2000,1.000,"Impeller vanes eroded, 30 percent material loss",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-01-22,EVD-000052
+ATT-000053,SESS-000820,000000000080000064,1000,1.000,"Shaft journal grooved, runout beyond limit",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-06,EVD-000053
+ATT-000054,SESS-000821,000000000080000065,1000,1.000,Casing wear through at discharge throat,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-11,EVD-000054
+ATT-000055,SESS-000822,000000000080000065,4000,1.000,Stator winding insulation resistance failed at 500V,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-01-12,EVD-000055
+ATT-000056,SESS-000823,000000000080000066,1000,1.000,Casing wear through at discharge throat,CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-06-04,EVD-000056
+ATT-000057,SESS-000824,000000000080000067,4000,1.000,Stator winding insulation resistance failed at 500V,CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-03-17,EVD-000057
+ATT-000058,SESS-000825,000000000080000068,1000,1.000,"Seal faces scored, leaking under load",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-30,EVD-000058
+ATT-000059,SESS-000826,000000000080000068,4000,1.000,"Seal faces scored, leaking under load",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-07-07,EVD-000059
+ATT-000060,SESS-000827,000000000080000069,2000,1.000,"Input pinion tooth chipping, backlash high",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-04,EVD-000060
+ATT-000061,SESS-000828,000000000080000069,1000,1.000,"Outer race spalling, radial play beyond limit",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-05-28,EVD-000061
+ATT-000062,SESS-000829,000000000080000070,2000,1.000,"Seal faces scored, leaking under load",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-05-01,EVD-000062
+ATT-000063,SESS-000830,000000000080000071,3000,1.000,"Shaft journal grooved, runout beyond limit",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-07-11,EVD-000063
+ATT-000064,SESS-000831,000000000080000071,1000,1.000,Stator winding insulation resistance failed at 500V,GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-21,EVD-000064
+ATT-000065,SESS-000833,000000000080000073,4000,1.000,"Input pinion tooth chipping, backlash high",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-07,EVD-000065
+ATT-000066,SESS-000834,000000000080000074,1000,1.000,"Input pinion tooth chipping, backlash high",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-20,EVD-000066
+ATT-000067,SESS-000835,000000000080000075,4000,1.000,"Impeller vanes eroded, 30 percent material loss",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-04-20,EVD-000067
+ATT-000068,SESS-000836,000000000080000076,1000,1.000,"Outer race spalling, radial play beyond limit",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-24,EVD-000068
+ATT-000069,SESS-000837,000000000080000077,2000,1.000,"Shaft journal grooved, runout beyond limit",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-04-20,EVD-000069
+ATT-000070,SESS-000838,000000000080000079,2000,1.000,"Outer race spalling, radial play beyond limit",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-02-24,EVD-000070
+ATT-000071,SESS-000840,000000000080000080,4000,1.000,Casing wear through at discharge throat,CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-05-27,EVD-000071
+ATT-000072,SESS-000842,000000000080000081,3000,1.000,"Seal faces scored, leaking under load",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-05-27,EVD-000072
+ATT-000073,SESS-000843,000000000080000082,4000,1.000,"Seal faces scored, leaking under load",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-02-18,EVD-000073
+ATT-000074,SESS-000845,000000000080000083,3000,1.000,"Shaft journal grooved, runout beyond limit",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-06-25,EVD-000074
+ATT-000075,SESS-000846,000000000080000084,4000,1.000,Stator winding insulation resistance failed at 500V,CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-05,EVD-000075
+ATT-000076,SESS-000847,000000000080000085,3000,1.000,Stator winding insulation resistance failed at 500V,GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-22,EVD-000076
+ATT-000077,SESS-000848,000000000080000086,1000,1.000,"Input pinion tooth chipping, backlash high",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2025-10-11,EVD-000077
+ATT-000078,SESS-000849,000000000080000087,3000,1.000,"Seal faces scored, leaking under load",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-04-22,EVD-000078
+ATT-000079,SESS-000850,000000000080000088,1000,1.000,Casing wear through at discharge throat,ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-01-27,EVD-000079
+ATT-000080,SESS-000851,000000000080000089,1000,1.000,Casing wear through at discharge throat,ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-09-02,EVD-000080
+ATT-000081,SESS-000852,000000000080000090,3000,1.000,"Seal faces scored, leaking under load",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-15,EVD-000081
+ATT-000082,SESS-000853,000000000080000091,4000,1.000,"Impeller vanes eroded, 30 percent material loss",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-06-11,EVD-000082
+ATT-000083,SESS-000854,000000000080000092,3000,1.000,"Shaft journal grooved, runout beyond limit",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-18,EVD-000083
+ATT-000084,SESS-000856,000000000080000094,2000,1.000,"Impeller vanes eroded, 30 percent material loss",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-01-19,EVD-000084
+ATT-000085,SESS-000858,000000000080000095,1000,1.000,Casing wear through at discharge throat,BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-13,EVD-000085
+ATT-000086,SESS-000860,000000000080000097,3000,1.000,Casing wear through at discharge throat,GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-01-02,EVD-000086
+ATT-000087,SESS-000863,000000000080000099,4000,1.000,"Outer race spalling, radial play beyond limit",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-08,EVD-000087
+ATT-000088,SESS-000864,000000000080000100,2000,1.000,Stator winding insulation resistance failed at 500V,WEAR,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-01-13,EVD-000088
+ATT-000089,SESS-000865,000000000080000100,3000,1.000,"Outer race spalling, radial play beyond limit",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-06-20,EVD-000089
+ATT-000090,SESS-000866,000000000080000101,2000,1.000,"Shaft journal grooved, runout beyond limit",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT02,2025-12-13,EVD-000090
+ATT-000091,SESS-000868,000000000080000103,2000,1.000,"Outer race spalling, radial play beyond limit",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-01-07,EVD-000091
+ATT-000092,SESS-000869,000000000080000104,3000,1.000,Stator winding insulation resistance failed at 500V,SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-04-23,EVD-000092
+ATT-000093,SESS-000871,000000000080000105,1000,1.000,"Input pinion tooth chipping, backlash high",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-09-04,EVD-000093
+ATT-000094,SESS-000872,000000000080000106,2000,1.000,Casing wear through at discharge throat,WEAR,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-29,EVD-000094
+ATT-000095,SESS-000873,000000000080000107,2000,1.000,Stator winding insulation resistance failed at 500V,BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-03-16,EVD-000095
+ATT-000096,SESS-000874,000000000080000108,2000,1.000,"Outer race spalling, radial play beyond limit",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-04-07,EVD-000096
+ATT-000097,SESS-000875,000000000080000109,3000,1.000,"Impeller vanes eroded, 30 percent material loss",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-04-15,EVD-000097
+ATT-000098,SESS-000876,000000000080000110,2000,1.000,Stator winding insulation resistance failed at 500V,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-10,EVD-000098
+ATT-000099,SESS-000877,000000000080000111,1000,1.000,Casing wear through at discharge throat,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-04-19,EVD-000099
+ATT-000100,SESS-000879,000000000080000112,1000,1.000,"Shaft journal grooved, runout beyond limit",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-24,EVD-000100
+ATT-000101,SESS-000880,000000000080000113,3000,1.000,"Impeller vanes eroded, 30 percent material loss",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-02-03,EVD-000101
+ATT-000102,SESS-000881,000000000080000114,2000,1.000,"Seal faces scored, leaking under load",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-22,EVD-000102
+ATT-000103,SESS-000882,000000000080000115,3000,1.000,"Seal faces scored, leaking under load",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-24,EVD-000103
+ATT-000104,SESS-000883,000000000080000116,1000,1.000,"Outer race spalling, radial play beyond limit",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2025-12-04,EVD-000104
+ATT-000105,SESS-000885,000000000080000118,3000,1.000,"Outer race spalling, radial play beyond limit",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT01,2025-12-20,EVD-000105
+ATT-000106,SESS-000886,000000000080000119,4000,1.000,"Impeller vanes eroded, 30 percent material loss",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT01,2025-12-31,EVD-000106
+ATT-000107,SESS-000887,000000000080000121,3000,1.000,"Outer race spalling, radial play beyond limit",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-02,EVD-000107
+ATT-000108,SESS-000889,000000000080000122,3000,1.000,"Input pinion tooth chipping, backlash high",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-05-17,EVD-000108
+ATT-000109,SESS-000891,000000000080000124,2000,1.000,Casing wear through at discharge throat,ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT02,2025-12-20,EVD-000109
+ATT-000110,SESS-000895,000000000080000130,1000,1.000,"Impeller vanes eroded, 30 percent material loss",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT02,2025-12-10,EVD-000110
+ATT-000111,SESS-000896,000000000080000131,4000,1.000,"Input pinion tooth chipping, backlash high",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-12,EVD-000111
+ATT-000112,SESS-000897,000000000080000131,3000,1.000,"Input pinion tooth chipping, backlash high",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-22,EVD-000112
+ATT-000113,SESS-000898,000000000080000132,3000,1.000,"Impeller vanes eroded, 30 percent material loss",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-03-19,EVD-000113
+ATT-000114,SESS-000899,000000000080000132,2000,1.000,"Seal faces scored, leaking under load",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-03-02,EVD-000114
+ATT-000115,SESS-000900,000000000080000133,4000,1.000,"Impeller vanes eroded, 30 percent material loss",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2025-11-25,EVD-000115
+ATT-000116,SESS-000901,000000000080000134,3000,1.000,"Shaft journal grooved, runout beyond limit",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-03-12,EVD-000116
+ATT-000117,SESS-000902,000000000080000135,3000,1.000,"Outer race spalling, radial play beyond limit",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT01,2025-12-29,EVD-000117
+ATT-000118,SESS-000905,000000000080000136,4000,1.000,"Outer race spalling, radial play beyond limit",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-02-28,EVD-000118
+ATT-000119,SESS-000906,000000000080000137,2000,1.000,"Outer race spalling, radial play beyond limit",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-28,EVD-000119
+ATT-000120,SESS-000908,000000000080000139,1000,1.000,Stator winding insulation resistance failed at 500V,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-14,EVD-000120
+ATT-000121,SESS-000909,000000000080000140,4000,1.000,"Impeller vanes eroded, 30 percent material loss",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-14,EVD-000121
+ATT-000122,SESS-000910,000000000080000141,1000,1.000,Stator winding insulation resistance failed at 500V,SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-04-10,EVD-000122
+ATT-000123,SESS-000911,000000000080000142,3000,1.000,"Input pinion tooth chipping, backlash high",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-02-11,EVD-000123
+ATT-000124,SESS-000912,000000000080000143,2000,1.000,Stator winding insulation resistance failed at 500V,BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-05-19,EVD-000124
+ATT-000125,SESS-000914,000000000080000145,1000,1.000,"Input pinion tooth chipping, backlash high",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT01,2025-11-08,EVD-000125
+ATT-000126,SESS-000915,000000000080000146,1000,1.000,"Seal faces scored, leaking under load",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-24,EVD-000126
+ATT-000127,SESS-000916,000000000080000146,3000,1.000,"Shaft journal grooved, runout beyond limit",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-01-14,EVD-000127
+ATT-000128,SESS-000917,000000000080000147,2000,1.000,"Shaft journal grooved, runout beyond limit",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-14,EVD-000128
+ATT-000129,SESS-000918,000000000080000148,4000,1.000,"Outer race spalling, radial play beyond limit",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-04-29,EVD-000129
+ATT-000130,SESS-000919,000000000080000149,2000,1.000,"Shaft journal grooved, runout beyond limit",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-22,EVD-000130
+ATT-000131,SESS-000921,000000000080000151,1000,1.000,Stator winding insulation resistance failed at 500V,ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-02-13,EVD-000131
+ATT-000132,SESS-000922,000000000080000151,2000,1.000,"Shaft journal grooved, runout beyond limit",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-04-19,EVD-000132
+ATT-000133,SESS-000923,000000000080000152,1000,1.000,Stator winding insulation resistance failed at 500V,CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-04-23,EVD-000133
+ATT-000134,SESS-000924,000000000080000153,4000,1.000,"Shaft journal grooved, runout beyond limit",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-06-28,EVD-000134
+ATT-000135,SESS-000926,000000000080000155,4000,1.000,"Input pinion tooth chipping, backlash high",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-02-13,EVD-000135
+ATT-000136,SESS-000927,000000000080000156,2000,1.000,Stator winding insulation resistance failed at 500V,SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-04-15,EVD-000136
+ATT-000137,SESS-000928,000000000080000156,4000,1.000,"Impeller vanes eroded, 30 percent material loss",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-03-26,EVD-000137
+ATT-000138,SESS-000929,000000000080000157,4000,1.000,"Input pinion tooth chipping, backlash high",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-05-14,EVD-000138
+ATT-000139,SESS-000930,000000000080000158,2000,1.000,"Impeller vanes eroded, 30 percent material loss",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-06-22,EVD-000139
+ATT-000140,SESS-000931,000000000080000158,1000,1.000,"Input pinion tooth chipping, backlash high",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-06-25,EVD-000140
+ATT-000141,SESS-000932,000000000080000159,2000,1.000,"Impeller vanes eroded, 30 percent material loss",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-05-23,EVD-000141
+ATT-000142,SESS-000933,000000000080000159,3000,1.000,Stator winding insulation resistance failed at 500V,ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-03-26,EVD-000142
+ATT-000143,SESS-000934,000000000080000160,2000,1.000,Stator winding insulation resistance failed at 500V,BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-01-21,EVD-000143
+ATT-000144,SESS-000936,000000000080000162,2000,1.000,Casing wear through at discharge throat,SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-05,EVD-000144
+ATT-000145,SESS-000937,000000000080000163,2000,1.000,"Outer race spalling, radial play beyond limit",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-07-02,EVD-000145
+ATT-000146,SESS-000940,000000000080000165,3000,1.000,"Impeller vanes eroded, 30 percent material loss",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-27,EVD-000146
+ATT-000147,SESS-000942,000000000080000167,2000,1.000,"Shaft journal grooved, runout beyond limit",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-04-29,EVD-000147
+ATT-000148,SESS-000943,000000000080000168,2000,1.000,"Shaft journal grooved, runout beyond limit",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-01,EVD-000148
+ATT-000149,SESS-000944,000000000080000169,1000,1.000,"Shaft journal grooved, runout beyond limit",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-05-09,EVD-000149
+ATT-000150,SESS-000947,000000000080000171,3000,1.000,Stator winding insulation resistance failed at 500V,GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-06-11,EVD-000150
+ATT-000151,SESS-000948,000000000080000172,2000,1.000,"Impeller vanes eroded, 30 percent material loss",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-04-16,EVD-000151
+ATT-000152,SESS-000949,000000000080000172,3000,1.000,"Outer race spalling, radial play beyond limit",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-08,EVD-000152
+ATT-000153,SESS-000950,000000000080000173,1000,1.000,"Shaft journal grooved, runout beyond limit",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT02,2025-11-29,EVD-000153
+ATT-000154,SESS-000951,000000000080000174,1000,1.000,Casing wear through at discharge throat,BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-20,EVD-000154
+ATT-000155,SESS-000954,000000000080000176,3000,1.000,Casing wear through at discharge throat,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-03-22,EVD-000155
+ATT-000156,SESS-000958,000000000080000178,3000,1.000,"Seal faces scored, leaking under load",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT02,2025-12-28,EVD-000156
+ATT-000157,SESS-000961,000000000080000180,3000,1.000,"Shaft journal grooved, runout beyond limit",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-19,EVD-000157
+ATT-000158,SESS-000963,000000000080000182,1000,1.000,Stator winding insulation resistance failed at 500V,BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-03-30,EVD-000158
+ATT-000159,SESS-000964,000000000080000183,2000,1.000,"Input pinion tooth chipping, backlash high",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2025-12-09,EVD-000159
+ATT-000160,SESS-000969,000000000080000188,4000,1.000,"Seal faces scored, leaking under load",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-08,EVD-000160
+ATT-000161,SESS-000970,000000000080000189,1000,1.000,Stator winding insulation resistance failed at 500V,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-05-21,EVD-000161
+ATT-000162,SESS-000972,000000000080000190,4000,1.000,"Seal faces scored, leaking under load",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-03-04,EVD-000162
+ATT-000163,SESS-000977,000000000080000194,1000,1.000,Stator winding insulation resistance failed at 500V,SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-05,EVD-000163
+ATT-000164,SESS-000981,000000000080000197,1000,1.000,"Seal faces scored, leaking under load",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-26,EVD-000164
+ATT-000165,SESS-000982,000000000080000198,2000,1.000,Casing wear through at discharge throat,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-01-01,EVD-000165
+ATT-000166,SESS-000983,000000000080000199,2000,1.000,Stator winding insulation resistance failed at 500V,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-25,EVD-000166
+ATT-000167,SESS-000984,000000000080000200,1000,1.000,Stator winding insulation resistance failed at 500V,BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-06-07,EVD-000167
+ATT-000168,SESS-000985,000000000080000201,1000,1.000,"Shaft journal grooved, runout beyond limit",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-26,EVD-000168
+ATT-000169,SESS-000987,000000000080000203,2000,1.000,Casing wear through at discharge throat,WEAR,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-07-31,EVD-000169
+ATT-000170,SESS-000988,000000000080000204,4000,1.000,Casing wear through at discharge throat,GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-19,EVD-000170
+ATT-000171,SESS-000989,000000000080000205,1000,1.000,Stator winding insulation resistance failed at 500V,ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2025-12-11,EVD-000171
+ATT-000172,SESS-000990,000000000080000206,3000,1.000,"Impeller vanes eroded, 30 percent material loss",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-06,EVD-000172
+ATT-000173,SESS-000991,000000000080000207,2000,1.000,"Input pinion tooth chipping, backlash high",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-06-17,EVD-000173
+ATT-000174,SESS-000992,000000000080000208,2000,1.000,"Input pinion tooth chipping, backlash high",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-30,EVD-000174
+ATT-000175,SESS-000993,000000000080000209,2000,1.000,"Input pinion tooth chipping, backlash high",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2025-11-17,EVD-000175
+ATT-000176,SESS-000994,000000000080000209,3000,1.000,Casing wear through at discharge throat,SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-04-26,EVD-000176
+ATT-000177,SESS-000995,000000000080000210,4000,1.000,Casing wear through at discharge throat,ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-06-07,EVD-000177
+ATT-000178,SESS-000996,000000000080000211,1000,1.000,"Outer race spalling, radial play beyond limit",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-07-13,EVD-000178
+ATT-000179,SESS-000997,000000000080000212,2000,1.000,Stator winding insulation resistance failed at 500V,WEAR,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-06-23,EVD-000179
+ATT-000180,SESS-000999,000000000080000213,2000,1.000,"Input pinion tooth chipping, backlash high",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-19,EVD-000180
+ATT-000181,SESS-001000,000000000080000214,3000,1.000,"Impeller vanes eroded, 30 percent material loss",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-05-12,EVD-000181
+ATT-000182,SESS-001001,000000000080000214,1000,1.000,"Seal faces scored, leaking under load",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-05-06,EVD-000182
+ATT-000183,SESS-001002,000000000080000215,4000,1.000,"Input pinion tooth chipping, backlash high",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-31,EVD-000183
+ATT-000184,SESS-001003,000000000080000216,1000,1.000,Stator winding insulation resistance failed at 500V,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-02-19,EVD-000184
+ATT-000185,SESS-001004,000000000080000216,4000,1.000,Casing wear through at discharge throat,SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-04-07,EVD-000185
+ATT-000186,SESS-001005,000000000080000217,2000,1.000,"Impeller vanes eroded, 30 percent material loss",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-06-06,EVD-000186
+ATT-000187,SESS-001006,000000000080000218,3000,1.000,Casing wear through at discharge throat,WEAR,true,Economically repairable; vendor repair recommended.,VZIATT02,2025-12-04,EVD-000187
+ATT-000188,SESS-001007,000000000080000218,1000,1.000,"Seal faces scored, leaking under load",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-06-13,EVD-000188
+ATT-000189,SESS-001008,000000000080000219,2000,1.000,"Shaft journal grooved, runout beyond limit",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-06-08,EVD-000189
+ATT-000190,SESS-001009,000000000080000220,2000,1.000,"Outer race spalling, radial play beyond limit",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-05-02,EVD-000190
+ATT-000191,SESS-001010,000000000080000221,2000,1.000,"Impeller vanes eroded, 30 percent material loss",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-16,EVD-000191
+ATT-000192,SESS-001011,000000000080000222,1000,1.000,Stator winding insulation resistance failed at 500V,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-02,EVD-000192
+ATT-000193,SESS-001012,000000000080000222,3000,1.000,"Shaft journal grooved, runout beyond limit",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-07-18,EVD-000193
+ATT-000194,SESS-001013,000000000080000223,1000,1.000,"Impeller vanes eroded, 30 percent material loss",BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-06-26,EVD-000194
+ATT-000195,SESS-001014,000000000080000224,1000,1.000,"Input pinion tooth chipping, backlash high",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-08-30,EVD-000195
+ATT-000196,SESS-001015,000000000080000226,4000,1.000,Casing wear through at discharge throat,CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2025-12-19,EVD-000196
+ATT-000197,SESS-001017,000000000080000228,4000,1.000,Stator winding insulation resistance failed at 500V,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2025-12-26,EVD-000197
+ATT-000198,SESS-001018,000000000080000229,2000,1.000,"Outer race spalling, radial play beyond limit",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-09,EVD-000198
+ATT-000199,SESS-001019,000000000080000230,1000,1.000,"Shaft journal grooved, runout beyond limit",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-04-08,EVD-000199
+ATT-000200,SESS-001020,000000000080000230,4000,1.000,"Impeller vanes eroded, 30 percent material loss",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-10,EVD-000200
+ATT-000201,SESS-001021,000000000080000231,1000,1.000,"Outer race spalling, radial play beyond limit",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-29,EVD-000201
+ATT-000202,SESS-001022,000000000080000232,2000,1.000,Stator winding insulation resistance failed at 500V,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-09-02,EVD-000202
+ATT-000203,SESS-001023,000000000080000233,3000,1.000,"Input pinion tooth chipping, backlash high",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-06-17,EVD-000203
+ATT-000204,SESS-001024,000000000080000234,2000,1.000,Casing wear through at discharge throat,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-03-09,EVD-000204
+ATT-000205,SESS-001027,000000000080000236,3000,1.000,Stator winding insulation resistance failed at 500V,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-04-03,EVD-000205
+ATT-000206,SESS-001028,000000000080000237,2000,1.000,"Outer race spalling, radial play beyond limit",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-07-28,EVD-000206
+ATT-000207,SESS-001029,000000000080000238,4000,1.000,"Input pinion tooth chipping, backlash high",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2025-12-26,EVD-000207
+ATT-000208,SESS-001030,000000000080000239,2000,1.000,"Impeller vanes eroded, 30 percent material loss",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-06-08,EVD-000208
+ATT-000209,SESS-001031,000000000080000240,4000,1.000,Casing wear through at discharge throat,BEARING_FAILURE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-06-28,EVD-000209
+ATT-000210,SESS-001033,000000000080000242,2000,1.000,"Impeller vanes eroded, 30 percent material loss",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-05-10,EVD-000210
+ATT-000211,SESS-001035,000000000080000243,3000,1.000,Casing wear through at discharge throat,SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-04-30,EVD-000211
+ATT-000212,SESS-001036,000000000080000244,1000,1.000,"Shaft journal grooved, runout beyond limit",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-05-22,EVD-000212
+ATT-000213,SESS-001037,000000000080000245,4000,1.000,"Shaft journal grooved, runout beyond limit",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-03-07,EVD-000213
+ATT-000214,SESS-001038,000000000080000246,1000,1.000,"Outer race spalling, radial play beyond limit",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-02-06,EVD-000214
+ATT-000215,SESS-001039,000000000080000246,4000,1.000,"Input pinion tooth chipping, backlash high",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-05-23,EVD-000215
+ATT-000216,SESS-001040,000000000080000247,1000,1.000,"Shaft journal grooved, runout beyond limit",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-04-23,EVD-000216
+ATT-000217,SESS-001041,000000000080000248,2000,1.000,"Outer race spalling, radial play beyond limit",CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2025-12-19,EVD-000217
+ATT-000218,SESS-001044,000000000080000250,2000,1.000,"Shaft journal grooved, runout beyond limit",WEAR,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-07-07,EVD-000218
+ATT-000219,SESS-001048,000000000080000254,4000,1.000,Casing wear through at discharge throat,IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-05-13,EVD-000219
+ATT-000220,SESS-001052,000000000080000258,4000,1.000,"Shaft journal grooved, runout beyond limit",IMPELLER_EROSION,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-06-30,EVD-000220
+ATT-000221,SESS-001053,000000000080000258,2000,1.000,Casing wear through at discharge throat,ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-22,EVD-000221
+ATT-000222,SESS-001054,000000000080000259,1000,1.000,Stator winding insulation resistance failed at 500V,GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-05-18,EVD-000222
+ATT-000223,SESS-001057,000000000080000262,2000,1.000,"Impeller vanes eroded, 30 percent material loss",ELECTRICAL_FAULT,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-06-08,EVD-000223
+ATT-000224,SESS-001058,000000000080000262,1000,1.000,Casing wear through at discharge throat,CORROSION,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-06-14,EVD-000224
+ATT-000225,SESS-001059,000000000080000263,3000,1.000,"Shaft journal grooved, runout beyond limit",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT02,2026-03-09,EVD-000225
+ATT-000226,SESS-001061,000000000080000265,2000,1.000,"Impeller vanes eroded, 30 percent material loss",SHAFT_DAMAGE,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-02-06,EVD-000226
+ATT-000227,SESS-001062,000000000080000266,3000,1.000,"Input pinion tooth chipping, backlash high",SEAL_LEAK,true,Economically repairable; vendor repair recommended.,VZIATT01,2026-08-06,EVD-000227
+ATT-000228,SESS-001063,000000000080000267,4000,1.000,"Outer race spalling, radial play beyond limit",GEARBOX_NOISE,true,Economically repairable; vendor repair recommended.,VZIATT01,2025-10-23,EVD-000228

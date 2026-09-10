@@ -1,0 +1,356 @@
+
+<h2 class="sr-only">Interactive mockup of the Spares AI Platform showing a chat interface with selectable options, workflow tracking, and escalation panels</h2>
+
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+.app { display: grid; grid-template-columns: 240px minmax(0,1fr) 220px; height: 600px; border: 0.5px solid var(--border); border-radius: 12px; overflow: hidden; font-size: 14px; background: var(--surface-2); }
+
+.sidebar { background: var(--surface-1); border-right: 0.5px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; }
+.sidebar-head { padding: 16px; border-bottom: 0.5px solid var(--border); }
+.sidebar-head h3 { font-size: 15px; font-weight: 500; color: var(--text-primary); }
+.sidebar-head p { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.nav-section { padding: 12px 12px 4px; font-size: 11px; color: var(--text-muted); font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+.nav-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin: 2px 8px; border-radius: var(--radius); cursor: pointer; color: var(--text-secondary); font-size: 13px; transition: background 0.15s; }
+.nav-item:hover { background: var(--surface-2); }
+.nav-item.active { background: var(--bg-accent); color: var(--text-accent); }
+.nav-item i { font-size: 16px; }
+.nav-badge { margin-left: auto; background: var(--bg-danger); color: var(--text-danger); font-size: 11px; padding: 1px 6px; border-radius: 10px; font-weight: 500; }
+
+.chat-area { display: flex; flex-direction: column; background: var(--surface-0); }
+.chat-header { padding: 12px 16px; border-bottom: 0.5px solid var(--border); display: flex; align-items: center; gap: 10px; background: var(--surface-2); }
+.chat-header h4 { font-size: 14px; font-weight: 500; color: var(--text-primary); }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: #1D9E75; }
+.chat-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+.msg { max-width: 88%; display: flex; flex-direction: column; gap: 6px; }
+.msg.ai { align-self: flex-start; }
+.msg.user { align-self: flex-end; }
+.msg-bubble { padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.55; }
+.msg.ai .msg-bubble { background: var(--surface-1); color: var(--text-primary); border: 0.5px solid var(--border); }
+.msg.user .msg-bubble { background: var(--fill-accent); color: var(--on-accent); }
+.msg-label { font-size: 11px; color: var(--text-muted); }
+
+.options-grid { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.option-card { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 0.5px solid var(--border); border-radius: var(--radius); cursor: pointer; background: var(--surface-2); transition: all 0.15s; }
+.option-card:hover { border-color: var(--border-accent); background: var(--bg-accent); }
+.option-card.selected { border-color: var(--border-accent); background: var(--bg-accent); }
+.option-card i { font-size: 18px; color: var(--text-accent); }
+.option-label { font-size: 13px; font-weight: 500; color: var(--text-primary); }
+.option-desc { font-size: 11px; color: var(--text-secondary); margin-top: 1px; }
+.option-radio { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--border-strong); margin-left: auto; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.option-card.selected .option-radio { border-color: var(--text-accent); }
+.option-card.selected .option-radio::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--text-accent); }
+
+.chat-input { padding: 12px 16px; border-top: 0.5px solid var(--border); background: var(--surface-2); display: flex; gap: 8px; align-items: center; }
+.chat-input input { flex: 1; }
+.send-btn { background: var(--fill-accent); color: var(--on-accent); border: none; width: 36px; height: 36px; border-radius: var(--radius); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+
+.right-panel { background: var(--surface-1); border-left: 0.5px solid var(--border); overflow-y: auto; display: flex; flex-direction: column; }
+.panel-section { padding: 12px; border-bottom: 0.5px solid var(--border); }
+.panel-title { font-size: 11px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+
+.tracker-item { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; }
+.tracker-icon { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0; }
+.tracker-icon.sent { background: var(--bg-accent); color: var(--text-accent); }
+.tracker-icon.pending { background: var(--bg-warning); color: var(--text-warning); }
+.tracker-icon.escalated { background: var(--bg-danger); color: var(--text-danger); }
+.tracker-icon.done { background: var(--bg-success); color: var(--text-success); }
+.tracker-text { font-size: 12px; color: var(--text-primary); line-height: 1.4; }
+.tracker-time { font-size: 11px; color: var(--text-muted); }
+
+.trace-tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin: 2px; font-weight: 500; }
+.trace-tag.cat { background: var(--bg-accent); color: var(--text-accent); }
+.trace-tag.tier { background: #E1F5EE; color: #0F6E56; }
+.trace-tag.status { background: var(--bg-warning); color: var(--text-warning); }
+
+.workflow-step { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12px; }
+.step-num { width: 20px; height: 20px; border-radius: 50%; font-size: 10px; font-weight: 500; display: flex; align-items: center; justify-content: center; }
+.step-num.done { background: var(--bg-success); color: var(--text-success); }
+.step-num.active { background: var(--bg-accent); color: var(--text-accent); }
+.step-num.wait { background: var(--surface-0); color: var(--text-muted); border: 0.5px solid var(--border); }
+
+.tab-row { display: flex; border-bottom: 0.5px solid var(--border); background: var(--surface-2); }
+.tab { padding: 8px 12px; font-size: 12px; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent; font-weight: 500; }
+.tab.active { color: var(--text-accent); border-bottom-color: var(--fill-accent); }
+</style>
+
+<div class="app">
+  <div class="sidebar">
+    <div class="sidebar-head">
+      <h3><i class="ti ti-cpu" aria-hidden="true" style="font-size:18px; vertical-align:-2px; margin-right:4px;"></i> Spares AI</h3>
+      <p>Vedanta procurement platform</p>
+    </div>
+    
+    <div class="nav-section">Active sessions</div>
+    <div class="nav-item active">
+      <i class="ti ti-message-circle" aria-hidden="true"></i>
+      <div>
+        <div style="font-weight:500; color: var(--text-accent);">Pump seal — Milling</div>
+        <div style="font-size:11px; color: var(--text-muted);">3 alternates found</div>
+      </div>
+    </div>
+    <div class="nav-item">
+      <i class="ti ti-message-circle" aria-hidden="true"></i>
+      <div>
+        <div>Conveyor bearing</div>
+        <div style="font-size:11px; color: var(--text-muted);">Pending approval</div>
+      </div>
+      <span class="nav-badge">1</span>
+    </div>
+    <div class="nav-item">
+      <i class="ti ti-message-circle" aria-hidden="true"></i>
+      <div>
+        <div>Pressure transmitter</div>
+        <div style="font-size:11px; color: var(--text-muted);">Escalated</div>
+      </div>
+      <span class="nav-badge" style="background:var(--bg-danger);">!</span>
+    </div>
+
+    <div class="nav-section">Quick actions</div>
+    <div class="nav-item"><i class="ti ti-search" aria-hidden="true"></i> Search materials</div>
+    <div class="nav-item"><i class="ti ti-chart-bar" aria-hidden="true"></i> Price benchmarks</div>
+    <div class="nav-item"><i class="ti ti-clipboard-check" aria-hidden="true"></i> Pending approvals <span class="nav-badge">4</span></div>
+    <div class="nav-item"><i class="ti ti-history" aria-hidden="true"></i> Audit trail</div>
+    
+    <div class="nav-section">Categories</div>
+    <div class="nav-item"><i class="ti ti-droplet" aria-hidden="true"></i> Flotation</div>
+    <div class="nav-item"><i class="ti ti-arrows-right-left" aria-hidden="true"></i> Conveyance</div>
+    <div class="nav-item"><i class="ti ti-tool" aria-hidden="true"></i> Milling</div>
+    <div class="nav-item"><i class="ti ti-gauge" aria-hidden="true"></i> Instrumentation</div>
+  </div>
+
+  <div class="chat-area">
+    <div class="chat-header">
+      <span class="status-dot"></span>
+      <h4>Pump seal — Milling unit 3</h4>
+      <span style="font-size:12px; color:var(--text-muted); margin-left:auto;">Session #SPR-2847</span>
+      <i class="ti ti-dots-vertical" style="color:var(--text-secondary); cursor:pointer;" aria-hidden="true"></i>
+    </div>
+    
+    <div class="chat-body">
+      <div class="msg user">
+        <div class="msg-bubble">I need an alternate supplier for material 500-14892 — mechanical seal for the milling pump</div>
+        <div class="msg-label" style="text-align:right;">You · 10:23 AM</div>
+      </div>
+      
+      <div class="msg ai">
+        <div class="msg-bubble">
+          I found material <strong>500-14892</strong> — currently described as "Seal Assy, Mech Type XR-200, Flowserve". Let me confirm the application context so I can find the right alternates.
+          <br><br>
+          <strong>Which equipment is this installed on?</strong>
+        </div>
+        <div class="options-grid">
+          <div class="option-card selected" onclick="this.classList.toggle('selected')">
+            <i class="ti ti-settings" aria-hidden="true"></i>
+            <div>
+              <div class="option-label">Warman 8/6 AH slurry pump</div>
+              <div class="option-desc">Milling circuit — primary grind</div>
+            </div>
+            <div class="option-radio"></div>
+          </div>
+          <div class="option-card" onclick="this.classList.toggle('selected')">
+            <i class="ti ti-settings" aria-hidden="true"></i>
+            <div>
+              <div class="option-label">Metso HM150 pump</div>
+              <div class="option-desc">Milling circuit — cyclone feed</div>
+            </div>
+            <div class="option-radio"></div>
+          </div>
+          <div class="option-card" onclick="this.classList.toggle('selected')">
+            <i class="ti ti-help" aria-hidden="true"></i>
+            <div>
+              <div class="option-label">Not sure / other equipment</div>
+              <div class="option-desc">I'll describe the application manually</div>
+            </div>
+            <div class="option-radio"></div>
+          </div>
+        </div>
+        <div class="msg-label">Spares AI · 10:23 AM · <span style="color:var(--text-accent);">Selection logged for traceability</span></div>
+      </div>
+
+      <div class="msg user">
+        <div class="msg-bubble">Warman 8/6 AH slurry pump</div>
+        <div class="msg-label" style="text-align:right;">You · 10:24 AM</div>
+      </div>
+
+      <div class="msg ai">
+        <div class="msg-bubble">
+          Got it. Based on the Warman 8/6 AH application, I've matched the specs: <strong>shaft size 65mm, seal face SiC/SiC, elastomer Viton, rated to 12 bar</strong>.
+          <br><br>
+          I found <strong>3 alternate options</strong>. What match tier are you looking for?
+        </div>
+        <div class="options-grid">
+          <div class="option-card selected">
+            <i class="ti ti-copy" aria-hidden="true"></i>
+            <div>
+              <div class="option-label">Direct equivalent</div>
+              <div class="option-desc">Same OEM part from different distributor — light approval</div>
+            </div>
+            <div class="option-radio"></div>
+          </div>
+          <div class="option-card">
+            <i class="ti ti-adjustments" aria-hidden="true"></i>
+            <div>
+              <div class="option-label">Technical equivalent</div>
+              <div class="option-desc">Different manufacturer, same specs — engineering sign-off</div>
+            </div>
+            <div class="option-radio"></div>
+          </div>
+          <div class="option-card">
+            <i class="ti ti-bulb" aria-hidden="true"></i>
+            <div>
+              <div class="option-label">Show all tiers</div>
+              <div class="option-desc">See all 3 options with price comparison</div>
+            </div>
+            <div class="option-radio"></div>
+          </div>
+        </div>
+        <div class="msg-label">Spares AI · 10:24 AM · <span style="color:var(--text-accent);">Tier selection determines approval workflow</span></div>
+      </div>
+
+      <div class="msg ai">
+        <div style="background: var(--surface-2); border: 0.5px solid var(--border); border-radius: 12px; padding: 14px; margin-top: 4px;">
+          <div style="font-size:13px; font-weight:500; margin-bottom:10px; color:var(--text-primary);">
+            <i class="ti ti-check" aria-hidden="true" style="color: #1D9E75; margin-right:4px;"></i> Direct equivalent found
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px;">
+            <div style="background:var(--surface-1); padding:10px; border-radius:var(--radius);">
+              <div style="color:var(--text-muted); font-size:11px;">Current supplier</div>
+              <div style="font-weight:500; margin: 4px 0;">Flowserve SA</div>
+              <div style="color:var(--text-secondary);">XR-200-65-VV</div>
+              <div style="font-weight:500; font-size:16px; margin-top:6px; color:var(--text-danger);">R 48,200</div>
+              <div style="color:var(--text-muted); font-size:11px;">Last PO: 14 Mar 2026</div>
+            </div>
+            <div style="background:var(--surface-1); padding:10px; border-radius:var(--radius); border: 2px solid var(--border-accent);">
+              <div style="color:var(--text-muted); font-size:11px;">Alternate — direct equivalent</div>
+              <div style="font-weight:500; margin: 4px 0;">Bearings Int'l (Pty)</div>
+              <div style="color:var(--text-secondary);">FLS-XR200-65V</div>
+              <div style="font-weight:500; font-size:16px; margin-top:6px; color: #1D9E75;">R 38,500</div>
+              <div style="color: #1D9E75; font-size:11px; font-weight:500;">20% below current <i class="ti ti-trending-down" aria-hidden="true" style="font-size:13px;"></i></div>
+            </div>
+          </div>
+          <div style="margin-top:10px; padding:8px 10px; background:var(--bg-accent); border-radius:var(--radius); font-size:12px; color:var(--text-accent);">
+            <i class="ti ti-info-circle" aria-hidden="true" style="margin-right:4px;"></i>
+            Market index benchmark: R 36,800 – R 42,100 for this spec. Alternate is within range.
+          </div>
+        </div>
+
+        <div class="options-grid" style="margin-top:8px;">
+          <div class="option-card" style="border-color: #1D9E75;">
+            <i class="ti ti-send" aria-hidden="true" style="color:#1D9E75;"></i>
+            <div>
+              <div class="option-label" style="color:#1D9E75;">Proceed with alternate</div>
+              <div class="option-desc">Triggers approval workflow and notifies stakeholders</div>
+            </div>
+          </div>
+          <div class="option-card">
+            <i class="ti ti-eye" aria-hidden="true"></i>
+            <div>
+              <div class="option-label">View technical equivalents too</div>
+              <div class="option-desc">See options from other manufacturers</div>
+            </div>
+          </div>
+          <div class="option-card">
+            <i class="ti ti-file-text" aria-hidden="true"></i>
+            <div>
+              <div class="option-label">Export comparison report</div>
+              <div class="option-desc">PDF for offline review with engineering</div>
+            </div>
+          </div>
+        </div>
+        <div class="msg-label">Spares AI · 10:25 AM</div>
+      </div>
+    </div>
+    
+    <div class="chat-input">
+      <input type="text" placeholder="Ask about materials, alternates, or pricing..." style="flex:1;" />
+      <button class="send-btn"><i class="ti ti-send" aria-hidden="true" style="font-size:16px;"></i></button>
+    </div>
+  </div>
+
+  <div class="right-panel">
+    <div class="tab-row">
+      <div class="tab active">Workflow</div>
+      <div class="tab">Emails</div>
+      <div class="tab">Trace</div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-title">Approval workflow</div>
+      <div class="workflow-step">
+        <div class="step-num done"><i class="ti ti-check" aria-hidden="true" style="font-size:12px;"></i></div>
+        <div>
+          <div style="font-size:12px; color:var(--text-primary);">Material identified</div>
+          <div style="font-size:11px; color:var(--text-muted);">Auto · 10:23</div>
+        </div>
+      </div>
+      <div class="workflow-step">
+        <div class="step-num done"><i class="ti ti-check" aria-hidden="true" style="font-size:12px;"></i></div>
+        <div>
+          <div style="font-size:12px; color:var(--text-primary);">Application confirmed</div>
+          <div style="font-size:11px; color:var(--text-muted);">User · 10:24</div>
+        </div>
+      </div>
+      <div class="workflow-step">
+        <div class="step-num active" style="font-size:10px;">3</div>
+        <div>
+          <div style="font-size:12px; color:var(--text-accent); font-weight:500;">Alternate selection</div>
+          <div style="font-size:11px; color:var(--text-muted);">Awaiting user</div>
+        </div>
+      </div>
+      <div class="workflow-step">
+        <div class="step-num wait" style="font-size:10px;">4</div>
+        <div style="font-size:12px; color:var(--text-muted);">Procurement approval</div>
+      </div>
+      <div class="workflow-step">
+        <div class="step-num wait" style="font-size:10px;">5</div>
+        <div style="font-size:12px; color:var(--text-muted);">Engineering sign-off</div>
+      </div>
+      <div class="workflow-step">
+        <div class="step-num wait" style="font-size:10px;">6</div>
+        <div style="font-size:12px; color:var(--text-muted);">PO generation</div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-title">Email notifications</div>
+      <div class="tracker-item">
+        <div class="tracker-icon sent"><i class="ti ti-mail" aria-hidden="true"></i></div>
+        <div>
+          <div class="tracker-text">Session started alert sent to procurement team</div>
+          <div class="tracker-time">10:23 AM</div>
+        </div>
+      </div>
+      <div class="tracker-item">
+        <div class="tracker-icon pending"><i class="ti ti-clock" aria-hidden="true"></i></div>
+        <div>
+          <div class="tracker-text">Approval reminder queued for R. Patel (Procurement head)</div>
+          <div class="tracker-time">Triggers on selection</div>
+        </div>
+      </div>
+      <div class="tracker-item">
+        <div class="tracker-icon escalated"><i class="ti ti-alert-triangle" aria-hidden="true"></i></div>
+        <div>
+          <div class="tracker-text">Auto-escalation to VP Supply Chain if no response in 24h</div>
+          <div class="tracker-time">Configured</div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="panel-section">
+      <div class="panel-title">Traceability log</div>
+      <div style="margin-bottom:8px;">
+        <span class="trace-tag cat">Milling</span>
+        <span class="trace-tag tier">Direct equiv.</span>
+        <span class="trace-tag status">In progress</span>
+      </div>
+      <div style="font-size:11px; color: var(--text-secondary); line-height:1.6;">
+        <div><strong>Material:</strong> 500-14892</div>
+        <div><strong>Equipment:</strong> Warman 8/6 AH</div>
+        <div><strong>Requester:</strong> M. Naidoo</div>
+        <div><strong>Spec match:</strong> 65mm / SiC / Viton</div>
+        <div><strong>Selections:</strong> 2 of 6 steps</div>
+      </div>
+    </div>
+  </div>
+</div>

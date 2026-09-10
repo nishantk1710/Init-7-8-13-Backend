@@ -1,0 +1,55 @@
+# Backend-scoped ignores for the FastAPI application.
+#
+# The repository-root .gitignore already covers everything here: its patterns
+# are deliberately de-anchored so they match at any depth (see
+# docs/repository-structure.md, "The 2026-09-09 restructure"). This file is the
+# conventional per-app copy — keep the two consistent, and prefer the root file
+# for anything that should apply to frontend/ as well.
+#
+# NOTE: data-generator/generated/**/*.csv and data-generator/discovery/* are
+# TRACKED on purpose — they are the synthetic dataset and the live SAP
+# discovery snapshot the frontend builds against. Nothing here may ignore them.
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Byte-compiled / cache ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# --- Packaging / build ---
+build/
+dist/
+sdist/
+wheels/
+*.egg-info/
+*.egg
+.eggs/
+
+# --- Testing and type checking ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# --- Environment files ---
+# Real env files are never committed; the template is. This also covers the
+# CPI credentials in data-generator/.env — do not narrow it.
+.env
+.env.*
+!.env.example
+
+# --- Editor / OS noise ---
+.DS_Store
+*.pem
+*.log
