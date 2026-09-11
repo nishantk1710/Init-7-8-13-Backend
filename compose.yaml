@@ -1,0 +1,65 @@
+# Local Postgres for development. Stands in for the managed cloud database.
+#
+#   podman compose up -d          (or: docker compose up -d)
+#   podman compose down           stop, keep the data
+#   podman compose down -v        stop and DELETE the data
+#
+# Nothing here is deployed. Production runs a managed database, reached through
+# DATABASE_URL -- which is the only thing the application ever knows about it.
+#
+# POSTGRES_PASSWORD is read from the .env file beside this one (gitignored).
+# Compose substitutes it automatically; no password is written to this file.
+
+services:
+  postgres:
+    image: docker.io/library/postgres:18
+    container_name: spares-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in backend/.env}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      # Created on first start, so nobody has to run CREATE DATABASE by hand.
+      # Only applied to an EMPTY volume -- see "Changing this" below.
+      POSTGRES_DB: ${POSTGRES_DB:-spares_ai}
+
+    ports:
+      # Bound to loopback deliberately. "5432:5432" would listen on every
+      # interface and expose the database to the whole network with a
+      # development password on it.
+      - "127.0.0.1:5432:5432"
+
+    volumes:
+      - spares_pgdata:/var/lib/postgresql/data
+
+    healthcheck:
+      # Lets `compose up --wait` block until the database genuinely accepts
+      # connections, rather than just until the container is running.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-spares_ai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+    # The seed loads ~3.4M rows via COPY. The defaults are tuned for a small
+    # shared server; these suit a laptop doing bulk loads and analytical reads.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - work_mem=32MB
+      - -c
+      - maintenance_work_mem=512MB   # index builds after each COPY
+      - -c
+      - max_wal_size=4GB             # fewer checkpoints during a bulk load
+
+volumes:
+  spares_pgdata:
+
+# Changing this
+# -------------
+# POSTGRES_DB, POSTGRES_USER and POSTGRES_PASSWORD are applied by the image only
+# when the data volume is empty. Editing them later has no effect on an existing
+# volume -- to genuinely reset, `podman compose down -v` and start again, which
+# deletes the data and means re-running `alembic upgrade head` and the seed.

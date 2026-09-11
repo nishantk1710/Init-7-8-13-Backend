@@ -1,5 +1,29 @@
-# Runtime dependencies. Keep this list minimal -- add a library only when the
-# code actually imports it.
+# All Python dependencies for the backend, runtime and test alike.
+#
+# Keep this list minimal -- add a library only when the code actually imports
+# it. Pin every version: an unpinned dependency makes a local pass and an Azure
+# failure indistinguishable.
+#
+# Note: the test packages below are installed in every environment, deployment
+# included. If a deployed image ever needs to stay lean, split the "Test" block
+# back out into requirements-dev.txt with a leading `-r requirements.txt`.
+
+# --- Runtime ---
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
 pydantic-settings==2.15.0
+
+# --- Data / persistence ---
+# Local Postgres stands in for the managed cloud database; the dialect is
+# chosen by DATABASE_URL, never by code. See app/core/db.py.
+SQLAlchemy==2.0.52
+psycopg[binary]==3.3.5
+alembic==1.19.2
+
+# Reads the SAP extract workbooks. app/seed/reader.py opens every one of them
+# with read_only=True -- see README, "Seeding".
+openpyxl==3.1.5
+
+# --- Test ---
+pytest==9.1.1
+httpx2==2.12.0
