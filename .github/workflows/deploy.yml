@@ -1,0 +1,84 @@
+# Backend deployment to Azure App Service.
+#
+# NOT WIRED UP, and deliberately so. There is no Azure subscription, no App
+# Service and no publish credential yet. This exists so the shape is agreed now
+# and Azure day is a matter of filling in values rather than designing a
+# pipeline under time pressure.
+#
+# Before this can run, someone must:
+#   1. Create the App Service and its Postgres (or SQL) instance.
+#   2. Add the repository secret AZURE_WEBAPP_PUBLISH_PROFILE (or switch to
+#      OIDC via azure/login, which is the better long-term choice -- no
+#      long-lived credential in GitHub).
+#   3. Set AZURE_WEBAPP_NAME below.
+#   4. Set DATABASE_URL and STORAGE_URL as App Service application settings --
+#      NOT here. They are configuration, and one of them carries a password.
+#   5. Confirm CPI allows inbound traffic from the App Service outbound IPs.
+#      Asked late, this costs a day of Azure time.
+#
+# Trigger is manual only. It will not fire on a push, so committing it cannot
+# break anything.
+
+name: Deploy (not yet active)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to confirm. Placeholder pipeline -- expect it to fail until the setup above is done.'
+        required: true
+        default: ""
+
+env:
+  AZURE_WEBAPP_NAME: "" # e.g. spares-ai-backend
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  deploy:
+    # Belt and braces: the empty AZURE_WEBAPP_NAME stops an accidental run even
+    # if someone triggers this before the secrets exist.
+    if: ${{ github.event.inputs.confirm == 'deploy' }}
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Guard -- refuse to deploy until configured
+        run: |
+          if [ -z "${{ env.AZURE_WEBAPP_NAME }}" ]; then
+            echo "AZURE_WEBAPP_NAME is not set. See the header of this file."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt --target=".python_packages/lib/site-packages"
+
+      # Migrations run against the deployed database BEFORE the new code is
+      # live, so the app never starts against a schema it does not expect.
+      # This needs DATABASE_URL from secrets, and network access to the database
+      # -- which for Azure Postgres means allowing the runner's IP, or running
+      # this step from inside the VNet instead.
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: alembic upgrade head
+
+      - name: Deploy
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: .
+
+      - name: Smoke check
+        # A deployment that returns 200 on /api/health but 503 on /api/ready is
+        # running but cannot reach its database -- worth catching here rather
+        # than from a user.
+        run: |
+          curl --fail --retry 5 --retry-delay 10 \
+            "https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/api/health"
