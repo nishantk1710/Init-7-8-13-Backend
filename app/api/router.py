@@ -17,10 +17,12 @@ api_router.include_router(ready.router)
 api_router.include_router(pr.router)
 
 # --- Extension points: one Spares AI backend, three business modules. ---
+from app.api.i8.router import router as i8_router
+
+api_router.include_router(i8_router)      # -> /api/i8/*
+
 # from app.api.i7.router import router as i7_router
-# from app.api.i8.router import router as i8_router
 # from app.api.i13.router import router as i13_router
 #
 # api_router.include_router(i7_router)    # -> /api/i7/*
-# api_router.include_router(i8_router)    # -> /api/i8/*
 # api_router.include_router(i13_router)   # -> /api/i13/*
