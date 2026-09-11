@@ -76,6 +76,35 @@ def _already_loaded(session: Session, spec: ExtractSpec, fingerprints: dict[str,
     return all(latest.get(key) == digest for key, digest in fingerprints.items())
 
 
+def _comment_table(cursor: psycopg.Cursor, spec: ExtractSpec) -> None:
+    """Attach a warning to the table itself.
+
+    The raw layer mirrors the EXTRACT, not the OData contract: business-label
+    column names, unpadded material numbers, everything text. Code written
+    against it will break when the same data arrives from CPI.
+
+    That warning lives in the README and the manifest, but neither is visible
+    to someone who found the table in a database client and started writing
+    SQL. This puts it where they will actually see it -- "backslash-d-plus" in psql, the
+    table description in DBeaver or pgAdmin.
+    """
+    warning = (
+        f"RAW extract layer, from {', '.join(spec.files)}. "
+        "Column names are the EXTRACT's business labels, not SAP field names or "
+        "OData properties; material numbers are unpadded; every column is text. "
+        "Do NOT build on this directly -- it does not match what CPI returns, so "
+        "anything written against it needs rewriting at cutover. Read the "
+        "normalised layer instead once it exists. See README, 'Seeding'."
+    )
+    if spec.note:
+        warning += f" NOTE: {spec.note}"
+    cursor.execute(
+        sql.SQL("COMMENT ON TABLE {} IS {}").format(
+            sql.Identifier(spec.raw_table), sql.Literal(warning)
+        )
+    )
+
+
 def _create_table(cursor: psycopg.Cursor, table: str, columns: list[str]) -> None:
     """Recreate the raw table for exactly these columns.
 
@@ -183,6 +212,7 @@ def load_table(spec: ExtractSpec, *, force: bool = False) -> TableResult:
             raw_connection = connection.connection.driver_connection
             with raw_connection.cursor() as cursor:
                 _create_table(cursor, spec.raw_table, columns)
+                _comment_table(cursor, spec)
                 for key in spec.files:
                     logger.info("%s: copying %s", spec.table, key)
                     per_file[key] = _copy_file(

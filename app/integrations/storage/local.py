@@ -43,13 +43,37 @@ _WINDOWS_MAX_PATH = 260
 class LocalFileSystemStorage(Storage):
     """``Storage`` backed by a directory tree.
 
-    The root is created if missing, so a fresh checkout does not need a manual
-    ``mkdir`` before the first write.
+    The root must already exist unless ``create=True`` -- see ``__init__``.
     """
 
-    def __init__(self, root: str | os.PathLike[str]) -> None:
+    def __init__(self, root: str | os.PathLike[str], *, create: bool = False) -> None:
+        """``create=False`` by default: a missing root is an error, not a request.
+
+        This used to create the root automatically, which seemed convenient and
+        was wrong. STORAGE_URL points at a DELIVERY of data that already exists;
+        a path that is not there means the setting is wrong, and silently
+        creating an empty directory turns that into "the extracts have vanished"
+        much later and somewhere else.
+
+        It was also slow in a way that looked like a hang. A copy of this
+        repository was run on another machine with STORAGE_URL still pointing at
+        the original machine's OneDrive folder; Windows spent minutes trying to
+        resolve and create that path, and the test suite appeared to freeze with
+        no output. Failing immediately, naming the path, is strictly better.
+
+        Pass ``create=True`` where making the directory is genuinely the intent.
+        """
         self._root = Path(root).expanduser().resolve()
-        self._root.mkdir(parents=True, exist_ok=True)
+        if create:
+            self._root.mkdir(parents=True, exist_ok=True)
+        elif not self._root.is_dir():
+            raise StorageError(
+                f"Storage root does not exist: {self._root}. "
+                "Check STORAGE_URL points at the folder CONTAINING the delivery "
+                "folders (see README, 'Seeding'). It is not created automatically: "
+                "a missing root means the setting is wrong, not that the data "
+                "should be conjured."
+            )
 
     @property
     def root(self) -> Path:
