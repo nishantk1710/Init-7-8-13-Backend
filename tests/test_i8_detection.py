@@ -3,9 +3,14 @@
 This is the task plan's section 13 table, one test per row, plus the properties
 that keep the rule honest as the code around it changes.
 
-None of these tests needs a database. That is the point of putting the rule in
-its own module: the thing every other number in I08 depends on can be checked
-in milliseconds, everywhere, including a machine with nothing configured.
+All but three of them run with no database at all. That is the point of
+putting the rule in its own module: the thing every other number in I08
+depends on can be checked in milliseconds, everywhere, including on a machine
+with nothing configured.
+
+The three exceptions check the SQL prefilter against every material the
+database actually holds, which is the one property that cannot be proved from
+the function alone.
 """
 
 from __future__ import annotations
@@ -159,6 +164,30 @@ class TestSameMaterial:
 # --- the prefilter contract, against the real database --------------------
 
 
+def test_the_prefilter_carries_no_guard_of_its_own() -> None:
+    """Looseness proved structurally, not by whatever the data happens to hold.
+
+    Every material in the July extract that starts with '80' also happens
+    to be ten digits, so on this data the prefilter and the predicate agree
+    exactly. That coincidence is not the contract -- a future extract, or
+    the CPI projection, will contain values where they differ. What must
+    stay true is that the SQL side carries only the prefix, so the Python
+    predicate is what rejects anything.
+    """
+    import fnmatch
+
+    cfg = I8Settings(_env_file=None)
+    patterns = [p.replace("%", "*") for p in series_like_patterns(cfg)]
+
+    for value in ("80", "80ABCDEFGH", "800000000", "80000056321"):
+        assert any(fnmatch.fnmatch(value, p) for p in patterns), (
+            f"{value!r} must reach Python -- the prefilter may not reject it"
+        )
+        assert is_eighty_series(value, cfg) is False, (
+            f"{value!r} must then be rejected by the predicate, not the SQL"
+        )
+
+
 @needs_views
 class TestPrefilterIsLooserThanThePredicate:
     """The database prefilter must never exclude a row the real test accepts.
@@ -201,26 +230,3 @@ class TestPrefilterIsLooserThanThePredicate:
             f"{len(missed)} materials in {view} pass is_eighty_series but the "
             f"prefilter excludes them, e.g. {sorted(missed)[:5]}"
         )
-
-    def test_the_prefilter_carries_no_guard_of_its_own(self) -> None:
-        """Looseness proved structurally, not by whatever the data happens to hold.
-
-        Every material in the July extract that starts with '80' also happens
-        to be ten digits, so on this data the prefilter and the predicate agree
-        exactly. That coincidence is not the contract -- a future extract, or
-        the CPI projection, will contain values where they differ. What must
-        stay true is that the SQL side carries only the prefix, so the Python
-        predicate is what rejects anything.
-        """
-        import fnmatch
-
-        cfg = I8Settings(_env_file=None)
-        patterns = [p.replace("%", "*") for p in series_like_patterns(cfg)]
-
-        for value in ("80", "80ABCDEFGH", "800000000", "80000056321"):
-            assert any(fnmatch.fnmatch(value, p) for p in patterns), (
-                f"{value!r} must reach Python -- the prefilter may not reject it"
-            )
-            assert is_eighty_series(value, cfg) is False, (
-                f"{value!r} must then be rejected by the predicate, not the SQL"
-            )
