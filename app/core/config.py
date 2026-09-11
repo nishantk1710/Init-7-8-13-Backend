@@ -62,11 +62,54 @@ class Settings(BaseSettings):
     # Empty by default so the app starts with no storage configured.
     storage_url: str = ""
 
+    # SAP, reached through the CPI generic OData consumption endpoint.
+    #
+    # Named CPI_*, not SAP_*, because that is what they actually are and what
+    # data-generator/.env has always called them: the platform never talks to
+    # SAP directly. Every call goes to ONE CPI iFlow URL carrying APIPath and
+    # APIQuery parameters -- there are no per-service OData URLs to configure.
+    #
+    # All empty by default. The application, its liveness endpoint and the test
+    # suite all start and pass with no SAP access at all.
+    cpi_base_url: str = ""
+    cpi_token_url: str = ""
+    cpi_client_id: str = ""
+    cpi_client_secret: str = ""
+
+    # The iFlow path appended to cpi_base_url. Configuration, not a constant:
+    # a differently-named iFlow in another VZI landscape must not need a code
+    # change.
+    cpi_path: str = "/http/SAPECC/OdataConsumption"
+
+    # Rows per page. Conservative -- SAP's real server-side limit is unproven.
+    cpi_page_size: int = 1000
+
+    # Seconds. Generous: some sets take over a minute to answer a $count.
+    cpi_timeout_seconds: int = 120
+
+    # Path to a CA bundle, for networks that terminate TLS with a corporate
+    # certificate. Empty means "use the default trust store".
+    #
+    # There is deliberately NO setting to disable verification. On a network
+    # that intercepts TLS, turning verification off does not "make it work" --
+    # it makes every call trust whatever answers, including on the day the
+    # interception is something else. Export the corporate root certificate and
+    # point this at it. `requests` also honours REQUESTS_CA_BUNDLE natively, so
+    # either mechanism works.
+    cpi_ca_bundle: str = ""
+
+    @property
+    def cpi_configured(self) -> bool:
+        """Whether enough is set to attempt a call. Drives skipping, not failing."""
+        return bool(
+            self.cpi_base_url
+            and self.cpi_token_url
+            and self.cpi_client_id
+            and self.cpi_client_secret
+        )
+
     # --- Reserved for future integrations. Not read by any code yet, and not
     # --- required for startup. See app/core/security.py and app/integrations/.
-    sap_base_url: str = ""
-    sap_client_id: str = ""
-    sap_client_secret: str = ""
     azure_tenant_id: str = ""
     azure_client_id: str = ""
 

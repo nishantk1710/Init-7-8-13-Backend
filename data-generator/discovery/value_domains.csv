@@ -1,0 +1,14 @@
+service,entity_set,field,value,count,pct_of_scanned_total
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Dismm,(blank),1023,47.0%
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Dismm,PD,827,38.0%
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Dismm,ND,184,8.4%
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Dismm,V1,79,3.6%
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Dismm,VB,45,2.1%
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Dismm,M0,13,0.6%
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Dismm,RP,3,0.1%
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Dismm,VI,1,0.0%
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Dismm,VH,1,0.0%
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Dismm,V2,1,0.0%
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Dismm,VM,1,0.0%
+ZVZI_KPI02_SHARED_SRV,MaterialSet,Mstae,(blank),2032,99.9%
+ZVZI_KPI02_SHARED_SRV,MaterialSet,Mstae,01,3,0.1%

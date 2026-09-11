@@ -53,3 +53,15 @@ htmlcov/
 .DS_Store
 *.pem
 *.log
+
+# --- Archives ---
+# An archive can carry files every rule above would have excluded -- a handover
+# zip of this folder contains .env, credentials and all. Because git sees only
+# the archive, no .env rule can help. So they are ignored by default; use -f
+# deliberately if you ever need to track one.
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar

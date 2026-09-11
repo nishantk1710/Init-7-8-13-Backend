@@ -233,9 +233,22 @@ class TestFactory:
 class TestLocalAdapterSpecifics:
     """Behaviour that only makes sense for the filesystem adapter."""
 
-    def test_root_is_created_if_missing(self, tmp_path: Path) -> None:
+    def test_missing_root_fails_fast_and_names_the_path(self) -> None:
+        """A wrong STORAGE_URL must error immediately, not stall or be created.
+
+        Regression test for a real incident: a copy of this repo ran elsewhere
+        with STORAGE_URL still pointing at the original machine's OneDrive
+        folder. The adapter tried to CREATE it, Windows spent minutes on the
+        network path, and the suite looked frozen.
+        """
+        from app.core.storage import StorageError
+
+        with pytest.raises(StorageError, match="does not exist"):
+            LocalFileSystemStorage("Z:/no/such/storage/root")
+
+    def test_root_is_created_only_when_explicitly_asked(self, tmp_path: Path) -> None:
         root = tmp_path / "not" / "there" / "yet"
-        LocalFileSystemStorage(root)
+        LocalFileSystemStorage(root, create=True)
         assert root.is_dir()
 
     def test_in_flight_temp_files_are_not_listed(self, tmp_path: Path) -> None:
@@ -245,8 +258,13 @@ class TestLocalAdapterSpecifics:
         assert list(store.list()) == []
 
     def test_check_connection_fails_when_root_disappears(self, tmp_path: Path) -> None:
+        """Readiness must notice a root that vanishes after start-up.
+
+        A network share disconnecting, or a container mount that does not come
+        back, looks exactly like this.
+        """
         root = tmp_path / "vanishing"
-        store = LocalFileSystemStorage(root)
+        store = LocalFileSystemStorage(root, create=True)
         root.rmdir()
         with pytest.raises(StorageError):
             store.check_connection()
@@ -280,12 +298,13 @@ class TestReadinessReportsStorage:
     ) -> None:
         """Configured but broken must read differently from not configured."""
         root = tmp_path / "gone"
+        root.mkdir()
         monkeypatch.setattr(
             "app.core.storage.get_settings",
             lambda: Settings(storage_url=str(root), _env_file=None),
         )
         reset_storage_cache()
-        get_storage()  # builds the adapter, creating the root
+        get_storage()  # builds the adapter against a root that exists
         root.rmdir()  # then it disappears underneath us
 
         response = client.get("/api/ready")

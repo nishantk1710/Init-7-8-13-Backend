@@ -55,6 +55,8 @@ backend/
 │   │   ├── logging.py           stdout logging setup
 │   │   └── security.py          auth placeholder (Entra ID / SAP callbacks)
 │   ├── integrations/            sap/  azure/  entra/  notifications/  (empty)
+│   ├── integrations/sap/        the CPI client — the ONLY SAP access
+│   ├── seed/                    loads the July extracts into Postgres
 │   ├── initiatives/             i7/  i8/  i13/  business logic (empty)
 │   ├── services/                business services (empty)
 │   ├── models/                  persistence models (empty)
@@ -66,6 +68,8 @@ backend/
 ├── tests/test_db.py
 ├── tests/test_storage.py        adapter-agnostic conformance suite
 ├── tests/test_seed.py
+├── tests/test_sap.py            client mechanics, on a fake transport
+├── tests/test_sap_contract.py   does SAP still look the way we believe?
 ├── requirements.txt             runtime + test dependencies
 ├── pytest.ini
 ├── .env.example
@@ -151,7 +155,7 @@ podman run -d --name spares-postgres \
 
 ```bash
 alembic upgrade head
-pytest                                    # 96 tests
+pytest                                    # 207 tests
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -205,8 +209,7 @@ cp .env.example .env
 | `FRONTEND_ORIGIN` | `http://localhost:3000` | Allowed CORS origin(s), comma-separated |
 
 Reserved and **not required for startup** — every one may be empty:
-`DATABASE_URL`, `STORAGE_URL`, `SAP_BASE_URL`, `SAP_CLIENT_ID`, `SAP_CLIENT_SECRET`,
-`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`.
+`DATABASE_URL`, `STORAGE_URL`, `CPI_*`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`.
 
 `.env` is gitignored. Never commit real credentials.
 
@@ -533,6 +536,162 @@ for Gamsberg at all until MARC covers it. Stock and movements *look* complete,
 which is exactly the trap.
 
 Both are re-extraction requests, not code fixes.
+
+## SAP access
+
+Read-only, through the CPI generic OData consumption endpoint. `SapClient` is
+the only thing application code should import:
+
+```python
+from app.integrations.sap import SapClient
+
+client = SapClient()
+page = client.read("MaterialPlantSet", filter="Dismm eq 'ND'", top=100)
+all_rows = client.read_all("MaterialPlantSet")     # ordered, paged, complete
+```
+
+Callers name an entity set. Which service owns it, the iFlow URL, the token, the
+OData envelope, typed decoding and paging are all below that line. **Nothing here
+writes** — P1 forbids SAP write-back programme-wide, and only GET is issued.
+
+### Three behaviours that are measured, not assumed
+
+**Paging is always ordered.** `discovery/paging_stability.txt` recorded an
+unordered full pull of `MaterialPlantSet` returning 2,178 rows but only 1,618
+distinct keys — 560 duplicated, 560 missing, and a *different* 560 next time.
+`read_all` refuses to page without `$orderby` rather than offering it as an option.
+
+**`$count` is not trusted.** It returns HTTP 500 on some sets. `read_all` asks
+once and, on failure, pages until a short page arrives. The demotion is reported
+in `ExtractResult.counted`, not hidden.
+
+**Filters that SAP silently ignores are refused.** `discovery/filter_support.csv`
+probed 208 filterable properties: 124 honoured, 11 rejected with HTTP 500, and
+**62 silently ignored** — SAP drops the filter and answers HTTP 200 with the whole
+set. There is no error to catch, so the guard runs before the request:
+
+```python
+client.read("PurchaseOrderItemSet", filter="Pstyp eq '3'")
+# UnsupportedFilterError: SAP SILENTLY IGNORES a filter on Pstyp ...
+```
+
+That is the exact case behind "apply the Pstyp filter on the EKPO pull, not in
+the query". Read the set without the predicate and filter client-side, or pass
+`allow_unsupported_filter=True` if you have re-verified it against live SAP.
+
+### Errors
+
+| Class | Meaning | Retry? |
+| --- | --- | --- |
+| `AuthError` | credentials or token exchange failed | no |
+| `TransientError` | 5xx or network fault | yes, with backoff |
+| `NotFoundError` | 404 — wrong path | never |
+| `RequestError` | other 4xx, usually a bad filter | no |
+| `ContractError` | response contradicts the contract — drift | no |
+| `UnsupportedFilterError` | raised *before* the call, see above | n/a |
+
+### Testing
+
+Almost every test uses an injected transport and needs no network. The tests that
+call live SAP are marked `live` and **excluded from the default run and from CI**
+(see `pytest.ini`), because they fail for reasons that are not the code — no
+credentials, no network, or a proxy terminating TLS.
+
+```bash
+pytest              # 207 tests, no network
+pytest -m live      # 7 tests, from a machine that can reach CPI
+```
+
+If `pytest -m live` fails with `CERTIFICATE_VERIFY_FAILED`, the network is
+intercepting TLS: set `CPI_CA_BUNDLE` to the corporate root certificate. Do not
+reach for a way to disable verification — there deliberately isn't one.
+
+### Contract testing — is SAP still what we think it is?
+
+Three layers, and the distinction is the point.
+
+| Layer | Runs | Proves |
+| --- | --- | --- |
+| Snapshot consistency | always | the CSVs and the committed `$metadata` agree |
+| Known conditions | always | the snapshot still says what we reasoned about |
+| Live drift | `-m live` | SAP still matches the snapshot **today** |
+
+The first two prove we are *self-consistent*; only the third proves we are
+*right*. Conflating them would be dishonest, so they are separate classes in
+`tests/test_sap_contract.py`.
+
+Layer 1 is not theoretical. A discovery folder was once replaced with a sweep
+from a day earlier; the CSVs and the XML disagreed and nothing noticed until
+something downstream broke. That comparison now runs on every test run:
+
+```python
+compare_contracts(contract(), parse_snapshot())   # must be []
+```
+
+Layer 2 lives in `known_conditions.py` — every constant an observation made
+against live CPI. **When one of those tests fails, the first question is "did SAP
+change?", not "is the expectation wrong?"** Particularly for `DISMM`: its value
+set decides OAR scope, so quietly adding a newly-seen MRP type to make a test
+green would silently change which materials three initiatives act on.
+
+### Live verification, 2026-09-11
+
+Run from a machine without TLS interception. **3 of 7 live tests passed, 4
+failed, and the failures were findings rather than defects.**
+
+Confirmed working against real SAP:
+
+- OAuth token acquisition, the CPI iFlow envelope, and typed decoding
+  (`rows: 5 | unknown properties: []`)
+- **Zero metadata drift on both services** — no key, type or property has moved
+- `Dismm` filter still honoured, so OAR material scope is safe
+- `$count` stable across repeated calls
+
+Four findings, in priority order:
+
+**1. `MaterialPlantSet` returns HTTP 500 for ANY two-field `$orderby`.**
+`Matnr,Werks` and `Werks,Matnr` both fail; every single-field ordering works;
+`Ebeln,Ebelp` works fine on `PurchaseOrderItemSet`. The body is empty, which
+means a backend short dump rather than a rejected query. This blocked
+`read_all()` entirely — it died on page 1.
+
+The client now negotiates: it tries the full key, and on a server error falls
+back to the longest prefix SAP accepts, reporting `order_by_degraded`. It also
+**measures** `duplicate_keys` afterwards, because a shortened ordering is not
+unique (`Matnr` alone repeats across plants) and duplicates in the output are
+direct evidence of rows missing from it. Still worth raising with SAP Basis:
+an empty-bodied 500 should have left an ST22 short dump.
+
+**2. `Pstyp` is no longer silently ignored — it now returns HTTP 500.** The
+opposite direction from what the snapshot records. Normal callers are unaffected
+(the filter guard already refuses both `IGNORED` and `REJECTED_HTTP_500`), but
+anything passing `allow_unsupported_filter=True` will now fail after exhausting
+its retries. `filter_support.csv` needs a discovery re-run.
+
+**3. `MaterialValuationSet` answers HTTP 400 to everything**, not just `$count`
+— a plain `$top=5` fails too. Recorded in `known_conditions.UNREADABLE_SETS`.
+No data impact: MBEW comes from the July extract (`raw_mbew`, 7,034 rows).
+
+**4. `MaterialPlantSet` grew 2,178 → 2,183.** Normal growth. The test asserted
+exact equality and has been changed to a tolerance — a test that cannot
+distinguish five new rows from a step change trains people to ignore it.
+
+Worth recording: the old 2,178 → 1,618 row-loss did **not** reproduce on the
+day. That is not evidence ordering is unnecessary — sort stability is data- and
+load-dependent — but it does mean no rows are being lost right now.
+
+### Why this is Python and not TypeScript
+
+The frontend used to carry a TypeScript CPI client at `frontend/src/lib/sap/`.
+It was removed on 2026-09-11. Two implementations of one wire protocol have to
+be fixed twice on every SAP change, and SAP changed twice in a week during
+development alone — `Edm.Decimal` to `Edm.String` on two properties, and a
+requisition key gaining a field.
+
+What moved here: the entity-set contract, EDMX parsing, drift comparison,
+paging, and the per-set mock/live routing. What stayed in the frontend:
+`src/lib/material-scope/`, the OAR rule — a business decision rather than a wire
+protocol, and the thing `routeMaterial()` consumes.
 
 ## Logging
 
