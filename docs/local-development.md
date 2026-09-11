@@ -13,7 +13,7 @@ python -m venv .venv
 # Linux / macOS
 source .venv/bin/activate
 
-pip install -r requirements.txt      # add -r requirements-dev.txt to run tests
+pip install -r requirements.txt
 cp .env.example .env
 uvicorn app.main:app --reload --port 8000
 ```

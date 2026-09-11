@@ -1,4 +1,0 @@
-# Development and test dependencies (not installed on the deployed app).
--r requirements.txt
-pytest==9.1.1
-httpx2==2.12.0
