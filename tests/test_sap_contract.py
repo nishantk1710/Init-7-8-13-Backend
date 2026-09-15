@@ -117,6 +117,81 @@ class TestContractShape:
             assert spec.api_path == f"sap/opu/odata/sap/{spec.service}/{name}"
 
 
+class TestDeclaredMetadataDetail:
+    """W2.5's "types, lengths, annotations", captured from $metadata."""
+
+    def test_lengths_are_captured(self) -> None:
+        with_length = [
+            p for spec in contract().values() for p in spec.properties if p.max_length
+        ]
+        assert len(with_length) == known.PROPERTIES_WITH_MAX_LENGTH
+
+    def test_precision_is_captured(self) -> None:
+        with_precision = [
+            p for spec in contract().values() for p in spec.properties if p.precision
+        ]
+        assert len(with_precision) == known.PROPERTIES_WITH_PRECISION
+
+    def test_total_property_count_is_unchanged(self) -> None:
+        total = sum(len(spec.properties) for spec in contract().values())
+        assert total == known.TOTAL_PROPERTIES
+
+    @pytest.mark.parametrize(("key", "expected"), sorted(known.KNOWN_MAX_LENGTHS.items()))
+    def test_known_max_lengths(self, key: tuple[str, str], expected: int) -> None:
+        """Matnr's 18 matters: the extract carries 10 unpadded, OData 18 padded."""
+        prop = entity_set(key[0]).find(key[1])
+        assert prop is not None and prop.max_length == expected
+
+    @pytest.mark.parametrize(("key", "expected"), sorted(known.KNOWN_LABELS.items()))
+    def test_labels_match_the_extract_vocabulary(
+        self, key: tuple[str, str], expected: str
+    ) -> None:
+        """These labels are the July extract's column headers, exactly."""
+        prop = entity_set(key[0]).find(key[1])
+        assert prop is not None and prop.label == expected
+
+    def test_every_property_has_a_label(self) -> None:
+        unlabelled = [
+            f"{name}.{p.name}"
+            for name, spec in contract().items()
+            for p in spec.properties
+            if not p.label
+        ]
+        assert not unlabelled, f"properties with no SAP label: {unlabelled[:8]}"
+
+    def test_declared_capability_flags_are_uniformly_false(self) -> None:
+        """The finding that makes the flags useless -- and worth watching.
+
+        All 229 properties declare filterable/sortable/creatable/updatable
+        false, while 124 are measured filterable and several sort fine. If this
+        ever fails, somebody has started maintaining the annotations and they
+        may finally mean something -- at which point compare them against
+        filter_support.csv rather than switching to them.
+        """
+        true_flags = [
+            f"{name}.{p.name}.{flag}"
+            for name, spec in contract().items()
+            for p in spec.properties
+            for flag in known.DECLARED_FLAGS
+            if getattr(p, flag) is True
+        ]
+        assert not true_flags, f"declared flags are no longer uniformly false: {true_flags[:8]}"
+
+    def test_declared_flags_do_not_predict_measured_behaviour(self) -> None:
+        """Evidence for the rule above: zero overlap between declared and measured."""
+        honoured = {k for k, v in filter_support().items() if v == "HONOURED"}
+        assert honoured, "no honoured filters recorded"
+        declared = {
+            k
+            for k in honoured
+            if (spec := contract().get(k[0])) and (p := spec.find(k[1])) and p.filterable
+        }
+        assert not declared, (
+            "Some measured-honoured properties are now DECLARED filterable. The "
+            "annotations may have become meaningful -- re-probe before relying on them."
+        )
+
+
 class TestKnownCounts:
     def test_empty_sets_are_still_empty(self) -> None:
         """Registered, responding, zero rows. The seed covers these from the extract."""
@@ -130,6 +205,26 @@ class TestKnownCounts:
 
     def test_paging_proof_set_total_is_unchanged(self) -> None:
         assert counts()[known.PAGING_PROOF_SET] == str(known.PAGING_PROOF_TOTAL)
+
+    def test_count_unreliable_sets_are_recorded_and_real(self) -> None:
+        """W2.5: "records the two known /$count failures".
+
+        This constant existed but nothing read it -- a note no one checked.
+        Paging demotes to short-page detection for these, so if a set is named
+        here that does not exist, the demotion silently never applies.
+        """
+        assert known.COUNT_UNRELIABLE_SETS, "the two known $count failures must be recorded"
+        for name in known.COUNT_UNRELIABLE_SETS:
+            assert name in contract(), f"{name} is recorded as $count-unreliable but is not a set"
+
+    def test_every_count_is_a_number_or_a_recorded_failure(self) -> None:
+        """A non-numeric count must be one we know about, not a surprise."""
+        for name, value in counts().items():
+            if value.isdigit():
+                continue
+            assert name in known.COUNT_UNRELIABLE_SETS, (
+                f"{name} reports a non-numeric $count ({value!r}) that is not recorded"
+            )
 
 
 class TestValueDomains:
@@ -180,6 +275,18 @@ class TestFilterVerdicts:
 
     def test_only_known_verdicts_appear(self) -> None:
         assert set(filter_support().values()) <= known.FILTER_VERDICTS
+
+    def test_verdicts_per_set_are_unchanged(self) -> None:
+        """W2.5's per-set list. An aggregate can hold while two sets swap behaviour."""
+        observed: dict[str, dict[str, int]] = {}
+        for (set_name, _), verdict in filter_support().items():
+            observed.setdefault(set_name, {})
+            observed[set_name][verdict] = observed[set_name].get(verdict, 0) + 1
+        observed = {k: dict(sorted(v.items())) for k, v in sorted(observed.items())}
+        assert observed == known.FILTER_VERDICTS_BY_SET
+
+    def test_every_probed_set_is_a_real_set(self) -> None:
+        assert set(known.FILTER_VERDICTS_BY_SET) <= set(contract())
 
     @pytest.mark.parametrize(("set_name", "property_name"), sorted(known.KNOWN_IGNORED_FILTERS))
     def test_known_ignored_filters_are_still_ignored(
@@ -388,6 +495,26 @@ class TestLiveDrift:
                 "Re-run data-generator/cpi_discovery.py to refresh filter_support.csv.",
             ]
         )
+
+    def test_values_respect_their_declared_lengths(self) -> None:
+        """W2.5's "lengths", checked against real rows.
+
+        A value longer than its declared MaxLength means something upstream
+        truncated, padded or corrupted it -- exactly the class of problem that
+        is invisible until a join silently stops matching.
+        """
+        client = SapClient()
+        for name in ("MaterialPlantSet", "MaterialSet", "PurchaseOrderItemSet"):
+            spec = entity_set(name)
+            for row in client.read(name, top=50).rows:
+                for property_name, value in row.items():
+                    prop = spec.find(property_name)
+                    if not prop or not prop.max_length or not isinstance(value, str):
+                        continue
+                    assert len(value) <= prop.max_length, (
+                        f"{name}.{property_name} returned {len(value)} characters "
+                        f"against a declared maximum of {prop.max_length}: {value!r}"
+                    )
 
     def test_an_honoured_filter_is_still_honoured(self) -> None:
         """Dismm selects OAR scope. An impossible value must return zero."""

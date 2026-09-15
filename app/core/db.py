@@ -45,11 +45,24 @@ def get_engine() -> Engine:
             "(see README, 'Database'). No default is assumed: a connection "
             "string must never be hard-coded."
         )
+    # connect_timeout bounds how long a connection attempt waits. Without it
+    # psycopg waits on the OS default, and a database that is simply not running
+    # makes the test suite HANG with no output rather than failing -- which is
+    # exactly what happened when the Postgres container was stopped. Same lesson
+    # as the storage root: fail fast and say why.
+    #
+    # Passed as a driver connect_arg rather than in the URL so it applies however
+    # DATABASE_URL is written, and only to drivers that understand it.
+    connect_args: dict[str, object] = {}
+    if settings.database_url.startswith(("postgresql", "postgres")):
+        connect_args["connect_timeout"] = settings.database_connect_timeout_seconds
+
     return create_engine(
         settings.database_url,
         echo=settings.database_echo,
         pool_pre_ping=True,
         future=True,
+        connect_args=connect_args,
     )
 
 

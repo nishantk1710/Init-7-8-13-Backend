@@ -71,6 +71,48 @@ DRIFTED_TO_STRING = {
 PURCHASE_REQUISITION_KEY = ("Banfn", "Bnfpo")
 
 
+# --- Declared metadata detail (W2.5: types, lengths, annotations) ---------
+
+# Every property declares these four as false -- all 229 of them, across both
+# services. Meanwhile 124 are MEASURED as filterable and several sort fine.
+#
+# So the flags are an untouched SEGW default carrying no information. They are
+# captured because W2.5 asks for the annotations, and asserted because their
+# uniformity is the very thing that makes them untrustworthy: the day one of
+# them turns true, somebody has started maintaining them and they might begin
+# to mean something.
+#
+# Until then: filter_support.csv and operator_support.csv are the source of
+# truth for what the service actually does.
+DECLARED_FLAGS_ARE_UNIFORMLY_FALSE = True
+DECLARED_FLAGS = ("filterable", "sortable", "creatable", "updatable")
+
+# Counted across BOTH services. A value longer than its declared maximum means
+# something upstream truncated or corrupted it.
+PROPERTIES_WITH_MAX_LENGTH = 184
+PROPERTIES_WITH_PRECISION = 35
+PROPERTIES_WITH_LABEL = 229  # every one, which is what makes labels usable
+TOTAL_PROPERTIES = 229
+
+# SAP's business labels are the same words the July extract uses as column
+# headers, which is what makes them worth capturing beyond W2.5's requirement.
+# Spot-checked pairs, exact matches against the extract headers.
+KNOWN_LABELS = {
+    ("MaterialPlantSet", "Dismm"): "MRP Type",
+    ("MaterialPlantSet", "Minbe"): "Reorder Point",
+    ("MaterialSet", "Matkl"): "Material Group",
+}
+
+# Declared maxima that downstream code depends on. Matnr in particular: the
+# extract carries unpadded 10-character numbers while OData returns them
+# zero-padded to 18, and any normalisation has to know which is which.
+KNOWN_MAX_LENGTHS = {
+    ("MaterialSet", "Matnr"): 18,
+    ("MaterialPlantSet", "Werks"): 4,
+    ("MaterialPlantSet", "Dismm"): 2,
+}
+
+
 # --- Value domains --------------------------------------------------------
 
 # Every MRP type observed on MaterialPlantSet, with the row count at the sweep.
@@ -133,6 +175,32 @@ FILTER_SUPPORT_ROW_COUNT = sum(FILTER_VERDICT_COUNTS.values())
 KNOWN_IGNORED_FILTERS = {
     ("PurchaseOrderItemSet", "Pstyp"),
 }
+
+# Verdict counts PER SET, not just in aggregate -- W2.5 asks for the honoured
+# list per set so a regression confined to one set is caught. An aggregate can
+# stay identical while two sets swap behaviour.
+FILTER_VERDICTS_BY_SET: dict[str, dict[str, int]] = {
+    "BatchStockSet": {'HONOURED': 4, 'IGNORED': 1},
+    "ChangeDocHeaderSet": {'HONOURED': 6, 'NOT_TESTED': 1},
+    "ChangeDocItemSet": {'HONOURED': 9},
+    "GoodsMovementItemSet": {'HONOURED': 6, 'IGNORED': 19},
+    "InfoRecordOrgSet": {'HONOURED': 4, 'IGNORED': 5, 'NOT_TESTED': 1},
+    "InfoRecordSet": {'HONOURED': 3, 'NOT_TESTED': 1},
+    "MaterialDescriptionSet": {'HONOURED': 2, 'IGNORED': 1},
+    "MaterialDocumentHeaderSet": {'HONOURED': 3, 'IGNORED': 2},
+    "MaterialPlantSet": {'HONOURED': 4, 'IGNORED': 7, 'NOT_TESTED': 1},
+    "MaterialSet": {'HONOURED': 4, 'IGNORED': 2, 'NOT_TESTED': 1},
+    "POHistorySet": {'HONOURED': 5, 'IGNORED': 10, 'PARTIAL_OR_ODD': 1},
+    "POScheduleLineSet": {'HONOURED': 4, 'IGNORED': 2},
+    "PurchaseOrderItemSet": {'HONOURED': 6, 'IGNORED': 12, 'NOT_TESTED': 1},
+    "PurchaseOrderSet": {'HONOURED': 7},
+    "PurchaseRequisitionSet": {'HONOURED': 22, 'NOT_TESTED': 1, 'REJECTED_HTTP_500': 6},
+    "ReservationItemSet": {'HONOURED': 15, 'NOT_TESTED': 2, 'REJECTED_HTTP_500': 2},
+    "StockMovementStatisticSet": {'HONOURED': 13, 'IGNORED': 1},
+    "StorageLocationStockSet": {'HONOURED': 4, 'REJECTED_HTTP_500': 3},
+    "VendorSet": {'HONOURED': 3, 'NOT_TESTED': 1},
+}
+
 
 # Dismm must stay honoured: the whole OAR scope is selected with it.
 KNOWN_HONOURED_FILTERS = {

@@ -12,6 +12,9 @@
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
 pydantic-settings==2.15.0
+# Imported directly by the API schemas and settings. Pinned rather than
+# inherited from fastapi: a transitive major-version bump would land silently.
+pydantic==2.13.5
 
 # --- Data / persistence ---
 # Local Postgres stands in for the managed cloud database; the dialect is

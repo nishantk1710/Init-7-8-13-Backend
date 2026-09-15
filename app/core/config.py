@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     # Echo every SQL statement to the log. Local debugging only.
     database_echo: bool = False
 
+    # Seconds to wait for a connection before giving up. Deliberately short: a
+    # database that is not running should fail in seconds with a clear message,
+    # not hang. Raise it only for a genuinely slow network path.
+    database_connect_timeout_seconds: int = 5
+
     # Object storage location. Like database_url, this is the ONLY place storage
     # is named, and the adapter is chosen from the URL scheme -- so moving from a
     # local folder to cloud storage is a config change, not a code change.
@@ -107,6 +112,105 @@ class Settings(BaseSettings):
             and self.cpi_client_id
             and self.cpi_client_secret
         )
+
+    # --- AI service layer (W1.5) ------------------------------------------
+    #
+    # Which provider is plugged in. Business logic never reads this -- it calls
+    # get_llm(). Defaults to the deterministic stub so the application, its
+    # tests and a developer laptop all work with no provider at all.
+    #
+    #   stub     deterministic, no network
+    #   foundry  Microsoft Foundry
+    #   openai   any OpenAI-compatible endpoint
+    llm_provider: str = "stub"
+
+    # Shared across providers.
+    llm_max_tokens: int = 1024
+    llm_timeout_seconds: int = 60
+    llm_max_retries: int = 3
+
+    # Foundry. Endpoint and key are the only things that wait for Azure.
+    #
+    # NOTE: which model family is deployed on VZI's Foundry resource is still an
+    # open item on the W1.1 Day-0 checklist. The adapter is built for the
+    # chat-completions shape; a Claude deployment would need the Anthropic
+    # Foundry client instead. That is one adapter file, not a redesign.
+    foundry_endpoint: str = ""
+    foundry_api_key: str = ""
+    foundry_deployment: str = ""
+
+    # The cheaper deployment, for high-volume formulaic work. VZI has gpt-4o and
+    # gpt-4o-mini; app/core/model_registry.py decides which job uses which.
+    # Empty means "use foundry_deployment for everything".
+    foundry_deployment_fast: str = ""
+    foundry_api_version: str = "2024-10-21"
+
+    # Which of Foundry's two request shapes the endpoint speaks.
+    #
+    #   v1           {endpoint}/chat/completions
+    #                model in the BODY, Bearer auth, NO api-version.
+    #                Endpoints ending /openai/v1 -- the newer AI Foundry surface.
+    #
+    #   deployments  {endpoint}/openai/deployments/{name}/chat/completions?api-version=...
+    #                model in the URL, api-key header.
+    #                The classic Azure OpenAI surface.
+    #
+    #   auto         infer from the endpoint (default): "/openai/v1" means v1.
+    #
+    # This matters concretely: VZI's endpoint is
+    # https://oai-vzi-aicom-nonprod-san.services.ai.azure.com/openai/v1, and
+    # appending the classic path to it yields a doubled /openai/ and a 404.
+    # Auto-detection reads that correctly; the override exists for the day an
+    # endpoint does not follow the convention.
+    foundry_api_style: str = "auto"
+
+    # The alternate provider -- any OpenAI-compatible endpoint.
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+    llm_model: str = ""
+
+    @property
+    def llm_configured(self) -> bool:
+        """Whether the selected provider has what it needs.
+
+        The stub always qualifies: "no provider configured" is a working state
+        here, not a broken one.
+        """
+        choice = (self.llm_provider or "stub").strip().lower()
+        if choice == "stub":
+            return True
+        if choice == "foundry":
+            return bool(self.foundry_endpoint and self.foundry_api_key and self.foundry_deployment)
+        if choice == "openai":
+            return bool(self.llm_base_url and self.llm_api_key and self.llm_model)
+        return False
+
+    # --- Criticality (W3.4) -----------------------------------------------
+    #
+    # Where material criticality is read from. I07, I08 and I13 never read this
+    # -- they call get_criticality_source(). Defaults to the delivered ZMM065
+    # extracts, which are the only confirmed source today.
+    #
+    #   zmm065   the delivered ZMM065 aging reports (default)
+    #   zzcritic MARC-ZZCRITIC, falling back to zmm065
+    #
+    # ZZCRITIC is the preferred source in principle, but the CPI service does
+    # not expose it and its contents are unconfirmed, so selecting it today
+    # resolves every lookup through the fallback -- visibly. See
+    # app/integrations/criticality/zzcritic.py for what would change that.
+    criticality_source: str = "zmm065"
+
+    @property
+    def criticality_configured(self) -> bool:
+        """Whether the selected source can answer.
+
+        ZMM065 reads the seeded raw tables, so it needs the database; ZZCRITIC
+        falls back to ZMM065 and therefore needs the same.
+        """
+        choice = (self.criticality_source or "zmm065").strip().lower()
+        if choice in ("zmm065", "zzcritic"):
+            return bool(self.database_url)
+        return False
 
     # --- Reserved for future integrations. Not read by any code yet, and not
     # --- required for startup. See app/core/security.py and app/integrations/.
