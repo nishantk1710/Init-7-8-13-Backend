@@ -22,6 +22,7 @@ class SapGateway:
     def __init__(self, data_dir: Path) -> None:
         self.live = LiveSapGateway(data_dir)
         self.mock = ReducedMockSapGateway(data_dir)
+        self._postgres_reservations = None  # built lazily; see get_reservations()
 
     # --- Live entity sets ---
     def get_purchase_requisitions(self) -> SapResult:
@@ -44,7 +45,30 @@ class SapGateway:
 
     # --- Mocked entity sets ---
     def get_reservations(self) -> SapResult:
+        """W6.2 reservation source, switched by ``Settings.i13_reservation_source``.
+
+        Default ("mock") keeps today's synthetic ReservationItemSet.csv, tied
+        to the same synthetic PR/PO/GR/GI dataset the rest of this gateway
+        reads -- so the full Reservation -> PR -> PO -> GR -> GI chain stays
+        demonstrable end to end. Setting it to "postgres" swaps in the real
+        RESB rows already extracted into ``raw_resb`` (see
+        ``postgres_reservation.py``) without any change to the ledger,
+        aging, or API code above this gateway -- the swap this config exists
+        to prove (implementation plan §11 / W6.2 DoD).
+        """
+        if get_settings().i13_reservation_source == "postgres":
+            return self._get_postgres_reservation_provider().get_reservations()
         return self.mock.get_reservations()
+
+    def _get_postgres_reservation_provider(self):
+        """Built on first use -- constructing ``SapGateway`` must never touch
+        the database when the reservation source is left at its "mock" default."""
+        if self._postgres_reservations is None:
+            from app.core.db import get_sessionmaker
+            from app.integrations.sap.postgres_reservation import PostgresReservationProvider
+
+            self._postgres_reservations = PostgresReservationProvider(get_sessionmaker())
+        return self._postgres_reservations
 
     def get_material_valuation(self) -> SapResult:
         return self.mock.get_material_valuation()

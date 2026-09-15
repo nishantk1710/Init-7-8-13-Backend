@@ -14,17 +14,9 @@ from app.initiatives.i13.models import ExceptionQueueItem, ExceptionStatus, Exce
 from app.initiatives.i13.plans import ConsumptionPlan, load_consumption_plans
 from app.initiatives.i13.watch import compute_watch_metrics
 from app.integrations.sap.gateway import SapGateway
-from app.shared.material_scope import MaterialScope, classify_material_scope
+from app.shared.material_scope import MaterialScope, build_scope_index
 
 Row = dict[str, Any]
-
-
-def _material_scope_index(material_plants: list[Row]) -> dict[tuple[str, str], MaterialScope]:
-    return {
-        (row.get("Matnr"), row.get("Werks")): classify_material_scope(row.get("Dismm"))
-        for row in material_plants
-        if row.get("Matnr") is not None and row.get("Werks") is not None
-    }
 
 
 def _index_ledger_by_reservation(
@@ -166,7 +158,7 @@ def build_exception_queue(
     ledger_entries = build_utilisation_ledger(gateway)
     ledger_by_reservation = _index_ledger_by_reservation(ledger_entries)
     plans = load_consumption_plans(data_dir)
-    scope_index = _material_scope_index(gateway.get_material_plants().rows)
+    scope_index = build_scope_index(gateway.get_material_plants().rows)
     planned_reservations = {(plan.reservation_number, plan.reservation_item) for plan in plans}
 
     exceptions: list[ExceptionQueueItem] = []

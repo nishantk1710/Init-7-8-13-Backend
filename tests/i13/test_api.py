@@ -49,6 +49,15 @@ def test_ledger_list_and_filters() -> None:
     assert all(entry["plant"] == plant for entry in filtered.json())
 
 
+def test_ledger_defaults_to_oar_scope_only() -> None:
+    """W2.4: the ledger's default view excludes Min-Max/Excluded materials --
+    the I13 boundary rule, applied once here rather than by each caller."""
+    scoped = client.get("/api/i13/ledger").json()
+    unscoped = client.get("/api/i13/ledger", params={"include_out_of_scope": True}).json()
+    assert len(unscoped) >= len(scoped)
+    assert len(unscoped) > len(scoped), "fixture data should contain at least one non-OAR PR line"
+
+
 def test_ledger_by_id_round_trips() -> None:
     ledger_id = client.get("/api/i13/ledger").json()[0]["ledger_id"]
     response = client.get(f"/api/i13/ledger/{ledger_id}")
@@ -92,7 +101,11 @@ def test_validation_reports_reference_unavailable_without_reference_counts() -> 
 
 
 def test_validation_reconciles_when_reference_provided() -> None:
-    ledger_count = len(client.get("/api/i13/ledger").json())
+    # /api/i13/validation reconciles against the full (unfiltered) ledger --
+    # ZMM065 is a plant-wide aging report, not an OAR-scoped one -- so the
+    # reference count must come from the unscoped view, not the ledger
+    # endpoint's OAR-only default (see test_ledger_defaults_to_oar_scope_only).
+    ledger_count = len(client.get("/api/i13/ledger", params={"include_out_of_scope": True}).json())
     response = client.get("/api/i13/validation", params={"zmm065_reference_count": ledger_count})
     body = response.json()
     zmm065 = next(r for r in body["results"] if r["source_name"] == "ZMM065")

@@ -125,6 +125,15 @@ class Settings(BaseSettings):
     i13_oar_mrp_types: str = "ND,PD"
     i13_min_max_mrp_types: str = "VB"
 
+    # W6.2 reservation source switch (implementation plan §11): "mock" (the
+    # synthetic ReservationItemSet.csv, tied to the same synthetic PR/PO/GR/GI
+    # dataset LiveSapGateway reads today) or "postgres" (real RESB rows
+    # already extracted into raw_resb -- see
+    # app/integrations/sap/postgres_reservation.py). The rest of I13 -- the
+    # ledger builder, aging, the API -- does not know or care which is active;
+    # only app.integrations.sap.gateway.SapGateway reads this.
+    i13_reservation_source: str = "mock"
+
     # Aging bands (days since last goods movement).
     i13_aging_fast_max_days: int = 365
     i13_aging_slow_max_days: int = 730
