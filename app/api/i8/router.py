@@ -41,6 +41,7 @@ from app.initiatives.i8.material_number import is_eighty_series, normalise
 from app.initiatives.i8.register import RepairLine
 from app.initiatives.i8.service import Snapshot, get_snapshot
 from app.initiatives.i8.universe import UniverseRow
+from app.shared import get_criticality_source
 
 router = APIRouter(prefix="/i8", tags=["i8 - refurbishable spares"])
 
@@ -331,7 +332,11 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
             "repairItemCategory": cfg.repair_item_category,
             "repairDocType": cfg.repair_doc_type,
             "overdueGraceDays": cfg.overdue_grace_days,
-            "criticalitySource": cfg.criticality_source,
+            # The shared W3.4 source that actually answered, not an I08
+            # setting -- I08 has not owned this since 15-Sep. A fallback chain
+            # reports as "zzcritic+zmm065", which is the point: the name says
+            # what really served the tiers.
+            "criticalitySource": get_criticality_source().name,
             "referenceDate": cfg.reference_date or "(today)",
         },
     )

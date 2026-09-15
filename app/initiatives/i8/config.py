@@ -101,12 +101,17 @@ class I8Settings(BaseSettings):
     # time bombs that pass this week and fail next.
     reference_date: str = ""
 
-    # --- Criticality (W3.4 seam) -----------------------------------------
-
-    # Where criticality comes from. 'zmm065' reads the aging report today;
-    # switch to 'w34' when Nishant's criticality module lands behind the
-    # adapter in criticality.py. Nothing above the adapter changes.
-    criticality_source: str = "zmm065"
+    # --- Criticality ------------------------------------------------------
+    #
+    # Deliberately NOT a setting here any more. Criticality moved to the shared
+    # W3.4 module when it landed on 15-Sep, and it is configured once, globally,
+    # by CRITICALITY_SOURCE in app.core.config -- not per initiative.
+    #
+    # An I8_CRITICALITY_SOURCE that only I08 obeyed would be a way to make one
+    # initiative disagree with the other two about the same material, which is
+    # the exact failure W3.4 exists to prevent. Read it through
+    # app.shared.get_criticality_source(); /api/i8/config reports which source
+    # actually answered.
 
     # --- Presentation -----------------------------------------------------
 

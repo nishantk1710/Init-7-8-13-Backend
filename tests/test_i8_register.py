@@ -309,7 +309,12 @@ class TestUniverse:
         assert any(row.material_type is None for row in rows)
 
     def test_criticality_is_never_invented(self, universe) -> None:
-        from app.initiatives.i8.criticality import KNOWN_TIERS
+        # The five tiers now come from the shared W3.4 enum, not an I08 copy
+        # of the list. That is the assertion that matters: I08 cannot drift to a
+        # sixth tier of its own, because it no longer owns the vocabulary.
+        from app.shared import CriticalityTier
+
+        KNOWN_TIERS = {tier.value for tier in CriticalityTier}
 
         rows, _ = universe
         tiers = {row.criticality for row in rows if row.criticality}

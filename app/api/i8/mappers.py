@@ -239,6 +239,7 @@ def universe_meta(stats: UniverseStats) -> UniverseMeta:
         with_stock=stats.with_stock,
         with_reorder_point=stats.with_reorder_point,
         with_criticality=stats.with_criticality,
+        with_criticality_from_other_plant=stats.with_criticality_from_other_plant,
         with_open_repair=stats.with_open_repair,
         in_material_master=stats.in_material_master,
     )

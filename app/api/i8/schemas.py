@@ -123,6 +123,13 @@ class UniverseMeta(I8Model):
     with_stock: int
     with_reorder_point: int
     with_criticality: int
+    with_criticality_from_other_plant: int
+    """Of ``withCriticality``, how many tiers came from a plant other than the
+    row's own. ZMM065 covers plants 1300 and 1500 only, so a row at 1600, 2000
+    or 3000 can only be answered from where the material IS described -- and
+    only when it carries the same tier everywhere. Reported so the inferred part
+    of the number is visible rather than assumed."""
+
     with_open_repair: int
     in_material_master: int
 
