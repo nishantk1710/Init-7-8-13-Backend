@@ -32,6 +32,29 @@ class DataSourceStatusResponse(BaseModel):
     fetched_at: datetime
 
 
+class MovementMetricsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    material: str
+    plant: str
+
+    last_movement_date: date | None
+    days_since_last_movement: int | None
+
+    last_issue_date: date | None
+    days_since_last_issue: int | None
+
+    consumption_count_12m: int
+    consumption_qty_12m: Decimal
+
+    inventory_turns: Decimal | None
+    inventory_turns_reason: str | None
+
+    aging_band: AgingBand
+
+    calculated_at: datetime
+
+
 class UtilisationLedgerEntryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.i13 import exceptions as exceptions_routes
 from app.api.i13 import ledger as ledger_routes
+from app.api.i13 import movement_metrics as movement_metrics_routes
 from app.api.i13 import reclassification as reclassification_routes
 from app.api.i13 import validation as validation_routes
 from app.api.i13 import watch as watch_routes
@@ -23,6 +24,7 @@ from app.schemas.i13 import DataSourceStatusResponse, I13SummaryResponse
 router = APIRouter(prefix="/i13", tags=["i13"])
 
 router.include_router(ledger_routes.router)
+router.include_router(movement_metrics_routes.router)
 router.include_router(watch_routes.router)
 router.include_router(exceptions_routes.router)
 router.include_router(reclassification_routes.router)

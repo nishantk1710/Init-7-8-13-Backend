@@ -79,6 +79,37 @@ class AgingResult:
 
 
 @dataclass(frozen=True)
+class MovementMetrics:
+    """W3.5: statistics-independent movement/aging metrics for one
+    material+plant, computed directly from goods-movement history (never
+    S031/S032). ``last_movement_date`` covers any qualifying movement;
+    ``last_issue_date`` covers goods-issue/consumption movements only, and
+    is what ``aging_band`` is actually classified on -- a material last
+    touched by a goods *receipt* is not FAST merely because something
+    happened to it recently. See ``app.initiatives.i13.movement_metrics``.
+    """
+
+    material: str
+    plant: str
+
+    last_movement_date: date | None
+    days_since_last_movement: int | None
+
+    last_issue_date: date | None
+    days_since_last_issue: int | None
+
+    consumption_count_12m: int
+    consumption_qty_12m: Decimal
+
+    inventory_turns: Decimal | None
+    inventory_turns_reason: str | None
+
+    aging_band: AgingBand
+
+    calculated_at: datetime
+
+
+@dataclass(frozen=True)
 class UtilisationLedgerEntry:
     """One PR-item's journey through PR -> PO -> GR -> GI (+ reservation leg)."""
 
