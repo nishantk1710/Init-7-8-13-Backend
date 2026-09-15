@@ -11,17 +11,31 @@
 # --- Runtime ---
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
+# The production server on App Service. uvicorn alone is a single process with
+# no supervisor; gunicorn runs it under a master that replaces a worker which
+# dies instead of taking the site down with it. See the startup command in
+# README, "Deployment".
+gunicorn==23.0.0
 pydantic-settings==2.15.0
 # Imported directly by the API schemas and settings. Pinned rather than
 # inherited from fastapi: a transitive major-version bump would land silently.
 pydantic==2.13.5
 
 # --- Data / persistence ---
-# Local Postgres stands in for the managed cloud database; the dialect is
-# chosen by DATABASE_URL, never by code. See app/core/db.py.
+# Azure SQL (sqldb-aicom) is the only backend. pyodbc additionally needs the
+# system-level "ODBC Driver 18 for SQL Server", which is NOT a pip package --
+# it ships with the App Service Python image, and a local machine has to install
+# it separately. That is the one dependency this file cannot pin for you.
 SQLAlchemy==2.0.52
-psycopg[binary]==3.3.5
+pyodbc==5.3.0
 alembic==1.19.2
+
+# --- Azure ---
+# Data Lake storage (stvziaicomnonprod) behind the Storage port, and the managed
+# identity that reaches it. azure-identity is what makes the deployed app need
+# no storage secret at all.
+azure-identity==1.19.0
+azure-storage-file-datalake==12.17.0
 
 # Reads the SAP extract workbooks. app/seed/reader.py opens every one of them
 # with read_only=True -- see README, "Seeding".

@@ -351,7 +351,7 @@ def iter_pages(
 ) -> Iterator[list[dict[str, Any]]]:
     """Yield pages instead of accumulating them.
 
-    For callers that stream rows into Postgres rather than holding them: the
+    For callers that stream rows into the database rather than holding them: the
     seed loader's COPY path is the obvious consumer, and 929,000 change-document
     rows should never be a Python list.
     """

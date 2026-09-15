@@ -402,10 +402,12 @@ class TestContract:
 
 
 class TestFilterGuard:
+    @pytest.mark.drift
     def test_pstyp_is_known_to_be_ignored(self) -> None:
         """The exact case behind 'apply the Pstyp filter client-side'."""
         assert verdict_for("PurchaseOrderItemSet", "Pstyp") == IGNORED
 
+    @pytest.mark.drift
     def test_filtering_on_an_ignored_property_is_refused(self) -> None:
         with pytest.raises(UnsupportedFilterError, match="SILENTLY IGNORES"):
             check_filter("PurchaseOrderItemSet", "Pstyp eq '3'")
@@ -428,6 +430,7 @@ class TestFilterGuard:
     def test_extracts_property_names(self, expression: str, expected: list[str]) -> None:
         assert properties_in(expression) == expected
 
+    @pytest.mark.drift
     def test_override_is_available_for_a_re_verified_filter(self) -> None:
         assert unsupported_properties("PurchaseOrderItemSet", "Pstyp eq '3'") == {
             "Pstyp": IGNORED

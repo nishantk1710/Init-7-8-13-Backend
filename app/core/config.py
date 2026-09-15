@@ -35,17 +35,23 @@ class Settings(BaseSettings):
     # Database connection, as a SQLAlchemy URL. Empty by default so the app --
     # and the liveness endpoint -- still start with no database present.
     #
-    # This is the ONLY place the database is named. Local development points it
-    # at Postgres; the deployed environment points it at the managed database.
-    # Swapping environments is therefore a config change, never a code change:
-    # nothing below this line, and nothing in app/core/db.py, knows which
-    # engine it is talking to.
+    # This is the ONLY place the database is named, so moving between VZI
+    # environments is a config change and never a code change.
     #
-    #   local:  postgresql+psycopg://postgres:<password>@localhost:5432/spares_ai
+    # Azure SQL, and only Azure SQL. Local Postgres was a stand-in while VZI's
+    # database was being provisioned; app/core/db.py now refuses any other
+    # backend rather than letting it fail obscurely further in.
     #
-    # NOTE: a Postgres-to-SQL-Server move is NOT config-only -- dialect, driver
-    # and several types differ. Keep models on portable SQLAlchemy constructs so
-    # that swap stays small. See README, "Database".
+    #   mssql+pyodbc://<user>:<password>@sql-vzi-aicom-nonprod-san.database.windows.net:1433/sqldb-aicom
+    #     ?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no
+    #
+    # The driver, Encrypt and TrustServerCertificate parameters are not
+    # optional: without Encrypt=yes Azure SQL refuses the connection, and with
+    # TrustServerCertificate=yes it would succeed while trusting anything, which
+    # is the same objection as cpi_ca_bundle below.
+    #
+    # Unreachable outside the VNet -- public network access is disabled and the
+    # server sits behind pe-sqlvziaicomnonprod-sqlserver.
     database_url: str = ""
 
     # Echo every SQL statement to the log. Local debugging only.
@@ -56,16 +62,48 @@ class Settings(BaseSettings):
     # not hang. Raise it only for a genuinely slow network path.
     database_connect_timeout_seconds: int = 5
 
+    # Seconds after which a pooled connection is replaced rather than reused.
+    # Azure SQL cuts idle connections at around 30 minutes; App Service instances
+    # sit idle between requests, so a pooled connection that looks fine can be
+    # dead by the next call. Recycling below that window means the replacement
+    # happens on our schedule instead of inside someone's request.
+    database_pool_recycle_seconds: int = 1500
+
     # Object storage location. Like database_url, this is the ONLY place storage
-    # is named, and the adapter is chosen from the URL scheme -- so moving from a
-    # local folder to cloud storage is a config change, not a code change.
+    # is named, and the adapter is chosen from the URL scheme.
     #
-    #   local:  D:/vzi-data/extracts        (a plain path is accepted)
-    #           file:///D:/vzi-data/extracts
-    #   cloud:  abfss://<container>@<account>.dfs.core.windows.net/<path>
+    #   abfss://<container>@stvziaicomnonprod.dfs.core.windows.net/<path>
+    #
+    # abfss:// is the only scheme supported. The local-folder adapter was a
+    # stand-in and has been removed, so a filesystem path is refused with an
+    # explanation rather than silently treated as something else.
     #
     # Empty by default so the app starts with no storage configured.
     storage_url: str = ""
+
+    # Optional. The Data Lake adapter authenticates with DefaultAzureCredential
+    # by default -- the App Service's managed identity when deployed, the
+    # developer's `az login` session locally -- so no secret is stored anywhere.
+    # This exists only for a machine where neither is available. Prefer granting
+    # 'Storage Blob Data Reader' to an identity over setting this.
+    azure_storage_account_key: str = ""
+
+    # The Key Vault, for `python -m app.checkup` ONLY.
+    #
+    # No code reads secrets from here. Secrets reach this app as App Service
+    # Key Vault references -- App Service resolves
+    # @Microsoft.KeyVault(SecretUri=...) into an ordinary environment variable
+    # before the process starts, so Settings reads them unchanged and this
+    # codebase needs no Key Vault SDK.
+    #
+    # That is the right design and it has one drawback: the app never talks to
+    # Key Vault, so it cannot report whether Key Vault is reachable -- which is
+    # one of the three things Anish asked to confirm. Setting this lets checkup
+    # probe the vault directly, using the same managed identity, to answer that
+    # question and nothing else.
+    #
+    #   https://kv-vzi-aicom-nonprod.vault.azure.net/
+    key_vault_url: str = ""
 
     # SAP, reached through the CPI generic OData consumption endpoint.
     #
