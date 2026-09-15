@@ -47,16 +47,87 @@ class TestRoutesAreMounted:
             "/api/i8/register/{document}/{item}",
             "/api/i8/vendors/turnaround",
             "/api/i8/snapshot",
+            # W5.3
+            "/api/i8/attestations",
+            "/api/i8/declarations",
+            "/api/i8/exceptions",
         } <= paths
 
-    def test_the_module_is_read_only(self, openapi) -> None:
-        """W5.1 and W5.2 are read models. The first write path in I08 is W5.3's
-        attestation, and it is not in this window -- so anything other than GET
-        appearing here is a mistake, not a feature."""
+    # --- The read-only guarantee, as it stands after W5.3 -----------------
+    #
+    # This test used to read "the module is read-only: anything other than GET
+    # is a mistake, not a feature." W5.3 makes that false, so the test was
+    # CHANGED rather than deleted -- deleting it would have quietly dropped the
+    # guarantee instead of restating it.
+    #
+    # The loosening is exactly one step, and the three tests below pin each part
+    # of the new, narrower promise:
+    #
+    #   1. exactly ONE write path exists, and it is the attestation
+    #   2. it writes to one table WE own, and never updates or deletes
+    #   3. nothing in I08 writes to SAP -- unchanged, and the one that matters
+    #
+    # Point 3 is the real guarantee. The platform reads SAP and records its own
+    # findings beside it; it has never had, and must never acquire, a write path
+    # into SAP. That is what makes "we cannot enforce this control, only observe
+    # it" an honest statement rather than an excuse.
+
+    def test_the_module_is_read_only_except_for_attestations(self, openapi) -> None:
+        """Exactly one write path, and it is the one W5.3 added."""
         i8_paths = {p: v for p, v in openapi["paths"].items() if p.startswith("/api/i8")}
         assert i8_paths, "no /api/i8 paths in the spec -- is the router mounted?"
+
+        writes = {
+            (path, verb)
+            for path, operations in i8_paths.items()
+            for verb in operations
+            if verb != "get"
+        }
+        assert writes == {("/api/i8/attestations", "post")}, (
+            f"I08 has exactly one write path -- the attestation. Found: {sorted(writes)}"
+        )
+
+    def test_nothing_updates_or_deletes(self, openapi) -> None:
+        """Attestations are audit records: append-only, no exceptions.
+
+        An amendment is a new row pointing at the one it supersedes. So PUT,
+        PATCH and DELETE must not exist anywhere in the module -- not even on
+        the attestation route.
+        """
+        i8_paths = {p: v for p, v in openapi["paths"].items() if p.startswith("/api/i8")}
         for path, operations in i8_paths.items():
-            assert set(operations) <= {"get"}, f"{path} exposes {sorted(operations)}"
+            forbidden = {"put", "patch", "delete"} & set(operations)
+            assert not forbidden, f"{path} exposes {sorted(forbidden)}"
+
+    def test_no_route_writes_to_sap(self) -> None:
+        """The guarantee that actually matters, and the one that did not change.
+
+        Checked structurally rather than by inspecting prose: the I08 packages
+        must not import the SAP client at all. Nothing in the initiative reaches
+        SAP directly -- it reads the seeded extract through views -- so an
+        import of app.integrations.sap here is the first step of a write path
+        into SAP and should fail before it becomes one.
+        """
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1]
+        offenders = []
+        for package in ("app/initiatives/i8", "app/api/i8"):
+            for file in (root / package).rglob("*.py"):
+                text = file.read_text(encoding="utf-8")
+                # The filters module is referenced from a docstring and a test,
+                # never imported at runtime; an actual import statement is what
+                # this is looking for.
+                for line in text.splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith(("import ", "from ")) and (
+                        "app.integrations.sap" in stripped
+                    ):
+                        offenders.append(f"{file.relative_to(root)}: {stripped}")
+        assert offenders == [], (
+            "I08 must not import the SAP client -- it reads the seeded extract. "
+            f"Found: {offenders}"
+        )
 
     def test_mounting_i8_did_not_break_the_existing_endpoints(self) -> None:
         assert client.get("/api/health").status_code == 200

@@ -9,6 +9,11 @@ changing underneath it.
 from __future__ import annotations
 
 from app.api.i8.schemas import (
+    Attestation,
+    DeclarationItem,
+    DeclarationMeta,
+    ExceptionMeta,
+    ExceptionQueueItem,
     LifecycleStage,
     MaterialReference,
     PlantReference,
@@ -21,7 +26,11 @@ from app.api.i8.schemas import (
     VendorTurnaroundItem,
 )
 from app.initiatives.i8.aging import days_between
+from app.initiatives.i8.attestation import CONDITION_LABELS, Recommendation
 from app.initiatives.i8.config import I8Settings
+from app.initiatives.i8.declarations import DeclarationRow
+from app.initiatives.i8.exceptions import RAISED_BY_I8, ExceptionItem, ExceptionStats
+from app.initiatives.i8.models import RepairAttestation
 from app.initiatives.i8.register import RegisterStats, RepairLine
 from app.initiatives.i8.universe import UniverseRow, UniverseStats
 from app.initiatives.i8.vendors import VendorTurnaround
@@ -247,3 +256,120 @@ def universe_meta(stats: UniverseStats) -> UniverseMeta:
 
 def register_meta(stats: RegisterStats) -> RegisterMeta:
     return RegisterMeta(**vars(stats))
+
+
+# --- W5.3: attestation, declarations, exceptions --------------------------
+
+
+def attestation_item(
+    row: RepairAttestation,
+    cfg: I8Settings,
+    *,
+    superseded_by: str | None = None,
+) -> Attestation:
+    """One stored attestation.
+
+    ``superseded_by`` is passed in rather than followed from the row, because
+    resolving it per row is a query per attestation. The caller already has the
+    whole list and can build the reverse index once.
+    """
+    return Attestation(
+        id=row.id,
+        material=MaterialReference(
+            material_id=row.material_id,
+            material_code=row.material_id,
+            # No description here on purpose: the attestation table does not
+            # carry one, and copying it from the register at write time would
+            # freeze a description that lives somewhere else.
+            description=None,
+        ),
+        plant=plant_reference(row.plant, cfg),
+        quantity=row.quantity,
+        condition_description=row.condition_description,
+        fault_category=row.fault_category,
+        recommendation=row.recommendation,
+        condition=CONDITION_LABELS[Recommendation(row.recommendation)],
+        serial_number=row.serial_number,
+        evidence_reference=row.evidence_reference,
+        attestor=row.attestor,
+        attested_at=row.attested_at,
+        session_id=row.session_id,
+        supersedes=row.supersedes,
+        superseded_by=superseded_by,
+    )
+
+
+def declaration_item(row: DeclarationRow, cfg: I8Settings) -> DeclarationItem:
+    return DeclarationItem(
+        id=row.id,
+        pr=(
+            SAPDocumentReference(
+                type="PR", document_number=row.pr_number, line=row.pr_item
+            )
+            if row.pr_number
+            else None
+        ),
+        material=MaterialReference(
+            material_id=row.material_id,
+            material_code=row.material_id,
+            description=row.description,
+        ),
+        plant=plant_reference(row.plant, cfg),
+        requester=row.requester,
+        source=row.source,
+        has_active_repair=row.has_active_repair,
+        related_repair_id=row.related_repair_id,
+        status=row.status,
+        declared_by=row.declared_by,
+        declared_at=row.declared_at,
+        condition=row.condition,
+        next_action=row.next_action,
+        created_at=row.created_at,
+    )
+
+
+def declaration_meta(rows, window_days: int) -> DeclarationMeta:
+    by_status: dict[str, int] = {}
+    for row in rows:
+        by_status[row.status] = by_status.get(row.status, 0) + 1
+    return DeclarationMeta(
+        total=len(rows),
+        by_status=by_status,
+        outstanding=sum(1 for r in rows if r.is_outstanding),
+        attestation_window_days=window_days,
+    )
+
+
+def exception_item(item: ExceptionItem, cfg: I8Settings) -> ExceptionQueueItem:
+    return ExceptionQueueItem(
+        id=item.id,
+        type=item.type,
+        severity=item.severity,
+        material=MaterialReference(
+            material_id=item.material_id,
+            material_code=item.material_id,
+            description=item.description,
+        ),
+        plant=plant_reference(item.plant, cfg),
+        repair_line=SAPDocumentReference(
+            type="PO", document_number=item.purchasing_document, line=item.item
+        ),
+        title=item.title,
+        detail=item.detail,
+        raised_at=item.raised_at,
+        is_open_repair=item.is_open_repair,
+    )
+
+
+def exception_meta(stats: ExceptionStats) -> ExceptionMeta:
+    return ExceptionMeta(
+        total=stats.total,
+        by_type=stats.by_type,
+        by_severity=stats.by_severity,
+        lines_checked=stats.lines_checked,
+        lines_covered=stats.lines_covered,
+        attestation_window_days=stats.attestation_window_days,
+        # Which types are actually implemented, so an empty count is
+        # distinguishable from an unimplemented check.
+        types_raised=sorted(t.value for t in RAISED_BY_I8),
+    )

@@ -300,6 +300,189 @@ class VendorResponse(I8Model):
     note: str
 
 
+# --- Attestation, declarations and exceptions (W5.3) ----------------------
+
+
+class AttestationRequest(I8Model):
+    """The condition-to-repair form, as submitted.
+
+    Note what is NOT here: ``attestor``, ``attestedAt`` and ``sessionId``. The
+    first two are set by the server from the authenticated caller and the clock
+    -- an audit record whose author and timestamp are the author's to choose is
+    not an audit record. The third is always null: FR-8 session linkage is not
+    I08's scope.
+    """
+
+    material_id: str
+    plant: str
+    quantity: Decimal
+    condition_description: str
+    """Free text. The part a human actually reads."""
+
+    fault_category: str
+    """Must be one of the configured list -- see ``GET /api/i8/config``. Not a
+    free string: the list is VZI's vocabulary and is validated against it."""
+
+    recommendation: Literal["REPAIRABLE", "BEYOND_ECONOMICAL_REPAIR", "SCRAP"]
+
+    serial_number: str | None = None
+    """Optional. I08 works at material-plant grain today; capturing a serial
+    when somebody knows it costs nothing now and is unrecoverable later."""
+
+    evidence_reference: str | None = None
+    """**A reference string only.** File upload is descoped and SharePoint is
+    not provisioned, so this holds a pointer somebody can follow -- the platform
+    does not pretend to store the artefact."""
+
+    supersedes: str | None = None
+    """The attestation this one amends. Attestations are never edited: an
+    amendment is a new record pointing at the one it replaces, and the original
+    stays readable. Must be for the same material and plant."""
+
+
+class Attestation(I8Model):
+    """One recorded attestation."""
+
+    id: str
+    material: MaterialReference
+    plant: PlantReference
+    quantity: Decimal
+    condition_description: str
+    fault_category: str
+    recommendation: str
+    condition: str
+    """The same judgement in the frontend's DeclarationCondition wording --
+    "Repairable" / "Beyond Economical Repair" / "Scrap" -- so the UI does not
+    have to carry a second mapping."""
+
+    serial_number: str | None = None
+    evidence_reference: str | None = None
+    attestor: str
+    attested_at: datetime
+    session_id: str | None = None
+    """Always null. FR-8 session linkage is not in I08's scope."""
+
+    supersedes: str | None = None
+    superseded_by: str | None = None
+    """Set when a later amendment replaces this one. The original is never
+    removed or edited -- this is how a reader knows it is not current."""
+
+    @property
+    def is_current(self) -> bool:
+        return self.superseded_by is None
+
+
+class AttestationResponse(I8Model):
+    items: list[Attestation]
+    total: int
+    fault_categories: list[str]
+    """The configured controlled list, served with the data so a form does not
+    have to hard-code it."""
+
+
+class DeclarationItem(I8Model):
+    """One row of the condition-to-repair declaration queue.
+
+    Field names match ``DeclarationItem`` in
+    ``src/features/initiative-8/types/repair.ts`` exactly.
+    """
+
+    id: str
+    pr: SAPDocumentReference | None = None
+    """Null where the repair line carries no requisition number."""
+
+    material: MaterialReference
+    plant: PlantReference | None = None
+
+    requester: str | None = None
+    """EKPO.AFNAM, and a CODE rather than a name -- no person directory was
+    delivered. Displayed as a code, the same way an unnamed vendor is."""
+
+    source: Literal["Manual", "MRP-generated"] | None = None
+    """**Null on every row today, and that is the honest answer.**
+
+    A fourth deliberate departure from the frontend type. EBAN carries the
+    creation indicator that would decide this and covers only 521 of the 1,201
+    repair requisitions; every one of those 521 reads ``F`` (created from an
+    order), which is neither "Manual" nor "MRP-generated". Both labels are false
+    for every row we can see, so neither is sent."""
+
+    has_active_repair: bool
+    related_repair_id: str
+    status: Literal["Required", "Pending", "Completed", "Flagged"]
+    """"Pending" is never emitted: it means "submitted, awaiting sign-off" and
+    no such state exists -- there is no approval workflow in SAP or here."""
+
+    declared_by: str | None = None
+    declared_at: datetime | None = None
+    condition: Literal["Repairable", "Beyond Economical Repair", "Scrap"] | None = None
+    next_action: str
+    created_at: date | None = None
+
+
+class DeclarationMeta(I8Model):
+    total: int
+    by_status: dict[str, int]
+    outstanding: int
+    """Required + Flagged -- the rows that want somebody's attention."""
+
+    attestation_window_days: int
+    """The matching rule that produced these statuses. Never quote a count
+    without its source."""
+
+
+class DeclarationResponse(I8Model):
+    items: list[DeclarationItem]
+    page: int
+    page_size: int
+    total: int
+    meta: DeclarationMeta
+    reference_date: date
+
+
+class ExceptionQueueItem(I8Model):
+    """One exception. No matching frontend type exists yet -- this defines it,
+    in the same camelCase house style as everything else in /api/i8."""
+
+    id: str
+    type: str
+    severity: Literal["info", "warning", "critical"]
+    material: MaterialReference
+    plant: PlantReference | None = None
+    repair_line: SAPDocumentReference
+    title: str
+    detail: str
+    """Says what is missing AND what was searched for, so a reader can tell a
+    real gap from a matching rule that did not fit."""
+
+    raised_at: date | None = None
+    """The repair line's own date, not the moment the check ran."""
+
+    is_open_repair: bool
+
+
+class ExceptionMeta(I8Model):
+    total: int
+    by_type: dict[str, int]
+    by_severity: dict[str, int]
+    lines_checked: int
+    lines_covered: int
+    attestation_window_days: int
+    types_raised: list[str]
+    """Which exception types I08 actually raises. MISSING_SESSION_ID and
+    UNJUSTIFIED_ACQUISITION are FR-5/7/8 and are declared but never raised here,
+    so a caller can tell an empty count from an unimplemented check."""
+
+
+class ExceptionResponse(I8Model):
+    items: list[ExceptionQueueItem]
+    page: int
+    page_size: int
+    total: int
+    meta: ExceptionMeta
+    reference_date: date
+
+
 # --- Diagnostics ----------------------------------------------------------
 
 
