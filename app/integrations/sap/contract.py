@@ -37,6 +37,39 @@ class Property:
     nullable: bool
     is_key: bool
 
+    # --- Detail from $metadata, absent from the CSVs -------------------------
+    # All optional: the CSVs remain the source for service ownership and keys,
+    # and these enrich a property when the XML is available. A missing value is
+    # "not declared", never "zero".
+
+    max_length: int | None = None
+    """Declared maximum length. 137 of 229 properties have one."""
+
+    precision: int | None = None
+    """Declared precision, on the 10 numeric properties that carry it."""
+
+    label: str | None = None
+    """SAP's business label, e.g. Dismm -> "MRP Type".
+
+    Worth more than it looks: these are the same words the July extract uses as
+    its column headers, so they bridge the extract's vocabulary to SAP field
+    names -- see README, "Seeding".
+    """
+
+    filterable: bool | None = None
+    sortable: bool | None = None
+    creatable: bool | None = None
+    updatable: bool | None = None
+    """SAP's declared capability flags.
+
+    RECORDED, NOT TRUSTED. Every one of the 229 properties declares false for
+    all four, while 124 are measured as filterable and several sort fine. They
+    are an untouched SEGW default carrying no information about behaviour.
+    `filter_support.csv` and `operator_support.csv` -- which probe the live
+    service -- are the source of truth. Captured because W2.5 asks for the
+    annotations and because their uniformity is itself worth asserting.
+    """
+
 
 @dataclass(frozen=True)
 class EntitySet:
@@ -101,6 +134,7 @@ def contract() -> dict[str, EntitySet]:
         # That matters: an OData key predicate is positional, so
         # StorageLocationStockSet's real key is (Matnr, Werks, Lgort), not the
         # alphabetical (Lgort, Matnr, Werks). Nine of the 21 sets differ.
+        props = _enriched(name, props)
         marked = tuple(p.name for p in props if p.is_key)
         declared = tuple(k.strip() for k in (row.get("keys") or "").split(";") if k.strip())
         if marked and declared and set(marked) != set(declared):
@@ -112,6 +146,101 @@ def contract() -> dict[str, EntitySet]:
         keys = marked or declared
         sets[name] = EntitySet(name=name, service=row["service"], keys=keys, properties=props)
     return sets
+
+
+def _enriched(set_name: str, props: tuple[Property, ...]) -> tuple[Property, ...]:
+    """Add lengths, labels and flags from $metadata where the XML supplies them.
+
+    Deliberately additive and forgiving. The CSVs stay authoritative for which
+    service owns a set and what its key is; this only fills in detail they do
+    not carry. If the XML is missing or a property is absent from it, the
+    property is returned unchanged rather than dropped -- a partial snapshot
+    must degrade, not delete.
+    """
+    detail = _metadata_detail().get(set_name)
+    if not detail:
+        return props
+    enriched = []
+    for prop in props:
+        extra = detail.get(prop.name)
+        if not extra:
+            enriched.append(prop)
+            continue
+        enriched.append(
+            Property(
+                name=prop.name,
+                type=prop.type,
+                nullable=prop.nullable,
+                is_key=prop.is_key,
+                max_length=extra.get("max_length"),
+                precision=extra.get("precision"),
+                label=extra.get("label"),
+                filterable=extra.get("filterable"),
+                sortable=extra.get("sortable"),
+                creatable=extra.get("creatable"),
+                updatable=extra.get("updatable"),
+            )
+        )
+    return tuple(enriched)
+
+
+@lru_cache
+def _metadata_detail() -> dict[str, dict[str, dict]]:
+    """Per-set, per-property detail scraped from every committed metadata_*.xml.
+
+    Imported here rather than at module scope: edmx.py imports Property and
+    EntitySet from this module, so a top-level import would be circular.
+    """
+    import xml.etree.ElementTree as ET
+
+    def local(tag: str) -> str:
+        return tag.rsplit("}", 1)[-1]
+
+    def flag(value: str | None) -> bool | None:
+        return None if value is None else value.strip().lower() == "true"
+
+    def number(value: str | None) -> int | None:
+        try:
+            return int(value) if value is not None else None
+        except ValueError:
+            return None
+
+    detail: dict[str, dict[str, dict]] = {}
+    for path in sorted(_DISCOVERY.glob("metadata_*.xml")):
+        if path.stat().st_size == 0:
+            continue
+        try:
+            root = ET.parse(path).getroot()
+        except ET.ParseError:
+            # A corrupt capture must not take the whole contract down; the
+            # snapshot-consistency test reports it properly.
+            continue
+
+        types: dict[str, dict[str, dict]] = {}
+        for element in root.iter():
+            if local(element.tag) != "EntityType":
+                continue
+            props: dict[str, dict] = {}
+            for child in element:
+                if local(child.tag) != "Property" or not child.get("Name"):
+                    continue
+                attrs = {local(k): v for k, v in child.attrib.items()}
+                props[child.get("Name", "")] = {
+                    "max_length": number(attrs.get("MaxLength")),
+                    "precision": number(attrs.get("Precision")),
+                    "label": attrs.get("label"),
+                    "filterable": flag(attrs.get("filterable")),
+                    "sortable": flag(attrs.get("sortable")),
+                    "creatable": flag(attrs.get("creatable")),
+                    "updatable": flag(attrs.get("updatable")),
+                }
+            types[element.get("Name", "")] = props
+
+        for element in root.iter():
+            if local(element.tag) == "EntitySet" and element.get("Name"):
+                type_name = element.get("EntityType", "").rsplit(".", 1)[-1]
+                detail[element.get("Name", "")] = types.get(type_name, {})
+    return detail
 
 
 def entity_set(name: str) -> EntitySet:
@@ -137,3 +266,4 @@ def reset_cache() -> None:
     """Forget the parsed snapshot. For tests that write a different one."""
     contract.cache_clear()
     counts.cache_clear()
+    _metadata_detail.cache_clear()

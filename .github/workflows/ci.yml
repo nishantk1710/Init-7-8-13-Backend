@@ -5,7 +5,7 @@
 # workflows are ever folded back into a single repo, every path below and the
 # `working-directory` need revisiting.
 #
-# What this protects: 205 of 207 tests. The 2 that skip need the ~800 MB SAP
+# What this protects: 287 of 289 tests. The 2 that skip need the ~800 MB SAP
 # extract delivery, which will never live in CI. That is by design, not a gap --
 # see the "storage" note on the test step.
 

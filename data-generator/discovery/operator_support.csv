@@ -1,17 +1,17 @@
 service,entity_set,operator,filter,set_total,count,expected_client_side,verdict
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,ne,Matnr ne '22271519',2178,2178,2178,WORKS
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,ge/le range on string,Matnr ge '8000000000' and Matnr le '8099999999',2178,0,0,WORKS
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,gt on string,Matnr gt '5',2178,67,67,WORKS
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,or on honoured property,Dismm eq 'ND' or Dismm eq 'PD',2178,1011,1011,WORKS
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,startswith,"startswith(Matnr,'8')",2178,0,0,WORKS
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,substringof,"substringof('800',Matnr)",2178,35,35,WORKS
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,and across two honoured properties,Werks eq '1300' and Dismm eq 'PD',2178,367,367,WORKS
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,ne,Matnr ne '22271519',2183,2182,,PLAUSIBLE
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,ge/le range on string,Matnr ge '8000000000' and Matnr le '8099999999',2183,27,,PLAUSIBLE
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,gt on string,Matnr gt '5',2183,2183,,IGNORED
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,or on honoured property,Dismm eq 'ND' or Dismm eq 'PD',2183,1011,,PLAUSIBLE
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,startswith,"startswith(Matnr,'8')",2183,,,REJECTED_HTTP_500
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,substringof,"substringof('800',Matnr)",2183,,,REJECTED_HTTP_500
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,and across two honoured properties,Werks eq '1300' and Dismm eq 'PD',2183,367,,PLAUSIBLE
 ZVZI_KPI02_SHARED_SRV,MaterialDocumentHeaderSet,date ge (delta load by posting date),Budat ge datetime'2026-01-01T00:00:00',40649,0,,UNSUPPORTED_EMPTY_OR_NO_DATA
 ZVZI_KPI02_SHARED_SRV,MaterialDocumentHeaderSet,date range,Budat ge datetime'2013-01-01T00:00:00' and Budat lt datetime'2014-01-01T00:00:00',40649,40649,,IGNORED
 ZVZI_KPI02_SHARED_SRV,MaterialDocumentHeaderSet,"date eq (control, sample row date)",Budat eq datetime'2013-09-27T00:00:00',40649,919,,PLAUSIBLE
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderSet,date ge on PO header,Aedat ge datetime'2026-01-01T00:00:00',3120,3,,PLAUSIBLE
-ZMM_KPI02_SRV,ChangeDocHeaderSet,date ge on CDHDR (delta for FR-9),Udate ge datetime'2026-01-01T00:00:00',241688,235,,PLAUSIBLE
-ZMM_KPI02_SRV,ChangeDocHeaderSet,eq + date ge,Objectclas eq 'MATERIAL' and Udate ge datetime'2018-01-01T00:00:00',241688,3684,,PLAUSIBLE
-ZMM_KPI02_SRV,ChangeDocItemSet,or inside parentheses,Objectclas eq 'MATERIAL' and (Tabname eq 'MARC' or Tabname eq 'MARA'),929167,13314,,PLAUSIBLE
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,or on key,Ebeln eq '4500000001' or Ebeln eq '4500000002',11074,2,,PLAUSIBLE
+ZVZI_KPI02_SHARED_SRV,PurchaseOrderSet,date ge on PO header,Aedat ge datetime'2026-01-01T00:00:00',3134,17,,PLAUSIBLE
+ZMM_KPI02_SRV,ChangeDocHeaderSet,date ge on CDHDR (delta for FR-9),Udate ge datetime'2026-01-01T00:00:00',,,,REJECTED_HTTP_500
+ZMM_KPI02_SRV,ChangeDocHeaderSet,eq + date ge,Objectclas eq 'MATERIAL' and Udate ge datetime'2018-01-01T00:00:00',,3699,,PLAUSIBLE
+ZMM_KPI02_SRV,ChangeDocItemSet,or inside parentheses,Objectclas eq 'MATERIAL' and (Tabname eq 'MARC' or Tabname eq 'MARA'),,,,REJECTED_HTTP_500
+ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,or on key,Ebeln eq '4500000001' or Ebeln eq '4500000002',11091,2,,PLAUSIBLE
 ZMM_KPI02_SRV,StockMovementStatisticSet,date ge on S032,Letztbew ge datetime'2020-01-01T00:00:00',1484,11,,PLAUSIBLE
