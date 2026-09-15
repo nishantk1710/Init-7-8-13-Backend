@@ -146,11 +146,33 @@ class TestPstypIsFilteredInPython:
 
     def test_the_sap_client_refuses_a_pstyp_filter(self) -> None:
         """The other half of the ruling, at the boundary that will matter after
-        cutover: the CPI client must not send this filter at all."""
-        from app.integrations.sap.errors import UnsupportedFilterError
-        from app.integrations.sap.filters import check_filter, verdict_for
+        cutover: the CPI client must not send this filter at all.
 
-        assert verdict_for("PurchaseOrderItemSet", "Pstyp") == "IGNORED"
+        **The recorded verdict changed on 15-Sep, and the ruling did not.**
+        Nobody weakened this test to make it pass. SAP used to accept a Pstyp
+        filter, return HTTP 200, and silently ignore it (IGNORED); it now
+        refuses the call outright (REJECTED_HTTP_500). Both verdicts mean the
+        same thing for us -- *you still cannot send this filter* -- so "apply
+        the Pstyp filter on the EKPO pull, not in the query" is still exactly
+        right, and no code changed with this assertion.
+
+        The change is loud rather than silent, which is strictly better: an
+        IGNORED filter produces confident wrong numbers, a 500 produces an
+        error. The transition is evidenced in the 15-Sep sweep, reproduced
+        independently hours apart -- see the task plan section 3.2.
+
+        The assertion is deliberately against the REJECTED constant rather than
+        the string, so the vocabulary lives in one place.
+        """
+        from app.integrations.sap.errors import UnsupportedFilterError
+        from app.integrations.sap.filters import REJECTED, check_filter, verdict_for
+
+        assert verdict_for("PurchaseOrderItemSet", "Pstyp") == REJECTED
+
+        # This is the assertion that carries the ruling, and it is unchanged:
+        # the client refuses the filter either way. check_filter() rejects
+        # IGNORED and REJECTED alike, so the guard did not weaken when the
+        # verdict moved.
         with pytest.raises(UnsupportedFilterError):
             check_filter("PurchaseOrderItemSet", "Pstyp eq '3'")
 
