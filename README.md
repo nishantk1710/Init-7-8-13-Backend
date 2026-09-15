@@ -72,7 +72,7 @@ backend/
 ├── tests/test_seed.py
 ├── tests/test_sap.py            client mechanics, on a fake transport
 ├── tests/test_sap_contract.py   does SAP still look the way we believe?
-├── tests/test_ai.py             AI layer, incl. the provider-leakage guard
+├── tests/test_ai.py             AI layer, leakage guard, live conformance
 ├── requirements.txt             runtime + test dependencies
 ├── pytest.ini
 ├── .env.example
@@ -775,13 +775,60 @@ in-process statistics with no provider to abstract and does not depend on this
 module. The port exists so call sites survive forecasting later moving to a
 hosted endpoint. Growing it further today would be speculative.
 
-### Open item
+### Foundry: two endpoint shapes, and why it matters
 
-Which model family is deployed on VZI's Foundry resource is still unanswered
-(W1.1's Day-0 checklist). The adapter is built for the chat-completions shape,
-which covers the Azure OpenAI family. A Claude deployment would need the
-official Anthropic Foundry client instead — one adapter file and its tests. The
-port does not change either way, which is the whole point of having one.
+Confirmed 15-Sep: VZI runs **GPT-4o and gpt-4o-mini** on
+
+```
+https://oai-vzi-aicom-nonprod-san.services.ai.azure.com/openai/v1
+```
+
+That trailing `/openai/v1` is not cosmetic. Foundry exposes two request shapes:
+
+| | **v1** (this endpoint) | **deployments** (classic Azure OpenAI) |
+| --- | --- | --- |
+| URL | `{endpoint}/chat/completions` | `{endpoint}/openai/deployments/{name}/chat/completions?api-version=...` |
+| Model named in | the body | the URL |
+| Auth | `Authorization: Bearer` | `api-key:` |
+| `api-version` | not used | required |
+
+Appending the classic path to a `/openai/v1` endpoint yields a doubled
+`/openai/` and a 404 that reads like a permissions problem — an afternoon lost
+to the wrong diagnosis. `FOUNDRY_API_STYLE=auto` infers the shape from the
+endpoint; both are implemented and tested, and the override exists for an
+endpoint that breaks convention.
+
+### Checking it end to end
+
+```bash
+python -m app.integrations.ai
+```
+
+Prints the resolved configuration, the inferred API style, the **exact URL**
+being called, the model routing, then calls each deployment once and reports
+tokens and latency. It never prints the key, so the output is safe to paste into
+a status update or send to whoever configured the deployment.
+
+Reading the failure matters: a **401** means the URL is right and the key is
+wrong; a **404** means the URL is wrong. Those need different fixes, and this
+makes which one obvious.
+
+### Which model each job uses
+
+Two deployments differing in cost, not correctness — so the choice lives in
+`app/core/model_registry.py` rather than at the call site:
+
+| Task | Tier | Why |
+| --- | --- | --- |
+| I07 rationale | fast | Short, formulaic, high volume; the reader checks the numbers |
+| I08 coding-candidate | capable | Language judgement over 5,225 messy free-text lines; a false negative is a repairable bought new |
+| I13 quantity suggestion | fast | Explains an arithmetic result |
+| Reservation assistant | capable | Interactive, and shapes a purchasing decision |
+
+Routes are written as an *intent* (`fast` / `capable`) rather than a deployment
+name, so a renamed deployment moves one setting instead of four call sites. With
+only `FOUNDRY_DEPLOYMENT` set, everything falls back to it — degrading to the
+costlier model rather than failing.
 
 ## Logging
 

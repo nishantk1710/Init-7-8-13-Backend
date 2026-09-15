@@ -138,7 +138,31 @@ class Settings(BaseSettings):
     foundry_endpoint: str = ""
     foundry_api_key: str = ""
     foundry_deployment: str = ""
+
+    # The cheaper deployment, for high-volume formulaic work. VZI has gpt-4o and
+    # gpt-4o-mini; app/core/model_registry.py decides which job uses which.
+    # Empty means "use foundry_deployment for everything".
+    foundry_deployment_fast: str = ""
     foundry_api_version: str = "2024-10-21"
+
+    # Which of Foundry's two request shapes the endpoint speaks.
+    #
+    #   v1           {endpoint}/chat/completions
+    #                model in the BODY, Bearer auth, NO api-version.
+    #                Endpoints ending /openai/v1 -- the newer AI Foundry surface.
+    #
+    #   deployments  {endpoint}/openai/deployments/{name}/chat/completions?api-version=...
+    #                model in the URL, api-key header.
+    #                The classic Azure OpenAI surface.
+    #
+    #   auto         infer from the endpoint (default): "/openai/v1" means v1.
+    #
+    # This matters concretely: VZI's endpoint is
+    # https://oai-vzi-aicom-nonprod-san.services.ai.azure.com/openai/v1, and
+    # appending the classic path to it yields a doubled /openai/ and a 404.
+    # Auto-detection reads that correctly; the override exists for the day an
+    # endpoint does not follow the convention.
+    foundry_api_style: str = "auto"
 
     # The alternate provider -- any OpenAI-compatible endpoint.
     llm_base_url: str = ""

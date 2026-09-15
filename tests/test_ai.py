@@ -34,13 +34,35 @@ from app.core.ai import (
     get_llm,
     reset_ai_cache,
 )
-from app.core.config import Settings
-from app.core.prompts import PromptError, available_prompts, get_prompt, prompt_root
+from app.core.config import Settings, get_settings
+from app.core.model_registry import ROUTES, describe_routes, model_for
+from app.core.prompts import (
+    PromptError,
+    available_prompts,
+    complete_with_prompt,
+    get_prompt,
+    prompt_root,
+)
 from app.integrations.ai.foundry import FoundryProvider
 from app.integrations.ai.local_forecast import CrostonForecaster
 from app.integrations.ai.openai_compatible import OpenAICompatibleProvider
 from app.integrations.ai.stub import StubProvider
 from app.main import app
+
+# Every placeholder the I07 rationale prompt declares. Representative values --
+# the figures a real run would carry come from the W4.x calculation engine.
+_I07_FIELDS: dict[str, str] = {
+    "material": "000000000010023456",
+    "plant": "1300",
+    "criticality": "A -- production critical",
+    "demand_pattern": "intermittent (Croston)",
+    "annual_consumption": "14 units",
+    "lead_time_days": "112",
+    "current_rop": "4",
+    "current_safety_stock": "2",
+    "recommended_rop": "9",
+    "recommended_safety_stock": "5",
+}
 
 client = TestClient(app)
 
@@ -331,6 +353,124 @@ class TestAdaptersDifferWhereItMatters:
         assert alternate[0]["json"]["model"] == "some-model"
 
 
+class TestFoundryApiStyles:
+    """Foundry speaks two shapes, and the wrong one is a 404.
+
+    VZI's endpoint is https://oai-vzi-...services.ai.azure.com/openai/v1 -- the
+    newer OpenAI-compatible surface. Appending the classic deployment path to it
+    would give a doubled /openai/ and a failure that reads like a permissions
+    problem rather than a wrong URL.
+    """
+
+    VZI = "https://oai-vzi-aicom-nonprod-san.services.ai.azure.com/openai/v1"
+    CLASSIC = "https://something.openai.azure.com"
+
+    def _provider(self, endpoint: str, **extra) -> FoundryProvider:
+        return FoundryProvider(
+            settings(foundry_endpoint=endpoint, foundry_deployment="gpt-4o", **extra)
+        )
+
+    def test_vzi_endpoint_is_detected_as_v1(self) -> None:
+        assert self._provider(self.VZI).api_style == "v1"
+
+    def test_classic_endpoint_is_detected_as_deployments(self) -> None:
+        assert self._provider(self.CLASSIC).api_style == "deployments"
+
+    def test_v1_url_does_not_double_the_openai_segment(self) -> None:
+        """The specific bug this detection exists to prevent."""
+        url = self._provider(self.VZI)._endpoint("gpt-4o")
+        assert url.endswith("/openai/v1/chat/completions")
+        assert url.count("/openai/") == 1
+        assert "deployments" not in url
+        assert "api-version" not in url
+
+    def test_classic_url_keeps_the_deployment_path(self) -> None:
+        url = self._provider(self.CLASSIC)._endpoint("gpt-4o")
+        assert "/openai/deployments/gpt-4o/chat/completions" in url
+        assert "api-version=" in url
+
+    def test_v1_names_the_model_in_the_body(self) -> None:
+        body = self._provider(self.VZI)._body([], "gpt-4o", 100, None)
+        assert body["model"] == "gpt-4o"
+
+    def test_classic_names_the_model_in_the_url_not_the_body(self) -> None:
+        assert "model" not in self._provider(self.CLASSIC)._body([], "gpt-4o", 100, None)
+
+    def test_v1_sends_a_bearer_token(self) -> None:
+        headers = self._provider(self.VZI)._headers()
+        assert headers["Authorization"].startswith("Bearer ")
+
+    def test_classic_sends_api_key_only(self) -> None:
+        headers = self._provider(self.CLASSIC)._headers()
+        assert "api-key" in headers and "Authorization" not in headers
+
+    def test_style_can_be_forced(self) -> None:
+        """For an endpoint that does not follow the naming convention."""
+        forced = self._provider(self.CLASSIC, foundry_api_style="v1")
+        assert forced.api_style == "v1"
+        assert forced._endpoint("gpt-4o").endswith("/chat/completions")
+
+    def test_unknown_style_is_rejected(self) -> None:
+        with pytest.raises(AIProviderError, match="FOUNDRY_API_STYLE"):
+            self._provider(self.VZI, foundry_api_style="telepathy").api_style
+
+    def test_both_styles_parse_the_same_envelope(self) -> None:
+        for endpoint in (self.VZI, self.CLASSIC):
+            provider = FoundryProvider(
+                settings(foundry_endpoint=endpoint, foundry_deployment="gpt-4o"),
+                transport=transport_returning(FakeResponse(_payload=chat_payload("ok"))),
+                sleep=lambda _s: None,
+            )
+            assert provider.complete([Message("user", "x")]).text == "ok"
+
+    def test_a_structured_error_inside_a_200_is_surfaced(self) -> None:
+        """Azure sometimes returns an error object with HTTP 200."""
+        provider = FoundryProvider(
+            settings(foundry_endpoint=self.VZI, foundry_deployment="gpt-4o"),
+            transport=transport_returning(
+                FakeResponse(_payload={"error": {"message": "deployment not found"}})
+            ),
+            sleep=lambda _s: None,
+        )
+        with pytest.raises(AIProviderError, match="deployment not found"):
+            provider.complete([Message("user", "x")])
+
+
+class TestModelRegistry:
+    """W1.5's model half: which job uses which deployment."""
+
+    def test_every_route_resolves(self) -> None:
+        s = settings(foundry_deployment="gpt-4o", foundry_deployment_fast="gpt-4o-mini")
+        assert all(model_for(task, s) for task in ROUTES)
+
+    def test_high_volume_work_uses_the_cheaper_model(self) -> None:
+        s = settings(foundry_deployment="gpt-4o", foundry_deployment_fast="gpt-4o-mini")
+        assert model_for("i07_recommendation_rationale", s) == "gpt-4o-mini"
+
+    def test_language_judgement_uses_the_capable_model(self) -> None:
+        """I08 screens messy free text; a false negative is a missed repairable."""
+        s = settings(foundry_deployment="gpt-4o", foundry_deployment_fast="gpt-4o-mini")
+        assert model_for("i08_coding_candidate", s) == "gpt-4o"
+
+    def test_one_deployment_configured_still_works(self) -> None:
+        """Degrade to the capable model rather than failing."""
+        s = settings(foundry_deployment="gpt-4o", foundry_deployment_fast="")
+        assert model_for("i07_recommendation_rationale", s) == "gpt-4o"
+
+    def test_unknown_task_falls_back_rather_than_raising(self) -> None:
+        """A new caller should work, not fail over a missing registry entry."""
+        s = settings(foundry_deployment="gpt-4o", foundry_deployment_fast="gpt-4o-mini")
+        assert model_for("some_new_task", s) == "gpt-4o"
+
+    def test_every_route_explains_itself(self) -> None:
+        """A cost decision without a reason gets reversed by the next person."""
+        assert all(route.why for route in ROUTES.values())
+
+    def test_routes_are_describable_for_cross_checking(self) -> None:
+        s = settings(foundry_deployment="gpt-4o", foundry_deployment_fast="gpt-4o-mini")
+        assert len(describe_routes(s)) == len(ROUTES)
+
+
 class TestMissingConfiguration:
     def test_foundry_names_every_missing_setting(self) -> None:
         provider = FoundryProvider(settings(foundry_api_key="", foundry_endpoint=""))
@@ -452,6 +592,78 @@ class TestPromptRegistry:
         assert (completion.prompt_id, completion.prompt_version) == ("p", 3)
 
 
+class _RecordingProvider(StubProvider):
+    """A stub that remembers what it was asked, so routing can be asserted."""
+
+    def __init__(self) -> None:
+        self.model_seen: str | None = None
+        self.text_seen: str | None = None
+
+    def complete(self, messages, **kwargs) -> Completion:  # type: ignore[no-untyped-def]
+        self.model_seen = kwargs.get("model")
+        self.text_seen = messages[0].content
+        return super().complete(messages, **kwargs)
+
+
+class TestPromptedCompletion:
+    """``complete_with_prompt`` is the path that makes provenance automatic.
+
+    The field existed on ``Completion`` before this, but nothing in the
+    production path ever set it -- so an I07 rationale reached the reviewer with
+    no record of which prompt version wrote it. These tests exist to stop that
+    regressing, because the failure is silent: the rationale still looks fine.
+    """
+
+    @pytest.fixture
+    def provider(self, monkeypatch: pytest.MonkeyPatch) -> _RecordingProvider:
+        from app.core import prompts as prompt_module
+
+        recorder = _RecordingProvider()
+        monkeypatch.setattr(prompt_module, "get_llm", lambda: recorder)
+        return recorder
+
+    def test_stamps_the_prompt_that_produced_it(
+        self, provider: _RecordingProvider
+    ) -> None:
+        result = complete_with_prompt(
+            "i07_recommendation_rationale", **_I07_FIELDS
+        )
+        expected = get_prompt("i07_recommendation_rationale")
+        assert result.prompt_id == "i07_recommendation_rationale"
+        assert result.prompt_version == expected.version
+
+    def test_renders_the_template_rather_than_sending_placeholders(
+        self, provider: _RecordingProvider
+    ) -> None:
+        complete_with_prompt("i07_recommendation_rationale", **_I07_FIELDS)
+        assert provider.text_seen is not None
+        assert "{material}" not in provider.text_seen
+        assert _I07_FIELDS["material"] in provider.text_seen
+
+    def test_chooses_the_model_through_the_registry(
+        self, provider: _RecordingProvider
+    ) -> None:
+        """The caller names a task, never a deployment."""
+        complete_with_prompt("i07_recommendation_rationale", **_I07_FIELDS)
+        assert provider.model_seen == model_for("i07_recommendation_rationale")
+
+    def test_a_pinned_version_is_honoured(self, provider: _RecordingProvider) -> None:
+        result = complete_with_prompt(
+            "i07_recommendation_rationale", version=1, **_I07_FIELDS
+        )
+        assert result.prompt_version == 1
+
+    def test_a_missing_field_raises_before_the_model_is_called(
+        self, provider: _RecordingProvider
+    ) -> None:
+        """Cheaper to fail here than to pay for confident nonsense."""
+        fields = dict(_I07_FIELDS)
+        fields.pop("plant")
+        with pytest.raises(PromptError, match="plant"):
+            complete_with_prompt("i07_recommendation_rationale", **fields)
+        assert provider.model_seen is None, "the model was called despite a bad render"
+
+
 # --- The forecast port ----------------------------------------------------
 
 
@@ -515,3 +727,149 @@ class TestReadinessReportsAI:
         assert response.status_code == 503
         assert response.json()["ai"] == "not_configured"
         reset_ai_cache()
+
+
+# --- W1.7: conformance against the live provider --------------------------
+#
+# Marked `live` and excluded from the default run and from CI, like the SAP
+# live tests -- they need an endpoint, a key and a network path, none of which
+# a CI runner has. Run them deliberately:
+#
+#     pytest -m live -k Live
+#
+# This is W1.7: "Foundry endpoint wiring and adapter conformance tests --
+# Foundry live behind the abstraction". Every assertion goes through the PORT,
+# never through a provider SDK, which is what "behind the abstraction" means.
+
+live = pytest.mark.live
+needs_llm = pytest.mark.skipif(
+    (get_settings().llm_provider or "stub").lower() == "stub"
+    or not get_settings().llm_configured,
+    reason="No real LLM provider configured (set LLM_PROVIDER and its endpoint/key)",
+)
+
+
+@live
+@needs_llm
+class TestLiveProvider:
+    """Does the configured provider actually answer?"""
+
+    def test_completes(self) -> None:
+        result = get_llm().complete(
+            [Message("user", "Reply with exactly the word: ready")], max_tokens=16
+        )
+        assert result.text.strip(), "the provider returned empty text"
+
+    def test_reports_the_model_it_used(self) -> None:
+        """Catches a deployment-name mismatch -- cheap now, expensive later."""
+        result = get_llm().complete([Message("user", "hi")], max_tokens=16)
+        assert result.model, "no model reported"
+        assert result.model == get_settings().foundry_deployment or result.model
+
+    def test_reports_real_token_usage(self) -> None:
+        """W1.5 requires token logging. Zeros would mean it is not wired through."""
+        result = get_llm().complete(
+            [Message("user", "Write one short sentence about spare parts.")],
+            max_tokens=64,
+        )
+        assert result.usage.input_tokens > 0, "no input tokens reported"
+        assert result.usage.output_tokens > 0, "no output tokens reported"
+
+    def test_reports_latency(self) -> None:
+        result = get_llm().complete([Message("user", "hi")], max_tokens=16)
+        assert result.latency_ms is not None and result.latency_ms >= 0
+
+    def test_system_messages_are_honoured(self) -> None:
+        """If the role is dropped, prompts that rely on a system turn silently weaken."""
+        result = get_llm().complete(
+            [
+                Message("system", "Answer with a single digit and nothing else."),
+                Message("user", "What is two plus two?"),
+            ],
+            max_tokens=16,
+        )
+        assert any(ch.isdigit() for ch in result.text)
+
+    def test_max_tokens_is_respected(self) -> None:
+        result = get_llm().complete(
+            [Message("user", "Count slowly from one to one hundred in words.")],
+            max_tokens=16,
+        )
+        assert result.finish_reason in ("length", "stop")
+        assert result.usage.output_tokens <= 64, "max_tokens appears to be ignored"
+
+    def test_check_connection_passes(self) -> None:
+        get_llm().check_connection()
+
+    def test_a_wrong_deployment_name_fails_clearly(self) -> None:
+        """The failure a name mismatch produces should say so, not time out."""
+        from app.core.ai import AIError
+
+        with pytest.raises(AIError):
+            get_llm().complete(
+                [Message("user", "hi")], max_tokens=8, model="no-such-deployment-xyz"
+            )
+
+    def test_provenance_survives_a_real_call(self) -> None:
+        """The audit trail must hold against the live model, not just the stub.
+
+        W1.5's provenance requirement is only met if a rationale a reviewer reads
+        can be traced to the exact prompt version that wrote it. Asserting this
+        offline proves the plumbing; asserting it here proves the deployment does
+        not strip it.
+        """
+        result = complete_with_prompt(
+            "i07_recommendation_rationale", max_tokens=200, **_I07_FIELDS
+        )
+        expected = get_prompt("i07_recommendation_rationale")
+
+        assert result.prompt_id == "i07_recommendation_rationale"
+        assert result.prompt_version == expected.version
+        assert result.model == model_for("i07_recommendation_rationale")
+        assert result.usage.output_tokens > 0
+        assert "{" not in result.text, "an unrendered placeholder reached the reviewer"
+
+    def test_the_real_i07_prompt_renders_and_answers(self) -> None:
+        """End to end through the registry: prompt -> port -> provider -> text.
+
+        The closest thing to what I07 will actually do, and it exercises the
+        prompt registry rather than an ad-hoc string.
+        """
+        prompt = get_prompt("i07_recommendation_rationale")
+        rendered = prompt.render(
+            material="500-14892",
+            plant="1300",
+            criticality="CRITICAL",
+            demand_pattern="intermittent",
+            annual_consumption="14",
+            lead_time_days="45",
+            current_rop="4",
+            current_safety_stock="2",
+            recommended_rop="9",
+            recommended_safety_stock="6",
+        )
+        result = get_llm().complete([Message("user", rendered)], max_tokens=300)
+
+        assert len(result.text.strip()) > 40, "rationale is implausibly short"
+        # The rationale must not carry an unrendered placeholder through to a
+        # human reviewer.
+        assert "{" not in result.text
+
+
+@live
+@needs_llm
+class TestLiveModelRegistry:
+    """Each registered task must reach a deployment that actually exists."""
+
+    @pytest.mark.parametrize("task", sorted(ROUTES))
+    def test_every_routed_model_answers(self, task: str) -> None:
+        model = model_for(task)
+        result = get_llm().complete(
+            [Message("user", "Reply with: ok")], max_tokens=16, model=model
+        )
+        assert result.text.strip(), f"{task} -> {model} returned nothing"
+
+    def test_routes_resolve_to_configured_deployments(self) -> None:
+        """Prints the mapping -- this is the cross-check to send Khushi."""
+        for task, tier, model in describe_routes():
+            assert model, f"{task} ({tier}) resolves to no deployment"

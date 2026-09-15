@@ -34,11 +34,12 @@ silently malformed prompt produces confident nonsense.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 
-from app.core.ai import AIError
+from app.core.ai import AIError, Completion, Message, get_llm
+from app.core.model_registry import model_for
 
 # backend/app/core/prompts.py -> backend/app/prompts
 _PROMPT_ROOT = Path(__file__).resolve().parent.parent / "prompts"
@@ -150,6 +151,41 @@ def get_prompt(prompt_id: str, version: int | None = None) -> Prompt:
         version=chosen,
         template=versions[chosen].read_text(encoding="utf-8").strip(),
     )
+
+
+def complete_with_prompt(
+    prompt_id: str,
+    *,
+    version: int | None = None,
+    task: str | None = None,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+    **values: object,
+) -> Completion:
+    """Render a registry prompt, run it, and stamp the answer with its origin.
+
+    This is the call business logic should make. Reaching for ``get_llm()``
+    directly works and is occasionally right, but the ``Completion`` it returns
+    has no prompt identity on it -- and an I07 rationale whose prompt version
+    cannot be recovered six months later is precisely what the provenance
+    described at the top of this module exists to prevent. Routing every prompted
+    call through here means the audit trail is a property of the path rather than
+    something each caller has to remember.
+
+    ``task`` selects the model tier and defaults to ``prompt_id``; every prompt
+    currently in the registry uses the same string for both.
+    """
+    prompt = get_prompt(prompt_id, version)
+    rendered = prompt.render(**values)
+
+    completion = get_llm().complete(
+        [Message("user", rendered)],
+        max_tokens=max_tokens,
+        temperature=temperature,
+        model=model_for(task or prompt_id),
+    )
+
+    return replace(completion, prompt_id=prompt.id, prompt_version=prompt.version)
 
 
 def available_prompts() -> list[str]:
