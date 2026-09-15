@@ -185,6 +185,33 @@ class Settings(BaseSettings):
             return bool(self.llm_base_url and self.llm_api_key and self.llm_model)
         return False
 
+    # --- Criticality (W3.4) -----------------------------------------------
+    #
+    # Where material criticality is read from. I07, I08 and I13 never read this
+    # -- they call get_criticality_source(). Defaults to the delivered ZMM065
+    # extracts, which are the only confirmed source today.
+    #
+    #   zmm065   the delivered ZMM065 aging reports (default)
+    #   zzcritic MARC-ZZCRITIC, falling back to zmm065
+    #
+    # ZZCRITIC is the preferred source in principle, but the CPI service does
+    # not expose it and its contents are unconfirmed, so selecting it today
+    # resolves every lookup through the fallback -- visibly. See
+    # app/integrations/criticality/zzcritic.py for what would change that.
+    criticality_source: str = "zmm065"
+
+    @property
+    def criticality_configured(self) -> bool:
+        """Whether the selected source can answer.
+
+        ZMM065 reads the seeded raw tables, so it needs the database; ZZCRITIC
+        falls back to ZMM065 and therefore needs the same.
+        """
+        choice = (self.criticality_source or "zmm065").strip().lower()
+        if choice in ("zmm065", "zzcritic"):
+            return bool(self.database_url)
+        return False
+
     # --- Reserved for future integrations. Not read by any code yet, and not
     # --- required for startup. See app/core/security.py and app/integrations/.
     azure_tenant_id: str = ""
