@@ -113,6 +113,44 @@ class I8Settings(BaseSettings):
     # app.shared.get_criticality_source(); /api/i8/config reports which source
     # actually answered.
 
+    # --- Attestation (W5.3) -----------------------------------------------
+
+    # The controlled list of fault categories the attestation form offers.
+    #
+    # Configuration, not a literal, and for the usual I08 reason: this is VZI's
+    # vocabulary, not ours. It was not delivered with the extracts, so the list
+    # below is a starting set drawn from the fault language already present in
+    # the EKPO short texts. IT WILL CHANGE, and when it does it must be one
+    # .env line rather than a code change, a review and a redeploy.
+    #
+    # Comma-separated, like series_prefixes, and for the same reason: a tuple
+    # would be parsed as JSON by pydantic-settings and the honest one-value form
+    # would become a startup error.
+    fault_categories: str = (
+        "BEARING_FAILURE,SEAL_LEAK,WEAR,IMPACT_DAMAGE,ELECTRICAL_FAULT,"
+        "CORROSION,VIBRATION_DAMAGE,OVERHEATING,CONTAMINATION,UNKNOWN"
+    )
+
+    # How far from a repair line's raised date an attestation may sit and still
+    # count as covering it.
+    #
+    # THIS IS A PROPOSAL, NOT A CONFIRMED RULE -- open question 3 on the task
+    # plan. Material + plant + a date window is the only key both sides share:
+    # an attestation is made against a physical part coming off a machine, and
+    # nothing in that moment carries the purchase-order number it will later be
+    # repaired under. A session id would match exactly and is not exposed.
+    #
+    # The window is symmetric around the line's raised date. The assessment
+    # normally happens first -- the part is looked at, then the repair is
+    # raised -- but not always, and a one-sided window would raise exceptions
+    # against lines that were attested two days late. Symmetric is easier to
+    # explain and easier to defend at UAT than a rule with a story attached.
+    #
+    # Every exception this produces carries the window that produced it, so a
+    # change here is visible in the output rather than silently re-scoring the
+    # queue.
+    attestation_window_days: int = 30
+
     # --- Presentation -----------------------------------------------------
 
     # Plant code -> display name, comma separated.
@@ -131,6 +169,14 @@ class I8Settings(BaseSettings):
     # 781 open repair lines will not render in one response.
     default_page_size: int = 50
     max_page_size: int = 500
+
+    @property
+    def fault_category_list(self) -> tuple[str, ...]:
+        """The controlled fault-category list, parsed. Order is preserved
+        because the form renders them in it."""
+        return tuple(
+            c.strip().upper() for c in self.fault_categories.split(",") if c.strip()
+        )
 
     @property
     def series_prefix_list(self) -> tuple[str, ...]:
