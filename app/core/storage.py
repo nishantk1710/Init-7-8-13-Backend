@@ -6,8 +6,12 @@ below. No module opens a path of its own, and no module names a directory or a
 container: the single source is ``Settings.storage_url``.
 
 The adapter is chosen from the URL scheme, exactly as SQLAlchemy chooses a
-dialect from ``DATABASE_URL``. Moving from a local folder to cloud storage is
-therefore a config change with no branch anywhere in application code.
+dialect from ``DATABASE_URL``. Today that resolves to Azure Data Lake and
+nothing else: the local-folder adapter was a stand-in until VZI's storage
+account existed, and it has been removed now that it does. The seam remains, so
+a second backing store is an adapter plus one line in ``build_storage`` -- but
+there is deliberately no longer a local path to fall back onto and no way to
+run against one by accident.
 
 Two properties this interface exists to guarantee:
 
@@ -33,7 +37,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
 from typing import BinaryIO
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 
 from app.core.config import get_settings
 
@@ -64,6 +68,16 @@ class InvalidKeyError(StorageError):
 
 WINDOWS_PATH = re.compile(r"^[A-Za-z]:[\\/]")
 _ILLEGAL_SEGMENTS = {"", ".", ".."}
+
+
+def _looks_like_a_local_path(url: str) -> bool:
+    """Whether ``url`` is a filesystem path rather than a storage URL.
+
+    Kept after the local adapter was removed so a leftover ``STORAGE_URL`` gets
+    an explanation instead of "unsupported scheme 'c'" -- ``urlparse`` reads
+    ``C:/data`` as scheme ``c``, which is a genuinely baffling thing to be told.
+    """
+    return bool(WINDOWS_PATH.match(url)) or url.startswith(("/", "\\", ".", "file://"))
 
 
 def validate_key(key: str) -> str:
@@ -181,63 +195,31 @@ def sha256_of(storage: Storage, key: str) -> str:
 # --- Factory --------------------------------------------------------------
 
 
-def _looks_like_a_plain_path(url: str) -> bool:
-    """Whether to treat ``url`` as a filesystem path rather than parse a scheme.
-
-    ``urlparse`` reads ``C:/data`` as scheme ``c``, so drive letters must be
-    recognised before any scheme parsing happens.
-    """
-    return bool(WINDOWS_PATH.match(url)) or url.startswith(("/", "\\", "."))
-
-
-def _local_root_from(url: str) -> str:
-    """Extract a filesystem root from a plain path or a ``file://`` URL.
-
-    Plain paths are accepted deliberately. The local extract folder is
-    ``...\\KPI 02 Data Extract\\Tables`` -- spaces and all -- and making every
-    developer percent-encode that into a URL buys nothing.
-    """
-    if _looks_like_a_plain_path(url):
-        return url
-
-    parsed = urlparse(url)
-    path = unquote(parsed.path)
-    # file:///D:/data parses to "/D:/data"; drop the slash before the drive letter.
-    if WINDOWS_PATH.match(path.lstrip("/")):
-        path = path.lstrip("/")
-    if parsed.netloc and parsed.netloc.lower() not in ("", "localhost"):
-        # file://server/share is a UNC path.
-        path = f"//{parsed.netloc}{path}"
-    return path
-
-
 def build_storage(url: str) -> Storage:
     """Choose an adapter from the URL scheme. The only place that mapping lives.
 
-    Exposed (rather than private) so tests can build an adapter for a temporary
-    directory without touching process-wide settings.
+    Exposed (rather than private) so tests can build an adapter without touching
+    process-wide settings.
     """
-    from app.integrations.storage.local import LocalFileSystemStorage
-
-    if _looks_like_a_plain_path(url):
-        return LocalFileSystemStorage(_local_root_from(url))
+    if _looks_like_a_local_path(url):
+        raise StorageError(
+            f"STORAGE_URL {url!r} is a local path. This system now runs against "
+            "Azure Data Lake only -- the local folder was a stand-in until VZI's "
+            "storage account existed, and it does. Set STORAGE_URL to "
+            "abfss://<container>@stvziaicomnonprod.dfs.core.windows.net/<path>. "
+            "See README, 'Storage'."
+        )
 
     scheme = urlparse(url).scheme.lower()
 
-    if scheme in ("", "file"):
-        return LocalFileSystemStorage(_local_root_from(url))
+    if scheme in ("abfs", "abfss"):
+        from app.integrations.storage.adls import AzureDataLakeStorage
 
-    if scheme in ("abfs", "abfss", "az", "https"):
-        raise StorageError(
-            f"STORAGE_URL scheme {scheme!r} needs the Azure Data Lake adapter, "
-            "which is not written yet (app/integrations/azure/). Nothing else "
-            "has to change when it lands: implement Storage, register the scheme "
-            "here, and run the existing conformance suite against it."
-        )
+        return AzureDataLakeStorage(url)
 
     raise StorageError(
-        f"Unsupported STORAGE_URL scheme {scheme!r}. Supported today: a plain "
-        "filesystem path, or file://."
+        f"Unsupported STORAGE_URL scheme {scheme!r}. Supported: "
+        "abfss://<container>@<account>.dfs.core.windows.net/<path>."
     )
 
 
@@ -252,9 +234,10 @@ def get_storage() -> Storage:
     url = get_settings().storage_url
     if not url:
         raise StorageNotConfiguredError(
-            "STORAGE_URL is not set. Copy .env.example to .env and set it (see "
-            "README, 'Storage'). No default is assumed: a storage location must "
-            "never be hard-coded."
+            "STORAGE_URL is not set. Expected "
+            "abfss://<container>@stvziaicomnonprod.dfs.core.windows.net/<path> "
+            "(see README, 'Storage'). No default is assumed: a storage location "
+            "must never be hard-coded."
         )
     return build_storage(url)
 

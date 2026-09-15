@@ -1,9 +1,13 @@
 """Load extract workbooks into the raw layer.
 
-The path is XLSX -> generator -> ``COPY ... FROM STDIN`` -> Postgres, with no
-list, no temporary CSV and no ORM object anywhere in between. That matters twice:
-``COPY`` is roughly two orders of magnitude faster than row-by-row inserts across
-3.3 million rows, and streaming keeps memory flat regardless of file size.
+The path is XLSX -> generator -> ``fast_executemany`` -> Azure SQL, with no list,
+no temporary CSV and no ORM object anywhere in between. That matters twice: the
+bulk path is orders of magnitude faster than row-by-row inserts across 3.3
+million rows, and streaming keeps memory flat regardless of file size.
+
+The SQL Server specifics -- bracket quoting, bounded widths on indexed columns,
+the extended property that carries the table's warning -- live in
+``app/seed/sqlserver.py``. This module orchestrates; that one writes.
 
 Every column is created as ``text``. The extract carries SAP keys as digit
 strings -- material numbers, plants, document numbers -- and any numeric
@@ -21,8 +25,6 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-import psycopg
-from psycopg import sql
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -32,6 +34,7 @@ from app.core.storage import Storage, get_storage, sha256_of
 from app.models.ingestion import IngestionRun
 from app.seed.manifest import EXTRACTS, ExtractSpec
 from app.seed.reader import read_headers, read_rows
+from app.seed.sqlserver import RawTableWriter
 
 logger = get_logger(__name__)
 
@@ -76,8 +79,8 @@ def _already_loaded(session: Session, spec: ExtractSpec, fingerprints: dict[str,
     return all(latest.get(key) == digest for key, digest in fingerprints.items())
 
 
-def _comment_table(cursor: psycopg.Cursor, spec: ExtractSpec) -> None:
-    """Attach a warning to the table itself.
+def _table_description(spec: ExtractSpec) -> str:
+    """The warning attached to the table itself.
 
     The raw layer mirrors the EXTRACT, not the OData contract: business-label
     column names, unpadded material numbers, everything text. Code written
@@ -86,7 +89,7 @@ def _comment_table(cursor: psycopg.Cursor, spec: ExtractSpec) -> None:
     That warning lives in the README and the manifest, but neither is visible
     to someone who found the table in a database client and started writing
     SQL. This puts it where they will actually see it -- "backslash-d-plus" in psql, the
-    table description in DBeaver or pgAdmin.
+    table description in DBeaver, pgAdmin or SSMS.
     """
     warning = (
         f"RAW extract layer, from {', '.join(spec.files)}. "
@@ -98,30 +101,7 @@ def _comment_table(cursor: psycopg.Cursor, spec: ExtractSpec) -> None:
     )
     if spec.note:
         warning += f" NOTE: {spec.note}"
-    cursor.execute(
-        sql.SQL("COMMENT ON TABLE {} IS {}").format(
-            sql.Identifier(spec.raw_table), sql.Literal(warning)
-        )
-    )
-
-
-def _create_table(cursor: psycopg.Cursor, table: str, columns: list[str]) -> None:
-    """Recreate the raw table for exactly these columns.
-
-    Drop-and-create rather than ``CREATE IF NOT EXISTS``: the table is fully
-    reloaded anyway, and this absorbs a changed extract shape instead of failing
-    on a column that no longer exists. It runs inside the caller's transaction,
-    so a failed load leaves the previous table intact.
-    """
-    cursor.execute(sql.SQL("DROP TABLE IF EXISTS {}").format(sql.Identifier(table)))
-    cursor.execute(
-        sql.SQL("CREATE TABLE {} ({})").format(
-            sql.Identifier(table),
-            sql.SQL(", ").join(
-                sql.SQL("{} text").format(sql.Identifier(name)) for name in columns
-            ),
-        )
-    )
+    return warning
 
 
 # Columns worth an index on every table that has one. These are what the three
@@ -142,44 +122,54 @@ INDEXED_COLUMNS = (
 )
 
 
-def _create_indexes(cursor: psycopg.Cursor, table: str, columns: list[str]) -> list[str]:
+def _describe_table(writer: RawTableWriter, spec: ExtractSpec) -> None:
+    """Attach the table's warning, in a transaction of its own. Never raises."""
+    try:
+        with get_engine().begin() as connection:
+            cursor = connection.connection.driver_connection.cursor()
+            try:
+                writer.describe_table(cursor, spec.raw_table, _table_description(spec))
+            finally:
+                cursor.close()
+    except Exception as exc:
+        logger.warning("%s: could not describe the table: %s", spec.table, exc)
+
+
+def _create_indexes(
+    writer: RawTableWriter, cursor: object, table: str, columns: list[str]
+) -> list[str]:
     """Index the join columns this table actually has. Returns the ones created."""
     created = []
     for column in INDEXED_COLUMNS:
         if column not in columns:
             continue
-        cursor.execute(
-            sql.SQL("CREATE INDEX {} ON {} ({})").format(
-                sql.Identifier(f"ix_{table}_{column}"),
-                sql.Identifier(table),
-                sql.Identifier(column),
-            )
-        )
+        writer.create_index(cursor, table, column)
         created.append(column)
     return created
 
 
-def _copy_file(
-    cursor: psycopg.Cursor,
+def _load_file(
+    writer: RawTableWriter,
+    cursor: object,
     storage: Storage,
     table: str,
     key: str,
     columns: list[str],
     spec: ExtractSpec,
 ) -> int:
-    """Stream one workbook into ``table`` via COPY. Returns the row count."""
-    statement = sql.SQL("COPY {} ({}) FROM STDIN").format(
-        sql.Identifier(table),
-        sql.SQL(", ").join(sql.Identifier(name) for name in columns),
-    )
-    rows = 0
-    with cursor.copy(statement) as copy:
-        for row in read_rows(
+    """Stream one workbook into ``table``. Returns the row count.
+
+    The generator is handed to the writer rather than consumed here, so the rows
+    never exist as a list on either backend.
+    """
+    return writer.bulk_load(
+        cursor,
+        table,
+        columns,
+        read_rows(
             storage, key, expected=columns, sheet=spec.sheet, header_row=spec.header_row
-        ):
-            copy.write_row(row)
-            rows += 1
-    return rows
+        ),
+    )
 
 
 def load_table(spec: ExtractSpec, *, force: bool = False) -> TableResult:
@@ -207,22 +197,37 @@ def load_table(spec: ExtractSpec, *, force: bool = False) -> TableResult:
             storage, spec.files[0], sheet=spec.sheet, header_row=spec.header_row
         )
 
+        writer = RawTableWriter(INDEXED_COLUMNS)
+
         per_file: dict[str, int] = {}
         with get_engine().begin() as connection:
             raw_connection = connection.connection.driver_connection
-            with raw_connection.cursor() as cursor:
-                _create_table(cursor, spec.raw_table, columns)
-                _comment_table(cursor, spec)
+            # try/finally rather than `with`: pyodbc's cursor context manager
+            # does more on exit than close, and closing is the only behaviour
+            # wanted here. The surrounding engine.begin() owns the transaction.
+            cursor = raw_connection.cursor()
+            try:
+                writer.create_table(cursor, spec.raw_table, columns)
                 for key in spec.files:
-                    logger.info("%s: copying %s", spec.table, key)
-                    per_file[key] = _copy_file(
-                        cursor, storage, spec.raw_table, key, columns, spec
+                    logger.info("%s: loading %s", spec.table, key)
+                    per_file[key] = _load_file(
+                        writer, cursor, storage, spec.raw_table, key, columns, spec
                     )
-                # After the rows, not before: building an index during a bulk
-                # COPY costs more than building it once at the end.
-                indexed = _create_indexes(cursor, spec.raw_table, columns)
+                # After the rows, not before: maintaining an index during a bulk
+                # load costs more than building it once at the end.
+                indexed = _create_indexes(writer, cursor, spec.raw_table, columns)
                 if indexed:
                     logger.info("%s: indexed %s", spec.table, ", ".join(indexed))
+            finally:
+                cursor.close()
+
+        # Deliberately AFTER the load has committed, in its own transaction.
+        # The description is a warning for whoever finds this table in SSMS --
+        # worth having, worth nothing next to the rows. Inside the load's
+        # transaction a failing sp_addextendedproperty could doom it and take
+        # the whole table down at commit, which is a spectacular way to lose
+        # 3.3 million rows to a comment.
+        _describe_table(writer, spec)
 
         total = sum(per_file.values())
         elapsed = time.monotonic() - started

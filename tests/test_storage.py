@@ -1,11 +1,15 @@
 """Storage conformance suite.
 
 Everything in ``TestStorageConformance`` is written against the ``Storage``
-interface, never against a concrete adapter. Today the ``storage`` fixture yields
-one implementation; when the Azure Data Lake adapter lands, add it to that
-fixture's ``params`` and every test below runs against it too, with no new test
-code. That is what makes "cutover is a config change" a claim the suite actually
-checks rather than a hope.
+interface, never against a concrete adapter. Azure Data Lake is now the only
+implementation, and it is exercised here through an in-memory fake of the Azure
+SDK (``tests/fake_adls.py``) rather than against the real account.
+
+That distinction matters. These tests prove the adapter's *behaviour* -- that a
+failed write leaves no object, that listings are recursive and sorted, that a
+missing key raises the right error. They do not prove RBAC, private endpoints,
+DNS or throughput, and nothing here should be cited as evidence that they work.
+The first deployment is what proves those.
 
 Tests outside that class cover the factory, key validation and the readiness
 endpoint, which are adapter-independent.
@@ -14,7 +18,6 @@ endpoint, which are adapter-independent.
 from __future__ import annotations
 
 import io
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -32,21 +35,32 @@ from app.core.storage import (
     sha256_of,
     validate_key,
 )
-from app.integrations.storage.local import LocalFileSystemStorage
+from app.integrations.storage.adls import AzureDataLakeStorage, parse_abfss
 from app.main import app
+from tests.fake_adls import FakeDataLakeServiceClient
 
 client = TestClient(app)
 
+# The URL shape the deployed app will actually carry, so the tests exercise a
+# base prefix rather than the simpler container-root case.
+FAKE_URL = "abfss://raw@stvziaicomnonprod.dfs.core.windows.net/extracts"
 
-@pytest.fixture(params=["local"])
-def storage(request: pytest.FixtureRequest, tmp_path: Path) -> Storage:
+
+def fake_storage(url: str = FAKE_URL) -> AzureDataLakeStorage:
+    """An empty Data Lake adapter backed by the in-memory fake."""
+    return AzureDataLakeStorage(url, service_client=FakeDataLakeServiceClient())
+
+
+@pytest.fixture(params=["adls"])
+def storage(request: pytest.FixtureRequest) -> Storage:
     """One configured, empty ``Storage`` per implementation under test.
 
-    Add "adls" here once that adapter exists -- ideally pointed at a throwaway
-    container -- and the whole class below covers it.
+    Parameterised even with a single implementation: a second backing store is
+    one entry here and the whole class below covers it, which is the property
+    that made swapping the local folder out for Azure cheap.
     """
-    if request.param == "local":
-        return LocalFileSystemStorage(tmp_path)
+    if request.param == "adls":
+        return fake_storage()
     raise AssertionError(f"Unknown storage implementation: {request.param}")
 
 
@@ -191,23 +205,49 @@ class TestKeyValidation:
 
 
 class TestFactory:
-    def test_plain_windows_path_builds_local_adapter(self, tmp_path: Path) -> None:
-        assert isinstance(build_storage(str(tmp_path)), LocalFileSystemStorage)
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "C:/Users/someone/OneDrive/Vedanta",
+            "/mnt/data/extracts",
+            "./extracts",
+            "file:///D:/vzi-data",
+        ],
+    )
+    def test_a_local_path_is_refused_and_explained(self, url: str) -> None:
+        """A leftover local STORAGE_URL is the likeliest upgrade failure.
 
-    def test_file_url_builds_local_adapter(self, tmp_path: Path) -> None:
-        built = build_storage(tmp_path.as_uri())
-        assert isinstance(built, LocalFileSystemStorage)
-        assert built.root == tmp_path.resolve()
+        urlparse reads "C:/data" as scheme "c", so without this the message
+        would be "Unsupported STORAGE_URL scheme 'c'" -- true, and useless.
+        """
+        with pytest.raises(StorageError, match="Azure Data Lake only"):
+            build_storage(url)
 
-    def test_file_url_with_spaces_round_trips(self, tmp_path: Path) -> None:
-        """The real extract folder is 'KPI 02 Data Extract' -- spaces must survive."""
-        spaced = tmp_path / "KPI 02 Data Extract"
-        spaced.mkdir()
-        assert build_storage(spaced.as_uri()).root == spaced.resolve()
+    def test_abfss_builds_the_data_lake_adapter(self) -> None:
+        """Building it must not authenticate or connect -- same laziness as the engine."""
+        built = build_storage("abfss://raw@acct.dfs.core.windows.net/extracts")
+        assert isinstance(built, AzureDataLakeStorage)
+        assert built.container == "raw"
+        assert built.account_url == "https://acct.dfs.core.windows.net"
+        assert built.base == "extracts"
 
-    def test_azure_scheme_names_the_missing_adapter(self) -> None:
-        with pytest.raises(StorageError, match="Azure Data Lake adapter"):
-            build_storage("abfss://raw@acct.dfs.core.windows.net/extracts")
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("abfss://acct.dfs.core.windows.net/x", "missing the container"),
+            ("abfss://raw@/x", "does not name both"),
+        ],
+    )
+    def test_a_malformed_abfss_url_says_what_correct_looks_like(
+        self, url: str, expected: str
+    ) -> None:
+        """A bad STORAGE_URL is a config mistake; the message has to be actionable."""
+        with pytest.raises(StorageError, match=expected):
+            build_storage(url)
+
+    def test_abfss_without_a_base_prefix_is_the_container_root(self) -> None:
+        built = build_storage("abfss://raw@acct.dfs.core.windows.net")
+        assert built.base == ""
 
     def test_unknown_scheme_is_refused(self) -> None:
         with pytest.raises(StorageError, match="Unsupported"):
@@ -230,54 +270,79 @@ class TestFactory:
         assert get_storage.cache_info().currsize == 0
 
 
-class TestLocalAdapterSpecifics:
-    """Behaviour that only makes sense for the filesystem adapter."""
+class TestDataLakeAdapterSpecifics:
+    """Behaviour that only makes sense for the Data Lake adapter."""
 
-    def test_missing_root_fails_fast_and_names_the_path(self) -> None:
-        """A wrong STORAGE_URL must error immediately, not stall or be created.
+    @pytest.mark.parametrize(
+        ("url", "account", "container", "base"),
+        [
+            (
+                "abfss://raw@stvziaicomnonprod.dfs.core.windows.net/extracts",
+                "https://stvziaicomnonprod.dfs.core.windows.net",
+                "raw",
+                "extracts",
+            ),
+            (
+                "abfss://raw@stvziaicomnonprod.dfs.core.windows.net/a/b/c",
+                "https://stvziaicomnonprod.dfs.core.windows.net",
+                "raw",
+                "a/b/c",
+            ),
+            (
+                "abfs://raw@stvziaicomnonprod.dfs.core.windows.net/",
+                "https://stvziaicomnonprod.dfs.core.windows.net",
+                "raw",
+                "",
+            ),
+        ],
+    )
+    def test_url_parsing(self, url: str, account: str, container: str, base: str) -> None:
+        assert parse_abfss(url) == (account, container, base)
 
-        Regression test for a real incident: a copy of this repo ran elsewhere
-        with STORAGE_URL still pointing at the original machine's OneDrive
-        folder. The adapter tried to CREATE it, Windows spent minutes on the
-        network path, and the suite looked frozen.
+    def test_reads_are_seekable_as_openpyxl_requires(self) -> None:
+        """The reason reads are spooled rather than streamed straight through.
+
+        An xlsx is a zip, and openpyxl seeks to the central directory before it
+        parses a row. Azure's StorageStreamDownloader is forward-only, so a naive
+        adapter that handed it back would work in every test here and then fail
+        on the first real workbook.
         """
-        from app.core.storage import StorageError
-
-        with pytest.raises(StorageError, match="does not exist"):
-            LocalFileSystemStorage("Z:/no/such/storage/root")
-
-    def test_root_is_created_only_when_explicitly_asked(self, tmp_path: Path) -> None:
-        root = tmp_path / "not" / "there" / "yet"
-        LocalFileSystemStorage(root, create=True)
-        assert root.is_dir()
-
-    def test_in_flight_temp_files_are_not_listed(self, tmp_path: Path) -> None:
-        """An interrupted write leaves a .tmp sibling; it is not an object."""
-        store = LocalFileSystemStorage(tmp_path)
-        (tmp_path / "leftover.bin.deadbeef.tmp").write_bytes(b"x")
-        assert list(store.list()) == []
-
-    def test_check_connection_fails_when_root_disappears(self, tmp_path: Path) -> None:
-        """Readiness must notice a root that vanishes after start-up.
-
-        A network share disconnecting, or a container mount that does not come
-        back, looks exactly like this.
-        """
-        root = tmp_path / "vanishing"
-        store = LocalFileSystemStorage(root, create=True)
-        root.rmdir()
-        with pytest.raises(StorageError):
-            store.check_connection()
-
-    def test_openpyxl_style_file_object_read(self, tmp_path: Path) -> None:
-        """Proof the handle is a real binary file object, as openpyxl requires."""
-        store = LocalFileSystemStorage(tmp_path)
+        store = fake_storage()
         with store.open_write("book.bin") as handle:
             handle.write(b"PK\x03\x04rest-of-a-zip")
         with store.open_read("book.bin") as handle:
-            assert isinstance(handle.read(0), bytes)
+            assert handle.seekable()
+            assert handle.read(2) == b"PK"
             handle.seek(0)
             assert io.BytesIO(handle.read()).read(2) == b"PK"
+
+    def test_keys_are_stored_under_the_configured_base_prefix(self) -> None:
+        """The base prefix must reach the service, and must not reach the caller."""
+        service = FakeDataLakeServiceClient()
+        store = AzureDataLakeStorage(FAKE_URL, service_client=service)
+        with store.open_write("Tables/MSEG_1.XLSX") as handle:
+            handle.write(b"x")
+
+        assert list(service.store) == ["extracts/Tables/MSEG_1.XLSX"]
+        assert list(store.list()) == ["Tables/MSEG_1.XLSX"]
+
+    def test_check_connection_fails_when_the_container_is_absent(self) -> None:
+        """The first-deployment failure: wrong container, or no RBAC assignment."""
+        store = AzureDataLakeStorage(
+            FAKE_URL, service_client=FakeDataLakeServiceClient(container_exists=False)
+        )
+        with pytest.raises(StorageError, match="Storage Blob Data Reader"):
+            store.check_connection()
+
+    def test_building_the_adapter_does_not_authenticate(self) -> None:
+        """No credential is resolved until a call is actually made.
+
+        DefaultAzureCredential probes several sources and can be slow or
+        interactive; doing that at import or construction time would make the
+        app's start-up depend on it.
+        """
+        store = AzureDataLakeStorage(FAKE_URL)
+        assert store._filesystem is None
 
 
 class TestReadinessReportsStorage:
@@ -293,19 +358,24 @@ class TestReadinessReportsStorage:
         assert response.json()["storage"] == "not_configured"
         reset_storage_cache()
 
-    def test_unavailable_storage_is_reported(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        """Configured but broken must read differently from not configured."""
-        root = tmp_path / "gone"
-        root.mkdir()
+    def test_unavailable_storage_is_reported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Configured but unreachable must read differently from not configured.
+
+        The deployed shape of this is the container missing, or the App Service
+        identity having no role assignment on stvziaicomnonprod -- both of which
+        present as a reachable account that will not serve us.
+        """
         monkeypatch.setattr(
             "app.core.storage.get_settings",
-            lambda: Settings(storage_url=str(root), _env_file=None),
+            lambda: Settings(storage_url=FAKE_URL, _env_file=None),
+        )
+        monkeypatch.setattr(
+            "app.core.storage.build_storage",
+            lambda url: AzureDataLakeStorage(
+                url, service_client=FakeDataLakeServiceClient(container_exists=False)
+            ),
         )
         reset_storage_cache()
-        get_storage()  # builds the adapter against a root that exists
-        root.rmdir()  # then it disappears underneath us
 
         response = client.get("/api/ready")
         assert response.status_code == 503

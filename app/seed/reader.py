@@ -23,9 +23,13 @@ import openpyxl
 
 from app.core.storage import Storage
 
-# Postgres identifiers are folded to lower case and capped at 63 bytes. The
-# extract's headers are business labels -- "Ext. Material Group", "DF at client
-# level" -- so they need real sanitising, not just a .lower().
+# The extract's headers are business labels -- "Ext. Material Group", "DF at
+# client level" -- so they need real sanitising, not just a .lower().
+#
+# 63 characters is retained deliberately. Azure SQL allows 128, but widening the
+# cap would silently rename every column whose header sanitises longer than 63,
+# and those names are already referenced by the manifest and the mapping work.
+# A lower cap is portable; a changed column name is a migration.
 _NON_IDENT = re.compile(r"[^0-9a-z]+")
 _MAX_IDENT = 63
 
@@ -35,7 +39,7 @@ class ExtractFormatError(RuntimeError):
 
 
 def column_name(header: Any, position: int) -> str:
-    """Turn one extract header into a Postgres column name.
+    """Turn one extract header into a database column name.
 
     ``"Ext. Material Group"`` -> ``ext_material_group``. A blank header becomes
     ``column_<n>`` rather than being dropped: an unnamed column still holds data,

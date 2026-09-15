@@ -3,7 +3,7 @@
 Two rules for anything that subclasses ``Base``:
 
 1. **Portable constructs only.** No ``JSONB``, no ``ARRAY``, no ``ON CONFLICT``.
-   Local Postgres stands in for the deployed database, and those two are not
+   The database is Azure SQL. Models stay on portable constructs anyway: those are not
    guaranteed to be the same engine. Portable models keep that swap small;
    dialect-specific ones turn it into a rewrite.
 2. **Import the model somewhere Alembic sees it**, or autogenerate will not

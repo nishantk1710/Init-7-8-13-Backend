@@ -124,58 +124,114 @@ def transport_returning(*responses: FakeResponse, capture: list | None = None):
 
 
 class TestNoProviderLeakage:
-    """W1.5: "Business logic never imports a provider SDK directly"."""
+    """W1.5: "Business logic never imports a provider SDK directly".
 
-    # Modules that are allowed to know a provider exists.
-    ALLOWED = (Path("app") / "integrations" / "ai",)
+    Two rules, because there are two kinds of vendor dependency and collapsing
+    them makes the guard either useless or a nuisance:
 
-    # Import names that mean somebody is talking to a provider.
-    PROVIDER_IMPORTS = frozenset(
-        {"anthropic", "openai", "azure", "google", "cohere", "mistralai", "ollama", "litellm"}
+    * **An AI SDK belongs in app/integrations/ai/ and nowhere else** -- not even
+      in another adapter package. Swapping model provider must stay a one-package
+      change, which is the whole point of W1.5.
+    * **A cloud SDK belongs in some adapter package** -- app/integrations/azure
+      storage is a legitimate place for ``azure.storage``. What it must never do
+      is appear in app/core, app/api, app/seed or app/models, because then the
+      Storage and Database ports have been bypassed.
+
+    Before Azure storage landed this was one rule banning ``azure`` outside the
+    AI package. That was right when the only azure import would have been an AI
+    one, and wrong the moment a Data Lake adapter existed.
+    """
+
+    AI_PACKAGE = Path("app") / "integrations" / "ai"
+    ADAPTER_PACKAGE = Path("app") / "integrations"
+
+    # Talking to a model.
+    AI_IMPORTS = frozenset(
+        {"anthropic", "openai", "google", "cohere", "mistralai", "ollama", "litellm"}
     )
+
+    # Talking to a cloud platform.
+    CLOUD_IMPORTS = frozenset({"azure", "boto3", "google.cloud"})
+
+    @staticmethod
+    def _imported_modules(tree: ast.AST) -> list[tuple[int, str]]:
+        """Every dotted module name imported, with its line number."""
+        found: list[tuple[int, str]] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                found += [(node.lineno, alias.name) for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    found.append((node.lineno, node.module))
+        return found
+
+    def _classify(self, module: str) -> str | None:
+        """``"ai"``, ``"cloud"`` or ``None`` for an ordinary import."""
+        root = module.split(".")[0]
+        # azure.ai.* is a model SDK wearing a cloud SDK's name, and is held to
+        # the stricter rule.
+        if module.startswith("azure.ai"):
+            return "ai"
+        if root in self.AI_IMPORTS:
+            return "ai"
+        if root in self.CLOUD_IMPORTS or module.startswith("google.cloud"):
+            return "cloud"
+        return None
 
     def _offenders(self) -> list[str]:
         offenders = []
         for path in sorted(Path("app").rglob("*.py")):
-            if any(str(path).startswith(str(allowed)) for allowed in self.ALLOWED):
-                continue
+            in_ai = str(path).startswith(str(self.AI_PACKAGE))
+            in_adapter = str(path).startswith(str(self.ADAPTER_PACKAGE))
             tree = ast.parse(path.read_text(encoding="utf-8"))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    names = [a.name.split(".")[0] for a in node.names]
-                elif isinstance(node, ast.ImportFrom):
-                    names = [(node.module or "").split(".")[0]]
-                else:
-                    continue
-                for name in names:
-                    if name in self.PROVIDER_IMPORTS:
-                        offenders.append(f"{path}:{node.lineno} imports {name}")
+
+            for lineno, module in self._imported_modules(tree):
+                kind = self._classify(module)
+                if kind == "ai" and not in_ai:
+                    offenders.append(
+                        f"{path}:{lineno} imports {module} -- AI SDKs belong in "
+                        f"{self.AI_PACKAGE} only"
+                    )
+                elif kind == "cloud" and not in_adapter:
+                    offenders.append(
+                        f"{path}:{lineno} imports {module} -- cloud SDKs belong in "
+                        f"an adapter under {self.ADAPTER_PACKAGE}, behind a port"
+                    )
         return offenders
 
     def test_no_business_logic_imports_a_provider(self) -> None:
-        """If this fails, the abstraction has been bypassed.
+        """If this fails, an abstraction has been bypassed.
 
-        The fix is to call get_llm() rather than to widen ALLOWED. A provider
-        import outside app/integrations/ai/ means changing provider now means
-        changing that file too -- which is the cost W1.5 exists to avoid.
+        The fix is to call get_llm() or get_storage() rather than to widen the
+        allowlist. An SDK import in business logic means changing provider now
+        means changing that file too -- which is the cost these ports exist to
+        avoid.
         """
         offenders = self._offenders()
-        assert not offenders, "provider SDK imported outside the adapter package:\n" + "\n".join(
+        assert not offenders, "vendor SDK imported outside its adapter package:\n" + "\n".join(
             offenders
         )
 
-    def test_the_guard_can_actually_fail(self) -> None:
-        """A guard nobody has seen fail is not known to work."""
-        source = "import anthropic\n"
-        tree = ast.parse(source)
-        found = [
-            a.name
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Import)
-            for a in node.names
-            if a.name.split(".")[0] in self.PROVIDER_IMPORTS
-        ]
-        assert found == ["anthropic"]
+    @pytest.mark.parametrize(
+        ("module", "expected"),
+        [
+            ("anthropic", "ai"),
+            ("openai", "ai"),
+            ("azure.ai.inference", "ai"),
+            ("azure.storage.filedatalake", "cloud"),
+            ("azure.identity", "cloud"),
+            ("boto3", "cloud"),
+            ("requests", None),
+            ("sqlalchemy", None),
+        ],
+    )
+    def test_the_guard_classifies_correctly(self, module: str, expected: str | None) -> None:
+        """A guard nobody has seen fail is not known to work.
+
+        ``azure.ai.inference`` versus ``azure.storage`` is the case that matters:
+        one must be confined to the AI package, the other must not be.
+        """
+        assert self._classify(module) == expected
 
 
 # --- The stub -------------------------------------------------------------

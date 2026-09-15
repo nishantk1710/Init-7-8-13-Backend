@@ -2,8 +2,10 @@
 
 FastAPI backend for Spares AI.
 
-> **Foundation only.** I07 / I08 / I13 business logic and all external integrations
-> (SAP, Azure SQL, Entra ID, notifications, LLM) are intentionally not implemented.
+> **Foundation.** I07 / I08 / I13 business logic is intentionally not implemented.
+> The shared infrastructure underneath it is: the CPI/SAP client, the Azure SQL
+> persistence layer, the Data Lake storage adapter and the AI service layer all
+> exist and are wired to VZI's non-prod Azure.
 
 It exists to prove the skeleton: FastAPI runs, routing is organised, the frontend can
 reach it, it deploys independently, and I07/I08/I13 have clean extension points.
@@ -58,7 +60,7 @@ backend/
 │   ├── integrations/sap/        the CPI client — the ONLY SAP access
 │   ├── integrations/ai/         LLM adapters — the ONLY provider imports
 │   ├── prompts/                 versioned prompt templates
-│   ├── seed/                    loads the July extracts into Postgres
+│   ├── seed/                    loads the July extracts into Azure SQL
 │   ├── initiatives/             i7/  i8/  i13/  business logic (empty)
 │   ├── services/                business services (empty)
 │   ├── models/                  persistence models (empty)
@@ -87,15 +89,26 @@ add modules in parallel without colliding.
 | | Version | Notes |
 | --- | --- | --- |
 | Python | 3.11+ | developed on 3.12 / 3.13 |
-| Podman or Docker | any current | runs Postgres locally |
-| Postgres | 18 | via `compose.yaml`, not installed on the host |
+| ODBC Driver 18 for SQL Server | 18 | **not** a pip package; ships with the App Service image, installed by hand locally |
+| Azure CLI | any current | for `az login`, so the Data Lake adapter has an identity |
 
-You also need the **SAP data delivery** to seed the database — see step 5.
+> **This backend no longer runs against anything local.**
+> Local Postgres and a local extract folder were stand-ins while VZI's Azure was
+> being provisioned. Both are gone. The database is Azure SQL (`sqldb-aicom`)
+> and storage is the `stvziaicomnonprod` Data Lake, and a `postgresql://` or
+> filesystem URL is now refused with an explanation rather than half-working.
+>
+> Both sit behind private endpoints with public network access disabled, so
+> **neither is reachable from a laptop.** That is the network working as
+> designed. What you can do locally is run the test suite — it covers the
+> storage adapter against an in-memory fake — and reach CPI and Foundry, which
+> are the two dependencies that are not private. Everything else is proven from
+> inside the App Service with `python -m app.checkup`.
 
 ## Setup, from a fresh clone
 
-Five steps. Steps 1–4 take a few minutes; step 5 takes about half an hour
-because it loads 3.4 million rows.
+Three steps to a running test suite. Seeding and anything database-backed
+happen on Azure — see **Deployment**.
 
 ### 1. Python environment
 
@@ -120,61 +133,74 @@ directly — it avoids the PowerShell execution-policy prompt.
 cp .env.example .env
 ```
 
-Then edit `.env` and set these four. Everything else has a working default:
+Everything has a working default except the two Azure resources, and **both are
+optional locally** — leave them empty and the app, the liveness endpoint and the
+whole test suite still work:
 
-| Variable | Example | Notes |
+| Variable | Value | Notes |
 | --- | --- | --- |
-| `POSTGRES_PASSWORD` | anything | read by `compose.yaml` when the container is first created |
-| `DATABASE_URL` | `postgresql+psycopg://postgres:<password>@127.0.0.1:5432/spares_ai` | must match the password above |
-| `STORAGE_URL` | path to the folder **containing** the delivery folders | see step 5 |
+| `DATABASE_URL` | `mssql+pyodbc://<user>:<pw>@sql-vzi-aicom-nonprod-san.database.windows.net:1433/sqldb-aicom?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes` | unreachable outside the VNet |
+| `STORAGE_URL` | `abfss://<container>@stvziaicomnonprod.dfs.core.windows.net/<path>` | unreachable outside the VNet |
+| `FOUNDRY_API_KEY` | the VZI non-prod key | reachable from anywhere |
+| `CPI_*` | four values | reachable from anywhere |
 
-**Use `127.0.0.1`, not `localhost`.** On Windows `localhost` resolves to IPv6
-`::1` first while the container forwards IPv4 only, so every connection stalls on
-the IPv6 attempt before falling back — measured here at ~19s per connect against
-0.34s, taking the test suite from 4m27s to 1.9s. It works either way, which is
-what makes it hard to spot.
+`Encrypt=yes` is not optional — Azure SQL refuses the connection without it.
+Do **not** set `TrustServerCertificate=yes` to work around a certificate error:
+it connects while trusting anything, which is the same objection as disabling
+TLS verification for CPI.
 
 `.env` is gitignored. Never commit real credentials.
 
-### 3. Postgres
+### 3. Run the tests
 
 ```bash
-podman compose up -d --wait      # or: docker compose up -d --wait
-```
-
-`--wait` blocks until the healthcheck passes, so the next step cannot race it.
-The database `spares_ai` is created automatically on first start.
-
-No compose provider installed? The equivalent by hand:
-
-```bash
-podman run -d --name spares-postgres \
-  -e POSTGRES_PASSWORD=<password> -e POSTGRES_DB=spares_ai \
-  -p 127.0.0.1:5432:5432 -v spares_pgdata:/var/lib/postgresql/data \
-  docker.io/library/postgres:18
-```
-
-### 4. Schema and app
-
-```bash
-alembic upgrade head
-pytest                                    # 289 tests
+pytest                                    # 360 pass, 12 fail, 14 skip
 uvicorn app.main:app --reload --port 8000
 ```
 
-Verify:
+**The 12 failures are expected right now, and are not your code.** They are
+`drift`-marked: they compare the SAP discovery snapshot against the constants in
+`known_conditions.py`, and a discovery re-run on 15-Sep moved the snapshot —
+five `ZMM_KPI02_SRV` entity sets now reject every request with HTTP 400. They
+stay visible on purpose rather than being re-baselined green, because that would
+erase the only signal that ~1.17M rows of change-document data stopped being
+readable. See `pytest.ini`, marker `drift`.
+
+To run only what gates a deployment — which is what CI runs, and which is green:
+
+```bash
+pytest -m "not live and not drift"        # 356 pass, 14 skip
+```
+
+Spell out both markers. A command-line `-m` **replaces** the one in `addopts`
+rather than combining with it, so `-m "not drift"` alone silently re-enables the
+live SAP tests and starts calling CPI.
 
 ```bash
 curl http://localhost:8000/api/health     # 200 - liveness, no dependencies
-curl http://localhost:8000/api/ready      # 200 once the database is reachable
+curl http://localhost:8000/api/ready      # 503 locally - see below
 ```
 
-`/api/ready` reporting `503 not_configured` means `.env` was not picked up;
-`503 unavailable` means the container is not running or the password is wrong.
+The 14 skips are the Azure-dependent tests, and `/api/ready` returning 503
+locally is **correct**: it touches the database and storage, and neither answers
+from outside the VNet. `not_configured` means the variable is empty;
+`unavailable` means it is set but the dependency did not answer.
 
-### 5. Seed the real SAP data
+To see exactly which dependency is unhappy, and why:
 
-Point `STORAGE_URL` at the folder that **contains** both delivery folders:
+```bash
+python -m app.checkup
+```
+
+That reports the database, storage, CPI and the model separately, prints no
+secret, and is the same command used to satisfy **W2.2** from inside the App
+Service. Locally, expect CPI and the model green and the other two failing.
+
+### Seeding the real SAP data
+
+The seed reads from the Data Lake and writes to Azure SQL, so it runs **inside
+the App Service**, not here. The `STORAGE_URL` path must contain both delivery
+folders:
 
 ```
 <STORAGE_URL>/
@@ -288,30 +314,57 @@ the SAP/VZI team confirms it. The PR stub is therefore deliberately unauthentica
 
 ```bash
 pip install -r requirements.txt
-pytest
+
+pytest                                # everything except live SAP
+pytest -m "not live and not drift"    # the deployment gate; CI runs this
+pytest -m live                        # live SAP + live Foundry; needs credentials
+pytest -m drift                       # SAP contract drift only
 ```
 
-Covers `GET /api/health` → 200 / `status == "ok"` and `POST /api/events/pr` → 202.
+Three markers, and the distinction between them is the point:
+
+| | What it proves | Blocks a deploy? |
+| --- | --- | --- |
+| unmarked | our code behaves | **yes** |
+| `drift` | SAP still matches what we recorded | no — reported only |
+| `live` | the real CPI and Foundry answer | no — excluded by default |
+
+`drift` and `live` are excluded from the gate because they fail for reasons that
+are not our code: SAP changing underneath us, or a machine with no credentials.
+Leaving them in would make red the normal state, which is how a suite stops
+being read.
+
+**A command-line `-m` replaces the one in `addopts`, it does not combine.** So
+`-m "not drift"` silently re-enables the live tests and starts calling CPI —
+which is why the gate spells out `"not live and not drift"`.
+
+Azure-dependent tests skip with a reason naming the network cause: `sqldb-aicom`
+and `stvziaicomnonprod` are behind private endpoints and answer only from inside
+the VNet. The storage adapter is still covered — against `tests/fake_adls.py`,
+an in-memory stand-in for the Azure SDK.
 
 ## Database
 
-Local Postgres stands in for the deployed database. `DATABASE_URL` is the only
-place either one is named, so switching environments is a config change.
+**Azure SQL — `sqldb-aicom` on `sql-vzi-aicom-nonprod-san`.** `DATABASE_URL` is
+the only place it is named.
+
+Local Postgres was a stand-in while this was being provisioned and has been
+removed. `app/core/db.py` now refuses any other backend outright rather than
+letting SQLAlchemy fail deeper in with a driver error, because the real problem
+— that there is no longer a local database — is not obvious from that.
 
 ```bash
-# start Postgres (podman or docker)
-podman run -d --name Postgres -e POSTGRES_PASSWORD=<password> -p 5432:5432 postgres:18
-podman exec Postgres psql -U postgres -c "CREATE DATABASE spares_ai;"
-
-cp .env.example .env        # then set DATABASE_URL
-alembic upgrade head        # create the tables
+alembic upgrade head        # from inside the App Service; see Deployment
 ```
 
-**Use `127.0.0.1`, not `localhost`.** On Windows `localhost` resolves to IPv6
-`::1` first while podman/docker forwards IPv4 only, so every connection stalls
-on the IPv6 attempt before falling back. Measured here: ~19s per connect against
-`localhost`, 0.34s against `127.0.0.1` — the full test suite went from 4m27s to
-1.9s. It works either way, which is what makes it hard to spot.
+Two things about this database that are easy to lose an afternoon to:
+
+- **It is unreachable outside the VNet.** Public network access is disabled and
+  it is fronted by `pe-sqlvziaicomnonprod-sqlserver`. `DATABASE_CONNECT_TIMEOUT_SECONDS`
+  defaults to 5 so that presents as a fast, clear failure instead of a hang.
+- **`pyodbc` needs a system driver.** "ODBC Driver 18 for SQL Server" is not a
+  pip package. It is present in the App Service Python image; a local machine
+  has to install it separately.
 
 | Endpoint | Touches dependencies | Purpose |
 | --- | --- | --- |
@@ -334,8 +387,10 @@ database will restart a healthy container over a database blip.
 ### Rules for models
 
 - **Portable SQLAlchemy constructs only** — no `JSONB`, `ARRAY` or `ON CONFLICT`.
-  A Postgres-to-SQL-Server move is *not* config-only: dialect, driver and several
-  types differ. Portable models keep that swap small.
+  The move off Postgres proved the point: the ORM models needed no change at all,
+  while the one place that reached past SQLAlchemy to the driver — the `COPY`
+  bulk load — had to be rewritten. That is now `app/seed/sqlserver.py`, and it
+  is the only file in the codebase that knows which database this is.
 - **Import every model in `app/models/__init__.py`.** Alembic autogenerate diffs
   against `Base.metadata`; a model nothing imports silently never gets a migration.
 - **Raw SAP landing tables belong in `app/models/`**, the shared foundation — not
@@ -356,22 +411,27 @@ it from settings. Do not restore it: a URL there is a credential in a tracked fi
 
 ## Storage
 
-A local folder stands in for cloud object storage. `STORAGE_URL` is the only
-place either is named, and the adapter is chosen from the URL scheme — so the
-cutover is one setting, with no environment branch in application code.
+**Azure Data Lake Gen2 — the `stvziaicomnonprod` account**, reached through
+`pe-stvziaicomnonprod-dfs`. `STORAGE_URL` is the only place it is named.
 
 ```bash
-STORAGE_URL=D:/vzi-data/extracts                             # plain path
-STORAGE_URL=file:///D:/vzi-data/extracts                     # or a file:// URL
-STORAGE_URL=abfss://raw@acct.dfs.core.windows.net/extracts   # once the ADLS adapter exists
+STORAGE_URL=abfss://<container>@stvziaicomnonprod.dfs.core.windows.net/<path>
 ```
 
-Plain paths are accepted deliberately: the SAP extract folder is
-`KPI 02 Data Extract/Tables`, and percent-encoding that into a URL buys nothing.
+The local-folder adapter was a stand-in and has been removed, so a filesystem
+path is refused — with a message that says what to set instead, because
+`urlparse` reads `C:/data` as scheme `c` and "unsupported scheme 'c'" helps
+nobody.
 
-**Do not copy the extracts into this repository.** They are ~800 MB, the tree is
-OneDrive-synced, and there is no ignore rule for a data directory. Point
-`STORAGE_URL` at wherever they already live.
+**Authentication is by managed identity, not a key.** `DefaultAzureCredential`
+resolves to the App Service's identity when deployed and to your `az login`
+session locally, so no storage secret is stored or rotated anywhere. The
+identity needs **Storage Blob Data Reader** on the account; without it every
+read is a 403 that reads like a missing file. `AZURE_STORAGE_ACCOUNT_KEY` exists
+as a fallback for a machine with neither, and should stay unused.
+
+**The extracts must be uploaded to the container.** They are ~800 MB and are not
+in this repository, and the seed no longer reads them from a local folder.
 
 ### Using it
 
@@ -389,9 +449,18 @@ Reads and writes are **streaming file objects**, not `bytes`. Hashing the 56 MB
 peaked at 56 MB locally and downloaded the whole blob from cloud storage before
 parsing a row. `openpyxl` accepts these handles directly.
 
-Writes are **atomic** — content goes to a temporary sibling and is renamed on
-success — so an interrupted seed run never leaves a truncated file that
-`exists()` then reports as present.
+Writes are **all-or-nothing** — the payload is buffered and only uploaded when
+the `with` block completes — so an interrupted run never leaves a truncated
+object that `exists()` then reports as present, and never clobbers good content
+with a half-written replacement.
+
+Reads are **seekable**, which is not incidental. An `.xlsx` is a zip, and
+`openpyxl` seeks to the central directory before parsing a row; Azure's
+`StorageStreamDownloader` is forward-only. Every read therefore lands in a
+`SpooledTemporaryFile` — in memory up to 32 MB, spilled to disk beyond — so a
+143 MB workbook still costs flat memory. An adapter that handed the downloader
+back directly would pass every behavioural test and fail on the first real
+workbook.
 
 ### Keys
 
@@ -403,12 +472,20 @@ refused rather than resolved.
 
 ### Adding an adapter
 
-1. Implement `Storage` in `app/integrations/<platform>/`.
+1. Implement `Storage` in `app/integrations/storage/`.
 2. Register its scheme in `app.core.storage.build_storage`.
 3. Add it to the `storage` fixture's `params` in `tests/test_storage.py`.
 
 Step 3 is the point: the conformance suite is written against the interface, so
 a new adapter inherits ~20 behavioural tests without a line of new test code.
+That is how the Data Lake adapter was validated — it runs against
+`tests/fake_adls.py`, an in-memory stand-in for the Azure SDK, and the fake
+caught three real bugs on its first run.
+
+Be clear about what that proves and what it does not. The fake exercises
+behaviour: failed writes, sorted recursive listings, missing-key errors. It
+cannot exercise RBAC, DNS, private endpoints or throughput. Those are proven by
+`python -m app.checkup` from inside the App Service, and by nothing else.
 
 ## Seeding
 
@@ -492,8 +569,8 @@ platform-side critical parts list (D3 interim). All three initiatives need them.
 Only two things are machine-specific, and both live in `.env` (never committed):
 
 ```
-DATABASE_URL=postgresql+psycopg://postgres:<password>@127.0.0.1:5432/spares_ai
-STORAGE_URL=<path to the folder CONTAINING both delivery folders>
+DATABASE_URL=mssql+pyodbc://<user>:<pw>@sql-vzi-aicom-nonprod-san.database.windows.net:1433/sqldb-aicom?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes
+STORAGE_URL=abfss://<container>@stvziaicomnonprod.dfs.core.windows.net/<path CONTAINING both delivery folders>
 ```
 
 The **folder layout must match**, because the manifest keys carry the delivery
@@ -837,22 +914,117 @@ Console/stdout only, configured centrally in `app/core/logging.py` using the sta
 needed; Application Insights can later be attached as an extra handler in that one file
 without touching any call site.
 
-## Azure App Service readiness
+## Deployment
 
-Deployable as-is; no infrastructure is defined or assumed here:
+Target: **`app-vzi-aicom-nonprod-san`** on `plan-vzi-aicom-nonprod-san`, South
+Africa North.
 
-- binds `0.0.0.0`, port supplied by the runtime
-- all configuration from environment variables
-- no local-machine-specific paths
-- logs to stdout
-- health endpoint for probes
-- explicit, pinned dependencies
+### One-time setup on the App Service
 
-Expected startup command:
+| Setting | Value |
+| --- | --- |
+| Startup Command | `bash /home/site/wwwroot/startup.sh` |
+| Identity | System-assigned, **on** |
+| Role assignment | that identity → **Storage Blob Data Reader** on `stvziaicomnonprod` |
+| VNet integration | `vnet-vzi-aicom-nonprod-san` / `snet-appservice` |
+| `SCM_DO_BUILD_DURING_DEPLOYMENT` | `true` |
+
+The startup command matters more than it looks. Without it Oryx guesses, and its
+guess for a FastAPI app is gunicorn's **sync** worker, which cannot run ASGI and
+fails with an opaque worker error rather than saying so.
+
+Then the app settings — `DATABASE_URL`, `STORAGE_URL`, `CPI_*`, `FOUNDRY_*`.
+Set them on the App Service, never in this repository.
+
+**`DATABASE_URL` does not have to carry a password.** Azure SQL accepts the App
+Service's managed identity, which removes the credential entirely:
+
+```
+mssql+pyodbc://@sql-vzi-aicom-nonprod-san.database.windows.net:1433/sqldb-aicom
+  ?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&Authentication=ActiveDirectoryMsi
+```
+
+No code change — `Authentication` is passed straight through to the ODBC driver.
+It needs one statement run against `sqldb-aicom` by an Entra admin first:
+
+```sql
+CREATE USER [app-vzi-aicom-nonprod-san] FROM EXTERNAL PROVIDER;
+ALTER ROLE db_datareader ADD MEMBER [app-vzi-aicom-nonprod-san];
+ALTER ROLE db_datawriter ADD MEMBER [app-vzi-aicom-nonprod-san];
+ALTER ROLE db_ddladmin  ADD MEMBER [app-vzi-aicom-nonprod-san];   -- migrations + seed
+```
+
+Use a SQL login instead if that admin is not available today; it is the faster
+start and the weaker end state. For any setting that does carry a secret, prefer
+a Key Vault reference:
+
+```
+DATABASE_URL = @Microsoft.KeyVault(SecretUri=https://kv-vzi-aicom-nonprod.vault.azure.net/secrets/database-url/)
+```
+
+App Service resolves those into ordinary environment variables before the
+process starts, so `Settings` reads them unchanged. **This is why there is no
+Key Vault SDK in this codebase** — adding one would buy nothing except another
+dependency and another failure mode.
+
+### Deploying
+
+`.github/workflows/deploy.yml` runs the tests, deploys, then curls
+`/api/health` and `/api/ready`. It needs `AZURE_WEBAPP_PUBLISH_PROFILE` as a
+repository secret, or OIDC via `azure/login`, which is the better long-term
+choice — no long-lived credential in GitHub.
+
+Note what the pipeline deliberately does **not** do: run migrations. The GitHub
+runner has no network path to `sql-vzi-aicom-nonprod-san`, so `alembic upgrade
+head` there cannot work regardless of secrets. It runs from `startup.sh`
+instead, on the other side of the private endpoint, and is **off by default**:
 
 ```bash
-python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
+# either set the app setting
+RUN_MIGRATIONS_ON_STARTUP=true
+
+# or, from the App Service SSH console
+cd /home/site/wwwroot && python -m alembic upgrade head
 ```
+
+Off by default because nothing serialises it across instances — scale past one
+instance with it enabled and two workers can run the same migration at once.
+
+### Proving it works
+
+From the App Service SSH console:
+
+```bash
+cd /home/site/wwwroot
+python -m app.checkup
+```
+
+That checks the database, storage, CPI and the model separately and prints no
+secret. **Green there is W2.2** — a live pull from inside the VZI environment,
+which is the acceptance criterion and the one thing a laptop cannot demonstrate.
+
+Then seed, which also has to run from here because it reads the Data Lake and
+writes Azure SQL:
+
+```bash
+python -m app.seed --list        # verifies all 27 files are in the container
+python -m app.seed --all         # ~3.4 million rows
+```
+
+### The outbound trap
+
+`snet-appservice` is a private subnet with **no default outbound access**. Today
+that is harmless: with `vnetRouteAllEnabled` off, internet-bound traffic leaves
+via the App Service's own outbound IPs and only private traffic enters the VNet.
+
+Turn route-all **on** — which is the usual companion to a private-endpoint
+posture, and someone will propose it — and all egress goes through that subnet.
+With no NAT Gateway attached, **CPI and Foundry both stop working**, because
+neither has a private endpoint. Nothing in this codebase changes; it simply
+stops being able to reach two of its four dependencies.
+
+If that change is made, attach a NAT Gateway and confirm CPI's allowlist covers
+its public IP.
 
 ## Extending this template
 

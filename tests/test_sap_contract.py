@@ -192,6 +192,7 @@ class TestDeclaredMetadataDetail:
         )
 
 
+@pytest.mark.drift
 class TestKnownCounts:
     def test_empty_sets_are_still_empty(self) -> None:
         """Registered, responding, zero rows. The seed covers these from the extract."""
@@ -263,6 +264,7 @@ class TestValueDomains:
         assert total == known.PAGING_PROOF_TOTAL
 
 
+@pytest.mark.drift
 class TestFilterVerdicts:
     def test_every_property_was_probed(self) -> None:
         assert len(filter_support()) == known.FILTER_SUPPORT_ROW_COUNT
