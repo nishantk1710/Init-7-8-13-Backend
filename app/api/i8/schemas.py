@@ -367,6 +367,31 @@ class Attestation(I8Model):
     """Set when a later amendment replaces this one. The original is never
     removed or edited -- this is how a reader knows it is not current."""
 
+    # --- What this attestation actually covers ------------------------------
+    #
+    # Populated on POST only, and null on GET, where the caller is reading
+    # history rather than asking "did the thing I just did land?".
+    #
+    # These exist because of a real and non-obvious trap. An attestation's
+    # timestamp is server-set -- that is what makes it an audit record -- and
+    # the extract is a frozen July-2026 snapshot whose repair lines were raised
+    # from April 2025. So an attestation recorded TODAY is months outside the
+    # matching window of every line in the register, and covers none of them.
+    #
+    # Both halves of that are correct and neither should change. But a UI that
+    # POSTs successfully and then shows the row still reading "Required" looks
+    # broken, and somebody would "fix" it by widening the window until it
+    # stopped looking broken -- which would let an assessment from a completely
+    # different repair cycle count. So the API says plainly what happened.
+
+    covers_repair_lines: list[str] | None = None
+    """Register line ids (``{EBELN}-{EBELP}``) this attestation now covers.
+    Empty list means it was recorded and covers nothing."""
+
+    coverage_note: str | None = None
+    """Plain-language explanation of ``coversRepairLines``, including WHY it is
+    empty when it is. Written to be shown to a user, not logged."""
+
     @property
     def is_current(self) -> bool:
         return self.superseded_by is None

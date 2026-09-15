@@ -301,6 +301,8 @@ def attestation_item(
     cfg: I8Settings,
     *,
     superseded_by: str | None = None,
+    covers_repair_lines: list[str] | None = None,
+    coverage_note: str | None = None,
 ) -> Attestation:
     """One stored attestation.
 
@@ -331,6 +333,8 @@ def attestation_item(
         session_id=row.session_id,
         supersedes=row.supersedes,
         superseded_by=superseded_by,
+        covers_repair_lines=covers_repair_lines,
+        coverage_note=coverage_note,
     )
 
 

@@ -875,3 +875,162 @@ class TestTheLifecycleTimelineAttestedStage:
         assert "Attestation ATT-" in stage["evidence"]
         assert "DEMO_SEED" in stage["evidence"]
         assert stage["daysSince"] is not None and stage["daysSince"] >= 0
+
+
+class TestExplainCoverage:
+    """What a POST actually achieved, in words a person can read.
+
+    This exists because of a trap that is invisible until somebody uses the
+    form. The timestamp is server-set (that is what makes it an audit record)
+    and the extract is a frozen July-2026 snapshot, so an attestation recorded
+    today is months outside the matching window of every line in the register
+    and covers none of them.
+
+    Both of those are correct. The danger is a UI that POSTs successfully, shows
+    the row still reading "Required", and invites somebody to "fix" it by
+    widening the window until it stops looking broken -- which would let an
+    assessment from a different repair cycle count. So the API explains itself.
+    """
+
+    def _attestation(self, when: datetime, material="8000005632", plant="1300"):
+        from app.initiatives.i8.models import RepairAttestation
+
+        return RepairAttestation(
+            id="ATT-EXPLAIN",
+            material_id=material,
+            plant=plant,
+            quantity=Decimal(1),
+            condition_description="Assessed.",
+            fault_category="WEAR",
+            recommendation="REPAIRABLE",
+            attestor="tester",
+            attested_at=when,
+        )
+
+    def test_it_reports_the_lines_it_covers(self) -> None:
+        from app.initiatives.i8.attestation import explain_coverage
+
+        raised = date(2026, 5, 1)
+        lines = [
+            FakeLine("4500", "10", "8000005632", "1300", raised),
+            FakeLine("4500", "20", "8000005632", "1300", raised),
+        ]
+        covered, note = explain_coverage(
+            self._attestation(datetime(2026, 5, 3, tzinfo=timezone.utc)), lines
+        )
+
+        # One attestation, two lines -- coverage is per material-plant. This is
+        # open question 4, answered empirically.
+        assert covered == ["4500-10", "4500-20"]
+        assert "covers 2 repair lines" in note
+
+    def test_no_repair_line_for_the_part_is_the_normal_case(self) -> None:
+        """A part assessed BEFORE it is sent anywhere covers nothing yet, and
+        that must not read as a failure."""
+        from app.initiatives.i8.attestation import explain_coverage
+
+        covered, note = explain_coverage(
+            self._attestation(datetime(2026, 5, 3, tzinfo=timezone.utc)),
+            [FakeLine("4500", "10", "8000009999", "1300", date(2026, 5, 1))],
+        )
+        assert covered == []
+        assert "No repair line exists" in note
+        assert "normal case" in note
+
+    def test_the_trap_is_explained_rather_than_left_to_be_inferred(self) -> None:
+        """The part HAS repair lines and they are all outside the window.
+
+        The note must say so, give the gap, and state that the outstanding rows
+        are the correct answer -- otherwise the next person widens the window.
+        """
+        from app.initiatives.i8.attestation import explain_coverage
+
+        lines = [FakeLine("4500", "10", "8000005632", "1300", date(2025, 4, 7))]
+        covered, note = explain_coverage(
+            self._attestation(datetime(2026, 9, 15, tzinfo=timezone.utc)), lines
+        )
+
+        assert covered == []
+        assert "covers none of the 1 repair line" in note
+        assert "2025-04-07" in note
+        assert "days from this assessment" in note
+        assert "30-day matching window" in note
+        assert "correct answer rather than a fault" in note
+
+    def test_it_uses_the_same_window_as_the_queue(self) -> None:
+        """An explanation derived from a second copy of the rule would
+        eventually contradict the queue it is explaining."""
+        from app.initiatives.i8.attestation import coverage as queue_coverage
+        from app.initiatives.i8.attestation import explain_coverage
+
+        # Exactly on the boundary: the queue and the explanation must agree.
+        raised = date(2026, 5, 1)
+        window = get_i8_settings().attestation_window_days
+        attested = datetime.combine(
+            raised + timedelta(days=window), datetime.min.time(), tzinfo=timezone.utc
+        )
+        line = FakeLine("4500", "10", "8000005632", "1300", raised)
+
+        covered, _note = explain_coverage(self._attestation(attested), [line])
+        assert covered == ["4500-10"]
+
+        # One day further out, both must say no.
+        covered, _note = explain_coverage(
+            self._attestation(attested + timedelta(days=1)), [line]
+        )
+        assert covered == []
+
+
+@needs_db
+class TestThePostExplainsItself:
+    @pytest.fixture(autouse=True)
+    def clean_table(self):
+        from app.core.db import get_sessionmaker
+        from app.initiatives.i8.service import reset_attestation_view
+
+        def wipe():
+            with get_sessionmaker()() as db:
+                db.execute(
+                    text(
+                        "ALTER TABLE i8_attestation DISABLE TRIGGER "
+                        "i8_attestation_no_update_or_delete"
+                    )
+                )
+                db.execute(text("DELETE FROM i8_attestation"))
+                db.execute(
+                    text(
+                        "ALTER TABLE i8_attestation ENABLE TRIGGER "
+                        "i8_attestation_no_update_or_delete"
+                    )
+                )
+                db.commit()
+            reset_attestation_view()
+
+        wipe()
+        yield
+        wipe()
+
+    def test_post_says_what_it_covered_and_get_does_not(self) -> None:
+        created = client.post(
+            ATTESTATIONS,
+            json={
+                "materialId": "8000005632",
+                "plant": "1300",
+                "quantity": 1,
+                "conditionDescription": "Assessed.",
+                "faultCategory": "WEAR",
+                "recommendation": "REPAIRABLE",
+            },
+        )
+        assert created.status_code == 201
+        body = created.json()
+
+        # On POST the caller is asking "did that do anything?", so it is told.
+        assert body["coversRepairLines"] is not None
+        assert body["coverageNote"]
+
+        # On GET the caller is reading history, and the fields stay null rather
+        # than recomputing a per-row answer nobody asked for.
+        listed = client.get(ATTESTATIONS).json()["items"][0]
+        assert listed["coversRepairLines"] is None
+        assert listed["coverageNote"] is None

@@ -62,6 +62,7 @@ from app.core.db import get_db
 from app.initiatives.i8.attestation import (
     AttestationDraft,
     AttestationError,
+    explain_coverage,
     find as find_attestations,
     record as record_attestation,
 )
@@ -404,6 +405,7 @@ def post_attestation(
     body: AttestationRequest,
     db: DbDep,
     cfg: SettingsDep,
+    snapshot: SnapshotDep,
 ) -> Attestation:
     """**The only write path in Initiative 08.**
 
@@ -442,7 +444,15 @@ def post_attestation(
     # planner must see their own submission immediately.
     reset_attestation_view()
 
-    return attestation_item(stored, cfg)
+    # Say what the write actually achieved, rather than leaving the caller to
+    # infer it from a queue that may not have moved. See the field docs on
+    # Attestation.coversRepairLines -- this is the difference between an honest
+    # "recorded, and here is why nothing changed" and a UI that looks broken.
+    covers, note = explain_coverage(stored, snapshot.lines, cfg)
+
+    return attestation_item(
+        stored, cfg, covers_repair_lines=covers, coverage_note=note
+    )
 
 
 @router.get(

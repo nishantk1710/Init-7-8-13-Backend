@@ -306,6 +306,81 @@ def _within_window(
     return raised_at - window <= attested_on <= raised_at + window
 
 
+def explain_coverage(
+    attestation: RepairAttestation,
+    lines,
+    cfg: I8Settings | None = None,
+) -> tuple[list[str], str]:
+    """Which repair lines one attestation covers, and a sentence saying why.
+
+    Answers the question a person asks immediately after submitting a form:
+    *did that do anything?* It lives here, beside :func:`coverage`, because it
+    must apply the SAME window rule -- an explanation derived from a second
+    implementation of the rule would eventually contradict the queue it is
+    explaining.
+
+    Returns ``(line ids, note)``. The note is written to be read by a user.
+    """
+    cfg = cfg or get_i8_settings()
+    window = timedelta(days=cfg.attestation_window_days)
+
+    same_part = [
+        line
+        for line in lines
+        if line.material_id == attestation.material_id
+        and line.plant == attestation.plant
+    ]
+    covered = [
+        line
+        for line in same_part
+        if _within_window(attestation.attested_at, line.raised_at, window)
+    ]
+
+    if covered:
+        return (
+            [f"{line.purchasing_document}-{line.item}" for line in covered],
+            (
+                f"Recorded, and it covers {len(covered)} repair "
+                f"line{'s' if len(covered) != 1 else ''} for "
+                f"{attestation.material_id} at plant {attestation.plant}."
+            ),
+        )
+
+    if not same_part:
+        return (
+            [],
+            (
+                f"Recorded. No repair line exists for {attestation.material_id} "
+                f"at plant {attestation.plant} in this extract, so it covers "
+                "nothing yet -- which is the normal case for a part assessed "
+                "before it is sent anywhere."
+            ),
+        )
+
+    # The trap. The part HAS repair lines; they are all outside the window.
+    dates = [line.raised_at for line in same_part if line.raised_at]
+    nearest = max(dates) if dates else None
+    gap = (
+        abs((attestation.attested_at.date() - nearest).days)
+        if nearest is not None
+        else None
+    )
+    return (
+        [],
+        (
+            f"Recorded, but it covers none of the {len(same_part)} repair "
+            f"line{'s' if len(same_part) != 1 else ''} for this part. The most "
+            f"recent was raised {nearest.isoformat() if nearest else 'unknown'}"
+            + (f", {gap} days from this assessment" if gap is not None else "")
+            + f" -- outside the {cfg.attestation_window_days}-day matching "
+            "window. This extract is a frozen July-2026 snapshot, so a "
+            "new assessment cannot retrospectively cover a repair that was "
+            "dispatched long ago. The queue will still show those lines as "
+            "outstanding, and that is the correct answer rather than a fault."
+        ),
+    )
+
+
 def coverage(
     db: Session,
     lines,
