@@ -32,6 +32,8 @@ from sqlalchemy.orm import Session
 
 from app.api.i8.mappers import (
     attestation_item,
+    coding_candidate_item,
+    coding_candidate_meta,
     declaration_item,
     declaration_meta,
     exception_item,
@@ -47,6 +49,7 @@ from app.api.i8.schemas import (
     Attestation,
     AttestationRequest,
     AttestationResponse,
+    CodingCandidateResponse,
     DeclarationResponse,
     ExceptionResponse,
     MaterialReference,
@@ -73,6 +76,7 @@ from app.initiatives.i8.service import (
     AttestationView,
     Snapshot,
     get_attestation_view,
+    get_coding_screen,
     get_snapshot,
     reset_attestation_view,
 )
@@ -604,6 +608,86 @@ def get_exceptions(
     )
 
 
+# --- W5.5: coding candidates -----------------------------------------------
+
+
+@router.get(
+    "/coding-candidates",
+    response_model=CodingCandidateResponse,
+    summary="Materials whose PO text says repair but whose number does not",
+)
+def get_coding_candidates(
+    db: DbDep,
+    snapshot: SnapshotDep,
+    cfg: SettingsDep,
+    screen: bool = Query(
+        False,
+        description=(
+            "Run the LANGUAGE JUDGEMENT as well. Off by default because it is "
+            "one model call per material -- 41 materials took 246 seconds "
+            "against live gpt-4o. With it off every verdict is UNSCREENED and "
+            "the keyword screen, the material split and the twin check have "
+            "still run"
+        ),
+    ),
+    limit: int | None = Query(
+        None,
+        ge=1,
+        description=(
+            "Screen at most this many materials. Use it to demonstrate the "
+            "model pass in seconds rather than minutes; the response reports "
+            "wasTruncated so a partial run cannot read as a complete one"
+        ),
+    ),
+    verdict: str | None = Query(
+        None, description="MISCODED_REPAIRABLE, CONSUMABLE_FOR_REPAIR, ..."
+    ),
+    actionable_only: bool = Query(
+        False,
+        alias="actionableOnly",
+        description="Only MISCODED_REPAIRABLE and UNCLEAR -- the rows worth reading",
+    ),
+    corroborated_only: bool = Query(
+        False,
+        alias="corroboratedOnly",
+        description=(
+            "Only candidates with an 80-series TWIN carrying identical text. "
+            "These are provable from the data rather than argued from language"
+        ),
+    ),
+) -> CodingCandidateResponse:
+    """A material is repairable only if somebody typed an 80-series number.
+
+    Nothing in SAP marks it, so when it is missed the part becomes invisible to
+    everything I08 builds -- and when it wears out, somebody buys a new one.
+    This finds those.
+
+    **Read `meta` before the items.** It says how many lines were screened, how
+    many were dropped for having no material number at all, whether a limit
+    truncated the run, and -- crucially -- WHICH PROVIDER answered. A `provider`
+    of `stub` means no model judged anything and every verdict is UNSCREENED.
+    """
+    result = get_coding_screen(db, snapshot, cfg, use_model=screen, limit=limit)
+    items = result.candidates
+
+    if verdict:
+        wanted = verdict.strip().upper()
+        items = tuple(c for c in items if c.verdict == wanted)
+    if actionable_only:
+        items = tuple(c for c in items if c.is_actionable)
+    if corroborated_only:
+        items = tuple(c for c in items if c.is_corroborated)
+
+    return CodingCandidateResponse(
+        items=[coding_candidate_item(c, cfg) for c in items],
+        total=len(items),
+        # Meta describes the whole screen, never the filtered view: "how much of
+        # the free text was searched" must not change because somebody asked for
+        # one verdict.
+        meta=coding_candidate_meta(result.stats),
+    )
+
+
 # --- Diagnostics -----------------------------------------------------------
 
 
@@ -639,5 +723,6 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
             "referenceDate": cfg.reference_date or "(today)",
             "attestationWindowDays": cfg.attestation_window_days,
             "faultCategories": ", ".join(cfg.fault_category_list),
+            "repairLanguage": ", ".join(cfg.repair_language_list),
         },
     )

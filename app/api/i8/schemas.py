@@ -508,6 +508,114 @@ class ExceptionResponse(I8Model):
     reference_date: date
 
 
+# --- Coding candidates (W5.5) ---------------------------------------------
+
+
+class CodingCandidateLine(I8Model):
+    """One PO line whose free text mentioned repair."""
+
+    purchasing_document: str
+    item: str
+    plant: PlantReference | None = None
+    short_text: str
+    """**The text the verdict was reached on.** Served with every candidate so a
+    cataloguer can check the call without going back to SAP. A flag nobody can
+    audit is a flag nobody will act on."""
+
+    matched_keywords: list[str]
+    """Which configured keywords this line hit, so "why was this picked up?"
+    needs no explanation."""
+
+    raised_at: date | None = None
+    item_category: str | None = None
+
+
+class CodingCandidateTwin(I8Model):
+    """An 80-series material carrying the SAME text as this candidate.
+
+    The strongest evidence the screen produces, and it owes nothing to the
+    model: the identical description, on the same physical part, coded both
+    ways in one extract. Where this is present the finding is an observation
+    about SAP rather than a language judgement.
+    """
+
+    material_id: str
+    shared_text: str
+
+
+class CodingCandidateItem(I8Model):
+    """One material the screen judged."""
+
+    material_id: str
+    verdict: str
+    """MISCODED_REPAIRABLE / REPAIR_SERVICE / CONSUMABLE_FOR_REPAIR / UNCLEAR /
+    UNSCREENED. UNSCREENED means no model answered -- never "not a candidate"."""
+
+    confidence: str
+    """high, medium or low, as the model reported it. Empty when unscreened."""
+
+    reason: str
+    """Why, in the model's own words."""
+
+    plants: list[str]
+    lines: list[CodingCandidateLine]
+    distinct_texts: list[str]
+
+    twins: list[CodingCandidateTwin] = []
+    is_corroborated: bool = False
+    is_actionable: bool = False
+    """MISCODED_REPAIRABLE or UNCLEAR -- the ones a human should look at."""
+
+    in_repairable_universe: bool = False
+    """Cross-checked against W5.1. Expected false on every candidate: a material
+    already in the universe is coded correctly whatever its text says. A true
+    here means the two rules disagree and something is wrong."""
+
+    model: str = ""
+    provider: str = ""
+    """WHO answered -- ``stub`` means nothing was really judged. Deliberately
+    separate from ``model``, which is only the deployment the registry routed
+    to and which the stub echoes straight back."""
+
+    prompt_version: int | None = None
+    screened_at: datetime | None = None
+
+
+class CodingCandidateMeta(I8Model):
+    """Every count, with the thing it counts named."""
+
+    lines_with_text: int
+    lines_with_repair_language: int
+    lines_already_eighty_series: int
+    """Repair language on a material that IS coded repairable -- the convention
+    worked. Measured at 6."""
+
+    lines_without_material: int
+    """Free-text service purchases with no material number at all. **Measured at
+    183, which is 60% of the matches.** They cannot be mis-coded because there is
+    nothing to re-code, so they are never candidates -- but they are repair spend
+    happening entirely outside the material master, which is its own finding."""
+
+    lines_screened: int
+    materials_found: int
+    materials_screened: int
+    was_truncated: bool
+    """True when a limit stopped the run short. Reported rather than implied: a
+    silent cap reads as "we checked everything" when it did not."""
+
+    corroborated: int
+    by_verdict: dict[str, int]
+    keywords: list[str]
+    provider: str
+    model: str
+
+
+class CodingCandidateResponse(I8Model):
+    items: list[CodingCandidateItem]
+    total: int
+    meta: CodingCandidateMeta
+
+
 # --- Diagnostics ----------------------------------------------------------
 
 

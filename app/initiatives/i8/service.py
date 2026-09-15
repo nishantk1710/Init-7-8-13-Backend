@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.initiatives.i8.attestation import AttestationCoverage, coverage as attestation_coverage
+from app.initiatives.i8.coding_candidates import CodingCandidate, ScreenStats, screen
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.declarations import DeclarationRow, build_queue
 from app.initiatives.i8.exceptions import ExceptionItem, ExceptionStats, build_exceptions
@@ -151,9 +152,10 @@ def reset_snapshot() -> None:
     global _snapshot
     with _lock:
         _snapshot = None
-    # The attestation view is derived from the snapshot's lines, so it cannot
-    # outlive it.
+    # The attestation view and the coding screen are both derived from the
+    # snapshot, so neither can outlive it.
     reset_attestation_view()
+    reset_coding_screen()
 
 
 # --- The attestation view (W5.3) ------------------------------------------
@@ -257,3 +259,90 @@ def reset_attestation_view() -> None:
     global _attestation_view
     with _attestation_lock:
         _attestation_view = None
+
+
+# --- The coding-candidate screen (W5.5) -----------------------------------
+#
+# Cached separately again, and for a third distinct lifetime.
+#
+#   snapshot           the frozen July extract -- never changes
+#   attestation view   our own table -- changes on every write
+#   coding screen      the extract AND a model -- changes only when re-run
+#
+# The screen is slow in a way the others are not: 41 materials at roughly six
+# seconds each is four minutes, because every call is a separate round trip to
+# gpt-4o. Nothing about that is fixable here, so it is cached hard and the model
+# pass is opt-in rather than implicit. Re-running it is an explicit request.
+
+
+@dataclass(frozen=True)
+class CodingScreen:
+    """One run of the coding-candidate screen."""
+
+    candidates: tuple[CodingCandidate, ...]
+    stats: ScreenStats
+    built_at: datetime
+    build_seconds: float
+    used_model: bool
+    """False when only the deterministic half ran. The stats say so too, via
+    every verdict being UNSCREENED."""
+
+
+_screen_lock = threading.Lock()
+#: Keyed by (use_model, limit) so a fast run and a full run do not evict each
+#: other -- a demo typically wants both.
+_screens: dict[tuple[bool, int | None], CodingScreen] = {}
+
+
+def build_coding_screen(
+    db: Session,
+    snapshot: Snapshot,
+    cfg: I8Settings | None = None,
+    *,
+    use_model: bool = False,
+    limit: int | None = None,
+) -> CodingScreen:
+    """Run the screen. Always does the work."""
+    cfg = cfg or get_i8_settings()
+    started = time.monotonic()
+    candidates, stats = screen(
+        db,
+        cfg,
+        limit=limit,
+        # The cross-check the task plan asks for, from the snapshot we already
+        # hold rather than a five-second rebuild.
+        universe_materials={row.material_id for row in snapshot.universe},
+        use_model=use_model,
+    )
+    return CodingScreen(
+        candidates=tuple(candidates),
+        stats=stats,
+        built_at=datetime.now(timezone.utc),
+        build_seconds=round(time.monotonic() - started, 2),
+        used_model=use_model,
+    )
+
+
+def get_coding_screen(
+    db: Session,
+    snapshot: Snapshot,
+    cfg: I8Settings | None = None,
+    *,
+    use_model: bool = False,
+    limit: int | None = None,
+    refresh: bool = False,
+) -> CodingScreen:
+    """The cached screen for this (use_model, limit), built on first use."""
+    key = (use_model, limit)
+    with _screen_lock:
+        if refresh or key not in _screens:
+            _screens[key] = build_coding_screen(
+                db, snapshot, cfg, use_model=use_model, limit=limit
+            )
+        return _screens[key]
+
+
+def reset_coding_screen() -> None:
+    """Drop every cached screen. For tests, and for a deliberate re-run."""
+    with _screen_lock:
+        _screens.clear()

@@ -151,6 +151,32 @@ class I8Settings(BaseSettings):
     # queue.
     attestation_window_days: int = 30
 
+    # --- Coding candidates (W5.5) -----------------------------------------
+
+    # The repair language that makes a PO line worth screening.
+    #
+    # Configuration, not a literal, for the usual reason: this is how VZI's
+    # buyers write, not a rule we get to fix. Measured against the 82,718
+    # free-text PO lines on 15-Sep, every one of these earns its place except
+    # the last:
+    #
+    #     repair            271      refurb             24
+    #     recon               3      service exchange    3
+    #     overhaul            2      rebuild             2
+    #     rotable             0      <- matches nothing in this extract
+    #
+    # `rotable` is kept deliberately. It is standard aviation/mining vocabulary
+    # for exactly this class of part, it costs nothing to carry, and a keyword
+    # that matches nothing today is evidence about the data rather than a bug.
+    #
+    # These are substring stems, matched case-insensitively: `repair` also
+    # catches `repairs`, `repaired` and `plantrepairs`; `refurb` catches
+    # `refurbished` and `refurbishment`. Measured: no false positives from
+    # `recon` -- no `reconciliation` or `reconnect` leaked in.
+    repair_language: str = (
+        "repair,refurb,overhaul,recon,rebuild,service exchange,rotable"
+    )
+
     # --- Presentation -----------------------------------------------------
 
     # Plant code -> display name, comma separated.
@@ -169,6 +195,26 @@ class I8Settings(BaseSettings):
     # 781 open repair lines will not render in one response.
     default_page_size: int = 50
     max_page_size: int = 500
+
+    @property
+    def repair_language_list(self) -> tuple[str, ...]:
+        """The repair-language stems, parsed and lower-cased."""
+        return tuple(
+            word.strip().lower() for word in self.repair_language.split(",") if word.strip()
+        )
+
+    @property
+    def repair_language_pattern(self) -> str:
+        """The stems as one POSIX regex, for a database prefilter.
+
+        Built from configuration and passed as a BIND PARAMETER, never
+        interpolated into SQL. Each stem is regex-escaped, so a keyword
+        containing a dot or a bracket narrows the search instead of silently
+        becoming a wildcard.
+        """
+        import re as _re
+
+        return "|".join(_re.escape(word) for word in self.repair_language_list)
 
     @property
     def fault_category_list(self) -> tuple[str, ...]:

@@ -10,6 +10,10 @@ from __future__ import annotations
 
 from app.api.i8.schemas import (
     Attestation,
+    CodingCandidateItem,
+    CodingCandidateLine,
+    CodingCandidateMeta,
+    CodingCandidateTwin,
     DeclarationItem,
     DeclarationMeta,
     ExceptionMeta,
@@ -27,6 +31,7 @@ from app.api.i8.schemas import (
 )
 from app.initiatives.i8.aging import days_between
 from app.initiatives.i8.attestation import CONDITION_LABELS, Recommendation
+from app.initiatives.i8.coding_candidates import CodingCandidate, ScreenStats
 from app.initiatives.i8.config import I8Settings
 from app.initiatives.i8.declarations import DeclarationRow
 from app.initiatives.i8.exceptions import RAISED_BY_I8, ExceptionItem, ExceptionStats
@@ -411,4 +416,61 @@ def exception_meta(stats: ExceptionStats) -> ExceptionMeta:
         # Which types are actually implemented, so an empty count is
         # distinguishable from an unimplemented check.
         types_raised=sorted(t.value for t in RAISED_BY_I8),
+    )
+
+
+# --- W5.5: coding candidates ----------------------------------------------
+
+
+def coding_candidate_item(
+    candidate: CodingCandidate, cfg: I8Settings
+) -> CodingCandidateItem:
+    return CodingCandidateItem(
+        material_id=candidate.material_id,
+        verdict=candidate.verdict,
+        confidence=candidate.confidence,
+        reason=candidate.reason,
+        plants=list(candidate.plants),
+        lines=[
+            CodingCandidateLine(
+                purchasing_document=line.purchasing_document,
+                item=line.item,
+                plant=plant_reference(line.plant, cfg),
+                short_text=line.short_text,
+                matched_keywords=list(line.matched),
+                raised_at=line.raised_at,
+                item_category=line.item_category,
+            )
+            for line in candidate.lines
+        ],
+        distinct_texts=list(candidate.texts),
+        twins=[
+            CodingCandidateTwin(material_id=material, shared_text=shared)
+            for material, shared in candidate.twins
+        ],
+        is_corroborated=candidate.is_corroborated,
+        is_actionable=candidate.is_actionable,
+        in_repairable_universe=candidate.in_repairable_universe,
+        model=candidate.model,
+        provider=candidate.provider,
+        prompt_version=candidate.prompt_version,
+        screened_at=candidate.screened_at,
+    )
+
+
+def coding_candidate_meta(stats: ScreenStats) -> CodingCandidateMeta:
+    return CodingCandidateMeta(
+        lines_with_text=stats.lines_with_text,
+        lines_with_repair_language=stats.lines_with_repair_language,
+        lines_already_eighty_series=stats.lines_already_eighty_series,
+        lines_without_material=stats.lines_without_material,
+        lines_screened=stats.lines_screened,
+        materials_found=stats.materials_found,
+        materials_screened=stats.materials_screened,
+        was_truncated=stats.was_truncated,
+        corroborated=stats.corroborated,
+        by_verdict=stats.by_verdict,
+        keywords=list(stats.keywords),
+        provider=stats.provider,
+        model=stats.model,
     )
