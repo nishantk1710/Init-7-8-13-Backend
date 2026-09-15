@@ -34,7 +34,10 @@ from datetime import date, datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
+from app.initiatives.i8.attestation import AttestationCoverage, coverage as attestation_coverage
 from app.initiatives.i8.config import I8Settings, get_i8_settings
+from app.initiatives.i8.declarations import DeclarationRow, build_queue
+from app.initiatives.i8.exceptions import ExceptionItem, ExceptionStats, build_exceptions
 from app.initiatives.i8.register import (
     RegisterStats,
     RepairLine,
@@ -148,3 +151,87 @@ def reset_snapshot() -> None:
     global _snapshot
     with _lock:
         _snapshot = None
+    # The attestation view is derived from the snapshot's lines, so it cannot
+    # outlive it.
+    reset_attestation_view()
+
+
+# --- The attestation view (W5.3) ------------------------------------------
+#
+# Cached separately from the snapshot, and that split is the whole design.
+#
+# The snapshot is built from the July extract, which never changes, so it is
+# cached until the process restarts. Attestations are the one thing in I08 that
+# DOES change while the process runs -- somebody submits one -- so a view
+# derived from them cannot share that lifetime. Fold it into the snapshot and a
+# planner records an attestation, reloads the queue, and sees their own entry
+# missing. That is the failure that looks like a bug in a demo.
+#
+# So: same batch shape, separate lifetime. One pass over the register, one query
+# for the whole attestation table, invalidated explicitly when a write happens.
+# What the task plan rules out is a query PER LINE, and there is not one here.
+
+
+@dataclass(frozen=True)
+class AttestationView:
+    """Coverage, the declaration queue and the exception queue, built together.
+
+    One object because they are three readings of a single pass: which repair
+    lines have an attestation. Building them separately would mean matching
+    1,225 lines against the attestation table three times to get three answers
+    that must agree.
+    """
+
+    coverage: AttestationCoverage
+    declarations: tuple[DeclarationRow, ...]
+    exceptions: tuple[ExceptionItem, ...]
+    exception_stats: ExceptionStats
+    built_at: datetime
+
+
+def build_attestation_view(
+    db: Session, snapshot: Snapshot, cfg: I8Settings | None = None
+) -> AttestationView:
+    """Match every repair line against the attestation table. Always does the work."""
+    cfg = cfg or get_i8_settings()
+    cover = attestation_coverage(db, snapshot.lines, cfg)
+    exceptions, exception_stats = build_exceptions(snapshot.lines, cover)
+    return AttestationView(
+        coverage=cover,
+        declarations=tuple(build_queue(snapshot.lines, cover)),
+        exceptions=tuple(exceptions),
+        exception_stats=exception_stats,
+        built_at=datetime.now(timezone.utc),
+    )
+
+
+_attestation_lock = threading.Lock()
+_attestation_view: AttestationView | None = None
+
+
+def get_attestation_view(
+    db: Session,
+    snapshot: Snapshot,
+    cfg: I8Settings | None = None,
+    *,
+    refresh: bool = False,
+) -> AttestationView:
+    """The cached attestation view, rebuilt on first use and after any write."""
+    global _attestation_view
+    with _attestation_lock:
+        if _attestation_view is None or refresh:
+            _attestation_view = build_attestation_view(db, snapshot, cfg)
+        return _attestation_view
+
+
+def reset_attestation_view() -> None:
+    """Drop the cached view. **Call this after recording an attestation.**
+
+    Explicit rather than automatic, and called at the write site in the router,
+    so that the one place that changes the data is also the place that says so.
+    A TTL would be the alternative and would mean a planner's own submission
+    takes up to N seconds to appear, which is indistinguishable from broken.
+    """
+    global _attestation_view
+    with _attestation_lock:
+        _attestation_view = None

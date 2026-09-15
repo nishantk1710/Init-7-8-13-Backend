@@ -109,6 +109,13 @@ class RepairLine:
     pr_number: str | None
     pr_item: str | None
 
+    requisitioner: str | None
+    """EKPO.AFNAM -- who asked for it. A code, not a name: no person directory
+    was delivered, so it is served as a code the same way an unnamed vendor is.
+    Populated on all 1,225 repair lines, 27 distinct values. This is the only
+    person-shaped field on a repair line, and W5.3's declaration queue needs it
+    for ``requester``."""
+
     # --- corroboration, LEFT JOINed -------------------------------------
     doc_type: str | None
     corroborated_by_doc_type: bool
@@ -167,7 +174,8 @@ class RepairLine:
 _CANDIDATES_SQL = """
 select
     p.ebeln, p.ebelp, p.matnr, p.werks, p.pstyp, p.txz01,
-    p.menge, p.meins, p.netpr, p.elikz, p.banfn, p.bnfpo, p.erdat, p.loekz
+    p.menge, p.meins, p.netpr, p.elikz, p.banfn, p.bnfpo, p.erdat, p.loekz,
+    p.afnam
 from v_ekpo p
 where p.ebeln is not null
   and p.ebelp is not null
@@ -428,6 +436,7 @@ def _build_line(
         delivery_completed=row["elikz"] == "X",
         pr_number=row["banfn"],
         pr_item=row["bnfpo"],
+        requisitioner=row["afnam"],
         doc_type=doc_type,
         corroborated_by_doc_type=doc_type == cfg.repair_doc_type,
         has_po_header=header is not None,
