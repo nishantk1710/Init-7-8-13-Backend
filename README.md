@@ -56,6 +56,8 @@ backend/
 │   │   └── security.py          auth placeholder (Entra ID / SAP callbacks)
 │   ├── integrations/            sap/  azure/  entra/  notifications/  (empty)
 │   ├── integrations/sap/        the CPI client — the ONLY SAP access
+│   ├── integrations/ai/         LLM adapters — the ONLY provider imports
+│   ├── prompts/                 versioned prompt templates
 │   ├── seed/                    loads the July extracts into Postgres
 │   ├── initiatives/             i7/  i8/  i13/  business logic (empty)
 │   ├── services/                business services (empty)
@@ -70,6 +72,7 @@ backend/
 ├── tests/test_seed.py
 ├── tests/test_sap.py            client mechanics, on a fake transport
 ├── tests/test_sap_contract.py   does SAP still look the way we believe?
+├── tests/test_ai.py             AI layer, incl. the provider-leakage guard
 ├── requirements.txt             runtime + test dependencies
 ├── pytest.ini
 ├── .env.example
@@ -155,7 +158,7 @@ podman run -d --name spares-postgres \
 
 ```bash
 alembic upgrade head
-pytest                                    # 207 tests
+pytest                                    # 289 tests
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -313,16 +316,16 @@ on the IPv6 attempt before falling back. Measured here: ~19s per connect against
 | Endpoint | Touches dependencies | Purpose |
 | --- | --- | --- |
 | `GET /api/health` | no | liveness — must work with nothing configured |
-| `GET /api/ready` | database + storage | readiness — `200` only when both are `ok` |
+| `GET /api/ready` | database + storage + AI | readiness — `200` only when both are `ok` |
 
 `/api/ready` reports each dependency as `ok`, `not_configured` or `unavailable`,
 and checks both even when the first has already failed, so one request tells you
 everything that is wrong:
 
 ```json
-{"status": "ready",     "database": "ok",             "storage": "ok"}
-{"status": "not_ready", "database": "ok",             "storage": "unavailable"}
-{"status": "not_ready", "database": "not_configured", "storage": "not_configured"}
+{"status": "ready",     "database": "ok",             "storage": "ok",             "ai": "ok"}
+{"status": "not_ready", "database": "ok",             "storage": "unavailable",    "ai": "ok"}
+{"status": "not_ready", "database": "not_configured", "storage": "not_configured", "ai": "ok"}
 ```
 
 Keep these separate. A platform probe pointed at a health check that touches the
@@ -598,8 +601,8 @@ call live SAP are marked `live` and **excluded from the default run and from CI*
 credentials, no network, or a proxy terminating TLS.
 
 ```bash
-pytest              # 207 tests, no network
-pytest -m live      # 7 tests, from a machine that can reach CPI
+pytest              # 289 tests, no network
+pytest -m live      # 8 tests, from a machine that can reach CPI
 ```
 
 If `pytest -m live` fails with `CERTIFICATE_VERIFY_FAILED`, the network is
@@ -692,6 +695,93 @@ What moved here: the entity-set contract, EDMX parsing, drift comparison,
 paging, and the per-set mock/live routing. What stayed in the frontend:
 `src/lib/material-scope/`, the OAR rule — a business decision rather than a wire
 protocol, and the thing `routeMaterial()` consumes.
+
+## AI service layer
+
+Four features need a language model — I07's recommendation rationale, I08's
+free-text screening, I13's quantity-suggestion reason, and the reservation
+assistant. If each called a provider directly, changing provider would mean
+changing four places and finding the fourth in production.
+
+So this is a socket. Business logic asks for a completion; it never names a
+provider, endpoint, deployment or model:
+
+```python
+from app.core.ai import get_llm, Message
+from app.core.prompts import get_prompt
+
+prompt = get_prompt("i07_recommendation_rationale")
+text = prompt.render(material="500-14892", plant="1300", ...)
+answer = get_llm().complete([Message("user", text)])
+```
+
+Which provider is plugged in comes from one setting:
+
+| `LLM_PROVIDER` | Provider |
+| --- | --- |
+| `stub` *(default)* | Deterministic, no network, no credentials |
+| `foundry` | Microsoft Foundry |
+| `openai` | Any OpenAI-compatible endpoint |
+
+**The stub is not a placeholder.** It means the application, its tests and a
+developer laptop all work with no provider at all — the same property the
+database and storage ports have. Only the endpoint and key wait for Azure.
+
+### The rule, and what enforces it
+
+W1.5's deliverable is *"business logic never imports a provider SDK directly"*.
+That is a rule until something checks it, so `tests/test_ai.py` walks every
+module under `app/` and fails the build if a provider package is imported
+outside `app/integrations/ai/`. The fix when it fails is to call `get_llm()` —
+never to widen the allow-list.
+
+### Why there are two HTTP adapters
+
+An abstraction with one implementation is untested: you only discover you have
+baked in provider-specific assumptions when you try to plug in something else.
+So the alternate differs from Foundry in every place that matters, and tests
+assert that it does:
+
+| | Foundry | Alternate |
+| --- | --- | --- |
+| URL | `…/deployments/{deployment}/chat/completions?api-version=…` | `…/chat/completions` |
+| Auth | `api-key:` header | `Authorization: Bearer` |
+| Model named in | the URL | the body |
+
+Both inherit retry, timeout and token logging from `http_base.py`, so a third
+adapter is about forty lines.
+
+### Prompts are files, and that matters for audit
+
+Prompts live under `app/prompts/<id>/vN.md` — one directory per prompt, one file
+per version, highest version winning unless one is pinned. Markdown because
+these are paragraphs of English that people review.
+
+The reason is provenance, not convenience. Every I07 recommendation carries an
+LLM-written rationale that a person reads before approving a stock change. When
+someone asks six months later why it said what it said, *"the model wrote it"* is
+not an answer — so `Completion` carries `prompt_id` and `prompt_version` through
+to the caller.
+
+Rendering refuses to guess: a missing **or** unexpected placeholder raises rather
+than sending a prompt containing a literal `{material}` to the model and getting
+confident nonsense back.
+
+### The forecast port is deliberately thin
+
+`Forecaster` exists alongside `LLMProvider`, with one in-process Croston
+implementation. It is **not** I07's forecasting engine — that is W4.2, which is
+in-process statistics with no provider to abstract and does not depend on this
+module. The port exists so call sites survive forecasting later moving to a
+hosted endpoint. Growing it further today would be speculative.
+
+### Open item
+
+Which model family is deployed on VZI's Foundry resource is still unanswered
+(W1.1's Day-0 checklist). The adapter is built for the chat-completions shape,
+which covers the Azure OpenAI family. A Claude deployment would need the
+official Anthropic Foundry client instead — one adapter file and its tests. The
+port does not change either way, which is the whole point of having one.
 
 ## Logging
 

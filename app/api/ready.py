@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from app.core.db import DatabaseNotConfiguredError, check_connection
 from app.core.logging import get_logger
+from app.core.ai import AINotConfiguredError, get_llm
 from app.core.storage import StorageNotConfiguredError, get_storage
 
 logger = get_logger(__name__)
@@ -35,6 +36,7 @@ class ReadinessResponse(BaseModel):
     status: str
     database: str
     storage: str
+    ai: str
     detail: str | None = None
 
 
@@ -62,28 +64,47 @@ def _check_storage() -> tuple[str, str | None]:
     return OK, None
 
 
+def _check_ai() -> tuple[str, str | None]:
+    """Whether the configured AI provider is reachable.
+
+    The stub answers instantly and always passes, so a machine with no provider
+    configured reports ready rather than degraded -- that is a working state
+    here, not a broken one.
+    """
+    try:
+        get_llm().check_connection()
+    except AINotConfiguredError as exc:
+        return NOT_CONFIGURED, str(exc)
+    except Exception as exc:
+        logger.warning("Readiness: AI check failed: %s", exc)
+        return UNAVAILABLE, type(exc).__name__
+    return OK, None
+
+
 @router.get(
     "/ready",
     response_model=ReadinessResponse,
-    summary="Readiness check (touches the database and storage)",
+    summary="Readiness check (touches the database, storage and the AI provider)",
     responses={503: {"model": ReadinessResponse, "description": "A dependency is not ready"}},
 )
 def get_ready(response: Response) -> ReadinessResponse:
     database, database_detail = _check_database()
     storage, storage_detail = _check_storage()
+    ai, ai_detail = _check_ai()
 
-    if database == OK and storage == OK:
-        return ReadinessResponse(status="ready", database=OK, storage=OK)
+    if database == OK and storage == OK and ai == OK:
+        return ReadinessResponse(status="ready", database=OK, storage=OK, ai=OK)
 
     response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 
     # Both dependencies are checked even when the first already failed: one
     # request should report everything that is wrong, not send the reader back
     # for a second round after they fix the first thing.
-    details = [d for d in (database_detail, storage_detail) if d]
+    details = [d for d in (database_detail, storage_detail, ai_detail) if d]
     return ReadinessResponse(
         status="not_ready",
         database=database,
         storage=storage,
+        ai=ai,
         detail="; ".join(details) or None,
     )

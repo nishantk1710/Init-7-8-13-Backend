@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     # Echo every SQL statement to the log. Local debugging only.
     database_echo: bool = False
 
+    # Seconds to wait for a connection before giving up. Deliberately short: a
+    # database that is not running should fail in seconds with a clear message,
+    # not hang. Raise it only for a genuinely slow network path.
+    database_connect_timeout_seconds: int = 5
+
     # Object storage location. Like database_url, this is the ONLY place storage
     # is named, and the adapter is chosen from the URL scheme -- so moving from a
     # local folder to cloud storage is a config change, not a code change.
@@ -107,6 +112,54 @@ class Settings(BaseSettings):
             and self.cpi_client_id
             and self.cpi_client_secret
         )
+
+    # --- AI service layer (W1.5) ------------------------------------------
+    #
+    # Which provider is plugged in. Business logic never reads this -- it calls
+    # get_llm(). Defaults to the deterministic stub so the application, its
+    # tests and a developer laptop all work with no provider at all.
+    #
+    #   stub     deterministic, no network
+    #   foundry  Microsoft Foundry
+    #   openai   any OpenAI-compatible endpoint
+    llm_provider: str = "stub"
+
+    # Shared across providers.
+    llm_max_tokens: int = 1024
+    llm_timeout_seconds: int = 60
+    llm_max_retries: int = 3
+
+    # Foundry. Endpoint and key are the only things that wait for Azure.
+    #
+    # NOTE: which model family is deployed on VZI's Foundry resource is still an
+    # open item on the W1.1 Day-0 checklist. The adapter is built for the
+    # chat-completions shape; a Claude deployment would need the Anthropic
+    # Foundry client instead. That is one adapter file, not a redesign.
+    foundry_endpoint: str = ""
+    foundry_api_key: str = ""
+    foundry_deployment: str = ""
+    foundry_api_version: str = "2024-10-21"
+
+    # The alternate provider -- any OpenAI-compatible endpoint.
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+    llm_model: str = ""
+
+    @property
+    def llm_configured(self) -> bool:
+        """Whether the selected provider has what it needs.
+
+        The stub always qualifies: "no provider configured" is a working state
+        here, not a broken one.
+        """
+        choice = (self.llm_provider or "stub").strip().lower()
+        if choice == "stub":
+            return True
+        if choice == "foundry":
+            return bool(self.foundry_endpoint and self.foundry_api_key and self.foundry_deployment)
+        if choice == "openai":
+            return bool(self.llm_base_url and self.llm_api_key and self.llm_model)
+        return False
 
     # --- Reserved for future integrations. Not read by any code yet, and not
     # --- required for startup. See app/core/security.py and app/integrations/.
