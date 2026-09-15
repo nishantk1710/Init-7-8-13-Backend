@@ -82,14 +82,18 @@ class TestKeywordMatching:
         cfg = get_i8_settings()
         assert "repair" in cfg.repair_language_list
 
-        import app.initiatives.i8.coding_candidates as module
+        # The QUERIES must carry no vocabulary -- the pattern reaches SQL as a
+        # bind parameter built from config. Checked against the SQL constants
+        # themselves rather than the whole file, which is full of these words in
+        # prose and would make this test fail on a comment.
+        from app.initiatives.i8.coding_candidates import _CANDIDATE_SQL, _TWIN_SQL
 
-        with open(module.__file__, encoding="utf-8") as handle:
-            body = handle.read()
-        # The SQL must carry no vocabulary -- it takes a bind parameter built
-        # from config. The words appear in prose, so only the query is checked.
-        assert ":pattern" in body
-        assert "'repair" not in body.replace("'repair spend", "")
+        assert ":pattern" in _CANDIDATE_SQL
+        for sql in (_CANDIDATE_SQL, _TWIN_SQL):
+            for keyword in cfg.repair_language_list:
+                assert keyword not in sql.lower(), (
+                    f"{keyword!r} is written into a query -- it belongs in config"
+                )
 
     def test_the_pattern_escapes_each_keyword(self) -> None:
         """A keyword containing a regex character must narrow the search, not
