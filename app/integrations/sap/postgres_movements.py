@@ -12,7 +12,11 @@ Rows are normalized into the exact same shape
 (``Matnr``/``Werks``/``Bwart``/``Menge``/``BudatMkpf``) that
 ``app.initiatives.i13.movements`` already consumes for the CSV-backed path,
 so the reversal-netting, windowing and aggregation logic there is reused
-unchanged rather than re-implemented against Postgres.
+unchanged rather than re-implemented against Postgres. Also carries
+``Ebeln``/``Ebelp`` (the movement's own PO reference, when SAP populated
+one) -- added for W6.1's goods-issue linkage attempt in
+``procurement_chain.py``; W3.5's aging/consumption calculations ignore the
+extra keys.
 
 Known data-quality gap in this extract, filtered out rather than guessed at
 (see the W3.5 implementation report for the measured scale): a majority of
@@ -36,7 +40,8 @@ from sqlalchemy.orm import Session
 Row = dict[str, Any]
 
 _MOVEMENT_HISTORY_QUERY = """
-    SELECT m.material, m.plant, m.movement_type, m.quantity, h.posting_date
+    SELECT m.material, m.plant, m.movement_type, m.quantity, h.posting_date,
+           m.purchase_order, m.item
     FROM raw_mseg m
     JOIN raw_mkpf h
       ON m.material_document = h.material_document
@@ -79,6 +84,8 @@ def _to_movement_row(record: Any) -> Row:
         "Bwart": (record.movement_type or "").strip(),
         "Menge": _decimal(record.quantity),
         "BudatMkpf": date.fromisoformat(record.posting_date),
+        "Ebeln": (record.purchase_order or "").strip() or None,
+        "Ebelp": (record.item or "").strip() or None,
     }
 
 

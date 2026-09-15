@@ -52,7 +52,7 @@ def test_movement_history_rows_are_typed_and_shaped_for_reuse() -> None:
     with get_sessionmaker()() as session:
         rows = fetch_movement_history(session, material=None, plant=None)
     row = rows[0]
-    assert set(row) == {"Matnr", "Werks", "Bwart", "Menge", "BudatMkpf"}
+    assert {"Matnr", "Werks", "Bwart", "Menge", "BudatMkpf"} <= set(row)
     assert isinstance(row["Menge"], Decimal)
     assert isinstance(row["BudatMkpf"], date)
     assert row["Matnr"] and row["Werks"]

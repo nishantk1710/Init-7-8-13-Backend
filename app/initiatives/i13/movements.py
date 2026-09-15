@@ -83,3 +83,17 @@ def latest_movement_date(rows: list[Row]) -> date | None:
     dates = [movement_date(row) for row in rows]
     dates = [d for d in dates if d is not None]
     return max(dates) if dates else None
+
+
+def event_dates(rows: list[Row], base_types: frozenset[str]) -> tuple[date | None, date | None]:
+    """First/latest date among ``rows`` whose ``Bwart`` is a base type
+    (excludes reversal rows, which don't represent a genuine event date).
+
+    Shared by ``ledger.py`` (CSV-backed GR/GI dates) and
+    ``procurement_chain.py`` (Postgres-backed GR dates) -- one definition of
+    "the date of an event", not two.
+    """
+    dates = sorted(d for row in rows if row.get("Bwart") in base_types and (d := movement_date(row)) is not None)
+    if not dates:
+        return None, None
+    return dates[0], dates[-1]

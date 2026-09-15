@@ -13,20 +13,9 @@ from typing import Any
 
 from app.integrations.sap.gateway import SapGateway
 from app.initiatives.i13.models import LedgerUtilisationStatus, LinkageStatus, ProcurementStatus, UtilisationLedgerEntry
-from app.initiatives.i13.movements import ISSUE_TYPES, RECEIPT_TYPES, movement_date, net_quantity
+from app.initiatives.i13.movements import ISSUE_TYPES, RECEIPT_TYPES, event_dates, net_quantity
 
 Row = dict[str, Any]
-
-
-def _dates(rows: list[Row], base_types: frozenset[str]) -> tuple[Any, Any]:
-    """First/latest date among ``rows`` whose ``Bwart`` is a base type
-    (excludes reversal rows, which don't represent a genuine event date)."""
-    event_dates = sorted(
-        d for row in rows if row.get("Bwart") in base_types and (d := movement_date(row)) is not None
-    )
-    if not event_dates:
-        return None, None
-    return event_dates[0], event_dates[-1]
 
 
 @dataclass
@@ -108,7 +97,7 @@ def build_ledger_entry(pr: Row, indexes: _Indexes) -> UtilisationLedgerEntry:
 
     gr_rows = indexes.movements_by_po.get((po_number, po_item_number), []) if po_number and po_item_number else []
     received_qty = net_quantity(gr_rows, RECEIPT_TYPES)
-    first_gr_date, latest_gr_date = _dates(gr_rows, RECEIPT_TYPES)
+    first_gr_date, latest_gr_date = event_dates(gr_rows, RECEIPT_TYPES)
 
     if reservation_item is not None:
         gi_rows = [
@@ -121,7 +110,7 @@ def build_ledger_entry(pr: Row, indexes: _Indexes) -> UtilisationLedgerEntry:
     else:
         gi_rows = []
     issued_qty = net_quantity(gi_rows, ISSUE_TYPES)
-    first_gi_date, latest_gi_date = _dates(gi_rows, ISSUE_TYPES)
+    first_gi_date, latest_gi_date = event_dates(gi_rows, ISSUE_TYPES)
 
     if reservation is not None:
         linkage_status = LinkageStatus.RESERVATION_LINKED

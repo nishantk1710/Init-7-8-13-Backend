@@ -109,6 +109,108 @@ class MovementMetrics:
     calculated_at: datetime
 
 
+class PrPoLinkStatus(str, Enum):
+    """How (or whether) a procurement line's PR reference was resolved."""
+
+    LINKED = "LINKED"
+    PR_REFERENCE_UNRESOLVED = "PR_REFERENCE_UNRESOLVED"
+    NO_PR_REFERENCE = "NO_PR_REFERENCE"
+    NO_PO_YET = "NO_PO_YET"
+
+
+class GrLinkStatus(str, Enum):
+    RECEIVED = "RECEIVED"
+    NO_RECEIPTS = "NO_RECEIPTS"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+class GiLinkStatus(str, Enum):
+    """Reserved ``LINKED`` member: not producible by W6.1 against this
+    dataset (see ``procurement_chain.py``'s module docstring for the measured
+    reason) -- included so the enum already carries the state W6.2 will
+    start populating, rather than W6.2 having to add a new value later."""
+
+    LINKED = "LINKED"
+    UNRESOLVED_PENDING_RESERVATION = "UNRESOLVED_PENDING_RESERVATION"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+class LifecycleStatus(str, Enum):
+    """W6.1's single derived status -- see ``procurement_chain.py``'s
+    ``_derive_lifecycle_status`` for exactly how each value is reached."""
+
+    PR_CREATED = "PR_CREATED"
+    ORDERED = "ORDERED"
+    PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED"
+    RECEIVED = "RECEIVED"
+    PARTIALLY_ISSUED = "PARTIALLY_ISSUED"
+    ISSUED = "ISSUED"
+
+
+@dataclass(frozen=True)
+class PartialLedgerEntry:
+    """W6.1: one PR -> PO -> GR -> GI procurement line, from real Postgres
+    data, WITHOUT the reservation leg (that's W6.2 -- see
+    ``app.initiatives.i13.procurement_chain``).
+
+    One entry per PO item where a PO exists; a PR-only entry (``po_number``
+    ``None``) where it doesn't yet. A PR item CAN legitimately produce more
+    than one entry -- confirmed real multi-sourcing exists in this dataset
+    (one PR item ordered across several POs), not a data defect -- so
+    ``pr_number``+``pr_item`` is not a unique key for this model; only
+    ``ledger_id`` is.
+    """
+
+    ledger_id: str
+    material: str
+    plant: str
+
+    pr_number: str | None
+    pr_item: str | None
+    po_number: str | None
+    po_item: str | None
+
+    pr_quantity: Decimal | None
+    ordered_quantity: Decimal | None
+    received_quantity: Decimal
+    # None (never 0) when GI linkage is unresolved -- 0 would claim a
+    # verified fact ("nothing was issued") this dataset cannot prove yet.
+    issued_quantity: Decimal | None
+
+    first_gr_date: date | None
+    last_gr_date: date | None
+    first_issue_date: date | None
+    last_issue_date: date | None
+
+    lifecycle_status: LifecycleStatus
+    pr_po_link_status: PrPoLinkStatus
+    gr_link_status: GrLinkStatus
+    gi_link_status: GiLinkStatus
+    gi_link_reason: str | None
+
+
+@dataclass(frozen=True)
+class ProcurementChainDiagnostics:
+    """Visibility into unmatched/ambiguous source records (FRS §13/§19.15) --
+    never silently discarded, always queryable."""
+
+    pr_items_total: int
+    pr_items_with_no_po: int
+    pr_items_with_single_po: int
+    pr_items_with_multiple_po: int
+
+    po_items_total: int
+    po_items_with_no_pr_reference: int
+    po_items_with_unresolved_pr_reference: int
+
+    # Raw-extract duplicate SOURCE rows (same natural key appearing twice) --
+    # distinct from "PR item legitimately split across multiple POs", which
+    # is a real relationship, not a duplicate. Measured empty in this
+    # dataset today (see the implementation report) but checked, not assumed.
+    duplicate_pr_keys: list[tuple[str, str]] = field(default_factory=list)
+    duplicate_po_keys: list[tuple[str, str]] = field(default_factory=list)
+
+
 @dataclass(frozen=True)
 class UtilisationLedgerEntry:
     """One PR-item's journey through PR -> PO -> GR -> GI (+ reservation leg)."""

@@ -15,8 +15,12 @@ from app.initiatives.i13.models import (
     AttributionStatus,
     ExceptionStatus,
     ExceptionType,
+    GiLinkStatus,
+    GrLinkStatus,
     LedgerUtilisationStatus,
+    LifecycleStatus,
     LinkageStatus,
+    PrPoLinkStatus,
     ProcurementStatus,
 )
 from app.integrations.sap.source_mode import SourceMode
@@ -53,6 +57,53 @@ class MovementMetricsResponse(BaseModel):
     aging_band: AgingBand
 
     calculated_at: datetime
+
+
+class PartialLedgerEntryResponse(BaseModel):
+    """W6.1: PR -> PO -> GR -> GI, without the reservation leg (see W6.2)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    ledger_id: str
+    material: str
+    plant: str
+
+    pr_number: str | None
+    pr_item: str | None
+    po_number: str | None
+    po_item: str | None
+
+    pr_quantity: Decimal | None
+    ordered_quantity: Decimal | None
+    received_quantity: Decimal
+    issued_quantity: Decimal | None
+
+    first_gr_date: date | None
+    last_gr_date: date | None
+    first_issue_date: date | None
+    last_issue_date: date | None
+
+    lifecycle_status: LifecycleStatus
+    pr_po_link_status: PrPoLinkStatus
+    gr_link_status: GrLinkStatus
+    gi_link_status: GiLinkStatus
+    gi_link_reason: str | None
+
+
+class ProcurementChainDiagnosticsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    pr_items_total: int
+    pr_items_with_no_po: int
+    pr_items_with_single_po: int
+    pr_items_with_multiple_po: int
+
+    po_items_total: int
+    po_items_with_no_pr_reference: int
+    po_items_with_unresolved_pr_reference: int
+
+    duplicate_pr_keys: list[tuple[str, str]]
+    duplicate_po_keys: list[tuple[str, str]]
 
 
 class UtilisationLedgerEntryResponse(BaseModel):
