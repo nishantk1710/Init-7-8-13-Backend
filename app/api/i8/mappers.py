@@ -158,13 +158,20 @@ def _at_vendor_evidence(line: RepairLine) -> str:
     return f"Returned {line.received_at}. {promised}"
 
 
-def timeline(line: RepairLine, today) -> list[LifecycleStage]:
+def timeline(
+    line: RepairLine, today, attestation: RepairAttestation | None = None
+) -> list[LifecycleStage]:
     """The lifecycle, stage by stage, with the evidence for each.
 
-    Stages 1 and 2 of the full lifecycle -- removal from the machine and the
-    condition attestation -- are present as explicitly unavailable rather than
-    omitted. A reader should be able to see that they were considered and why
-    they cannot be shown, instead of wondering whether they were forgotten.
+    Stage 1 -- removal from the machine -- is present as explicitly unavailable
+    rather than omitted. A reader should be able to see that it was considered
+    and why it cannot be shown, instead of wondering whether it was forgotten.
+
+    **Stage 2 is no longer a hook.** It read "W5.3 owns this. Hook only." until
+    W5.3 landed; it now carries the real attestation where one covers this line,
+    and says what was searched for where none does. That distinction is the
+    whole point of the stage: "nobody assessed this part" and "we have not
+    looked" are different statements.
     """
     stages: list[LifecycleStage] = [
         LifecycleStage(
@@ -180,8 +187,28 @@ def timeline(line: RepairLine, today) -> list[LifecycleStage]:
         LifecycleStage(
             stage="attested",
             label="Condition attested",
-            occurred_at=None,
-            evidence="W5.3 owns this. Hook only.",
+            occurred_at=attestation.attested_at.date() if attestation else None,
+            evidence=(
+                (
+                    f"Attestation {attestation.id}: "
+                    f"{CONDITION_LABELS[Recommendation(attestation.recommendation)]}"
+                    f" ({attestation.fault_category.replace('_', ' ').lower()}), "
+                    f"by {attestation.attestor}"
+                )
+                if attestation
+                else (
+                    "No condition-to-repair attestation covers this line. The "
+                    "part was sent for repair with no recorded assessment -- "
+                    "see GET /api/i8/exceptions. Until this platform there was "
+                    "nowhere to record one, so this is expected on every "
+                    "historical repair rather than a data gap."
+                )
+            ),
+            days_since=(
+                days_between(attestation.attested_at.date(), today)
+                if attestation
+                else None
+            ),
         ),
         LifecycleStage(
             stage="po_raised",

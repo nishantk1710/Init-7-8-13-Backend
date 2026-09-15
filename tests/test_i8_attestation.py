@@ -805,3 +805,73 @@ class TestTheRegisterCarriesTheRealDeclarationStatus:
             "Completed",
             "Flagged",
         }
+
+
+@needs_views
+class TestTheLifecycleTimelineAttestedStage:
+    """Stage 2 of the lifecycle, which read "W5.3 owns this. Hook only."
+
+    Both states are asserted, because they are different statements and the
+    stage exists to keep them apart: "nobody assessed this part" is a finding,
+    "we have not looked" is not.
+    """
+
+    @pytest.fixture(autouse=True)
+    def clean_table(self):
+        from app.core.db import get_sessionmaker
+        from app.initiatives.i8.service import reset_attestation_view
+
+        def wipe():
+            with get_sessionmaker()() as db:
+                db.execute(
+                    text(
+                        "ALTER TABLE i8_attestation DISABLE TRIGGER "
+                        "i8_attestation_no_update_or_delete"
+                    )
+                )
+                db.execute(text("DELETE FROM i8_attestation"))
+                db.execute(
+                    text(
+                        "ALTER TABLE i8_attestation ENABLE TRIGGER "
+                        "i8_attestation_no_update_or_delete"
+                    )
+                )
+                db.commit()
+            reset_attestation_view()
+
+        wipe()
+        yield
+        wipe()
+
+    def _attested_stage(self, document: str, item: str) -> dict:
+        body = client.get(f"/api/i8/register/{document}/{item}").json()
+        return next(s for s in body["timeline"] if s["stage"] == "attested")
+
+    def test_with_no_attestation_it_says_what_was_looked_for(self) -> None:
+        line = client.get("/api/i8/register?pageSize=1").json()["items"][0]
+        document, item = line["id"].rsplit("-", 1)
+        stage = self._attested_stage(document, item)
+
+        assert stage["occurredAt"] is None
+        # It must not read as a forgotten field. It should say there is no
+        # assessment, and that this is expected rather than a data gap.
+        assert "no recorded assessment" in stage["evidence"]
+        assert "/api/i8/exceptions" in stage["evidence"]
+        assert "Hook only" not in stage["evidence"]
+
+    def test_with_an_attestation_it_carries_the_real_evidence(self) -> None:
+        from app.core.db import get_sessionmaker
+        from app.initiatives.i8.demo_seed import seed
+        from app.initiatives.i8.service import reset_attestation_view
+
+        with get_sessionmaker()() as db:
+            result = seed(db, count=3)
+        reset_attestation_view()
+
+        document, item = result.lines[0].rsplit("-", 1)
+        stage = self._attested_stage(document, item)
+
+        assert stage["occurredAt"] is not None
+        assert "Attestation ATT-" in stage["evidence"]
+        assert "DEMO_SEED" in stage["evidence"]
+        assert stage["daysSince"] is not None and stage["daysSince"] >= 0

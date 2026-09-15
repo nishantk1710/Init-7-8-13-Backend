@@ -362,7 +362,9 @@ def get_repair_line(
         )
     return RepairDetail(
         line=_chain(line, cfg, _stock_lookup(snapshot), view.declaration_status_by_line),
-        timeline=timeline(line, snapshot.reference_date),
+        timeline=timeline(
+            line, snapshot.reference_date, view.coverage.covered.get(line.key)
+        ),
     )
 
 
