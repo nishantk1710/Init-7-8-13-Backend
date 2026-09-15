@@ -148,11 +148,14 @@ def _chain(
     line: RepairLine,
     cfg: I8Settings,
     lookup: dict[tuple[str, str | None], UniverseRow],
+    declaration_statuses: dict[tuple[str, str], str] | None = None,
 ) -> RepairChain:
     """A register row enriched with its material's stock position.
 
     Stock and reorder point live on the material+plant, not on the PO line, so
-    they come from the universe rather than from a second query.
+    they come from the universe rather than from a second query. The declaration
+    status comes from W5.3's attestation view for the same reason -- and because
+    that table changes while the process runs, which the July snapshot does not.
     """
     row = lookup.get((line.material_id, line.plant))
     return repair_chain(
@@ -161,6 +164,7 @@ def _chain(
         stock_on_hand=row.stock_on_hand if row else None,
         reorder_point=row.reorder_point if row else None,
         new_unit_lead_time_days=row.planned_delivery_days if row else None,
+        declaration_status=(declaration_statuses or {}).get(line.key, "Required"),
     )
 
 
@@ -233,7 +237,10 @@ def get_universe(
     summary="One repairable material, its plants and its repair history",
 )
 def get_universe_material(
-    material_id: str, snapshot: SnapshotDep, cfg: SettingsDep
+    material_id: str,
+    snapshot: SnapshotDep,
+    cfg: SettingsDep,
+    view: AttestationViewDep,
 ) -> UniverseDetail:
     # Normalised on the way in, so a caller may pass either the extract form
     # (8000005632) or the zero-padded CPI form (000000008000005632).
@@ -263,7 +270,10 @@ def get_universe_material(
             material_id=key, material_code=key, description=description
         ),
         plants=[universe_item(row, cfg) for row in rows],
-        repair_lines=[_chain(line, cfg, _stock_lookup(snapshot)) for line in lines],
+        repair_lines=[
+            _chain(line, cfg, _stock_lookup(snapshot), view.declaration_status_by_line)
+            for line in lines
+        ],
     )
 
 
@@ -278,6 +288,7 @@ def get_universe_material(
 def get_register(
     snapshot: SnapshotDep,
     cfg: SettingsDep,
+    view: AttestationViewDep,
     plant: str | None = Query(None),
     vendor: str | None = Query(None),
     material: str | None = Query(None),
@@ -319,7 +330,10 @@ def get_register(
     page_lines, total = _paginate(lines, page, page_size)
     lookup = _stock_lookup(snapshot)
     return RegisterResponse(
-        items=[_chain(line, cfg, lookup) for line in page_lines],
+        items=[
+            _chain(line, cfg, lookup, view.declaration_status_by_line)
+            for line in page_lines
+        ],
         page=page,
         page_size=page_size,
         total=total,
@@ -334,7 +348,11 @@ def get_register(
     summary="One repair line, with its full lifecycle timeline",
 )
 def get_repair_line(
-    document: str, item: str, snapshot: SnapshotDep, cfg: SettingsDep
+    document: str,
+    item: str,
+    snapshot: SnapshotDep,
+    cfg: SettingsDep,
+    view: AttestationViewDep,
 ) -> RepairDetail:
     line = snapshot.line(document, item)
     if line is None:
@@ -343,7 +361,7 @@ def get_repair_line(
             detail=f"No repair line {document}/{item} in this extract.",
         )
     return RepairDetail(
-        line=_chain(line, cfg, _stock_lookup(snapshot)),
+        line=_chain(line, cfg, _stock_lookup(snapshot), view.declaration_status_by_line),
         timeline=timeline(line, snapshot.reference_date),
     )
 

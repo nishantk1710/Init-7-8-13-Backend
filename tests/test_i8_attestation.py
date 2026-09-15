@@ -708,3 +708,100 @@ class TestAgainstTheSeededRegister:
             "createdAt",
         } <= set(row)
         assert row["status"] in {"Required", "Pending", "Completed", "Flagged"}
+
+
+@needs_views
+class TestTheRegisterCarriesTheRealDeclarationStatus:
+    """The register's declarationStatus column, which W5.3 finally owns.
+
+    Through W5.2 it was a hard-coded "Required" with a schema note saying W5.3
+    owned it. The UI renders that column, so leaving it hard-coded after the
+    attestation existed would have shown a screen full of "Required" that no
+    attestation could ever change -- the exact quiet-wrongness I08 exists to
+    stop.
+    """
+
+    @pytest.fixture(autouse=True)
+    def clean_table(self):
+        from app.core.db import get_sessionmaker
+        from app.initiatives.i8.service import reset_attestation_view
+
+        def wipe():
+            with get_sessionmaker()() as db:
+                db.execute(
+                    text(
+                        "ALTER TABLE i8_attestation DISABLE TRIGGER "
+                        "i8_attestation_no_update_or_delete"
+                    )
+                )
+                db.execute(text("DELETE FROM i8_attestation"))
+                db.execute(
+                    text(
+                        "ALTER TABLE i8_attestation ENABLE TRIGGER "
+                        "i8_attestation_no_update_or_delete"
+                    )
+                )
+                db.commit()
+            reset_attestation_view()
+
+        wipe()
+        yield
+        wipe()
+
+    def _statuses(self) -> dict[str, int]:
+        rows: list[dict] = []
+        page = 1
+        while True:
+            body = client.get(f"/api/i8/register?page={page}&pageSize=500").json()
+            rows += body["items"]
+            if len(rows) >= body["total"]:
+                break
+            page += 1
+        counts: dict[str, int] = {}
+        for row in rows:
+            counts[row["declarationStatus"]] = counts.get(row["declarationStatus"], 0) + 1
+        return counts
+
+    def test_with_no_attestations_every_line_reads_required(self) -> None:
+        assert self._statuses() == {"Required": 1225}
+
+    def test_seeding_moves_the_register_column_too(self) -> None:
+        """Not just the declaration queue -- the register the UI actually renders."""
+        from app.core.db import get_sessionmaker
+        from app.initiatives.i8.demo_seed import seed
+        from app.initiatives.i8.service import reset_attestation_view
+
+        with get_sessionmaker()() as db:
+            seed(db, count=6)
+        reset_attestation_view()
+
+        counts = self._statuses()
+        assert counts.get("Required", 0) < 1225
+        assert counts.get("Completed", 0) >= 1
+        assert sum(counts.values()) == 1225
+
+    def test_the_repair_detail_agrees_with_the_register(self) -> None:
+        """Two endpoints, one answer. A detail page that disagrees with the row
+        it was opened from is worse than either being wrong on its own."""
+        from app.core.db import get_sessionmaker
+        from app.initiatives.i8.demo_seed import seed
+        from app.initiatives.i8.service import reset_attestation_view
+
+        with get_sessionmaker()() as db:
+            result = seed(db, count=3)
+        reset_attestation_view()
+
+        document, item = result.lines[0].rsplit("-", 1)
+        row = client.get(f"/api/i8/register?pageSize=500").json()["items"]
+        from_register = {r["id"]: r["declarationStatus"] for r in row}
+
+        detail = client.get(f"/api/i8/register/{document}/{item}").json()
+        line_id = detail["line"]["id"]
+        if line_id in from_register:
+            assert detail["line"]["declarationStatus"] == from_register[line_id]
+        assert detail["line"]["declarationStatus"] in {
+            "Required",
+            "Pending",
+            "Completed",
+            "Flagged",
+        }

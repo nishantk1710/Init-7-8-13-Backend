@@ -188,6 +188,28 @@ class AttestationView:
     exception_stats: ExceptionStats
     built_at: datetime
 
+    @property
+    def declaration_status_by_line(self) -> dict[tuple[str, str], str]:
+        """(document, item) -> declaration status, for the register.
+
+        The register carries a declarationStatus column that the UI renders.
+        Until W5.3 it was a hard-coded "Required" placeholder with a note saying
+        W5.3 owned it; this is that ownership arriving. Memoised on the instance
+        because the register maps 1,225 rows and rebuilding the index per row
+        would be the per-row cost this whole view exists to avoid.
+        """
+        cached = self.__dict__.get("_status_index")
+        if cached is None:
+            cached = {
+                # DeclarationRow.related_repair_id is "{document}-{item}", the
+                # same key the register uses, but the line's own tuple is what
+                # the caller holds -- so it is rebuilt from the id's parts.
+                tuple(row.related_repair_id.rsplit("-", 1)): row.status
+                for row in self.declarations
+            }
+            object.__setattr__(self, "_status_index", cached)
+        return cached
+
 
 def build_attestation_view(
     db: Session, snapshot: Snapshot, cfg: I8Settings | None = None

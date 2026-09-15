@@ -77,12 +77,19 @@ def repair_chain(
     stock_on_hand=None,
     reorder_point=None,
     new_unit_lead_time_days: int | None = None,
+    declaration_status: str = "Required",
 ) -> RepairChain:
     """One register row.
 
     Stock and reorder point are passed in from the universe rather than
     re-queried: they belong to the material+plant, not to the PO line, and the
     snapshot already holds them.
+
+    ``declaration_status`` comes from W5.3's attestation view for the same
+    reason: it belongs to the attestation table, which has a different lifetime
+    from the July snapshot. It defaults to "Required" because that is the honest
+    answer for a line nobody has checked -- but it is now a real computed value
+    rather than the placeholder it was through W5.2.
     """
     return RepairChain(
         id=f"{line.purchasing_document}-{line.item}",
@@ -104,6 +111,7 @@ def repair_chain(
         vendor=line.vendor,
         vendor_name=line.vendor_name,
         repair_status=line.repair_status,
+        declaration_status=declaration_status,
         receipt_status=line.receipt_status,
         overdue_status=line.overdue_status,
         days_open=line.days_open,
