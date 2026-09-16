@@ -38,13 +38,15 @@ W6.1 implementation report for the full numbers):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+from app.integrations.sap._request_cache import memoize_per_instance
 
 Row = dict[str, Any]
 
@@ -282,15 +284,28 @@ def fetch_deterministic_gi_candidates(db: Session, *, po_number: str | None = No
 
 @dataclass
 class PostgresProcurementRepository:
-    """Thin repository wrapper -- one object, one held session, three reads."""
+    """Thin repository wrapper -- one object, one held session, four reads.
+
+    Memoized per instance (see ``_request_cache.py``) -- construct one per
+    request, never share across requests. ``build_reservation_ledger`` calls
+    ``build_procurement_chain`` internally, and W6.2's composed services
+    (``build_exception_queue``, ``compute_watch_metrics``, ``build_summary``)
+    each build a reservation ledger of their own -- without this cache, one
+    ``GET /api/i13/summary`` re-ran every fetch here multiple times over the
+    full tenant (measured: 50+ seconds; see ``_request_cache.py``'s docstring
+    for the exact call-graph duplication).
+    """
 
     db: Session
+    _cache: dict = field(default_factory=dict, repr=False, compare=False)
 
+    @memoize_per_instance
     def get_purchase_requisitions(
         self, *, pr_number: str | None = None, material: str | None = None, plant: str | None = None
     ) -> list[Row]:
         return fetch_purchase_requisitions(self.db, pr_number=pr_number, material=material, plant=plant)
 
+    @memoize_per_instance
     def get_purchase_order_items(
         self,
         *,
@@ -303,8 +318,10 @@ class PostgresProcurementRepository:
             self.db, po_number=po_number, pr_number=pr_number, material=material, plant=plant
         )
 
+    @memoize_per_instance
     def get_goods_receipt_history(self, *, po_number: str | None = None) -> list[Row]:
         return fetch_goods_receipt_history(self.db, po_number=po_number)
 
+    @memoize_per_instance
     def get_deterministic_gi_candidates(self, *, po_number: str | None = None) -> list[Row]:
         return fetch_deterministic_gi_candidates(self.db, po_number=po_number)

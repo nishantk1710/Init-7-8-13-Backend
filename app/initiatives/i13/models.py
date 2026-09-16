@@ -19,25 +19,6 @@ class AgingBand(str, Enum):
     NON_MOVING = "NON_MOVING"
 
 
-class ProcurementStatus(str, Enum):
-    OPEN = "OPEN"
-    PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED"
-    RECEIVED = "RECEIVED"
-
-
-class LedgerUtilisationStatus(str, Enum):
-    NOT_ISSUED = "NOT_ISSUED"
-    PARTIALLY_ISSUED = "PARTIALLY_ISSUED"
-    FULLY_ISSUED = "FULLY_ISSUED"
-
-
-class LinkageStatus(str, Enum):
-    RESERVATION_LINKED = "RESERVATION_LINKED"
-    PR_ONLY = "PR_ONLY"
-    FULL_CHAIN = "FULL_CHAIN"
-    UNMATCHED = "UNMATCHED"
-
-
 class AttributionStatus(str, Enum):
     RESERVATION_LINK = "RESERVATION_LINK"
     ORDER_LINK = "ORDER_LINK"
@@ -62,22 +43,6 @@ class ExceptionStatus(str, Enum):
     OPEN = "OPEN"
     ACKNOWLEDGED = "ACKNOWLEDGED"
     RESOLVED = "RESOLVED"
-
-
-@dataclass(frozen=True)
-class AgingResult:
-    """Statistics-independent aging for one material+plant."""
-
-    material: str
-    plant: str
-    last_movement_date: date | None
-    days_since_last_movement: int | None
-    consumption_count_12m: int
-    consumed_qty_12m: Decimal
-    aging_band: AgingBand
-    current_stock: Decimal | None
-    inventory_turns: Decimal | None
-    inventory_turns_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -280,39 +245,6 @@ class ReservationLedgerEntry:
     gi_link_reason: str | None
 
     material_scope: MaterialScope
-
-
-@dataclass(frozen=True)
-class UtilisationLedgerEntry:
-    """One PR-item's journey through PR -> PO -> GR -> GI (+ reservation leg)."""
-
-    ledger_id: str
-    material: str
-    plant: str
-
-    reservation_number: str | None
-    reservation_item: str | None
-
-    pr_number: str | None
-    pr_item: str | None
-
-    po_number: str | None
-    po_item: str | None
-
-    received_quantity: Decimal
-    issued_quantity: Decimal
-    open_quantity: Decimal
-
-    first_gr_date: date | None
-    latest_gr_date: date | None
-    first_gi_date: date | None
-    latest_gi_date: date | None
-
-    procurement_status: ProcurementStatus
-    utilisation_status: LedgerUtilisationStatus
-    linkage_status: LinkageStatus
-
-    data_source: str
 
 
 @dataclass(frozen=True)

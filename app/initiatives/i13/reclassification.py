@@ -4,57 +4,71 @@ This is evidence only -- I13 never changes the SAP MRP type and never calls
 an I7 recommendation engine. The result is a plain DTO I7 may later consume
 (``ReclassificationCandidate`` -> API -> I7), which is the only allowed
 direction across that boundary.
+
+Postgres-backed: OAR scope from ``raw_marc`` (``postgres_material.py``),
+consumption evidence from real goods-movement history
+(``movement_metrics.py``, W3.5) -- no CSV, no SapGateway.
 """
 
 from datetime import date
 
-from app.initiatives.i13.aging import compute_aging, group_by_material_plant
 from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.models import ReclassificationCandidate
-from app.integrations.sap.gateway import SapGateway
+from app.initiatives.i13.movement_metrics import compute_all_movement_metrics
+from app.integrations.sap.postgres_movements import PostgresMovementRepository
 from app.shared.material_scope import MaterialScope, classify_material_scope
 
 
 def build_reclassification_candidates(
-    gateway: SapGateway, config: I13Config, *, as_of: date | None = None
+    movement_repository: PostgresMovementRepository,
+    material_scope_index: dict[tuple[str, str], str | None],
+    config: I13Config,
+    *,
+    material: str | None = None,
+    plant: str | None = None,
+    as_of: date | None = None,
 ) -> list[ReclassificationCandidate]:
-    as_of = as_of or date.today()
-
-    material_plants = gateway.get_material_plants().rows
-    movements = gateway.get_goods_movements().rows
-    movements_by_key = group_by_material_plant(movements)
-
-    candidates: list[ReclassificationCandidate] = []
-    for row in material_plants:
-        material, plant = row.get("Matnr"), row.get("Werks")
-        if material is None or plant is None:
-            continue
-        if classify_material_scope(row.get("Dismm")) is not MaterialScope.OAR:
-            continue
-
-        aging = compute_aging(
-            material,
-            plant,
-            movements_by_key.get((material, plant), []),
-            current_stock=None,
+    metrics_by_key = {
+        (metric.material, metric.plant): metric
+        for metric in compute_all_movement_metrics(
+            movement_repository,
             thresholds=config.aging,
             window_months=config.watch.consumption_window_months,
             as_of=as_of,
+            material=material,
+            plant=plant,
         )
+    }
 
-        consumed_more_than_threshold = aging.consumption_count_12m > config.reclassification.min_consumption_count
+    candidates: list[ReclassificationCandidate] = []
+    for key, dismm in material_scope_index.items():
+        if material and key[0] != material:
+            continue
+        if plant and key[1] != plant:
+            continue
+        if classify_material_scope(dismm) is not MaterialScope.OAR:
+            continue
+
+        # An OAR material with no movement history at all is a legitimate
+        # zero-consumption candidate, not an omission -- unlike
+        # compute_all_movement_metrics (which only returns keys it has
+        # movement rows for), every OAR (material, plant) must appear here.
+        metric = metrics_by_key.get(key)
+        consumption_count_12m = metric.consumption_count_12m if metric else 0
+
+        consumed_more_than_threshold = consumption_count_12m > config.reclassification.min_consumption_count
         reasons: list[str] = []
         if consumed_more_than_threshold:
             reasons.append(
-                f"Consumed {aging.consumption_count_12m} times in trailing 12 months "
+                f"Consumed {consumption_count_12m} times in trailing 12 months "
                 f"(> {config.reclassification.min_consumption_count})"
             )
 
         candidates.append(
             ReclassificationCandidate(
-                material=material,
-                plant=plant,
-                consumption_count_12m=aging.consumption_count_12m,
+                material=key[0],
+                plant=key[1],
+                consumption_count_12m=consumption_count_12m,
                 consumed_more_than_threshold=consumed_more_than_threshold,
                 critical_impact_indicator=None,
                 hod_justified_request_indicator=None,

@@ -2,28 +2,29 @@
 
 Attribution is decided purely from the references already resolved on a
 ledger entry -- no scoring, no probabilistic matching, no Initiative 10
-logic. Precedence: an exact reservation-item match beats a reservation
-matched only at the order/header level (``Rsnum`` without ``Rspos``), which
-beats a bare procurement (PO-only, not yet issued) link.
+logic.
+
+Ported onto ``ReservationLedgerEntry`` (W6.2): unlike the old CSV-backed
+``UtilisationLedgerEntry``, goods-issue attribution here is always resolved
+via the reservation's own exact (RSNUM, RSPOS) key when any issue exists --
+there is no "order matched without an item" intermediate case anymore, since
+``reservation_ledger.py`` never looks up GI any other way. ``RESERVATION_LINK``
+therefore covers every case with issued quantity; ``ORDER_LINK`` is unused
+under this model and kept only so ``AttributionStatus`` doesn't need to
+change shape for existing consumers.
 """
 
-from app.initiatives.i13.models import AttributionResult, AttributionStatus, UtilisationLedgerEntry
+from app.initiatives.i13.models import AttributionResult, AttributionStatus, ReservationLedgerEntry
 
 
-def attribute_consumption(entry: UtilisationLedgerEntry) -> AttributionResult:
-    if entry.issued_quantity > 0 and entry.reservation_item is not None:
+def attribute_consumption(entry: ReservationLedgerEntry) -> AttributionResult:
+    if entry.issued_quantity > 0:
         return AttributionResult(
             ledger_id=entry.ledger_id,
             status=AttributionStatus.RESERVATION_LINK,
             evidence=f"Rsnum {entry.reservation_number}/{entry.reservation_item} matched to goods issue",
         )
-    if entry.issued_quantity > 0 and entry.reservation_number is not None:
-        return AttributionResult(
-            ledger_id=entry.ledger_id,
-            status=AttributionStatus.ORDER_LINK,
-            evidence=f"Rsnum {entry.reservation_number} matched to goods issue without an exact reservation item",
-        )
-    if entry.received_quantity > 0:
+    if entry.received_quantity and entry.received_quantity > 0:
         return AttributionResult(
             ledger_id=entry.ledger_id,
             status=AttributionStatus.PROCUREMENT_LINK,

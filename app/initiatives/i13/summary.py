@@ -2,18 +2,23 @@
 
 Computed here, not in the API controller -- ``app/api/i13/routes.py`` only
 serializes the result.
+
+Postgres-backed: composes ``movement_metrics.py`` (W3.5), ``exceptions.py``
+and ``reclassification.py`` rather than reading a gateway/CSV directly.
 """
 
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from app.initiatives.i13.aging import compute_aging, group_by_material_plant
 from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.exceptions import build_exception_queue
 from app.initiatives.i13.models import AgingBand, ExceptionType
+from app.initiatives.i13.movement_metrics import compute_all_movement_metrics
 from app.initiatives.i13.reclassification import build_reclassification_candidates
-from app.integrations.sap.gateway import SapGateway
+from app.integrations.sap.postgres_movements import PostgresMovementRepository
+from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
+from app.integrations.sap.postgres_reservation import PostgresReservationRepository
 from app.shared.material_scope import MaterialScope, classify_material_scope
 
 
@@ -30,40 +35,51 @@ class I13Summary:
     valuation_is_mocked: bool
 
 
-def build_summary(gateway: SapGateway, config: I13Config, data_dir: Path, *, as_of: date | None = None) -> I13Summary:
+def build_summary(
+    movement_repository: PostgresMovementRepository,
+    procurement_repository: PostgresProcurementRepository,
+    reservation_repository: PostgresReservationRepository,
+    material_scope_index: dict[tuple[str, str], str | None],
+    config: I13Config,
+    data_dir: Path,
+    *,
+    as_of: date | None = None,
+) -> I13Summary:
     as_of = as_of or date.today()
 
-    material_plants = gateway.get_material_plants().rows
-    oar_positions = [row for row in material_plants if classify_material_scope(row.get("Dismm")) is MaterialScope.OAR]
+    oar_keys = {key for key, dismm in material_scope_index.items() if classify_material_scope(dismm) is MaterialScope.OAR}
 
-    movements = gateway.get_goods_movements().rows
-    movements_by_key = group_by_material_plant(movements)
-
+    metrics = compute_all_movement_metrics(
+        movement_repository, thresholds=config.aging, window_months=config.watch.consumption_window_months, as_of=as_of
+    )
     band_counts = {AgingBand.FAST: 0, AgingBand.SLOW: 0, AgingBand.NON_MOVING: 0}
-    for row in oar_positions:
-        material, plant = row.get("Matnr"), row.get("Werks")
-        aging = compute_aging(
-            material,
-            plant,
-            movements_by_key.get((material, plant), []),
-            current_stock=None,
-            thresholds=config.aging,
-            window_months=config.watch.consumption_window_months,
-            as_of=as_of,
-        )
-        if aging.aging_band in band_counts:
-            band_counts[aging.aging_band] += 1
+    oar_keys_seen: set[tuple[str, str]] = set()
+    for metric in metrics:
+        key = (metric.material, metric.plant)
+        if key not in oar_keys:
+            continue
+        oar_keys_seen.add(key)
+        band_counts[metric.aging_band] += 1
+    # An OAR material with zero movement history never appears in ``metrics``
+    # (compute_all_movement_metrics only returns keys with movement rows) --
+    # it is still a real OAR position, and its aging band is NON_MOVING by
+    # definition (no last-issue date at all).
+    band_counts[AgingBand.NON_MOVING] += len(oar_keys - oar_keys_seen)
 
-    exceptions = build_exception_queue(gateway, config, data_dir, as_of=as_of)
+    exceptions = build_exception_queue(
+        movement_repository, procurement_repository, reservation_repository, material_scope_index, config, data_dir, as_of=as_of
+    )
     exception_counts = {exception_type: 0 for exception_type in ExceptionType}
     for exception in exceptions:
         exception_counts[exception.type] += 1
 
-    reclassification_candidates = build_reclassification_candidates(gateway, config, as_of=as_of)
+    reclassification_candidates = build_reclassification_candidates(
+        movement_repository, material_scope_index, config, as_of=as_of
+    )
     candidate_count = sum(1 for candidate in reclassification_candidates if candidate.candidate_flag)
 
     return I13Summary(
-        total_oar_positions=len(oar_positions),
+        total_oar_positions=len(oar_keys),
         fast_moving_count=band_counts[AgingBand.FAST],
         slow_moving_count=band_counts[AgingBand.SLOW],
         non_moving_count=band_counts[AgingBand.NON_MOVING],

@@ -29,13 +29,15 @@ unaffected -- ``material`` is populated on all of them in this dataset.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+from app.integrations.sap._request_cache import memoize_per_instance
 
 Row = dict[str, Any]
 
@@ -145,13 +147,21 @@ def fetch_current_stock(
 class PostgresMovementRepository:
     """Thin object wrapper so callers (the domain service, the API layer)
     depend on a repository, not on bare functions plus a session they have
-    to remember to pass consistently. Holds a session, nothing else."""
+    to remember to pass consistently.
+
+    Memoized per instance (see ``_request_cache.py``) -- construct one per
+    request, never share across requests, and repeated identical calls
+    within that request are free after the first.
+    """
 
     db: Session
+    _cache: dict = field(default_factory=dict, repr=False, compare=False)
 
+    @memoize_per_instance
     def get_movement_history(self, *, material: str | None = None, plant: str | None = None) -> list[Row]:
         return fetch_movement_history(self.db, material=material, plant=plant)
 
+    @memoize_per_instance
     def get_current_stock(
         self, *, material: str | None = None, plant: str | None = None
     ) -> dict[tuple[str, str], Decimal]:

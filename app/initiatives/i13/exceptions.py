@@ -1,41 +1,45 @@
 """Plan-breach, no-plan, and GR-not-issued-30-day exception engine.
 
 Deterministic domain logic only -- no Initiative 09/10 exception types.
+
+Postgres-backed: composes ``reservation_ledger.py`` (W6.2) and ``watch.py``
+rather than reading a gateway/CSV directly. ``reservation_number``/
+``reservation_item`` are always present on a ``ReservationLedgerEntry``
+(unlike the old CSV-backed ``UtilisationLedgerEntry``, where they could be
+``None``) -- this ledger is reservation-anchored by construction.
 """
 
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
 
 from app.initiatives.i13.config import I13Config
-from app.initiatives.i13.ledger import build_utilisation_ledger
-from app.initiatives.i13.models import ExceptionQueueItem, ExceptionStatus, ExceptionType, UtilisationLedgerEntry
+from app.initiatives.i13.models import ExceptionQueueItem, ExceptionStatus, ExceptionType, ReservationLedgerEntry
 from app.initiatives.i13.plans import ConsumptionPlan, load_consumption_plans
+from app.initiatives.i13.reservation_ledger import build_reservation_ledger
 from app.initiatives.i13.watch import compute_watch_metrics
-from app.integrations.sap.gateway import SapGateway
-from app.shared.material_scope import MaterialScope, build_scope_index
-
-Row = dict[str, Any]
+from app.integrations.sap.postgres_movements import PostgresMovementRepository
+from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
+from app.integrations.sap.postgres_reservation import PostgresReservationRepository
+from app.shared.material_scope import MaterialScope
 
 
 def _index_ledger_by_reservation(
-    entries: list[UtilisationLedgerEntry],
-) -> dict[tuple[str, str], list[UtilisationLedgerEntry]]:
-    index: dict[tuple[str, str], list[UtilisationLedgerEntry]] = defaultdict(list)
+    entries: list[ReservationLedgerEntry],
+) -> dict[tuple[str, str], list[ReservationLedgerEntry]]:
+    index: dict[tuple[str, str], list[ReservationLedgerEntry]] = defaultdict(list)
     for entry in entries:
-        if entry.reservation_number and entry.reservation_item:
-            index[(entry.reservation_number, entry.reservation_item)].append(entry)
+        index[(entry.reservation_number, entry.reservation_item)].append(entry)
     return index
 
 
-def _has_issuance_evidence(entries: list[UtilisationLedgerEntry]) -> bool:
+def _has_issuance_evidence(entries: list[ReservationLedgerEntry]) -> bool:
     return any(entry.issued_quantity > 0 for entry in entries)
 
 
 def _plan_breach_exceptions(
     plans: list[ConsumptionPlan],
-    ledger_by_reservation: dict[tuple[str, str], list[UtilisationLedgerEntry]],
+    ledger_by_reservation: dict[tuple[str, str], list[ReservationLedgerEntry]],
     *,
     grace_days: int,
     as_of: date,
@@ -79,17 +83,12 @@ def _plan_breach_exceptions(
 
 
 def _no_plan_exceptions(
-    entries: list[UtilisationLedgerEntry],
-    scope_index: dict[tuple[str, str], MaterialScope],
+    entries: list[ReservationLedgerEntry],
     planned_reservations: set[tuple[str, str]],
-    *,
-    as_of: date,
 ) -> list[ExceptionQueueItem]:
     exceptions: list[ExceptionQueueItem] = []
     for entry in entries:
-        if not entry.reservation_number or not entry.reservation_item:
-            continue
-        if scope_index.get((entry.material, entry.plant)) is not MaterialScope.OAR:
+        if entry.material_scope is not MaterialScope.OAR:
             continue
         if (entry.reservation_number, entry.reservation_item) in planned_reservations:
             continue
@@ -116,9 +115,31 @@ def _no_plan_exceptions(
     return exceptions
 
 
-def _gr_not_issued_exceptions(gateway: SapGateway, config: I13Config, data_dir: Path, *, as_of: date) -> list[ExceptionQueueItem]:
+def _gr_not_issued_exceptions(
+    movement_repository: PostgresMovementRepository,
+    procurement_repository: PostgresProcurementRepository,
+    reservation_repository: PostgresReservationRepository,
+    material_scope_index: dict[tuple[str, str], str | None],
+    config: I13Config,
+    data_dir: Path,
+    *,
+    material: str | None = None,
+    plant: str | None = None,
+    as_of: date,
+) -> list[ExceptionQueueItem]:
     exceptions: list[ExceptionQueueItem] = []
-    for metric in compute_watch_metrics(gateway, config, data_dir, as_of=as_of):
+    metrics = compute_watch_metrics(
+        movement_repository,
+        procurement_repository,
+        reservation_repository,
+        material_scope_index,
+        config,
+        data_dir,
+        material=material,
+        plant=plant,
+        as_of=as_of,
+    )
+    for metric in metrics:
         if not metric.gr_not_issued_flag:
             continue
         exceptions.append(
@@ -151,14 +172,43 @@ def _gr_not_issued_exceptions(gateway: SapGateway, config: I13Config, data_dir: 
 
 
 def build_exception_queue(
-    gateway: SapGateway, config: I13Config, data_dir: Path, *, as_of: date | None = None
+    movement_repository: PostgresMovementRepository,
+    procurement_repository: PostgresProcurementRepository,
+    reservation_repository: PostgresReservationRepository,
+    material_scope_index: dict[tuple[str, str], str | None],
+    config: I13Config,
+    data_dir: Path,
+    *,
+    material: str | None = None,
+    plant: str | None = None,
+    as_of: date | None = None,
 ) -> list[ExceptionQueueItem]:
+    """``material``/``plant`` push down into every underlying build (real SQL
+    filters, not a client-side trim afterwards) -- without them, this scans
+    the entire tenant's reservations/movements regardless of what an API
+    caller asked for. Measured against real data: a plant-scoped call still
+    takes double-digit seconds (this composes ``build_reservation_ledger``
+    AND ``compute_watch_metrics``, which itself rebuilds a reservation ledger
+    internally); an unfiltered call is worse. There is no caching anywhere in
+    I13 today -- see the W3.5/W6.1/W6.2 implementation reports' performance
+    notes for the follow-up this implies.
+    """
     as_of = as_of or date.today()
 
-    ledger_entries = build_utilisation_ledger(gateway)
+    ledger_entries = build_reservation_ledger(
+        reservation_repository,
+        procurement_repository,
+        material_scope_index=material_scope_index,
+        material=material,
+        plant=plant,
+        include_out_of_scope=True,
+    )
     ledger_by_reservation = _index_ledger_by_reservation(ledger_entries)
     plans = load_consumption_plans(data_dir)
-    scope_index = build_scope_index(gateway.get_material_plants().rows)
+    if material:
+        plans = [plan for plan in plans if plan.material == material]
+    if plant:
+        plans = [plan for plan in plans if plan.plant == plant]
     planned_reservations = {(plan.reservation_number, plan.reservation_item) for plan in plans}
 
     exceptions: list[ExceptionQueueItem] = []
@@ -167,6 +217,18 @@ def build_exception_queue(
             plans, ledger_by_reservation, grace_days=config.exceptions.plan_breach_grace_days, as_of=as_of
         )
     )
-    exceptions.extend(_no_plan_exceptions(ledger_entries, scope_index, planned_reservations, as_of=as_of))
-    exceptions.extend(_gr_not_issued_exceptions(gateway, config, data_dir, as_of=as_of))
+    exceptions.extend(_no_plan_exceptions(ledger_entries, planned_reservations))
+    exceptions.extend(
+        _gr_not_issued_exceptions(
+            movement_repository,
+            procurement_repository,
+            reservation_repository,
+            material_scope_index,
+            config,
+            data_dir,
+            material=material,
+            plant=plant,
+            as_of=as_of,
+        )
+    )
     return exceptions

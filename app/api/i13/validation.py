@@ -3,20 +3,30 @@
 No real ZMM065 / 30-Day GR Report export exists in this repository yet, so
 reference counts are accepted as optional query params; without them the
 result is ``REFERENCE_UNAVAILABLE`` (see ``initiatives/i13/reconciliation.py``).
+
+Reconciles against W6.1's procurement chain (``build_procurement_chain``,
+PO-item-anchored), not W6.2's reservation-anchored ledger -- ZMM065 is a
+plant-wide procurement/aging report at the PR/PO-item grain, the same grain
+this reconciliation used before the CSV-to-Postgres migration.
 """
 
-from decimal import Decimal
 from pathlib import Path
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
 
 from app.api.i13.deps import get_data_dir
+from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.exceptions import build_exception_queue
-from app.initiatives.i13.ledger import build_utilisation_ledger
 from app.initiatives.i13.models import ExceptionType
+from app.initiatives.i13.procurement_chain import build_procurement_chain
 from app.initiatives.i13.reconciliation import reconcile
-from app.integrations.sap.gateway import SapGateway, get_sap_gateway
+from app.integrations.sap.postgres_material import fetch_material_scope_index
+from app.integrations.sap.postgres_movements import PostgresMovementRepository
+from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
+from app.integrations.sap.postgres_reservation import PostgresReservationRepository
 from app.schemas.i13 import ReconciliationSourceResult, ValidationResponse
 
 router = APIRouter()
@@ -28,18 +38,25 @@ def get_validation(
     gr_30_day_reference_count: int | None = Query(
         None, description="Reference count from the 30-Day GR Report"
     ),
-    gateway: SapGateway = Depends(get_sap_gateway),
+    db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
     data_dir: Path = Depends(get_data_dir),
 ) -> ValidationResponse:
-    ledger_entries = build_utilisation_ledger(gateway)
-    exceptions = build_exception_queue(gateway, config, data_dir)
+    procurement_repo = PostgresProcurementRepository(db)
+    movement_repo = PostgresMovementRepository(db)
+    reservation_repo = PostgresReservationRepository(db)
+    material_scope_index = fetch_material_scope_index(db)
+
+    procurement_entries = build_procurement_chain(procurement_repo)
+    exceptions = build_exception_queue(
+        movement_repo, procurement_repo, reservation_repo, material_scope_index, config, data_dir
+    )
     gr_not_issued_count = sum(1 for item in exceptions if item.type is ExceptionType.GR_NOT_ISSUED_30_DAY)
 
     results = [
         reconcile(
             "ZMM065",
-            len(ledger_entries),
+            len(procurement_entries),
             zmm065_reference_count,
             tolerance_pct=config.reconciliation.tolerance_pct,
         ),

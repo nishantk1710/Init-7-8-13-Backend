@@ -1,70 +1,31 @@
 """Reservation source backed by the real RESB extract already in Postgres.
 
-``ReservationItemSet`` over live CPI OData returns 0 rows in this tenant (see
-``mock_gateway.py``), which is why W6.2 needs a reservation source boundary at
-all. But the RESB *extract* -- loaded separately into ``raw_resb`` by
+``ReservationItemSet`` over live CPI OData returns 0 rows in this tenant, but
+the RESB *extract* -- loaded separately into ``raw_resb`` by
 ``app.seed.loader`` from ``RESB.XLSX`` (see ``app/seed/manifest.py``) -- is
 NOT empty: 105,848 real rows, ~1,274 of them carrying a real purchase
-requisition reference. This module reads that real data, so the reservation
-leg does not have to be fabricated to be tested (see the implementation
-plan's W6.2 requirement that any mock "must be built using real values
-already present in PostgreSQL").
-
-Tagged ``SourceMode.LIVE``: these are genuine SAP RESB rows, unlike
-``ReducedMockSapGateway``'s synthetic ``ReservationItemSet.csv``.
-
-Known gap, documented rather than hidden: the PR/PO/GR/GI legs read by
-``LiveSapGateway`` in this build are still the synthetic CSV dataset (see
-``csv_source.py``), which uses a different document-number space than the
-real ``raw_eban``/``raw_ekpo``/``raw_mseg`` extract this module reads. So a
-Reservation -> PR join against *that CSV-backed ledger's* PR set will not
-resolve for these rows -- that is the correct, honest ``UNMATCHED``/pending
-behaviour (see ``ledger.py``), not a bug. **W6.2's own ledger
-(``app.initiatives.i13.reservation_ledger``) does not have this problem** --
-it stitches this module's reservations against ``postgres_procurement.py``'s
-PR/PO/GR data, the same real Postgres extract, so the join genuinely resolves
-there. See that module for the current, real-data-backed Reservation ->
-PR -> PO -> GR -> GI ledger.
+requisition reference. This module is the one place the raw-extract ->
+normalized-row translation happens for RESB; ``reservation_ledger.py`` (W6.2)
+stitches these rows against ``postgres_procurement.py``'s PR/PO/GR data, the
+same real Postgres extract, so Reservation -> PR joins genuinely resolve.
 
 The raw layer is untyped text and carries the extract's business-label
-column names, not SAP field codes (see ``app.seed.loader``'s table comment) --
-this module is the one place that translation happens for RESB.
+column names, not SAP field codes (see ``app.seed.loader``'s table comment).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from app.integrations.sap.source_mode import SapResult, SourceMode, make_status
+from app.integrations.sap._request_cache import memoize_per_instance
 
 Row = dict[str, Any]
-
-# Rows with a purchase requisition reference first (the ones a Reservation ->
-# PR join can actually use), then the remainder up to LIMIT -- so both "has a
-# PR" and "no PR yet" cases (see W6.2 test requirements) are represented
-# without loading all 105,848 rows into memory.
-_QUERY = text(
-    """
-    SELECT
-        reservation, item_no_stock_transfer_reserv, item_deleted, final_issue,
-        material, plant, storage_location, requirement_date, requirement_quantity,
-        base_unit_of_measure, quantity_withdrawn, value_withdrawn,
-        purchase_requisition, item_of_requisition, "order", movement_type,
-        receiving_plant, receiving_stor_loc, goods_recipient
-    FROM raw_resb
-    WHERE material <> '' AND plant <> ''
-    ORDER BY (purchase_requisition <> '') DESC, reservation, item_no_stock_transfer_reserv
-    LIMIT :limit
-    """
-)
-
-DEFAULT_LIMIT = 2000
 
 
 def _text_or_none(raw: str | None) -> str | None:
@@ -93,13 +54,11 @@ def _flag(raw: str | None) -> bool:
 
 def _to_reservation_row(record: Any) -> Row:
     """One ``raw_resb`` record -> a row shaped like the normalized
-    ``ReservationItemSet`` model the rest of I13 already consumes (see
-    ``mock_gateway.py``'s ``_RESERVATION_ITEM`` schema)."""
-    # Same zero-default sentinel as EKPO's Bnfpo / EBAN's Ebelp (see
-    # postgres_procurement.py): item_of_requisition reads "0" whenever
+    ``ReservationItemSet`` model the rest of I13 consumes."""
+    # "0" zero-default sentinel: item_of_requisition reads "0" whenever
     # purchase_requisition is NULL, never otherwise (measured: 104,574/104,574
-    # co-occurrences, 0 counter-examples) -- guarded the same way so a "no
-    # PR" reservation reports Bnfpo=None, not the misleading literal "0".
+    # co-occurrences, 0 counter-examples) -- guarded so a "no PR" reservation
+    # reports Bnfpo=None, not the misleading literal "0".
     banfn = _text_or_none(record.purchase_requisition)
     bnfpo = _text_or_none(record.item_of_requisition) if banfn else None
     return {
@@ -129,14 +88,6 @@ def _to_reservation_row(record: Any) -> Row:
     }
 
 
-# --- W6.2: filtered reservation fetch for ledger stitching ------------------
-#
-# Distinct from the ``_QUERY``/``PostgresReservationProvider`` above (which
-# serves the SapGateway ``ReservationItemSet`` contract, LIMIT-sampled for
-# that CSV-shaped integration). W6.2's own ledger wants every reservation in
-# scope, filterable, no artificial sample cap -- 105,848 rows is the same
-# order of magnitude as raw_eban/raw_ekpo, already handled unsampled
-# elsewhere in this codebase (see postgres_procurement.py).
 _RESERVATION_FETCH_QUERY = """
     SELECT
         reservation, item_no_stock_transfer_reserv, item_deleted, final_issue,
@@ -236,11 +187,16 @@ def fetch_goods_issue_by_reservation(db: Session, *, reservation_number: str | N
 @dataclass
 class PostgresReservationRepository:
     """W6.2's reservation repository -- reservations plus their
-    deterministic GI linkage. Distinct from ``PostgresReservationProvider``
-    below, which serves the older SapGateway/CSV-ledger integration seam."""
+    deterministic GI linkage.
+
+    Memoized per instance (see ``_request_cache.py``) -- construct one per
+    request, never share across requests.
+    """
 
     db: Session
+    _cache: dict = field(default_factory=dict, repr=False, compare=False)
 
+    @memoize_per_instance
     def get_reservations(
         self,
         *,
@@ -253,24 +209,6 @@ class PostgresReservationRepository:
             self.db, reservation_number=reservation_number, pr_number=pr_number, material=material, plant=plant
         )
 
+    @memoize_per_instance
     def get_goods_issue_by_reservation(self, *, reservation_number: str | None = None) -> list[Row]:
         return fetch_goods_issue_by_reservation(self.db, reservation_number=reservation_number)
-
-
-@dataclass
-class PostgresReservationProvider:
-    """``ReservationProvider`` backed by the real ``raw_resb`` Postgres table.
-
-    Takes a ``sessionmaker`` rather than opening its own engine/session, so it
-    composes with ``app.core.db`` and stays lazy -- constructing this class
-    does not connect to anything; only ``get_reservations()`` does.
-    """
-
-    session_factory: sessionmaker[Session]
-    limit: int = DEFAULT_LIMIT
-
-    def get_reservations(self) -> SapResult:
-        with self.session_factory() as session:
-            records = session.execute(_QUERY, {"limit": self.limit}).fetchall()
-        rows = [_to_reservation_row(record) for record in records]
-        return SapResult(rows=rows, status=make_status("ReservationItemSet", SourceMode.LIVE, len(rows)))

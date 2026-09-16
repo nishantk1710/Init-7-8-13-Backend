@@ -9,7 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.initiatives.i13.models import LifecycleStatus
+from app.initiatives.i13.attribution import attribute_consumption
+from app.initiatives.i13.models import LifecycleStatus, ReservationLedgerEntry
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
@@ -17,6 +18,14 @@ from app.integrations.sap.postgres_reservation import PostgresReservationReposit
 from app.schemas.i13 import ReservationLedgerEntryResponse
 
 router = APIRouter()
+
+
+def _to_response(entry: ReservationLedgerEntry) -> ReservationLedgerEntryResponse:
+    attribution = attribute_consumption(entry)
+    response = ReservationLedgerEntryResponse.model_validate(entry)
+    return response.model_copy(
+        update={"attribution_status": attribution.status, "attribution_evidence": attribution.evidence}
+    )
 
 
 @router.get("/utilisation-ledger", response_model=list[ReservationLedgerEntryResponse])
@@ -52,7 +61,7 @@ def list_reservation_ledger(
             wanted = None
         entries = [e for e in entries if e.lifecycle_status is wanted]
     page = entries[offset : offset + limit]
-    return [ReservationLedgerEntryResponse.model_validate(entry) for entry in page]
+    return [_to_response(entry) for entry in page]
 
 
 @router.get("/utilisation-ledger/{reservation_number}/{reservation_item}", response_model=ReservationLedgerEntryResponse)
@@ -76,4 +85,4 @@ def get_reservation_ledger_entry(
     matching = [e for e in entries if e.reservation_item == reservation_item]
     if not matching:
         raise HTTPException(status_code=404, detail="Reservation ledger entry not found")
-    return ReservationLedgerEntryResponse.model_validate(matching[0])
+    return _to_response(matching[0])

@@ -1,9 +1,10 @@
 """Movement normalisation: reversal-aware netting over goods-movement rows.
 
 A single reusable layer, rather than embedding movement-type conditionals
-inside every dashboard/aging/ledger query. Rows are plain
-``GoodsMovementItemSet`` dicts (``Bwart``, ``Menge``, ``BudatMkpf``, ...) as
-returned by ``SapGateway.get_goods_movements()``.
+inside every dashboard/aging/ledger query. Rows are plain normalized dicts
+(``Bwart``, ``Menge``, ``BudatMkpf``, ...) as produced by
+``app.integrations.sap.postgres_movements`` and consumed throughout
+``app.initiatives.i13``.
 """
 
 from datetime import date

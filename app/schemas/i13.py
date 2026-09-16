@@ -17,25 +17,25 @@ from app.initiatives.i13.models import (
     ExceptionType,
     GiLinkStatus,
     GrLinkStatus,
-    LedgerUtilisationStatus,
     LifecycleStatus,
-    LinkageStatus,
     PrPoLinkStatus,
-    ProcurementStatus,
     ReservationPrLinkStatus,
 )
-from app.integrations.sap.source_mode import SourceMode
+from app.initiatives.i13.ledger_compat import LedgerUtilisationStatus, LinkageStatus, ProcurementStatus
 from app.shared.material_scope import MaterialScope
 
 
 class DataSourceStatusResponse(BaseModel):
+    """Postgres ingestion status per raw extract table (from ``ingestion_run``)
+    -- replaces the old LIVE/MOCK SapGateway diagnostic, which no longer
+    applies now that every I13 read goes through Postgres."""
+
     model_config = ConfigDict(from_attributes=True)
 
-    entity_set: str
-    mode: SourceMode
+    table: str
     row_count: int
-    available: bool
-    fetched_at: datetime
+    status: str
+    loaded_at: datetime | None
 
 
 class MovementMetricsResponse(BaseModel):
@@ -147,8 +147,15 @@ class ReservationLedgerEntryResponse(BaseModel):
 
     material_scope: MaterialScope
 
+    attribution_status: AttributionStatus | None = None
+    attribution_evidence: str | None = None
+
 
 class UtilisationLedgerEntryResponse(BaseModel):
+    """Compatibility contract for ``GET /api/i13/ledger`` -- see
+    ``app.initiatives.i13.ledger_compat`` for why this still exists and what
+    it's built from now."""
+
     model_config = ConfigDict(from_attributes=True)
 
     ledger_id: str

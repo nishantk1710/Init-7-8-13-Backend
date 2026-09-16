@@ -8,6 +8,8 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.api.i13 import exceptions as exceptions_routes
 from app.api.i13 import ledger as ledger_routes
@@ -18,9 +20,14 @@ from app.api.i13 import reservation_ledger as reservation_ledger_routes
 from app.api.i13 import validation as validation_routes
 from app.api.i13 import watch as watch_routes
 from app.api.i13.deps import get_data_dir
+from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.summary import build_summary
-from app.integrations.sap.gateway import SapGateway, get_sap_gateway
+from app.integrations.sap.postgres_material import fetch_material_scope_index
+from app.integrations.sap.postgres_movements import PostgresMovementRepository
+from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
+from app.integrations.sap.postgres_reservation import PostgresReservationRepository
+from app.models import IngestionRun
 from app.schemas.i13 import DataSourceStatusResponse, I13SummaryResponse
 
 router = APIRouter(prefix="/i13", tags=["i13"])
@@ -39,17 +46,43 @@ router.include_router(exceptions_routes.router)
 router.include_router(reclassification_routes.router)
 router.include_router(validation_routes.router)
 
+# The raw extract tables I13 actually reads -- see app/seed/manifest.py for
+# the full delivery; this is the I13-relevant subset.
+_I13_TABLES = ("raw_eban", "raw_ekpo", "raw_ekbe", "raw_mseg", "raw_mkpf", "raw_mard", "raw_resb", "raw_marc")
+
 
 @router.get("/summary", response_model=I13SummaryResponse)
 def get_summary(
-    gateway: SapGateway = Depends(get_sap_gateway),
+    db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
     data_dir: Path = Depends(get_data_dir),
 ) -> I13SummaryResponse:
-    summary = build_summary(gateway, config, data_dir)
+    movement_repo = PostgresMovementRepository(db)
+    procurement_repo = PostgresProcurementRepository(db)
+    reservation_repo = PostgresReservationRepository(db)
+    material_scope_index = fetch_material_scope_index(db)
+
+    summary = build_summary(movement_repo, procurement_repo, reservation_repo, material_scope_index, config, data_dir)
     return I13SummaryResponse(**asdict(summary))
 
 
 @router.get("/data-sources", response_model=list[DataSourceStatusResponse])
-def get_data_sources(gateway: SapGateway = Depends(get_sap_gateway)) -> list[DataSourceStatusResponse]:
-    return [DataSourceStatusResponse.model_validate(status) for status in gateway.data_source_statuses()]
+def get_data_sources(db: Session = Depends(get_db)) -> list[DataSourceStatusResponse]:
+    """Postgres ingestion status per raw extract table I13 reads, from
+    ``ingestion_run`` -- the real replacement for the old CSV-gateway
+    LIVE/MOCK diagnostic, which no longer applies."""
+    results = []
+    for table in _I13_TABLES:
+        run = db.execute(
+            select(IngestionRun)
+            .where(IngestionRun.target_table == table, IngestionRun.status == "succeeded")
+            .order_by(IngestionRun.finished_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if run is not None:
+            results.append(
+                DataSourceStatusResponse(table=table, row_count=run.row_count, status="LOADED", loaded_at=run.finished_at)
+            )
+        else:
+            results.append(DataSourceStatusResponse(table=table, row_count=0, status="NOT_LOADED", loaded_at=None))
+    return results
