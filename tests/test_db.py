@@ -20,7 +20,7 @@ skipping is not evidence that the database works.
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from app.core.config import Settings, get_settings
 from app.core.db import (
@@ -165,11 +165,7 @@ def test_readiness_reports_database_ok() -> None:
 @needs_db
 def test_migration_has_been_applied() -> None:
     """The table exists in the database, not just in the metadata."""
-    with get_engine().connect() as connection:
-        exists = connection.execute(
-            text("SELECT to_regclass('public.ingestion_run')")
-        ).scalar_one()
-    assert exists is not None, "run `alembic upgrade head`"
+    assert inspect(get_engine()).has_table("ingestion_run"), "run `alembic upgrade head`"
 
 
 @needs_db
