@@ -94,7 +94,23 @@ jobs:
       - name: Run tests
         # -rs lists the skipped tests with their reason, so "2 skipped" is
         # visible in the log as a deliberate choice rather than a silent hole.
-        run: pytest -q -rs
+        #
+        # "not drift" is explicit, not inherited from pytest.ini's addopts: a
+        # bare -m REPLACES that default rather than adding to it, so leaving
+        # this as just "-rs" would silently re-admit the live-SAP-sensitive
+        # drift suite into the blocking gate.
+        run: pytest -q -rs -m "not live and not drift"
+
+      # Drift compares our recorded knowledge of SAP (known_conditions.py)
+      # against a fresh discovery snapshot. It fails when SAP's measured
+      # behaviour changes -- see CLAUDE.md: that is information for whoever
+      # owns the SAP contract, not a reason to block unrelated PRs, and never
+      # something to quietly re-baseline to make green. Mirrors deploy.yml.
+      - name: SAP contract drift (informational)
+        continue-on-error: true
+        run: |
+          pytest -q -m "drift" \
+            || echo "::warning::SAP contract drift detected -- see pytest.ini, marker 'drift'"
 
   # `npm run lint`'s equivalent is deliberately not a step yet. Add ruff or
   # flake8 in the same change that fixes whatever it first reports, so CI starts
