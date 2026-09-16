@@ -29,7 +29,7 @@ def upgrade() -> None:
     sa.Column('source_sha256', sa.String(length=64), nullable=True),
     sa.Column('status', sa.String(length=32), nullable=False),
     sa.Column('error', sa.Text(), nullable=True),
-    sa.Column('started_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('started_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
     sa.Column('finished_at', sa.DateTime(timezone=True), nullable=True),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_ingestion_run'))
     )
