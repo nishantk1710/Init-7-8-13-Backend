@@ -1,5 +1,52 @@
-# Runtime dependencies. Keep this list minimal -- add a library only when the
-# code actually imports it.
+# All Python dependencies for the backend, runtime and test alike.
+#
+# Keep this list minimal -- add a library only when the code actually imports
+# it. Pin every version: an unpinned dependency makes a local pass and an Azure
+# failure indistinguishable.
+#
+# Note: the test packages below are installed in every environment, deployment
+# included. If a deployed image ever needs to stay lean, split the "Test" block
+# back out into requirements-dev.txt with a leading `-r requirements.txt`.
+
+# --- Runtime ---
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
+# The production server on App Service. uvicorn alone is a single process with
+# no supervisor; gunicorn runs it under a master that replaces a worker which
+# dies instead of taking the site down with it. See the startup command in
+# README, "Deployment".
+gunicorn==23.0.0
 pydantic-settings==2.15.0
+# Imported directly by the API schemas and settings. Pinned rather than
+# inherited from fastapi: a transitive major-version bump would land silently.
+pydantic==2.13.5
+
+# --- Data / persistence ---
+# Azure SQL (sqldb-aicom) is the only backend. pyodbc additionally needs the
+# system-level "ODBC Driver 18 for SQL Server", which is NOT a pip package --
+# it ships with the App Service Python image, and a local machine has to install
+# it separately. That is the one dependency this file cannot pin for you.
+SQLAlchemy==2.0.52
+pyodbc==5.3.0
+alembic==1.19.2
+
+# --- Azure ---
+# Data Lake storage (stvziaicomnonprod) behind the Storage port, and the managed
+# identity that reaches it. azure-identity is what makes the deployed app need
+# no storage secret at all.
+azure-identity==1.19.0
+azure-storage-file-datalake==12.17.0
+
+# Reads the SAP extract workbooks. app/seed/reader.py opens every one of them
+# with read_only=True -- see README, "Seeding".
+openpyxl==3.1.5
+
+# --- SAP / CPI ---
+# HTTP to the CPI generic OData endpoint. Chosen over httpx because this is the
+# library data-generator/cpi_discovery.py has been proven against for weeks --
+# porting working auth and retry logic to a new client is unforced risk.
+requests==2.34.2
+
+# --- Test ---
+pytest==9.1.1
+httpx2==2.12.0

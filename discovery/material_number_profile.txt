@@ -1,0 +1,56 @@
+MaterialSet full pull, 2026-09-16T07:21:00Z: 2040 rows in 5 page(s)
+
+Matnr length distribution:
+  len  3: 2
+  len  4: 4
+  len  5: 10
+  len  6: 9
+  len  7: 7
+  len  8: 6
+  len  9: 5
+  len 10: 5
+  len 11: 4
+  len 12: 8
+  len 13: 1
+  len 14: 1
+  len 18: 1978
+
+Leading two characters after stripping leading zeros:
+  43   338
+  50   276
+  20   233
+  28   208
+  30   200
+  60   190
+  10   100
+  90   75
+  87   61
+  37   54
+  44   47
+  32   34
+  51   32
+  80   26
+  40   21
+
+80-series materials present (after stripping leading zeros): 26  e.g. 000000008000000000, 000000008000000001, 000000008000000002, 000000008000000011, 000000008000000012
+
+Material type (Mtart) distribution:
+  ZMPX   846
+  HALB   231
+  ZOPC   203
+  FERT   195
+  ZMAC   146
+  ERSA   130
+  UNBW   71
+  ROH    69
+  PROD   48
+  IBAU   29
+  ZREP   17
+  LEER   15
+  HIBE   15
+  ZCAP   9
+  KMAT   7
+  ZCON   4
+  LEIH   3
+  HERS   1
+  WERB   1

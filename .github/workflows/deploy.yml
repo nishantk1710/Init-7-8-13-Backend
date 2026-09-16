@@ -1,0 +1,137 @@
+# Backend deployment to Azure App Service (app-vzi-aicom-nonprod-san).
+#
+# WHAT CHANGED, AND WHY IT MATTERS
+#
+# The previous version of this file was written before VZI's Azure existed and
+# said so. Two things in it would now fail:
+#
+#   1. It ran `alembic upgrade head` on the GitHub runner. It cannot work.
+#      sql-vzi-aicom-nonprod-san has public network access disabled and is
+#      reached through pe-sqlvziaicomnonprod-sqlserver, so the runner has no
+#      network path to the database and no secret changes that. Migrations now
+#      run inside the App Service, from startup.sh, on the other side of the
+#      private endpoint.
+#
+#   2. It had no startup command, so Oryx would guess -- and its guess for a
+#      FastAPI app is a sync gunicorn worker, which cannot run ASGI.
+#
+# STILL REQUIRED BEFORE THIS RUNS
+#
+#   * Repository secret AZURE_WEBAPP_PUBLISH_PROFILE, or preferably OIDC via
+#     azure/login (no long-lived credential in GitHub).
+#   * App settings on the App Service -- NOT here, and NOT in this repository:
+#       DATABASE_URL     mssql+pyodbc://...  (carries a password; use a Key
+#                                             Vault reference, see README)
+#       STORAGE_URL      abfss://<container>@stvziaicomnonprod.dfs.core.windows.net/...
+#       FOUNDRY_*        endpoint, key, deployments
+#       CPI_*            base URL, token URL, client id and secret
+#   * A system-assigned managed identity on the App Service, with
+#     "Storage Blob Data Reader" on stvziaicomnonprod. Without it the Data Lake
+#     adapter authenticates as nobody and every read is a 403.
+#   * Startup Command set to: bash /home/site/wwwroot/startup.sh
+#   * CPI's allowlist updated for the App Service's outbound IPs, if it has one.
+#     Asked late, this costs a day of Azure time.
+
+name: Deploy backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**"
+      - "!**.md"
+  workflow_dispatch:
+
+concurrency:
+  # Two deployments racing onto one App Service leaves it in whichever state
+  # finished last, which is not necessarily the newer commit.
+  group: deploy-backend
+  cancel-in-progress: false
+
+env:
+  AZURE_WEBAPP_NAME: app-vzi-aicom-nonprod-san
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # The build gate. Azure-dependent tests skip here by design -- this runner
+      # is outside the VNet -- so what runs is everything that does not need
+      # Azure, including the storage conformance suite against its fake.
+      #
+      # Both markers are spelled out because a command-line -m REPLACES the one
+      # in pytest.ini's addopts rather than combining with it. Writing only
+      # "not drift" here would silently re-enable the live SAP tests and have
+      # this runner call CPI on every push.
+      #
+      # Green here does NOT mean the deployment works. The smoke checks below,
+      # and W2.2 from inside the App Service, are what prove that.
+      - name: Tests
+        run: python -m pytest -q -m "not live and not drift"
+
+      # Drift is reported, never blocking. These compare our recorded knowledge
+      # of SAP against itself; they fail when SAP changes, which is information
+      # rather than a reason to refuse a deployment of unrelated code.
+      - name: SAP contract drift (informational)
+        continue-on-error: true
+        run: |
+          python -m pytest -q -m "drift" \
+            || echo "::warning::SAP contract drift detected -- see pytest.ini, marker 'drift'"
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Guard -- refuse to deploy without a publish credential
+        run: |
+          if [ -z "${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}" ]; then
+            echo "AZURE_WEBAPP_PUBLISH_PROFILE is not set. See the header of this file."
+            exit 1
+          fi
+
+      # Oryx builds on the App Service side (SCM_DO_BUILD_DURING_DEPLOYMENT),
+      # which is what installs pyodbc against the image's ODBC driver. Building
+      # wheels here instead would ship a Linux-runner build that may not match.
+      - name: Deploy
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: .
+
+      - name: Smoke check -- liveness
+        # /api/health is dependency-free, so this proves the process started and
+        # is serving. It says nothing about the database or storage.
+        run: |
+          curl --fail --retry 10 --retry-delay 10 --retry-all-errors \
+            "https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/api/health"
+
+      - name: Smoke check -- readiness
+        # /api/ready touches the database, storage and the model. A 503 here on
+        # a 200 above means the app is running but cannot reach its dependencies
+        # -- the private endpoints, the managed identity's role assignment, or a
+        # missing app setting. Reported, not fatal: a deployment that is up but
+        # not yet wired is still worth having deployed, and the body says which
+        # dependency is unhappy.
+        continue-on-error: true
+        run: |
+          curl --silent --show-error --fail-with-body --retry 5 --retry-delay 10 \
+            "https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/api/ready" \
+            || echo "::warning::/api/ready is not green yet -- see the body above"

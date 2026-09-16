@@ -1,122 +1,828 @@
-24 failed call(s). CPI entry point: https://vzicpinonprod.it-cpi021-rt.cfapps.in30.hana.ondemand.com/http/SAPECC/OdataConsumption
+118 failed call(s). CPI entry point: https://vzicpinonprod.it-cpi021-rt.cfapps.in30.hana.ondemand.com/http/SAPECC/OdataConsumption
 SAP path = what CPI forwards to the ECC gateway; paste it into /IWFND/GW_CLIENT to reproduce.
 
-[1] HTTP 500 after 1.0s at 2026-09-09T13:19:42Z
+[1] HTTP 400 after 0.7s at 2026-09-15T06:59:21Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/MaterialValuationSet/$count
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:17 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "6abf257c-ec8b-4005-5ba5-6a250a92f8fd, 6abf257c-ec8b-4005-5ba5-6a250a92f8fd", "x-vcap-request-id": "6abf257c-ec8b-4005-5ba5-6a250a92f8fd"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/MaterialValuationSet/$count?&sap-client=110 with statusCode: 400"
+}
+
+[2] HTTP 400 after 0.7s at 2026-09-15T06:59:21Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/MaterialValuationSet?$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:17 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "a070e598-1c5b-406e-72a1-a29146090eed, a070e598-1c5b-406e-72a1-a29146090eed", "x-vcap-request-id": "a070e598-1c5b-406e-72a1-a29146090eed"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/MaterialValuationSet?$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 400"
+}
+
+[3] HTTP 400 after 0.6s at 2026-09-15T06:59:22Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet/$count
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:18 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "aba87f45-9c51-4d3e-719b-682b0ec2770f, aba87f45-9c51-4d3e-719b-682b0ec2770f", "x-vcap-request-id": "aba87f45-9c51-4d3e-719b-682b0ec2770f"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet/$count?&sap-client=110 with statusCode: 400"
+}
+
+[4] HTTP 400 after 0.6s at 2026-09-15T06:59:23Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet?$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:19 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "3c0efd4e-583f-41ee-5e1c-0f32daf70b79, 3c0efd4e-583f-41ee-5e1c-0f32daf70b79", "x-vcap-request-id": "3c0efd4e-583f-41ee-5e1c-0f32daf70b79"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet?$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 400"
+}
+
+[5] HTTP 400 after 0.7s at 2026-09-15T06:59:23Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet/$count
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:19 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "90dc6b66-e30c-496a-57c9-26ba80b9e788, 90dc6b66-e30c-496a-57c9-26ba80b9e788", "x-vcap-request-id": "90dc6b66-e30c-496a-57c9-26ba80b9e788"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet/$count?&sap-client=110 with statusCode: 400"
+}
+
+[6] HTTP 400 after 0.6s at 2026-09-15T06:59:24Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet?$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:20 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "5d750a6e-143d-466a-7c85-7af858bee35c, 5d750a6e-143d-466a-7c85-7af858bee35c", "x-vcap-request-id": "5d750a6e-143d-466a-7c85-7af858bee35c"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet?$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 400"
+}
+
+[7] HTTP 400 after 0.6s at 2026-09-15T06:59:25Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/BatchStockSet/$count
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:20 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "a0a341c8-896c-42cd-6726-d66f12167cf9, a0a341c8-896c-42cd-6726-d66f12167cf9", "x-vcap-request-id": "a0a341c8-896c-42cd-6726-d66f12167cf9"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/BatchStockSet/$count?&sap-client=110 with statusCode: 400"
+}
+
+[8] HTTP 400 after 0.6s at 2026-09-15T06:59:25Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/BatchStockSet?$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:21 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "3a643b39-dbec-4f19-4e30-0bd82280d1bd, 3a643b39-dbec-4f19-4e30-0bd82280d1bd", "x-vcap-request-id": "3a643b39-dbec-4f19-4e30-0bd82280d1bd"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/BatchStockSet?$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 400"
+}
+
+[9] HTTP 400 after 0.6s at 2026-09-15T06:59:26Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/MonthlyMovementStatisticSet/$count
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:22 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "6b5e644e-63fd-4b26-4854-d5f0eb80a46d, 6b5e644e-63fd-4b26-4854-d5f0eb80a46d", "x-vcap-request-id": "6b5e644e-63fd-4b26-4854-d5f0eb80a46d"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/MonthlyMovementStatisticSet/$count?&sap-client=110 with statusCode: 400"
+}
+
+[10] HTTP 400 after 0.6s at 2026-09-15T06:59:27Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/MonthlyMovementStatisticSet?$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:22 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "9a0a6b44-398b-423c-5ae1-b4dac925bfff, 9a0a6b44-398b-423c-5ae1-b4dac925bfff", "x-vcap-request-id": "9a0a6b44-398b-423c-5ae1-b4dac925bfff"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/MonthlyMovementStatisticSet?$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 400"
+}
+
+[11] HTTP 400 after 0.7s at 2026-09-15T06:59:28Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/MaterialValuationSet?$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:24 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "9135ac10-0806-4ba5-6fdb-3ca56d07ccaa, 9135ac10-0806-4ba5-6fdb-3ca56d07ccaa", "x-vcap-request-id": "9135ac10-0806-4ba5-6fdb-3ca56d07ccaa"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/MaterialValuationSet?$top=1&$format=json&sap-client=110 with statusCode: 400"
+}
+
+[12] HTTP 400 after 0.7s at 2026-09-15T06:59:29Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/MonthlyMovementStatisticSet?$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:25 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "bb82351e-a458-4681-7c07-cf1894944c2a, bb82351e-a458-4681-7c07-cf1894944c2a", "x-vcap-request-id": "bb82351e-a458-4681-7c07-cf1894944c2a"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/MonthlyMovementStatisticSet?$top=1&$format=json&sap-client=110 with statusCode: 400"
+}
+
+[13] HTTP 500 after 0.6s at 2026-09-15T06:59:31Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$top=1&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:19:41 GMT", "x-correlationid": "2f44da1c-385d-4e0c-668c-0e56e1f440cc, 2f44da1c-385d-4e0c-668c-0e56e1f440cc", "x-vcap-request-id": "2f44da1c-385d-4e0c-668c-0e56e1f440cc"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:27 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "d73ef7ae-3d48-4abd-5572-49116f38d855, d73ef7ae-3d48-4abd-5572-49116f38d855", "x-vcap-request-id": "d73ef7ae-3d48-4abd-5572-49116f38d855"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[2] HTTP 500 after 1.2s at 2026-09-09T13:19:45Z
+[14] HTTP 500 after 1.6s at 2026-09-15T06:59:35Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$top=1&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:19:44 GMT", "x-correlationid": "602bc998-f098-40cb-7430-e74a41202d4a, 602bc998-f098-40cb-7430-e74a41202d4a", "x-vcap-request-id": "602bc998-f098-40cb-7430-e74a41202d4a"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:31 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "91b2d36a-bba6-4de5-5386-56246190fcfd, 91b2d36a-bba6-4de5-5386-56246190fcfd", "x-vcap-request-id": "91b2d36a-bba6-4de5-5386-56246190fcfd"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[3] HTTP 500 after 1.0s at 2026-09-09T13:19:58Z
+[15] HTTP 400 after 0.6s at 2026-09-15T06:59:35Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet?$top=5&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:31 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "09d18928-a5f1-4de7-674c-2edf36001932, 09d18928-a5f1-4de7-674c-2edf36001932", "x-vcap-request-id": "09d18928-a5f1-4de7-674c-2edf36001932"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet?$top=5&$format=json&sap-client=110 with statusCode: 400"
+}
+
+[16] HTTP 400 after 0.7s at 2026-09-15T06:59:36Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet?$top=5&$skip=5&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:32 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "4c507561-2c26-4206-4bdd-8ee7410ea741, 4c507561-2c26-4206-4bdd-8ee7410ea741", "x-vcap-request-id": "4c507561-2c26-4206-4bdd-8ee7410ea741"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet?$top=5&$skip=5&$format=json&sap-client=110 with statusCode: 400"
+}
+
+[17] HTTP 400 after 0.6s at 2026-09-15T06:59:37Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet?$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:33 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "1f4fead0-ac1d-4dd5-48d6-bdf9270ded34, 1f4fead0-ac1d-4dd5-48d6-bdf9270ded34", "x-vcap-request-id": "1f4fead0-ac1d-4dd5-48d6-bdf9270ded34"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet?$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 400"
+}
+
+[18] HTTP 500 after 0.7s at 2026-09-15T06:59:39Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet?$top=1000&$skip=40000&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:19:57 GMT", "x-correlationid": "c058fb04-4018-42ff-4ab7-0c51d6a82ae6, c058fb04-4018-42ff-4ab7-0c51d6a82ae6", "x-vcap-request-id": "c058fb04-4018-42ff-4ab7-0c51d6a82ae6"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:35 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "084736cb-b525-4b90-6226-a08180d68c71, 084736cb-b525-4b90-6226-a08180d68c71", "x-vcap-request-id": "084736cb-b525-4b90-6226-a08180d68c71"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet?$top=1000&$skip=40000&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[4] HTTP 500 after 1.0s at 2026-09-09T13:20:01Z
+[19] HTTP 500 after 0.7s at 2026-09-15T06:59:41Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet?$orderby=Aedat desc&$top=3&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:20:00 GMT", "x-correlationid": "20989591-062d-4f33-7a2e-2e1198037da4, 20989591-062d-4f33-7a2e-2e1198037da4", "x-vcap-request-id": "20989591-062d-4f33-7a2e-2e1198037da4"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:37 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "0546ae5e-c7af-4cbf-7e02-c55176e6789a, 0546ae5e-c7af-4cbf-7e02-c55176e6789a", "x-vcap-request-id": "0546ae5e-c7af-4cbf-7e02-c55176e6789a"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet?$orderby=Aedat%20desc&$top=3&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[5] HTTP 400 after 1.0s at 2026-09-09T13:20:07Z
+[20] HTTP 400 after 0.6s at 2026-09-15T06:59:43Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count?$filter=Dismm eq 'VB' and Minbe gt 0
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:20:05 GMT", "x-correlationid": "8de5acd7-429e-4cd1-51b6-a1c8da3cb1b6, 8de5acd7-429e-4cd1-51b6-a1c8da3cb1b6", "x-vcap-request-id": "8de5acd7-429e-4cd1-51b6-a1c8da3cb1b6"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:39 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "c8fe8b3e-83cc-4c50-79c5-098811b33657, c8fe8b3e-83cc-4c50-79c5-098811b33657", "x-vcap-request-id": "c8fe8b3e-83cc-4c50-79c5-098811b33657"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count?$filter=Dismm%20eq%20'VB'%20and%20Minbe%20gt%200&sap-client=110 with statusCode: 400"
+}
 
-[6] HTTP 400 after 0.9s at 2026-09-09T13:20:07Z
+[21] HTTP 400 after 0.8s at 2026-09-15T06:59:44Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count?$filter=(Dismm eq 'ND' or Dismm eq 'PD') and Minbe gt 0
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:20:06 GMT", "x-correlationid": "c1859a75-9c09-4943-7a9e-25ded60d7757, c1859a75-9c09-4943-7a9e-25ded60d7757", "x-vcap-request-id": "c1859a75-9c09-4943-7a9e-25ded60d7757"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:40 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "850869d6-73a5-412a-5dcc-8075fb10b5e6, 850869d6-73a5-412a-5dcc-8075fb10b5e6", "x-vcap-request-id": "850869d6-73a5-412a-5dcc-8075fb10b5e6"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count?$filter=(Dismm%20eq%20'ND'%20or%20Dismm%20eq%20'PD')%20and%20Minbe%20gt%200&sap-client=110 with statusCode: 400"
+}
 
-[7] HTTP 500 after 1.0s at 2026-09-09T13:20:13Z
+[22] HTTP 500 after 0.6s at 2026-09-15T06:59:47Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count?$filter=Pstyp eq '3'
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:42 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "473e7522-9842-422f-4a3b-7ad90490980a, 473e7522-9842-422f-4a3b-7ad90490980a", "x-vcap-request-id": "473e7522-9842-422f-4a3b-7ad90490980a"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count?$filter=Pstyp%20eq%20'3'&sap-client=110 with statusCode: 500"
+}
+
+[23] HTTP 500 after 0.7s at 2026-09-15T06:59:49Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count?$filter=startswith(Matnr,'80')
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:45 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "c37324aa-1fd1-4762-6bf0-3e50fd5b06be, c37324aa-1fd1-4762-6bf0-3e50fd5b06be", "x-vcap-request-id": "c37324aa-1fd1-4762-6bf0-3e50fd5b06be"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count?$filter=startswith(Matnr,'80')&sap-client=110 with statusCode: 500"
+}
+
+[24] HTTP 500 after 0.6s at 2026-09-15T06:59:52Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$inlinecount=allpages&$top=1&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:20:11 GMT", "x-correlationid": "d0a7557d-fa43-497c-669c-e01efdd0588e, d0a7557d-fa43-497c-669c-e01efdd0588e", "x-vcap-request-id": "d0a7557d-fa43-497c-669c-e01efdd0588e"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:47 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "b797e7df-0fb0-4de7-4eb1-0ff0c6ab2813, b797e7df-0fb0-4de7-4eb1-0ff0c6ab2813", "x-vcap-request-id": "b797e7df-0fb0-4de7-4eb1-0ff0c6ab2813"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[8] HTTP 500 after 1.2s at 2026-09-09T13:20:16Z
+[25] HTTP 500 after 1.0s at 2026-09-15T06:59:55Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$inlinecount=allpages&$top=1&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:20:15 GMT", "x-correlationid": "cbdfa9de-edf3-4c59-6091-1f77fc7bb3a3, cbdfa9de-edf3-4c59-6091-1f77fc7bb3a3", "x-vcap-request-id": "cbdfa9de-edf3-4c59-6091-1f77fc7bb3a3"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:50 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "2ec16f32-2fa9-4dbd-4de2-28c42a392493, 2ec16f32-2fa9-4dbd-4de2-28c42a392493", "x-vcap-request-id": "2ec16f32-2fa9-4dbd-4de2-28c42a392493"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[9] HTTP 500 after 0.9s at 2026-09-09T13:20:47Z
+[26] HTTP 500 after 0.6s at 2026-09-15T06:59:57Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count?$filter=startswith(Matnr,'2227')
+    headers  : {"Date": "Tue, 15 Sep 2026 06:59:53 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "e565e768-2809-49fe-4901-a8b357b15341, e565e768-2809-49fe-4901-a8b357b15341", "x-vcap-request-id": "e565e768-2809-49fe-4901-a8b357b15341"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count?$filter=startswith(Matnr,'2227')&sap-client=110 with statusCode: 500"
+}
+
+[27] HTTP 500 after 0.7s at 2026-09-15T07:00:06Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$orderby=Matnr,Werks&$top=500&$skip=0&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:01 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "0a8ebe57-5910-402e-7d62-40abe848aa8a, 0a8ebe57-5910-402e-7d62-40abe848aa8a", "x-vcap-request-id": "0a8ebe57-5910-402e-7d62-40abe848aa8a"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$orderby=Matnr,Werks&$top=500&$skip=0&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[28] HTTP 500 after 0.9s at 2026-09-15T07:00:08Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Dismm eq 'VB'&$orderby=Matnr,Werks&$top=500&$skip=0&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:04 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "fd46c092-dfed-406b-66e1-108f446b0b4c, fd46c092-dfed-406b-66e1-108f446b0b4c", "x-vcap-request-id": "fd46c092-dfed-406b-66e1-108f446b0b4c"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Dismm%20eq%20'VB'&$orderby=Matnr,Werks&$top=500&$skip=0&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[29] HTTP 500 after 0.7s at 2026-09-15T07:00:11Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Dismm eq 'ND'&$orderby=Matnr,Werks&$top=500&$skip=0&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:07 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "fce155f9-b7dc-494a-6426-10786ad32284, fce155f9-b7dc-494a-6426-10786ad32284", "x-vcap-request-id": "fce155f9-b7dc-494a-6426-10786ad32284"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Dismm%20eq%20'ND'&$orderby=Matnr,Werks&$top=500&$skip=0&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[30] HTTP 500 after 0.7s at 2026-09-15T07:00:14Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Dismm eq 'PD'&$orderby=Matnr,Werks&$top=500&$skip=0&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:10 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "b360d416-efec-4996-4db0-30b25a00bb14, b360d416-efec-4996-4db0-30b25a00bb14", "x-vcap-request-id": "b360d416-efec-4996-4db0-30b25a00bb14"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Dismm%20eq%20'PD'&$orderby=Matnr,Werks&$top=500&$skip=0&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[31] HTTP 500 after 0.8s at 2026-09-15T07:00:16Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Dismm eq 'V1'&$orderby=Matnr,Werks&$top=500&$skip=0&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:12 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "2ba89d0d-3369-455d-5d77-6a787894e549, 2ba89d0d-3369-455d-5d77-6a787894e549", "x-vcap-request-id": "2ba89d0d-3369-455d-5d77-6a787894e549"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Dismm%20eq%20'V1'&$orderby=Matnr,Werks&$top=500&$skip=0&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[32] HTTP 500 after 0.7s at 2026-09-15T07:00:20Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet?$filter=Bsart eq 'ZREP'&$top=500&$skip=0&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:20:46 GMT", "x-correlationid": "8d40f62a-84c4-4d65-6d62-5a41722002aa, 8d40f62a-84c4-4d65-6d62-5a41722002aa", "x-vcap-request-id": "8d40f62a-84c4-4d65-6d62-5a41722002aa"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:15 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "87cb01e4-4236-45da-629c-e57dca5f17fd, 87cb01e4-4236-45da-629c-e57dca5f17fd", "x-vcap-request-id": "87cb01e4-4236-45da-629c-e57dca5f17fd"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet?$filter=Bsart%20eq%20'ZREP'&$top=500&$skip=0&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[10] HTTP 500 after 1.0s at 2026-09-09T13:21:01Z
+[33] HTTP 500 after 0.7s at 2026-09-15T07:00:21Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count?$filter=startswith(Matnr,'8')
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:17 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "1c46280a-7fc2-4884-4544-69a0ef631c26, 1c46280a-7fc2-4884-4544-69a0ef631c26", "x-vcap-request-id": "1c46280a-7fc2-4884-4544-69a0ef631c26"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count?$filter=startswith(Matnr,'8')&sap-client=110 with statusCode: 500"
+}
+
+[34] HTTP 500 after 0.7s at 2026-09-15T07:00:22Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=startswith(Matnr,'8')&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:17 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "3adf9d8b-64f6-49a7-73fd-8a3342155d9a, 3adf9d8b-64f6-49a7-73fd-8a3342155d9a", "x-vcap-request-id": "3adf9d8b-64f6-49a7-73fd-8a3342155d9a"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=startswith(Matnr,'8')&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[35] HTTP 500 after 0.6s at 2026-09-15T07:00:22Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=substringof('800',Matnr)&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:18 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "78918065-0258-4bac-4e6b-1c37d06f6419, 78918065-0258-4bac-4e6b-1c37d06f6419", "x-vcap-request-id": "78918065-0258-4bac-4e6b-1c37d06f6419"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=substringof('800',Matnr)&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[36] HTTP 400 after 0.7s at 2026-09-15T07:00:24Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet?$filter=Udate ge datetime'2026-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:20 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "53ff46a4-5573-4a32-7b5a-52a41cdb3d53, 53ff46a4-5573-4a32-7b5a-52a41cdb3d53", "x-vcap-request-id": "53ff46a4-5573-4a32-7b5a-52a41cdb3d53"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet?$filter=Udate%20ge%20datetime'2026-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 400"
+}
+
+[37] HTTP 400 after 0.6s at 2026-09-15T07:00:25Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet?$filter=Objectclas eq 'MATERIAL' and (Tabname eq 'MARC' or Tabname eq 'MARA')&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:20 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "048f63a2-91a3-4585-4f41-54a08298f4b8, 048f63a2-91a3-4585-4f41-54a08298f4b8", "x-vcap-request-id": "048f63a2-91a3-4585-4f41-54a08298f4b8"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet?$filter=Objectclas%20eq%20'MATERIAL'%20and%20(Tabname%20eq%20'MARC'%20or%20Tabname%20eq%20'MARA')&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 400"
+}
+
+[38] HTTP 500 after 0.8s at 2026-09-15T07:00:27Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count?$filter=Menge eq 'ZZ~NOPE'
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:21:00 GMT", "x-correlationid": "5de4ef85-5e0c-414b-63fa-392c45191a96, 5de4ef85-5e0c-414b-63fa-392c45191a96", "x-vcap-request-id": "5de4ef85-5e0c-414b-63fa-392c45191a96"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:23 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "8e406c12-1796-4b87-4717-dbb0bed2dc9b, 8e406c12-1796-4b87-4717-dbb0bed2dc9b", "x-vcap-request-id": "8e406c12-1796-4b87-4717-dbb0bed2dc9b"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count?$filter=Menge%20eq%20'ZZ%7ENOPE'&sap-client=110 with statusCode: 500"
+}
 
-[11] HTTP 500 after 0.9s at 2026-09-09T13:21:02Z
+[39] HTTP 500 after 0.8s at 2026-09-15T07:00:28Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:21:01 GMT", "x-correlationid": "5e17c453-f681-4cc2-58ff-14e37dba893a, 5e17c453-f681-4cc2-58ff-14e37dba893a", "x-vcap-request-id": "5e17c453-f681-4cc2-58ff-14e37dba893a"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:24 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "00fc0f39-d854-48df-68dd-45d1b44a0237, 00fc0f39-d854-48df-68dd-45d1b44a0237", "x-vcap-request-id": "00fc0f39-d854-48df-68dd-45d1b44a0237"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Menge%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[12] HTTP 500 after 0.9s at 2026-09-09T13:21:04Z
+[40] HTTP 500 after 0.9s at 2026-09-15T07:00:29Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Preis eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:21:03 GMT", "x-correlationid": "871a1a4b-0ecf-4f1e-685f-a55ce5cab0a2, 871a1a4b-0ecf-4f1e-685f-a55ce5cab0a2", "x-vcap-request-id": "871a1a4b-0ecf-4f1e-685f-a55ce5cab0a2"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:25 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "c25775f4-cefe-4540-45a2-0da58c8192a5, c25775f4-cefe-4540-45a2-0da58c8192a5", "x-vcap-request-id": "c25775f4-cefe-4540-45a2-0da58c8192a5"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Preis%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[13] HTTP 500 after 0.9s at 2026-09-09T13:21:05Z
+[41] HTTP 500 after 0.6s at 2026-09-15T07:00:30Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:21:04 GMT", "x-correlationid": "fc013651-3312-4855-45de-19cf6233d2f2, fc013651-3312-4855-45de-19cf6233d2f2", "x-vcap-request-id": "fc013651-3312-4855-45de-19cf6233d2f2"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:26 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "9aede0a6-e89f-4db6-7a78-cc01a13c2fcf, 9aede0a6-e89f-4db6-7a78-cc01a13c2fcf", "x-vcap-request-id": "9aede0a6-e89f-4db6-7a78-cc01a13c2fcf"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Peinh%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[14] HTTP 500 after 1.0s at 2026-09-09T13:21:07Z
+[42] HTTP 500 after 0.6s at 2026-09-15T07:00:31Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Ebelp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:21:06 GMT", "x-correlationid": "7fce2820-dcf4-42bf-5e60-06f4f2c947f2, 7fce2820-dcf4-42bf-5e60-06f4f2c947f2", "x-vcap-request-id": "7fce2820-dcf4-42bf-5e60-06f4f2c947f2"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:27 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "30d94ff3-f2f1-4ec8-6301-3bb7b6b8f149, 30d94ff3-f2f1-4ec8-6301-3bb7b6b8f149", "x-vcap-request-id": "30d94ff3-f2f1-4ec8-6301-3bb7b6b8f149"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Ebelp%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[15] HTTP 500 after 1.0s at 2026-09-09T13:21:08Z
+[43] HTTP 500 after 0.6s at 2026-09-15T07:00:31Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Bsmng eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:21:07 GMT", "x-correlationid": "785eb76f-a610-4c9f-4d1a-2f9b95ca2a36, 785eb76f-a610-4c9f-4d1a-2f9b95ca2a36", "x-vcap-request-id": "785eb76f-a610-4c9f-4d1a-2f9b95ca2a36"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:27 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "daffa1c7-30d3-49c2-7915-9a2f30b2a39f, daffa1c7-30d3-49c2-7915-9a2f30b2a39f", "x-vcap-request-id": "daffa1c7-30d3-49c2-7915-9a2f30b2a39f"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Bsmng%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[16] HTTP 500 after 1.0s at 2026-09-09T13:21:09Z
+[44] HTTP 500 after 0.7s at 2026-09-15T07:00:32Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Rsnum eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:21:08 GMT", "x-correlationid": "2d6cc51f-ec19-4a0d-6ca0-0eae6fc3f8fe, 2d6cc51f-ec19-4a0d-6ca0-0eae6fc3f8fe", "x-vcap-request-id": "2d6cc51f-ec19-4a0d-6ca0-0eae6fc3f8fe"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:28 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "f3c7cdc4-5ed7-4d1a-6d34-d876f7a864ca, f3c7cdc4-5ed7-4d1a-6d34-d876f7a864ca", "x-vcap-request-id": "f3c7cdc4-5ed7-4d1a-6d34-d876f7a864ca"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?$filter=Rsnum%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[17] HTTP 500 after 1.0s at 2026-09-09T13:22:09Z
+[45] HTTP 500 after 0.8s at 2026-09-15T07:00:34Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet/$count?$filter=Lgort eq 'ZZ~NOPE'
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:29 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "b914d3d3-0373-432d-68f1-a24bbf89a962, b914d3d3-0373-432d-68f1-a24bbf89a962", "x-vcap-request-id": "b914d3d3-0373-432d-68f1-a24bbf89a962"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet/$count?$filter=Lgort%20eq%20'ZZ%7ENOPE'&sap-client=110 with statusCode: 500"
+}
+
+[46] HTTP 500 after 0.6s at 2026-09-15T07:00:34Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Lgort eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:30 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "7f8b352a-5ee5-48fc-51ac-8a30e9299eb3, 7f8b352a-5ee5-48fc-51ac-8a30e9299eb3", "x-vcap-request-id": "7f8b352a-5ee5-48fc-51ac-8a30e9299eb3"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Lgort%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[47] HTTP 500 after 0.6s at 2026-09-15T07:00:35Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Lifnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:31 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "950e1efd-ad89-4a4e-4017-09de742b8375, 950e1efd-ad89-4a4e-4017-09de742b8375", "x-vcap-request-id": "950e1efd-ad89-4a4e-4017-09de742b8375"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Lifnr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[48] HTTP 500 after 0.7s at 2026-09-15T07:00:36Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Shkzg eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:31 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "6e54638b-faaa-458f-6341-9732abc67fcb, 6e54638b-faaa-458f-6341-9732abc67fcb", "x-vcap-request-id": "6e54638b-faaa-458f-6341-9732abc67fcb"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Shkzg%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[49] HTTP 500 after 0.6s at 2026-09-15T07:00:36Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Dmbtr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:32 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "dc7a809a-3648-4e46-72b0-ea4b6c63ed79, dc7a809a-3648-4e46-72b0-ea4b6c63ed79", "x-vcap-request-id": "dc7a809a-3648-4e46-72b0-ea4b6c63ed79"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Dmbtr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[50] HTTP 500 after 0.6s at 2026-09-15T07:00:37Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:33 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "ef43b5e6-38a8-4737-4ef5-d44aae3e80aa, ef43b5e6-38a8-4737-4ef5-d44aae3e80aa", "x-vcap-request-id": "ef43b5e6-38a8-4737-4ef5-d44aae3e80aa"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Menge%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[51] HTTP 500 after 0.6s at 2026-09-15T07:00:37Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:33 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "e7892221-aafc-4634-4b4a-11ba6a5af836, e7892221-aafc-4634-4b4a-11ba6a5af836", "x-vcap-request-id": "e7892221-aafc-4634-4b4a-11ba6a5af836"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Meins%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[52] HTTP 500 after 1.2s at 2026-09-15T07:00:39Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Ebeln eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:34 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "e3a2f15a-c5d0-4c8a-5e70-27b47d0ee77e, e3a2f15a-c5d0-4c8a-5e70-27b47d0ee77e", "x-vcap-request-id": "e3a2f15a-c5d0-4c8a-5e70-27b47d0ee77e"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Ebeln%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[53] HTTP 500 after 0.8s at 2026-09-15T07:00:39Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Ebelp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:35 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "5c504fcc-d64b-4d25-6d20-1dfba21f5069, 5c504fcc-d64b-4d25-6d20-1dfba21f5069", "x-vcap-request-id": "5c504fcc-d64b-4d25-6d20-1dfba21f5069"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Ebelp%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[54] HTTP 500 after 0.7s at 2026-09-15T07:00:40Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Sgtxt eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:36 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "95820656-7fc8-400b-7ef9-0831738378f0, 95820656-7fc8-400b-7ef9-0831738378f0", "x-vcap-request-id": "95820656-7fc8-400b-7ef9-0831738378f0"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Sgtxt%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[55] HTTP 500 after 0.7s at 2026-09-15T07:00:41Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Wempf eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:37 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "be271f48-aa45-4195-792e-2e1f3b9a1edd, be271f48-aa45-4195-792e-2e1f3b9a1edd", "x-vcap-request-id": "be271f48-aa45-4195-792e-2e1f3b9a1edd"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Wempf%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[56] HTTP 500 after 0.8s at 2026-09-15T07:00:42Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Kostl eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:37 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "f071b42e-7a03-4cc7-48f2-132c0f82dcc3, f071b42e-7a03-4cc7-48f2-132c0f82dcc3", "x-vcap-request-id": "f071b42e-7a03-4cc7-48f2-132c0f82dcc3"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Kostl%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[57] HTTP 500 after 0.7s at 2026-09-15T07:00:42Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Aufnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:38 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "491f29e0-0942-45e1-7745-4c635afbcdf4, 491f29e0-0942-45e1-7745-4c635afbcdf4", "x-vcap-request-id": "491f29e0-0942-45e1-7745-4c635afbcdf4"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Aufnr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[58] HTTP 500 after 0.7s at 2026-09-15T07:00:43Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Rsnum eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:39 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "06bd54e9-9387-4607-414a-7fc204de6fdf, 06bd54e9-9387-4607-414a-7fc204de6fdf", "x-vcap-request-id": "06bd54e9-9387-4607-414a-7fc204de6fdf"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Rsnum%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[59] HTTP 500 after 0.7s at 2026-09-15T07:00:44Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Rspos eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:40 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "0a8e12fd-bd8e-4e9d-6b40-8c946f22bf4c, 0a8e12fd-bd8e-4e9d-6b40-8c946f22bf4c", "x-vcap-request-id": "0a8e12fd-bd8e-4e9d-6b40-8c946f22bf4c"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Rspos%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[60] HTTP 500 after 0.7s at 2026-09-15T07:00:44Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Umwrk eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:40 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "5e0a6aca-337b-4f43-7408-f0ba4ebae347, 5e0a6aca-337b-4f43-7408-f0ba4ebae347", "x-vcap-request-id": "5e0a6aca-337b-4f43-7408-f0ba4ebae347"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Umwrk%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[61] HTTP 500 after 0.6s at 2026-09-15T07:00:45Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Umlgo eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:41 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "f1493f8a-a575-4c35-7522-899fee9093d4, f1493f8a-a575-4c35-7522-899fee9093d4", "x-vcap-request-id": "f1493f8a-a575-4c35-7522-899fee9093d4"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Umlgo%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[62] HTTP 500 after 0.6s at 2026-09-15T07:00:46Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Grund eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:42 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "c52e18a4-9d14-478c-79e6-80d1cc15427b, c52e18a4-9d14-478c-79e6-80d1cc15427b", "x-vcap-request-id": "c52e18a4-9d14-478c-79e6-80d1cc15427b"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=Grund%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[63] HTTP 500 after 0.7s at 2026-09-15T07:00:46Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=BudatMkpf eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:42 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "3f709d69-2dd9-4509-7aa9-b3449be35b1c, 3f709d69-2dd9-4509-7aa9-b3449be35b1c", "x-vcap-request-id": "3f709d69-2dd9-4509-7aa9-b3449be35b1c"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=BudatMkpf%20eq%20datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[64] HTTP 500 after 0.7s at 2026-09-15T07:00:47Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=CpudtMkpf eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:43 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "bc2d3f73-3a8e-4f8d-4296-d9ea8ea40258, bc2d3f73-3a8e-4f8d-4296-d9ea8ea40258", "x-vcap-request-id": "bc2d3f73-3a8e-4f8d-4296-d9ea8ea40258"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?$filter=CpudtMkpf%20eq%20datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[65] HTTP 500 after 0.6s at 2026-09-15T07:00:48Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet/$count?$filter=Waers eq 'ZZ~NOPE'
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:44 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "9982de3e-2358-4812-4dd5-8981adaa909c, 9982de3e-2358-4812-4dd5-8981adaa909c", "x-vcap-request-id": "9982de3e-2358-4812-4dd5-8981adaa909c"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet/$count?$filter=Waers%20eq%20'ZZ%7ENOPE'&sap-client=110 with statusCode: 500"
+}
+
+[66] HTTP 500 after 0.6s at 2026-09-15T07:00:49Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet?$filter=Waers eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:45 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "4cf7f2b1-bd94-44c2-5454-d37c59ff163d, 4cf7f2b1-bd94-44c2-5454-d37c59ff163d", "x-vcap-request-id": "4cf7f2b1-bd94-44c2-5454-d37c59ff163d"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet?$filter=Waers%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[67] HTTP 500 after 0.7s at 2026-09-15T07:00:50Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet?$filter=Aplfz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:46 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "41f20dc7-abaa-4793-5abc-a30cd7082f16, 41f20dc7-abaa-4793-5abc-a30cd7082f16", "x-vcap-request-id": "41f20dc7-abaa-4793-5abc-a30cd7082f16"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet?$filter=Aplfz%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[68] HTTP 500 after 0.7s at 2026-09-15T07:00:51Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet?$filter=Netpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:46 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "5f9960a5-a1eb-4bbc-4231-88a43f5404a2, 5f9960a5-a1eb-4bbc-4231-88a43f5404a2", "x-vcap-request-id": "5f9960a5-a1eb-4bbc-4231-88a43f5404a2"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet?$filter=Netpr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[69] HTTP 500 after 0.7s at 2026-09-15T07:00:51Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet?$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:47 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "d058d068-d193-4423-6ea7-6545bd310fdd, d058d068-d193-4423-6ea7-6545bd310fdd", "x-vcap-request-id": "d058d068-d193-4423-6ea7-6545bd310fdd"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet?$filter=Peinh%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[70] HTTP 500 after 0.7s at 2026-09-15T07:00:52Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet?$filter=Effpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:48 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "2b2d91a5-132a-4425-529b-d43d7bbe06ab, 2b2d91a5-132a-4425-529b-d43d7bbe06ab", "x-vcap-request-id": "2b2d91a5-132a-4425-529b-d43d7bbe06ab"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet?$filter=Effpr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[71] HTTP 500 after 0.7s at 2026-09-15T07:00:54Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count?$filter=Txz01 eq 'ZZ~NOPE'
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:50 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "8f4ed42c-76f8-40b9-45c6-5d9231289239, 8f4ed42c-76f8-40b9-45c6-5d9231289239", "x-vcap-request-id": "8f4ed42c-76f8-40b9-45c6-5d9231289239"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count?$filter=Txz01%20eq%20'ZZ%7ENOPE'&sap-client=110 with statusCode: 500"
+}
+
+[72] HTTP 500 after 0.7s at 2026-09-15T07:00:54Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Txz01 eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:50 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "a06b2e71-abd0-4b5f-639a-52c5c52a5e77, a06b2e71-abd0-4b5f-639a-52c5c52a5e77", "x-vcap-request-id": "a06b2e71-abd0-4b5f-639a-52c5c52a5e77"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Txz01%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[73] HTTP 500 after 0.7s at 2026-09-15T07:00:55Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Lgort eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:51 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "f99b167d-916c-4940-6166-d84990754e6c, f99b167d-916c-4940-6166-d84990754e6c", "x-vcap-request-id": "f99b167d-916c-4940-6166-d84990754e6c"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Lgort%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[74] HTTP 500 after 0.7s at 2026-09-15T07:00:56Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Bednr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:52 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "dcc4eacf-4d8e-473c-6bd8-4c06ad140ba1, dcc4eacf-4d8e-473c-6bd8-4c06ad140ba1", "x-vcap-request-id": "dcc4eacf-4d8e-473c-6bd8-4c06ad140ba1"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Bednr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[75] HTTP 500 after 0.6s at 2026-09-15T07:00:57Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:52 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "a5960f51-93de-465c-7bbb-35a7c767c65e, a5960f51-93de-465c-7bbb-35a7c767c65e", "x-vcap-request-id": "a5960f51-93de-465c-7bbb-35a7c767c65e"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Menge%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[76] HTTP 500 after 0.6s at 2026-09-15T07:00:57Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:53 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "dc9278f0-ebb7-45ca-7536-bd1bce9a9274, dc9278f0-ebb7-45ca-7536-bd1bce9a9274", "x-vcap-request-id": "dc9278f0-ebb7-45ca-7536-bd1bce9a9274"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Meins%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[77] HTTP 500 after 0.6s at 2026-09-15T07:00:58Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Netpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:54 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "4222e236-2f6d-42a4-6246-94be46ce9835, 4222e236-2f6d-42a4-6246-94be46ce9835", "x-vcap-request-id": "4222e236-2f6d-42a4-6246-94be46ce9835"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Netpr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[78] HTTP 500 after 0.7s at 2026-09-15T07:00:59Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:54 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "4c8a3daa-74b2-4c96-490b-41b70638a046, 4c8a3daa-74b2-4c96-490b-41b70638a046", "x-vcap-request-id": "4c8a3daa-74b2-4c96-490b-41b70638a046"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Peinh%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[79] HTTP 500 after 0.7s at 2026-09-15T07:00:59Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Netwr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:55 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "90fe633b-c022-430f-4318-0474753e2965, 90fe633b-c022-430f-4318-0474753e2965", "x-vcap-request-id": "90fe633b-c022-430f-4318-0474753e2965"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Netwr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[80] HTTP 500 after 0.6s at 2026-09-15T07:01:00Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Pstyp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:56 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "b49f165c-d5fe-4feb-48f7-d48bc4ca1ca5, b49f165c-d5fe-4feb-48f7-d48bc4ca1ca5", "x-vcap-request-id": "b49f165c-d5fe-4feb-48f7-d48bc4ca1ca5"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Pstyp%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[81] HTTP 500 after 0.8s at 2026-09-15T07:01:01Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Knttp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:56 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "9588cb90-5bc7-4c10-40ab-37825d2f5788, 9588cb90-5bc7-4c10-40ab-37825d2f5788", "x-vcap-request-id": "9588cb90-5bc7-4c10-40ab-37825d2f5788"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Knttp%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[82] HTTP 500 after 0.7s at 2026-09-15T07:01:01Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Plifz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:57 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "f072db28-72da-4ccd-6c82-c6e36908f28e, f072db28-72da-4ccd-6c82-c6e36908f28e", "x-vcap-request-id": "f072db28-72da-4ccd-6c82-c6e36908f28e"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Plifz%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[83] HTTP 500 after 0.7s at 2026-09-15T07:01:02Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Bnfpo eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:58 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "17a8e478-4c82-4519-4f45-738836abbe90, 17a8e478-4c82-4519-4f45-738836abbe90", "x-vcap-request-id": "17a8e478-4c82-4519-4f45-738836abbe90"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?$filter=Bnfpo%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[84] HTTP 500 after 0.6s at 2026-09-15T07:01:03Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDescriptionSet/$count?$filter=Maktx eq 'ZZ~NOPE'
+    headers  : {"Date": "Tue, 15 Sep 2026 07:00:59 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "a55f45b9-92be-43ea-479e-214603eeb54e, a55f45b9-92be-43ea-479e-214603eeb54e", "x-vcap-request-id": "a55f45b9-92be-43ea-479e-214603eeb54e"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDescriptionSet/$count?$filter=Maktx%20eq%20'ZZ%7ENOPE'&sap-client=110 with statusCode: 500"
+}
+
+[85] HTTP 500 after 0.6s at 2026-09-15T07:01:04Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDescriptionSet?$filter=Maktx eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:00 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "0b87ad41-8fd5-4e0a-5318-36fc250dc227, 0b87ad41-8fd5-4e0a-5318-36fc250dc227", "x-vcap-request-id": "0b87ad41-8fd5-4e0a-5318-36fc250dc227"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDescriptionSet?$filter=Maktx%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[86] HTTP 500 after 0.7s at 2026-09-15T07:01:05Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count?$filter=Bismt eq 'ZZ~NOPE'
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:01 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "325b6fa0-4b39-4d43-515c-b0451add32b8, 325b6fa0-4b39-4d43-515c-b0451add32b8", "x-vcap-request-id": "325b6fa0-4b39-4d43-515c-b0451add32b8"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count?$filter=Bismt%20eq%20'ZZ%7ENOPE'&sap-client=110 with statusCode: 500"
+}
+
+[87] HTTP 500 after 0.7s at 2026-09-15T07:01:06Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet?$filter=Bismt eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:02 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "2f02465f-5f47-4703-4a4b-7b61632ef10c, 2f02465f-5f47-4703-4a4b-7b61632ef10c", "x-vcap-request-id": "2f02465f-5f47-4703-4a4b-7b61632ef10c"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet?$filter=Bismt%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[88] HTTP 500 after 0.7s at 2026-09-15T07:01:07Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet?$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:02 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "82f17d50-0d17-4ced-72fe-3b02c8442503, 82f17d50-0d17-4ced-72fe-3b02c8442503", "x-vcap-request-id": "82f17d50-0d17-4ced-72fe-3b02c8442503"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet?$filter=Meins%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[89] HTTP 500 after 0.7s at 2026-09-15T07:01:08Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Plifz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:04 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "678c79f7-d3d4-4bed-4af6-651724c3633d, 678c79f7-d3d4-4bed-4af6-651724c3633d", "x-vcap-request-id": "678c79f7-d3d4-4bed-4af6-651724c3633d"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Plifz%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[90] HTTP 500 after 0.6s at 2026-09-15T07:01:08Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Webaz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:04 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "ed392fed-c684-438d-6d32-58a55ff52a58, ed392fed-c684-438d-6d32-58a55ff52a58", "x-vcap-request-id": "ed392fed-c684-438d-6d32-58a55ff52a58"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Webaz%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[91] HTTP 500 after 0.6s at 2026-09-15T07:01:09Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Minbe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:05 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "e8cad036-0e2b-4db2-7e32-7ffc9eacf709, e8cad036-0e2b-4db2-7e32-7ffc9eacf709", "x-vcap-request-id": "e8cad036-0e2b-4db2-7e32-7ffc9eacf709"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Minbe%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[92] HTTP 500 after 0.6s at 2026-09-15T07:01:10Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Eisbe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:06 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "cb248c6a-263a-4796-60da-e75b294f6ea9, cb248c6a-263a-4796-60da-e75b294f6ea9", "x-vcap-request-id": "cb248c6a-263a-4796-60da-e75b294f6ea9"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Eisbe%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[93] HTTP 500 after 0.7s at 2026-09-15T07:01:10Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Bstmi eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:06 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "783abd34-7711-4373-5a91-04a5edb150ce, 783abd34-7711-4373-5a91-04a5edb150ce", "x-vcap-request-id": "783abd34-7711-4373-5a91-04a5edb150ce"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Bstmi%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[94] HTTP 500 after 0.7s at 2026-09-15T07:01:11Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Bstma eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:07 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "d3c9ed9c-2565-46f1-7a0d-9d367adc6593, d3c9ed9c-2565-46f1-7a0d-9d367adc6593", "x-vcap-request-id": "d3c9ed9c-2565-46f1-7a0d-9d367adc6593"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Bstma%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[95] HTTP 500 after 0.7s at 2026-09-15T07:01:12Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Mabst eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:08 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "4385719e-b15f-44ae-5600-efd7687cb162, 4385719e-b15f-44ae-5600-efd7687cb162", "x-vcap-request-id": "4385719e-b15f-44ae-5600-efd7687cb162"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?$filter=Mabst%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[96] HTTP 500 after 0.6s at 2026-09-15T07:01:13Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet/$count?$filter=Labst eq 'ZZ~NOPE'
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:22:08 GMT", "x-correlationid": "cf275693-6fa1-4888-6ceb-adfc090d8117, cf275693-6fa1-4888-6ceb-adfc090d8117", "x-vcap-request-id": "cf275693-6fa1-4888-6ceb-adfc090d8117"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:09 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "87d67b09-f59b-47e9-7d3b-f326a4c02bee, 87d67b09-f59b-47e9-7d3b-f326a4c02bee", "x-vcap-request-id": "87d67b09-f59b-47e9-7d3b-f326a4c02bee"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet/$count?$filter=Labst%20eq%20'ZZ%7ENOPE'&sap-client=110 with statusCode: 500"
+}
 
-[18] HTTP 500 after 1.0s at 2026-09-09T13:22:10Z
+[97] HTTP 500 after 0.7s at 2026-09-15T07:01:13Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet?$filter=Labst eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:22:09 GMT", "x-correlationid": "c3fca1e7-37f8-4c49-7cb9-5653ec99ac5e, c3fca1e7-37f8-4c49-7cb9-5653ec99ac5e", "x-vcap-request-id": "c3fca1e7-37f8-4c49-7cb9-5653ec99ac5e"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:09 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "9ca65c66-0fa7-463b-4294-5976f82e6737, 9ca65c66-0fa7-463b-4294-5976f82e6737", "x-vcap-request-id": "9ca65c66-0fa7-463b-4294-5976f82e6737"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet?$filter=Labst%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[19] HTTP 500 after 1.0s at 2026-09-09T13:22:11Z
+[98] HTTP 500 after 0.7s at 2026-09-15T07:01:14Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet?$filter=Insme eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:22:10 GMT", "x-correlationid": "ecefb4b1-fad2-4332-5bf6-906db0a64e4e, ecefb4b1-fad2-4332-5bf6-906db0a64e4e", "x-vcap-request-id": "ecefb4b1-fad2-4332-5bf6-906db0a64e4e"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:10 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "4139e4fd-45e1-4c32-73f0-4d18f2975f52, 4139e4fd-45e1-4c32-73f0-4d18f2975f52", "x-vcap-request-id": "4139e4fd-45e1-4c32-73f0-4d18f2975f52"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet?$filter=Insme%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[20] HTTP 500 after 1.0s at 2026-09-09T13:22:12Z
+[99] HTTP 500 after 0.7s at 2026-09-15T07:01:15Z
     SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet?$filter=Speme eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:22:11 GMT", "x-correlationid": "b9ffb07c-ead9-4e2a-6432-8b73099c2a97, b9ffb07c-ead9-4e2a-6432-8b73099c2a97", "x-vcap-request-id": "b9ffb07c-ead9-4e2a-6432-8b73099c2a97"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:11 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "d6c8e87e-136c-4368-4581-938c345c4d9d, d6c8e87e-136c-4368-4581-938c345c4d9d", "x-vcap-request-id": "d6c8e87e-136c-4368-4581-938c345c4d9d"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet?$filter=Speme%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[21] HTTP 500 after 1.0s at 2026-09-09T13:22:31Z
+[100] HTTP 500 after 0.6s at 2026-09-15T07:01:16Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet/$count?$filter=Menge eq 'ZZ~NOPE'
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:12 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "efd80f8e-451a-4802-42d3-125f5c9e052e, efd80f8e-451a-4802-42d3-125f5c9e052e", "x-vcap-request-id": "efd80f8e-451a-4802-42d3-125f5c9e052e"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet/$count?$filter=Menge%20eq%20'ZZ%7ENOPE'&sap-client=110 with statusCode: 500"
+}
+
+[101] HTTP 500 after 0.6s at 2026-09-15T07:01:17Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet?$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:13 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "a7458a1e-6e92-43ff-6632-24443d361806, a7458a1e-6e92-43ff-6632-24443d361806", "x-vcap-request-id": "a7458a1e-6e92-43ff-6632-24443d361806"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet?$filter=Menge%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[102] HTTP 500 after 0.6s at 2026-09-15T07:01:18Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet?$filter=Wemng eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:14 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "d51191f4-eff2-4dc3-58bc-d1e79aadd853, d51191f4-eff2-4dc3-58bc-d1e79aadd853", "x-vcap-request-id": "d51191f4-eff2-4dc3-58bc-d1e79aadd853"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet?$filter=Wemng%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[103] HTTP 500 after 0.7s at 2026-09-15T07:01:19Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet/$count?$filter=Zekkn eq 'ZZ~NOPE'
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:14 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "af24cd79-105a-4b7a-418d-c9875741aa9e, af24cd79-105a-4b7a-418d-c9875741aa9e", "x-vcap-request-id": "af24cd79-105a-4b7a-418d-c9875741aa9e"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet/$count?$filter=Zekkn%20eq%20'ZZ%7ENOPE'&sap-client=110 with statusCode: 500"
+}
+
+[104] HTTP 500 after 0.6s at 2026-09-15T07:01:19Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Zekkn eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:15 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "276567fe-18ab-4193-6000-54e6bf6ac81a, 276567fe-18ab-4193-6000-54e6bf6ac81a", "x-vcap-request-id": "276567fe-18ab-4193-6000-54e6bf6ac81a"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Zekkn%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[105] HTTP 500 after 0.9s at 2026-09-15T07:01:20Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Vgabe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:16 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "1608b3ee-4341-4701-6360-3d9bbb39b0e9, 1608b3ee-4341-4701-6360-3d9bbb39b0e9", "x-vcap-request-id": "1608b3ee-4341-4701-6360-3d9bbb39b0e9"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Vgabe%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[106] HTTP 500 after 0.7s at 2026-09-15T07:01:21Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Gjahr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:17 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "7a5e0230-1613-4518-7262-2cd16dd618ba, 7a5e0230-1613-4518-7262-2cd16dd618ba", "x-vcap-request-id": "7a5e0230-1613-4518-7262-2cd16dd618ba"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Gjahr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[107] HTTP 500 after 0.6s at 2026-09-15T07:01:22Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Buzei eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:17 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "e89ff2e9-6db3-49f2-43fe-de978861232f, e89ff2e9-6db3-49f2-43fe-de978861232f", "x-vcap-request-id": "e89ff2e9-6db3-49f2-43fe-de978861232f"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Buzei%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[108] HTTP 500 after 0.7s at 2026-09-15T07:01:22Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Bewtp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:18 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "f68b4940-cc7b-480a-6d22-f6ad291851a8, f68b4940-cc7b-480a-6d22-f6ad291851a8", "x-vcap-request-id": "f68b4940-cc7b-480a-6d22-f6ad291851a8"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Bewtp%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[109] HTTP 500 after 0.7s at 2026-09-15T07:01:23Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Bwart eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:19 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "234b75ee-61b8-4551-437f-a18444083680, 234b75ee-61b8-4551-437f-a18444083680", "x-vcap-request-id": "234b75ee-61b8-4551-437f-a18444083680"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Bwart%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[110] HTTP 500 after 0.7s at 2026-09-15T07:01:24Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Budat eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:19 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "9cce37c5-cd2a-47b5-45d0-68c133224f68, 9cce37c5-cd2a-47b5-45d0-68c133224f68", "x-vcap-request-id": "9cce37c5-cd2a-47b5-45d0-68c133224f68"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Budat%20eq%20datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[111] HTTP 500 after 0.7s at 2026-09-15T07:01:24Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:20 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "79b60280-89e7-492b-7e8e-5e49853363fa, 79b60280-89e7-492b-7e8e-5e49853363fa", "x-vcap-request-id": "79b60280-89e7-492b-7e8e-5e49853363fa"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Menge%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[112] HTTP 500 after 0.6s at 2026-09-15T07:01:25Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Dmbtr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:21 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "987457d8-e5a3-4394-781e-acc1e46b583c, 987457d8-e5a3-4394-781e-acc1e46b583c", "x-vcap-request-id": "987457d8-e5a3-4394-781e-acc1e46b583c"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Dmbtr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[113] HTTP 500 after 0.7s at 2026-09-15T07:01:26Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Shkzg eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:21 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "cdf17477-c4cb-4987-47ae-4512b23aa0b7, cdf17477-c4cb-4987-47ae-4512b23aa0b7", "x-vcap-request-id": "cdf17477-c4cb-4987-47ae-4512b23aa0b7"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Shkzg%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[114] HTTP 500 after 0.7s at 2026-09-15T07:01:26Z
+    SAP path : /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Cpudt eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:22 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "8c690257-3dbb-43e4-6598-2ba4114c88b6, 8c690257-3dbb-43e4-6598-2ba4114c88b6", "x-vcap-request-id": "8c690257-3dbb-43e4-6598-2ba4114c88b6"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?$filter=Cpudt%20eq%20datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
+
+[115] HTTP 500 after 0.7s at 2026-09-15T07:01:28Z
     SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count?$filter=Meins eq 'ZZ~NOPE'
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:22:29 GMT", "x-correlationid": "277a9fe3-02c6-43ee-5fb7-4879f25bd063, 277a9fe3-02c6-43ee-5fb7-4879f25bd063", "x-vcap-request-id": "277a9fe3-02c6-43ee-5fb7-4879f25bd063"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:24 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "611895e0-bf8f-4785-4197-d21135b9bf24, 611895e0-bf8f-4785-4197-d21135b9bf24", "x-vcap-request-id": "611895e0-bf8f-4785-4197-d21135b9bf24"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count?$filter=Meins%20eq%20'ZZ%7ENOPE'&sap-client=110 with statusCode: 500"
+}
 
-[22] HTTP 500 after 1.1s at 2026-09-09T13:22:32Z
+[116] HTTP 500 after 0.6s at 2026-09-15T07:01:29Z
     SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet?$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
-    headers  : {"content-type": "application/json", "dataserviceversion": "1.0", "date": "Wed, 09 Sep 2026 13:22:30 GMT", "x-correlationid": "ca316a65-ca52-4624-4ff0-b4c03b5aa809, ca316a65-ca52-4624-4ff0-b4c03b5aa809", "x-vcap-request-id": "ca316a65-ca52-4624-4ff0-b4c03b5aa809"}
-    body     : <empty - CPI did not forward the backend error>
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:24 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "27f48d76-5ed5-440a-56f5-ebccbb99c61b, 27f48d76-5ed5-440a-56f5-ebccbb99c61b", "x-vcap-request-id": "27f48d76-5ed5-440a-56f5-ebccbb99c61b"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet?$filter=Meins%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 500"
+}
 
-[23] HTTP 500 after 1.3s at 2026-09-09T13:22:34Z
-    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count?$filter=Bnfpo eq 'ZZ~NOPE'
-    headers  : {"content-type": "application/xml;charset=utf-8", "date": "Wed, 09 Sep 2026 13:22:33 GMT", "x-correlationid": "9ed81511-1f0c-4805-4c5a-efca51587e64, 9ed81511-1f0c-4805-4c5a-efca51587e64", "x-vcap-request-id": "9ed81511-1f0c-4805-4c5a-efca51587e64"}
-    body     : <empty - CPI did not forward the backend error>
+[117] HTTP 400 after 0.6s at 2026-09-15T07:01:31Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count?$filter=Letztzug eq datetime'1900-01-01T00:00:00'
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:27 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "d73c92ed-1ce6-4716-4ad2-4e750275f7bc, d73c92ed-1ce6-4716-4ad2-4e750275f7bc", "x-vcap-request-id": "d73c92ed-1ce6-4716-4ad2-4e750275f7bc"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count?$filter=Letztzug%20eq%20datetime'1900-01-01T00:00:00'&sap-client=110 with statusCode: 400"
+}
 
-[24] HTTP 500 after 1.3s at 2026-09-09T13:22:36Z
-    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet?$filter=Bnfpo eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json
-    headers  : {"content-type": "application/xml;charset=utf-8", "date": "Wed, 09 Sep 2026 13:22:34 GMT", "x-correlationid": "55a83d8a-2395-48de-4d93-732ad7ade34e, 55a83d8a-2395-48de-4d93-732ad7ade34e", "x-vcap-request-id": "55a83d8a-2395-48de-4d93-732ad7ade34e"}
-    body     : <empty - CPI did not forward the backend error>
+[118] HTTP 400 after 0.6s at 2026-09-15T07:01:32Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet?$filter=Letztzug eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json
+    headers  : {"Date": "Tue, 15 Sep 2026 07:01:27 GMT", "Content-Type": "application/json", "dataserviceversion": "1.0", "x-correlationid": "0005710b-7abb-43d3-77a4-088cddc4fccf, 0005710b-7abb-43d3-77a4-088cddc4fccf", "x-vcap-request-id": "0005710b-7abb-43d3-77a4-088cddc4fccf"}
+    body     : {
+"errormessage" : "HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet?$filter=Letztzug%20eq%20datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json&sap-client=110 with statusCode: 400"
+}

@@ -1,0 +1,118 @@
+# Backend CI.
+#
+# Paths here are relative to the REPOSITORY root, and this repository's root is
+# the backend application itself -- there is no `backend/` prefix. If these
+# workflows are ever folded back into a single repo, every path below and the
+# `working-directory` need revisiting.
+#
+# What this protects: 287 of 289 tests. The 2 that skip need the ~800 MB SAP
+# extract delivery, which will never live in CI. That is by design, not a gap --
+# see the "storage" note on the test step.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  # A new push supersedes an in-flight run on the same branch.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      mssql:
+        # The app only ever talks to Azure SQL now (mssql+pyodbc); a different
+        # engine here would test a database nobody deploys against.
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "ci-Passw0rd!"
+        ports:
+          - 1433:1433
+        # Without this the job can start connecting before SQL Server accepts
+        # connections, and the first migration fails intermittently.
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P ci-Passw0rd! -C -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      # 127.0.0.1, not localhost: the same IPv6-vs-IPv4 resolution trap that
+      # cost ~19s per connection locally. Service containers publish on IPv4.
+      # TrustServerCertificate=yes here ONLY because the CI container uses a
+      # self-signed cert with no matching hostname -- never do this against the
+      # real Azure SQL server, see app/core/config.py.
+      DATABASE_URL: >-
+        mssql+pyodbc://sa:ci-Passw0rd!@127.0.0.1:1433/spares_ai_ci
+        ?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=yes
+      # Deliberately unset. The SAP extracts are not in CI, so the two tests
+      # that need them skip and say so.
+      STORAGE_URL: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Pinned to the version the team develops on. "3.x" would silently
+          # move under us and turn a Python release into a red build.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install ODBC Driver 18 for SQL Server
+        # pyodbc needs this system package; it is not a pip install. ubuntu-latest
+        # runners don't ship it, so add Microsoft's apt repo and install it here.
+        run: |
+          curl https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc
+          curl https://packages.microsoft.com/config/ubuntu/22.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+          sudo apt-get update
+          ACCEPT_EULA=Y sudo apt-get install -y msodbcsql18 unixodbc-dev mssql-tools18
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create test database
+        # The mssql image only accepts a SA password, not a database name, so
+        # spares_ai_ci has to be created explicitly before migrations can target it.
+        run: |
+          /opt/mssql-tools18/bin/sqlcmd -S 127.0.0.1 -U sa -P "ci-Passw0rd!" -C \
+            -Q "IF DB_ID('spares_ai_ci') IS NULL CREATE DATABASE spares_ai_ci"
+
+      - name: Apply migrations
+        # Proves the migrations actually run against an empty database -- which
+        # `pytest` alone does not, since it finds the schema already there.
+        run: alembic upgrade head
+
+      - name: Run tests
+        # -rs lists the skipped tests with their reason, so "2 skipped" is
+        # visible in the log as a deliberate choice rather than a silent hole.
+        #
+        # "not drift" is explicit, not inherited from pytest.ini's addopts: a
+        # bare -m REPLACES that default rather than adding to it, so leaving
+        # this as just "-rs" would silently re-admit the live-SAP-sensitive
+        # drift suite into the blocking gate.
+        run: pytest -q -rs -m "not live and not drift"
+
+      # Drift compares our recorded knowledge of SAP (known_conditions.py)
+      # against a fresh discovery snapshot. It fails when SAP's measured
+      # behaviour changes -- see CLAUDE.md: that is information for whoever
+      # owns the SAP contract, not a reason to block unrelated PRs, and never
+      # something to quietly re-baseline to make green. Mirrors deploy.yml.
+      - name: SAP contract drift (informational)
+        continue-on-error: true
+        run: |
+          pytest -q -m "drift" \
+            || echo "::warning::SAP contract drift detected -- see pytest.ini, marker 'drift'"
+
+  # `npm run lint`'s equivalent is deliberately not a step yet. Add ruff or
+  # flake8 in the same change that fixes whatever it first reports, so CI starts
+  # green and stays meaningful -- the frontend workflow carries the same note
+  # about its own three pre-existing lint errors.
