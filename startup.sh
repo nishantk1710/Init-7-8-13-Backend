@@ -16,7 +16,37 @@
 
 set -euo pipefail
 
-cd /home/site/wwwroot
+# Resolve our own directory rather than hard-coding /home/site/wwwroot.
+#
+# Same result on App Service, but it also works from a test container, a local
+# checkout, or a deployment slot on a different path. A hard-coded cd that is
+# wrong fails as "No such file or directory" -- another opaque exit that says
+# nothing about what actually went wrong.
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- Preflight ------------------------------------------------------------
+#
+# Exit 127 means "command not found", and App Service reports it with no
+# indication of WHICH command. These checks cost milliseconds and turn that
+# into one line naming the actual problem.
+if ! command -v python >/dev/null 2>&1; then
+    echo "startup: FATAL - no 'python' on PATH. PATH=$PATH" >&2
+    exit 127
+fi
+
+if ! python -c "import gunicorn" >/dev/null 2>&1; then
+    echo "startup: FATAL - gunicorn is not importable. Did the build install" >&2
+    echo "         requirements.txt? Try: python -m pip install -r requirements.txt" >&2
+    exit 127
+fi
+
+if ! python -c "import app.main" >/dev/null 2>&1; then
+    echo "startup: FATAL - cannot import app.main from $(pwd)" >&2
+    echo "         Directory contains: $(ls -A | tr '\n' ' ')" >&2
+    exit 127
+fi
+
+echo "startup: $(python -V 2>&1), cwd $(pwd)"
 
 # --- Migrations -----------------------------------------------------------
 #
