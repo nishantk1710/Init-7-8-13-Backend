@@ -1,0 +1,4 @@
+Objectclas eq 'MATERIAL'                                -> 26582
+Objectclas eq 'MATERIAL' and Tabname eq 'MARC'          -> 7228
+Objectclas eq 'BANF'                                    -> 2925
+(Property names Objectclas / Tabname confirmed against live $metadata on 2026-09-08. Field-level counts for DISMM/EISBE/MINBE/MABST are in probes.csv.)
