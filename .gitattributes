@@ -1,1 +1,19 @@
-startup.sh text eol=lf
+# Line endings.
+#
+# Any shell script that reaches a Linux container must have LF endings. With
+# Windows endings the shebang line ends in a carriage return, so the kernel
+# looks for a program whose name ends in that character, does not find one, and
+# the container exits 127 with one of the least obvious messages in the
+# business -- it reports that "bash" (with an invisible character after it) does
+# not exist.
+#
+# Globbed rather than named: this pinned startup.sh alone, so the next script
+# anyone added would have been unprotected and the bug would have looked
+# brand new.
+*.sh text eol=lf
+
+# The synthetic dataset and the SAP discovery snapshot are diffed and compared
+# between sweeps. Without this a Windows checkout rewrites every line, and a
+# real one-row change is buried in thousands of line-ending changes.
+*.csv text eol=lf
+*.xml text eol=lf
