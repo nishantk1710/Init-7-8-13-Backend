@@ -26,28 +26,32 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
-      postgres:
-        # Match compose.yaml. A different major version here would mean CI
-        # tests a database nobody develops against.
-        image: postgres:18
+      mssql:
+        # The app only ever talks to Azure SQL now (mssql+pyodbc); a different
+        # engine here would test a database nobody deploys against.
+        image: mcr.microsoft.com/mssql/server:2022-latest
         env:
-          POSTGRES_PASSWORD: ci
-          POSTGRES_USER: postgres
-          POSTGRES_DB: spares_ai_ci
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "ci-Passw0rd!"
         ports:
-          - 5432:5432
-        # Without this the job can start connecting before Postgres accepts
+          - 1433:1433
+        # Without this the job can start connecting before SQL Server accepts
         # connections, and the first migration fails intermittently.
         options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P ci-Passw0rd! -C -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
           --health-timeout 5s
           --health-retries 12
 
     env:
       # 127.0.0.1, not localhost: the same IPv6-vs-IPv4 resolution trap that
       # cost ~19s per connection locally. Service containers publish on IPv4.
-      DATABASE_URL: postgresql+psycopg://postgres:ci@127.0.0.1:5432/spares_ai_ci
+      # TrustServerCertificate=yes here ONLY because the CI container uses a
+      # self-signed cert with no matching hostname -- never do this against the
+      # real Azure SQL server, see app/core/config.py.
+      DATABASE_URL: >-
+        mssql+pyodbc://sa:ci-Passw0rd!@127.0.0.1:1433/spares_ai_ci
+        ?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=yes
       # Deliberately unset. The SAP extracts are not in CI, so the two tests
       # that need them skip and say so.
       STORAGE_URL: ""
@@ -63,8 +67,24 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
+      - name: Install ODBC Driver 18 for SQL Server
+        # pyodbc needs this system package; it is not a pip install. ubuntu-latest
+        # runners don't ship it, so add Microsoft's apt repo and install it here.
+        run: |
+          curl https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc
+          curl https://packages.microsoft.com/config/ubuntu/22.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+          sudo apt-get update
+          ACCEPT_EULA=Y sudo apt-get install -y msodbcsql18 unixodbc-dev mssql-tools18
+
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Create test database
+        # The mssql image only accepts a SA password, not a database name, so
+        # spares_ai_ci has to be created explicitly before migrations can target it.
+        run: |
+          /opt/mssql-tools18/bin/sqlcmd -S 127.0.0.1 -U sa -P "ci-Passw0rd!" -C \
+            -Q "IF DB_ID('spares_ai_ci') IS NULL CREATE DATABASE spares_ai_ci"
 
       - name: Apply migrations
         # Proves the migrations actually run against an empty database -- which
