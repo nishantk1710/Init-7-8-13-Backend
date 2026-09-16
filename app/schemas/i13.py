@@ -22,8 +22,10 @@ from app.initiatives.i13.models import (
     LinkageStatus,
     PrPoLinkStatus,
     ProcurementStatus,
+    ReservationPrLinkStatus,
 )
 from app.integrations.sap.source_mode import SourceMode
+from app.shared.material_scope import MaterialScope
 
 
 class DataSourceStatusResponse(BaseModel):
@@ -104,6 +106,46 @@ class ProcurementChainDiagnosticsResponse(BaseModel):
 
     duplicate_pr_keys: list[tuple[str, str]]
     duplicate_po_keys: list[tuple[str, str]]
+
+
+class ReservationLedgerEntryResponse(BaseModel):
+    """W6.2: Reservation -> PR -> PO -> GR -> GI."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    ledger_id: str
+    reservation_number: str
+    reservation_item: str
+
+    material: str
+    plant: str
+    reservation_quantity: Decimal
+    requirement_date: date | None
+
+    pr_number: str | None
+    pr_item: str | None
+    po_number: str | None
+    po_item: str | None
+
+    ordered_quantity: Decimal | None
+    received_quantity: Decimal | None
+    issued_quantity: Decimal
+
+    first_gr_date: date | None
+    last_gr_date: date | None
+    first_issue_date: date | None
+    last_issue_date: date | None
+
+    procurement_issued_quantity: Decimal | None
+    direct_store_issued_quantity: Decimal | None
+
+    lifecycle_status: LifecycleStatus
+    reservation_pr_link_status: ReservationPrLinkStatus
+    gr_link_status: GrLinkStatus
+    gi_link_status: GiLinkStatus
+    gi_link_reason: str | None
+
+    material_scope: MaterialScope
 
 
 class UtilisationLedgerEntryResponse(BaseModel):

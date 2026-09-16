@@ -14,6 +14,7 @@ from app.api.i13 import ledger as ledger_routes
 from app.api.i13 import movement_metrics as movement_metrics_routes
 from app.api.i13 import procurement_chain as procurement_chain_routes
 from app.api.i13 import reclassification as reclassification_routes
+from app.api.i13 import reservation_ledger as reservation_ledger_routes
 from app.api.i13 import validation as validation_routes
 from app.api.i13 import watch as watch_routes
 from app.api.i13.deps import get_data_dir
@@ -26,7 +27,13 @@ router = APIRouter(prefix="/i13", tags=["i13"])
 
 router.include_router(ledger_routes.router)
 router.include_router(movement_metrics_routes.router)
+# procurement_chain_routes ("/utilisation-ledger/partial", ".../diagnostics")
+# MUST be registered before reservation_ledger_routes
+# ("/utilisation-ledger/{reservation_number}/{reservation_item}") -- FastAPI
+# matches routes in registration order, and "partial/diagnostics" would
+# otherwise structurally match the two-segment parameterised route first.
 router.include_router(procurement_chain_routes.router)
+router.include_router(reservation_ledger_routes.router)
 router.include_router(watch_routes.router)
 router.include_router(exceptions_routes.router)
 router.include_router(reclassification_routes.router)

@@ -51,15 +51,37 @@ from app.integrations.sap.postgres_procurement import PostgresProcurementReposit
 Row = dict[str, Any]
 
 
-def _derive_lifecycle_status(
+def derive_lifecycle_status(
     *,
     has_po: bool,
     received_quantity: Decimal,
     ordered_quantity: Decimal | None,
     issued_quantity: Decimal | None,
     gi_link_status: GiLinkStatus,
+    requested_quantity: Decimal | None = None,
 ) -> LifecycleStatus:
+    """Shared by W6.1 (``procurement_chain.py``) and W6.2
+    (``reservation_ledger.py``). The ``not has_po`` + deterministic-GI branch
+    only ever fires from W6.2: a reservation-anchored entry can have goods
+    issued directly from stock with no PR/PO at all (§10), and
+    ``gi_link_status`` is never ``LINKED`` with ``has_po=False`` in W6.1
+    (a PR-only entry always sets it ``NOT_APPLICABLE``), so this is additive,
+    not a behaviour change for existing W6.1 callers.
+
+    ``requested_quantity`` (W6.1 never passes it -- no such quantity exists
+    at the PO-item grain) lets the no-PO branch tell PARTIALLY_ISSUED from
+    ISSUED against the reservation's own requested quantity, since there is
+    no ``received_quantity`` to compare against there.
+    """
+    has_deterministic_gi = gi_link_status is GiLinkStatus.LINKED and issued_quantity is not None
+
     if not has_po:
+        if has_deterministic_gi and issued_quantity > 0:
+            # Fulfilled without procurement (e.g. direct-store issue against
+            # a reservation).
+            if requested_quantity and issued_quantity < requested_quantity:
+                return LifecycleStatus.PARTIALLY_ISSUED
+            return LifecycleStatus.ISSUED
         return LifecycleStatus.PR_CREATED
     if received_quantity <= 0:
         return LifecycleStatus.ORDERED
@@ -69,7 +91,7 @@ def _derive_lifecycle_status(
     # GI only ever promotes the status past RECEIVED when a genuine
     # deterministic link exists -- an unresolved link must never be read as
     # "not issued" (see §11: "do not incorrectly label the row ISSUED/UNISSUED").
-    if gi_link_status is GiLinkStatus.LINKED and issued_quantity is not None:
+    if has_deterministic_gi:
         if issued_quantity <= 0:
             return LifecycleStatus.RECEIVED
         if issued_quantity < received_quantity:
@@ -118,7 +140,7 @@ def _build_po_item_entry(
             "item. Deterministic GI attribution requires the reservation leg (W6.2)."
         )
 
-    lifecycle_status = _derive_lifecycle_status(
+    lifecycle_status = derive_lifecycle_status(
         has_po=True,
         received_quantity=received_quantity,
         ordered_quantity=ordered_quantity,

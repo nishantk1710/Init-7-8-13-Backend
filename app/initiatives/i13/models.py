@@ -10,6 +10,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 
+from app.shared.material_scope import MaterialScope
+
 
 class AgingBand(str, Enum):
     FAST = "FAST"
@@ -209,6 +211,75 @@ class ProcurementChainDiagnostics:
     # dataset today (see the implementation report) but checked, not assumed.
     duplicate_pr_keys: list[tuple[str, str]] = field(default_factory=list)
     duplicate_po_keys: list[tuple[str, str]] = field(default_factory=list)
+
+
+class ReservationPrLinkStatus(str, Enum):
+    """How (or whether) a reservation's PR reference was resolved --
+    the reservation-side analogue of ``PrPoLinkStatus``."""
+
+    LINKED = "LINKED"
+    PR_REFERENCE_UNRESOLVED = "PR_REFERENCE_UNRESOLVED"
+    NO_PR_REFERENCE = "NO_PR_REFERENCE"
+    # SAP MRP consolidated multiple reservations into one PR (measured: rare
+    # but real -- 2 PR items in this dataset are each referenced by more than
+    # one distinct reservation). No approved deterministic allocation rule
+    # exists in this repository, so the PR link is shown but its quantities
+    # are deliberately left unpopulated rather than guessed -- see
+    # reservation_ledger.py's module docstring.
+    CONSOLIDATION_UNRESOLVED = "CONSOLIDATION_UNRESOLVED"
+
+
+@dataclass(frozen=True)
+class ReservationLedgerEntry:
+    """W6.2: Reservation -> PR -> PO -> GR -> GI, anchored on
+    (reservation_number, reservation_item) -- never material+plant, since
+    the same material can carry multiple independent reservations (see
+    ``app.initiatives.i13.reservation_ledger``).
+
+    Built by attaching reservation context (this module) onto W6.1's
+    existing ``PartialLedgerEntry`` output, never by rebuilding the PR ->
+    PO -> GR chain. ``issued_quantity`` here supersedes W6.1's -- it comes
+    from the reservation's own RSNUM/RSPOS match against goods-issue
+    movements, the deterministic link W6.1 didn't have.
+    """
+
+    ledger_id: str
+    reservation_number: str
+    reservation_item: str
+
+    material: str
+    plant: str
+    reservation_quantity: Decimal
+    requirement_date: date | None
+
+    pr_number: str | None
+    pr_item: str | None
+    po_number: str | None
+    po_item: str | None
+
+    ordered_quantity: Decimal | None
+    received_quantity: Decimal | None
+    issued_quantity: Decimal
+
+    first_gr_date: date | None
+    last_gr_date: date | None
+    first_issue_date: date | None
+    last_issue_date: date | None
+
+    # W6.2 §10: an arithmetic split derived from two independently
+    # deterministic quantities (received via the PO/GR chain; issued via
+    # RSNUM/RSPOS) -- not itself a new SAP fact, and only populated when
+    # both quantities are known. See reservation_ledger.py.
+    procurement_issued_quantity: Decimal | None
+    direct_store_issued_quantity: Decimal | None
+
+    lifecycle_status: LifecycleStatus
+    reservation_pr_link_status: ReservationPrLinkStatus
+    gr_link_status: GrLinkStatus
+    gi_link_status: GiLinkStatus
+    gi_link_reason: str | None
+
+    material_scope: MaterialScope
 
 
 @dataclass(frozen=True)
