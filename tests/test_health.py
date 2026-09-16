@@ -1,5 +1,7 @@
 """Smoke tests for the backend template."""
 
+import logging
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -28,11 +30,70 @@ def test_root_returns_service_info() -> None:
     assert body["health_url"] == "/api/health"
 
 
+# The payload SAP confirmed for the PR-created event.
+SAP_PR_EVENT = {
+    "BANFN": "1000000567",
+    "CREATED_ON": "2026-09-16",
+    "CREATED_BY": "VSUNEEL",
+    "CREATED_AT": "13:14:03",
+    "MESSAGE": "PR Created Successfully",
+}
+
+
 def test_pr_event_is_accepted() -> None:
     response = client.post("/api/events/pr", json={"prNumber": "10012345", "plant": "1101"})
 
     assert response.status_code == 202
     assert response.json() == {"status": "received"}
+
+
+def test_pr_event_accepts_the_payload_sap_confirmed() -> None:
+    response = client.post("/api/events/pr", json=SAP_PR_EVENT)
+
+    assert response.status_code == 202
+    assert response.json() == {"status": "received"}
+
+
+def test_pr_event_logs_the_payload_in_saps_own_field_names(caplog) -> None:
+    """The log line is what we compare against CPI when the two disagree.
+
+    It has to read in SAP's spelling, not our Python one, or every comparison
+    needs a mental translation first.
+    """
+    with caplog.at_level(logging.INFO, logger="app.api.events.pr"):
+        client.post("/api/events/pr", json=SAP_PR_EVENT)
+
+    logged = " | ".join(caplog.messages)
+    assert "PR event received" in logged
+    for field, value in SAP_PR_EVENT.items():
+        assert field in logged, f"{field} missing from the log line"
+        assert value in logged, f"value of {field} missing from the log line"
+
+
+def test_pr_event_survives_a_field_sap_adds_without_telling_us() -> None:
+    """The iFlow is not versioned, so an unknown field must not 422."""
+    response = client.post(
+        "/api/events/pr",
+        json={**SAP_PR_EVENT, "WERKS": "1101", "NEW_FIELD": "whatever"},
+    )
+
+    assert response.status_code == 202
+
+
+def test_pr_event_survives_a_field_sap_drops() -> None:
+    """Losing a real requisition to a missing field would be the worse bug."""
+    response = client.post("/api/events/pr", json={"BANFN": "1000000567"})
+
+    assert response.status_code == 202
+
+
+def test_pr_event_without_banfn_is_accepted_but_warned_about(caplog) -> None:
+    """Accepted, because refusing it would drop the event entirely."""
+    with caplog.at_level(logging.WARNING, logger="app.api.events.pr"):
+        response = client.post("/api/events/pr", json={"MESSAGE": "PR Created Successfully"})
+
+    assert response.status_code == 202
+    assert any("BANFN" in message for message in caplog.messages)
 
 
 def test_pr_event_rejects_non_object_body() -> None:
