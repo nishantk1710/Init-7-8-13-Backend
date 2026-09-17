@@ -35,6 +35,7 @@ def _latest_feature_run(session) -> int:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_multiple_feature_run_generations_exist_and_are_each_complete(session):
     """The real database has accumulated several feature-run generations
     across Phases 3-7's development. Each generation's recommendation set must
@@ -77,6 +78,7 @@ def test_inventory_runs_reference_the_current_feature_generation(session):
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_latest_forecast_run_is_scoped_by_feature_generation(session):
     """Regression for a genuine Phase 9 finding: an unscoped "global latest
     forecast run" can predate the feature generation a recommendation batch is
@@ -201,6 +203,7 @@ def test_no_material_identity_collisions_across_plants(session):
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_no_cross_plant_leakage_in_current_values(session):
     """A material's current SAP values must match the plant they were staged
     at -- 1300 and 1200 must never be confused for the same material."""

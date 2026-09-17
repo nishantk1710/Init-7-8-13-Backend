@@ -49,6 +49,18 @@ htmlcov/
 .env.*
 !.env.example
 
+# --- Local run output ---
+# scripts/run_full_pipeline.py prints a report meant to be read once and thrown
+# away; redirecting it to a file is the normal way to review the wide tables.
+# That output names real material numbers and plant codes, and it goes stale the
+# moment the pipeline runs again, so it must never be committed. Ignored by
+# default for the same reason the archives below are: the cost of one of these
+# being swept into a commit is much higher than the cost of -f on the day
+# someone genuinely wants to share one.
+pipeline-report.txt
+*-report.txt
+pipeline*.log
+
 # --- Editor / OS noise ---
 .DS_Store
 *.pem

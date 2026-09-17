@@ -41,6 +41,7 @@ def _latest_feature_run(session) -> int:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_feature_store_baseline_matches_the_documented_state(session):
     total = session.execute(select(func.count()).select_from(MaterialFeature)).scalar()
     assert total == 113465
@@ -69,6 +70,7 @@ def test_recommendation_baseline_has_zero_ready_for_review(session):
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_oar_similarity_available_but_estimate_blocked(session):
     """Every OAR target with an available similarity match is still blocked
     on the same unsigned service-level matrix that blocks the normal path --
