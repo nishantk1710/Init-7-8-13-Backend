@@ -1,4 +1,4 @@
-ChangeDocItemSet key collapse check, 2026-09-17T13:50:30Z, sample = MATERIAL/MARC $top=500
+ChangeDocItemSet key collapse check, 2026-09-17T14:03:25Z, sample = MATERIAL/MARC $top=500
 rows returned                     : 500
 distinct on declared key (3 cols)  : 478
 distinct on composite key (7 cols) : 500
