@@ -74,7 +74,20 @@ jobs:
       - name: Run tests
         # -rs lists the skipped tests with their reason, so "2 skipped" is
         # visible in the log as a deliberate choice rather than a silent hole.
-        run: pytest -q -rs
+        # "not live and not drift" matches deploy.yml: live needs real CPI
+        # network/credentials this runner doesn't have, and drift compares our
+        # recorded knowledge of SAP against itself -- it fails when SAP changes
+        # underneath us, which is information about an external system, not a
+        # reason to redden every unrelated PR.
+        run: pytest -q -rs -m "not live and not drift"
+
+      # Drift is reported, never blocking -- see the marker's description in
+      # pytest.ini and the matching step in deploy.yml.
+      - name: SAP contract drift (informational)
+        continue-on-error: true
+        run: |
+          pytest -q -m "drift" \
+            || echo "::warning::SAP contract drift detected -- see pytest.ini, marker 'drift'"
 
   # `npm run lint`'s equivalent is deliberately not a step yet. Add ruff or
   # flake8 in the same change that fixes whatever it first reports, so CI starts
