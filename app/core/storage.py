@@ -202,17 +202,6 @@ def build_storage(url: str) -> Storage:
     process-wide settings.
     """
     if _looks_like_a_local_path(url):
-        # LOCAL-DEV-ONLY BYPASS, UNCOMMITTED: this refusal is temporarily
-        # replaced by the restored local-folder adapter so this machine can
-        # seed from the July SAP extracts on disk while Azure Data Lake
-        # credentials are unavailable. Mirrors the require_azure_sql() bypass
-        # in app/core/db.py, and carries the same warning: never commit this
-        # change -- the raise below must ship to the shared branch unchanged,
-        # and app/integrations/storage/local.py must go with it.
-        from app.integrations.storage.local import LocalFileSystemStorage
-
-        return LocalFileSystemStorage(url)
-
         raise StorageError(
             f"STORAGE_URL {url!r} is a local path. This system now runs against "
             "Azure Data Lake only -- the local folder was a stand-in until VZI's "
