@@ -1,0 +1,72 @@
+# I07 -- Max Stock strategy mock configuration. DEVELOPMENT FIXTURE ONLY.
+#
+#   DEV/TEST ONLY -- NOT VZI PRODUCTION POLICY
+#
+# NOT a Vedanta-signed business decision. The Solution Design's Rule 2 is
+# explicit:
+#
+#   THE MAX STOCK FORMULA MUST BE AGREED DURING SOLUTION DESIGN
+#   Do NOT hardcode Max = 2 x ROP.
+#   Do NOT pick a formula without business sign-off.
+#   The formula choice is configuration, not a coding decision.
+#
+# This file exists BECAUSE of that last line, not despite it. It selects an
+# already-implemented strategy through the already-existing configuration
+# schema (app/initiatives/i7/policy/unresolved.py's MaxStockStrategy), so
+# that development and testing can exercise the Max Stock leg of the chain
+# -- and, through it, the OAR similarity-weighted Max estimate, which can
+# only borrow from donor materials whose own Phase 5 Max succeeded. No new
+# algorithm is introduced and app/initiatives/i7/inventory/max_stock.py is
+# not modified: the arithmetic below is the ReviewPeriodMaxStockStrategy
+# that was already written and already unit-tested.
+#
+# Containment, mirroring i7_service_level_matrix.yaml exactly:
+#
+#   * never loaded by default -- PolicyDocument() still constructs an
+#     unconfigured MaxStockStrategy, and NotConfiguredMaxStockStrategy is
+#     still what strategy_for() returns in production;
+#   * reached only when I7_DEV_MOCK_MAX_STOCK is explicitly set (false in
+#     every environment including production, see .env.example);
+#   * the values live in this file rather than in a code literal, so a
+#     reviewer can see they were never chosen "in" business logic;
+#   * a PolicyDocument built from it still has status=DRAFT, so
+#     require_ready_for_recommendations() still blocks, and
+#     unresolved_policies() still lists max_stock_strategy until this file
+#     is replaced by a signed decision.
+#
+# Delete this file, its flag, and load_mock_max_stock_policy() the day
+# Vedanta signs a real Max Stock policy.
+#
+# ---------------------------------------------------------------------------
+# Strategy: review_period (Solution Design Option B), the only one of the two
+# implemented strategies configurable from data we actually have.
+#
+#   Max = ROP + (D_rate x T)
+#
+# Option A (EOQ) is deliberately NOT selected here: it needs an ordering cost
+# S and an annual holding rate H, which appear in no I07 document and no
+# seeded table. Mocking those would be inventing two business figures rather
+# than one review cadence, and neither has a source to be replaced from.
+# ---------------------------------------------------------------------------
+strategy: review_period
+
+# T, in months, per ZMM065 criticality tier. PLACEHOLDER CADENCE, NOT AGREED
+# WITH VEDANTA: one month for every tier, i.e. "stock is reviewed monthly",
+# chosen because it is the least presumptuous value that is (a) positive, as
+# ReviewPeriodMaxStockStrategy requires, and (b) uniform, so no tier is
+# implicitly ranked against another -- CriticalityTier is a nominal
+# vocabulary, not an ordinal scale (see app/core/criticality.py).
+#
+# Replace these values (never this file's *shape*) with the signed review
+# periods when they exist.
+#
+# OBSOLETE is absent for the same reason it is absent from
+# i7_service_level_matrix.yaml: inventory/service.py short-circuits OBSOLETE
+# materials to NOT_APPLICABLE_OBSOLETE before Max Stock is ever reached, so a
+# review period for it would never be looked up and listing one here would
+# misleadingly suggest it mattered.
+review_period_months_by_criticality:
+  CRITICAL: 1.0
+  IMPACT: 1.0
+  INSURANCE: 1.0
+  NORMAL: 1.0

@@ -1,4 +1,4 @@
-MaterialPlantSet paging stability, 2026-09-15T07:00:06Z, $count total = 2183
+MaterialPlantSet paging stability, 2026-09-17T13:50:39Z, $count total = 2183
   pull 1, no $orderby            rows= 2183 distinct keys= 2183 duplicates=   0 missing vs total=   0
   pull 2, no $orderby            rows= 2183 distinct keys= 2183 duplicates=   0 missing vs total=   0
   pull 3, $orderby=Matnr,Werks   rows=    0 distinct keys=    0 duplicates=   0 missing vs total=2183
@@ -8,4 +8,4 @@ Filtered pull vs filtered $count, Dismm values (a mismatch means the filter or t
   VB  $count=45  filtered pull rows=0  rows with that value in the ordered full pull=0  MISMATCH
   ND  $count=184  filtered pull rows=0  rows with that value in the ordered full pull=0  MISMATCH
   PD  $count=827  filtered pull rows=0  rows with that value in the ordered full pull=0  MISMATCH
-  V1  $count=79  filtered pull rows=0  rows with that value in the ordered full pull=0  MISMATCH
+  V1  $count=78  filtered pull rows=0  rows with that value in the ordered full pull=0  MISMATCH

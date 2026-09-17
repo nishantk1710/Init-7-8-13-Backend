@@ -138,8 +138,22 @@ def generate_recommendations(
     hod_lookup: HodApprovalLookup | None = None,
 ) -> RecommendationRunResult:
     """Build recommendations for every material-plant from the latest
-    successful upstream runs."""
-    policy = policy or PolicyDocument()
+    successful upstream runs.
+
+    ``policy`` defaults to the dev-fixture-aware default (see
+    ``app.initiatives.i7.policy.dev_fixtures.default_policy``), matching
+    every other phase's fallback. The recommended SS/ROP/Max values
+    themselves are read from the upstream rows and never depend on this, but
+    the builder asks the policy two questions it would otherwise answer
+    wrongly in a dev run: whether the service level is configured (which
+    decides the blocking reason and the explanation factors) and the holding
+    cost rate (used by the expected-impact calculation). Production is
+    unaffected -- with neither dev flag set, ``default_policy()`` returns
+    exactly the ``PolicyDocument()`` this line used to construct.
+    """
+    from app.initiatives.i7.policy.dev_fixtures import default_policy
+
+    policy = policy or default_policy()
     session_factory = get_sessionmaker()
     result = RecommendationRunResult()
 

@@ -266,8 +266,22 @@ def run_oar_similarity(
 
     Idempotent: a run is identified by feature run, inventory run, policy and
     embedding-model version, matching the pattern of every earlier phase.
+
+    ``policy`` defaults to the dev-fixture-aware default (see
+    ``app.initiatives.i7.policy.dev_fixtures.default_policy``), the same
+    fallback ``run_forecasting`` and ``run_inventory_calculations`` already
+    use, rather than a bare ``PolicyDocument()``. Without this, a dev run
+    with ``I7_DEV_MOCK_SERVICE_LEVEL`` set produced Phase 5 donor values that
+    Phase 6 then refused to borrow: ``_oar_service_level_configured`` read an
+    unconfigured matrix off a policy the flag had never reached, and every
+    target reported ``NOT_EVALUABLE_SERVICE_LEVEL_UNSET`` while its
+    neighbours' own numbers sat in ``i7_inventory_calculation``. Production
+    is unaffected -- with neither dev flag set, ``default_policy()`` returns
+    exactly the ``PolicyDocument()`` this line used to construct.
     """
-    policy = policy or PolicyDocument()
+    from app.initiatives.i7.policy.dev_fixtures import default_policy
+
+    policy = policy or default_policy()
     provider = provider or MiniLmEmbeddingProvider()
     session_factory = get_sessionmaker()
 
