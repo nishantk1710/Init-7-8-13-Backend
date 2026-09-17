@@ -16,11 +16,31 @@ class AgingThresholds:
     fast_max_days: int
     slow_max_days: int
 
+    def __post_init__(self) -> None:
+        if self.fast_max_days <= 0 or self.slow_max_days <= 0:
+            raise ValueError(
+                f"i13 aging thresholds must be positive days (fast_max_days={self.fast_max_days}, "
+                f"slow_max_days={self.slow_max_days})"
+            )
+        if self.fast_max_days >= self.slow_max_days:
+            raise ValueError(
+                f"i13_aging_fast_max_days ({self.fast_max_days}) must be less than "
+                f"i13_aging_slow_max_days ({self.slow_max_days})"
+            )
+
 
 @dataclass(frozen=True)
 class WatchConfig:
     consumption_window_months: int
     gr_not_issued_threshold_days: int
+
+    def __post_init__(self) -> None:
+        if self.consumption_window_months <= 0:
+            raise ValueError(f"i13_consumption_window_months must be positive, got {self.consumption_window_months}")
+        if self.gr_not_issued_threshold_days <= 0:
+            raise ValueError(
+                f"i13_gr_not_issued_threshold_days must be positive, got {self.gr_not_issued_threshold_days}"
+            )
 
 
 @dataclass(frozen=True)

@@ -195,11 +195,19 @@ class WatchMetricResponse(BaseModel):
 
     material: str
     plant: str
+    material_scope: MaterialScope
 
+    stock_on_hand: Decimal | None
+    open_po_quantity: Decimal
+    average_monthly_consumption: Decimal
     months_of_cover: Decimal | None
+    projected_months_of_cover: Decimal | None
     months_of_cover_reason: str | None
 
+    last_movement_date: date | None
     days_since_last_movement: int | None
+    last_issue_date: date | None
+    days_since_last_issue: int | None
     consumption_count_12m: int
     consumed_qty_12m: Decimal
     inventory_turns: Decimal | None
@@ -208,6 +216,8 @@ class WatchMetricResponse(BaseModel):
 
     gr_not_issued_flag: bool
     gr_not_issued_days_since_gr: int | None
+    gr_not_issued_relevant_gr_date: date | None
+    gr_not_issued_threshold_days: int
     gr_not_issued_received_quantity: Decimal
     gr_not_issued_issued_quantity: Decimal
     gr_not_issued_outstanding_quantity: Decimal
@@ -216,6 +226,10 @@ class WatchMetricResponse(BaseModel):
     planned_quantity: Decimal | None
     received_quantity: Decimal
     issued_quantity: Decimal
+    acquired_vs_plan_variance_quantity: Decimal | None
+    acquired_vs_plan_variance_percentage: Decimal | None
+
+    calculated_at: datetime
 
 
 class ExceptionResponse(BaseModel):

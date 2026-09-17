@@ -12,6 +12,7 @@ initiative.
 """
 
 from app.models.base import Base
+from app.models.i13_watch_mart import WatchMetricMart
 from app.models.ingestion import IngestionRun
 
-__all__ = ["Base", "IngestionRun"]
+__all__ = ["Base", "IngestionRun", "WatchMetricMart"]

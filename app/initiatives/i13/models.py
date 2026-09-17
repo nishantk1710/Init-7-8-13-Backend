@@ -27,6 +27,11 @@ class AttributionStatus(str, Enum):
 
 
 class AcquiredVsPlanStatus(str, Enum):
+    """``ON_PLAN`` is this codebase's name for what the FRS calls
+    ``ALIGNED`` -- same state (acquired quantity exactly equals planned
+    quantity), kept under its original name for backward compatibility with
+    the already-shipped API contract and tests."""
+
     NO_PLAN = "NO_PLAN"
     BELOW_PLAN = "BELOW_PLAN"
     ON_PLAN = "ON_PLAN"
@@ -256,31 +261,73 @@ class AttributionResult:
 
 @dataclass(frozen=True)
 class WatchMetric:
-    """Backend-computed WATCH metrics for one material+plant."""
+    """W6.3: backend-computed WATCH utilisation-mart metrics for one
+    material+plant -- months of cover, acquired-vs-plan, 30-day
+    goods-received-not-issued, and the W3.5 aging/movement classification.
+
+    Built on top of W6.2's ``ReservationLedgerEntry`` (acquisition detail)
+    and W3.5's ``MovementMetrics`` (aging/consumption) -- see ``watch.py``.
+    ``material_scope`` lets a caller filter to the W2.4/W6.2 OAR scope
+    without WATCH reimplementing that classification.
+    """
 
     material: str
     plant: str
+    material_scope: MaterialScope
 
+    # --- Coverage (months of cover) ---
+    # ``months_of_cover`` is the FRS's "current_months_of_cover" -- kept
+    # under its original name (predates this task) for backward
+    # compatibility with the already-shipped API contract and its tests.
+    stock_on_hand: Decimal | None
+    open_po_quantity: Decimal
+    average_monthly_consumption: Decimal
     months_of_cover: Decimal | None
+    projected_months_of_cover: Decimal | None
     months_of_cover_reason: str | None
 
+    # --- Movement / aging (W3.5, reused not reimplemented) ---
+    last_movement_date: date | None
     days_since_last_movement: int | None
+    last_issue_date: date | None
+    days_since_last_issue: int | None
     consumption_count_12m: int
     consumed_qty_12m: Decimal
     inventory_turns: Decimal | None
     inventory_turns_reason: str | None
     aging_band: AgingBand
 
+    # --- 30-day goods-received-not-issued ---
     gr_not_issued_flag: bool
     gr_not_issued_days_since_gr: int | None
+    gr_not_issued_relevant_gr_date: date | None
+    gr_not_issued_threshold_days: int
     gr_not_issued_received_quantity: Decimal
     gr_not_issued_issued_quantity: Decimal
     gr_not_issued_outstanding_quantity: Decimal
 
+    # --- Acquired vs plan ---
     acquired_vs_plan_status: AcquiredVsPlanStatus
     planned_quantity: Decimal | None
     received_quantity: Decimal
     issued_quantity: Decimal
+    acquired_vs_plan_variance_quantity: Decimal | None
+    acquired_vs_plan_variance_percentage: Decimal | None
+
+    # --- Audit ---
+    calculated_at: datetime
+
+
+@dataclass(frozen=True)
+class WatchMartRefreshResult:
+    """Outcome of one ``refresh_watch_metrics_mart`` run (see
+    ``app.initiatives.i13.watch_mart``) -- what a caller/validation script
+    checks to confirm the refresh happened and was idempotent."""
+
+    row_count: int
+    oar_only: bool
+    as_of: date
+    refreshed_at: datetime
 
 
 @dataclass(frozen=True)
