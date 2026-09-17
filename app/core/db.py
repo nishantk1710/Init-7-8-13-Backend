@@ -111,10 +111,14 @@ def get_engine() -> Engine:
     # outside the VNet sees -- makes the caller HANG with no output rather than
     # failing. Same lesson as the storage root: fail fast and say why.
     #
-    # ``timeout`` is pyodbc's login timeout. Passed as a driver connect_arg
-    # rather than in the URL so it applies however DATABASE_URL is written.
+    # The option name is driver-specific: pyodbc's login timeout is ``timeout``,
+    # psycopg's is ``connect_timeout``. Only pyodbc's name applied here before --
+    # invisible while Azure SQL was the only backend anyone actually connected
+    # with, but a psycopg connection (ALLOW_NON_AZURE_SQL, see require_azure_sql)
+    # rejects an option it does not recognise rather than ignoring it.
+    timeout_option = "timeout" if backend_of(settings.database_url) == MSSQL else "connect_timeout"
     connect_args: dict[str, object] = {
-        "timeout": settings.database_connect_timeout_seconds
+        timeout_option: settings.database_connect_timeout_seconds
     }
 
     return create_engine(
