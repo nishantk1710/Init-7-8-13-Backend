@@ -42,6 +42,11 @@ class WorkflowStateResponse(BaseModel):
     recommendation_id: str
     status: str
     pending_role: str | None
+    route: list[str]
+    """The full approval route this recommendation follows, in order --
+    OAR_APPROVAL_CHAIN for OAR conversion recommendations, or the
+    criticality-routed ROP/Max chain otherwise (see
+    ``recommendations.routing.route_for``)."""
     chain_index: int
     adjustment_count: int
     current_version: int

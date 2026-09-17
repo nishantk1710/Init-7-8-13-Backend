@@ -180,7 +180,15 @@ def test_an_oar_recommendation_traces_through_similarity_to_the_estimate_block()
 
     assert detail["oar"]["similarity_status"] == "AVAILABLE"
     assert detail["oar"]["neighbour_count"] is not None
-    assert detail["oar"]["estimate_status"] == "NOT_EVALUABLE_SERVICE_LEVEL_UNSET"
+    # Two legitimate block reasons exist once similarity is AVAILABLE but the
+    # estimate itself is not SUCCESS: the unsigned service-level matrix, or
+    # (since the minimum_neighbours=5 / minimum_similarity=0.60 admission
+    # gate) too few candidates cleared the 0.60 similarity floor.
+    assert detail["oar"]["estimate_status"] in (
+        "NOT_EVALUABLE_SERVICE_LEVEL_UNSET",
+        "NOT_EVALUABLE_NEIGHBOR_INVENTORY",
+        "NOT_EVALUABLE_INSUFFICIENT_NEIGHBOURS",
+    )
     assert detail["status"] == "NOT_EVALUABLE"
     entry_labels = {entry["label"] for entry in trace["entries"]}
     assert "neighbour_count" in entry_labels

@@ -51,6 +51,19 @@ class LifecycleStatus(StrEnum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
     SENT_BACK = "SENT_BACK"
+    """Returned for correction/rework. The pending role moves back one step
+    (the reviewer who should re-examine the corrected value), and the
+    recommendation is expected to change before the chain continues. Distinct
+    from HELD -- see below."""
+
+    HELD = "HELD"
+    """Paused awaiting a later decision, with nothing about the recommendation
+    expected to change. The pending role and chain position are frozen
+    exactly where they were -- HOLD does not move the chain backward (unlike
+    SEND_BACK) or forward (unlike APPROVE), and never advances on its own.
+    Only an explicit RELEASE_HOLD by the same pending role resumes
+    PENDING_APPROVAL at the same position."""
+
     ADJUSTED = "ADJUSTED"
     """A reviewer changed a value before continuing the chain. Never a silent
     edit -- see :mod:`workflow`."""
@@ -74,6 +87,7 @@ _TO_RECOMMENDATION_STATUS: dict[LifecycleStatus, RecommendationStatus] = {
     LifecycleStatus.APPROVED: RecommendationStatus.APPROVED,
     LifecycleStatus.REJECTED: RecommendationStatus.REJECTED,
     LifecycleStatus.SENT_BACK: RecommendationStatus.RETURNED,
+    LifecycleStatus.HELD: RecommendationStatus.IN_APPROVAL,
     LifecycleStatus.ADJUSTED: RecommendationStatus.IN_APPROVAL,
     LifecycleStatus.SAP_EXECUTION_PENDING: RecommendationStatus.APPROVED,
     LifecycleStatus.SAP_EXECUTED: RecommendationStatus.IMPLEMENTED,
@@ -95,12 +109,24 @@ def to_recommendation_status(status: LifecycleStatus) -> RecommendationStatus:
 
 
 class ApprovalRole(StrEnum):
-    """The four-step chain, exactly as approved. Order is load-bearing."""
+    """Every role that can appear in any approval route.
+
+    Order within this enum is not itself load-bearing -- a *route* (a tuple
+    of these) is what defines a chain's order. ``APPROVAL_CHAIN`` remains the
+    ROP/Max default chain: the one used when no criticality-specific route is
+    configured (see ``ApprovalRoutingPolicy``). ``OAR_APPROVAL_CHAIN`` is the
+    separate, fixed route the FRS requires for OAR conversion recommendations.
+    """
 
     END_USER = "End User"
     ENGINEERING_MANAGER = "Engineering Manager"
     COMMERCIAL_MANAGER = "Commercial Manager"
     WAREHOUSE_SUPERVISOR = "Warehouse Supervisor"
+
+    INVENTORY_CONTROLLER = "Inventory Controller"
+    COMMERCIAL_HEAD = "Commercial Head"
+    ENGINEERING_HEAD = "Engineering Head"
+    PLANT_HEAD = "Plant Head"
 
 
 APPROVAL_CHAIN: tuple[ApprovalRole, ...] = (
@@ -109,6 +135,20 @@ APPROVAL_CHAIN: tuple[ApprovalRole, ...] = (
     ApprovalRole.COMMERCIAL_MANAGER,
     ApprovalRole.WAREHOUSE_SUPERVISOR,
 )
+"""The ROP/Max default route -- used only when
+``ApprovalRoutingPolicy.rop_max_route_for`` has no criticality-specific
+override configured for a given tier."""
+
+OAR_APPROVAL_CHAIN: tuple[ApprovalRole, ...] = (
+    ApprovalRole.INVENTORY_CONTROLLER,
+    ApprovalRole.COMMERCIAL_HEAD,
+    ApprovalRole.ENGINEERING_HEAD,
+    ApprovalRole.PLANT_HEAD,
+)
+"""The fixed, required route for OAR conversion recommendations. Every step
+is human-gated; no step may be skipped or auto-advance -- enforced by the
+same :mod:`workflow` state machine as the ROP/Max chain, just with this
+tuple as its route."""
 
 
 class ApprovalAction(StrEnum):
@@ -116,6 +156,14 @@ class ApprovalAction(StrEnum):
     REJECT = "REJECT"
     SEND_BACK = "SEND_BACK"
     ADJUST = "ADJUST"
+    HOLD = "HOLD"
+    """Pause the recommendation awaiting a later decision. Does not move the
+    chain position in either direction and never auto-advances -- distinct
+    from SEND_BACK, which returns a step for correction/rework."""
+
+    RELEASE_HOLD = "RELEASE_HOLD"
+    """Resume a HELD recommendation at the exact position it was paused --
+    the only action valid from HELD besides itself being entered."""
 
 
 class ConversionTrigger(StrEnum):

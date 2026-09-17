@@ -203,10 +203,19 @@ def test_decisions_are_per_material_plant_not_per_segment(session):
 
     ``segment_key`` must hold ``"{material}/{plant}"``, one row per
     material-plant per run -- never a demand-class name pooling many
-    material-plants into a single decision."""
+    material-plants into a single decision.
+
+    Scoped to the latest run: earlier runs in this shared dev database
+    predate the per-material-plant fix and legitimately still hold the old
+    per-segment-class keys, which is history, not a regression."""
     if not _run(session):
         pytest.skip("no forecast run")
-    keys = session.execute(select(SegmentModelDecision.segment_key)).scalars().all()
+    latest_run_id = session.execute(select(func.max(ForecastRun.id))).scalar()
+    keys = session.execute(
+        select(SegmentModelDecision.segment_key).where(
+            SegmentModelDecision.forecast_run_id == latest_run_id
+        )
+    ).scalars().all()
     assert keys
     assert not set(keys) & {"SMOOTH", "ERRATIC", "INTERMITTENT", "LUMPY"}
     assert all(key.count("/") == 1 for key in keys)

@@ -19,7 +19,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.i7.deps import get_session, load_latest_recommendation
-from app.initiatives.i7.recommendations import ledger, workflow
+from app.initiatives.i7.policy import PolicyDocument
+from app.initiatives.i7.recommendations import ledger, routing, workflow
 from app.initiatives.i7.recommendations.types import WorkflowError
 from app.models.i7_recommendation import Recommendation
 from app.schemas.i7.approvals import (
@@ -32,15 +33,20 @@ from app.schemas.i7.errors import conflict
 router = APIRouter(tags=["i7-approvals"])
 
 
-def _state_response(row: Recommendation) -> WorkflowStateResponse:
+def _state_response(row: Recommendation, policy: PolicyDocument) -> WorkflowStateResponse:
+    route = routing.route_for(row.is_oar, row.criticality, policy)
     state = workflow.WorkflowState(
-        status=row.status, chain_index=row.chain_index, adjustment_count=row.adjustment_count
+        status=row.status,
+        chain_index=row.chain_index,
+        adjustment_count=row.adjustment_count,
+        route=route,
     )
     pending = state.pending_role
     return WorkflowStateResponse(
         recommendation_id=row.recommendation_id,
         status=row.status,
         pending_role=pending.value if pending else None,
+        route=[role.value for role in route],
         chain_index=row.chain_index,
         adjustment_count=row.adjustment_count,
         current_version=row.current_version,
@@ -51,7 +57,10 @@ def _state_response(row: Recommendation) -> WorkflowStateResponse:
     "/recommendations/{recommendation_id}/submit",
     response_model=WorkflowStateResponse,
     summary="Submit a recommendation for approval",
-    description="Enters the four-step chain at End User. Requires the "
+    description="Enters the recommendation's own route at its first role -- "
+    "the fixed OAR chain (Inventory Controller -> Commercial Head -> "
+    "Engineering Head -> Plant Head) for OAR conversion recommendations, or "
+    "the criticality-routed ROP/Max chain otherwise. Requires the "
     "recommendation to be READY_FOR_REVIEW -- a NOT_EVALUABLE recommendation "
     "cannot be submitted.",
     responses={404: {"description": "Recommendation not found"}, 409: {"description": "Invalid workflow state"}},
@@ -62,24 +71,28 @@ def submit_recommendation(
     session: Annotated[Session, Depends(get_session)],
 ) -> WorkflowStateResponse:
     row = load_latest_recommendation(session, recommendation_id)
+    policy = PolicyDocument()
     try:
-        ledger.submit_for_approval(session, row, actor_id=body.actor_id)
+        ledger.submit_for_approval(session, row, actor_id=body.actor_id, policy=policy)
     except WorkflowError as exc:
         raise conflict("INVALID_WORKFLOW_STATE", str(exc)) from exc
     session.commit()
-    return _state_response(row)
+    return _state_response(row, policy)
 
 
 @router.post(
     "/recommendations/{recommendation_id}/actions",
     response_model=WorkflowStateResponse,
-    summary="Apply an approval action (APPROVE / REJECT / SEND_BACK / ADJUST)",
-    description="Enforces the existing four-step role chain: the acting role "
-    "must match the pending role exactly, stages cannot be skipped, and "
-    "REJECT / SEND_BACK / ADJUST require a non-empty comment. Final APPROVE "
-    "at Warehouse Supervisor moves the recommendation to "
-    "SAP_EXECUTION_PENDING and calls no SAP API. Every action writes one "
-    "immutable approval-ledger entry.",
+    summary="Apply an approval action (APPROVE / REJECT / SEND_BACK / HOLD / RELEASE_HOLD / ADJUST)",
+    description="Enforces the recommendation's own route (see /submit): the "
+    "acting role must match the pending role exactly, stages cannot be "
+    "skipped, and REJECT / SEND_BACK / ADJUST / HOLD require a non-empty "
+    "comment. HOLD freezes the recommendation at its current step -- it "
+    "does not advance or reverse -- until the same pending role calls "
+    "RELEASE_HOLD; this is distinct from SEND_BACK, which returns one step "
+    "for correction/rework. Final APPROVE at the route's last role moves "
+    "the recommendation to SAP_EXECUTION_PENDING and calls no SAP API. "
+    "Every action writes one immutable approval-ledger entry.",
     responses={404: {"description": "Recommendation not found"}, 409: {"description": "Invalid action for the current role/stage, or missing required comment"}},
 )
 def apply_action(
@@ -88,11 +101,13 @@ def apply_action(
     session: Annotated[Session, Depends(get_session)],
 ) -> WorkflowStateResponse:
     row = load_latest_recommendation(session, recommendation_id)
+    policy = PolicyDocument()
     try:
         ledger.apply_approval_action(
-            session, row, body.actor_id, body.actor_role, body.action, body.comment
+            session, row, body.actor_id, body.actor_role, body.action, body.comment,
+            policy=policy,
         )
     except WorkflowError as exc:
         raise conflict("INVALID_WORKFLOW_ACTION", str(exc)) from exc
     session.commit()
-    return _state_response(row)
+    return _state_response(row, policy)

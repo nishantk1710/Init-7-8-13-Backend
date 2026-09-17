@@ -171,3 +171,97 @@ def test_chain_order_is_exactly_four_named_roles():
         ApprovalRole.COMMERCIAL_MANAGER,
         ApprovalRole.WAREHOUSE_SUPERVISOR,
     )
+
+
+# --- HOLD: pauses, never advances or reverses; distinct from SEND_BACK -----
+
+
+def test_hold_requires_a_comment():
+    state = submit(start())
+    with pytest.raises(WorkflowError):
+        apply_action(state, ApprovalAction.HOLD, ApprovalRole.END_USER, None)
+    with pytest.raises(WorkflowError):
+        apply_action(state, ApprovalAction.HOLD, ApprovalRole.END_USER, "   ")
+
+
+def test_hold_freezes_at_the_current_position():
+    state = apply_action(
+        submit(start()), ApprovalAction.APPROVE, ApprovalRole.END_USER, None
+    )
+    held = apply_action(
+        state, ApprovalAction.HOLD, ApprovalRole.ENGINEERING_MANAGER, "awaiting budget sign-off"
+    )
+    assert held.status is LifecycleStatus.HELD
+    assert held.pending_role is ApprovalRole.ENGINEERING_MANAGER
+    assert held.chain_index == state.chain_index
+
+
+def test_hold_does_not_automatically_advance_the_workflow():
+    """HOLD alone must never move the recommendation toward
+    SAP_EXECUTION_PENDING -- it is a pause, not a disguised APPROVE."""
+    state = submit(start())
+    held = apply_action(state, ApprovalAction.HOLD, ApprovalRole.END_USER, "pausing")
+    assert held.status is LifecycleStatus.HELD
+    assert held.status is not LifecycleStatus.SAP_EXECUTION_PENDING
+    assert held.status is not LifecycleStatus.PENDING_APPROVAL
+
+
+def test_no_action_other_than_release_hold_is_valid_while_held():
+    state = submit(start())
+    held = apply_action(state, ApprovalAction.HOLD, ApprovalRole.END_USER, "pausing")
+    for action in (ApprovalAction.APPROVE, ApprovalAction.REJECT, ApprovalAction.SEND_BACK):
+        with pytest.raises(WorkflowError):
+            apply_action(held, action, ApprovalRole.END_USER, "comment" if action != ApprovalAction.APPROVE else None)
+
+
+def test_release_hold_resumes_at_the_exact_position_it_was_frozen_at():
+    state = apply_action(
+        submit(start()), ApprovalAction.APPROVE, ApprovalRole.END_USER, None
+    )
+    held = apply_action(
+        state, ApprovalAction.HOLD, ApprovalRole.ENGINEERING_MANAGER, "awaiting budget sign-off"
+    )
+    released = apply_action(held, ApprovalAction.RELEASE_HOLD, ApprovalRole.ENGINEERING_MANAGER, None)
+    assert released.status is LifecycleStatus.PENDING_APPROVAL
+    assert released.pending_role is ApprovalRole.ENGINEERING_MANAGER
+    assert released.chain_index == state.chain_index
+
+
+def test_release_hold_is_only_valid_from_held():
+    state = submit(start())
+    with pytest.raises(WorkflowError):
+        apply_action(state, ApprovalAction.RELEASE_HOLD, ApprovalRole.END_USER, None)
+
+
+def test_hold_behaves_differently_from_send_back():
+    """SEND_BACK moves the pending role back one step (correction/rework);
+    HOLD keeps the exact same pending role (pause). Same starting state, two
+    different resulting positions."""
+    state = apply_action(
+        submit(start()), ApprovalAction.APPROVE, ApprovalRole.END_USER, None
+    )
+    sent_back = apply_action(
+        state, ApprovalAction.SEND_BACK, ApprovalRole.ENGINEERING_MANAGER, "needs rework"
+    )
+    held = apply_action(
+        state, ApprovalAction.HOLD, ApprovalRole.ENGINEERING_MANAGER, "awaiting decision"
+    )
+    assert sent_back.status is LifecycleStatus.SENT_BACK
+    assert held.status is LifecycleStatus.HELD
+    assert sent_back.pending_role is ApprovalRole.END_USER
+    assert held.pending_role is ApprovalRole.ENGINEERING_MANAGER
+
+
+def test_send_back_still_retains_its_existing_correction_semantics():
+    """Regression guard: HOLD's addition must not change SEND_BACK's own
+    behaviour (still requires a comment, still steps back one role)."""
+    state = apply_action(
+        submit(start()), ApprovalAction.APPROVE, ApprovalRole.END_USER, None
+    )
+    with pytest.raises(WorkflowError):
+        apply_action(state, ApprovalAction.SEND_BACK, ApprovalRole.ENGINEERING_MANAGER, None)
+    new_state = apply_action(
+        state, ApprovalAction.SEND_BACK, ApprovalRole.ENGINEERING_MANAGER, "needs rework"
+    )
+    assert new_state.status is LifecycleStatus.SENT_BACK
+    assert new_state.pending_role is ApprovalRole.END_USER

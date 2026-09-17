@@ -1,11 +1,18 @@
-"""The four-step approval state machine.
+"""The approval state machine, parameterised by route.
 
-    End User -> Engineering Manager -> Commercial Manager -> Warehouse Supervisor
-        -> SAP_EXECUTION_PENDING
+    Route[0] -> Route[1] -> ... -> Route[-1] -> SAP_EXECUTION_PENDING
 
 Pure functions over an explicit state, so the rules are testable without a
 database and the same logic runs whether Phase 8 calls it from a web request or
 a batch job calls it from a script.
+
+**The chain a recommendation follows is data, not a constant.** ROP/Max
+recommendations are routed by criticality tier (see
+``policy.ApprovalRoutingPolicy``); OAR conversion recommendations always use
+``OAR_APPROVAL_CHAIN`` (Inventory Controller -> Commercial Head -> Engineering
+Head -> Plant Head). Every function here takes the resolved ``route`` tuple
+explicitly rather than reading a single module-level chain, so the same state
+machine enforces both without a second implementation.
 
 **A recommendation never reaches SAP.** APPROVE at the final role produces
 ``SAP_EXECUTION_PENDING`` and stops there -- there is no code path from any
@@ -15,6 +22,12 @@ action to a SAP write, because no such path exists to remove.
 re-enters the chain at the point the adjustment was made from -- silently
 editing an approved number is exactly the failure mode an audit trail exists to
 catch.
+
+**HOLD freezes; it never advances or reverses.** A HELD recommendation keeps
+its exact ``chain_index`` -- the same pending role must RELEASE_HOLD it before
+any other action becomes valid again. This is deliberately different from
+SEND_BACK, which moves the pending role back one step because the material
+substance of the recommendation is expected to change before re-review.
 """
 
 from dataclasses import dataclass, replace
@@ -29,35 +42,52 @@ from app.initiatives.i7.recommendations.types import (
 )
 
 REQUIRES_COMMENT = frozenset(
-    {ApprovalAction.REJECT, ApprovalAction.SEND_BACK, ApprovalAction.ADJUST}
+    {ApprovalAction.REJECT, ApprovalAction.SEND_BACK, ApprovalAction.ADJUST, ApprovalAction.HOLD}
 )
-"""APPROVE alone may proceed without a comment -- silence is consent. Every
-other action changes the outcome for someone else and must say why."""
+"""APPROVE and RELEASE_HOLD alone may proceed without a comment -- silence is
+consent, and resuming a hold is a return to the status quo. Every other
+action changes the outcome for someone else and must say why."""
+
+_ACTIONABLE_STATUSES = (LifecycleStatus.PENDING_APPROVAL, LifecycleStatus.SENT_BACK)
+"""Statuses from which the normal APPROVE/REJECT/SEND_BACK/ADJUST/HOLD actions
+may be applied. HELD is deliberately excluded -- see ``apply_action``."""
 
 
 @dataclass(frozen=True)
 class WorkflowState:
-    """Where one recommendation sits in the chain."""
+    """Where one recommendation sits in a route.
+
+    ``route`` defaults to the historical ROP/Max chain so existing callers
+    that never pass one keep working unchanged.
+    """
 
     status: LifecycleStatus
     chain_index: int
-    """Index into :data:`APPROVAL_CHAIN` of the role whose decision is next
-    pending. Meaningless once ``status`` leaves PENDING_APPROVAL/SENT_BACK."""
+    """Index into ``route`` of the role whose decision is next pending.
+    Meaningless once ``status`` leaves PENDING_APPROVAL/SENT_BACK/HELD."""
 
     adjustment_count: int = 0
+    route: tuple[ApprovalRole, ...] = APPROVAL_CHAIN
 
     @property
     def pending_role(self) -> ApprovalRole | None:
-        if self.status not in (LifecycleStatus.PENDING_APPROVAL, LifecycleStatus.SENT_BACK):
+        if self.status not in (
+            LifecycleStatus.PENDING_APPROVAL,
+            LifecycleStatus.SENT_BACK,
+            LifecycleStatus.HELD,
+        ):
             return None
-        if self.chain_index >= len(APPROVAL_CHAIN):
+        if self.chain_index >= len(self.route):
             return None
-        return APPROVAL_CHAIN[self.chain_index]
+        return self.route[self.chain_index]
 
 
-def start(state: LifecycleStatus = LifecycleStatus.READY_FOR_REVIEW) -> WorkflowState:
+def start(
+    state: LifecycleStatus = LifecycleStatus.READY_FOR_REVIEW,
+    route: tuple[ApprovalRole, ...] = APPROVAL_CHAIN,
+) -> WorkflowState:
     """A freshly-built recommendation, not yet submitted."""
-    return WorkflowState(status=state, chain_index=0)
+    return WorkflowState(status=state, chain_index=0, route=route)
 
 
 def submit(state: WorkflowState) -> WorkflowState:
@@ -86,9 +116,19 @@ def apply_action(
     writing the ledger entry alongside it, so the two never disagree about what
     happened.
     """
-    if state.status not in (LifecycleStatus.PENDING_APPROVAL, LifecycleStatus.SENT_BACK):
+    if state.status is LifecycleStatus.HELD:
+        if action is not ApprovalAction.RELEASE_HOLD:
+            raise WorkflowError(
+                f"{action.value} is not valid while HELD; only RELEASE_HOLD "
+                "may act on a held recommendation"
+            )
+    elif state.status not in _ACTIONABLE_STATUSES:
         raise WorkflowError(
             f"no approval action is valid in state {state.status.value}"
+        )
+    elif action is ApprovalAction.RELEASE_HOLD:
+        raise WorkflowError(
+            f"RELEASE_HOLD is only valid from HELD, not {state.status.value}"
         )
 
     pending = state.pending_role
@@ -113,6 +153,15 @@ def apply_action(
             # go and stays there for correction.
             new_index = max(state.chain_index - 1, 0)
             return replace(state, status=LifecycleStatus.SENT_BACK, chain_index=new_index)
+        case ApprovalAction.HOLD:
+            # Freezes exactly where it is -- neither SEND_BACK's step back nor
+            # APPROVE's step forward. Nothing else may act until the same
+            # pending role releases it.
+            return replace(state, status=LifecycleStatus.HELD)
+        case ApprovalAction.RELEASE_HOLD:
+            # Resumes at the identical position HOLD froze -- never a step
+            # forward or back on its own.
+            return replace(state, status=LifecycleStatus.PENDING_APPROVAL)
         case ApprovalAction.ADJUST:
             # Re-enters the chain from the role that made the adjustment,
             # since a later role must see the changed value before it proceeds
@@ -128,7 +177,7 @@ def apply_action(
 
 def _advance(state: WorkflowState) -> WorkflowState:
     next_index = state.chain_index + 1
-    if next_index >= len(APPROVAL_CHAIN):
+    if next_index >= len(state.route):
         return replace(
             state, status=LifecycleStatus.SAP_EXECUTION_PENDING, chain_index=next_index
         )

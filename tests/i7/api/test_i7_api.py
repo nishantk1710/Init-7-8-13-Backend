@@ -138,6 +138,34 @@ def test_detail_of_an_unknown_recommendation_returns_404():
     assert body["error"]["code"] == "RECOMMENDATION_NOT_FOUND"
 
 
+@needs_db
+def test_detail_exposes_rationale_and_its_source():
+    with get_sessionmaker()() as session:
+        row = session.execute(select(Recommendation).limit(1)).scalar_one_or_none()
+    if row is None:
+        pytest.skip("no recommendations generated")
+    response = client.get(f"/api/v1/i7/recommendations/{row.recommendation_id}")
+    assert response.status_code == 200
+    body = response.json()
+    assert "rationale" in body
+    assert "text" in body["rationale"]
+    assert "source" in body["rationale"]
+    if body["rationale"]["source"] is not None:
+        assert body["rationale"]["source"] in ("AI_GENERATED", "DETERMINISTIC_FALLBACK")
+
+
+@needs_db
+def test_recommendation_detail_response_carries_no_secrets():
+    with get_sessionmaker()() as session:
+        row = session.execute(select(Recommendation).limit(1)).scalar_one_or_none()
+    if row is None:
+        pytest.skip("no recommendations generated")
+    response = client.get(f"/api/v1/i7/recommendations/{row.recommendation_id}")
+    body_text = response.text.lower()
+    for forbidden in ("api_key", "foundry_api_key", "llm_api_key", "authorization: bearer"):
+        assert forbidden not in body_text
+
+
 # --- E: trace ---------------------------------------------------------------------------
 
 
@@ -198,7 +226,15 @@ def test_oar_recommendation_preserves_similarity_evidence_while_blocked():
 
     body = client.get(f"/api/v1/i7/recommendations/{row.recommendation_id}").json()
     assert body["oar"]["similarity_status"] == "AVAILABLE"
-    assert body["oar"]["estimate_status"] == "NOT_EVALUABLE_SERVICE_LEVEL_UNSET"
+    # Two legitimate block reasons exist once similarity is AVAILABLE but the
+    # estimate itself is not SUCCESS: the unsigned service-level matrix, or
+    # (since the minimum_neighbours=5 / minimum_similarity=0.60 admission
+    # gate) too few candidates cleared the 0.60 similarity floor.
+    assert body["oar"]["estimate_status"] in (
+        "NOT_EVALUABLE_SERVICE_LEVEL_UNSET",
+        "NOT_EVALUABLE_NEIGHBOR_INVENTORY",
+        "NOT_EVALUABLE_INSUFFICIENT_NEIGHBOURS",
+    )
     assert body["status"] == "NOT_EVALUABLE"
     assert body["recommended"]["safety_stock"] is None
     assert body["recommended"]["rop"] is None
@@ -376,6 +412,191 @@ def test_successful_full_chain_reaches_sap_execution_pending(ready_recommendatio
     assert response.json()["status"] == "SAP_EXECUTION_PENDING"
 
 
+# --- H2: HOLD, distinct from SEND_BACK -------------------------------------
+
+
+@needs_db
+def test_hold_requires_a_comment(ready_recommendation):
+    rid = ready_recommendation
+    client.post(f"/api/v1/i7/recommendations/{rid}/submit", json={"actor_id": "U1"})
+
+    missing = client.post(
+        f"/api/v1/i7/recommendations/{rid}/actions",
+        json={"actor_id": "U2", "actor_role": "End User", "action": "HOLD"},
+    )
+    assert missing.status_code == 409
+
+    present = client.post(
+        f"/api/v1/i7/recommendations/{rid}/actions",
+        json={
+            "actor_id": "U2", "actor_role": "End User", "action": "HOLD",
+            "comment": "awaiting budget sign-off",
+        },
+    )
+    assert present.status_code == 200
+    assert present.json()["status"] == "HELD"
+    assert present.json()["pending_role"] == "End User"
+
+
+@needs_db
+def test_hold_does_not_auto_advance_and_only_release_hold_resumes(ready_recommendation):
+    rid = ready_recommendation
+    client.post(f"/api/v1/i7/recommendations/{rid}/submit", json={"actor_id": "U1"})
+    client.post(
+        f"/api/v1/i7/recommendations/{rid}/actions",
+        json={
+            "actor_id": "U2", "actor_role": "End User", "action": "HOLD",
+            "comment": "pausing",
+        },
+    )
+
+    blocked = client.post(
+        f"/api/v1/i7/recommendations/{rid}/actions",
+        json={"actor_id": "U2", "actor_role": "End User", "action": "APPROVE"},
+    )
+    assert blocked.status_code == 409
+
+    released = client.post(
+        f"/api/v1/i7/recommendations/{rid}/actions",
+        json={"actor_id": "U2", "actor_role": "End User", "action": "RELEASE_HOLD"},
+    )
+    assert released.status_code == 200
+    assert released.json()["status"] == "PENDING_APPROVAL"
+    assert released.json()["pending_role"] == "End User"
+
+
+@needs_db
+def test_hold_and_send_back_leave_the_recommendation_in_different_states(ready_recommendation):
+    """Same starting position, two different actions, two different
+    resulting states -- proving HOLD is not a silent rename of SEND_BACK."""
+    rid = ready_recommendation
+    client.post(f"/api/v1/i7/recommendations/{rid}/submit", json={"actor_id": "U1"})
+    client.post(
+        f"/api/v1/i7/recommendations/{rid}/actions",
+        json={"actor_id": "U2", "actor_role": "End User", "action": "APPROVE"},
+    )
+
+    held = client.post(
+        f"/api/v1/i7/recommendations/{rid}/actions",
+        json={
+            "actor_id": "U3", "actor_role": "Engineering Manager", "action": "HOLD",
+            "comment": "awaiting decision",
+        },
+    )
+    assert held.json()["status"] == "HELD"
+    assert held.json()["pending_role"] == "Engineering Manager"
+
+    released = client.post(
+        f"/api/v1/i7/recommendations/{rid}/actions",
+        json={"actor_id": "U3", "actor_role": "Engineering Manager", "action": "RELEASE_HOLD"},
+    )
+    sent_back = client.post(
+        f"/api/v1/i7/recommendations/{rid}/actions",
+        json={
+            "actor_id": "U3", "actor_role": "Engineering Manager", "action": "SEND_BACK",
+            "comment": "needs rework",
+        },
+    )
+    assert released.json()["status"] == "PENDING_APPROVAL"
+    assert sent_back.json()["status"] == "SENT_BACK"
+    assert sent_back.json()["pending_role"] == "End User"
+
+
+# --- H3: OAR route and criticality-based ROP/Max route -----------------------
+
+
+@pytest.fixture
+def ready_oar_recommendation():
+    """One throwaway READY_FOR_REVIEW OAR recommendation, to exercise the
+    fixed Inventory Controller -> Commercial Head -> Engineering Head ->
+    Plant Head route."""
+    recommendation_id = "REC-TEST-API-OAR-WORKFLOW"
+    with get_sessionmaker()() as session:
+        session.execute(delete(ApprovalLedgerEntry).where(
+            ApprovalLedgerEntry.recommendation_id == recommendation_id
+        ))
+        session.execute(delete(Recommendation).where(
+            Recommendation.recommendation_id == recommendation_id
+        ))
+        session.add(
+            Recommendation(
+                recommendation_id=recommendation_id,
+                sap_material_number="TESTAPIOAR001",
+                sap_plant_code="1300",
+                policy_id="i07-test",
+                policy_version=1,
+                formula_version="i07-recommendation-2",
+                status="READY_FOR_REVIEW",
+                impact_status="NOT_EVALUABLE_MISSING_RECOMMENDED",
+                is_oar=True,
+                recommended_safety_stock=5,
+                recommended_rop=12,
+            )
+        )
+        session.commit()
+
+    yield recommendation_id
+
+    with get_sessionmaker()() as session:
+        session.execute(delete(ApprovalLedgerEntry).where(
+            ApprovalLedgerEntry.recommendation_id == recommendation_id
+        ))
+        session.execute(delete(Recommendation).where(
+            Recommendation.recommendation_id == recommendation_id
+        ))
+        session.commit()
+
+
+@needs_db
+def test_oar_recommendation_submits_into_the_oar_route(ready_oar_recommendation):
+    rid = ready_oar_recommendation
+    submit = client.post(f"/api/v1/i7/recommendations/{rid}/submit", json={"actor_id": "U1"})
+    assert submit.status_code == 200
+    assert submit.json()["pending_role"] == "Inventory Controller"
+    assert submit.json()["route"] == [
+        "Inventory Controller", "Commercial Head", "Engineering Head", "Plant Head",
+    ]
+
+
+@needs_db
+def test_oar_route_steps_cannot_be_skipped_via_the_api(ready_oar_recommendation):
+    rid = ready_oar_recommendation
+    client.post(f"/api/v1/i7/recommendations/{rid}/submit", json={"actor_id": "U1"})
+
+    response = client.post(
+        f"/api/v1/i7/recommendations/{rid}/actions",
+        json={"actor_id": "U2", "actor_role": "Plant Head", "action": "APPROVE"},
+    )
+    assert response.status_code == 409
+
+
+@needs_db
+def test_oar_route_completes_through_all_four_named_roles(ready_oar_recommendation):
+    rid = ready_oar_recommendation
+    client.post(f"/api/v1/i7/recommendations/{rid}/submit", json={"actor_id": "U1"})
+    for role in (
+        "Inventory Controller", "Commercial Head", "Engineering Head", "Plant Head",
+    ):
+        response = client.post(
+            f"/api/v1/i7/recommendations/{rid}/actions",
+            json={"actor_id": "U2", "actor_role": role, "action": "APPROVE"},
+        )
+        assert response.status_code == 200
+    assert response.json()["status"] == "SAP_EXECUTION_PENDING"
+
+
+@needs_db
+def test_rop_max_recommendation_still_uses_the_default_four_step_route(ready_recommendation):
+    """Regression guard: adding OAR routing must not change the default
+    ROP/Max route for a non-OAR recommendation with no configured policy
+    override."""
+    rid = ready_recommendation
+    submit = client.post(f"/api/v1/i7/recommendations/{rid}/submit", json={"actor_id": "U1"})
+    assert submit.json()["route"] == [
+        "End User", "Engineering Manager", "Commercial Manager", "Warehouse Supervisor",
+    ]
+
+
 # --- I: approval history ------------------------------------------------------------------------
 
 
@@ -399,7 +620,10 @@ def test_approval_history_returns_ledger_entries(ready_recommendation):
 
 @needs_db
 def test_adoption_returns_unknown_when_no_sap_evidence_exists():
-    """The only reachable status on this extract: no staged CDHDR/CDPOS."""
+    """The only reachable status on this extract: raw_cdhdr/raw_cdpos are
+    staged with real data, but raw_cdpos carries zero MATERIAL/MARC rows, so
+    RawChangeDocumentProvider genuinely finds no evidence for any
+    material-plant."""
     with get_sessionmaker()() as session:
         row = session.execute(select(Recommendation).limit(1)).scalar_one_or_none()
     if row is None:
@@ -408,6 +632,45 @@ def test_adoption_returns_unknown_when_no_sap_evidence_exists():
     response = client.get(f"/api/v1/i7/recommendations/{row.recommendation_id}/adoption")
     assert response.status_code == 200
     assert response.json()["status"] == "UNKNOWN"
+
+
+@needs_db
+def test_adoption_marks_parameter_checks_as_not_conversion_adoption():
+    with get_sessionmaker()() as session:
+        row = session.execute(
+            select(Recommendation).where(Recommendation.is_oar.is_(False)).limit(1)
+        ).scalar_one_or_none()
+    if row is None:
+        pytest.skip("no normal-path recommendation generated")
+
+    response = client.get(f"/api/v1/i7/recommendations/{row.recommendation_id}/adoption")
+    assert response.status_code == 200
+    assert response.json()["is_conversion_adoption"] is False
+
+
+@needs_db
+def test_adoption_never_claims_conversion_adoption_without_a_real_transition():
+    """No recommendation on this extract is currently OAR-conversion-eligible
+    (Critical/HOD triggers are unresolved, and no consumption_count_12m
+    candidate has fired) -- if one becomes eligible later, its adoption
+    result must still report UNKNOWN/"Awaiting SAP test change", never
+    ADOPTED, since no ND/PD -> VB transition exists in this extract."""
+    with get_sessionmaker()() as session:
+        row = session.execute(
+            select(Recommendation).where(
+                Recommendation.is_oar.is_(True),
+                Recommendation.conversion_eligibility == "ELIGIBLE",
+            ).limit(1)
+        ).scalar_one_or_none()
+    if row is None:
+        pytest.skip("no OAR-conversion-eligible recommendation exists on this extract")
+
+    response = client.get(f"/api/v1/i7/recommendations/{row.recommendation_id}/adoption")
+    body = response.json()
+    assert body["is_conversion_adoption"] is True
+    assert body["status"] == "UNKNOWN"
+    assert body["status"] != "ADOPTED"
+    assert "Awaiting SAP test change" in body["detail"]
 
 
 def test_adoption_of_unknown_recommendation_returns_404():

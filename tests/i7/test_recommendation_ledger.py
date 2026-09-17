@@ -242,3 +242,154 @@ def test_no_execution_evidence_module_imports_a_sap_client(session):
     }
     forbidden = {"requests", "httpx", "urllib3"}
     assert not (imported_modules & forbidden)
+
+
+# --- Routing: OAR chain, criticality-based ROP/Max chain, through ledger ----
+
+
+@needs_db
+def test_oar_recommendation_is_routed_through_the_oar_chain(session):
+    from app.initiatives.i7.policy import PolicyDocument
+    from app.initiatives.i7.recommendations.types import OAR_APPROVAL_CHAIN
+
+    rec = make_recommendation(recommendation_id="REC-LEDGER-OAR-1", is_oar=True)
+    session.add(rec)
+    session.flush()
+
+    submit_for_approval(session, rec, "U1", policy=PolicyDocument())
+    session.flush()
+
+    entry = session.execute(
+        select(ApprovalLedgerEntry).where(
+            ApprovalLedgerEntry.recommendation_id == "REC-LEDGER-OAR-1"
+        )
+    ).scalar_one()
+    assert entry.actor_role == OAR_APPROVAL_CHAIN[0].value == "Inventory Controller"
+
+
+@needs_db
+def test_oar_chain_cannot_skip_a_step_through_the_ledger(session):
+    from app.initiatives.i7.policy import PolicyDocument
+    from app.initiatives.i7.recommendations.types import ApprovalRole, WorkflowError
+
+    rec = make_recommendation(recommendation_id="REC-LEDGER-OAR-2", is_oar=True)
+    session.add(rec)
+    session.flush()
+    submit_for_approval(session, rec, "U1", policy=PolicyDocument())
+
+    with pytest.raises(WorkflowError):
+        apply_approval_action(
+            session, rec, "U2", ApprovalRole.PLANT_HEAD, ApprovalAction.APPROVE, None,
+            policy=PolicyDocument(),
+        )
+
+
+@needs_db
+def test_criticality_routed_rop_max_recommendation_uses_the_configured_route(session):
+    from app.initiatives.i7.policy import PolicyDocument
+    from app.initiatives.i7.policy.thresholds import ApprovalRoutingPolicy
+    from app.initiatives.i7.recommendations.types import ApprovalRole
+
+    rec = make_recommendation(
+        recommendation_id="REC-LEDGER-CRIT-1", is_oar=False, criticality="CRITICAL"
+    )
+    session.add(rec)
+    session.flush()
+
+    policy = PolicyDocument(
+        approval_routing=ApprovalRoutingPolicy(
+            rop_max_route_by_tier={"CRITICAL": ("Warehouse Supervisor",)}
+        )
+    )
+    submit_for_approval(session, rec, "U1", policy=policy)
+    session.flush()
+
+    entry = session.execute(
+        select(ApprovalLedgerEntry).where(
+            ApprovalLedgerEntry.recommendation_id == "REC-LEDGER-CRIT-1"
+        )
+    ).scalar_one()
+    assert entry.actor_role == ApprovalRole.WAREHOUSE_SUPERVISOR.value
+
+    # And the single-step configured route reaches SAP_EXECUTION_PENDING
+    # after just that one approval -- proving the route, not the default
+    # four-step chain, is what actually governed the transition.
+    apply_approval_action(
+        session, rec, "U2", ApprovalRole.WAREHOUSE_SUPERVISOR, ApprovalAction.APPROVE, None,
+        policy=policy,
+    )
+    assert rec.status == LifecycleStatus.SAP_EXECUTION_PENDING.value
+
+
+# --- HOLD through the ledger: an entry is written, no auto-advance ---------
+
+
+@needs_db
+def test_hold_and_release_hold_each_create_a_ledger_entry(session):
+    rec = make_recommendation(recommendation_id="REC-LEDGER-HOLD-1")
+    session.add(rec)
+    session.flush()
+
+    submit_for_approval(session, rec, "U1")
+    apply_approval_action(
+        session, rec, "U2", ApprovalRole.END_USER, ApprovalAction.HOLD, "awaiting decision"
+    )
+    assert rec.status == LifecycleStatus.HELD.value
+
+    apply_approval_action(
+        session, rec, "U2", ApprovalRole.END_USER, ApprovalAction.RELEASE_HOLD, None
+    )
+    assert rec.status == LifecycleStatus.PENDING_APPROVAL.value
+    session.flush()
+
+    entries = session.execute(
+        select(ApprovalLedgerEntry)
+        .where(ApprovalLedgerEntry.recommendation_id == "REC-LEDGER-HOLD-1")
+        .order_by(ApprovalLedgerEntry.id)
+    ).scalars().all()
+    assert [e.action for e in entries] == ["SUBMIT", "HOLD", "RELEASE_HOLD"]
+
+
+@needs_db
+def test_hold_does_not_advance_the_persisted_chain_index(session):
+    rec = make_recommendation(recommendation_id="REC-LEDGER-HOLD-2")
+    session.add(rec)
+    session.flush()
+
+    submit_for_approval(session, rec, "U1")
+    apply_approval_action(
+        session, rec, "U2", ApprovalRole.END_USER, ApprovalAction.APPROVE, None
+    )
+    index_before_hold = rec.chain_index
+
+    apply_approval_action(
+        session, rec, "U2", ApprovalRole.ENGINEERING_MANAGER, ApprovalAction.HOLD, "pausing"
+    )
+    assert rec.chain_index == index_before_hold
+    assert rec.status == LifecycleStatus.HELD.value
+
+
+# --- No SAP write-back, at the ledger/API-facing layer ----------------------
+
+
+@needs_db
+def test_no_ledger_or_workflow_module_imports_a_sap_client(session):
+    import ast
+    import inspect
+
+    from app.initiatives.i7.recommendations import ledger, routing, workflow
+
+    forbidden = {"requests", "httpx", "urllib3"}
+    for module in (ledger, routing, workflow):
+        tree = ast.parse(inspect.getsource(module))
+        imported = {
+            alias.name.split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        } | {
+            node.module.split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module
+        }
+        assert not (imported & forbidden), module.__name__

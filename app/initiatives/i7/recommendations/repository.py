@@ -15,6 +15,7 @@ _NORMAL_SQL = """
            f.current_safety_stock, f.current_reorder_point, f.current_maximum_stock,
            f.unit_price,
            i.lead_time_method, i.valid_po_count, i.lt_avg_months,
+           i.lt_avg_days, i.sigma_lt_days, i.circuit,
            i.service_level, i.z_factor,
            i.safety_stock_status, i.safety_stock_method, i.safety_stock, i.detail,
            i.rop_status, i.rop,
@@ -61,7 +62,7 @@ _OAR_SQL = """
 
 _UNCOVERED_OAR_SQL = """
     SELECT f.sap_material_number, f.sap_plant_code, f.history_status, f.criticality,
-           f.feature_run_id
+           f.feature_run_id, f.unit_price
       FROM i7_material_feature f
      WHERE f.history_status <> 'SUFFICIENT'
        AND NOT EXISTS (

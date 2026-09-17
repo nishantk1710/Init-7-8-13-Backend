@@ -188,6 +188,45 @@ def test_no_blocking_reason_is_empty_for_a_not_evaluable_recommendation(session)
     assert missing_reason == 0
 
 
+@needs_db
+def test_rationale_is_never_ai_generated_for_a_not_evaluable_recommendation(session):
+    """Confirms, against real persisted rows, that a NOT_EVALUABLE
+    recommendation never carries an AI_GENERATED rationale -- the gateway
+    is skipped entirely whenever nothing was actually computed to explain."""
+    if not _generated(session):
+        pytest.skip("no recommendations generated")
+    wrongly_ai_generated = session.execute(
+        select(func.count())
+        .select_from(Recommendation)
+        .where(
+            Recommendation.status == LifecycleStatus.NOT_EVALUABLE.value,
+            Recommendation.rationale_source == "AI_GENERATED",
+        )
+    ).scalar()
+    assert wrongly_ai_generated == 0
+
+
+@needs_db
+def test_a_freshly_inserted_recommendation_always_carries_a_rationale_source(session):
+    """A row actually inserted by generate_recommendations (not reused from
+    before rationale support existed) always has a rationale_source --
+    generation always resolves AI_GENERATED or DETERMINISTIC_FALLBACK, never
+    leaves it null. This targets the highest existing id rather than a run
+    id, since OAR rows carry no forecast_run_id and the idempotency check
+    intentionally leaves a reused row's existing columns untouched (see
+    generate_recommendations's ``continue`` on an existing-row match) --
+    older rows predating this column are not what this test is about."""
+    if not _generated(session):
+        pytest.skip("no recommendations generated")
+    newest_id = session.execute(select(func.max(Recommendation.id))).scalar()
+    if newest_id is None:
+        pytest.skip("no recommendations generated")
+    row = session.execute(
+        select(Recommendation.rationale_source).where(Recommendation.id == newest_id)
+    ).scalar_one()
+    assert row in ("AI_GENERATED", "DETERMINISTIC_FALLBACK")
+
+
 # --- Idempotency ----------------------------------------------------------------------
 
 
@@ -410,13 +449,24 @@ def test_cold_start_recommendations_expose_unclassified_not_a_fabricated_label(s
     """OAR/cold-start materials never reached SUFFICIENT history, so FR-2
     never classified them -- demand_class must read the real FR-2 result,
     UNCLASSIFIED, not a fabricated SMOOTH/ERRATIC/INTERMITTENT/LUMPY label and
-    not a silently dropped None."""
+    not a silently dropped None.
+
+    Scoped to the latest OAR run: earlier runs in this shared dev database
+    predate the demand_class propagation fix and legitimately still have
+    demand_class=None on every OAR row, which is history, not a regression."""
     if not _generated(session):
         pytest.skip("no recommendations generated")
+    latest_oar_run_id = session.execute(
+        select(func.max(Recommendation.oar_run_id)).where(Recommendation.is_oar.is_(True))
+    ).scalar()
+    if latest_oar_run_id is None:
+        pytest.skip("no OAR recommendations generated")
+
     wrong = session.execute(
         select(func.count())
         .select_from(Recommendation)
         .where(
+            Recommendation.oar_run_id == latest_oar_run_id,
             Recommendation.history_status != "SUFFICIENT",
             Recommendation.demand_class.isnot(None),
             Recommendation.demand_class != "UNCLASSIFIED",
@@ -430,6 +480,7 @@ def test_cold_start_recommendations_expose_unclassified_not_a_fabricated_label(s
         select(func.count())
         .select_from(Recommendation)
         .where(
+            Recommendation.oar_run_id == latest_oar_run_id,
             Recommendation.history_status != "SUFFICIENT",
             Recommendation.is_oar.is_(True),
             Recommendation.demand_class.is_(None),

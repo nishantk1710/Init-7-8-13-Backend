@@ -206,6 +206,51 @@ class ConversionTriggerPolicy(BaseModel):
     ``None`` and the trigger is enabled."""
 
 
+class ApprovalRoutingPolicy(BaseModel):
+    """Which approval chain a ROP/Max recommendation follows, by criticality
+    tier.
+
+    Configuration, not API logic: a call site asks this policy for a tuple of
+    role *values* and enforces it through the same ``workflow`` state machine
+    every recommendation already uses -- it never branches on criticality
+    itself. Roles are plain strings here (matching ``ApprovalRole``'s own
+    string values) rather than the enum itself, to avoid a circular import
+    between ``app.initiatives.i7.policy`` and
+    ``app.initiatives.i7.recommendations``; ``recommendations.routing``
+    converts them to ``ApprovalRole`` at the one seam that needs the enum.
+
+    Defaults to the historical four-step chain's role values for every tier,
+    so an unconfigured deployment behaves exactly as it did before this
+    policy existed; a signed business decision to route CRITICAL materials
+    through a shorter or different chain is a configuration edit here, not a
+    code change.
+
+    OAR conversion recommendations do not use this policy at all -- they
+    always take the fixed OAR route required regardless of criticality (see
+    ``recommendations.routing.route_for``).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    rop_max_route_by_tier: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    """Criticality tier value (e.g. ``"CRITICAL"``) -> its route, as role
+    values. A tier absent from this mapping falls back to ``default_route``."""
+
+    default_route: tuple[str, ...] = (
+        "End User",
+        "Engineering Manager",
+        "Commercial Manager",
+        "Warehouse Supervisor",
+    )
+
+    def route_for(self, criticality: str | None) -> tuple[str, ...]:
+        """The configured route for this tier, or ``default_route`` if the
+        tier is unset or has no specific override."""
+        if criticality is None:
+            return self.default_route
+        return self.rop_max_route_by_tier.get(criticality, self.default_route)
+
+
 class AdoptionPolicy(BaseModel):
     """Stage 5A -- detecting that VZI executed an approved change in SAP.
 

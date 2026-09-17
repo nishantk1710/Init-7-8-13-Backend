@@ -71,15 +71,18 @@ def test_recommendation_baseline_has_zero_ready_for_review(session):
 @needs_db
 def test_oar_similarity_available_but_estimate_blocked(session):
     """Every OAR target with an available similarity match is still blocked
-    on the same unsigned service-level matrix that blocks the normal path --
-    similarity data alone is not enough to produce an estimate.
+    from a SUCCESS estimate -- similarity data alone is not enough to
+    produce one.
 
-    The exact count grew from 741 to 1,596 when the feature-builder fix
-    (union of MARC + MARD material-plant keys) brought Gamsberg's 24,609
-    material-plants into the feature store; more cold-start candidates now
-    exist for the OAR engine to find similarity matches for. Asserting
-    available == blocked (rather than a specific number) is the invariant
-    that actually matters and survives future data changes.
+    Two legitimate block reasons now exist, not one: the unsigned
+    service-level matrix (NOT_EVALUABLE_SERVICE_LEVEL_UNSET, still the
+    majority case) and, since the minimum_neighbours=5 /
+    minimum_similarity=0.60 admission gate was added, targets whose
+    similarity matched something but fewer than 5 candidates cleared the
+    0.60 floor (NOT_EVALUABLE_INSUFFICIENT_NEIGHBOURS) -- 570 of the current
+    baseline. Asserting "no AVAILABLE-similarity target reaches SUCCESS"
+    (rather than pinning it to one specific reason) is the invariant that
+    actually matters and survives future data/policy changes.
     """
     latest = _latest_feature_run(session)
     available = session.execute(
@@ -98,7 +101,13 @@ def test_oar_similarity_available_but_estimate_blocked(session):
         .where(
             Recommendation.feature_run_id == latest,
             Recommendation.oar_similarity_status == "AVAILABLE",
-            Recommendation.oar_estimate_status == "NOT_EVALUABLE_SERVICE_LEVEL_UNSET",
+            Recommendation.oar_estimate_status.in_(
+                (
+                    "NOT_EVALUABLE_SERVICE_LEVEL_UNSET",
+                    "NOT_EVALUABLE_NEIGHBOR_INVENTORY",
+                    "NOT_EVALUABLE_INSUFFICIENT_NEIGHBOURS",
+                )
+            ),
         )
     ).scalar()
     assert blocked == available

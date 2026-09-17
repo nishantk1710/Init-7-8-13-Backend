@@ -26,3 +26,10 @@ class AdoptionResponse(BaseModel):
     matched_fields: list[str]
     mismatched_fields: list[str]
     detail: str
+
+    is_conversion_adoption: bool = False
+    """Whether this result is FR-9's OAR-conversion check (ND/PD -> VB with
+    MINBE and MABST populated) rather than a normal-path parameter check --
+    distinct concepts (see ``adoption.py``'s two evaluator functions), never
+    conflated. A caller must not read a parameter-adoption ADOPTED/UNKNOWN
+    result as evidence about conversion adoption or vice versa."""

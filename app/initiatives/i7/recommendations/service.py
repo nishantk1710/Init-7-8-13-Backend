@@ -22,7 +22,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.core.db import get_sessionmaker
-from app.initiatives.i7.recommendations import builder, repository
+from app.initiatives.i7.recommendations import builder, rationale, repository
 from app.initiatives.i7.recommendations.builder import BuiltRecommendation
 from app.initiatives.i7.recommendations.conversion import HodApprovalLookup
 from app.initiatives.i7.recommendations.types import RECOMMENDATION_FORMULA_VERSION
@@ -66,6 +66,7 @@ def _factors_text(factors: tuple) -> str | None:
 def _to_row(built: BuiltRecommendation) -> dict[str, Any]:
     conversion = built.conversion
     impact = built.impact
+    rationale_result = rationale.generate_rationale(built)
 
     return {
         "recommendation_id": _recommendation_id(
@@ -100,6 +101,12 @@ def _to_row(built: BuiltRecommendation) -> dict[str, Any]:
         "oar_best_similarity": built.oar_best_similarity,
         "oar_similarity_status": built.oar_similarity_status,
         "oar_estimate_status": built.oar_estimate_status,
+        "circuit": built.circuit,
+        "unit_price": built.unit_price,
+        "lead_time_days": built.lead_time_days,
+        "lead_time_variance_days": built.lead_time_variance_days,
+        "service_level": built.service_level,
+        "z_factor": built.z_factor,
         "conversion_eligibility": conversion.eligibility.value if conversion else None,
         "conversion_trigger": conversion.trigger.value if conversion else None,
         "conversion_detail": conversion.detail[:500] if conversion else None,
@@ -112,6 +119,8 @@ def _to_row(built: BuiltRecommendation) -> dict[str, Any]:
         "blocking_reason": (built.blocking_reason or "")[:500] or None,
         "factors_text": _factors_text(built.factors),
         "calculation_trace": _trace_text(built.calculation_trace),
+        "rationale_text": rationale_result.text,
+        "rationale_source": rationale_result.source,
         "impact_status": impact.status.value,
         "safety_stock_delta": impact.safety_stock.delta if impact.safety_stock else None,
         "rop_delta": impact.reorder_point.delta if impact.reorder_point else None,

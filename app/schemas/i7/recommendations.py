@@ -2,10 +2,20 @@
 
 Grouped to mirror ``app.models.i7_recommendation.Recommendation`` field for
 field -- nothing here is invented. Where the conceptual shape in the Phase 8
-brief names a field the model does not have (ADI, CV-squared, and lead-time
-variability are not persisted on the recommendation row; they live upstream in
-Phase 3/5), the group omits it rather than fabricating a value, and
-``docs/i07_api.md`` records the gap explicitly.
+brief names a field the model does not have, the group omits it rather than
+fabricating a value, and ``docs/i07_api.md`` records the gap explicitly.
+
+``circuit``/``unit_price``/lead-time days+variance/``service_level``/
+``z_factor`` are Phase 5 values the recommendation builder already read (into
+``calculation_trace`` as text) but never exposed as typed fields -- they are
+now persisted columns, read verbatim, never recomputed. ADI and CV-squared
+remain genuinely absent: they are Phase 3 feature-store fields with no
+equivalent read anywhere in the recommendation pipeline. Working-capital
+monetary impact and a "stockout risk" concept are also genuinely absent --
+``ExpectedImpact.monetary_impact`` is hardcoded ``None`` because no I07
+document or table supplies an annual holding-cost rate, and no risk model
+exists in this codebase at all; inventing either would be exactly the kind of
+unconfirmed business value this module refuses to guess.
 """
 
 from datetime import datetime
@@ -48,12 +58,36 @@ class LeadTimeInfo(BaseModel):
     is why both remain valid values here. ``None`` when no lead-time analysis
     was recorded for this recommendation."""
 
+    days: Decimal | None = None
+    """``i7_inventory_calculation.lt_avg_days`` -- Phase 5's own lead-time
+    figure, read as-is, never recomputed here. ``None`` on the OAR/cold-start
+    path, which never reaches Phase 5 (see ``inventory/service.py``'s
+    ``DEFERRED_TO_OAR``)."""
+
+    variance_days: Decimal | None = None
+    """``i7_inventory_calculation.sigma_lt_days``. Same availability rule as
+    ``days``."""
+
 
 class CriticalityInfo(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     value: str | None = None
     """The ZMM065 tier, or ``None`` -- never defaulted to NORMAL."""
+
+
+class ServiceLevelInfo(BaseModel):
+    """The signed service level and its derived Z-factor, read verbatim from
+    Phase 5's own ``inventory.service_level.resolve()`` result -- never
+    recomputed here. Both are ``None`` while the Criticality x Service Level
+    matrix is unsigned (``NOT_EVALUABLE_SERVICE_LEVEL_UNSET``), which is the
+    honest current state on this extract, and also ``None`` on the OAR/
+    cold-start path, which never reaches Phase 5 at all."""
+
+    model_config = ConfigDict(frozen=True)
+
+    service_level: Decimal | None = None
+    z_factor: Decimal | None = None
 
 
 class OarInfo(BaseModel):
@@ -105,6 +139,26 @@ class OarInfo(BaseModel):
     consumption_count_threshold: int | None = None
     production_impact: bool | None = None
     i13_hod_approved: bool | None = None
+
+
+class RationaleInfo(BaseModel):
+    """One paragraph explaining this recommendation, plus its provenance.
+
+    ``text`` is never a source of truth for any calculated value -- it only
+    explains SS/ROP/Max/OAR facts Phase 3/4/5/6 already computed. ``source``
+    distinguishes a real model call (``AI_GENERATED``) from the deterministic
+    template (``DETERMINISTIC_FALLBACK``, also used when
+    ``LLM_PROVIDER=stub`` -- the stub always answers but never consulted a
+    real model, so its output is never labelled AI_GENERATED). No API key,
+    credential, or raw prompt reaches this schema.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    text: str | None = None
+    source: str | None = None
+    """``AI_GENERATED`` / ``DETERMINISTIC_FALLBACK`` / ``None`` (no
+    recommendation has been generated with rationale support yet)."""
 
 
 class ImpactInfo(BaseModel):
@@ -181,6 +235,14 @@ class RecommendationDetail(BaseModel):
     recommendation_id: str
     material: str
     plant: str
+    circuit: str | None = None
+    """Phase 5's own circuit assignment. ``None`` on the OAR/cold-start path
+    -- no SAP field currently supplies circuit at all (see
+    ``oar/repository.py``'s hardcoded ``NULL AS circuit``), so this is
+    genuinely absent there, not merely unpopulated."""
+    unit_price: Decimal | None = None
+    """Feature-store (Phase 3) field, available on both the normal and OAR
+    path regardless of history status."""
 
     current: StockParameters
     recommended: StockParameters
@@ -188,8 +250,10 @@ class RecommendationDetail(BaseModel):
     demand: DemandInfo
     lead_time: LeadTimeInfo
     criticality: CriticalityInfo
+    service_level: ServiceLevelInfo
     oar: OarInfo
     impact: ImpactInfo
+    rationale: RationaleInfo
     governance: GovernanceInfo
 
     status: str
@@ -210,6 +274,8 @@ class RecommendationDetail(BaseModel):
             recommendation_id=row.recommendation_id,
             material=row.sap_material_number,
             plant=row.sap_plant_code,
+            circuit=row.circuit,
+            unit_price=row.unit_price,
             current=StockParameters(
                 safety_stock=row.current_safety_stock,
                 rop=row.current_rop,
@@ -226,8 +292,16 @@ class RecommendationDetail(BaseModel):
                 model=row.baseline_model,
                 forecast_rate=row.forecast_rate,
             ),
-            lead_time=LeadTimeInfo(method=row.lead_time_method),
+            lead_time=LeadTimeInfo(
+                method=row.lead_time_method,
+                days=row.lead_time_days,
+                variance_days=row.lead_time_variance_days,
+            ),
             criticality=CriticalityInfo(value=row.criticality),
+            service_level=ServiceLevelInfo(
+                service_level=row.service_level,
+                z_factor=row.z_factor,
+            ),
             oar=OarInfo(
                 is_oar=row.is_oar,
                 similarity_status=row.oar_similarity_status,
@@ -249,6 +323,10 @@ class RecommendationDetail(BaseModel):
                 safety_stock_delta=row.safety_stock_delta,
                 rop_delta=row.rop_delta,
                 max_stock_delta=row.max_stock_delta,
+            ),
+            rationale=RationaleInfo(
+                text=row.rationale_text,
+                source=row.rationale_source,
             ),
             governance=GovernanceInfo(
                 policy_id=row.policy_id,

@@ -105,6 +105,18 @@ class Recommendation(Base):
     max_stock_strategy: Mapped[str | None] = mapped_column(String(32), nullable=True)
     confidence: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
+    # --- Detail-API completeness: values Phase 5 already computed and this
+    # module already read (into calculation_trace, as text) but never gave a
+    # typed column -- exposed as-is here, never recalculated. NULL exactly
+    # where Phase 5 itself reports NULL (e.g. service_level/z_factor/circuit
+    # while the service-level matrix is unsigned), never defaulted. ---------
+    circuit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    lead_time_days: Mapped[Decimal | None] = mapped_column(QUANTITY, nullable=True)
+    lead_time_variance_days: Mapped[Decimal | None] = mapped_column(QUANTITY, nullable=True)
+    service_level: Mapped[Decimal | None] = mapped_column(QUANTITY, nullable=True)
+    z_factor: Mapped[Decimal | None] = mapped_column(QUANTITY, nullable=True)
+
     # --- OAR-specific ------------------------------------------------------
     oar_neighbour_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     oar_best_similarity: Mapped[Decimal | None] = mapped_column(Numeric(9, 6), nullable=True)
@@ -149,6 +161,19 @@ class Recommendation(Base):
     ``RecommendationFactor`` tuples, kept as text per the no-JSONB rule."""
 
     calculation_trace: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # --- Rationale (Part 20) -------------------------------------------------
+    rationale_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """One paragraph explaining this recommendation to an approver -- either
+    AI-generated (see ``recommendations/rationale.py``) or the deterministic
+    fallback built from ``factors_text``'s own facts. Never a source of truth
+    for any calculated value; see ``rationale_source``."""
+
+    rationale_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    """``AI_GENERATED`` or ``DETERMINISTIC_FALLBACK``. ``NULL`` only for rows
+    persisted before this column existed. The stub LLM provider
+    (``LLM_PROVIDER=stub``, the default) always counts as
+    DETERMINISTIC_FALLBACK -- it never consulted a real model."""
 
     # --- Expected impact ----------------------------------------------------
     impact_status: Mapped[str] = mapped_column(String(48))

@@ -27,6 +27,7 @@ from app.initiatives.i7.errors import ConfigurationError, PolicyNotConfiguredErr
 from app.initiatives.i7.policy.oar import OarPolicy, current_oar_policy
 from app.initiatives.i7.policy.thresholds import (
     AdoptionPolicy,
+    ApprovalRoutingPolicy,
     ClassificationPolicy,
     ConfidencePolicy,
     ConversionTriggerPolicy,
@@ -60,6 +61,7 @@ class PolicyDocument(BaseModel):
     lead_time: LeadTimePolicy = Field(default_factory=LeadTimePolicy)
     conversion_triggers: ConversionTriggerPolicy = Field(default_factory=ConversionTriggerPolicy)
     adoption: AdoptionPolicy = Field(default_factory=AdoptionPolicy)
+    approval_routing: ApprovalRoutingPolicy = Field(default_factory=ApprovalRoutingPolicy)
 
     # Unresolved. Default to empty, never to a guess.
     service_level: ServiceLevelPolicy = Field(default_factory=ServiceLevelPolicy)

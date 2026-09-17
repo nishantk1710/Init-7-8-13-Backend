@@ -59,6 +59,13 @@ class BuiltRecommendation:
     oar_neighbour_count: int | None
     oar_best_similarity: Decimal | None
 
+    circuit: str | None
+    unit_price: Decimal | None
+    lead_time_days: Decimal | None
+    lead_time_variance_days: Decimal | None
+    service_level: Decimal | None
+    z_factor: Decimal | None
+
     conversion: ConversionDecision | None
     blocking_reason: str | None
     factors: tuple
@@ -191,6 +198,12 @@ def build_normal_recommendation(
         confidence=None,
         oar_neighbour_count=None,
         oar_best_similarity=None,
+        circuit=row.circuit,
+        unit_price=row.unit_price,
+        lead_time_days=row.lt_avg_days,
+        lead_time_variance_days=row.sigma_lt_days,
+        service_level=row.service_level,
+        z_factor=row.z_factor,
         conversion=conversion,
         blocking_reason=blocking_reason,
         factors=factors,
@@ -308,6 +321,18 @@ def build_oar_recommendation(
         confidence=row.confidence,
         oar_neighbour_count=row.neighbour_count,
         oar_best_similarity=row.best_similarity,
+        # circuit/lead_time/service_level/z_factor are Phase 5 outputs; an
+        # OAR/cold-start material never reaches Phase 5 (see
+        # inventory/service.py's DEFERRED_TO_OAR), so these are genuinely
+        # unavailable here -- not a gap in this builder, a fact about the
+        # material. unit_price is the one exception: it's a feature-store
+        # (Phase 3) field, available regardless of history status.
+        circuit=None,
+        unit_price=row.unit_price,
+        lead_time_days=None,
+        lead_time_variance_days=None,
+        service_level=None,
+        z_factor=None,
         conversion=conversion,
         blocking_reason=blocking_reason,
         factors=factors,
@@ -350,6 +375,12 @@ def deferred_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommenda
         confidence=None,
         oar_neighbour_count=None,
         oar_best_similarity=None,
+        circuit=None,
+        unit_price=row.unit_price,
+        lead_time_days=None,
+        lead_time_variance_days=None,
+        service_level=None,
+        z_factor=None,
         conversion=None,
         blocking_reason="no OAR similarity run has evaluated this material yet",
         factors=(),

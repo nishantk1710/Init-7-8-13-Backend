@@ -1,9 +1,11 @@
 """SAP adoption reconciliation, read-only.
 
 Calls the existing Phase 7 evaluators directly -- no SAP client is imported
-here, and none exists to import. ``NoSapStateAvailable`` (the only
-``SapStateProvider`` implementation today) makes every call resolve to
-UNKNOWN, which is the honest answer on an extract with no staged CDHDR/CDPOS.
+here, and none exists to import. ``RawChangeDocumentProvider`` reads the raw
+``raw_cdhdr``/``raw_cdpos`` extract tables (real data, no SAP call); on the
+current extract every result is still UNKNOWN, because that extract's CDPOS
+table contains no MATERIAL/MARC change rows at all -- see
+``sap_change_documents.py`` for the verification.
 """
 
 from typing import Annotated
@@ -16,6 +18,7 @@ from app.initiatives.i7.recommendations.adoption import (
     evaluate_conversion_adoption,
     evaluate_parameter_adoption,
 )
+from app.initiatives.i7.recommendations.sap_change_documents import RawChangeDocumentProvider
 from app.models.i7_recommendation import Recommendation
 from app.schemas.i7.adoption import AdoptionResponse
 
@@ -37,10 +40,13 @@ def get_adoption(
     recommendation_id: str, session: Annotated[Session, Depends(get_session)]
 ) -> AdoptionResponse:
     row: Recommendation = load_latest_recommendation(session, recommendation_id)
+    provider = RawChangeDocumentProvider(session)
+    is_conversion_adoption = bool(row.is_oar and row.conversion_eligibility == "ELIGIBLE")
 
-    if row.is_oar and row.conversion_eligibility == "ELIGIBLE":
+    if is_conversion_adoption:
         result = evaluate_conversion_adoption(
-            row.sap_material_number, row.sap_plant_code, expected_mrp_type="VB"
+            row.sap_material_number, row.sap_plant_code, expected_mrp_type="VB",
+            provider=provider,
         )
     else:
         result = evaluate_parameter_adoption(
@@ -53,7 +59,17 @@ def get_adoption(
             approved_max_stock=(
                 int(row.recommended_max_stock) if row.recommended_max_stock else None
             ),
+            provider=provider,
         )
+
+    detail = result.detail
+    if is_conversion_adoption and result.status.value == "UNKNOWN":
+        # The literal, business-facing phrase for this specific case: no
+        # ND/PD -> VB transition has been observed for this material-plant.
+        # Never claimed as ADOPTED/NOT_ADOPTED from planning-field evidence
+        # alone -- conversion adoption is a distinct check (ND/PD -> VB +
+        # MINBE + MABST), not inferred from any other field changing.
+        detail = "Awaiting SAP test change: " + detail
 
     return AdoptionResponse(
         recommendation_id=recommendation_id,
@@ -62,5 +78,6 @@ def get_adoption(
         observed=dict(result.observed),
         matched_fields=list(result.matched_fields),
         mismatched_fields=list(result.mismatched_fields),
-        detail=result.detail,
+        detail=detail,
+        is_conversion_adoption=is_conversion_adoption,
     )
