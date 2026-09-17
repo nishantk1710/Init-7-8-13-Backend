@@ -78,7 +78,13 @@ class TestOnlyAzureSqlIsAccepted:
             "sqlite:///./local.db",
         ],
     )
-    def test_a_non_azure_url_is_refused_and_explained(self, url: str) -> None:
+    def test_a_non_azure_url_is_refused_and_explained(
+        self, url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # This suite runs in CI with ALLOW_NON_AZURE_SQL=1 (see ci.yml) so the
+        # Postgres service container is usable; the gate itself must still be
+        # provably on for anyone who has not set that escape hatch.
+        monkeypatch.delenv("ALLOW_NON_AZURE_SQL", raising=False)
         with pytest.raises(DatabaseNotConfiguredError, match="Azure SQL only"):
             require_azure_sql(url)
 
@@ -92,9 +98,20 @@ class TestOnlyAzureSqlIsAccepted:
         """Unconfigured and wrongly-configured are different states, as elsewhere."""
         require_azure_sql("")
 
-    def test_the_refusal_names_the_backend_it_found(self) -> None:
+    def test_the_refusal_names_the_backend_it_found(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ALLOW_NON_AZURE_SQL", raising=False)
         with pytest.raises(DatabaseNotConfiguredError, match="postgresql"):
             require_azure_sql("postgresql://u:p@h/db")
+
+    def test_allow_non_azure_sql_env_var_lifts_the_gate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The CI/local-dev escape hatch, exercised explicitly rather than only
+        relied on implicitly through this suite's own environment."""
+        monkeypatch.setenv("ALLOW_NON_AZURE_SQL", "1")
+        require_azure_sql("postgresql://u:p@h/db")
 
 
 def test_unconfigured_database_raises_a_distinct_error(monkeypatch: pytest.MonkeyPatch) -> None:

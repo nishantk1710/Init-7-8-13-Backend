@@ -18,6 +18,7 @@ to work with zero configuration. Instead the engine is built on first use and
 cached, so a process that never touches the database never connects to one.
 """
 
+import os
 from collections.abc import Iterator
 from functools import lru_cache
 
@@ -64,7 +65,16 @@ def require_azure_sql(url: str) -> None:
     Postgres URL in someone's environment would otherwise fail deep inside the
     seed with a driver error, and the actual problem -- that this system no
     longer has a local backend -- would not be obvious from it.
+
+    ``ALLOW_NON_AZURE_SQL=1`` lifts this gate. It exists because Azure SQL sits
+    behind a private endpoint that only the VNet can reach, so neither a GitHub
+    Actions runner nor most local machines can reach it at all -- CI still needs
+    *some* database to prove migrations and app code work. Default is unset, so
+    the gate is on everywhere unless this is set deliberately (ci.yml, or a
+    developer's own shell); it must never be set in a deployed environment.
     """
+    if os.environ.get("ALLOW_NON_AZURE_SQL") == "1":
+        return
     backend = backend_of(url)
     if backend and backend != MSSQL:
         raise DatabaseNotConfiguredError(
@@ -72,7 +82,9 @@ def require_azure_sql(url: str) -> None:
             "against Azure SQL only; local Postgres was a stand-in and has been "
             "removed. Expected mssql+pyodbc://...@sql-vzi-aicom-nonprod-san"
             ".database.windows.net:1433/sqldb-aicom?driver=ODBC+Driver+18+for+"
-            "SQL+Server&Encrypt=yes. See README, 'Database'."
+            "SQL+Server&Encrypt=yes. See README, 'Database'. Set "
+            "ALLOW_NON_AZURE_SQL=1 to use a non-Azure database anyway (CI/local "
+            "dev only -- never in a deployed environment)."
         )
 
 
