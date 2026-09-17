@@ -12,6 +12,7 @@ from app.api import root
 from app.api.router import api_router
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, get_logger
+from app.schemas.i7.errors import ApiError, ErrorBody, ErrorResponse
 
 logger = get_logger(__name__)
 
@@ -34,6 +35,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Service index at `/`, outside the API prefix.
     application.include_router(root.router)
     application.include_router(api_router, prefix=settings.api_prefix)
+
+    @application.exception_handler(ApiError)
+    async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
+        """The single place an I07 domain error becomes an HTTP response.
+
+        Routes raise ``not_found`` / ``conflict`` / ``bad_request`` and never
+        format a response body themselves -- this keeps the error envelope
+        consistent (``{"error": {"code", "message", "details"}}``) without
+        duplicating that shape in every route.
+        """
+        body = ErrorResponse(error=ErrorBody(code=exc.code, message=exc.message, details=exc.error_details))
+        return JSONResponse(status_code=exc.status_code, content=body.model_dump())
 
     @application.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:

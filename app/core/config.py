@@ -250,6 +250,18 @@ class Settings(BaseSettings):
             return bool(self.database_url)
         return False
 
+    # Load a development-only mock Criticality -> Service Level matrix
+    # (config/dev/i7_service_level_matrix.yaml) instead of leaving I07's
+    # ServiceLevelPolicy unconfigured. False by default everywhere, including
+    # production: the Solution Design's Rule 1 still requires the real,
+    # Vedanta-signed matrix, and this flag exists only so local development
+    # can exercise the chain that an unsigned matrix blocks (LightGBM's
+    # target quantile, Z-factor, safety stock, ROP) without it. See
+    # app/initiatives/i7/policy/dev_fixtures.py -- a caller must still opt in
+    # explicitly by calling load_mock_service_level_policy(); this flag does
+    # not, by itself, change what PolicyDocument() builds.
+    i7_dev_mock_service_level: bool = False
+
     # --- Reserved for future integrations. Not read by any code yet, and not
     # --- required for startup. See app/core/security.py and app/integrations/.
     azure_tenant_id: str = ""

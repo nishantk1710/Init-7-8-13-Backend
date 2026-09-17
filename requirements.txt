@@ -47,6 +47,28 @@ openpyxl==3.1.5
 # porting working auth and retry logic to a new client is unforced risk.
 requests==2.34.2
 
+# --- Forecasting (Initiative 07, Phase 4) ---
+# SES and Auto-ARIMA. statsmodels rather than pmdarima: pmdarima is effectively
+# unmaintained and does not build cleanly on Python 3.14, and the order search
+# it provides is a loop over statsmodels fits that app/initiatives/i7/
+# forecasting/arima.py does directly.
+statsmodels==0.15.0
+
+# The LightGBM quantile challenger for intermittent/lumpy demand. Trained as one
+# global pooled model, never per material -- individual series here hold at most
+# 13 observations.
+lightgbm==4.7.0
+
+# Pulled in by the two above; pinned so a fresh install matches this one.
+numpy==2.5.3
+scipy==1.18.1
+pandas==3.0.5
+
+# Reads config/dev/i7_service_level_matrix.yaml, the development-only mock
+# Criticality -> Service Level matrix (see
+# app/initiatives/i7/policy/dev_fixtures.py). Not used for anything else.
+PyYAML==6.0.3
+
 # --- Test ---
 pytest==9.1.1
 httpx2==2.12.0
