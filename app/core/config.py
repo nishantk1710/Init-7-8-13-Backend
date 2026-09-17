@@ -262,6 +262,21 @@ class Settings(BaseSettings):
     # not, by itself, change what PolicyDocument() builds.
     i7_dev_mock_service_level: bool = False
 
+    # Load a development-only mock Max Stock strategy
+    # (config/dev/i7_max_stock_strategy.yaml) instead of leaving I07's
+    # MaxStockStrategy unchosen. False by default everywhere, including
+    # production: the Solution Design's Rule 2 still requires the formula to
+    # be agreed with Vedanta, and this flag exists only so local development
+    # can exercise the Max Stock leg -- and, through it, the OAR
+    # similarity-weighted Max estimate, which borrows only from donor
+    # materials whose own Phase 5 Max succeeded. The fixture selects the
+    # already-implemented review-period strategy through the existing
+    # MaxStockStrategy schema; no new formula is introduced. Independent of
+    # i7_dev_mock_service_level, though setting this one alone changes
+    # nothing in practice, because Max Stock is computed from ROP and ROP is
+    # blocked by an unsigned service level.
+    i7_dev_mock_max_stock: bool = False
+
     # --- Reserved for future integrations. Not read by any code yet, and not
     # --- required for startup. See app/core/security.py and app/integrations/.
     azure_tenant_id: str = ""
