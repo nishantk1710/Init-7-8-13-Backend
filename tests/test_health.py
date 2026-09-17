@@ -1,5 +1,6 @@
 """Smoke tests for the backend template."""
 
+import json
 import logging
 
 from fastapi.testclient import TestClient
@@ -97,7 +98,61 @@ def test_pr_event_without_banfn_is_accepted_but_warned_about(caplog) -> None:
 
 
 def test_pr_event_rejects_non_object_body() -> None:
-    """FastAPI's default validation behaviour is enough here."""
+    """400 with a reason, rather than FastAPI's 422 blob.
+
+    SAP's HTTP client surfaces the status code and little else, so the reason
+    has to be something a person can act on without our logs in front of them.
+    """
     response = client.post("/api/events/pr", json=["not", "an", "object"])
 
-    assert response.status_code == 422
+    assert response.status_code == 400
+    assert "JSON object" in response.json()["detail"]
+
+
+def test_pr_event_accepts_json_sent_as_text_plain() -> None:
+    """The 422 SAP hit in production.
+
+    ABAP's cl_http_client sends text/plain unless told otherwise, and FastAPI
+    parses the body before the model is consulted -- so a valid JSON event was
+    refused over a header. Content type is not consulted any more.
+    """
+    response = client.post(
+        "/api/events/pr",
+        content=json.dumps(SAP_PR_EVENT),
+        headers={"Content-Type": "text/plain"},
+    )
+
+    assert response.status_code == 202
+
+
+def test_pr_event_accepts_a_numeric_banfn() -> None:
+    """ABAP serialisers differ on whether a NUMC-like field is quoted."""
+    response = client.post("/api/events/pr", json={"BANFN": 1000000567})
+
+    assert response.status_code == 202
+
+
+def test_pr_event_accepts_abap_dats_and_tims_formats() -> None:
+    """DATS is 20260916 and TIMS is 131403; neither is ISO."""
+    response = client.post(
+        "/api/events/pr",
+        json={"BANFN": "1000000567", "CREATED_ON": "20260916", "CREATED_AT": "131403"},
+    )
+
+    assert response.status_code == 202
+
+
+def test_pr_event_rejects_an_unreadable_body_with_the_reason_logged(caplog) -> None:
+    """A FastAPI 422 never reached our code, which is why the live failures
+    were invisible from this side and had to be guessed at from SAP's."""
+    with caplog.at_level(logging.WARNING, logger="app.api.events.pr"):
+        response = client.post(
+            "/api/events/pr",
+            content="<root><BANFN>1</BANFN></root>",
+            headers={"Content-Type": "application/xml"},
+        )
+
+    assert response.status_code == 400
+    logged = " | ".join(caplog.messages)
+    assert "REJECTED" in logged
+    assert "application/xml" in logged
