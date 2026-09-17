@@ -52,6 +52,7 @@ needs_staging = pytest.mark.skipif(
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_raw_tables_survive_staging(session):
     """The extract is the immutable baseline; the adapter only reads it."""
     tables = session.execute(

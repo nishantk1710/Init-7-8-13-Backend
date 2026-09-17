@@ -209,6 +209,7 @@ def test_repeated_generation_reuses_unchanged_recommendations(session):
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_raw_tables_are_untouched(session):
     assert session.execute(
         text("select count(*) from pg_tables where schemaname='public' and tablename like 'raw_%'")

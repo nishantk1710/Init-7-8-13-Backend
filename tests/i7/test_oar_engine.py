@@ -324,6 +324,7 @@ def test_run_records_the_configured_weights_and_top_k(session):
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_raw_tables_are_untouched(session):
     assert session.execute(
         text("select count(*) from pg_tables where schemaname='public' and tablename like 'raw_%'")
