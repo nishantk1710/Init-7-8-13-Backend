@@ -95,6 +95,35 @@ def test_reservation_ledger_unknown_id_is_404() -> None:
     assert response.status_code == 404
 
 
+def test_consumption_attribution_list_and_round_trip() -> None:
+    response = client.get("/api/i13/consumption-attribution", params={"plant": "1300", "limit": 5})
+    assert response.status_code == 200
+    entries = response.json()
+    assert len(entries) > 0
+    assert all(e["status"] in ("ATTRIBUTED", "PARTIALLY_ATTRIBUTED", "UNATTRIBUTED", "AMBIGUOUS") for e in entries)
+
+    entry = entries[0]
+    round_trip = client.get(
+        f"/api/i13/consumption-attribution/{entry['reservation_number']}/{entry['reservation_item']}"
+    )
+    assert round_trip.status_code == 200
+    assert round_trip.json()["reservation_number"] == entry["reservation_number"]
+
+
+def test_consumption_attribution_unknown_id_is_404() -> None:
+    response = client.get("/api/i13/consumption-attribution/does-not-exist/0")
+    assert response.status_code == 404
+
+
+def test_consumption_attribution_cost_centre_disabled_by_default() -> None:
+    response = client.get("/api/i13/consumption-attribution", params={"plant": "1300", "limit": 20})
+    assert response.status_code == 200
+    entries = response.json()
+    assert len(entries) > 0
+    assert all(e["cost_centre"] is None for e in entries)
+    assert all(e["cost_centre_attribution_enabled"] is False for e in entries)
+
+
 def test_watch_returns_insufficient_history_rather_than_zero() -> None:
     response = client.get("/api/i13/watch", params={"plant": "1300"})
     assert response.status_code == 200

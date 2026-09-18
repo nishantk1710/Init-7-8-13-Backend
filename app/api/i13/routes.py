@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.i13 import consumption_attribution as consumption_attribution_routes
 from app.api.i13 import exceptions as exceptions_routes
 from app.api.i13 import ledger as ledger_routes
 from app.api.i13 import movement_metrics as movement_metrics_routes
@@ -41,6 +42,7 @@ router.include_router(movement_metrics_routes.router)
 # otherwise structurally match the two-segment parameterised route first.
 router.include_router(procurement_chain_routes.router)
 router.include_router(reservation_ledger_routes.router)
+router.include_router(consumption_attribution_routes.router)
 router.include_router(watch_routes.router)
 router.include_router(exceptions_routes.router)
 router.include_router(reclassification_routes.router)

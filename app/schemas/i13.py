@@ -13,6 +13,8 @@ from app.initiatives.i13.models import (
     AcquiredVsPlanStatus,
     AgingBand,
     AttributionStatus,
+    ConsumptionAttributionSource,
+    ConsumptionAttributionStatus,
     ExceptionStatus,
     ExceptionType,
     GiLinkStatus,
@@ -188,6 +190,33 @@ class UtilisationLedgerEntryResponse(BaseModel):
 
     attribution_status: AttributionStatus | None = None
     attribution_evidence: str | None = None
+
+
+class ConsumptionAttributionResponse(BaseModel):
+    """W6.4: deterministic ownership/accountability attribution for one W6.2
+    ``ReservationLedgerEntry``."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    ledger_id: str
+
+    material: str
+    plant: str
+
+    reservation_number: str
+    reservation_item: str
+
+    requester_id: str | None
+    order_number: str | None
+    cost_centre: str | None
+
+    status: ConsumptionAttributionStatus
+    source: ConsumptionAttributionSource
+    evidence: str
+
+    cost_centre_attribution_enabled: bool
+
+    attributed_at: datetime
 
 
 class WatchMetricResponse(BaseModel):
