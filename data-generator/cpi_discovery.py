@@ -1,8 +1,11 @@
 """
 VZI CPI OData discovery v4: $metadata, $count, behavioural probes and dictionary gap report.
  
-Credentials come from a .env file next to this script (or --env-file / real environment
-variables, which always win over the file). Never hard-code them. See .env.example:
+Credentials come from a .env file (or --env-file / real environment variables, which
+always win over any file). Never hard-code them. The default checks, in order:
+data-generator/.env (next to this script), then the backend's own .env one level up --
+the common case, since CPI_* credentials already live there for the FastAPI app and
+nothing needs a second copy of a live credential. See .env.example:
  
   CPI_CLIENT_ID=...
   CPI_CLIENT_SECRET=...
@@ -132,7 +135,17 @@ NS = {"edmx": "http://schemas.microsoft.com/ado/2007/06/edmx", "edm": "http://sc
 SAP_NS = "http://www.sap.com/Protocols/SAPData"
  
  
-DEFAULT_ENV_FILE = Path(__file__).resolve().parent / ".env"
+
+# Two candidates, checked in this order. A data-generator/.env is honoured if
+# someone actually creates one (e.g. for a discovery-only checkout with no
+# backend), but the common case is the backend's own .env one level up -- the
+# same file the FastAPI app reads its CPI_* credentials from. Without this
+# fallback the default silently pointed at a file that has never existed here,
+# which reads as a credentials problem when it is really a path default (see
+# Initiative_08_W5.3_W5.4_W5.5_Task_Plan.md, section 3.2).
+_LOCAL_ENV_FILE = Path(__file__).resolve().parent / ".env"
+_BACKEND_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+DEFAULT_ENV_FILE = _LOCAL_ENV_FILE if _LOCAL_ENV_FILE.is_file() else _BACKEND_ENV_FILE
  
  
 def load_env_file(path):
@@ -719,7 +732,8 @@ def main():
     ap.add_argument("--only-probes", action="store_true", help="skip $metadata and $count; run FR-9, probes, key check and profiles only")
     ap.add_argument("--skip-filter-sweep", action="store_true", help="skip the per-property filter support test (~230 calls)")
     ap.add_argument("--skip-profiles", action="store_true", help="skip the full pulls (MARC changes, MRP type, material numbers, ZREP)")
-    ap.add_argument("--env-file", default=str(DEFAULT_ENV_FILE), help="path to .env (default: alongside this script)")
+    ap.add_argument("--env-file", default=str(DEFAULT_ENV_FILE),
+                     help="path to .env (default: data-generator/.env if present, else the backend's .env)")
     args = ap.parse_args()
  
     if load_env_file(args.env_file):

@@ -1,4 +1,4 @@
-MaterialSet full pull, 2026-09-15T07:00:17Z: 2040 rows in 5 page(s)
+MaterialSet full pull, 2026-09-17T20:52:10Z: 2040 rows in 5 page(s)
 
 Matnr length distribution:
   len  3: 2
