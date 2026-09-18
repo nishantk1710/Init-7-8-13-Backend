@@ -8,13 +8,14 @@ registered here as they are built -- see the commented extension points below.
 from fastapi import APIRouter
 
 from app.api import health, ready
-from app.api.events import pr
+from app.api.events import csv_upload, pr
 
 api_router = APIRouter()
 
 api_router.include_router(health.router)
 api_router.include_router(ready.router)
 api_router.include_router(pr.router)
+api_router.include_router(csv_upload.router)
 
 # --- Extension points: one Spares AI backend, three business modules. ---
 # from app.api.i7.router import router as i7_router

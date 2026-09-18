@@ -16,6 +16,12 @@ uvicorn[standard]==0.52.4
 # dies instead of taking the site down with it. See the startup command in
 # README, "Deployment".
 gunicorn==23.0.0
+
+# Form and file-upload parsing, used by the CSV endpoint when SAP posts the
+# extract as a multipart file part rather than as a raw body. Without it
+# Starlette raises on such a request, and an upload would be lost to how it
+# was wrapped rather than to anything in it.
+python-multipart==0.0.20
 pydantic-settings==2.15.0
 # Imported directly by the API schemas and settings. Pinned rather than
 # inherited from fastapi: a transitive major-version bump would land silently.
