@@ -26,6 +26,36 @@ class AttributionStatus(str, Enum):
     UNATTRIBUTED = "UNATTRIBUTED"
 
 
+class ConsumptionAttributionStatus(str, Enum):
+    """W6.4: consumption *ownership* attribution -- who/which business
+    object owns a ledger entry's consumption or unutilised OAR stock. Not to
+    be confused with ``AttributionStatus`` above, which only classifies how
+    a ledger entry's issued/received *quantity* was evidenced (W6.2's GI/GR
+    linkage) -- see ``app.initiatives.i13.consumption_attribution``.
+    """
+
+    ATTRIBUTED = "ATTRIBUTED"
+    PARTIALLY_ATTRIBUTED = "PARTIALLY_ATTRIBUTED"
+    UNATTRIBUTED = "UNATTRIBUTED"
+    # Two or more deterministic candidates disagree (e.g. conflicting raw
+    # reservation rows) -- the FRS forbids picking one arbitrarily, so this
+    # is reported rather than guessed.
+    AMBIGUOUS = "AMBIGUOUS"
+
+
+class ConsumptionAttributionSource(str, Enum):
+    RESERVATION = "RESERVATION"
+    RESERVATION_ORDER = "RESERVATION_ORDER"
+    # Reserved for a future order-repository/AUFK-backed lookup -- not
+    # producible today (no order repository exists in this codebase; RESB's
+    # own Aufnr field is the only deterministic order reference available
+    # today, which resolves as RESERVATION_ORDER instead). Kept so this enum
+    # doesn't need to change shape when that source is added.
+    ORDER = "ORDER"
+    COST_CENTRE = "COST_CENTRE"
+    NONE = "NONE"
+
+
 class AcquiredVsPlanStatus(str, Enum):
     """``ON_PLAN`` is this codebase's name for what the FRS calls
     ``ALIGNED`` -- same state (acquired quantity exactly equals planned
@@ -257,6 +287,38 @@ class AttributionResult:
     ledger_id: str
     status: AttributionStatus
     evidence: str
+
+
+@dataclass(frozen=True)
+class ConsumptionAttribution:
+    """W6.4: deterministic ownership/accountability attribution for one W6.2
+    ``ReservationLedgerEntry``. See ``app.initiatives.i13.consumption_attribution``
+    for exactly how each field is resolved and what each status/source value
+    means.
+    """
+
+    ledger_id: str
+
+    material: str
+    plant: str
+
+    reservation_number: str
+    reservation_item: str
+
+    requester_id: str | None
+    order_number: str | None
+    cost_centre: str | None
+
+    status: ConsumptionAttributionStatus
+    source: ConsumptionAttributionSource
+    evidence: str
+
+    # Whether cost-centre enrichment was configured on when this record was
+    # resolved -- audit context distinguishing "disabled" from "enabled but
+    # unavailable" after the fact.
+    cost_centre_attribution_enabled: bool
+
+    attributed_at: datetime
 
 
 @dataclass(frozen=True)

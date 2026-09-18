@@ -54,7 +54,13 @@ def upgrade() -> None:
         sa.Column('acquired_vs_plan_variance_quantity', sa.Numeric(18, 6), nullable=True),
         sa.Column('acquired_vs_plan_variance_percentage', sa.Numeric(18, 6), nullable=True),
         sa.Column('calculated_at', sa.DateTime(timezone=True), nullable=False),
-        sa.Column('refreshed_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+        # CURRENT_TIMESTAMP (ANSI standard), not Postgres's now() -- this
+        # table must create identically on Postgres and Azure SQL (see
+        # app/models/base.py's portability rule). The application itself
+        # never relies on this server_default (watch_mart.py always sets
+        # refreshed_at explicitly); it exists only as a safety net for any
+        # other insert path.
+        sa.Column('refreshed_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
         sa.PrimaryKeyConstraint('material', 'plant', name=op.f('pk_i13_watch_metric_mart')),
     )
     op.create_index(

@@ -59,12 +59,22 @@ class ReconciliationConfig:
 
 
 @dataclass(frozen=True)
+class AttributionConfig:
+    """W6.4: whether cost-centre enrichment runs at all. Reservation/
+    requester/order attribution is never gated -- only cost centre, per the
+    FRS ("cost-centre path behind a config flag")."""
+
+    cost_centre_enabled: bool
+
+
+@dataclass(frozen=True)
 class I13Config:
     aging: AgingThresholds
     watch: WatchConfig
     exceptions: ExceptionConfig
     reclassification: ReclassificationConfig
     reconciliation: ReconciliationConfig
+    attribution: AttributionConfig
 
 
 def build_i13_config(settings: Settings) -> I13Config:
@@ -82,6 +92,7 @@ def build_i13_config(settings: Settings) -> I13Config:
             min_consumption_count=settings.i13_reclass_min_consumption_count
         ),
         reconciliation=ReconciliationConfig(tolerance_pct=settings.i13_reconciliation_tolerance_pct),
+        attribution=AttributionConfig(cost_centre_enabled=settings.i13_cost_centre_attribution_enabled),
     )
 
 

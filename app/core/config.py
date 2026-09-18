@@ -288,6 +288,13 @@ class Settings(BaseSettings):
     # Reconciliation tolerance for local validation against reference reports.
     i13_reconciliation_tolerance_pct: float = 5.0
 
+    # W6.4: gates cost-centre enrichment in consumption attribution. Off by
+    # default -- no deterministic cost-centre source (EKKN/AUFK) is loaded
+    # in this codebase yet (see app/initiatives/i13/cost_centre_provider.py),
+    # so leaving it on would silently do nothing; reservation/requester/order
+    # attribution is never gated by this flag.
+    i13_cost_centre_attribution_enabled: bool = False
+
     @property
     def cors_origins(self) -> list[str]:
         """Allowed CORS origins, parsed from ``FRONTEND_ORIGIN``."""
