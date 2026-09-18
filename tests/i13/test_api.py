@@ -138,13 +138,20 @@ def test_exceptions_only_contains_i13_exception_types() -> None:
     assert types <= {"PLAN_BREACH", "NO_PLAN", "GR_NOT_ISSUED_30_DAY"}
 
 
-def test_reclassification_candidates_never_fabricate_criticality() -> None:
+def test_reclassification_candidates_use_real_criticality_but_never_fabricate_hod_justification() -> None:
     response = client.get("/api/i13/reclassification", params={"plant": "1300"})
     assert response.status_code == 200
     candidates = response.json()
     assert len(candidates) > 0
+    # No HOD-justification workflow (W6.6) exists in this codebase yet, so
+    # that indicator -- and therefore data_available (which requires every
+    # indicator to have actually resolved) -- must never be fabricated.
+    assert all(c["hod_justified_request_indicator"] is None for c in candidates)
     assert all(c["data_available"] is False for c in candidates)
-    assert all(c["critical_impact_indicator"] is None for c in candidates)
+    # Criticality (W3.4) IS wired in and resolves real tiers from the seeded
+    # ZMM065 data at plant 1300 -- unlike the old stub, this is not
+    # universally None.
+    assert any(c["critical_impact_indicator"] is not None for c in candidates)
 
 
 def test_validation_reports_reference_unavailable_without_reference_counts() -> None:

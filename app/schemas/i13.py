@@ -291,12 +291,15 @@ class ReclassificationCandidateResponse(BaseModel):
 
     material: str
     plant: str
+    as_of_date: date
     consumption_count_12m: int
+    consumption_threshold: int
     consumed_more_than_threshold: bool
     critical_impact_indicator: bool | None
     hod_justified_request_indicator: bool | None
     data_available: bool
     candidate_flag: bool
+    generated_at: datetime
     candidate_reasons: list[str]
 
 

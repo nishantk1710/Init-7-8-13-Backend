@@ -9,6 +9,7 @@ worse, repeats the threshold as a literal) at each call site.
 from dataclasses import dataclass
 
 from app.core.config import Settings, get_settings
+from app.core.criticality import CriticalityTier
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ class ExceptionConfig:
 @dataclass(frozen=True)
 class ReclassificationConfig:
     min_consumption_count: int
+    critical_tiers: frozenset[CriticalityTier]
 
 
 @dataclass(frozen=True)
@@ -89,7 +91,8 @@ def build_i13_config(settings: Settings) -> I13Config:
         ),
         exceptions=ExceptionConfig(plan_breach_grace_days=settings.i13_plan_breach_grace_days),
         reclassification=ReclassificationConfig(
-            min_consumption_count=settings.i13_reclass_min_consumption_count
+            min_consumption_count=settings.i13_reclass_min_consumption_count,
+            critical_tiers=settings.i13_reclass_critical_tier_set,
         ),
         reconciliation=ReconciliationConfig(tolerance_pct=settings.i13_reconciliation_tolerance_pct),
         attribution=AttributionConfig(cost_centre_enabled=settings.i13_cost_centre_attribution_enabled),

@@ -134,3 +134,44 @@ class FakeReservationRepository:
 def oar_scope_index(*keys, dismm: str = "ND") -> dict:
     """(material, plant) -> an OAR-classifying DISMM value for every key given."""
     return {key: dismm for key in keys}
+
+
+class FakeCriticalitySource:
+    """Stands in for a real ``CriticalitySource`` (W3.4) -- an in-memory
+    (material, plant) -> tier map, so W6.5 tests never need a database."""
+
+    name = "fake"
+
+    def __init__(self, tiers: dict | None = None):
+        from app.core.criticality import CriticalityResult, parse_tier
+
+        self._tiers = dict(tiers or {})
+        self._parse_tier = parse_tier
+        self._CriticalityResult = CriticalityResult
+
+    def get(self, sap_material_number, sap_plant_code=None):
+        raw = self._tiers.get((sap_material_number, sap_plant_code))
+        tier = self._parse_tier(raw) if isinstance(raw, str) else raw
+        return self._CriticalityResult(
+            sap_material_number=sap_material_number,
+            sap_plant_code=sap_plant_code,
+            tier=tier,
+            source=self.name,
+            reason=None if tier else f"{sap_material_number} not present",
+        )
+
+    def check_connection(self) -> None:
+        return None
+
+
+class FakeHodJustificationProvider:
+    """Stands in for a real ``HodJustificationProvider`` (W6.6) -- an
+    in-memory (material, plant) -> bool|None map. Defaults to ``None``
+    (unavailable/unknown) for any key not explicitly given, matching
+    ``NullHodJustificationProvider``'s no-fabrication posture."""
+
+    def __init__(self, answers: dict | None = None):
+        self._answers = dict(answers or {})
+
+    def get_hod_justification(self, *, material: str, plant: str) -> bool | None:
+        return self._answers.get((material, plant))

@@ -392,19 +392,50 @@ class WatchMartRefreshResult:
     refreshed_at: datetime
 
 
+class ReclassificationReason(str, Enum):
+    """Machine-readable SOP 3.1.1 trigger codes, one per indicator that
+    fired. Kept as codes (not free text) so W4.6, Initiative 11 and the
+    dashboard can explain a candidate's evidence programmatically rather
+    than parsing a sentence."""
+
+    FREQUENT_CONSUMPTION = "FREQUENT_CONSUMPTION"
+    CRITICAL = "CRITICAL"
+    HOD_JUSTIFIED = "HOD_JUSTIFIED"
+
+
 @dataclass(frozen=True)
 class ReclassificationCandidate:
-    """OAR -> Min-Max reclassification evidence. Output only -- I13 never
-    calls into I7's recommendation engine; I7 may later consume this."""
+    """OAR -> Min-Max reclassification evidence (SOP 3.1.1, W6.5). Advisory
+    only -- I13 never calls into I7's recommendation engine, never computes
+    ROP/Max, and never writes back to SAP; I7 may later consume this.
+
+    Grain is (material, plant), matching W6.2's OAR scope and W3.4's
+    criticality lookup -- both are already plant-level facts (the same
+    material can be OAR at one plant and Min-Max at another; CRITICAL at one
+    plant and NORMAL at another), so collapsing to material-only would
+    either double-count consumption across plants or hide a real per-plant
+    difference in the evidence.
+    """
 
     material: str
     plant: str
+    as_of_date: date
     consumption_count_12m: int
+    consumption_threshold: int
     consumed_more_than_threshold: bool
     critical_impact_indicator: bool | None
+    """``None`` means criticality is UNKNOWN for this material-plant (the
+    configured source has no tier for it) -- never fabricated as ``False``."""
     hod_justified_request_indicator: bool | None
+    """``None`` means no HOD-justification source is available yet -- never
+    fabricated as ``False``. See ``hod_justification_provider.py``."""
     data_available: bool
+    """Whether every indicator source actually answered (criticality found
+    a tier AND the HOD provider returned a definite yes/no). ``False`` means
+    this record's non-candidate indicators are not proven negative evidence
+    -- only that no *available* indicator fired."""
     candidate_flag: bool
+    generated_at: datetime
     candidate_reasons: list[str] = field(default_factory=list)
 
 

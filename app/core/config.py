@@ -285,6 +285,15 @@ class Settings(BaseSettings):
     # SOP indicator for OAR -> Min-Max reclassification review.
     i13_reclass_min_consumption_count: int = 4
 
+    # SOP 3.1.1 indicator 2: which ZMM065 criticality tiers (W3.4,
+    # app.core.criticality.CriticalityTier) count as "Critical" evidence for
+    # reclassification. The Dev Plan says "Critical flag"; the FRS also
+    # mentions "Critical or significant production impact" -- IMPACT is
+    # deliberately NOT enabled by default, since broadening the rule beyond
+    # the Dev Plan's own wording is a business decision, not one this code
+    # should make silently. Comma-separated tier names.
+    i13_reclass_critical_tiers: str = "CRITICAL"
+
     # Reconciliation tolerance for local validation against reference reports.
     i13_reconciliation_tolerance_pct: float = 5.0
 
@@ -309,6 +318,18 @@ class Settings(BaseSettings):
     def i13_min_max_mrp_type_set(self) -> frozenset[str]:
         """Normalised MRP type codes that count as Min-Max (stocked) materials."""
         return frozenset(code.strip().upper() for code in self.i13_min_max_mrp_types.split(",") if code.strip())
+
+    @property
+    def i13_reclass_critical_tier_set(self):  # -> frozenset[CriticalityTier]
+        """Configured criticality tiers that count as reclassification
+        evidence. Local import to avoid a Settings <-> criticality import
+        cycle (``app.core.criticality`` itself imports ``Settings``).
+        Unrecognised tier names are dropped, never coerced -- the same
+        no-invention rule ``parse_tier`` itself follows."""
+        from app.core.criticality import parse_tier
+
+        tiers = (parse_tier(raw) for raw in self.i13_reclass_critical_tiers.split(","))
+        return frozenset(tier for tier in tiers if tier is not None)
 
 
 @lru_cache
