@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.i13 import act as act_routes
 from app.api.i13 import consumption_attribution as consumption_attribution_routes
 from app.api.i13 import exceptions as exceptions_routes
 from app.api.i13 import ledger as ledger_routes
@@ -47,6 +48,7 @@ router.include_router(watch_routes.router)
 router.include_router(exceptions_routes.router)
 router.include_router(reclassification_routes.router)
 router.include_router(validation_routes.router)
+router.include_router(act_routes.router)
 
 # The raw extract tables I13 actually reads -- see app/seed/manifest.py for
 # the full delivery; this is the I13-relevant subset.

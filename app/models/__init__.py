@@ -12,12 +12,22 @@ initiative.
 """
 
 from app.models.base import Base
+from app.models.i13_act_exception import (
+    ActConfirmationRecord,
+    ActExceptionEventRecord,
+    ActExceptionRecord,
+    ActNotificationRecord,
+)
 from app.models.i13_consumption_attribution import ConsumptionAttributionRecord
 from app.models.i13_reclassification import ReclassificationCandidateMart
 from app.models.i13_watch_mart import WatchMetricMart
 from app.models.ingestion import IngestionRun
 
 __all__ = [
+    "ActConfirmationRecord",
+    "ActExceptionEventRecord",
+    "ActExceptionRecord",
+    "ActNotificationRecord",
     "Base",
     "ConsumptionAttributionRecord",
     "IngestionRun",

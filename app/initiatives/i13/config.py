@@ -50,6 +50,21 @@ class ExceptionConfig:
 
 
 @dataclass(frozen=True)
+class EscalationConfig:
+    """W6.6: how long an ACT exception's requester has to confirm before it
+    escalates to the HOD, and today's local/config HOD routing table. The
+    30-day GRNI fallback for no-plan cases reuses ``WatchConfig.
+    gr_not_issued_threshold_days`` -- it is not duplicated here."""
+
+    requester_response_days: int
+    hod_recipients_raw: str
+
+    def __post_init__(self) -> None:
+        if self.requester_response_days <= 0:
+            raise ValueError(f"i13_requester_response_days must be positive, got {self.requester_response_days}")
+
+
+@dataclass(frozen=True)
 class ReclassificationConfig:
     min_consumption_count: int
     critical_tiers: frozenset[CriticalityTier]
@@ -77,6 +92,7 @@ class I13Config:
     reclassification: ReclassificationConfig
     reconciliation: ReconciliationConfig
     attribution: AttributionConfig
+    escalation: EscalationConfig
 
 
 def build_i13_config(settings: Settings) -> I13Config:
@@ -96,6 +112,10 @@ def build_i13_config(settings: Settings) -> I13Config:
         ),
         reconciliation=ReconciliationConfig(tolerance_pct=settings.i13_reconciliation_tolerance_pct),
         attribution=AttributionConfig(cost_centre_enabled=settings.i13_cost_centre_attribution_enabled),
+        escalation=EscalationConfig(
+            requester_response_days=settings.i13_requester_response_days,
+            hod_recipients_raw=settings.i13_hod_recipients,
+        ),
     )
 
 

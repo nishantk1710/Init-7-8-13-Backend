@@ -164,6 +164,97 @@ class FakeCriticalitySource:
         return None
 
 
+class FakeExceptionRepository:
+    """In-memory ``ExceptionRepository`` (W6.6) -- stands in for
+    ``app.initiatives.i13.act_exception_store.SqlExceptionRepository`` so
+    ACT service/state-machine tests never need a database."""
+
+    def __init__(self):
+        import collections
+
+        self._exceptions: dict = {}
+        self._events: dict = collections.defaultdict(list)
+        self._confirmations: dict = {}
+        self._notifications: dict = collections.defaultdict(list)
+        self._event_seq = 0
+
+    def get(self, exception_id: str):
+        return self._exceptions.get(exception_id)
+
+    def upsert(self, exception) -> None:
+        self._exceptions[exception.exception_id] = exception
+
+    def list(self, *, material=None, plant=None, exception_type=None, status=None, owner_requester_id=None):
+        items = list(self._exceptions.values())
+        if material:
+            items = [i for i in items if i.material == material]
+        if plant:
+            items = [i for i in items if i.plant == plant]
+        if exception_type:
+            items = [i for i in items if i.exception_type == exception_type]
+        if status:
+            items = [i for i in items if i.status == status]
+        if owner_requester_id:
+            items = [i for i in items if i.owner_requester_id == owner_requester_id]
+        return items
+
+    def append_event(self, event) -> None:
+        import dataclasses
+
+        self._event_seq += 1
+        self._events[event.exception_id].append(dataclasses.replace(event, event_id=str(self._event_seq)))
+
+    def list_events(self, exception_id: str):
+        return list(self._events.get(exception_id, []))
+
+    def save_confirmation(self, confirmation) -> None:
+        self._confirmations[confirmation.exception_id] = confirmation
+
+    def get_confirmation(self, exception_id: str):
+        return self._confirmations.get(exception_id)
+
+    def record_notification(self, attempt) -> None:
+        self._notifications[attempt.exception_id].append(attempt)
+
+    def list_notifications(self, exception_id: str):
+        return list(self._notifications.get(exception_id, []))
+
+
+class FakeNotificationPort:
+    """Stands in for a real ``NotificationPort`` (W6.6) -- records every
+    intent it was asked to send, and can be configured to simulate a
+    provider failure without raising (``outcome=FAILED``) or a raising
+    adapter (``raises=True``)."""
+
+    def __init__(self, *, fail: bool = False, raises: bool = False):
+        self.sent = []
+        self._fail = fail
+        self._raises = raises
+
+    def send(self, intent):
+        from app.initiatives.i13.act.domain import NotificationOutcome, NotificationResult
+
+        self.sent.append(intent)
+        if self._raises:
+            raise RuntimeError("simulated notification provider failure")
+        if self._fail:
+            return NotificationResult(outcome=NotificationOutcome.FAILED, detail="simulated failure")
+        return NotificationResult(outcome=NotificationOutcome.SENT, detail="ok")
+
+
+class FakeEscalationRecipientProvider:
+    """Stands in for a real ``EscalationRecipientProvider`` (W6.6) -- an
+    in-memory plant -> HOD identity map. Missing plants resolve to ``None``
+    (routing pending), matching ``ConfigEscalationRecipientProvider``'s
+    no-fabrication posture."""
+
+    def __init__(self, plant_to_hod: dict | None = None):
+        self._plant_to_hod = dict(plant_to_hod or {})
+
+    def get_hod(self, *, material: str, plant: str, requester_id):
+        return self._plant_to_hod.get(plant)
+
+
 class FakeHodJustificationProvider:
     """Stands in for a real ``HodJustificationProvider`` (W6.6) -- an
     in-memory (material, plant) -> bool|None map. Defaults to ``None``

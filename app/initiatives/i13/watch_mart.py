@@ -24,7 +24,7 @@ it" pattern ``watch.py``'s own docstring documents.
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.initiatives.i13.config import I13Config
@@ -144,3 +144,39 @@ def refresh_watch_metrics_mart(
         as_of=as_of,
         refreshed_at=refreshed_at,
     )
+
+
+def get_watch_metric(session: Session, material: str, plant: str) -> WatchMetricMart | None:
+    """Read-path counterpart to ``refresh_watch_metrics_mart`` -- the
+    persisted WATCH evidence for one material-plant, or ``None`` if it
+    hasn't been (re)computed yet. W6.6 (``app.initiatives.i13.act``) reads
+    the mart exclusively through this and ``list_watch_metrics`` -- it never
+    calls ``compute_watch_metrics`` directly, so ACT exception detection
+    never recalculates months of cover, aging, GRNI or acquired-vs-plan."""
+    return session.get(WatchMetricMart, (material, plant))
+
+
+def list_watch_metrics(
+    session: Session,
+    *,
+    plant: str | None = None,
+    material: str | None = None,
+    aging_band: str | None = None,
+    gr_not_issued_flag: bool | None = None,
+    acquired_vs_plan_status: str | None = None,
+) -> list[WatchMetricMart]:
+    """Read-path listing over the persisted mart, with the filters the W6.6
+    utilisation/aging API exposes. Never touches ``compute_watch_metrics``."""
+    stmt = select(WatchMetricMart)
+    if plant:
+        stmt = stmt.where(WatchMetricMart.plant == plant)
+    if material:
+        stmt = stmt.where(WatchMetricMart.material == material)
+    if aging_band:
+        stmt = stmt.where(WatchMetricMart.aging_band == aging_band.upper())
+    if gr_not_issued_flag is not None:
+        stmt = stmt.where(WatchMetricMart.gr_not_issued_flag == gr_not_issued_flag)
+    if acquired_vs_plan_status:
+        stmt = stmt.where(WatchMetricMart.acquired_vs_plan_status == acquired_vs_plan_status.upper())
+    stmt = stmt.order_by(WatchMetricMart.material, WatchMetricMart.plant)
+    return list(session.execute(stmt).scalars().all())

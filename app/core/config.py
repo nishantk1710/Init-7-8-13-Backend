@@ -304,6 +304,20 @@ class Settings(BaseSettings):
     # attribution is never gated by this flag.
     i13_cost_centre_attribution_enabled: bool = False
 
+    # W6.6: how many days an ACT exception's requester has to confirm before
+    # it escalates to the responsible HOD (app.initiatives.i13.act.service
+    # .process_escalations). The 30-day GRNI fallback for no-plan cases
+    # reuses i13_gr_not_issued_threshold_days above -- it is not a second
+    # constant.
+    i13_requester_response_days: int = 5
+
+    # W6.6: local/config HOD routing -- "PLANT:identity,PLANT2:identity2".
+    # A placeholder for a future Entra/DOA-backed lookup (see
+    # app/initiatives/i13/act_hod_provider.py); empty by default, which
+    # leaves every escalation's routing explicitly PENDING rather than
+    # inventing a recipient.
+    i13_hod_recipients: str = ""
+
     @property
     def cors_origins(self) -> list[str]:
         """Allowed CORS origins, parsed from ``FRONTEND_ORIGIN``."""
