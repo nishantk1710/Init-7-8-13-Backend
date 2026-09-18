@@ -473,7 +473,9 @@ def _build_line(
         days_at_vendor=days_between(dispatched_at, received_at or today),
         days_in_current_stage=days_between(stage_started, today),
         days_remaining=days_remaining(due_date, today),
-        aging_bucket=aging_bucket(days_between(raised_at, today)),
+        aging_bucket=aging_bucket(
+            days_between(raised_at, today), cfg.aging_band_boundaries_list
+        ),
     )
 
 

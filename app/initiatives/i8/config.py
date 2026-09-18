@@ -101,6 +101,20 @@ class I8Settings(BaseSettings):
     # time bombs that pass this week and fail next.
     reference_date: str = ""
 
+    # How many days open before a repair line moves to the next aging band.
+    #
+    # THIS IS A PLACEHOLDER, NOT A CONFIRMED RULE -- FRS open item 5, "aging
+    # bands... to be tuned during real-data calibration." These are the values
+    # the frontend already rendered before either side could read them from
+    # configuration (see aging.py), kept as the default so nothing changes
+    # until VZI gives an actual answer.
+    #
+    # Comma-separated ascending days, like series_prefixes -- the boundaries
+    # between bands, not the bands themselves. Four boundaries make five bands;
+    # changing the count changes how many bands exist, not just where they
+    # fall. `app.initiatives.i8.aging.bucket_labels()` derives the labels.
+    aging_band_boundaries: str = "15,30,45,60"
+
     # --- Criticality ------------------------------------------------------
     #
     # Deliberately NOT a setting here any more. Criticality moved to the shared
@@ -177,6 +191,20 @@ class I8Settings(BaseSettings):
         "repair,refurb,overhaul,recon,rebuild,service exchange,rotable"
     )
 
+    # How sure the model has to be before a candidate counts as meeting the
+    # bar, one of "low" / "medium" / "high".
+    #
+    # THIS IS A PLACEHOLDER, NOT A CONFIRMED RULE -- FRS open item 5,
+    # "coding-candidate confidence threshold... to be tuned during real-data
+    # calibration." Defaulting to "low" means every screened candidate meets
+    # it today -- turning this into an actual filter is VZI's call, not ours.
+    #
+    # This never removes a candidate from the response (see
+    # `app.initiatives.i8.coding_candidates.meets_confidence_threshold`): a
+    # below-threshold candidate is still reported, only flagged, the same way
+    # `actionableOnly` filters rather than silently drops.
+    coding_candidate_confidence_threshold: str = "low"
+
     # --- Presentation -----------------------------------------------------
 
     # Plant code -> display name, comma separated.
@@ -238,6 +266,13 @@ class I8Settings(BaseSettings):
             if code.strip() and name.strip():
                 mapping[code.strip()] = name.strip()
         return mapping
+
+    @property
+    def aging_band_boundaries_list(self) -> tuple[int, ...]:
+        """The aging-band day boundaries, parsed and ordered as configured."""
+        return tuple(
+            int(x.strip()) for x in self.aging_band_boundaries.split(",") if x.strip()
+        )
 
     @property
     def reference_date_value(self) -> date | None:

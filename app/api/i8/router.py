@@ -62,6 +62,7 @@ from app.api.i8.schemas import (
     VendorResponse,
 )
 from app.core.db import get_db
+from app.initiatives.i8.aging import bucket_labels
 from app.initiatives.i8.attestation import (
     AttestationDraft,
     AttestationError,
@@ -69,6 +70,7 @@ from app.initiatives.i8.attestation import (
     find as find_attestations,
     record as record_attestation,
 )
+from app.initiatives.i8.coding_candidates import meets_confidence_threshold
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.material_number import is_eighty_series, normalise
 from app.initiatives.i8.register import RepairLine
@@ -655,6 +657,15 @@ def get_coding_candidates(
             "These are provable from the data rather than argued from language"
         ),
     ),
+    meets_confidence_threshold_only: bool = Query(
+        False,
+        alias="meetsConfidenceThresholdOnly",
+        description=(
+            "Only candidates whose model confidence clears "
+            "I8_CODING_CANDIDATE_CONFIDENCE_THRESHOLD. Nothing is ever hidden "
+            "by default -- this only narrows the list when asked"
+        ),
+    ),
 ) -> CodingCandidateResponse:
     """A material is repairable only if somebody typed an 80-series number.
 
@@ -677,6 +688,14 @@ def get_coding_candidates(
         items = tuple(c for c in items if c.is_actionable)
     if corroborated_only:
         items = tuple(c for c in items if c.is_corroborated)
+    if meets_confidence_threshold_only:
+        items = tuple(
+            c
+            for c in items
+            if meets_confidence_threshold(
+                c.confidence, cfg.coding_candidate_confidence_threshold
+            )
+        )
 
     return CodingCandidateResponse(
         items=[coding_candidate_item(c, cfg) for c in items],
@@ -724,5 +743,10 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
             "attestationWindowDays": cfg.attestation_window_days,
             "faultCategories": ", ".join(cfg.fault_category_list),
             "repairLanguage": ", ".join(cfg.repair_language_list),
+            # The current band labels, not the raw day boundaries -- the
+            # frontend needs names to render, not the arithmetic that produced
+            # them. See app.initiatives.i8.aging.bucket_labels.
+            "agingBands": ", ".join(bucket_labels(cfg.aging_band_boundaries_list)),
+            "codingCandidateConfidenceThreshold": cfg.coding_candidate_confidence_threshold,
         },
     )

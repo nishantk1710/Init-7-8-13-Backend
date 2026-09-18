@@ -476,6 +476,21 @@ class TestTheApi:
         assert filtered["total"] < everything["total"]
         assert filtered["meta"]["materialsFound"] == everything["meta"]["materialsFound"]
 
+    def test_every_item_carries_a_confidence_threshold_flag(self) -> None:
+        """Default pass is unscreened -- empty confidence never meets a
+        threshold, however low, so the flag reads False for every item."""
+        for item in client.get(f"{CANDIDATES}?limit=5").json()["items"]:
+            assert item["meetsConfidenceThreshold"] is False
+
+    def test_confidence_threshold_filter_does_not_move_the_meta_counts(self) -> None:
+        everything = client.get(f"{CANDIDATES}?limit=5").json()
+        filtered = client.get(
+            f"{CANDIDATES}?limit=5&meetsConfidenceThresholdOnly=true"
+        ).json()
+        assert everything["total"] == 5
+        assert filtered["total"] == 0
+        assert filtered["meta"]["materialsFound"] == everything["meta"]["materialsFound"]
+
     def test_the_corroborated_candidate_is_served_with_its_twin(self) -> None:
         body = client.get(f"{CANDIDATES}?corroboratedOnly=true").json()
         assert body["total"] == 1

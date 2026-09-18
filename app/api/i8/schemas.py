@@ -566,6 +566,12 @@ class CodingCandidateItem(I8Model):
     is_actionable: bool = False
     """MISCODED_REPAIRABLE or UNCLEAR -- the ones a human should look at."""
 
+    meets_confidence_threshold: bool = False
+    """Whether the model's own confidence clears the configured bar
+    (``I8Settings.coding_candidate_confidence_threshold``). A sibling flag to
+    ``is_actionable``, not a replacement -- they answer different questions,
+    and a below-threshold candidate is still returned here, never dropped."""
+
     in_repairable_universe: bool = False
     """Cross-checked against W5.1. Expected false on every candidate: a material
     already in the universe is coded correctly whatever its text says. A true

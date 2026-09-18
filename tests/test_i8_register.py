@@ -281,6 +281,26 @@ class TestLifecycleAndAging:
         assert strict_stats.received_lines == lenient_stats.received_lines
         assert len(strict) == len(lenient)
 
+    def test_aging_band_boundaries_change_the_distribution_and_nothing_else(
+        self, db
+    ) -> None:
+        narrow, narrow_stats = load_repair_lines(
+            db,
+            I8Settings(_env_file=None, aging_band_boundaries="5,10"),
+            today=REFERENCE_DATE,
+        )
+        wide, wide_stats = load_repair_lines(
+            db,
+            I8Settings(_env_file=None, aging_band_boundaries="1000,2000"),
+            today=REFERENCE_DATE,
+        )
+        narrow_buckets = {line.aging_bucket for line in narrow}
+        wide_buckets = {line.aging_bucket for line in wide}
+        assert narrow_buckets != wide_buckets
+        assert narrow_stats.total_lines == wide_stats.total_lines
+        assert narrow_stats.open_lines == wide_stats.open_lines
+        assert len(narrow) == len(wide)
+
     def test_the_reference_date_moves_the_aging_not_the_population(
         self, db, register
     ) -> None:

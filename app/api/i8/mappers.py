@@ -31,7 +31,11 @@ from app.api.i8.schemas import (
 )
 from app.initiatives.i8.aging import days_between
 from app.initiatives.i8.attestation import CONDITION_LABELS, Recommendation
-from app.initiatives.i8.coding_candidates import CodingCandidate, ScreenStats
+from app.initiatives.i8.coding_candidates import (
+    CodingCandidate,
+    ScreenStats,
+    meets_confidence_threshold,
+)
 from app.initiatives.i8.config import I8Settings
 from app.initiatives.i8.declarations import DeclarationRow
 from app.initiatives.i8.exceptions import RAISED_BY_I8, ExceptionItem, ExceptionStats
@@ -450,6 +454,9 @@ def coding_candidate_item(
         ],
         is_corroborated=candidate.is_corroborated,
         is_actionable=candidate.is_actionable,
+        meets_confidence_threshold=meets_confidence_threshold(
+            candidate.confidence, cfg.coding_candidate_confidence_threshold
+        ),
         in_repairable_universe=candidate.in_repairable_universe,
         model=candidate.model,
         provider=candidate.provider,

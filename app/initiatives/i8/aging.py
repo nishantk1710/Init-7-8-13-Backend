@@ -1,8 +1,10 @@
 """W5.2 Layer 3 -- per-stage aging and the overdue rule.
 
-Pure functions over dates. No database, no session, no settings object beyond
-the two numbers that are configuration, so every rule in here is unit-testable
-without any environment at all.
+Pure functions over dates. No database, no session, no settings object --
+every rule here takes the numbers it needs (grace days, reference date, aging
+boundaries) as plain parameters, so it is unit-testable without any
+environment at all. ``I8Settings`` unpacks its fields at the call site; this
+module never imports it.
 
 Two decisions worth reading before changing anything.
 
@@ -23,18 +25,38 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Final
 
-# The exact bands the frontend already defines in
-# Init-7-8-13-Frontend/src/features/initiative-8/types/repair.ts (AgingBucket).
-# Renaming or re-cutting one of these costs the UI owner an afternoon, so the
-# boundaries are copied, not invented.
-AGING_BUCKETS: Final[tuple[str, ...]] = ("0-15", "16-30", "31-45", "46-60", "60+")
+# The default bands -- what the frontend rendered before either side could
+# read these from configuration. Still the fallback when I8_AGING_BAND_
+# BOUNDARIES is left unset, and still what AGING_BUCKETS below equals.
+DEFAULT_AGING_BOUNDARIES: Final[tuple[int, ...]] = (15, 30, 45, 60)
 
-_BUCKET_LIMITS: Final[tuple[tuple[int, str], ...]] = (
-    (15, "0-15"),
-    (30, "16-30"),
-    (45, "31-45"),
-    (60, "46-60"),
-)
+
+def bucket_labels(boundaries: tuple[int, ...]) -> tuple[str, ...]:
+    """Band labels derived from ascending day boundaries.
+
+    The number of bands is however many boundaries are configured, not a
+    fixed five -- a shorter or longer list changes how many bands exist, not
+    just where they fall.
+
+    >>> bucket_labels((15, 30, 45, 60))
+    ('0-15', '16-30', '31-45', '46-60', '60+')
+    >>> bucket_labels((10, 20))
+    ('0-10', '11-20', '20+')
+    """
+    labels: list[str] = []
+    lower = 0
+    for limit in boundaries:
+        labels.append(f"{lower}-{limit}")
+        lower = limit + 1
+    labels.append(f"{boundaries[-1]}+")
+    return tuple(labels)
+
+
+# Kept as the default-configuration label set. A test asserts this still
+# equals the frontend's AgingBucket literal union -- that type is what a
+# custom I8_AGING_BAND_BOUNDARIES value now has to widen away from, on the
+# frontend side, to actually render a different band count.
+AGING_BUCKETS: Final[tuple[str, ...]] = bucket_labels(DEFAULT_AGING_BOUNDARIES)
 
 # Overdue states. RECEIVED and NO_DUE_DATE are outcomes, not failures to decide.
 RECEIVED: Final = "RECEIVED"
@@ -45,11 +67,18 @@ ON_TIME: Final = "ON_TIME"
 OVERDUE_STATES: Final[tuple[str, ...]] = (RECEIVED, NO_DUE_DATE, OVERDUE, ON_TIME)
 
 
-def aging_bucket(days_open: int | None) -> str | None:
+def aging_bucket(
+    days_open: int | None,
+    boundaries: tuple[int, ...] = DEFAULT_AGING_BOUNDARIES,
+) -> str | None:
     """Which aging band this many days falls in, or None if unknown.
 
     Negative input (a future start date, which the extract does contain) is
-    treated as day zero rather than silently bucketed as 60+.
+    treated as day zero rather than silently bucketed as the top band.
+
+    ``boundaries`` defaults to the shipped bands so every existing caller and
+    doctest keeps working unchanged; a caller passing
+    ``cfg.aging_band_boundaries_list`` gets the configured bands instead.
 
     >>> aging_bucket(0), aging_bucket(15), aging_bucket(16), aging_bucket(61)
     ('0-15', '0-15', '16-30', '60+')
@@ -59,10 +88,11 @@ def aging_bucket(days_open: int | None) -> str | None:
     if days_open is None:
         return None
     days = max(days_open, 0)
-    for limit, bucket in _BUCKET_LIMITS:
+    labels = bucket_labels(boundaries)
+    for limit, label in zip(boundaries, labels):
         if days <= limit:
-            return bucket
-    return "60+"
+            return label
+    return labels[-1]
 
 
 def days_between(start: date | None, end: date | None) -> int | None:

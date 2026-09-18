@@ -80,6 +80,18 @@ class TestAgingBuckets:
         arrive as the most-overdue band, which is the opposite of the truth."""
         assert aging_bucket(-40) == "0-15"
 
+    def test_boundaries_are_configurable(self) -> None:
+        """FRS open item 5: aging bands are a placeholder pending VZI
+        calibration, and NFR-6 requires them to be configuration, not code."""
+        custom = (10, 20)
+        assert aging_bucket(5, custom) == "0-10"
+        assert aging_bucket(15, custom) == "11-20"
+        assert aging_bucket(21, custom) == "20+"
+        # The default is untouched -- passing custom boundaries never leaks
+        # into a call that didn't ask for them.
+        assert aging_bucket(21) == "16-30"
+        assert aging_bucket(65) == "60+"
+
 
 # --- overdue --------------------------------------------------------------
 
@@ -355,6 +367,24 @@ class TestNothingIsHardCoded:
     def test_grace_period_is_configuration(self) -> None:
         assert I8Settings(_env_file=None, overdue_grace_days=0).overdue_grace_days == 0
         assert I8Settings(_env_file=None, overdue_grace_days=30).overdue_grace_days == 30
+
+    def test_aging_band_boundaries_are_configuration(self) -> None:
+        """FRS open item 5: aging bands, pending VZI's real-data calibration."""
+        cfg = I8Settings(_env_file=None, aging_band_boundaries="10,20,30")
+        assert cfg.aging_band_boundaries_list == (10, 20, 30)
+        assert aging_bucket(25, cfg.aging_band_boundaries_list) == "21-30"
+
+    def test_confidence_threshold_is_configuration(self) -> None:
+        """FRS open item 5: coding-candidate confidence threshold, same status."""
+        from app.initiatives.i8.coding_candidates import meets_confidence_threshold
+
+        cfg = I8Settings(_env_file=None, coding_candidate_confidence_threshold="high")
+        assert cfg.coding_candidate_confidence_threshold == "high"
+        assert meets_confidence_threshold("medium", "high") is False
+        assert meets_confidence_threshold("high", "high") is True
+        # Unscreened never meets even the lowest bar -- it is not a real
+        # judgement, however permissively the threshold is set.
+        assert meets_confidence_threshold("", "low") is False
 
     def test_reference_date_can_be_pinned(self) -> None:
         """So a demo is explainable and a test is not a time bomb."""

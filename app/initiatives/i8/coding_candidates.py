@@ -150,6 +150,23 @@ class Verdict(str, Enum):
 #: The verdicts a human should act on.
 ACTIONABLE: frozenset[Verdict] = frozenset({Verdict.MISCODED_REPAIRABLE, Verdict.UNCLEAR})
 
+# Rank, not an IntEnum: confidence isn't ordinal by nature, only by this one
+# caller's need to compare it against a configured threshold. Same idiom as
+# app.core.criticality.SEVERITY_ORDER.
+_CONFIDENCE_RANK: dict[str, int] = {"low": 0, "medium": 1, "high": 2}
+
+
+def meets_confidence_threshold(confidence: str, threshold: str) -> bool:
+    """Does this candidate clear the configured confidence bar?
+
+    Unscreened candidates carry an empty ``confidence`` and never meet any
+    threshold, however low -- the same rule that keeps :data:`Verdict.UNSCREENED`
+    from ever being read as a real judgement. An unrecognised ``threshold``
+    (a config typo) is treated as the most permissive, "low" -- a filter that
+    fails open rather than silently hiding every candidate.
+    """
+    return _CONFIDENCE_RANK.get(confidence, -1) >= _CONFIDENCE_RANK.get(threshold, 0)
+
 
 @dataclass(frozen=True)
 class CandidateLine:
