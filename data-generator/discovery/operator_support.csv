@@ -11,7 +11,7 @@ ZVZI_KPI02_SHARED_SRV,MaterialDocumentHeaderSet,date range,Budat ge datetime'201
 ZVZI_KPI02_SHARED_SRV,MaterialDocumentHeaderSet,"date eq (control, sample row date)",Budat eq datetime'2013-09-27T00:00:00',40651,919,,PLAUSIBLE
 ZVZI_KPI02_SHARED_SRV,PurchaseOrderSet,date ge on PO header,Aedat ge datetime'2026-01-01T00:00:00',3140,23,,PLAUSIBLE
 ZMM_KPI02_SRV,ChangeDocHeaderSet,date ge on CDHDR (delta for FR-9),Udate ge datetime'2026-01-01T00:00:00',,,,REJECTED_HTTP_500
-ZMM_KPI02_SRV,ChangeDocHeaderSet,eq + date ge,Objectclas eq 'MATERIAL' and Udate ge datetime'2018-01-01T00:00:00',,3713,,PLAUSIBLE
+ZMM_KPI02_SRV,ChangeDocHeaderSet,eq + date ge,Objectclas eq 'MATERIAL' and Udate ge datetime'2018-01-01T00:00:00',,3760,,PLAUSIBLE
 ZMM_KPI02_SRV,ChangeDocItemSet,or inside parentheses,Objectclas eq 'MATERIAL' and (Tabname eq 'MARC' or Tabname eq 'MARA'),,,,REJECTED_HTTP_500
 ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,or on key,Ebeln eq '4500000001' or Ebeln eq '4500000002',11097,2,,PLAUSIBLE
 ZMM_KPI02_SRV,StockMovementStatisticSet,date ge on S032,Letztbew ge datetime'2020-01-01T00:00:00',1486,12,,PLAUSIBLE

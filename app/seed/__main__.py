@@ -23,7 +23,21 @@ logger = get_logger(__name__)
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m app.seed",
-        description="Load the July SAP extracts into the local database.",
+        description=(
+            "Load delivered SAP extract workbooks into the raw layer. "
+            "NOT the primary route any more -- see the epilog."
+        ),
+        epilog=(
+            "Live SAP is now the primary source: `python -m app.ingest --fetch "
+            "--load --all` pulls all 21 entity sets through CPI into odata_* "
+            "tables. Prefer it -- it covers all 13 plants, where the July "
+            "extracts carry two, and it needs nobody to upload a file first.\n"
+            "\n"
+            "This loader remains for what CPI does not expose: EXTWG and the "
+            "other ~237 MARA columns, ZZCRITIC, and the ZMM065 and GR reports, "
+            "which have no OData equivalent at all."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--all", action="store_true", help="load every table in the manifest")

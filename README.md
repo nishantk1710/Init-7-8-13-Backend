@@ -487,10 +487,101 @@ behaviour: failed writes, sorted recursive listings, missing-key errors. It
 cannot exercise RBAC, DNS, private endpoints or throughput. Those are proven by
 `python -m app.checkup` from inside the App Service, and by nothing else.
 
-## Seeding
+## Ingestion from live SAP
 
-Loads the July SAP extracts into the local database. This replaces
-`data-generator/` as the development data source -- no synthetic data.
+**The primary route.** Pulls all 21 entity sets through CPI, lands them in
+object storage, then loads them into Azure SQL.
+
+```bash
+python -m app.ingest --list                   # sets, target tables, what has landed
+python -m app.ingest --fetch --all            # CPI -> storage
+python -m app.ingest --load  --all            # storage -> Azure SQL
+python -m app.ingest --fetch --load --all     # both, in order
+python -m app.ingest --fetch --set MaterialPlantSet
+```
+
+Needs `DATABASE_URL`, `STORAGE_URL`, the `CPI_*` settings, and
+**`Storage Blob Data Contributor`** on the identity -- the fetch stage is the
+first thing in this codebase that writes to the Data Lake, and `Reader` is not
+enough. `--list` touches neither SAP nor the database.
+
+Landing layout, under `INGEST_PREFIX`:
+
+```
+odata/<service>/<EntitySet>/<YYYY-MM-DD>/data.jsonl
+odata/<service>/<EntitySet>/<YYYY-MM-DD>/_manifest.json
+```
+
+**Why two stages rather than one command.** A load that fails can be rerun
+against bytes already on disk instead of asking SAP for a hundred thousand rows
+it already gave us; the landed files are an audit of exactly what SAP returned
+on a given day; and the two halves fail for unrelated reasons -- service
+defects versus driver and schema problems -- so their errors stay legible.
+
+**The run manifest is the gate.** It records `$inlinecount`, the `$orderby`
+actually used, whether that ordering had to be degraded, and the measured
+duplicate-key count. A pull that failed the duplicate check is landed anyway --
+it is the evidence -- but marked `usable: false`, and the loader refuses it.
+Loading it would put a plausible, incomplete dataset in front of people with no
+way to tell. `--allow-unstable` exists for inspecting a bad pull deliberately,
+never for getting a sweep to finish.
+
+### Deltas
+
+```bash
+python -m app.ingest --fetch --load --delta --all
+python -m app.ingest --fetch --delta --set PurchaseOrderSet --since 2026-09-01
+```
+
+Six sets pull incrementally; the rest pull in full. `--list` shows which, and
+how.
+
+Two shapes, and which one a set gets is decided by measurement rather than
+preference:
+
+| Set | How |
+| --- | --- |
+| PurchaseOrderSet (EKKO) | direct, `Aedat ge ...` |
+| MaterialDocumentHeaderSet (MKPF) | direct, `Budat ge ...` |
+| PurchaseOrderItemSet, POScheduleLineSet, POHistorySet | via PurchaseOrderSet, by `Ebeln` |
+| GoodsMovementItemSet (MSEG) | via MaterialDocumentHeaderSet, by `Mblnr` |
+
+The derived shape is forced, not chosen. Filtering MSEG by `BudatMkpf` returns
+HTTP 500, and by `Ebeln` also returns HTTP 500, so reading MKPF by date and
+then fetching the items by document number is the only route to a date-bounded
+read of it. Same for EKBE, where `Budat` is rejected but `Ebeln` is honoured.
+
+**A delta is only declared where the filter is measured HONOURED.** That bar is
+higher than the client's own `check_filter`, which blocks properties measured
+IGNORED or REJECTED and lets an *unprobed* one through -- the right call for an
+ad-hoc query where a person is watching, the wrong one for a pipeline that runs
+unattended. An unprobed filter that turns out to be ignored returns HTTP 200
+with the whole set, so a "delta" would silently pull everything. A test asserts
+this, and the CLI refuses a `--delta` run if any declared delta fails it. It is
+why ChangeDocHeaderSet and ChangeDocItemSet stay on full pulls: `Udate` and
+`Changenr` were never probed.
+
+**The window is inclusive** (`ge`, not `gt`). SAP's dates have day granularity,
+so an exclusive bound would drop anything created later on the same day as the
+previous run's last row. The overlap is absorbed by the load, which merges on
+the entity key.
+
+**The watermark advances only after the rows are landed**, only on a stable
+pull, and only for a direct delta -- a derived child was filtered by its
+parent's keys, so it measured no position of its own.
+
+**A delta file merges; a full file replaces.** The manifest says which. Merging
+stages the batch, deletes the matching keys from the target and inserts, all in
+one transaction. A delta whose target table does not exist is refused rather
+than loaded as a replace, which would leave a table holding only the increment
+and looking complete.
+
+## Seeding from extract workbooks
+
+**Secondary route**, for what OData does not expose: `EXTWG` and the other ~237
+MARA columns, `ZZCRITIC`, and the ZMM065 and GR reports, which have no entity
+set at all. Anything a CPI pull can reach should come from `app.ingest`
+instead -- it carries all 13 plants, where the July extracts carry two.
 
 ```bash
 python -m app.seed --list          # manifest + whether each source file is present
@@ -501,17 +592,23 @@ python -m app.seed --all --force   # reload even if nothing changed
 
 Needs `DATABASE_URL` and `STORAGE_URL`. `--list` touches no database.
 
-### Two layers, and why
+### The layers, and why
 
 ```
-XLSX extract  ->  raw_<table>   mirrors the extract exactly, every column, text
+CPI live pull ->  odata_<set>   what SAP exposes: 21 sets, 13 plants, fresh
+                      |
+XLSX extract  ->  raw_<table>   what SAP does not expose: the wide columns
                       |
                  normalise      translation map + MATNR padding  (NOT YET BUILT)
                       v
-                  <table>       matches the OData contract; what initiatives read
-                      ^
-CPI live pull  -------+         same shape, different loader
+                  <table>       what initiatives read
 ```
+
+The two raw layers are kept apart on purpose. They cannot share a table: the
+workbook carries Excel headers (`Material Number`), OData carries property
+names (`Matnr`), and the column sets differ by an order of magnitude.
+Reconciling the two vocabularies is the normalise step's job, not something to
+fudge by letting whichever loader ran last decide the shape.
 
 Only the raw layer exists today. It is deliberately a faithful copy, because the
 extract and the OData projection are **not the same data**:
