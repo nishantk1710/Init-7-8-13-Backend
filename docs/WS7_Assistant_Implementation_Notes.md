@@ -416,7 +416,37 @@ Unchanged from the plan, and now more concrete because the code exists:
 
 ---
 
-## 10. How to run it
+## 10. Test status
+
+**234 new tests**, all passing.
+
+Across the whole suite (excluding `tests/i13`'s slow Postgres tests, and
+`test_seed.py` / `test_storage.py`, which cannot be collected because the
+`azure` package is not installed in this environment):
+
+```
+764 passed, 15 failed
+```
+
+**All 15 failures are pre-existing and none of them are WS7's.** They were
+checked by running the same files on `feat/vp/init8` in a separate worktree, and
+the counts match exactly:
+
+| File | Failing | On base branch too? |
+| --- | --- | --- |
+| `test_sap_contract.py` | 12 | Yes — 12 |
+| `test_sap.py::TestFilterGuard` | 3 | Yes — 3 |
+
+These are the SAP drift tests. `pytest.ini` already documents them: a discovery
+re-run refreshed the snapshot and five `ZMM_KPI02_SRV` sets began rejecting
+every request with HTTP 400. They assert facts about an external system we do
+not control, and re-baselining them would erase the only signal that ~1.17M rows
+of change-document data stopped being readable. Nothing on this branch touches
+the SAP client, the drift snapshot or `known_conditions.py`.
+
+---
+
+## 11. How to run it
 
 ```bash
 alembic upgrade head          # applies the WS7 tables AND the four I13 ones
