@@ -138,14 +138,20 @@ def latest_prefix(storage: Storage, spec: IngestSpec, *, root: str) -> str | Non
     ISO dates, so lexical order is chronological order, and a file copied
     between accounts keeps its name while losing its timestamps.
     """
-    base = f"{root.strip('/')}/{spec.service}/{spec.name}/"
+    # No trailing slash on what is handed to list(): the port validates its
+    # prefix as a key, and a trailing slash is an empty path segment, which is
+    # refused. Matching still uses the slash-terminated form, so a set whose
+    # name is a prefix of another -- MaterialSet against MaterialSetX -- cannot
+    # pick up the other's runs.
+    base = f"{root.strip('/')}/{spec.service}/{spec.name}"
+    marker = f"{base}/"
     suffix = f"/{MANIFEST_FILE}"
     dates = sorted(
-        key[len(base) : -len(suffix)]
+        key[len(marker) : -len(suffix)]
         for key in storage.list(base)
-        if key.startswith(base) and key.endswith(suffix)
+        if key.startswith(marker) and key.endswith(suffix)
     )
-    return f"{base}{dates[-1]}" if dates else None
+    return f"{marker}{dates[-1]}" if dates else None
 
 
 def _iter_rows(

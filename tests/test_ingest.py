@@ -15,7 +15,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.core.storage import ObjectNotFoundError
+from app.core.storage import ObjectNotFoundError, validate_key
 from app.ingest import fetch as fetch_mod
 from app.ingest import load as load_mod
 from app.ingest.manifest import (
@@ -33,24 +33,36 @@ from app.ingest.watermarks import highest
 
 
 class MemoryStorage:
-    """The Storage port, backed by a dict."""
+    """The Storage port, backed by a dict.
+
+    Every key and prefix goes through the port's own ``validate_key``. That is
+    not pedantry: the first version of this fake accepted anything, so a
+    listing prefix with a trailing slash passed here and raised
+    ``InvalidKeyError`` against the real Data Lake. A fake that is more
+    permissive than the thing it stands in for does not reduce risk, it hides
+    it until deployment.
+    """
 
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
 
     @contextlib.contextmanager
     def open_write(self, key: str):
+        validate_key(key)
         buffer = io.BytesIO()
         yield buffer
         self.objects[key] = buffer.getvalue()
 
     @contextlib.contextmanager
     def open_read(self, key: str):
+        validate_key(key)
         if key not in self.objects:
             raise ObjectNotFoundError(key)
         yield io.BytesIO(self.objects[key])
 
     def list(self, prefix: str = ""):
+        if prefix:
+            validate_key(prefix)
         return iter(sorted(k for k in self.objects if k.startswith(prefix)))
 
 
@@ -280,6 +292,30 @@ def test_latest_prefix_picks_the_most_recent_run(spec, storage) -> None:
 
 def test_latest_prefix_is_none_when_nothing_landed(spec, storage) -> None:
     assert load_mod.latest_prefix(storage, spec, root="odata") is None
+
+
+def test_latest_prefix_asks_for_a_prefix_the_port_accepts(spec, storage) -> None:
+    """A trailing slash is an empty path segment, which validate_key refuses.
+
+    This shipped: --list on the App Service reported InvalidKeyError for all
+    21 sets, because the original fake accepted a prefix the Data Lake does not.
+    """
+    seen: list[str] = []
+    real_list = storage.list
+    storage.list = lambda prefix="": (seen.append(prefix), real_list(prefix))[1]
+
+    load_mod.latest_prefix(storage, spec, root="odata")
+
+    assert seen and not seen[0].endswith("/")
+    validate_key(seen[0])
+
+
+def test_latest_prefix_does_not_pick_up_a_similarly_named_set(spec, storage) -> None:
+    """MaterialSet must not see MaterialPlantSet's runs."""
+    _land(storage, spec)
+    material = spec_for("MaterialSet")
+
+    assert load_mod.latest_prefix(storage, material, root="odata") is None
 
 
 def test_load_refuses_an_unstable_fetch(spec, storage) -> None:
