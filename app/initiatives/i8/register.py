@@ -51,9 +51,14 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.initiatives.i8.aging import (
+    BEYOND_LEAD_TIME,
+    OVERDUE,
     aging_bucket,
     days_between,
+    days_over_lead_time,
     days_remaining,
+    elapsed_days,
+    lead_time_state,
     overdue_state,
 )
 from app.initiatives.i8.config import I8Settings, get_i8_settings
@@ -136,12 +141,33 @@ class RepairLine:
 
     reversals: int
 
+    # --- the planned standard, from MARC ---------------------------------
+    lead_time_days: int | None
+    """MARC.PLIFZ for this material at this plant -- planned delivery time in
+    CALENDAR days, PO to received. None where MARC has no row or the value is
+    unmaintained. The same field and meaning Initiative 07 uses."""
+
     # --- derived --------------------------------------------------------
     repair_status: str
     receipt_status: str
     overdue_status: str
+    lead_time_status: str
+    """WITHIN_LEAD_TIME, BEYOND_LEAD_TIME or NO_LEAD_TIME. Independent of
+    ``overdue_status``: one measures the date somebody promised, the other the
+    time this material normally takes. A line can be ON_TIME and already
+    BEYOND_LEAD_TIME, and that disagreement is a finding, not an error."""
+
     qty_under_repair: Decimal
     days_open: int | None
+    days_elapsed: int | None
+    """Raised to received, or raised to today while still out. What the
+    lead-time check measures -- unlike ``days_open``, it stops when the unit
+    comes back."""
+
+    days_over_lead_time: int | None
+    """Positive once past the planned time, negative while inside it, None when
+    there is no lead time to measure against."""
+
     days_at_vendor: int | None
     days_in_current_stage: int | None
     days_remaining: int | None
@@ -154,7 +180,11 @@ class RepairLine:
 
     @property
     def is_overdue(self) -> bool:
-        return self.overdue_status == "OVERDUE"
+        return self.overdue_status == OVERDUE
+
+    @property
+    def is_beyond_lead_time(self) -> bool:
+        return self.lead_time_status == BEYOND_LEAD_TIME
 
     @property
     def key(self) -> tuple[str, str]:
@@ -274,23 +304,65 @@ group by 1, 2
 
 _HEADER_SQL = """
 -- LEFT JOINed, never an inner join. 455 of 1,225 repair lines have no row here.
-select ebeln, bsart, lifnr, bedat
+--
+-- AEDAT (created on), NOT BEDAT (document date). Both are in this extract, and
+-- the register used BEDAT until 21-Sep. **BEDAT is not exposed by CPI** -- it is
+-- absent from the OData projection, and Initiative 07 already anchors on AEDAT
+-- for exactly that reason (see its model guide: "Release date: EKKO-AEDAT
+-- (interim proxy -- EKKO-BEDAT is not exposed)"). Reading a column that
+-- disappears at cutover is a bug with a date on it, and two initiatives
+-- anchoring on different columns would report different ages for one PO line.
+select ebeln, bsart, lifnr, aedat
 from v_ekko
 where ebeln = any(:documents)
 """
 
 _VENDOR_SQL = "select lifnr, name1 from v_lfa1 where lifnr is not null"
 
+_LEAD_TIME_SQL = """
+-- Planned delivery time per material + plant: MARC.PLIFZ, in calendar days,
+-- measured PO to received.
+--
+-- Keyed on BOTH material and plant, not material alone. MARC is a plant-level
+-- master and the same part can carry a different planned time at each site, so
+-- collapsing to the material would quietly apply Black Mountain's number to
+-- Gamsberg.
+--
+-- max() because MARC is one row per material+plant -- the same aggregate the
+-- universe query uses for MINBE and DISMM, and for the same reason: it picks
+-- that single value without the query having to assert uniqueness.
+--
+-- KNOWN COVERAGE GAP, and it is in the delivery, not here: the July MARC
+-- extract is plant 1300 and 1200 only, with ZERO rows for Gamsberg (1500) --
+-- see app/seed/manifest.py. Repair lines exist at 1300 and 1500 and nowhere
+-- else, so every Gamsberg repair line resolves to NO_LEAD_TIME until a MARC
+-- extract covering 1500 arrives. The register reports that as a count rather
+-- than absorbing it.
+select matnr, werks, max(plifz) as plifz
+from v_marc
+where matnr = any(:materials)
+  and werks is not null
+group by 1, 2
+"""
+
 
 def _evidence(
-    db: Session, documents: Sequence[str], cfg: I8Settings
-) -> tuple[dict, dict, dict, dict, dict]:
+    db: Session,
+    documents: Sequence[str],
+    materials: Sequence[str],
+    cfg: I8Settings,
+) -> tuple[dict, dict, dict, dict, dict, dict]:
     """Fetch every lifecycle source for the identified repair documents.
 
     Keyed lookups built once, rather than a query per line: 1,225 lines times
-    five sources is 6,125 round trips, and the register is served on request.
+    six sources is 7,350 round trips, and the register is served on request.
+
+    ``materials`` is separate from ``documents`` because the lead time belongs
+    to the material + plant, not to the purchase order -- MARC knows nothing
+    about EBELN.
     """
     documents = list(documents)
+    materials = list(materials)
 
     schedules = {
         (r["ebeln"], r["ebelp"]): r
@@ -333,7 +405,13 @@ def _evidence(
         .all()
     }
     vendors = {r["lifnr"]: r["name1"] for r in db.execute(text(_VENDOR_SQL)).mappings()}
-    return schedules, receipts, dispatches, headers, vendors
+    lead_times = {
+        (r["matnr"], r["werks"]): r["plifz"]
+        for r in db.execute(text(_LEAD_TIME_SQL), {"materials": materials})
+        .mappings()
+        .all()
+    }
+    return schedules, receipts, dispatches, headers, vendors, lead_times
 
 
 def repair_status(
@@ -377,6 +455,20 @@ def receipt_status(
     return NOT_YET_SHIPPED
 
 
+def _lead_time_days(plifz) -> int | None:
+    """MARC.PLIFZ as whole days, or None when it is not maintained.
+
+    ``sap_num`` gives a Decimal, and PLIFZ arrives as 0 far more often than it
+    arrives as a real number -- blank on every non-stock and service-type
+    material. Zero is folded into None here, at the boundary, so no rule
+    downstream has to remember that "no days" means "nobody told us".
+    """
+    if plifz is None:
+        return None
+    days = int(plifz)
+    return days if days > 0 else None
+
+
 def _build_line(
     row: Mapping,
     *,
@@ -385,6 +477,7 @@ def _build_line(
     dispatch: Mapping | None,
     header: Mapping | None,
     vendor_names: Mapping[str, str],
+    lead_time: int | None,
     today: date,
     cfg: I8Settings,
 ) -> RepairLine:
@@ -404,7 +497,7 @@ def _build_line(
 
     doc_type = header["bsart"] if header else None
     vendor = header["lifnr"] if header else None
-    po_date = header["bedat"] if header else None
+    po_date = header["aedat"] if header else None
 
     # ERDAT is the line's own creation date and is populated on every repair
     # line; the header date is a fallback for a shape where it is not.
@@ -422,6 +515,11 @@ def _build_line(
         (d for d in (raised_at, dispatched_at, received_at) if d is not None),
         default=None,
     )
+
+    # The lead-time clock. Stops at the receipt, unlike days_open -- so a repair
+    # that came back inside its planned time does not drift into breach months
+    # later just because the record is old.
+    elapsed = elapsed_days(raised_at=raised_at, received_at=received_at, today=today)
 
     return RepairLine(
         purchasing_document=row["ebeln"],
@@ -462,6 +560,14 @@ def _build_line(
             due_date=due_date,
             today=today,
             grace_days=cfg.overdue_grace_days,
+        ),
+        lead_time_days=lead_time,
+        # No grace_days argument, and that is the ruling rather than an
+        # oversight -- see the note in aging.py.
+        lead_time_status=lead_time_state(elapsed=elapsed, lead_time_days=lead_time),
+        days_elapsed=elapsed,
+        days_over_lead_time=days_over_lead_time(
+            elapsed=elapsed, lead_time_days=lead_time
         ),
         qty_under_repair=(
             ZERO if received_at is not None else max(ordered_qty - received_qty, ZERO)
@@ -505,6 +611,19 @@ class RegisterStats:
     differ: 63 repair lines have no EKET schedule line at all, and 2 of them
     have already come back, so 61 are actually chaseable.
     """
+
+    lines_with_lead_time: int = 0
+    """Lines whose material+plant has a usable MARC.PLIFZ.
+
+    Reported rather than assumed, because the July MARC extract covers plants
+    1300 and 1200 only and every repair line at Gamsberg (1500) therefore has
+    no planned delivery time at all. A lead-time breach count means nothing
+    without the population it was measured over.
+    """
+
+    lines_beyond_lead_time: int = 0
+    open_lines_beyond_lead_time: int = 0
+    """The actionable half: still out, and already past the planned time."""
 
     partially_received_lines: int = 0
     lines_with_reversals: int = 0
@@ -557,8 +676,9 @@ def load_repair_lines(
         return [], RegisterStats(candidates_scanned=len(candidates))
 
     documents = sorted({row["ebeln"] for row in repair_rows})
-    schedules, receipts, dispatches, headers, vendor_names = _evidence(
-        db, documents, cfg
+    materials = sorted({row["matnr"] for row in repair_rows if row["matnr"]})
+    schedules, receipts, dispatches, headers, vendor_names, lead_times = _evidence(
+        db, documents, materials, cfg
     )
 
     lines = [
@@ -569,6 +689,7 @@ def load_repair_lines(
             dispatch=dispatches.get((row["ebeln"], row["ebelp"])),
             header=headers.get(row["ebeln"]),
             vendor_names=vendor_names,
+            lead_time=_lead_time_days(lead_times.get((row["matnr"], row["werks"]))),
             today=today,
             cfg=cfg,
         )
@@ -585,6 +706,11 @@ def load_repair_lines(
             1 for line in lines if line.overdue_status == "NO_DUE_DATE"
         ),
         lines_without_due_date=sum(1 for line in lines if line.due_date is None),
+        lines_with_lead_time=sum(1 for line in lines if line.lead_time_days),
+        lines_beyond_lead_time=sum(1 for line in lines if line.is_beyond_lead_time),
+        open_lines_beyond_lead_time=sum(
+            1 for line in lines if line.is_open and line.is_beyond_lead_time
+        ),
         partially_received_lines=sum(
             1 for line in lines if line.receipt_status == PARTIALLY_RECEIVED
         ),

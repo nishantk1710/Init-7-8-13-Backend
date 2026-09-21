@@ -315,6 +315,85 @@ class TestLifecycleAndAging:
 # --- W5.1 universe --------------------------------------------------------
 
 
+class TestLeadTimeAgainstTheExtract:
+    """MARC.PLIFZ over the real 1,225 lines.
+
+    Every assertion here is about COVERAGE rather than about a particular
+    breach count, because the breach count is only meaningful next to the
+    population it was measured over -- and that population has a known hole in
+    it (see the first test).
+    """
+
+    def test_gamsberg_has_no_lead_time_at_all(self, register) -> None:
+        """Not a bug here -- a gap in the delivery.
+
+        The July MARC extract is plants 1300 and 1200 only, with ZERO rows for
+        Gamsberg (see app/seed/manifest.py). Repair lines exist at 1300 and 1500
+        and nowhere else, so every Gamsberg line resolves to NO_LEAD_TIME until
+        a MARC extract covering 1500 arrives. Asserted rather than assumed, so
+        the day that extract lands this test fails and says so.
+        """
+        lines, _stats = register
+        gamsberg = [line for line in lines if line.plant == "1500"]
+        assert gamsberg, "expected repair lines at Gamsberg"
+        assert all(line.lead_time_days is None for line in gamsberg)
+        assert all(line.lead_time_status == "NO_LEAD_TIME" for line in gamsberg)
+
+    def test_coverage_is_reported_not_absorbed(self, register) -> None:
+        """A breach count without its population is not a number anyone can use."""
+        lines, stats = register
+        assert stats.lines_with_lead_time == sum(
+            1 for line in lines if line.lead_time_days
+        )
+        assert stats.lines_with_lead_time < stats.total_lines, (
+            "if this ever equals the total, MARC now covers every plant and the "
+            "Gamsberg caveat in the UAT pack is out of date"
+        )
+
+    def test_a_breach_never_comes_from_an_unmaintained_plifz(self, register) -> None:
+        """PLIFZ is 0 or blank on most non-stock materials. Reading it literally
+        would put every such line into breach on the day its PO was raised."""
+        lines, _stats = register
+        for line in lines:
+            if line.lead_time_status != "NO_LEAD_TIME":
+                assert line.lead_time_days and line.lead_time_days > 0
+
+    def test_the_two_signals_are_independent(self, register) -> None:
+        """The reason the check runs on all lines and not only the 63.
+
+        If lead time were merely a fallback for a missing due date, no line
+        could ever be both ON_TIME and BEYOND_LEAD_TIME. Lines in that state are
+        the finding the ruling asked for.
+        """
+        lines, _stats = register
+        assert any(
+            line.overdue_status in {"ON_TIME", "RECEIVED"}
+            and line.lead_time_status == "BEYOND_LEAD_TIME"
+            for line in lines
+        )
+
+    def test_it_reaches_lines_that_were_never_dispatched(self, register) -> None:
+        """Anchored on the PO date, not the dispatch.
+
+        788 lines have no dispatch movement at all. Anchoring the lead-time
+        clock on the 541 would have left every one of them unmeasurable -- the
+        same blind spot the check was asked for to close.
+        """
+        lines, _stats = register
+        measured = [
+            line
+            for line in lines
+            if line.dispatched_at is None and line.lead_time_status != "NO_LEAD_TIME"
+        ]
+        assert measured, "the lead-time clock must not depend on a dispatch date"
+
+    def test_the_clock_stops_at_the_receipt(self, register) -> None:
+        lines, _stats = register
+        for line in lines:
+            if line.received_at is not None and line.raised_at is not None:
+                assert line.days_elapsed == (line.received_at - line.raised_at).days
+
+
 class TestUniverse:
     def test_detection_is_not_a_mara_lookup(self, universe) -> None:
         """The measurement that decides the whole design.

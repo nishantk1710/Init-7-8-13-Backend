@@ -181,6 +181,15 @@ class RepairChain(I8Model):
     """RECEIVED, NO_DUE_DATE, OVERDUE or ON_TIME. Not in the frontend type yet:
     it is the state the 63 no-due-date lines need to be visible at all."""
 
+    lead_time_status: str = "NO_LEAD_TIME"
+    """WITHIN_LEAD_TIME, BEYOND_LEAD_TIME or NO_LEAD_TIME.
+
+    A SECOND, INDEPENDENT signal, not a fallback for ``overdueStatus``. One says
+    whether the line passed the date somebody promised on the PO; this says
+    whether it has taken longer than the material's planned delivery time. They
+    can disagree on the same row and neither overrides the other.
+    """
+
     declaration_status: Literal["Required", "Pending", "Completed", "Flagged"] = (
         "Required"
     )
@@ -188,6 +197,23 @@ class RepairChain(I8Model):
 
     days_open: int | None = None
     aging_bucket: str | None = None
+
+    lead_time_days: int | None = None
+    """MARC.PLIFZ for this material at this plant -- planned delivery time in
+    calendar days, PO to received. Null where MARC has no row for the pair, or
+    the value is unmaintained. The July MARC extract covers plants 1300 and 1200
+    only, so this is null on every Gamsberg line."""
+
+    days_elapsed: int | None = None
+    """Raised to received, or raised to today while still out. What
+    ``leadTimeStatus`` is measured on -- it stops when the unit comes back,
+    unlike ``daysOpen``."""
+
+    days_over_lead_time: int | None = None
+    """Positive once past the planned time, negative while inside it, null when
+    there is no lead time to measure against. Null rather than 0: "nobody told
+    us how long this takes" must not average in as "finished exactly on time"."""
+
     days_at_vendor: int | None = None
     days_in_current_stage: int | None = None
     days_remaining_in_repair: int | None = None
@@ -230,6 +256,9 @@ class RegisterMeta(I8Model):
     overdue_lines: int
     no_due_date_lines: int
     lines_without_due_date: int
+    lines_with_lead_time: int
+    lines_beyond_lead_time: int
+    open_lines_beyond_lead_time: int
     partially_received_lines: int
     lines_with_reversals: int
     lines_on_eighty_series: int
@@ -485,6 +514,11 @@ class ExceptionQueueItem(I8Model):
 
     is_open_repair: bool
 
+    pre_automation: bool = False
+    """The line predates the attestation control, so the gap is explained by
+    when it was raised rather than by anyone failing to act. Always false while
+    no cutover date is configured."""
+
 
 class ExceptionMeta(I8Model):
     total: int
@@ -493,6 +527,16 @@ class ExceptionMeta(I8Model):
     lines_checked: int
     lines_covered: int
     attestation_window_days: int
+
+    pre_automation: int = 0
+    actionable: int = 0
+    """``total`` less ``preAutomation`` -- the work, where ``total`` is the
+    business case. Both are served because quoting either alone misleads."""
+
+    attestation_cutover_date: date | None = None
+    """The cutover these counts were measured against. Null means none is
+    configured, which is the current state."""
+
     types_raised: list[str]
     """Which exception types I08 actually raises. MISSING_SESSION_ID and
     UNJUSTIFIED_ACQUISITION are FR-5/7/8 and are declared but never raised here,

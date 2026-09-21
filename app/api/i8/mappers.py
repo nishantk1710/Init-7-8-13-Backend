@@ -123,8 +123,12 @@ def repair_chain(
         declaration_status=declaration_status,
         receipt_status=line.receipt_status,
         overdue_status=line.overdue_status,
+        lead_time_status=line.lead_time_status,
         days_open=line.days_open,
         aging_bucket=line.aging_bucket,
+        lead_time_days=line.lead_time_days,
+        days_elapsed=line.days_elapsed,
+        days_over_lead_time=line.days_over_lead_time,
         days_at_vendor=line.days_at_vendor,
         days_in_current_stage=line.days_in_current_stage,
         days_remaining_in_repair=line.days_remaining,
@@ -406,6 +410,7 @@ def exception_item(item: ExceptionItem, cfg: I8Settings) -> ExceptionQueueItem:
         detail=item.detail,
         raised_at=item.raised_at,
         is_open_repair=item.is_open_repair,
+        pre_automation=item.pre_automation,
     )
 
 
@@ -417,6 +422,9 @@ def exception_meta(stats: ExceptionStats) -> ExceptionMeta:
         lines_checked=stats.lines_checked,
         lines_covered=stats.lines_covered,
         attestation_window_days=stats.attestation_window_days,
+        pre_automation=stats.pre_automation,
+        actionable=stats.actionable,
+        attestation_cutover_date=stats.attestation_cutover_date,
         # Which types are actually implemented, so an empty count is
         # distinguishable from an unimplemented check.
         types_raised=sorted(t.value for t in RAISED_BY_I8),

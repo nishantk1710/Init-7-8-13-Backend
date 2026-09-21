@@ -165,6 +165,23 @@ class I8Settings(BaseSettings):
     # queue.
     attestation_window_days: int = 30
 
+    # The date the attestation control starts applying. Blank means "no cutover
+    # is set", and every line is then judged as if the control had always
+    # existed -- which is today's behaviour, unchanged.
+    #
+    # THE DATE ITSELF IS STILL MISSING. The RULING is not: asked on 20-Sep why
+    # MISSING_ATTESTATION fires on all 1,225 lines, the team lead answered
+    # "on them can we show before Spares Automation". A line raised before this
+    # date did not fail a control -- the control did not exist -- so it is
+    # labelled rather than accused, and kept out of the actionable count while
+    # staying visible in the queue.
+    #
+    # Whoever owns go-live supplies the date; it is one .env line. Until then
+    # this is deliberately blank rather than guessed, because a wrong cutover
+    # silently forgives real misses on one side of it and accuses historical
+    # lines on the other.
+    attestation_cutover_date: str = ""
+
     # --- Coding candidates (W5.5) -----------------------------------------
 
     # The repair language that makes a PO line worth screening.
@@ -273,6 +290,18 @@ class I8Settings(BaseSettings):
         return tuple(
             int(x.strip()) for x in self.aging_band_boundaries.split(",") if x.strip()
         )
+
+    @property
+    def attestation_cutover_date_value(self) -> date | None:
+        """``attestation_cutover_date`` as a date, or None meaning "not set".
+
+        Invalid input raises at startup, the same as ``reference_date`` -- a
+        malformed cutover would otherwise decide, silently and wrongly, which
+        historical lines get accused of a control failure.
+        """
+        if not self.attestation_cutover_date.strip():
+            return None
+        return date.fromisoformat(self.attestation_cutover_date.strip())
 
     @property
     def reference_date_value(self) -> date | None:

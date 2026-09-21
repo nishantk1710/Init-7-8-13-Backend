@@ -219,7 +219,9 @@ def build_attestation_view(
     """Match every repair line against the attestation table. Always does the work."""
     cfg = cfg or get_i8_settings()
     cover = attestation_coverage(db, snapshot.lines, cfg)
-    exceptions, exception_stats = build_exceptions(snapshot.lines, cover)
+    exceptions, exception_stats = build_exceptions(
+        snapshot.lines, cover, cutover=cfg.attestation_cutover_date_value
+    )
     return AttestationView(
         coverage=cover,
         declarations=tuple(build_queue(snapshot.lines, cover)),

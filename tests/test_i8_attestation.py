@@ -320,6 +320,71 @@ class TestMissingAttestationException:
         assert by_doc["10"] == "warning"
         assert by_doc["20"] == "info"
 
+    def test_a_line_raised_before_the_cutover_is_labelled_not_accused(self) -> None:
+        """The 20-Sep ruling: "on them can we show before Spares Automation".
+
+        MISSING_ATTESTATION fires on all 1,225 historical lines because the
+        control did not exist when they were raised. The exception still fires
+        and still counts -- what changes is that it says why.
+        """
+        line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
+        cover = AttestationCoverage(covered={}, uncovered={line.key}, window_days=30)
+        items, stats = build_exceptions([line], cover, cutover=date(2026, 10, 1))
+
+        assert items[0].pre_automation is True
+        assert items[0].title == "Raised before Spares Automation"
+        assert "2026-10-01" in items[0].detail
+        # Open, but INFO: there was no form to fill in when it was raised.
+        assert items[0].severity == "info"
+        # Counted, but not as work.
+        assert (stats.total, stats.pre_automation, stats.actionable) == (1, 1, 0)
+
+    def test_a_line_raised_after_the_cutover_is_a_real_miss(self) -> None:
+        line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 11, 1))
+        cover = AttestationCoverage(covered={}, uncovered={line.key}, window_days=30)
+        items, stats = build_exceptions([line], cover, cutover=date(2026, 10, 1))
+
+        assert items[0].pre_automation is False
+        assert items[0].title == "No condition-to-repair attestation"
+        assert items[0].severity == "warning"
+        assert (stats.total, stats.pre_automation, stats.actionable) == (1, 0, 1)
+
+    def test_no_cutover_configured_changes_nothing(self) -> None:
+        """The shipped default. VZI has not given the date yet, and a guessed
+        one would silently forgive real misses on one side of it."""
+        line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
+        cover = AttestationCoverage(covered={}, uncovered={line.key}, window_days=30)
+        items, stats = build_exceptions([line], cover)
+
+        assert items[0].pre_automation is False
+        assert items[0].title == "No condition-to-repair attestation"
+        assert (stats.pre_automation, stats.actionable) == (0, 1)
+        assert stats.attestation_cutover_date is None
+
+    def test_a_line_with_no_date_is_not_quietly_forgiven(self) -> None:
+        """Guessing in the forgiving direction is still guessing, and the line
+        it would forgive is the one we know least about."""
+        line = FakeLine("4500", "10", "8000005632", "1300", None)
+        cover = AttestationCoverage(covered={}, uncovered={line.key}, window_days=30)
+        items, _stats = build_exceptions([line], cover, cutover=date(2026, 10, 1))
+        assert items[0].pre_automation is False
+
+    def test_the_full_number_survives_the_label(self) -> None:
+        """The 1,225 figure is the business case for the initiative. The label
+        is about how it reads, not about making it smaller -- so `total` still
+        carries it and `actionable` is served beside it, never instead."""
+        lines = [
+            FakeLine("4500", str(i), "800000563" + str(i % 10), "1300", date(2026, 5, 1))
+            for i in range(10)
+        ]
+        cover = AttestationCoverage(
+            covered={}, uncovered={line.key for line in lines}, window_days=30
+        )
+        _items, stats = build_exceptions(lines, cover, cutover=date(2026, 10, 1))
+        assert stats.total == 10
+        assert stats.actionable == 0
+        assert stats.attestation_cutover_date == date(2026, 10, 1)
+
     def test_the_type_column_is_open_for_the_ones_we_do_not_raise(self) -> None:
         """MISSING_SESSION_ID and UNJUSTIFIED_ACQUISITION are FR-5/7/8. They are
         declared so adding them later is a detector, not a migration -- and the

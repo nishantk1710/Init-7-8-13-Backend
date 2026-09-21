@@ -18,6 +18,26 @@ it for demos and the UAT pack; blank means today.
 schedule line in EKET at all. Letting a NULL fall through to "not overdue"
 hides them: they are precisely the lines nobody is chasing, because nobody
 agreed a date. They come back as ``NO_DUE_DATE`` so the queue can chase them.
+
+**Lead time is a second, independent signal -- not a fallback.** Confirmed by
+the team lead on 21-Sep: *"can we keep the aging and when the aging goes beyond
+lead time we can highlight it"*, and it applies to **every** line, not only the
+63 without a due date. So :func:`overdue_state` and :func:`lead_time_state` are
+separate functions answering separate questions, and a line can be ON_TIME
+against its agreed date while already BEYOND_LEAD_TIME against the standard:
+
+    overdue_state    did this line pass the date somebody promised?
+    lead_time_state  has it taken longer than this material normally takes?
+
+The first is a commitment, the second is a benchmark. Ruling out precedence
+between them was deliberate -- a line that is late by one measure and not the
+other is a finding, not a contradiction to be resolved away.
+
+**The grace period does NOT apply to the lead-time check.** Also confirmed on
+21-Sep, asked explicitly and answered "No not needed". Grace exists because a
+promised date is a commitment somebody made and a few days' slack is courtesy;
+a planned delivery time is already an average with slack baked into it, and
+discounting it twice would just move the threshold nobody agreed to.
 """
 
 from __future__ import annotations
@@ -65,6 +85,18 @@ OVERDUE: Final = "OVERDUE"
 ON_TIME: Final = "ON_TIME"
 
 OVERDUE_STATES: Final[tuple[str, ...]] = (RECEIVED, NO_DUE_DATE, OVERDUE, ON_TIME)
+
+# Lead-time states. Parallel to the overdue ones and deliberately named apart:
+# nothing here means "late", it means "longer than this material usually takes".
+NO_LEAD_TIME: Final = "NO_LEAD_TIME"
+WITHIN_LEAD_TIME: Final = "WITHIN_LEAD_TIME"
+BEYOND_LEAD_TIME: Final = "BEYOND_LEAD_TIME"
+
+LEAD_TIME_STATES: Final[tuple[str, ...]] = (
+    NO_LEAD_TIME,
+    WITHIN_LEAD_TIME,
+    BEYOND_LEAD_TIME,
+)
 
 
 def aging_bucket(
@@ -161,3 +193,89 @@ def days_remaining(due_date: date | None, today: date) -> int | None:
     if due_date is None:
         return None
     return (due_date - today).days
+
+
+def elapsed_days(
+    *, raised_at: date | None, received_at: date | None, today: date
+) -> int | None:
+    """How long this repair has actually taken, so far or in total.
+
+    To the receipt where there is one, to today where there is not -- the same
+    shape as ``daysAtVendor``, and the reason a closed repair stops ageing the
+    moment the unit comes back. ``days_open`` deliberately keeps counting to
+    today for every line; that is the right answer for "how old is this record"
+    and the wrong one for "did this repair overrun", which is what the
+    lead-time check asks.
+
+    >>> elapsed_days(raised_at=date(2026, 1, 1), received_at=date(2026, 2, 1),
+    ...              today=date(2026, 9, 1))
+    31
+    >>> elapsed_days(raised_at=date(2026, 1, 1), received_at=None,
+    ...              today=date(2026, 3, 2))
+    60
+    >>> elapsed_days(raised_at=None, received_at=None, today=date(2026, 3, 2)) is None
+    True
+    """
+    return days_between(raised_at, received_at or today)
+
+
+def lead_time_state(
+    *, elapsed: int | None, lead_time_days: int | None
+) -> str:
+    """Whether this repair has run past the planned delivery time.
+
+    ``lead_time_days`` is ``MARC.PLIFZ`` for the line's material at its plant --
+    planned delivery time, in CALENDAR days, measured PO to received. Confirmed
+    with Khushi on 21-Sep as the same field and the same meaning Initiative 07
+    uses, so the two initiatives cannot report different turnarounds for the
+    same part.
+
+    **Zero and NULL both mean "not maintained", never "this repair should take
+    no days".** PLIFZ is routinely left blank on non-stock and service-type
+    materials, and reading a blank literally would put every such line into
+    breach on the day its PO was raised -- a register that is entirely red says
+    nothing. Not flagging is the safe failure here; falsely flagging is not.
+
+    No grace period, by ruling. See the module docstring.
+
+    >>> lead_time_state(elapsed=30, lead_time_days=21)
+    'BEYOND_LEAD_TIME'
+    >>> lead_time_state(elapsed=21, lead_time_days=21)
+    'WITHIN_LEAD_TIME'
+    >>> lead_time_state(elapsed=300, lead_time_days=0)
+    'NO_LEAD_TIME'
+    >>> lead_time_state(elapsed=300, lead_time_days=None)
+    'NO_LEAD_TIME'
+    >>> lead_time_state(elapsed=None, lead_time_days=21)
+    'NO_LEAD_TIME'
+    """
+    if lead_time_days is None or lead_time_days <= 0 or elapsed is None:
+        return NO_LEAD_TIME
+    return BEYOND_LEAD_TIME if elapsed > lead_time_days else WITHIN_LEAD_TIME
+
+
+def days_over_lead_time(
+    *, elapsed: int | None, lead_time_days: int | None
+) -> int | None:
+    """Days past the planned delivery time. Negative while still inside it.
+
+    The sign matches ``days_remaining``, which the frontend already documents as
+    "negative once overdue" -- inverted here because this number counts up as
+    things get worse, and a column that means the opposite of its neighbour by
+    the same sign is how a reader misreads a queue.
+
+    None when there is no lead time to measure against, rather than 0: "we were
+    never told how long this takes" and "it finished exactly on time" are
+    different answers, and a dashboard that averages them together reports a
+    fleet of unmaintained materials as perfectly punctual.
+
+    >>> days_over_lead_time(elapsed=30, lead_time_days=21)
+    9
+    >>> days_over_lead_time(elapsed=14, lead_time_days=21)
+    -7
+    >>> days_over_lead_time(elapsed=30, lead_time_days=0) is None
+    True
+    """
+    if lead_time_days is None or lead_time_days <= 0 or elapsed is None:
+        return None
+    return elapsed - lead_time_days

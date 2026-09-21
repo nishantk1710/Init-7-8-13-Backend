@@ -27,6 +27,27 @@ real attestations, because nobody was ever asked to make one.
 That number is the argument for the whole initiative. Hiding it behind seeded
 data would be arguing against ourselves.
 
+Labelled, not softened
+----------------------
+The team lead's ruling of 20-Sep -- *"on them can we show before Spares
+Automation"* -- is about how that number reads, not how big it is. A line raised
+before the attestation control existed did not fail it. So the exception still
+fires, still lists, and still counts; what changes is that it carries
+``pre_automation`` and says in its own text that the control post-dates it.
+
+Two consequences worth being deliberate about:
+
+* **Severity drops to INFO.** Nobody can act on a gap in a part that went for
+  repair before there was a form to fill in.
+* **It leaves the actionable count.** ``ExceptionStats.actionable`` is the
+  number an operations queue should show; ``total`` stays honest and keeps the
+  full figure. Reporting one without the other is how a queue of 1,225
+  un-actionable rows either buries the real misses or disappears them.
+
+The cutover date is ``I8_ATTESTATION_CUTOVER_DATE`` and **is not set yet** --
+see the note on the setting. Blank means no line is treated as pre-automation
+and the behaviour is exactly what it was before this was built.
+
 The type column is deliberately open
 -------------------------------------
 ``MISSING_SESSION_ID`` and ``UNJUSTIFIED_ACQUISITION`` belong to FR-5/7/8 and are
@@ -109,10 +130,42 @@ class ExceptionItem:
     """Whether the unit is still out. An exception on an open line is
     actionable; one on a closed line can only be counted."""
 
+    pre_automation: bool = False
+    """Raised on a line that predates the attestation control itself.
+
+    Not a lesser finding -- a different one. It says the gap is explained by
+    when the line was raised, not by anyone failing to do something, and it is
+    what keeps 1,225 historical rows from reading as 1,225 violations. False
+    whenever no cutover date is configured, which is the current state.
+    """
+
+
+def is_pre_automation(line: RepairLine, cutover: date | None) -> bool:
+    """Whether this line was raised before the attestation control existed.
+
+    A line with no date of its own is NOT treated as pre-automation. Guessing
+    in the forgiving direction is still guessing, and the one it would forgive
+    is a line we know least about.
+
+    >>> from datetime import date as d
+    >>> class L: raised_at = d(2026, 5, 1)
+    >>> is_pre_automation(L(), d(2026, 10, 1))
+    True
+    >>> is_pre_automation(L(), d(2026, 1, 1))
+    False
+    >>> is_pre_automation(L(), None)
+    False
+    """
+    if cutover is None or line.raised_at is None:
+        return False
+    return line.raised_at < cutover
+
 
 def missing_attestations(
     lines,
     coverage: AttestationCoverage,
+    *,
+    cutover: date | None = None,
 ) -> list[ExceptionItem]:
     """Raise MISSING_ATTESTATION for every repair line with no attestation.
 
@@ -121,6 +174,11 @@ def missing_attestations(
     those with no plant, where the material-plant key cannot be formed -- are
     not reported here. An exception nobody could ever clear is noise, not a
     finding.
+
+    ``cutover`` is the date the attestation control starts applying. Lines
+    raised before it are labelled rather than accused -- see the module
+    docstring. None, the default, means no cutover is configured and every line
+    is judged as if the control had always existed.
     """
     by_key = {line.key: line for line in lines}
     items: list[ExceptionItem] = []
@@ -130,6 +188,8 @@ def missing_attestations(
         if line is None:  # pragma: no cover - coverage is built from these lines
             continue
 
+        historical = is_pre_automation(line, cutover)
+
         items.append(
             ExceptionItem(
                 id=f"EX-{ExceptionType.MISSING_ATTESTATION.value}-{line.purchasing_document}-{line.item}",
@@ -137,32 +197,57 @@ def missing_attestations(
                 # An open line is a part that is out there now with no assessment
                 # on record, which someone can still do something about. A closed
                 # one is history: worth counting, not worth paging anybody over.
-                severity=(Severity.WARNING if line.is_open else Severity.INFO).value,
+                #
+                # A pre-automation line is INFO whether it is open or not: there
+                # was no form to fill in when it was raised, so nothing about it
+                # is anybody's to action now.
+                severity=(
+                    Severity.INFO
+                    if historical or not line.is_open
+                    else Severity.WARNING
+                ).value,
                 material_id=line.material_id,
                 description=line.description,
                 plant=line.plant,
                 purchasing_document=line.purchasing_document,
                 item=line.item,
-                title="No condition-to-repair attestation",
+                title=(
+                    "Raised before Spares Automation"
+                    if historical
+                    else "No condition-to-repair attestation"
+                ),
                 detail=(
-                    f"No attestation was found for material {line.material_id} at "
-                    f"plant {line.plant} within {coverage.window_days} days of "
-                    f"{line.raised_at.isoformat() if line.raised_at else 'the line being raised'}. "
-                    "The part was sent for repair with no recorded assessment of "
-                    "its condition."
+                    (
+                        f"This line was raised on "
+                        f"{line.raised_at.isoformat() if line.raised_at else 'an unknown date'}, "
+                        f"before the condition-to-repair attestation was introduced on "
+                        f"{cutover.isoformat() if cutover else 'the cutover date'}. "
+                        "No assessment is on record because none was asked for at "
+                        "the time; this is not an outstanding action."
+                    )
+                    if historical
+                    else (
+                        f"No attestation was found for material {line.material_id} at "
+                        f"plant {line.plant} within {coverage.window_days} days of "
+                        f"{line.raised_at.isoformat() if line.raised_at else 'the line being raised'}. "
+                        "The part was sent for repair with no recorded assessment of "
+                        "its condition."
+                    )
                 ),
                 raised_at=line.raised_at,
                 is_open_repair=line.is_open,
+                pre_automation=historical,
             )
         )
 
     logger.info(
         "I08 exceptions: %d MISSING_ATTESTATION of %d repair lines checked "
-        "(%d open, %d closed)",
+        "(%d open, %d closed, %d pre-automation)",
         len(items),
         coverage.checked,
         sum(1 for i in items if i.is_open_repair),
         sum(1 for i in items if not i.is_open_repair),
+        sum(1 for i in items if i.pre_automation),
     )
     return items
 
@@ -182,13 +267,28 @@ class ExceptionStats:
     lines_covered: int
     attestation_window_days: int
 
+    pre_automation: int = 0
+    """Exceptions explained by predating the control rather than by a miss."""
+
+    actionable: int = 0
+    """``total`` less the pre-automation ones -- what an operations queue should
+    show. Served alongside ``total`` rather than instead of it: the full number
+    is the business case for the initiative, and the actionable number is the
+    work. Quoting either one alone misleads in a different direction."""
+
+    attestation_cutover_date: date | None = None
+    """The cutover the counts above were measured against, so a number can be
+    traced to the rule that produced it. None means none is configured."""
+
 
 def build_exceptions(
     lines,
     coverage: AttestationCoverage,
+    *,
+    cutover: date | None = None,
 ) -> tuple[list[ExceptionItem], ExceptionStats]:
     """The whole exception queue for one snapshot, and its counts."""
-    items = missing_attestations(lines, coverage)
+    items = missing_attestations(lines, coverage, cutover=cutover)
 
     by_type: dict[str, int] = {}
     by_severity: dict[str, int] = {}
@@ -196,6 +296,7 @@ def build_exceptions(
         by_type[item.type] = by_type.get(item.type, 0) + 1
         by_severity[item.severity] = by_severity.get(item.severity, 0) + 1
 
+    historical = sum(1 for item in items if item.pre_automation)
     stats = ExceptionStats(
         total=len(items),
         by_type=by_type,
@@ -203,5 +304,8 @@ def build_exceptions(
         lines_checked=coverage.checked,
         lines_covered=len(coverage.covered),
         attestation_window_days=coverage.window_days,
+        pre_automation=historical,
+        actionable=len(items) - historical,
+        attestation_cutover_date=cutover,
     )
     return items, stats

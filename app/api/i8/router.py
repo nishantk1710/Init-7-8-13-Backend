@@ -741,6 +741,13 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
             "criticalitySource": get_criticality_source().name,
             "referenceDate": cfg.reference_date or "(today)",
             "attestationWindowDays": cfg.attestation_window_days,
+            "attestationCutoverDate": cfg.attestation_cutover_date or "(not set)",
+            # Where the lead-time benchmark comes from and what it is measured
+            # between. Echoed as prose because the answer is a ruling, not a
+            # number: it is the same field and the same span Initiative 07 uses,
+            # and the two must not drift apart unnoticed.
+            "leadTimeSource": "MARC.PLIFZ (calendar days, PO to received)",
+            "leadTimeGraceDays": 0,
             "faultCategories": ", ".join(cfg.fault_category_list),
             "repairLanguage": ", ".join(cfg.repair_language_list),
             # The current band labels, not the raw day boundaries -- the

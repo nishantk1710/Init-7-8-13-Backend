@@ -15,13 +15,19 @@ import pytest
 
 from app.initiatives.i8.aging import (
     AGING_BUCKETS,
+    BEYOND_LEAD_TIME,
     NO_DUE_DATE,
+    NO_LEAD_TIME,
     ON_TIME,
     OVERDUE,
     RECEIVED,
+    WITHIN_LEAD_TIME,
     aging_bucket,
     days_between,
+    days_over_lead_time,
     days_remaining,
+    elapsed_days,
+    lead_time_state,
     overdue_state,
 )
 from app.initiatives.i8.config import I8Settings
@@ -317,6 +323,210 @@ class TestReceiptStatus:
 # --- configuration discipline --------------------------------------------
 
 
+class TestLeadTime:
+    """The 21-Sep ruling: aging beyond MARC.PLIFZ is highlighted on every line.
+
+    Lead time is planned delivery time in calendar days, measured PO to
+    received -- the same field and span Initiative 07 uses, confirmed with
+    Khushi. No grace period, confirmed with the team lead.
+    """
+
+    def test_beyond_the_planned_time(self) -> None:
+        assert lead_time_state(elapsed=22, lead_time_days=21) == BEYOND_LEAD_TIME
+
+    def test_exactly_on_the_planned_time_is_within_it(self) -> None:
+        """21 days against a 21-day lead time is met, not missed."""
+        assert lead_time_state(elapsed=21, lead_time_days=21) == WITHIN_LEAD_TIME
+
+    @pytest.mark.parametrize("plifz", [None, 0])
+    def test_unmaintained_plifz_never_breaches(self, plifz) -> None:
+        """PLIFZ is blank or zero on most non-stock materials.
+
+        Reading it literally puts every such line into breach on the day its PO
+        was raised. A register that is entirely red says nothing, so the safe
+        failure is not to flag.
+        """
+        assert lead_time_state(elapsed=9999, lead_time_days=plifz) == NO_LEAD_TIME
+        assert days_over_lead_time(elapsed=9999, lead_time_days=plifz) is None
+
+    def test_no_grace_period(self) -> None:
+        """One day over is over. Asked explicitly, answered "No not needed".
+
+        Grace exists because a promised date is a commitment somebody made. A
+        planned delivery time is already an average with slack in it, and
+        discounting it twice moves a threshold nobody agreed.
+        """
+        assert lead_time_state(elapsed=22, lead_time_days=21) == BEYOND_LEAD_TIME
+        assert days_over_lead_time(elapsed=22, lead_time_days=21) == 1
+
+    def test_the_clock_stops_at_the_receipt(self) -> None:
+        """A repair that came back inside its planned time stays inside it.
+
+        days_open keeps counting to today for every line, which is right for
+        "how old is this record" and wrong for "did this repair overrun". A
+        closed line must not drift into breach months later.
+        """
+        raised, received = date(2026, 1, 1), date(2026, 1, 15)
+        elapsed = elapsed_days(raised_at=raised, received_at=received, today=TODAY)
+        assert elapsed == 14
+        assert lead_time_state(elapsed=elapsed, lead_time_days=21) == WITHIN_LEAD_TIME
+        # ... whereas the register's days_open for the same line is enormous.
+        assert days_between(raised, TODAY) > 200
+
+    def test_an_open_line_keeps_ageing(self) -> None:
+        raised = date(2026, 1, 1)
+        elapsed = elapsed_days(raised_at=raised, received_at=None, today=TODAY)
+        assert elapsed == days_between(raised, TODAY)
+        assert lead_time_state(elapsed=elapsed, lead_time_days=21) == BEYOND_LEAD_TIME
+
+    def test_a_line_can_be_on_time_and_beyond_lead_time(self) -> None:
+        """The two signals are independent, and disagreement is a finding.
+
+        A buyer who wrote a generous delivery date onto the PO makes the line
+        ON_TIME while it has already taken longer than the material normally
+        takes. Neither answer overrides the other; that is the whole reason the
+        lead-time check applies to all lines rather than only the 63 with no
+        date at all.
+        """
+        state = overdue_state(
+            received_at=None,
+            due_date=date(2026, 12, 31),
+            today=TODAY,
+            grace_days=7,
+        )
+        assert state == ON_TIME
+        elapsed = elapsed_days(
+            raised_at=date(2026, 1, 1), received_at=None, today=TODAY
+        )
+        assert lead_time_state(elapsed=elapsed, lead_time_days=21) == BEYOND_LEAD_TIME
+
+    def test_it_covers_the_63_lines_with_no_due_date(self) -> None:
+        """The gap this was asked for: no EKET row, so no overdue verdict ever.
+
+        Anchored on the PO date rather than the dispatch, so it fires even on
+        the 788 lines that were never dispatched -- which is what makes it a
+        real answer rather than the same blind spot renamed.
+        """
+        assert (
+            overdue_state(
+                received_at=None, due_date=None, today=TODAY, grace_days=7
+            )
+            == NO_DUE_DATE
+        )
+        elapsed = elapsed_days(
+            raised_at=date(2026, 6, 1), received_at=None, today=TODAY
+        )
+        assert lead_time_state(elapsed=elapsed, lead_time_days=21) == BEYOND_LEAD_TIME
+
+    def test_days_over_is_signed(self) -> None:
+        """Positive once past, negative while inside -- it counts up as things
+        get worse, the opposite sign convention from daysRemainingInRepair."""
+        assert days_over_lead_time(elapsed=30, lead_time_days=21) == 9
+        assert days_over_lead_time(elapsed=14, lead_time_days=21) == -7
+
+    def test_unknown_elapsed_is_not_a_breach(self) -> None:
+        assert lead_time_state(elapsed=None, lead_time_days=21) == NO_LEAD_TIME
+
+
+class TestTheLeadTimeReachesTheLine:
+    """The wiring, without a database.
+
+    The rules above are pure functions; this is the assurance that a PLIFZ
+    value actually arrives on a RepairLine rather than being computed correctly
+    somewhere nothing reads.
+    """
+
+    @staticmethod
+    def _row(**overrides):
+        row = {
+            "ebeln": "4500000001",
+            "ebelp": "00010",
+            "matnr": "8000005632",
+            "werks": "1300",
+            "pstyp": "3",
+            "txz01": "REPAIR OF PUMP",
+            "menge": Decimal(1),
+            "meins": "EA",
+            "netpr": Decimal(100),
+            "elikz": "",
+            "banfn": None,
+            "bnfpo": None,
+            "erdat": date(2026, 6, 1),
+            "loekz": None,
+            "afnam": "10316",
+        }
+        row.update(overrides)
+        return row
+
+    def _line(self, *, lead_time, received_at=None, **row_overrides):
+        from app.initiatives.i8.register import _build_line
+
+        return _build_line(
+            self._row(**row_overrides),
+            schedule=None,
+            receipt=(
+                {"net_qty": Decimal(1), "reversals": 0, "first_receipt": received_at}
+                if received_at
+                else None
+            ),
+            dispatch=None,
+            header=None,
+            vendor_names={},
+            lead_time=lead_time,
+            today=TODAY,
+            cfg=I8Settings(_env_file=None),
+        )
+
+    def test_a_breach_reaches_the_line(self) -> None:
+        line = self._line(lead_time=21)
+        assert line.lead_time_days == 21
+        assert line.lead_time_status == "BEYOND_LEAD_TIME"
+        assert line.is_beyond_lead_time is True
+        assert line.days_over_lead_time == days_between(date(2026, 6, 1), TODAY) - 21
+
+    def test_no_marc_row_is_not_a_breach(self) -> None:
+        """Every Gamsberg repair line, today: the July MARC extract has no rows
+        for plant 1500 at all."""
+        line = self._line(lead_time=None, werks="1500")
+        assert line.lead_time_days is None
+        assert line.lead_time_status == "NO_LEAD_TIME"
+        assert line.days_over_lead_time is None
+
+    def test_a_received_line_is_judged_on_its_actual_turnaround(self) -> None:
+        line = self._line(lead_time=21, received_at=date(2026, 6, 10))
+        assert line.days_elapsed == 9
+        assert line.lead_time_status == "WITHIN_LEAD_TIME"
+        # days_open keeps counting to today; the lead-time clock does not.
+        assert line.days_open == days_between(date(2026, 6, 1), TODAY)
+
+    def test_a_zero_plifz_is_coerced_away_at_the_boundary(self) -> None:
+        """So no rule downstream has to remember that 0 means "unmaintained"."""
+        from app.initiatives.i8.register import _lead_time_days
+
+        assert _lead_time_days(None) is None
+        assert _lead_time_days(Decimal(0)) is None
+        assert _lead_time_days(Decimal("21")) == 21
+
+    def test_the_po_date_comes_from_aedat(self) -> None:
+        """BEDAT is not exposed by CPI, so reading it is a cutover bug with a
+        date on it. Initiative 07 anchors on AEDAT for the same reason."""
+        from app.initiatives.i8.register import _build_line
+
+        line = _build_line(
+            self._row(erdat=None),
+            schedule=None,
+            receipt=None,
+            dispatch=None,
+            header={"bsart": "ZREP", "lifnr": "V1", "aedat": date(2026, 5, 20)},
+            vendor_names={},
+            lead_time=None,
+            today=TODAY,
+            cfg=I8Settings(_env_file=None),
+        )
+        assert line.po_date == date(2026, 5, 20)
+        assert line.raised_at == date(2026, 5, 20)
+
+
 class TestNothingIsHardCoded:
     """The repair-PO convention is PENDING SAP TEAM CONFIRMATION.
 
@@ -397,6 +607,25 @@ class TestNothingIsHardCoded:
         """At startup, rather than producing wrong aging on every row."""
         with pytest.raises(ValueError):
             I8Settings(_env_file=None, reference_date="31-07-2026").reference_date_value
+
+    def test_the_attestation_cutover_is_configuration(self) -> None:
+        """The date attestation starts applying -- still unsupplied by VZI.
+
+        Blank is the shipped default and means "no cutover", which leaves the
+        exception behaving exactly as it did before the label existed. Turning
+        it on must be one .env line.
+        """
+        cfg = I8Settings(_env_file=None)
+        assert cfg.attestation_cutover_date_value is None
+        cfg = I8Settings(_env_file=None, attestation_cutover_date="2026-10-01")
+        assert cfg.attestation_cutover_date_value == date(2026, 10, 1)
+
+    def test_a_malformed_cutover_fails_loudly(self) -> None:
+        """A wrong cutover silently forgives real misses on one side of it."""
+        with pytest.raises(ValueError):
+            I8Settings(
+                _env_file=None, attestation_cutover_date="01-10-2026"
+            ).attestation_cutover_date_value
 
     def test_plant_names_are_never_invented(self) -> None:
         """Only 1300 and 1500 are documented anywhere in this repository."""
