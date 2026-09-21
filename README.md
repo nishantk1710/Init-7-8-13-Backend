@@ -576,6 +576,56 @@ one transaction. A delta whose target table does not exist is refused rather
 than loaded as a replace, which would leave a table holding only the increment
 and looking complete.
 
+## The serving layer
+
+What the initiatives read. Built from `odata_*`, so it needs the database and
+nothing else -- no SAP, no storage. It can be rebuilt at any time to pick up a
+corrected rule without re-fetching a row.
+
+```bash
+python -m app.serving --material-plant
+python -m app.serving --all
+```
+
+`material_plant` is one row per material and plant -- the grain everything
+hangs off, since stock, movements, reservations and purchase orders are all
+counted per material per plant. MARC is the spine; MARA and MAKT widen it.
+
+**Migration-managed, unlike `odata_*`.** The raw tables mirror SAP, so their
+shape is SAP's decision and they are dropped and rebuilt. These are our design,
+so they are versioned and change deliberately.
+
+**Built in Python, not `INSERT ... SELECT`.** The slower option, chosen because
+the interesting logic -- the material number padding rule and decimal coercion
+-- is conditional in ways that are painful in T-SQL and awkward to test there.
+Keeping them as ordinary functions means they are covered by tests needing no
+database. If a fact table outgrows this, move that table's build to SQL rather
+than giving up the tested functions for all of them.
+
+### The two traps this layer exists for
+
+**MATNR padding.** SAP's ALPHA exit left-pads to 18 characters **only when the
+value is entirely numeric** -- `2000000270` becomes `000000002000000270`, while
+`SPARE-12` stays as it is. Padding unconditionally corrupts the alphanumeric
+ones. Both shapes are live: the 21-Sep sweep found 1,978 rows at 18 characters
+and 62 between 3 and 14.
+
+Get it wrong and `JOIN ... ON marc.matnr = mara.matnr` returns **zero rows**.
+Not an error, not a warning -- an empty result indistinguishable from "there is
+no matching data", which somebody will then act on.
+
+**Space-padded decimals.** MARC safety stock arrives as `'              0.000'`
+because the property drifted `Edm.Decimal` -> `Edm.String`. Compared as text it
+sorts wrongly -- `'10'` before `'9'` -- so it is coerced to `Numeric` here.
+`Decimal`, not `Float`: these are quantities, and a reorder point that reads
+2.0000000000000004 is a support ticket.
+
+**A LEFT join, deliberately.** MARA covered 93.4% of MARC on 21-Sep. An inner
+join would silently drop the other 6.6% -- real material-plant combinations
+that movements reference. A dimension row with a null description beats a
+movement pointing at a material the dimension has never heard of. The build
+reports how many rows were widened and how many were not.
+
 ## Seeding from extract workbooks
 
 **Secondary route**, for what OData does not expose: `EXTWG` and the other ~237

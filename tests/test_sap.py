@@ -480,6 +480,44 @@ class TestClient:
         client = SapClient(settings(), transport_returning(FakeResponse(status_code=500)))
         assert client.count("GoodsMovementItemSet") is None
 
+    def test_a_capped_count_is_never_asked_for(self) -> None:
+        """ReservationItemSet answers 1000 where paging returns 7088.
+
+        A wrong-but-successful total is worse than a failed one. Paging stops
+        once it has read as many rows as the total claims, so believing 1000
+        hands the caller a seventh of the set and calls it complete -- every
+        reservation-dependent figure computed on 14% of the data, silently.
+        Measured 2026-09-21; see known_conditions.COUNT_CAPPED_SETS.
+        """
+        calls: list[dict] = []
+        client = SapClient(
+            settings(),
+            transport_returning(FakeResponse(text="1000"), capture=calls),
+        )
+
+        assert client.count("ReservationItemSet") is None
+        assert calls == [], "SAP must not even be asked for this count"
+
+    def test_a_capped_count_does_not_stop_paging_early(self) -> None:
+        """The whole point: with no count, paging runs to a short page."""
+        page = feed([{"Rsnum": str(i), "Rspos": "1"} for i in range(2)])
+        client = SapClient(
+            settings(),
+            routed_transport(
+                count=FakeResponse(text="1"),
+                pages=[
+                    FakeResponse(text=page),
+                    FakeResponse(text=feed([{"Rsnum": "99", "Rspos": "1"}])),
+                ],
+            ),
+        )
+
+        result = client.read_all("ReservationItemSet", page_size=2)
+
+        # A trusted count of 1 would have stopped after the first page.
+        assert len(result) == 3
+        assert result.counted is False
+
     def test_read_all_always_orders_by_the_key(self) -> None:
         """The 25%-row-loss finding, encoded as a test."""
         calls: list[dict] = []

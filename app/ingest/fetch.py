@@ -396,7 +396,11 @@ def fetch_set(
     # Counted across the whole fetch, not per request. A chunked read can
     # return the same row from two chunks if the parent handed us a duplicate
     # key, and no single request would notice.
-    result.duplicate_keys = count_duplicate_keys(rows, spec.keys)
+    #
+    # identity_keys, not keys: CDPOS's declared key repeats once per field
+    # changed in a document, so counting against it would condemn every correct
+    # pull of that set as corrupt.
+    result.duplicate_keys = count_duplicate_keys(rows, spec.identity_keys)
     result.stable = result.duplicate_keys == 0
 
     try:

@@ -1,0 +1,28 @@
+﻿STORAGE_URL is not set, so landed files cannot be checked.
+  STORAGE_URL is not set. Expected abfss://<container>@stvziaicomnonprod.dfs.core.windows.net/<path> (see README, 'Storage'). No default is assumed: a storage location must never be hard-coded.
+
+ENTITY SET                     TABLE                        DELTA                          LANDED
+BatchStockSet                  odata_batch_stock            full pull only                 -
+ChangeDocHeaderSet             odata_change_doc_header      Udate ge ...                   -
+ChangeDocItemSet               odata_change_doc_item        full pull only                 -
+GoodsMovementItemSet           odata_goods_movement_item    via MaterialDocumentHeaderSet.Mblnr -
+InfoRecordOrgSet               odata_info_record_org        full pull only                 -
+InfoRecordSet                  odata_info_record            full pull only                 -
+MaterialDescriptionSet         odata_material_description   full pull only                 -
+MaterialDocumentHeaderSet      odata_material_document_header Budat ge ...                   -
+MaterialPlantSet               odata_material_plant         full pull only                 -
+MaterialSet                    odata_material               full pull only                 -
+MaterialValuationSet           odata_material_valuation     full pull only                 -  (empty in this client)
+MonthlyMovementStatisticSet    odata_monthly_movement_statistic full pull only                 -  (empty in this client)
+POHistorySet                   odata_po_history             via PurchaseOrderSet.Ebeln     -
+POScheduleLineSet              odata_po_schedule_line       via PurchaseOrderSet.Ebeln     -
+PurchaseOrderItemSet           odata_purchase_order_item    via PurchaseOrderSet.Ebeln     -
+PurchaseOrderSet               odata_purchase_order         Aedat ge ...                   -
+PurchaseRequisitionSet         odata_purchase_requisition   full pull only                 -
+ReservationItemSet             odata_reservation_item       full pull only                 -  (empty in this client)
+StockMovementStatisticSet      odata_stock_movement_statistic full pull only                 -
+StorageLocationStockSet        odata_storage_location_stock full pull only                 -
+VendorSet                      odata_vendor                 full pull only                 -
+
+21 entity sets. Landing area: odata/ inside STORAGE_URL.
+7 have a delta; the rest pull in full.

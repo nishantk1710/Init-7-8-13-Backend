@@ -318,6 +318,27 @@ def test_latest_prefix_does_not_pick_up_a_similarly_named_set(spec, storage) -> 
     assert load_mod.latest_prefix(storage, material, root="odata") is None
 
 
+def test_latest_prefixes_answers_for_every_set_in_one_listing(spec, storage) -> None:
+    """--list asked per set: 21 round trips to the Data Lake for one question."""
+    _land(storage, spec, run_date=date(2026, 9, 19))
+    _land(storage, spec, run_date=date(2026, 9, 21))
+    _land(storage, spec_for("VendorSet"), rows=[{"Lifnr": "1"}])
+
+    calls: list[str] = []
+    real_list = storage.list
+    storage.list = lambda prefix="": (calls.append(prefix), real_list(prefix))[1]
+
+    found = load_mod.latest_prefixes(storage, root="odata")
+
+    assert len(calls) == 1
+    assert found["MaterialPlantSet"].endswith("2026-09-21")
+    assert "VendorSet" in found
+
+
+def test_latest_prefixes_is_empty_before_anything_lands(storage) -> None:
+    assert load_mod.latest_prefixes(storage, root="odata") == {}
+
+
 def test_load_refuses_an_unstable_fetch(spec, storage) -> None:
     """The rows would look complete and not be."""
     _land(storage, spec, usable=False)
@@ -365,10 +386,40 @@ def test_every_declared_delta_filter_is_measured_honoured() -> None:
     assert check_delta_filters() == []
 
 
-def test_change_documents_have_no_delta() -> None:
-    """Udate and Changenr were never probed, so they stay on full pulls."""
-    assert spec_for("ChangeDocHeaderSet").delta is None
+def test_cdhdr_deltas_on_udate_with_a_citation() -> None:
+    """Bare `Udate ge` is HTTP 400; alongside Objectclas it returns 3760 rows.
+
+    filter_support.csv probes one property at a time, so it cannot express
+    "works only in combination" -- hence the citation rather than a verdict.
+    """
+    delta = spec_for("ChangeDocHeaderSet").delta
+
+    assert delta.field == "Udate"
+    assert "operator_support.csv" in delta.verified
+
+
+def test_cdpos_has_no_delta_because_sap_rejects_the_only_shape() -> None:
+    """`Changenr eq 'a' or ...` is REJECTED_HTTP_400 on this set.
+
+    One request per change number would be thousands per run, so it stays a
+    full pull. Slower and honest beats an increment SAP cannot express.
+    """
     assert spec_for("ChangeDocItemSet").delta is None
+
+
+def test_a_delta_without_a_honoured_filter_or_a_citation_is_refused() -> None:
+    """The citation is a place to record evidence, not a way around the check."""
+    from app.ingest import manifest as manifest_mod
+
+    original = dict(manifest_mod.DELTAS)
+    try:
+        manifest_mod.DELTAS["VendorSet"] = Delta(field="NeverProbedProperty")
+        problems = check_delta_filters()
+        assert any("NeverProbedProperty" in p for p in problems)
+        assert any("never probed" in p for p in problems)
+    finally:
+        manifest_mod.DELTAS.clear()
+        manifest_mod.DELTAS.update(original)
 
 
 def test_movement_items_are_derived_because_their_own_filters_500() -> None:

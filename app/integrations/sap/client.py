@@ -32,6 +32,7 @@ from app.integrations.sap.contract import EntitySet, entity_set
 from app.integrations.sap.envelope import DecodedRows, decode_count, decode_rows
 from app.integrations.sap.errors import SapError, TransientError
 from app.integrations.sap.filters import check_filter
+from app.integrations.sap.known_conditions import COUNT_CAPPED_SETS
 from app.integrations.sap.paging import (
     ExtractResult,
     Page,
@@ -144,12 +145,26 @@ class SapClient:
         filter: str | None = None,
         allow_unsupported_filter: bool = False,
     ) -> int | None:
-        """``$count``, or None where SAP cannot produce one.
+        """``$count``, or None where SAP cannot produce a trustworthy one.
 
         None is a real answer, not an error: several sets return HTTP 500 for
         ``$count`` while serving rows perfectly well.
+
+        One set is not asked at all. ReservationItemSet answers 1000 when paging
+        returns 7088 -- a cap rather than a total. Paging stops once it has read
+        as many rows as the total claims, so believing that number hands the
+        caller a seventh of the set and calls it complete. Declining to ask
+        demotes the read to page-until-short-page, which is exact.
+        See known_conditions.COUNT_CAPPED_SETS.
         """
         target = entity_set(name)
+        if name in COUNT_CAPPED_SETS:
+            logger.info(
+                "%s: not asking for $count -- it is capped on this set and would "
+                "stop paging early. Reading until a short page instead.",
+                name,
+            )
+            return None
         if not allow_unsupported_filter:
             check_filter(name, filter)
         try:

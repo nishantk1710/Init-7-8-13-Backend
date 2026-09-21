@@ -94,8 +94,12 @@ def _merge(
     try:
         staged = writer.bulk_load(cursor, staging, columns, rows_iter)
 
+        # identity_keys: the merge must delete exactly the rows this batch
+        # replaces. Joining on a key that is not unique would delete every row
+        # sharing it -- for CDPOS, every field change in the same document,
+        # when the batch only carries one of them.
         on_clause = " AND ".join(
-            f"t.{quote(key)} = s.{quote(key)}" for key in spec.keys
+            f"t.{quote(key)} = s.{quote(key)}" for key in spec.identity_keys
         )
         cursor.execute(
             f"DELETE t FROM {quote(target)} t "
@@ -152,6 +156,31 @@ def latest_prefix(storage: Storage, spec: IngestSpec, *, root: str) -> str | Non
         if key.startswith(marker) and key.endswith(suffix)
     )
     return f"{marker}{dates[-1]}" if dates else None
+
+
+def latest_prefixes(storage: Storage, *, root: str) -> dict[str, str]:
+    """Latest landed prefix for every entity set, from a single listing.
+
+    ``latest_prefix`` asks per set, which is right when loading one. For a
+    listing of all 21 that is 21 round trips to the Data Lake to answer one
+    question, so this walks the whole prefix once and groups in memory.
+    """
+    suffix = f"/{MANIFEST_FILE}"
+    best: dict[str, str] = {}
+    for key in storage.list(root.strip("/")):
+        if not key.endswith(suffix):
+            continue
+        prefix = key[: -len(suffix)]
+        parts = prefix.split("/")
+        if len(parts) < 4:
+            # Not <root>/<service>/<set>/<date>; something else lives here.
+            continue
+        name = parts[-2]
+        # Lexical comparison is chronological: only the dated final segment
+        # differs between runs of the same set, and it is ISO.
+        if name not in best or prefix > best[name]:
+            best[name] = prefix
+    return best
 
 
 def _iter_rows(

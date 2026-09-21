@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 from app.integrations.sap.contract import EntitySet, contract
 from app.integrations.sap.filters import HONOURED, verdict_for
+from app.integrations.sap.known_conditions import NON_UNIQUE_DECLARED_KEYS
 
 # Raw tables from the live service. The prefix keeps them apart from the seed's
 # ``raw_`` tables, which hold the same SAP data under different column names.
@@ -108,6 +109,17 @@ class Delta:
     via: str | None = None
     via_key: str | None = None
 
+    # Evidence, where it does not come from filter_support.csv.
+    #
+    # The default bar is a HONOURED verdict in that file. Some filters are
+    # proven elsewhere -- CDHDR's Udate is REJECTED alone and works alongside
+    # the Objectclas predicate, which filter_support's one-property-at-a-time
+    # probe cannot express, so the proof lives in operator_support.csv instead.
+    #
+    # A free-text citation rather than a boolean: "someone ticked a box" is not
+    # evidence, and the next person needs to know where to look.
+    verified: str | None = None
+
     def __post_init__(self) -> None:
         direct = self.field is not None
         derived = self.via is not None and self.via_key is not None
@@ -140,6 +152,28 @@ DELTAS: dict[str, Delta] = {
     # MKPF by posting date, then MSEG by the document numbers.
     "MaterialDocumentHeaderSet": Delta(field="Budat"),
     "GoodsMovementItemSet": Delta(via="MaterialDocumentHeaderSet", via_key="Mblnr"),
+    # CDHDR by change date. Only works alongside the Objectclas predicate this
+    # set demands -- `Udate ge ...` on its own is HTTP 400, while
+    # `Objectclas eq 'MATERIAL' and Udate ge ...` returned 3760 rows
+    # (discovery 2026-09-21, operator_support.csv). combine() sends both.
+    "ChangeDocHeaderSet": Delta(
+        field="Udate",
+        verified=(
+            "operator_support.csv 2026-09-21: 'eq + date ge' -> 3760 rows "
+            "(bare 'date ge on CDHDR' is REJECTED_HTTP_400)"
+        ),
+    ),
+    # CDPOS deliberately has NO delta, and it is not an oversight.
+    #
+    # The obvious shape is `via ChangeDocHeaderSet on Changenr`, which builds
+    # `Changenr eq 'a' or Changenr eq 'b' or ...`. That exact shape is measured
+    # REJECTED_HTTP_400 on this set -- "or inside parentheses" in
+    # operator_support.csv. One request per change number would be thousands of
+    # requests for one run.
+    #
+    # So CDPOS stays a full pull under its Objectclas predicate, and anything
+    # wanting only the changed documents filters after the fact. Honest and
+    # slower beats an increment SAP cannot express.
 }
 
 
@@ -167,8 +201,25 @@ class IngestSpec:
 
     @property
     def keys(self) -> tuple[str, ...]:
-        """Entity key properties. Indexed after load, and used to spot duplicates."""
+        """The key SAP declares. Indexed after load; what downstream joins on."""
         return self.entity_set.keys
+
+    @property
+    def identity_keys(self) -> tuple[str, ...]:
+        """The columns that actually address a row uniquely.
+
+        Usually the declared key, but not always: CDPOS declares three columns
+        and repeats them once per field changed in the same document. Duplicate
+        counting is how a pull proves it lost nothing, so running it against a
+        key that is not unique reports duplicates that are not there and a
+        correct extract gets refused as corrupt.
+
+        Used for the duplicate check and for the merge join. Indexes still
+        follow the declared key -- that is what downstream tables join on, and
+        indexing seven columns to serve a uniqueness check nobody queries would
+        cost more than it returns.
+        """
+        return NON_UNIQUE_DECLARED_KEYS.get(self.entity_set.name, self.entity_set.keys)
 
     @property
     def expects_rows(self) -> bool:
@@ -198,6 +249,11 @@ def check_delta_filters() -> list[str]:
     """
     problems: list[str] = []
     for set_name, delta in DELTAS.items():
+        if delta.verified:
+            # Proven by a different probe, with the citation recorded. Not a
+            # way around the check -- a way to record evidence filter_support
+            # cannot hold, and the citation is what makes it reviewable.
+            continue
         if delta.field is not None:
             target, prop = set_name, delta.field
         else:
@@ -207,7 +263,7 @@ def check_delta_filters() -> list[str]:
         if verdict != HONOURED:
             problems.append(
                 f"{target}.{prop}: {verdict or 'never probed'} "
-                f"(a delta needs {HONOURED})"
+                f"(a delta needs {HONOURED}, or a Delta(verified=...) citation)"
             )
     return problems
 
