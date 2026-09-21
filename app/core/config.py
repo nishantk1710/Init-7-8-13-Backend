@@ -35,17 +35,23 @@ class Settings(BaseSettings):
     # Database connection, as a SQLAlchemy URL. Empty by default so the app --
     # and the liveness endpoint -- still start with no database present.
     #
-    # This is the ONLY place the database is named. Local development points it
-    # at Postgres; the deployed environment points it at the managed database.
-    # Swapping environments is therefore a config change, never a code change:
-    # nothing below this line, and nothing in app/core/db.py, knows which
-    # engine it is talking to.
+    # This is the ONLY place the database is named, so moving between VZI
+    # environments is a config change and never a code change.
     #
-    #   local:  postgresql+psycopg://postgres:<password>@localhost:5432/spares_ai
+    # Azure SQL, and only Azure SQL. Local Postgres was a stand-in while VZI's
+    # database was being provisioned; app/core/db.py now refuses any other
+    # backend rather than letting it fail obscurely further in.
     #
-    # NOTE: a Postgres-to-SQL-Server move is NOT config-only -- dialect, driver
-    # and several types differ. Keep models on portable SQLAlchemy constructs so
-    # that swap stays small. See README, "Database".
+    #   mssql+pyodbc://<user>:<password>@sql-vzi-aicom-nonprod-san.database.windows.net:1433/sqldb-aicom
+    #     ?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=no
+    #
+    # The driver, Encrypt and TrustServerCertificate parameters are not
+    # optional: without Encrypt=yes Azure SQL refuses the connection, and with
+    # TrustServerCertificate=yes it would succeed while trusting anything, which
+    # is the same objection as cpi_ca_bundle below.
+    #
+    # Unreachable outside the VNet -- public network access is disabled and the
+    # server sits behind pe-sqlvziaicomnonprod-sqlserver.
     database_url: str = ""
 
     # Echo every SQL statement to the log. Local debugging only.
@@ -56,16 +62,48 @@ class Settings(BaseSettings):
     # not hang. Raise it only for a genuinely slow network path.
     database_connect_timeout_seconds: int = 5
 
+    # Seconds after which a pooled connection is replaced rather than reused.
+    # Azure SQL cuts idle connections at around 30 minutes; App Service instances
+    # sit idle between requests, so a pooled connection that looks fine can be
+    # dead by the next call. Recycling below that window means the replacement
+    # happens on our schedule instead of inside someone's request.
+    database_pool_recycle_seconds: int = 1500
+
     # Object storage location. Like database_url, this is the ONLY place storage
-    # is named, and the adapter is chosen from the URL scheme -- so moving from a
-    # local folder to cloud storage is a config change, not a code change.
+    # is named, and the adapter is chosen from the URL scheme.
     #
-    #   local:  D:/vzi-data/extracts        (a plain path is accepted)
-    #           file:///D:/vzi-data/extracts
-    #   cloud:  abfss://<container>@<account>.dfs.core.windows.net/<path>
+    #   abfss://<container>@stvziaicomnonprod.dfs.core.windows.net/<path>
+    #
+    # abfss:// is the only scheme supported. The local-folder adapter was a
+    # stand-in and has been removed, so a filesystem path is refused with an
+    # explanation rather than silently treated as something else.
     #
     # Empty by default so the app starts with no storage configured.
     storage_url: str = ""
+
+    # Optional. The Data Lake adapter authenticates with DefaultAzureCredential
+    # by default -- the App Service's managed identity when deployed, the
+    # developer's `az login` session locally -- so no secret is stored anywhere.
+    # This exists only for a machine where neither is available. Prefer granting
+    # 'Storage Blob Data Reader' to an identity over setting this.
+    azure_storage_account_key: str = ""
+
+    # The Key Vault, for `python -m app.checkup` ONLY.
+    #
+    # No code reads secrets from here. Secrets reach this app as App Service
+    # Key Vault references -- App Service resolves
+    # @Microsoft.KeyVault(SecretUri=...) into an ordinary environment variable
+    # before the process starts, so Settings reads them unchanged and this
+    # codebase needs no Key Vault SDK.
+    #
+    # That is the right design and it has one drawback: the app never talks to
+    # Key Vault, so it cannot report whether Key Vault is reachable -- which is
+    # one of the three things Anish asked to confirm. Setting this lets checkup
+    # probe the vault directly, using the same managed identity, to answer that
+    # question and nothing else.
+    #
+    #   https://kv-vzi-aicom-nonprod.vault.azure.net/
+    key_vault_url: str = ""
 
     # SAP, reached through the CPI generic OData consumption endpoint.
     #
@@ -217,10 +255,95 @@ class Settings(BaseSettings):
     azure_tenant_id: str = ""
     azure_client_id: str = ""
 
+    # --- Initiative 13: End-to-End Spares Utilisation Tracking. ---
+    # Root directory for platform-owned (non-SAP) reference data -- currently
+    # just consumption_plans.csv (see app/initiatives/i13/plans.py). All
+    # SAP-derived I13 data reads from Postgres (see app/integrations/sap/
+    # postgres_*.py); there is no CSV path for it any more.
+    i13_data_dir: str = "data-generator/generated"
+
+    # Current VZI OAR material-scope ruling (MARC.DISMM), comma-separated.
+    # See app/shared/material_scope/policy.py -- this is shared platform
+    # config, not owned by any single initiative.
+    i13_oar_mrp_types: str = "ND,PD"
+    i13_min_max_mrp_types: str = "VB"
+
+    # Aging bands (days since last goods movement).
+    i13_aging_fast_max_days: int = 365
+    i13_aging_slow_max_days: int = 730
+
+    # Trailing consumption window used throughout WATCH/aging/reclassification.
+    i13_consumption_window_months: int = 12
+
+    # 30-day goods-received-not-issued exception threshold.
+    i13_gr_not_issued_threshold_days: int = 30
+
+    # Grace period after a consumption plan's planned-use window before it
+    # becomes a PLAN_BREACH exception.
+    i13_plan_breach_grace_days: int = 14
+
+    # SOP indicator for OAR -> Min-Max reclassification review.
+    i13_reclass_min_consumption_count: int = 4
+
+    # SOP 3.1.1 indicator 2: which ZMM065 criticality tiers (W3.4,
+    # app.core.criticality.CriticalityTier) count as "Critical" evidence for
+    # reclassification. The Dev Plan says "Critical flag"; the FRS also
+    # mentions "Critical or significant production impact" -- IMPACT is
+    # deliberately NOT enabled by default, since broadening the rule beyond
+    # the Dev Plan's own wording is a business decision, not one this code
+    # should make silently. Comma-separated tier names.
+    i13_reclass_critical_tiers: str = "CRITICAL"
+
+    # Reconciliation tolerance for local validation against reference reports.
+    i13_reconciliation_tolerance_pct: float = 5.0
+
+    # W6.4: gates cost-centre enrichment in consumption attribution. Off by
+    # default -- no deterministic cost-centre source (EKKN/AUFK) is loaded
+    # in this codebase yet (see app/initiatives/i13/cost_centre_provider.py),
+    # so leaving it on would silently do nothing; reservation/requester/order
+    # attribution is never gated by this flag.
+    i13_cost_centre_attribution_enabled: bool = False
+
+    # W6.6: how many days an ACT exception's requester has to confirm before
+    # it escalates to the responsible HOD (app.initiatives.i13.act.service
+    # .process_escalations). The 30-day GRNI fallback for no-plan cases
+    # reuses i13_gr_not_issued_threshold_days above -- it is not a second
+    # constant.
+    i13_requester_response_days: int = 5
+
+    # W6.6: local/config HOD routing -- "PLANT:identity,PLANT2:identity2".
+    # A placeholder for a future Entra/DOA-backed lookup (see
+    # app/initiatives/i13/act_hod_provider.py); empty by default, which
+    # leaves every escalation's routing explicitly PENDING rather than
+    # inventing a recipient.
+    i13_hod_recipients: str = ""
+
     @property
     def cors_origins(self) -> list[str]:
         """Allowed CORS origins, parsed from ``FRONTEND_ORIGIN``."""
         return [origin.strip() for origin in self.frontend_origin.split(",") if origin.strip()]
+
+    @property
+    def i13_oar_mrp_type_set(self) -> frozenset[str]:
+        """Normalised MRP type codes that count as OAR (in-scope) materials."""
+        return frozenset(code.strip().upper() for code in self.i13_oar_mrp_types.split(",") if code.strip())
+
+    @property
+    def i13_min_max_mrp_type_set(self) -> frozenset[str]:
+        """Normalised MRP type codes that count as Min-Max (stocked) materials."""
+        return frozenset(code.strip().upper() for code in self.i13_min_max_mrp_types.split(",") if code.strip())
+
+    @property
+    def i13_reclass_critical_tier_set(self):  # -> frozenset[CriticalityTier]
+        """Configured criticality tiers that count as reclassification
+        evidence. Local import to avoid a Settings <-> criticality import
+        cycle (``app.core.criticality`` itself imports ``Settings``).
+        Unrecognised tier names are dropped, never coerced -- the same
+        no-invention rule ``parse_tier`` itself follows."""
+        from app.core.criticality import parse_tier
+
+        tiers = (parse_tier(raw) for raw in self.i13_reclass_critical_tiers.split(","))
+        return frozenset(tier for tier in tiers if tier is not None)
 
 
 @lru_cache

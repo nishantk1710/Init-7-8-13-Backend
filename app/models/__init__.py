@@ -12,6 +12,15 @@ initiative.
 """
 
 from app.models.base import Base
+from app.models.i13_act_exception import (
+    ActConfirmationRecord,
+    ActExceptionEventRecord,
+    ActExceptionRecord,
+    ActNotificationRecord,
+)
+from app.models.i13_consumption_attribution import ConsumptionAttributionRecord
+from app.models.i13_reclassification import ReclassificationCandidateMart
+from app.models.i13_watch_mart import WatchMetricMart
 from app.models.ingestion import IngestionRun
 
 # --- Initiative-owned tables ----------------------------------------------
@@ -37,4 +46,14 @@ from app.models.ingestion import IngestionRun
 # imported from their own modules, not from here.
 import app.initiatives.i8.models  # noqa: F401,E402  (registers i8_attestation)
 
-__all__ = ["Base", "IngestionRun"]
+__all__ = [
+    "ActConfirmationRecord",
+    "ActExceptionEventRecord",
+    "ActExceptionRecord",
+    "ActNotificationRecord",
+    "Base",
+    "ConsumptionAttributionRecord",
+    "IngestionRun",
+    "ReclassificationCandidateMart",
+    "WatchMetricMart",
+]
