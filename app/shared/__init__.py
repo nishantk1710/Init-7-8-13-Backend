@@ -22,6 +22,7 @@ Criticality is per **material-plant**: the same material can be CRITICAL at one
 plant and NORMAL at another, so always pass the plant.
 """
 
+from app.shared.numbers import plain
 from app.core.criticality import (
     SEVERITY_ORDER,
     CriticalityError,
@@ -42,4 +43,5 @@ __all__ = [
     "CriticalityTier",
     "get_criticality_source",
     "parse_tier",
+    "plain",
 ]

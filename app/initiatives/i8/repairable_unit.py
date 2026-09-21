@@ -63,6 +63,7 @@ from typing import Sequence
 from app.initiatives.i8.material_number import normalise
 from app.initiatives.i8.register import RepairLine
 from app.initiatives.i8.universe import UniverseRow
+from app.shared.numbers import plain
 
 
 class UnitSource(str, Enum):
@@ -175,14 +176,14 @@ class RepairableUnitVerdict:
             )
             parts.append(
                 f"There {'is' if self.stock_on_hand == 1 else 'are'} "
-                f"{_plain(self.stock_on_hand)} in stock at plant {self.plant}{where}"
+                f"{plain(self.stock_on_hand)} in stock at plant {self.plant}{where}"
             )
 
         if self.open_repair_lines:
             line_word = "repair" if self.open_repair_lines == 1 else "repairs"
             clause = (
                 f"{self.open_repair_lines} open {line_word} for "
-                f"{_plain(self.quantity_under_repair)} unit"
+                f"{plain(self.quantity_under_repair)} unit"
                 f"{'' if self.quantity_under_repair == 1 else 's'}"
             )
             if self.soonest_due_date is not None:
@@ -252,13 +253,6 @@ class RepairableUnitVerdict:
         return tuple(notes)
 
 
-def _plain(quantity: Decimal) -> str:
-    """A quantity a person would say out loud: 3 rather than 3.000."""
-    normalised = quantity.normalize()
-    # normalize() gives 3E+1 for 30; quantize back when the exponent went positive.
-    if normalised.as_tuple().exponent > 0:
-        normalised = normalised.quantize(Decimal(1))
-    return str(normalised)
 
 
 def assess(
