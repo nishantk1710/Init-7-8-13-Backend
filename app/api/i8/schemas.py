@@ -683,3 +683,52 @@ class SnapshotInfo(I8Model):
 
 
 UniverseDetail.model_rebuild()
+
+
+# --- W7.2 / FR-6: does a repairable unit already exist? --------------------
+
+
+class RepairEvidenceItem(I8Model):
+    """One open repair, as the assistant is allowed to describe it.
+
+    ``dispatched`` is served rather than assumed: zero of the 788 open repair
+    lines in this extract carry a dispatch movement, so "a repair is open" must
+    not be rendered as "the vendor has it".
+    """
+
+    purchasing_document: str
+    item: str
+    quantity: Decimal
+    raised_at: date | None = None
+    due_date: date | None = None
+    days_overdue: int | None = None
+    vendor: str | None = None
+    vendor_name: str | None = None
+    status: str
+    dispatched: bool
+
+
+class RepairableUnitResponse(I8Model):
+    """FR-6's answer, with the evidence behind it.
+
+    ``stockOnHand`` is nullable and null is NOT zero -- it means no MARD row
+    exists for this material at this plant. ``stockIsUnknown`` is served
+    alongside it so the UI never has to infer that from a missing number.
+    """
+
+    material_id: str
+    plant: str | None = None
+    is_repairable_material: bool
+    exists: bool
+    sources: list[str]
+    stock_on_hand: Decimal | None = None
+    stock_is_unknown: bool
+    stock_locations: int
+    open_repair_lines: int
+    quantity_under_repair: Decimal
+    soonest_due_date: date | None = None
+    overdue_lines: int
+    headline: str
+    caveats: list[str]
+    evidence: list[RepairEvidenceItem]
+    reference_date: date

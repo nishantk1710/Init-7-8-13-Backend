@@ -55,7 +55,9 @@ from app.api.i8.schemas import (
     MaterialReference,
     RepairChain,
     RegisterResponse,
+    RepairableUnitResponse,
     RepairDetail,
+    RepairEvidenceItem,
     SnapshotInfo,
     UniverseDetail,
     UniverseResponse,
@@ -74,6 +76,7 @@ from app.initiatives.i8.coding_candidates import meets_confidence_threshold
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.material_number import is_eighty_series, normalise
 from app.initiatives.i8.register import RepairLine
+from app.initiatives.i8.repairable_unit import assess as assess_repairable_unit
 from app.initiatives.i8.service import (
     AttestationView,
     Snapshot,
@@ -756,4 +759,69 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
             "agingBands": ", ".join(bucket_labels(cfg.aging_band_boundaries_list)),
             "codingCandidateConfidenceThreshold": cfg.coding_candidate_confidence_threshold,
         },
+    )
+
+
+# --- W7.2 / FR-6: the repairable-unit rule, on its own ---------------------
+#
+# Exposed separately from the assistant so the rule is demoable and testable
+# without a conversation, and so the frontend can ask the question directly on
+# a register screen. A GET -- it decides nothing and records nothing.
+
+
+@router.get(
+    "/repairable-unit",
+    response_model=RepairableUnitResponse,
+    summary="FR-6: does a repairable unit already exist for this material?",
+)
+def get_repairable_unit(
+    snapshot: SnapshotDep,
+    material: Annotated[str, Query(description="Material number, padded or stripped")],
+    plant: Annotated[str | None, Query(description="Plant code. Omitted means every plant.")] = None,
+) -> RepairableUnitResponse:
+    """Whether a repairable unit is on the shelf or coming back from repair.
+
+    ``today`` is the snapshot's reference date rather than the wall clock, so
+    the overdue counts here agree with the register screen beside it. That is
+    the right trade on a frozen July extract; when the source becomes live it
+    is ``get_snapshot``'s caching that has to change, not this route.
+    """
+    verdict = assess_repairable_unit(
+        material_id=material,
+        plant=plant,
+        universe_rows=snapshot.universe,
+        repair_lines=snapshot.lines,
+        today=snapshot.reference_date,
+    )
+    return RepairableUnitResponse(
+        material_id=verdict.material_id,
+        plant=verdict.plant,
+        is_repairable_material=verdict.is_repairable_material,
+        exists=verdict.exists,
+        sources=[source.value for source in verdict.sources],
+        stock_on_hand=verdict.stock_on_hand,
+        stock_is_unknown=verdict.stock_is_unknown,
+        stock_locations=verdict.stock_locations,
+        open_repair_lines=verdict.open_repair_lines,
+        quantity_under_repair=verdict.quantity_under_repair,
+        soonest_due_date=verdict.soonest_due_date,
+        overdue_lines=verdict.overdue_lines,
+        headline=verdict.headline,
+        caveats=list(verdict.caveats),
+        evidence=[
+            RepairEvidenceItem(
+                purchasing_document=item.purchasing_document,
+                item=item.item,
+                quantity=item.quantity,
+                raised_at=item.raised_at,
+                due_date=item.due_date,
+                days_overdue=item.days_overdue,
+                vendor=item.vendor,
+                vendor_name=item.vendor_name,
+                status=item.status,
+                dispatched=item.dispatched,
+            )
+            for item in verdict.evidence
+        ],
+        reference_date=snapshot.reference_date,
     )
