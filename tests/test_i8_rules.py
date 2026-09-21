@@ -630,5 +630,7 @@ class TestNothingIsHardCoded:
     def test_plant_names_are_never_invented(self) -> None:
         """Only 1300 and 1500 are documented anywhere in this repository."""
         cfg = I8Settings(_env_file=None)
-        assert cfg.plant_name_map == {"1300": "Black Mountain", "1500": "Gamsberg"}
+        # Derived from app/shared/plant_scope.py, so this also guards against
+        # I08 drifting back to its own shorter spelling of Black Mountain.
+        assert cfg.plant_name_map == {"1300": "Black Mountain Mining", "1500": "Gamsberg"}
         assert "3000" not in cfg.plant_name_map

@@ -140,7 +140,8 @@ class TestPstypIsFilteredInPython:
         """
         candidates = fetch_candidate_lines(db)
         repair = [row for row in candidates if is_repair_line(row, cfg)]
-        assert len(candidates) == 82718
+        # 82,718 before the two-plant scope ruling of 21-Sep-2026.
+        assert len(candidates) == 80880
         assert len(repair) == 1225
         assert len(candidates) > len(repair) * 10
 
@@ -327,9 +328,9 @@ class TestLeadTimeAgainstTheExtract:
     def test_gamsberg_has_no_lead_time_at_all(self, register) -> None:
         """Not a bug here -- a gap in the delivery.
 
-        The July MARC extract is plants 1300 and 1200 only, with ZERO rows for
-        Gamsberg (see app/seed/manifest.py). Repair lines exist at 1300 and 1500
-        and nowhere else, so every Gamsberg line resolves to NO_LEAD_TIME until
+        The July MARC extract has ZERO rows for Gamsberg -- in scope it is
+        plant 1300 only (see app/seed/manifest.py). Both in-scope plants carry
+        repair lines, so every Gamsberg line resolves to NO_LEAD_TIME until
         a MARC extract covering 1500 arrives. Asserted rather than assumed, so
         the day that extract lands this test fails and says so.
         """
@@ -398,13 +399,19 @@ class TestUniverse:
     def test_detection_is_not_a_mara_lookup(self, universe) -> None:
         """The measurement that decides the whole design.
 
-        MARA knows 362 of the series. The union of every source knows 3,605.
-        Gating on the material master would discard roughly nine in ten.
+        MARA knows 362 of the series. The union of every source knows 3,145.
+        Gating on the material master would discard roughly eight in nine.
+
+        The two-plant scope ruling of 21-Sep-2026 moved the totals (3,605
+        materials over 5 plants before it) but not the conclusion, which is
+        the point of pinning the ratio as well as the count: narrowing the
+        scope does not make the material master a usable gate.
         """
         _rows, stats = universe
         assert stats.by_source["mara"] == 362
-        assert stats.materials == 3605
-        assert stats.materials > stats.by_source["mara"] * 9
+        assert stats.materials == 3145
+        assert stats.plants == 2
+        assert stats.materials > stats.by_source["mara"] * 8
 
     def test_every_row_passes_the_predicate(self, universe, cfg) -> None:
         from app.initiatives.i8.material_number import is_eighty_series

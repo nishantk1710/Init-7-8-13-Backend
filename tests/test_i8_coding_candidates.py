@@ -105,7 +105,7 @@ class TestKeywordMatching:
 
 
 class TestPartition:
-    """Where the population goes from 305 to 41, and why."""
+    """Where the population goes from 296 to 41, and why."""
 
     def test_a_line_with_no_material_is_never_a_candidate(self) -> None:
         """60% of the keyword hits have no material number at all.
@@ -236,7 +236,7 @@ class TestThePrompt:
         assert ROUTES[PROMPT_ID].tier == "capable"
 
     def test_it_names_the_consumable_trap(self) -> None:
-        """Roughly 57 of the 305 screened lines are repair KITS and clamps.
+        """Roughly 57 of the screened lines are repair KITS and clamps.
         They are the most common wrong answer, so the prompt must call them
         out by name rather than hoping the model infers it."""
         from app.core.prompts import get_prompt
@@ -379,21 +379,27 @@ class TestAgainstTheRealExtract:
             yield session
 
     def test_the_keyword_screen_returns_what_the_plan_measured(self, db) -> None:
-        """The plan's 305 and 6, plus the 6 already-coded lines it counted
+        """The plan's 305 and 6, plus the already-coded lines it counted
         separately. If this moves, find out what changed before anything else.
         """
         lines = fetch_repair_language_lines(db)
         groups = partition(lines)
 
-        assert len(lines) == 311
-        assert len(groups.already_coded) == 6
-        assert len(lines) - len(groups.already_coded) == 305
+        # Pre-ruling: 311 lines, 6 already coded, 305 screened. The two-plant
+        # scope of 21-Sep-2026 takes each down proportionally.
+        assert len(lines) == 300
+        assert len(groups.already_coded) == 4
+        assert len(lines) - len(groups.already_coded) == 296
 
-    def test_most_of_the_305_have_no_material_at_all(self, db) -> None:
-        """The finding that reshaped this module. 183 of 305 -- 60% -- are
-        free-text service purchases with nothing to re-code."""
+    def test_most_of_the_screened_lines_have_no_material_at_all(self, db) -> None:
+        """The finding that reshaped this module. 174 of 296 -- 59% -- are
+        free-text service purchases with nothing to re-code.
+
+        Pre-ruling this was 183 of 305, also 60%. The proportion barely moved
+        when the scope narrowed, which is worth knowing: the free-text repair
+        spend is not a quirk of one site."""
         groups = partition(fetch_repair_language_lines(db))
-        assert len(groups.without_material) == 183
+        assert len(groups.without_material) == 174
         assert sum(len(v) for v in groups.by_material.values()) == 122
 
     def test_122_lines_collapse_to_41_materials(self, db) -> None:
@@ -429,7 +435,7 @@ class TestAgainstTheRealExtract:
         candidates, stats = screen(db, use_model=False)
 
         assert stats.materials_screened == 41
-        assert stats.lines_with_repair_language == 311
+        assert stats.lines_with_repair_language == 300
         assert stats.corroborated == 1
         # And it says plainly that nothing was judged.
         assert stats.by_verdict == {"UNSCREENED": 41}
@@ -461,10 +467,10 @@ class TestTheApi:
 
     def test_the_meta_reports_every_number_with_what_it_counts(self) -> None:
         meta = client.get(f"{CANDIDATES}?limit=1").json()["meta"]
-        assert meta["linesWithText"] == 82718
-        assert meta["linesWithRepairLanguage"] == 311
-        assert meta["linesAlreadyEightySeries"] == 6
-        assert meta["linesWithoutMaterial"] == 183
+        assert meta["linesWithText"] == 80880
+        assert meta["linesWithRepairLanguage"] == 300
+        assert meta["linesAlreadyEightySeries"] == 4
+        assert meta["linesWithoutMaterial"] == 174
         assert meta["materialsFound"] == 41
         assert "repair" in meta["keywords"]
 

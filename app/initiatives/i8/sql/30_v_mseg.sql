@@ -13,6 +13,11 @@
 --    30... So '0' is mapped to NULL here, where it reads as "this movement
 --    cannot be attached to a line" instead of quietly joining to nothing.
 --    132 of the 710 dispatches on 80-series materials are in that state.
+--
+-- SCOPE: in-scope plants only -- see app/shared/plant_scope.py, which is the
+-- one place the codes are written down. Filtered here rather than at render
+-- time: a total computed over out-of-scope rows is wrong even when those rows
+-- are never drawn. in_scope_plant() is generated from that module by views.py.
 create or replace view v_mseg as
 select
     nullif(material_document, '')        as mblnr,
@@ -30,4 +35,5 @@ select
     sap_key(purchase_order)              as ebeln,
     nullif(nullif(item, ''), '0')        as ebelp,
     sap_key(supplier)                    as lifnr
-from raw_mseg;
+from raw_mseg
+where in_scope_plant(plant);

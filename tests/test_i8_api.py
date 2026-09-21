@@ -212,11 +212,12 @@ class TestResponseShapeMatchesTheFrontend:
 class TestUniverseEndpoint:
     def test_returns_the_repairable_universe_with_its_sources(self) -> None:
         body = client.get(f"{UNIVERSE}?pageSize=5").json()
-        assert body["total"] == 3802
+        # 3,802 before the two-plant scope ruling of 21-Sep-2026.
+        assert body["total"] == 3242
         assert len(body["items"]) == 5
         # Every figure travels with the extract it came from.
         assert body["meta"]["bySource"]["mara"] == 362
-        assert body["meta"]["totalMaterials"] == 3605
+        assert body["meta"]["totalMaterials"] == 3145
 
     def test_the_mara_slice_is_reproducible(self) -> None:
         """The plan's "362 materials" figure, still obtainable -- as a filter on
@@ -358,7 +359,8 @@ class TestSnapshotEndpoint:
         assert body["rules"]["repairDocType"] == "ZREP"
         assert body["rules"]["seriesPrefixes"] == "80"
         assert body["repairRegister"]["totalLines"] == 1225
-        assert body["universe"]["totalMaterials"] == 3605
+        # 3,605 before the two-plant scope ruling of 21-Sep-2026.
+        assert body["universe"]["totalMaterials"] == 3145
 
     def test_the_snapshot_is_reused_not_rebuilt(self) -> None:
         """The register reads ~400,000 rows. Rebuilding per request would make

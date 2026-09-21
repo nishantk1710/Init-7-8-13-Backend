@@ -241,8 +241,8 @@ back.
 
 ### Cross-plant stock listed plants holding nothing
 
-The assistant said "other plants hold 0 at 1100, 0 at 1200" — which announces
-that there is stock elsewhere and then says there is not. Now filtered.
+The assistant said "other plants hold 0 at 1500" — which announces that there
+is stock elsewhere and then says there is not. Now filtered.
 
 ### Captured plans were being written with a status the engine rejects
 

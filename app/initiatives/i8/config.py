@@ -24,6 +24,8 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.shared.plant_scope import PLANT_NAMES
+
 
 class I8Settings(BaseSettings):
     """Initiative 08 rules. Field names map to ``I8_``-prefixed env vars."""
@@ -227,14 +229,16 @@ class I8Settings(BaseSettings):
     # Plant code -> display name, comma separated.
     #
     # No plant-name table was delivered, so these are not read from SAP. They
-    # come from app/seed/manifest.py, which records 1300 as Black Mountain and
-    # 1500 as Gamsberg -- documented facts about this landscape rather than
-    # invented labels. A code with no entry here is displayed as its code,
-    # never as a guess.
-    # Only 1300 and 1500 are listed because only those two are documented.
-    # Plants 1200, 2000, 3000 and 1600 appear in the stock data and are served
-    # as their codes until someone supplies their names.
-    plant_names: str = "1300=Black Mountain,1500=Gamsberg"
+    # are documented facts about this landscape rather than invented labels,
+    # and they are the only two plants in scope -- so this map is complete
+    # rather than partial, and nothing renders as a bare code.
+    #
+    # DERIVED from app/shared/plant_scope.py rather than typed out again. Two
+    # copies of the same two names drifted once already: I08 said "Black
+    # Mountain" while everything else said "Black Mountain Mining", so the same
+    # plant read as two different sites depending on which screen you were on.
+    # Overriding I8_PLANT_NAMES in the environment still works and still wins.
+    plant_names: str = ",".join(f"{code}={name}" for code, name in PLANT_NAMES.items())
 
     # --- API paging -------------------------------------------------------
     # 781 open repair lines will not render in one response.

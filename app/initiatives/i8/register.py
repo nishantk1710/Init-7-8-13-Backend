@@ -333,9 +333,9 @@ _LEAD_TIME_SQL = """
 -- that single value without the query having to assert uniqueness.
 --
 -- KNOWN COVERAGE GAP, and it is in the delivery, not here: the July MARC
--- extract is plant 1300 and 1200 only, with ZERO rows for Gamsberg (1500) --
--- see app/seed/manifest.py. Repair lines exist at 1300 and 1500 and nowhere
--- else, so every Gamsberg repair line resolves to NO_LEAD_TIME until a MARC
+-- extract has ZERO rows for Gamsberg (1500) -- see app/seed/manifest.py.
+-- Both in-scope plants carry repair lines, so every Gamsberg repair line
+-- resolves to NO_LEAD_TIME until a MARC
 -- extract covering 1500 arrives. The register reports that as a count rather
 -- than absorbing it.
 select matnr, werks, max(plifz) as plifz
@@ -615,8 +615,8 @@ class RegisterStats:
     lines_with_lead_time: int = 0
     """Lines whose material+plant has a usable MARC.PLIFZ.
 
-    Reported rather than assumed, because the July MARC extract covers plants
-    1300 and 1200 only and every repair line at Gamsberg (1500) therefore has
+    Reported rather than assumed, because the July MARC extract has no
+    Gamsberg (1500) rows and every repair line there therefore has
     no planned delivery time at all. A lead-time breach count means nothing
     without the population it was measured over.
     """

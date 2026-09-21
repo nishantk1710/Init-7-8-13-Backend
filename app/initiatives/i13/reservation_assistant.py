@@ -229,7 +229,7 @@ def build(
     **Plants holding nothing are dropped.** ``PostgresCrossPlantStockProvider``
     returns a row per plant the material is known at, including those with zero
     on hand, because the exception queue wants that completeness. In a sentence
-    it reads as "other plants hold 0 at 1100, 0 at 1200" -- which says there is
+    it reads as "other plants hold 0 at 1500" -- which says there is
     stock elsewhere and then says there is not. Filtering here rather than in
     the provider leaves ACT's use of it untouched.
     """

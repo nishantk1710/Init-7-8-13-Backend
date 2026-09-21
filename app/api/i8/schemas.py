@@ -87,7 +87,7 @@ class UniverseItem(I8Model):
 
     storage_locations: int = 0
     reorder_point: Decimal | None = None
-    """Null outside plants 1300 and 1200 -- MARC covers no other plant."""
+    """Null for Gamsberg (1500) -- the July MARC extract has no rows for it."""
 
     mrp_type: str | None = None
     new_unit_lead_time_days: int | None = None
@@ -125,10 +125,10 @@ class UniverseMeta(I8Model):
     with_criticality: int
     with_criticality_from_other_plant: int
     """Of ``withCriticality``, how many tiers came from a plant other than the
-    row's own. ZMM065 covers plants 1300 and 1500 only, so a row at 1600, 2000
-    or 3000 can only be answered from where the material IS described -- and
-    only when it carries the same tier everywhere. Reported so the inferred part
-    of the number is visible rather than assumed."""
+    row's own. ZMM065 covers both in-scope plants, but not every material is
+    described at both, so a row can only be answered from where the material IS
+    described -- and only when it carries the same tier everywhere. Reported so
+    the inferred part of the number is visible rather than assumed."""
 
     with_open_repair: int
     in_material_master: int
@@ -201,8 +201,8 @@ class RepairChain(I8Model):
     lead_time_days: int | None = None
     """MARC.PLIFZ for this material at this plant -- planned delivery time in
     calendar days, PO to received. Null where MARC has no row for the pair, or
-    the value is unmaintained. The July MARC extract covers plants 1300 and 1200
-    only, so this is null on every Gamsberg line."""
+    the value is unmaintained. The July MARC extract has no Gamsberg rows, so
+    this is null on every Gamsberg line."""
 
     days_elapsed: int | None = None
     """Raised to received, or raised to today while still out. What
@@ -642,7 +642,7 @@ class CodingCandidateMeta(I8Model):
 
     lines_without_material: int
     """Free-text service purchases with no material number at all. **Measured at
-    183, which is 60% of the matches.** They cannot be mis-coded because there is
+    174, which is 59% of the matches.** They cannot be mis-coded because there is
     nothing to re-code, so they are never candidates -- but they are repair spend
     happening entirely outside the material master, which is its own finding."""
 

@@ -14,10 +14,21 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.shared.plant_scope import sql_predicate
+
+# Plants 1300 and 1500 only -- the team lead's ruling of 2026-09-21. Applied in
+# the WHERE clause rather than over the returned rows so counts, sums and aging
+# bands are computed on the scoped population to begin with; filtering after
+# aggregation is where an out-of-scope quantity leaks into a total. Built from
+# app/shared/plant_scope.py -- never write the codes out here.
+_PLANT_SCOPE = sql_predicate("plant")
+
+
+
 _MRP_TYPE_QUERY = """
     SELECT material, plant, mrp_type
     FROM raw_marc
-    WHERE material <> '' AND plant <> ''
+    WHERE material <> '' AND plant <> '' AND {plant_scope}
       {material_filter}
       {plant_filter}
 """
@@ -38,6 +49,12 @@ def fetch_material_scope_index(
         plant_filter = "AND plant = :plant"
         params["plant"] = plant
 
-    query = text(_MRP_TYPE_QUERY.format(material_filter=material_filter, plant_filter=plant_filter))
+    query = text(
+        _MRP_TYPE_QUERY.format(
+            material_filter=material_filter,
+            plant_filter=plant_filter,
+            plant_scope=_PLANT_SCOPE,
+        )
+    )
     records = db.execute(query, params).fetchall()
     return {(r.material.strip(), r.plant.strip()): (r.mrp_type or "").strip() or None for r in records}

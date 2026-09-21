@@ -38,8 +38,19 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.integrations.sap._request_cache import memoize_per_instance
+from app.shared.plant_scope import sql_predicate
 
 Row = dict[str, Any]
+
+# Plants 1300 and 1500 only -- the team lead's ruling of 2026-09-21. Applied in
+# the WHERE clause rather than over the returned rows so counts, sums and aging
+# bands are computed on the scoped population to begin with; filtering after
+# aggregation is where an out-of-scope quantity leaks into a total. Built from
+# app/shared/plant_scope.py -- never write the codes out here.
+_PLANT_SCOPE = sql_predicate("plant")
+_PLANT_SCOPE_M = sql_predicate("m.plant")
+
+
 
 _MOVEMENT_HISTORY_QUERY = """
     SELECT m.material, m.plant, m.movement_type, m.quantity, h.posting_date,
@@ -48,7 +59,7 @@ _MOVEMENT_HISTORY_QUERY = """
     JOIN raw_mkpf h
       ON m.material_document = h.material_document
      AND m.material_doc_year = h.material_doc_year
-    WHERE m.material <> '' AND m.plant <> '' AND h.posting_date <> ''
+    WHERE m.material <> '' AND m.plant <> '' AND {plant_scope} AND h.posting_date <> ''
       {material_filter}
       {plant_filter}
 """
@@ -62,7 +73,7 @@ _MOVEMENT_HISTORY_QUERY = """
 _CURRENT_STOCK_QUERY = """
     SELECT material, plant, unrestricted
     FROM raw_mard
-    WHERE material <> '' AND plant <> '' AND unrestricted <> ''
+    WHERE material <> '' AND plant <> '' AND {plant_scope} AND unrestricted <> ''
       {material_filter}
       {plant_filter}
 """
@@ -110,7 +121,13 @@ def fetch_movement_history(
         plant_filter = "AND m.plant = :plant"
         params["plant"] = plant
 
-    query = text(_MOVEMENT_HISTORY_QUERY.format(material_filter=material_filter, plant_filter=plant_filter))
+    query = text(
+        _MOVEMENT_HISTORY_QUERY.format(
+            material_filter=material_filter,
+            plant_filter=plant_filter,
+            plant_scope=_PLANT_SCOPE_M,
+        )
+    )
     records = db.execute(query, params).fetchall()
     return [_to_movement_row(record) for record in records]
 
@@ -133,7 +150,13 @@ def fetch_current_stock(
         plant_filter = "AND plant = :plant"
         params["plant"] = plant
 
-    query = text(_CURRENT_STOCK_QUERY.format(material_filter=material_filter, plant_filter=plant_filter))
+    query = text(
+        _CURRENT_STOCK_QUERY.format(
+            material_filter=material_filter,
+            plant_filter=plant_filter,
+            plant_scope=_PLANT_SCOPE,
+        )
+    )
     records = db.execute(query, params).fetchall()
 
     totals: dict[tuple[str, str], Decimal] = {}

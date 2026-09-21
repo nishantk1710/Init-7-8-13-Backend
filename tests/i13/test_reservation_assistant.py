@@ -78,12 +78,12 @@ class TestCrossPlantStock:
         assert "Other plants hold 6 at 1500" in assessment.headline
 
     def test_plants_holding_nothing_are_dropped(self) -> None:
-        """"Other plants hold 0 at 1100, 0 at 1200" says there is stock
+        """"Other plants hold 0 at 1300, 0 at 1500" says there is stock
         elsewhere and then says there is not."""
         assessment = _assessment(
             cross_plant=[
-                CrossPlantStockInfo("1000000123", "1100", Decimal("0")),
-                CrossPlantStockInfo("1000000123", "1200", Decimal("0")),
+                CrossPlantStockInfo("1000000123", "1300", Decimal("0")),
+                CrossPlantStockInfo("1000000123", "1500", Decimal("0")),
             ]
         )
         assert assessment.cross_plant_stock == ()
@@ -92,7 +92,7 @@ class TestCrossPlantStock:
     def test_a_mix_keeps_only_the_plants_with_stock(self) -> None:
         assessment = _assessment(
             cross_plant=[
-                CrossPlantStockInfo("1000000123", "1100", Decimal("0")),
+                CrossPlantStockInfo("1000000123", "1300", Decimal("0")),
                 CrossPlantStockInfo("1000000123", "1500", Decimal("6")),
             ]
         )

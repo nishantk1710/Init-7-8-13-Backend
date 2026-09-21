@@ -47,6 +47,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.integrations.sap._request_cache import memoize_per_instance
+from app.shared.plant_scope import sql_predicate
 
 Row = dict[str, Any]
 
@@ -75,6 +76,16 @@ def _date_or_none(raw: str | None) -> date | None:
     except ValueError:
         return None
 
+# Plants 1300 and 1500 only -- the team lead's ruling of 2026-09-21. Applied in
+# the WHERE clause rather than over the returned rows so counts, sums and aging
+# bands are computed on the scoped population to begin with; filtering after
+# aggregation is where an out-of-scope quantity leaks into a total. Built from
+# app/shared/plant_scope.py -- never write the codes out here.
+_PLANT_SCOPE = sql_predicate("plant")
+_PLANT_SCOPE_M = sql_predicate("m.plant")
+
+
+
 
 # --- Purchase requisitions (EBAN-equivalent) --------------------------------
 
@@ -82,7 +93,7 @@ _PR_QUERY = """
     SELECT purchase_requisition, item_of_requisition, material, plant,
            quantity_requested, requisition_date, purchase_order, purchase_order_item
     FROM raw_eban
-    WHERE purchase_requisition <> '' AND material <> '' AND plant <> ''
+    WHERE purchase_requisition <> '' AND material <> '' AND plant <> '' AND {plant_scope}
       {pr_filter}
       {material_filter}
       {plant_filter}
@@ -129,7 +140,14 @@ def fetch_purchase_requisitions(
         plant_filter = "AND plant = :plant"
         params["plant"] = plant
 
-    query = text(_PR_QUERY.format(pr_filter=pr_filter, material_filter=material_filter, plant_filter=plant_filter))
+    query = text(
+        _PR_QUERY.format(
+            pr_filter=pr_filter,
+            material_filter=material_filter,
+            plant_filter=plant_filter,
+            plant_scope=_PLANT_SCOPE,
+        )
+    )
     return [_to_pr_row(r) for r in db.execute(query, params).fetchall()]
 
 
@@ -139,7 +157,7 @@ _PO_ITEM_QUERY = """
     SELECT purchasing_document, item, purchase_requisition, item_of_requisition,
            material, plant, order_quantity
     FROM raw_ekpo
-    WHERE purchasing_document <> '' AND material <> '' AND plant <> ''
+    WHERE purchasing_document <> '' AND material <> '' AND plant <> '' AND {plant_scope}
       {po_filter}
       {pr_filter}
       {material_filter}
@@ -196,7 +214,11 @@ def fetch_purchase_order_items(
 
     query = text(
         _PO_ITEM_QUERY.format(
-            po_filter=po_filter, pr_filter=pr_filter, material_filter=material_filter, plant_filter=plant_filter
+            po_filter=po_filter,
+            pr_filter=pr_filter,
+            material_filter=material_filter,
+            plant_filter=plant_filter,
+            plant_scope=_PLANT_SCOPE,
         )
     )
     return [_to_po_item_row(r) for r in db.execute(query, params).fetchall()]
@@ -253,6 +275,7 @@ _GI_LINK_ATTEMPT_QUERY = """
      AND m.material_doc_year = h.material_doc_year
     WHERE m.movement_type IN ('201', '261')
       AND m.purchase_order <> '' AND m.item <> ''
+      AND {plant_scope}
       AND h.posting_date <> ''
       {po_filter}
 """
@@ -278,7 +301,7 @@ def fetch_deterministic_gi_candidates(db: Session, *, po_number: str | None = No
         po_filter = "AND m.purchase_order = :po_number"
         params["po_number"] = po_number
 
-    query = text(_GI_LINK_ATTEMPT_QUERY.format(po_filter=po_filter))
+    query = text(_GI_LINK_ATTEMPT_QUERY.format(po_filter=po_filter, plant_scope=_PLANT_SCOPE_M))
     return [_to_gi_link_row(r) for r in db.execute(query, params).fetchall()]
 
 

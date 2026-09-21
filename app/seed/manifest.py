@@ -90,8 +90,8 @@ EXTRACTS: tuple[ExtractSpec, ...] = (
         sap_table="MARC",
         initiatives=("I07", "I08", "I13"),
         note="Carries 'MRP Type' (DISMM) -- the OAR rule -- and Reorder Point / "
-        "Planned Deliv. Time. PLANT 1300 ONLY: 45,352 rows for 1300, 57 for 1200, "
-        "ZERO for Gamsberg (1500). Every DISMM/OAR statistic from this table is a "
+        "Planned Deliv. Time. IN SCOPE THIS IS PLANT 1300 ONLY: 45,352 rows for "
+        "1300 and ZERO for Gamsberg (1500). Every DISMM/OAR statistic from this table is a "
         "Black Mountain figure, not a business-wide one.",
     ),
     ExtractSpec(
@@ -287,20 +287,35 @@ ALL_FILES: frozenset[str] = frozenset(f for spec in EXTRACTS for f in spec.files
 # 234,310 rows and every one is plant 1300 (Black Mountain). Gamsberg
 # requisitions are not in any delivery, and both I08 and I13 read PRs.
 MISSING_FROM_DELIVERY: tuple[str, ...] = (
-    "MARC for Gamsberg (1500) -- the extract holds plant 1300 and 1200 only, so "
-    "no MRP type, reorder point or lead time exists for Gamsberg",
-    "EBAN for plants other than 1300 -- requisitions are Black Mountain only",
+    "MARC for Gamsberg (1500) -- the extract has ZERO rows for it, so no MRP "
+    "type, reorder point or lead time exists for Gamsberg",
+    "EBAN for Gamsberg (1500) -- requisitions are Black Mountain only",
 )
 
-# Measured, not assumed. MARD, MSEG, RESB, EKPO and the ZMM065 reports all carry
-# multiple plants; MARC and EBAN do not. That asymmetry is what makes the gap
-# easy to miss: stock and movements look complete while the planning parameters
-# behind them cover one site.
-PLANT_COVERAGE_NOTE = """raw_marc  plant 1300 (45,352) + 1200 (57).  Gamsberg 1500: ZERO rows.
-raw_eban  plant 1300 only (234,310).
-raw_mard  1300, 3000, 2000, 1500, 1600, ... multi-plant.
-raw_resb  1300, 1500, 3000, 1200, 2000, ... multi-plant.
-raw_ekpo  13 plants incl. 1500 (35,083).
+# THE SCOPE IS TWO PLANTS: 1300 (Black Mountain) and 1500 (Gamsberg), per the
+# team lead's ruling of 2026-09-21. The raw tables below are loaded verbatim
+# from the July spreadsheets and some of them carry other plant codes as well;
+# those rows are filtered out at the read boundary, never here. Keeping the
+# raw layer a faithful copy of what was delivered is the whole point of it --
+# a scope change must not silently rewrite the evidence.
+#
+# See app/shared/plant_scope.py for the list, and the I08 views plus the I13
+# postgres_* adapters for the two places it is enforced.
+#
+# Measured, not assumed. The asymmetry below is what makes the gap easy to
+# miss: stock and movements look complete for both sites while the planning
+# parameters behind them cover one.
+PLANT_COVERAGE_NOTE = """In-scope coverage, plants 1300 and 1500:
+
+raw_marc  1300 only (45,352).  Gamsberg 1500: ZERO rows.
+raw_eban  1300 only (234,310). Gamsberg 1500: ZERO rows.
+raw_mard  1300 and 1500 both present.
+raw_resb  1300 and 1500 both present.
+raw_ekpo  1300 and 1500 both present (1500: 35,083).
+
+The extract also carries rows at other plant codes. They are out of scope and
+are excluded by app/shared/plant_scope.py at every read; no count here
+includes them.
 """
 
 

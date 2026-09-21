@@ -24,6 +24,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.integrations.sap._request_cache import memoize_per_instance
+from app.shared.plant_scope import sql_predicate
 
 Row = dict[str, Any]
 
@@ -87,6 +88,15 @@ def _to_reservation_row(record: Any) -> Row:
         "Zzaisession": None,
     }
 
+# Plants 1300 and 1500 only -- the team lead's ruling of 2026-09-21. Applied in
+# the WHERE clause rather than over the returned rows so counts, sums and aging
+# bands are computed on the scoped population to begin with; filtering after
+# aggregation is where an out-of-scope quantity leaks into a total. Built from
+# app/shared/plant_scope.py -- never write the codes out here.
+_PLANT_SCOPE = sql_predicate("plant")
+
+
+
 
 _RESERVATION_FETCH_QUERY = """
     SELECT
@@ -96,7 +106,7 @@ _RESERVATION_FETCH_QUERY = """
         purchase_requisition, item_of_requisition, "order", movement_type,
         receiving_plant, receiving_stor_loc, goods_recipient
     FROM raw_resb
-    WHERE material <> '' AND plant <> ''
+    WHERE material <> '' AND plant <> '' AND {plant_scope}
       {reservation_filter}
       {pr_filter}
       {material_filter}
@@ -136,6 +146,7 @@ def fetch_reservations(
             pr_filter=pr_filter,
             material_filter=material_filter,
             plant_filter=plant_filter,
+            plant_scope=_PLANT_SCOPE,
         )
     )
     return [_to_reservation_row(r) for r in db.execute(query, params).fetchall()]

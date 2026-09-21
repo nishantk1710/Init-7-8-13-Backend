@@ -27,24 +27,30 @@ for. The registry routes it accordingly::
 
 What the measurement actually showed, and why it changed the shape
 -------------------------------------------------------------------
-Measured against the July extract on 15-Sep. The task plan's three headline
-numbers are exactly right::
+Measured against the July extract on 15-Sep and re-measured on 21-Sep, when the
+scope narrowed to plants 1300 and 1500 (``app/shared/plant_scope.py``). The
+task plan's three headline numbers were exactly right for the whole extract; in
+scope they are smaller, and the in-scope figures are what this module asserts::
 
-    82,718   PO lines carrying free text (every line in EKPO has some)
-       305   non-80-series lines with repair language
-         6   80-series lines with repair language
+                          in scope   whole extract (pre-21-Sep)
+    PO lines with text      80,880    82,718
+    non-80-series, repair      296       305
+    already 80-series            4         6
 
-But **305 is not the screening population**, and this is the finding that
+But **296 is not the screening population**, and this is the finding that
 reshaped the module:
 
-    183 of the 305 (60%) have NO MATERIAL NUMBER AT ALL.
+    174 of the 296 (59%) have NO MATERIAL NUMBER AT ALL.
 
 A coding candidate is a material that *should* have been coded 80-series and was
 not. A PO line with no material cannot be mis-coded -- there is nothing to
-re-code. Those 183 are free-text service purchases, and they are a real and
+re-code. Those 174 are free-text service purchases, and they are a real and
 separate finding (repair spend happening entirely outside the material master),
 so they are counted and reported rather than quietly dropped. They are never
 candidates.
+
+The proportion barely moved when the scope narrowed -- it was 183 of 305, also
+60%. Free-text repair spend is not a quirk of one site.
 
 That leaves 122 lines carrying a material, and those collapse to **41 distinct
 materials**, because the same part is bought repeatedly::
@@ -52,12 +58,12 @@ materials**, because the same part is bought repeatedly::
     5000075445  18 lines      5000075446  18 lines      5000024401  16 lines
 
 So the screen judges **materials, not lines**. That is both cheaper -- 41 model
-calls rather than 305 -- and more correct: the coding is a property of the
+calls rather than 296 -- and more correct: the coding is a property of the
 material, so judging the same part four times could produce four verdicts and no
 way to choose between them. Every line's text is passed in together, which is
 also strictly more evidence per call.
 
-A caution the plan did not have: roughly 57 of the 305 are repair *products* --
+A caution the plan did not have: roughly 57 of them are repair *products* --
 "REPAIR KIT", "REPAIR CLAMP", "PIPE REPAIR KIT" -- which are consumables that
 match the keyword and are correctly not 80-series. They are exactly what the
 model is there to reject, and :data:`Verdict.CONSUMABLE_FOR_REPAIR` names that
@@ -135,7 +141,7 @@ class Verdict(str, Enum):
 
     CONSUMABLE_FOR_REPAIR = "CONSUMABLE_FOR_REPAIR"
     """A part used *in* a repair -- a repair kit, a clamp, a patch. It matches
-    the keyword and is correctly not 80-series. Roughly 57 of the 305 screened
+    the keyword and is correctly not 80-series. Roughly 57 of the screened
     lines look like this, so it is named rather than lumped into "no"."""
 
     UNCLEAR = "UNCLEAR"
@@ -175,7 +181,7 @@ class CandidateLine:
     purchasing_document: str
     item: str
     material_id: str | None
-    """None on 183 of the 305 matching lines -- a free-text service purchase."""
+    """None on 174 of the 296 matching lines -- a free-text service purchase."""
 
     plant: str | None
     short_text: str
@@ -262,7 +268,7 @@ class ScreenStats:
 
     lines_without_material: int
     """Free-text service purchases. Cannot be mis-coded because there is nothing
-    to re-code. Measured at 183, which is 60% of the matches."""
+    to re-code. Measured at 174, which is 59% of the matches."""
 
     lines_screened: int
     materials_screened: int
@@ -301,7 +307,7 @@ class ScreenStats:
 # ever be LOOSER than the Python predicate, and `NOT LIKE '80%'` would be
 # stricter -- it would drop a material like '80' that the real predicate
 # rejects anyway, but also anything the predicate would have kept. The set is
-# ~311 rows, so it is filtered in Python where the one true test lives.
+# ~300 rows, so it is filtered in Python where the one true test lives.
 _CANDIDATE_SQL = """
 select
     p.ebeln, p.ebelp, p.matnr, p.werks, p.txz01, p.erdat, p.pstyp
@@ -366,7 +372,7 @@ class Screenable:
 def partition(lines, cfg: I8Settings | None = None) -> Screenable:
     """Split the keyword hits into the three groups that mean different things.
 
-    This is where the population shrinks from 305 to 41, and the reason is
+    This is where the population shrinks from 296 to 41, and the reason is
     stated in the module docstring: coding is a property of a MATERIAL, and 60%
     of the hits have no material at all.
     """

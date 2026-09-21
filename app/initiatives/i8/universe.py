@@ -79,7 +79,7 @@ class UniverseRow:
     """How many bins the stock was summed over. Makes the sum auditable."""
 
     reorder_point: Decimal | None
-    """None outside plants 1300 and 1200 -- MARC has no Gamsberg rows."""
+    """None for Gamsberg (1500) -- the July MARC extract has no rows for it."""
 
     mrp_type: str | None
 
@@ -237,10 +237,10 @@ def resolve_criticality(
     3,802 rows, against a 5.7 s build before criticality. ``get_many()`` was
     added to the shared port for exactly this, and does it in one round trip.
 
-    **The plant fallback, stated plainly.** ZMM065 covers plants 1300 and 1500.
-    The universe also holds rows at 1600, 2000 and 3000, which no criticality
-    source describes. For those, the material's tier *where it is known* is used
-    -- but only when the material carries the same tier everywhere it appears.
+    **The plant fallback, stated plainly.** ZMM065 covers both in-scope plants,
+    but not every material in the universe is described at both of them. Where
+    a material+plant has no ZMM065 row, the material's tier *where it is known*
+    is used -- but only when it carries the same tier everywhere it appears.
     A material that is CRITICAL at one plant and NORMAL at another is answered
     with nothing, because there is no honest way to pick. That is the shared
     port's own plant-less rule (``get(material, None)``), not a local invention,

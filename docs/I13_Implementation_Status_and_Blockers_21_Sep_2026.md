@@ -183,7 +183,7 @@ This is the risk the 11-Sep Implementation Plan flagged ("validate with mock; re
 3. **Acquired-vs-plan is untestable** — see the plan-data blocker in Section 5.
 
 **Problems**
-1. **Mart coverage is 16%.** `i13_watch_metric_mart` holds **7,184 rows against 44,394 OAR positions**, covering only plants 1300 and 1200. Any dashboard reading the mart today shows a partial picture.
+1. **Mart coverage is 16%.** `i13_watch_metric_mart` holds **7,184 rows against 44,394 OAR positions**, and within the two-plant scope that is Black Mountain (1300) only. Any dashboard reading the mart today shows a partial picture.
 2. **`GET /api/i13/watch` (the live-compute path) silently ignores unknown query parameters.** `?grni=true&limit=3` returned the **entire unfiltered dataset — 13.3 MB**, because neither parameter is declared on that route. The mart-backed `/act/utilisation` supports `grni` but has no `limit`. Two near-identical endpoints with different contracts and no validation.
 3. **No tolerance band on acquired-vs-plan** — exact comparison by deliberate design (the code says so explicitly). FRS does not define whether small variances count as a breach.
 
@@ -309,7 +309,7 @@ Only 1,274 of 105,848 reservations carry a PR reference. The CAPTURE→STITCH ch
 
 | Field | Plan CSV | Real extract |
 | --- | --- | --- |
-| Plant | `4000` | `1300`, `1500`, `1200`, … — **plant 4000 does not exist (0 rows)** |
+| Plant | `4000` | `1300`, `1500` — **plant 4000 does not exist (0 rows)** |
 | Reservation | `1000000000`, `1000000001` | `219937`, `829147` — **0 matches** |
 | Material | `000000000030000000` (18-char) | `2000000002` (10-digit) |
 
@@ -320,33 +320,35 @@ Only 1,274 of 105,848 reservations carry a PR reference. The CAPTURE→STITCH ch
 
 **Needs:** the file removed or replaced. Real plans can only come from W7.3/W7.5 (assistant + session issuance), which are not built. **Recommendation:** delete the synthetic file now so the false KPI disappears, and seed a small hand-built plan set that joins to real reservations purely to validate the PLAN_BREACH path before UAT.
 
-### B3 — Material scope covers 2 plants; transactions span 13 *(blocks population completeness)*
-`MARC` — the sole source of MRP type and therefore of OAR scope — covers only:
+### B3 — MARC covers one of the two in-scope plants *(blocks population completeness)*
 
-| MARC plant | Rows |
+> **Scope note (21-Sep):** the delivery scope is now **two plants, 1300 and
+> 1500** — see `app/shared/plant_scope.py`. The figures below are restated for
+> that scope. Narrowing it did not cause this blocker, but it does change its
+> size: what used to read as one gap among many plants is now **half the
+> platform**.
+
+`MARC` — the sole source of MRP type and therefore of OAR scope — covers only
+one of the two:
+
+| In-scope plant | MARC rows |
 | --- | --- |
-| 1300 | 45,352 |
-| 1200 | 57 |
+| 1300 Black Mountain | 45,352 |
+| 1500 Gamsberg | **0** |
 
-But transactions exist far beyond that:
+But Gamsberg carries more transactions than Black Mountain does:
 
-| Plant | MSEG | RESB | EKPO | In MARC? |
+| In-scope plant | MSEG | RESB | EKPO | In MARC? |
 | --- | --- | --- | --- | --- |
-| 1500 | **122,868** | 10,333 | 35,083 | ❌ **No** |
-| 1300 | 99,394 | 92,673 | 45,797 | ✅ |
-| 1600 | 4,645 | 339 | 772 | ❌ |
-| 1200 | 2,738 | 590 | 31 | ✅ |
-| 3000 | 1,565 | 1,526 | 498 | ❌ |
-| 1800 | 1,464 | — | 154 | ❌ |
-| 2000 | 408 | 385 | 331 | ❌ |
-| Others (1700, 1320, 1820, 1100, 1900, 3400, GERG) | small | small | small | ❌ |
+| 1500 Gamsberg | **122,868** | 10,333 | 35,083 | ❌ **No** |
+| 1300 Black Mountain | 99,394 | 92,673 | 45,797 | ✅ |
 
-**Plant 1500 has more goods movements than 1300** yet has zero MARC rows. Every 1500 material therefore classifies `EXCLUDED` and is invisible to OAR scope, WATCH, exceptions and reclassification. The FRS states four in-scope plants (Gamsberg, BMM + two unnamed); the extract supports scope selection for at most two.
+**Plant 1500 has more goods movements than 1300** yet has zero MARC rows. Every 1500 material therefore classifies `EXCLUDED` and is invisible to OAR scope, WATCH, exceptions and reclassification — so **one of the two plants in scope is entirely dark to I13**. The FRS still states four in-scope plants; it is now wrong on two counts and should be corrected to 1300 and 1500.
 
 **Needs:** (a) the four in-scope plant codes from VZI; (b) the MARC extract extended to cover them — 1500 at minimum.
 
 ### B4 — WATCH mart covers 16% of the OAR population *(blocks dashboard completeness)*
-7,184 mart rows vs 44,394 OAR positions, plants 1300/1200 only. Partly a consequence of B3, partly because refresh has only ever been run scoped. **Needs:** a full-population refresh, then the daily job (Section 4.4).
+7,184 mart rows vs 44,394 OAR positions — Black Mountain (1300) only within the two-plant scope. Partly a consequence of B3, partly because refresh has only ever been run scoped. **Needs:** a full-population refresh, then the daily job (Section 4.4).
 
 ### B5 — Two of three reclassification indicators cannot fire *(degrades W6.5)*
 Critical flag and HOD-justified flag both resolve to `null`. The HOD flag is circularly blocked on W6.6's confirmation workflow. See Section 4.6.
@@ -476,7 +478,7 @@ No ZMM065 export or 30-Day GR Report is loaded, so `/api/i13/validation` cannot 
 | --- | --- |
 | I13 test suite | 249 passed, 0 failed (16m 49s, live Postgres) |
 | OAR positions (ND + PD) | 44,394 (PD 36,914 · ND 7,480) |
-| Distinct materials / MARC plants | 45,352 / 2 (1300, 1200) |
+| Distinct materials / MARC plants | 45,352 / 1 in scope (1300) |
 | Aging split | FAST 3,148 · SLOW 378 · NON_MOVING 40,868 |
 | EKPO with PR reference | 31,101 / 82,718 (37.6%) |
 | RESB with PR reference | 1,274 / 105,848 (**1.2%**) |

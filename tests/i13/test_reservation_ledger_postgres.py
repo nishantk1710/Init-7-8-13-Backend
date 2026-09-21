@@ -19,6 +19,7 @@ from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
 from app.shared.material_scope import MaterialScope, classify_material_scope
+from app.shared.plant_scope import sql_predicate
 
 needs_db = pytest.mark.skipif(not get_settings().database_url, reason="DATABASE_URL not set")
 
@@ -158,6 +159,15 @@ def test_oar_scope_excludes_real_non_oar_reservations() -> None:
 @needs_db
 def test_material_scope_index_matches_classify_material_scope() -> None:
     with get_sessionmaker()() as session:
-        row = session.execute(text("SELECT material, plant, mrp_type FROM raw_marc WHERE mrp_type <> '' LIMIT 1")).first()
+        # In-scope plants only: fetch_material_scope_index returns no row for
+        # any other plant, so an unscoped sample would make this a test of the
+        # plant filter instead of the DISMM classification it is for.
+        row = session.execute(
+            text(
+                "SELECT material, plant, mrp_type FROM raw_marc "
+                f"WHERE mrp_type <> '' AND {sql_predicate('plant')} LIMIT 1"
+            )
+        ).first()
+        assert row is not None, "no in-scope MARC row carries an MRP type"
         index = fetch_material_scope_index(session, material=row.material, plant=row.plant)
     assert classify_material_scope(index[(row.material, row.plant)]) == classify_material_scope(row.mrp_type)

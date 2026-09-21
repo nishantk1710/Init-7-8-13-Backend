@@ -7,6 +7,11 @@
 -- 'unrestricted' is the current-period unrestricted stock (LABST). The
 -- similarly-named 'unrestr_use_stock' column is the previous period -- checked
 -- against the extract, not guessed.
+--
+-- SCOPE: in-scope plants only -- see app/shared/plant_scope.py, which is the
+-- one place the codes are written down. Filtered here rather than at render
+-- time: a total computed over out-of-scope rows is wrong even when those rows
+-- are never drawn. in_scope_plant() is generated from that module by views.py.
 create or replace view v_mard as
 select
     sap_key(material)               as matnr,
@@ -16,4 +21,5 @@ select
     sap_num(unrestricted)           as labst,
     sap_num(in_quality_insp)        as insme,
     sap_num(blocked)                as speme
-from raw_mard;
+from raw_mard
+where in_scope_plant(plant);

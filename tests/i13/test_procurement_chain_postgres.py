@@ -17,6 +17,7 @@ from app.core.db import get_sessionmaker
 from app.initiatives.i13.models import GiLinkStatus, LifecycleStatus, PrPoLinkStatus
 from app.initiatives.i13.procurement_chain import build_procurement_chain, compute_chain_diagnostics
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
+from app.shared.plant_scope import sql_predicate
 
 needs_db = pytest.mark.skipif(not get_settings().database_url, reason="DATABASE_URL not set")
 
@@ -72,13 +73,17 @@ def test_real_po_with_unresolved_pr_reference_exists_and_is_reported() -> None:
     with get_sessionmaker()() as session:
         unresolved = session.execute(
             text(
-                """
+                # In-scope plants only: the repository will not return a line
+                # from any other plant, so an unscoped sample would make this
+                # a test of the plant filter rather than of PR resolution.
+                f"""
                 SELECT k.purchasing_document, k.item, k.purchase_requisition, k.item_of_requisition
                 FROM raw_ekpo k
                 LEFT JOIN raw_eban e ON k.purchase_requisition = e.purchase_requisition
                                      AND k.item_of_requisition = e.item_of_requisition
                 WHERE k.purchase_requisition <> '' AND e.purchase_requisition IS NULL
                   AND k.material <> '' AND k.plant <> ''
+                  AND {sql_predicate("k.plant")}
                 LIMIT 1
                 """
             )

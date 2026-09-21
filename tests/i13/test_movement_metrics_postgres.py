@@ -19,6 +19,7 @@ from app.core.db import get_sessionmaker
 from app.initiatives.i13.config import AgingThresholds
 from app.initiatives.i13.movement_metrics import compute_all_movement_metrics
 from app.integrations.sap.postgres_movements import PostgresMovementRepository, fetch_current_stock, fetch_movement_history
+from app.shared.plant_scope import IN_SCOPE_PLANTS, sql_predicate
 
 needs_db = pytest.mark.skipif(not get_settings().database_url, reason="DATABASE_URL not set")
 
@@ -28,21 +29,45 @@ THRESHOLDS = AgingThresholds(fast_max_days=365, slow_max_days=730)
 @needs_db
 def test_movement_history_join_matches_manual_sql_count() -> None:
     """Proves the repository's JOIN + WHERE (material<>'', plant<>'',
-    posting_date<>'') matches a hand-written equivalent, row for row."""
+    in-scope plant, posting_date<>'') matches a hand-written equivalent, row
+    for row.
+
+    The plant-scope predicate is written out here from ``sql_predicate`` rather
+    than restated, so this stays a check on the repository's join and not a
+    copy of the scope rule that could drift from it.
+    """
     with get_sessionmaker()() as session:
         expected = session.execute(
             text(
-                """
+                f"""
                 SELECT count(*) FROM raw_mseg m
                 JOIN raw_mkpf h ON m.material_document = h.material_document
                                 AND m.material_doc_year = h.material_doc_year
-                WHERE m.material <> '' AND m.plant <> '' AND h.posting_date <> ''
+                WHERE m.material <> '' AND m.plant <> ''
+                  AND {sql_predicate("m.plant")}
+                  AND h.posting_date <> ''
                 """
             )
         ).scalar_one()
         rows = fetch_movement_history(session)
     assert len(rows) == expected
     assert expected > 0
+
+
+@needs_db
+def test_movement_history_is_restricted_to_the_in_scope_plants() -> None:
+    """No movement row may come back from a plant outside the delivery scope.
+
+    The count test above would still pass if the filter were dropped from BOTH
+    the repository and the hand-written SQL, so the scope needs its own check
+    that names no plant the repository is allowed to return.
+    """
+    with get_sessionmaker()() as session:
+        rows = fetch_movement_history(session)
+
+    plants = {row["Werks"] for row in rows}
+    assert plants, "no movement rows at all -- the fixture database is empty"
+    assert plants <= set(IN_SCOPE_PLANTS), f"out-of-scope plants served: {plants - set(IN_SCOPE_PLANTS)}"
 
 
 @needs_db

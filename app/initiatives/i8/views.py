@@ -49,6 +49,7 @@ from sqlalchemy import Engine, text
 
 from app.core.db import get_engine
 from app.core.logging import get_logger
+from app.shared.plant_scope import IN_SCOPE_PLANTS, sql_literals
 
 logger = get_logger(__name__)
 
@@ -73,7 +74,29 @@ VIEWS: tuple[str, ...] = (
     "v_zmm065",
 )
 
-FUNCTIONS: tuple[str, ...] = ("sap_key", "sap_date", "sap_num")
+FUNCTIONS: tuple[str, ...] = ("sap_key", "sap_date", "sap_num", "in_scope_plant")
+
+# in_scope_plant() is GENERATED, not written in 00_functions.sql.
+#
+# Every plant-bearing view filters through it, so the codes it tests have to be
+# the same ones `app.shared.plant_scope` tests in Python. Writing them into a
+# .sql file would mean two lists to keep in step, and the failure when they
+# drift is silent: the API would serve a plant the Python scope rejects, or
+# hide one it accepts, and either way the totals stop matching the register.
+#
+# Generating it from IN_SCOPE_PLANTS removes the second list entirely. Adding a
+# third plant is then a one-line change in that module and a `views create`.
+#
+# btrim() because the raw layer is all text -- a padded cell must not fall out
+# of scope on whitespace alone.
+_IN_SCOPE_PLANT_SQL = f"""
+create or replace function in_scope_plant(value text) returns boolean
+    language sql
+    immutable
+as $$
+    select btrim(coalesce(value, '')) in ({sql_literals()})
+$$;
+"""
 
 # Expression indexes on the NORMALISED material key.
 #
@@ -115,6 +138,8 @@ def ensure_views(engine: Engine | None = None) -> list[str]:
         raise FileNotFoundError(f"No .sql files found in {SQL_DIR}")
 
     with engine.begin() as connection:
+        # Before the views: every one of them that carries a plant calls it.
+        connection.execute(text(_IN_SCOPE_PLANT_SQL))
         for script in scripts:
             connection.execute(text(script.read_text(encoding="utf-8")))
         for name, table, expression in INDEXES:
@@ -129,9 +154,10 @@ def ensure_views(engine: Engine | None = None) -> list[str]:
             connection.execute(text(f"ANALYZE {table}"))
 
     logger.info(
-        "I08: %d views and %d indexes ready (%s)",
+        "I08: %d views and %d indexes ready, plants %s (%s)",
         len(VIEWS),
         len(INDEXES),
+        "/".join(IN_SCOPE_PLANTS),
         ", ".join(VIEWS),
     )
     return list(VIEWS)

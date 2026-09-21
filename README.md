@@ -286,7 +286,7 @@ I07/I08/I13. The payload is intentionally untyped — the SAP contract is not co
 ```bash
 curl -i -X POST http://localhost:8000/api/events/pr \
   -H "Content-Type: application/json" \
-  -d '{"prNumber":"10012345","plant":"1101"}'
+  -d '{"prNumber":"10012345","plant":"1300"}'
 ```
 
 ```json
@@ -596,18 +596,25 @@ keep their delivered casing. And the reports' sheet names (`Sheet1`, `Sheet2`,
 `GR REPORT`) are what SAP exported — a re-export could rename them, and the
 loader will say so by name rather than loading the wrong sheet.
 
-### Plant coverage — the gap to know about
+### Plant scope, and the coverage gap to know about
 
-Two tables cover Black Mountain only, while everything around them is
-multi-plant. That asymmetry is what makes it easy to miss:
+**The scope is two plants: 1300 (Black Mountain Mining) and 1500 (Gamsberg).**
+The list lives once, in `app/shared/plant_scope.py`, and is enforced on read in
+two places — the I08 views (through a generated `in_scope_plant()` SQL
+function) and the I13 `postgres_*` adapters. The `raw_*` tables stay a faithful
+copy of the July spreadsheets, other plant codes and all; nothing is deleted,
+it is filtered when read. A query for an out-of-scope plant returns nothing.
 
-| Table | Plants |
+Within that scope, two tables cover Black Mountain only while everything around
+them covers both sites. That asymmetry is what makes the gap easy to miss:
+
+| Table | In-scope coverage |
 | --- | --- |
-| `raw_marc` | 1300 (45,352), 1200 (57) — **Gamsberg 1500: zero rows** |
-| `raw_eban` | 1300 only (234,310) |
-| `raw_mard` | 1300, 3000, 2000, 1500, 1600 … |
-| `raw_resb` | 1300, 1500, 3000, 1200, 2000 … |
-| `raw_ekpo` | 13 plants, including 1500 (35,083) |
+| `raw_marc` | 1300 only (45,352) — **Gamsberg 1500: zero rows** |
+| `raw_eban` | 1300 only (234,310) — **Gamsberg 1500: zero rows** |
+| `raw_mard` | 1300 and 1500 |
+| `raw_resb` | 1300 and 1500 |
+| `raw_ekpo` | 1300 and 1500 (1500: 35,083) |
 
 MARC is the consequential one: it holds MRP type, reorder point and planned
 delivery time. **Every DISMM / OAR statistic derived from this data is a Black
