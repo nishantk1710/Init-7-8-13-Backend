@@ -318,6 +318,71 @@ class Settings(BaseSettings):
     # inventing a recipient.
     i13_hod_recipients: str = ""
 
+    # W7.4 / I13 FR-3: the three values the FRS names as configuration for the
+    # quantity suggestion. The FRS names all three and gives numbers for none
+    # of them, so these are OUR defaults and are labelled as such -- see
+    # app/initiatives/i13/quantity.py, which reports the values it used with
+    # every suggestion so a reviewer never has to guess which ceiling produced
+    # a number. Open question 10 to VZI.
+    #
+    # Cover ceiling: how many months of cover a reservation may take a
+    # material to. Suggest enough to reach it, never more.
+    i13_quantity_cover_ceiling_months: float = 12.0
+
+    # Look-back window for the average monthly consumption the suggestion
+    # divides by. Deliberately a SEPARATE value from
+    # i13_consumption_window_months even though both default to 12: WATCH's
+    # window is a reporting choice and this one is an arithmetic input, and
+    # retuning one must not silently move the other.
+    i13_quantity_lookback_months: int = 12
+
+    # Below this many consumption events in the look-back window, NO suggestion
+    # is made. An average built from one movement is not an average, and a
+    # confident number derived from it is worse than no number -- the same
+    # never-invent rule the rest of the platform follows.
+    i13_quantity_min_history_consumptions: int = 3
+
+    # --- W7: the reservation-time assistant (shared I08 + I13) -------------
+    #
+    # The session ID is read off one screen by a human and typed into another,
+    # so its shape is constrained by the SAP field it lands in, not by us.
+    # Bednr is Edm.String(10), so 10 is the ceiling; Wempf, the only exposed
+    # alternative, is 12, which means 10 is safe either way. Width is
+    # configuration so pointing at a different field later is an .env change.
+    # See app/assistant/ids.py.
+    assistant_session_id_length: int = 10
+    assistant_session_id_prefix: str = "S"
+
+    # How long a minted session stays valid. OUR default, not a VZI ruling --
+    # open question 11. Expiry is reported on the trace and never used to
+    # invalidate a session retrospectively: the reservation is already saved in
+    # SAP and the platform cannot write back, so raising an exception nobody
+    # can clear would be a fault, not a control.
+    assistant_session_ttl_hours: int = 72
+
+    # Whether the assistant asks the model to write the sentence around the
+    # facts it has already computed. OFF by default: every number the assistant
+    # states is a field we hold, the arithmetic is never the model's job, and a
+    # stubbed provider must never pass placeholder prose off as advice. When
+    # on, a failed or unconfigured provider degrades to the deterministic text
+    # rather than failing the turn. See app/assistant/narrative.py.
+    assistant_narrative_enabled: bool = False
+
+    # Reason categories offered when a requester justifies a decision -- both
+    # FRSs say "reason category plus free text" and neither lists the
+    # categories. A PLACEHOLDER list until VZI's vocabulary arrives (open
+    # question 9), which is why it is configuration and not an enum.
+    assistant_justification_reason_categories: str = (
+        "URGENT_BREAKDOWN,NO_SUITABLE_REPAIRABLE,REPAIR_TOO_SLOW,"
+        "PLANNED_MAINTENANCE,SAFETY_CRITICAL,PROJECT_WORK,OTHER"
+    )
+
+    # Whether the free-text box answers anything at all. When on it routes to a
+    # small, explicit set of intents over the DETERMINISTIC read models (see
+    # app/assistant/intents.py) -- it is not a general question-answering agent
+    # over the data, and that remains a separate scope decision.
+    assistant_free_text_intents_enabled: bool = True
+
     @property
     def cors_origins(self) -> list[str]:
         """Allowed CORS origins, parsed from ``FRONTEND_ORIGIN``."""
@@ -332,6 +397,20 @@ class Settings(BaseSettings):
     def i13_min_max_mrp_type_set(self) -> frozenset[str]:
         """Normalised MRP type codes that count as Min-Max (stocked) materials."""
         return frozenset(code.strip().upper() for code in self.i13_min_max_mrp_types.split(",") if code.strip())
+
+    @property
+    def assistant_justification_reason_category_list(self) -> list[str]:
+        """The configured reason categories, normalised, order preserved.
+
+        A list rather than a set: the order is what the assistant offers them
+        in, and a set would reorder the options on a form between restarts.
+        """
+        seen: dict[str, None] = {}
+        for raw in self.assistant_justification_reason_categories.split(","):
+            category = raw.strip().upper()
+            if category:
+                seen.setdefault(category, None)
+        return list(seen)
 
     @property
     def i13_reclass_critical_tier_set(self):  # -> frozenset[CriticalityTier]

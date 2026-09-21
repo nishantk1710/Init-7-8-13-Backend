@@ -46,6 +46,12 @@ from app.models.ingestion import IngestionRun
 # imported from their own modules, not from here.
 import app.initiatives.i8.models  # noqa: F401,E402  (registers i8_attestation)
 
+# The W7 assistant spine. Shared rather than initiative-owned -- one session
+# namespace serves both I08 FR-8 and I13 FR-4, because the BAdI hands the
+# session ID to one field on one reservation and two namespaces would make it
+# unreadable. Imported as a module for the same import-cycle reason as above.
+import app.assistant.models  # noqa: F401,E402  (registers assistant_session and friends)
+
 __all__ = [
     "ActConfirmationRecord",
     "ActExceptionEventRecord",
