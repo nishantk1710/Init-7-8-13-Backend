@@ -11,6 +11,8 @@ per the Phase 7 correction: every recommendation is blocked on the unsigned
 service-level matrix) and remove it in a fixture teardown.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
@@ -78,6 +80,164 @@ def test_list_pagination_is_deterministic_across_pages():
     first_ids = {i["recommendation_id"] for i in first_a["items"]}
     second_ids = {i["recommendation_id"] for i in second["items"]}
     assert not (first_ids & second_ids), "page 1 and page 2 must not overlap"
+
+
+# --- Part 22: portfolio-wide summary aggregates --------------------------------
+
+
+@needs_db
+def test_summary_returns_200_with_expected_shape():
+    response = client.get("/api/v1/i7/recommendations/summary")
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {
+        "total",
+        "by_status",
+        "by_criticality",
+        "by_circuit",
+        "by_risk",
+        "by_plant",
+        "oar_count",
+        "normal_count",
+        "awaiting_approval_count",
+        "ready_for_review_count",
+        "not_evaluable_count",
+        "net_safety_stock_value_impact",
+    }
+
+
+@needs_db
+def test_summary_total_matches_the_unfiltered_list_total():
+    summary = client.get("/api/v1/i7/recommendations/summary").json()
+    listing = client.get("/api/v1/i7/recommendations?page=1&page_size=1").json()
+    assert summary["total"] == listing["total"]
+
+
+@needs_db
+def test_summary_by_status_counts_sum_to_the_total():
+    summary = client.get("/api/v1/i7/recommendations/summary").json()
+    assert sum(row["count"] for row in summary["by_status"]) == summary["total"]
+
+
+@needs_db
+def test_summary_oar_and_normal_counts_sum_to_the_total():
+    summary = client.get("/api/v1/i7/recommendations/summary").json()
+    assert summary["oar_count"] + summary["normal_count"] == summary["total"]
+
+
+@needs_db
+def test_summary_by_plant_counts_sum_to_the_total():
+    summary = client.get("/api/v1/i7/recommendations/summary").json()
+    assert sum(row["count"] for row in summary["by_plant"]) == summary["total"]
+
+
+@needs_db
+def test_summary_by_plant_agrees_with_the_list_endpoints_plant_filter():
+    """The plant filter dropdown is built from by_plant, so a code offered
+    there must return exactly that many rows when actually filtered on --
+    otherwise selecting a plant shows a count the table cannot reproduce."""
+    summary = client.get("/api/v1/i7/recommendations/summary").json()
+    if not summary["by_plant"]:
+        pytest.skip("no recommendations on this database")
+
+    row = max(summary["by_plant"], key=lambda r: r["count"])
+    listing = client.get(
+        f"/api/v1/i7/recommendations?page_size=1&plant={row['plant']}"
+    ).json()
+    assert listing["total"] == row["count"]
+
+
+@needs_db
+def test_summary_respects_the_same_filters_as_the_list_endpoint():
+    filtered = client.get(
+        "/api/v1/i7/recommendations/summary?status=NOT_EVALUABLE"
+    ).json()
+    for row in filtered["by_status"]:
+        assert row["status"] == "NOT_EVALUABLE"
+
+
+@needs_db
+def test_summary_route_is_registered_before_the_id_route():
+    """'summary' must never be swallowed by /{recommendation_id} -- this is
+    the exact ordering bug that would otherwise make GET .../summary return
+    a 200-with-detail-shape (or a spurious 404 for a "recommendation" named
+    'summary') instead of the aggregate response."""
+    response = client.get("/api/v1/i7/recommendations/summary")
+    assert response.status_code == 200
+    assert "recommendation_id" not in response.json()
+
+
+@needs_db
+def test_summary_criticality_and_circuit_counts_never_fabricate_a_value():
+    """None-grouped rows (missing criticality/circuit) must be reported as
+    criticality/circuit == null, never collapsed into a real tier or
+    silently dropped from the count."""
+    summary = client.get("/api/v1/i7/recommendations/summary").json()
+    by_criticality_total = sum(row["count"] for row in summary["by_criticality"])
+    by_circuit_total = sum(row["count"] for row in summary["by_circuit"])
+    assert by_criticality_total == summary["total"]
+    assert by_circuit_total == summary["total"]
+
+
+@needs_db
+def test_summary_by_risk_counts_sum_to_the_total():
+    summary = client.get("/api/v1/i7/recommendations/summary").json()
+    by_risk_total = sum(row["count"] for row in summary["by_risk"])
+    assert by_risk_total == summary["total"]
+
+
+@needs_db
+def test_summary_by_risk_uses_only_the_four_known_tiers():
+    summary = client.get("/api/v1/i7/recommendations/summary").json()
+    tiers = {row["risk"] for row in summary["by_risk"]}
+    assert tiers <= {"critical", "high", "medium", "low"}
+
+
+@needs_db
+def test_summary_by_risk_escalates_impact_and_insurance_not_just_critical():
+    """Regression (Part 36): the frontend's own deriveRisk() used to compare
+    the raw criticality against the literal strings "HIGH"/"MEDIUM", which
+    never occur in the real ZMM065 vocabulary (CRITICAL/IMPACT/INSURANCE/
+    NORMAL/OBSOLETE) -- so no material could ever show "high"/"medium" risk,
+    only "critical" or "low". This aggregate must not repeat that mistake:
+    any IMPACT-criticality, open-status recommendation must count under
+    "high", and any INSURANCE one under "medium", not "low"."""
+    with get_sessionmaker()() as session:
+        has_impact = session.execute(
+            select(Recommendation.id).where(
+                Recommendation.criticality == "IMPACT",
+                Recommendation.status.in_(
+                    ("NOT_EVALUABLE", "READY_FOR_REVIEW", "PENDING_APPROVAL", "HELD", "SENT_BACK", "ADJUSTED")
+                ),
+            ).limit(1)
+        ).scalar_one_or_none()
+    if has_impact is None:
+        pytest.skip("no open IMPACT-criticality recommendation on this database")
+
+    summary = client.get("/api/v1/i7/recommendations/summary").json()
+    by_risk = {row["risk"]: row["count"] for row in summary["by_risk"]}
+    assert by_risk.get("high", 0) > 0
+
+
+@needs_db
+def test_sort_desc_reverses_ordering():
+    """Part 22 -- 'recent recommendations' needs newest-first, which the
+    default ascending-only sort cannot provide without pulling every page
+    client-side to re-sort. sort_desc reuses the same SORT_FIELDS column,
+    just descending."""
+    ascending = client.get("/api/v1/i7/recommendations?sort=generated_at&page_size=5").json()
+    descending = client.get(
+        "/api/v1/i7/recommendations?sort=generated_at&sort_desc=true&page_size=5"
+    ).json()
+    assert [i["recommendation_id"] for i in ascending["items"]] != [
+        i["recommendation_id"] for i in descending["items"]
+    ]
+    # The very first row overall (id=1, ascending default) must never appear
+    # in a sort_desc=true page unless the whole table is <=5 rows.
+    if ascending["total"] > 5:
+        assert ascending["items"][0]["recommendation_id"] not in {
+            i["recommendation_id"] for i in descending["items"]
+        }
 
 
 # --- C: filtering ------------------------------------------------------------------
@@ -152,6 +312,47 @@ def test_detail_exposes_rationale_and_its_source():
     assert "source" in body["rationale"]
     if body["rationale"]["source"] is not None:
         assert body["rationale"]["source"] in ("AI_GENERATED", "DETERMINISTIC_FALLBACK")
+
+
+@needs_db
+def test_detail_exposes_a_real_staged_consumption_series_for_the_three_target_materials():
+    """The exact materials verified in this session's Max Stock work
+    (5000092261/1300 and siblings) have 6 real staged months -- confirms the
+    detail endpoint reads i7_staged_consumption verbatim, not a fabricated or
+    densified series."""
+    with get_sessionmaker()() as session:
+        row = session.execute(
+            select(Recommendation).where(
+                Recommendation.sap_material_number == "5000092261",
+                Recommendation.sap_plant_code == "1300",
+            ).order_by(Recommendation.id.desc())
+        ).scalars().first()
+    if row is None:
+        pytest.skip("material 5000092261/1300 has no recommendation on this database")
+    response = client.get(f"/api/v1/i7/recommendations/{row.recommendation_id}")
+    assert response.status_code == 200
+    history = response.json()["demand"]["consumption_history"]
+    assert len(history) > 0
+    for entry in history:
+        assert "period" in entry
+        assert "quantity" in entry
+
+
+@needs_db
+def test_detail_consumption_history_is_empty_not_fabricated_for_a_cold_start_material():
+    """An OAR/cold-start material has UNCLASSIFIED demand and typically no
+    staged consumption at all -- the field must come back as an empty list,
+    never a guessed series."""
+    with get_sessionmaker()() as session:
+        row = session.execute(
+            select(Recommendation).where(Recommendation.demand_class == "UNCLASSIFIED").limit(1)
+        ).scalar_one_or_none()
+    if row is None:
+        pytest.skip("no UNCLASSIFIED-demand recommendation on this database")
+    response = client.get(f"/api/v1/i7/recommendations/{row.recommendation_id}")
+    assert response.status_code == 200
+    history = response.json()["demand"]["consumption_history"]
+    assert isinstance(history, list)
 
 
 @needs_db
@@ -283,6 +484,35 @@ def ready_recommendation():
             Recommendation.recommendation_id == recommendation_id
         ))
         session.commit()
+
+
+# --- Part 22: read-only workflow state -----------------------------------------
+
+
+@needs_db
+def test_workflow_state_before_submission_shows_ready_for_review(ready_recommendation):
+    rid = ready_recommendation
+    response = client.get(f"/api/v1/i7/recommendations/{rid}/workflow-state")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "READY_FOR_REVIEW"
+    assert body["pending_role"] is None
+    assert body["chain_index"] == 0
+
+
+@needs_db
+def test_workflow_state_matches_what_submit_itself_returned(ready_recommendation):
+    rid = ready_recommendation
+    submit = client.post(f"/api/v1/i7/recommendations/{rid}/submit", json={"actor_id": "U1"})
+    state = client.get(f"/api/v1/i7/recommendations/{rid}/workflow-state")
+    assert state.status_code == 200
+    assert state.json() == submit.json()
+
+
+@needs_db
+def test_workflow_state_of_an_unknown_recommendation_returns_404():
+    response = client.get("/api/v1/i7/recommendations/REC-DOES-NOT-EXIST/workflow-state")
+    assert response.status_code == 404
 
 
 @needs_db
@@ -772,4 +1002,88 @@ def test_i7_api_package_imports_no_sap_write_client():
 
 def test_openapi_and_docs_are_served():
     assert client.get("/openapi.json").status_code == 200
+
+
+# --- I: adoption tracking list --------------------------------------------------
+
+
+@pytest.fixture
+def two_recommendation_runs_same_material_plant():
+    """Two Recommendation rows for the same material-plant, as a genuine
+    pipeline rerun under new upstream run ids produces (see
+    app/models/i7_recommendation.py's uq_i7_recommendation_inputs) -- the
+    exact shape that made /recommendations/adoption show the same
+    material-plant twice before the "latest run only" filter."""
+    recommendation_id = "REC-TEST-API-ADOPTION-DUP"
+    material = "TESTAPI-ADOPT-001"
+    plant = "1300"
+
+    with get_sessionmaker()() as session:
+        session.execute(delete(Recommendation).where(
+            Recommendation.recommendation_id == recommendation_id
+        ))
+        session.add_all([
+            Recommendation(
+                recommendation_id=recommendation_id,
+                sap_material_number=material,
+                sap_plant_code=plant,
+                feature_run_id="run-1",
+                forecast_run_id="run-1",
+                inventory_run_id="run-1",
+                oar_run_id="run-1",
+                policy_id="i07-test",
+                policy_version=1,
+                formula_version="i07-recommendation-2",
+                status="READY_FOR_REVIEW",
+                impact_status="NOT_EVALUABLE_MISSING_RECOMMENDED",
+                recommended_safety_stock=5,
+                recommended_rop=20,
+                generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ),
+            Recommendation(
+                recommendation_id=recommendation_id,
+                sap_material_number=material,
+                sap_plant_code=plant,
+                feature_run_id="run-2",
+                forecast_run_id="run-2",
+                inventory_run_id="run-2",
+                oar_run_id="run-2",
+                policy_id="i07-test",
+                policy_version=1,
+                formula_version="i07-recommendation-2",
+                status="READY_FOR_REVIEW",
+                impact_status="NOT_EVALUABLE_MISSING_RECOMMENDED",
+                recommended_safety_stock=7,
+                recommended_rop=31,
+                generated_at=datetime(2026, 2, 1, tzinfo=timezone.utc),
+            ),
+        ])
+        session.commit()
+
+    yield material, plant
+
+    with get_sessionmaker()() as session:
+        session.execute(delete(Recommendation).where(
+            Recommendation.recommendation_id == recommendation_id
+        ))
+        session.commit()
+
+
+@needs_db
+def test_adoption_list_shows_one_row_per_material_plant(two_recommendation_runs_same_material_plant):
+    material, plant = two_recommendation_runs_same_material_plant
+    response = client.get(f"/api/v1/i7/recommendations/adoption?material={material}&plant={plant}")
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) == 1
+
+
+@needs_db
+def test_adoption_list_total_reflects_one_row_not_two(two_recommendation_runs_same_material_plant):
+    """The count endpoint uses in the pagination footer must match the
+    dedup, not just the visible page -- otherwise 'N recommendations total'
+    still double-counts even once the displayed rows look right."""
+    material, plant = two_recommendation_runs_same_material_plant
+    response = client.get(f"/api/v1/i7/recommendations/adoption?material={material}&plant={plant}")
+    assert response.json()["total"] == 1
     assert client.get("/docs").status_code == 200

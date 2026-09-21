@@ -167,7 +167,18 @@ def build_normal_recommendation(
             if row.lead_time_method
             else None
         ),
-        service_level_configured=policy.service_level.is_configured,
+        # Part 30 -- whether *this persisted calculation* actually had a
+        # configured service level, not whether the CURRENT
+        # generate_recommendations() call's policy does. inventory/
+        # service_level.resolve() only ever sets service_level/z_factor when
+        # its own status is SUCCESS (every NOT_EVALUABLE_*/CALCULATION_ERROR
+        # path leaves both None) -- so row.service_level is not None is an
+        # exact, already-persisted, already-selected proxy for "the
+        # inventory run this recommendation was built from had a signed
+        # service level for this material," immune to whatever policy is
+        # active when a later caller re-runs generation (e.g. DEV mock
+        # toggled off, or a reused/idempotent recommendation).
+        service_level_configured=row.service_level is not None,
         recommended_rop=row.rop if rop_ok else None,
         current_rop=row.current_reorder_point,
         is_oar=False,

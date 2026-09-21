@@ -206,6 +206,19 @@ class ConversionTriggerPolicy(BaseModel):
     ``None`` and the trigger is enabled."""
 
 
+def current_conversion_trigger_policy() -> ConversionTriggerPolicy:
+    """The trigger set in force: ``criticality_trigger_tiers=("NORMAL",)``.
+
+    Business-confirmed (Part 30 audit follow-up): NORMAL is the tier that
+    triggers the OAR -> Min-Max conversion's Trigger 2, not CRITICAL/IMPACT --
+    a deliberate call, not the FRS's ambiguity being guessed at. Matches
+    :func:`app.initiatives.i7.policy.oar.current_oar_policy`'s pattern: the
+    resolved rule lives in one function a reviewer can find, rather than a
+    default silently baked into the schema.
+    """
+    return ConversionTriggerPolicy(criticality_trigger_tiers=("NORMAL",))
+
+
 class ApprovalRoutingPolicy(BaseModel):
     """Which approval chain a ROP/Max recommendation follows, by criticality
     tier.

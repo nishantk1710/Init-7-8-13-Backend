@@ -119,13 +119,22 @@ stated exactly; a later ruling is a configuration edit. Three properties matter:
 - **`EXTWG` is retired.** It stays on `MaterialAttributes` for source fidelity
   and audit, but `PredicateField` does not offer it, so no rule can name it. A
   leakage test mirrors the frontend's `no-leakage.test.ts`.
-- **Evaluation is three-state.** A blank `DISMM` is `UNKNOWN`, not
-  `OUT_OF_SCOPE` — 47% of live rows have no value, and folding them into "not
-  OAR" would drop half the catalogue silently. Definite exclusion beats unknown;
-  unknown beats inclusion.
-- **Nothing is confirmed.** `confirmed=False`, `rollup=None`. The live scan found
-  ND+PD = 46.4% against a plan wanting <40%, plus six undocumented MRP codes
-  (`V1`, `M0`, `RP`, `VI`, `VH`, `V2`).
+- **Evaluation is three-state, in general.** The machinery supports
+  `IN_SCOPE`/`OUT_OF_SCOPE`/`UNKNOWN` for any predicate, and definite
+  exclusion still beats unknown, which still beats inclusion. For the
+  current OAR rule specifically, a blank `DISMM` no longer resolves to
+  `UNKNOWN` -- it is business-confirmed as `IN_SCOPE` (`blank_means_in_scope
+  =True`), reversing the original design (47% of live rows have no `DISMM`
+  value, which is why this mattered enough to design for explicitly).
+- **The field rule (including blank) is confirmed; roll-up is not.**
+  `OarPolicy.confirmed` still defaults to `False` on the backend object --
+  that flag gates the policy as a whole, including the still-undecided
+  `rollup`, not the field rule in isolation (the frontend's parallel
+  `ScopeDefinition.confirmed` is `true`, since its scope has no roll-up
+  field to also gate). The live scan found ND+PD = 46.4% against a plan
+  wanting <40% -- with blank now also in-scope, OAR coverage is roughly
+  double that -- plus six undocumented MRP codes (`V1`, `M0`, `RP`, `VI`,
+  `VH`, `V2`), which remain `OUT_OF_SCOPE`.
 
 ## Identity mapping boundary
 

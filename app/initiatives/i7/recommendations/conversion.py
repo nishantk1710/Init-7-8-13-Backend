@@ -25,11 +25,14 @@ to feed ADI/CV-squared only): a material with 2 issues in January, 1 in
 February, 3 in March and 1 in April has ``consumption_count_12m = 7`` and
 ``non_zero_periods = 4`` -- the SOP 3.1.1 trigger must see 7, not 4.
 
-**Trigger 2 is unresolved and stays unresolved.** The FRS's own two statements
-disagree on the criticality tier set ("Critical classification" vs "Critical or
-of significant production impact"), and Phase 1's `ConversionTriggerPolicy`
-already leaves `criticality_trigger_tiers` at `None` for exactly this reason.
-This module does not choose between them.
+**Trigger 2's tier set is business-confirmed as NORMAL.** The FRS's own two
+statements disagree on wording ("Critical classification" vs "Critical or of
+significant production impact"), but the business decision confirmed for this
+system is that the NORMAL tier is what should trigger conversion review here
+-- not CRITICAL/IMPACT, despite the FRS wording. See
+:func:`app.initiatives.i7.policy.thresholds.current_conversion_trigger_policy`,
+which is where this resolved rule lives (mirroring
+:func:`app.initiatives.i7.policy.oar.current_oar_policy`'s pattern).
 
 **Trigger 3 needs an I13 ledger that does not exist.** `app/initiatives/i13/` is
 an empty extension point. The trigger is evaluated through an injected lookup

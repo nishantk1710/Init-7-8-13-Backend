@@ -18,7 +18,7 @@ exists in this codebase at all; inventing either would be exactly the kind of
 unconfirmed business value this module refuses to guess.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
@@ -34,6 +34,22 @@ class StockParameters(BaseModel):
     max_stock: Decimal | None = None
 
 
+class ConsumptionHistoryEntry(BaseModel):
+    """One staged month of real consumption for this material-plant.
+
+    Read straight from ``i7_staged_consumption`` -- the same table Phase 3's
+    feature engineering reads to derive ADI/CV-squared/forecast_rate --
+    never recomputed or densified with invented zero-months. Zero-demand
+    months are not stored there (see StagedConsumption's own docstring), so a
+    gap in ``period`` here is a genuine absence of a movement that month, not
+    a missing row."""
+
+    model_config = ConfigDict(frozen=True)
+
+    period: date
+    quantity: Decimal
+
+
 class DemandInfo(BaseModel):
     """Demand classification and forecast, as far as the recommendation row
     carries it. ADI and CV-squared are Phase 3 feature-store fields, not
@@ -46,6 +62,11 @@ class DemandInfo(BaseModel):
     history_status: str | None = None
     model: str | None = None
     forecast_rate: Decimal | None = None
+    consumption_history: tuple[ConsumptionHistoryEntry, ...] = ()
+    """The staged monthly series behind this recommendation's forecast --
+    populated only on the detail endpoint (a per-material query), empty on
+    the list endpoint. Empty, never fabricated, for a material with no
+    staged consumption rows at all (e.g. every OAR/cold-start material)."""
 
 
 class LeadTimeInfo(BaseModel):
@@ -187,9 +208,12 @@ class GovernanceInfo(BaseModel):
 
 
 class RecommendationSummary(BaseModel):
-    """One row of the list endpoint -- enough to render a table, not the full
-    detail. Kept intentionally small so the list query stays a single
-    lightweight SELECT."""
+    """One row of the list endpoint -- enough to render a table AND its
+    value/ROP change columns without a second request per row. ``current``/
+    ``recommended``/``impact`` add no query cost: the list endpoint already
+    runs ``select(Recommendation)`` (the full ORM row) per app/api/i7/
+    recommendations.py, so these are columns already in hand, read verbatim
+    -- never a second lookup, never recomputed."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -202,9 +226,37 @@ class RecommendationSummary(BaseModel):
     criticality: str | None
     confidence: str | None
     generated_at: datetime
+    updated_at: datetime
+    """When this row last changed -- a submit/hold/approve/reject action
+    updates the existing row in place (see the Phase-7-cleanup note in
+    docs/i07_recommendations.md), so this is the correct "waiting since"
+    anchor for a pipeline/stuck-detection view, not ``generated_at`` (which
+    only reflects when the recommendation was first calculated)."""
+    chain_index: int
+    """Index into ``route`` (below) of the role whose decision is next
+    pending. Meaningless once status leaves PENDING_APPROVAL/SENT_BACK/HELD,
+    exactly as WorkflowState.pending_role documents."""
+    route: list[str]
+    """The resolved approval route for this recommendation (routing.route_for
+    -- OAR_APPROVAL_CHAIN for OAR conversions, otherwise a criticality-tier
+    lookup through the configured ApprovalRoutingPolicy). Computed here, once,
+    server-side -- a criticality-tier route is configuration, not a fixed
+    constant, so deriving it a second time client-side from raw criticality
+    would silently drift from whatever policy is actually active. Paired with
+    chain_index this is enough for a pipeline table to show pending-role and
+    step-N-of-M progress for every row in one list fetch, without the
+    per-recommendation GET .../workflow-state call that exists for a single
+    detail view, not a table of hundreds of rows."""
+    current: StockParameters
+    recommended: StockParameters
+    impact: ImpactInfo
+    unit_price: Decimal | None = None
+    """Added so the list endpoint's own Value-change column can price
+    ``impact.safety_stock_delta`` without a second (detail) request per row --
+    the same reasoning as ``current``/``recommended``/``impact`` above."""
 
     @classmethod
-    def from_model(cls, row: RecommendationModel) -> "RecommendationSummary":
+    def from_model(cls, row: RecommendationModel, route: tuple[str, ...]) -> "RecommendationSummary":
         return cls(
             recommendation_id=row.recommendation_id,
             material=row.sap_material_number,
@@ -215,6 +267,26 @@ class RecommendationSummary(BaseModel):
             criticality=row.criticality,
             confidence=row.confidence,
             generated_at=row.generated_at,
+            updated_at=row.updated_at,
+            chain_index=row.chain_index,
+            route=list(route),
+            unit_price=row.unit_price,
+            current=StockParameters(
+                safety_stock=row.current_safety_stock,
+                rop=row.current_rop,
+                max_stock=row.current_max_stock,
+            ),
+            recommended=StockParameters(
+                safety_stock=row.recommended_safety_stock,
+                rop=row.recommended_rop,
+                max_stock=row.recommended_max_stock,
+            ),
+            impact=ImpactInfo(
+                status=row.impact_status,
+                safety_stock_delta=row.safety_stock_delta,
+                rop_delta=row.rop_delta,
+                max_stock_delta=row.max_stock_delta,
+            ),
         )
 
 
@@ -225,6 +297,110 @@ class RecommendationListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class StatusCount(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: str
+    count: int
+
+
+class CriticalityCount(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    criticality: str | None
+    """``None`` groups every row with no criticality recorded -- never
+    collapsed into a real tier. See ``RecommendationSummary.from_model``: the
+    same field, here counted rather than read per-row."""
+
+    count: int
+
+
+class CircuitCount(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    circuit: str | None
+    """``None`` groups every row with no circuit recorded (see
+    ``RecommendationDetail.circuit``'s own docstring: genuinely absent on the
+    OAR/cold-start path, not merely unpopulated)."""
+
+    count: int
+
+
+class RiskCount(BaseModel):
+    """Portfolio-wide count for one of the frontend's UI-only risk tiers --
+    there is no "stockout risk" concept in the I07 domain itself (see
+    RecommendationDetail's ImpactInfo docstring); this mirrors the frontend's
+    own deriveRisk() (services/i7-api.ts) exactly, in SQL, over the whole
+    (optionally filtered) set rather than one fetched page: a criticality tier
+    only counts as elevated risk while the recommendation's status is still
+    "open" (not yet finally decided), and CRITICAL/IMPACT/INSURANCE map to
+    critical/high/medium respectively -- everything else (NORMAL/OBSOLETE/no
+    criticality at all/not open) is "low", never fabricated as a middle
+    tier."""
+
+    model_config = ConfigDict(frozen=True)
+
+    risk: str
+    """``critical`` / ``high`` / ``medium`` / ``low`` -- lowercase, matching
+    the frontend's own RiskLevel literal union."""
+
+    count: int
+
+
+class PlantCount(BaseModel):
+    """Portfolio-wide count per SAP plant code.
+
+    Exists so a plant filter can offer exactly the plants the data actually
+    contains. The frontend's own PLANTS list (lib/shared-data/plants.ts) is
+    app-side scenario master data keyed on invented ids (PLANT-GBG, PLANT-BMM,
+    PLANT-SKZ) that no SAP field supplies -- a live plant filter built from it
+    can never match a real row, whose plant is a SAP WERKS code (1300, 1500,
+    3000, ...). This aggregate is the honest source for that dropdown."""
+
+    model_config = ConfigDict(frozen=True)
+
+    plant: str
+    count: int
+
+
+class RecommendationSummaryStats(BaseModel):
+    """Portfolio-wide aggregates, computed in SQL over every recommendation
+    matching the given filters -- never paginated, and never recomputed
+    client-side. Exists because the dashboard/KPI screens need counts across
+    the whole (filtered) set, not one page of it; every number here is a
+    ``COUNT``/``SUM`` over columns the list/detail endpoints already expose,
+    not a new business calculation.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    total: int
+    by_status: list[StatusCount]
+    by_criticality: list[CriticalityCount]
+    by_circuit: list[CircuitCount]
+    by_risk: list[RiskCount]
+    by_plant: list[PlantCount]
+    oar_count: int
+    normal_count: int
+    awaiting_approval_count: int
+    """Rows whose status is PENDING_APPROVAL or HELD -- submitted and not yet
+    finally decided. Matches the same statuses the workflow considers "in the
+    chain" (see ``app.initiatives.i7.recommendations.workflow``)."""
+
+    ready_for_review_count: int
+    not_evaluable_count: int
+    net_safety_stock_value_impact: Decimal | None
+    """SUM(unit_price * (current_safety_stock - recommended_safety_stock))
+    over rows where both stock values and unit_price are present -- positive
+    means the portfolio's recommended changes would net RELEASE working
+    capital (recommended safety stock is lower), negative means they would
+    net TIE UP more. ``None`` when no row in scope has all three values
+    available (this extract's actual state today, since unit_price and
+    computed safety stock rarely coincide on the same row) -- never
+    defaulted to 0, which would silently claim "no impact" instead of "not
+    computable yet\"."""
 
 
 class RecommendationDetail(BaseModel):
@@ -269,7 +445,11 @@ class RecommendationDetail(BaseModel):
     updated_at: datetime
 
     @classmethod
-    def from_model(cls, row: RecommendationModel) -> "RecommendationDetail":
+    def from_model(
+        cls,
+        row: RecommendationModel,
+        consumption_history: tuple[ConsumptionHistoryEntry, ...] = (),
+    ) -> "RecommendationDetail":
         return cls(
             recommendation_id=row.recommendation_id,
             material=row.sap_material_number,
@@ -291,6 +471,7 @@ class RecommendationDetail(BaseModel):
                 history_status=row.history_status,
                 model=row.baseline_model,
                 forecast_rate=row.forecast_rate,
+                consumption_history=consumption_history,
             ),
             lead_time=LeadTimeInfo(
                 method=row.lead_time_method,

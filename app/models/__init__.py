@@ -24,6 +24,7 @@ from app.models.i7_recommendation import (
     SapExecutionEvidence,
 )
 from app.models.i7_policy import PolicyVersion
+from app.models.i7_reporting import QuarterlyReportRecord
 from app.models.i7_staging import (
     StagedConsumption,
     StagedMaterial,
@@ -52,6 +53,7 @@ __all__ = [
     "SapAdoptionResult",
     "SapExecutionEvidence",
     "PolicyVersion",
+    "QuarterlyReportRecord",
     "SegmentModelDecision",
     "StagedConsumption",
     "StagedMaterial",

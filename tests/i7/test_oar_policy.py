@@ -73,14 +73,14 @@ def test_only_one_predicate_in_the_active_rule():
 # --- Unknown handling -------------------------------------------------
 
 
-def test_missing_mrp_type_is_unknown_not_out_of_scope():
+def test_missing_mrp_type_is_in_scope_not_unknown():
+    """Business-confirmed exception for OAR specifically: a genuinely
+    unmaintained MRP type (the staging adapter collapses a blank cell to
+    None -- see ScopePredicate.unknown_values's docstring) now counts as
+    OAR, the same as ND/PD. This reverses the rule's earlier behaviour
+    (blank -> UNKNOWN); see oar.py's module docstring for why."""
     decision = current_oar_policy().evaluate(attributes(mrp_type=None))
-    assert decision is ScopeDecision.UNKNOWN
-
-
-def test_blank_mrp_type_is_unknown():
-    decision = current_oar_policy().evaluate(attributes(mrp_type=""))
-    assert decision is ScopeDecision.UNKNOWN
+    assert decision is ScopeDecision.IN_SCOPE
 
 
 def test_undocumented_mrp_codes_are_out_of_scope_not_unknown():

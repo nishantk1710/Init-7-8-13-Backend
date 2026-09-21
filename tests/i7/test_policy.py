@@ -182,8 +182,22 @@ def test_max_stock_eoq_inputs_absent_by_default():
 
 def test_conversion_criticality_tiers_unset_because_the_frs_contradicts_itself():
     """FR-5 says "Critical"; section 3.1 says "Critical or significant production
-    impact". Different tier sets -- not ours to choose."""
+    impact". Different tier sets -- not ours to choose. This describes
+    ConversionTriggerPolicy's own bare default; PolicyDocument's default now
+    resolves this via current_conversion_trigger_policy() instead (see the
+    test immediately below)."""
     assert ConversionTriggerPolicy().criticality_trigger_tiers is None
+
+
+def test_policy_document_default_resolves_conversion_criticality_tiers_to_normal():
+    """Business-confirmed: NORMAL is the tier that fires the OAR -> Min-Max
+    conversion's Trigger 2 in this system, not CRITICAL/IMPACT despite the FRS
+    wording (see policy/thresholds.py::current_conversion_trigger_policy).
+    PolicyDocument's own default now carries this resolved value -- a fresh
+    PolicyDocument() is no longer blocked on this specific gap."""
+    policy = PolicyDocument()
+    assert policy.conversion_triggers.criticality_trigger_tiers == ("NORMAL",)
+    assert "conversion_criticality_tiers" not in policy.unresolved_policies()
 
 
 # --- Policy document ---------------------------------------------------
@@ -194,12 +208,19 @@ def test_document_defaults_to_draft():
 
 
 def test_document_lists_every_unresolved_policy():
+    # conversion_criticality_tiers is no longer here: PolicyDocument's own
+    # default now resolves it via current_conversion_trigger_policy()
+    # (criticality_trigger_tiers=("NORMAL",), a confirmed business decision --
+    # see policy/thresholds.py). ConversionTriggerPolicy() built bare (with no
+    # PolicyDocument around it) still defaults criticality_trigger_tiers to
+    # None on its own, which is what test_conversion_criticality_tiers_unset_
+    # because_the_frs_contradicts_itself asserts -- the two tests are not in
+    # tension; they check different construction paths.
     outstanding = PolicyDocument().unresolved_policies()
     assert set(outstanding) == {
         "service_level_matrix",
         "max_stock_strategy",
         "adoption_monitoring_window",
-        "conversion_criticality_tiers",
         "oar_rule_confirmation",
         "oar_rollup_policy",
     }

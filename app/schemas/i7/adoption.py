@@ -33,3 +33,25 @@ class AdoptionResponse(BaseModel):
     distinct concepts (see ``adoption.py``'s two evaluator functions), never
     conflated. A caller must not read a parameter-adoption ADOPTED/UNKNOWN
     result as evidence about conversion adoption or vice versa."""
+
+
+class AdoptionListItem(BaseModel):
+    """One recommendation's adoption result, for the portfolio-wide list."""
+
+    model_config = ConfigDict(frozen=True)
+
+    recommendation_id: str
+    sap_material_number: str
+    sap_plant_code: str
+    status: str
+    is_conversion_adoption: bool
+    detail: str
+
+
+class AdoptionListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: list[AdoptionListItem]
+    total: int
+    page: int
+    page_size: int

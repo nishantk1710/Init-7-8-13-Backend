@@ -52,7 +52,9 @@ def attributes(
         ("PD", ScopeDecision.IN_SCOPE),
         ("ND", ScopeDecision.IN_SCOPE),
         ("VB", ScopeDecision.OUT_OF_SCOPE),
-        (None, ScopeDecision.UNKNOWN),
+        # Business-confirmed: blank/unmaintained MRP type now counts as OAR
+        # too, not UNKNOWN -- see oar.py's module docstring.
+        (None, ScopeDecision.IN_SCOPE),
     ],
 )
 def test_documented_scope_cases(mrp_type, expected):
@@ -73,21 +75,18 @@ def test_material_status_no_longer_participates_in_the_active_rule():
 # --- Unknown handling -----------------------------------------------------
 
 
-def test_blank_mrp_type_is_unknown():
+def test_missing_mrp_type_is_in_scope_not_unknown():
+    """Business-confirmed exception for OAR: an unmaintained MRP type
+    (the staging adapter collapses a blank cell to None) now counts as
+    OAR, same as ND/PD -- reverses the rule's earlier UNKNOWN behaviour."""
     assert (
-        assess_oar_scope(attributes(mrp_type=""), POLICY).scope is ScopeDecision.UNKNOWN
+        assess_oar_scope(attributes(mrp_type=None), POLICY).scope is ScopeDecision.IN_SCOPE
     )
 
 
-def test_missing_mrp_type_is_unknown():
-    assert (
-        assess_oar_scope(attributes(mrp_type=None), POLICY).scope is ScopeDecision.UNKNOWN
-    )
-
-
-def test_unknown_reason_names_the_missing_field():
+def test_in_scope_reason_names_the_satisfied_predicate_for_blank_too():
     assessment = assess_oar_scope(attributes(mrp_type=None), POLICY)
-    assert "mrp_type" in assessment.reason
+    assert assessment.scope is ScopeDecision.IN_SCOPE
 
 
 def test_excluded_reason_names_the_failing_predicate():

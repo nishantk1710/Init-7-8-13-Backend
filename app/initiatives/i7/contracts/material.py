@@ -32,8 +32,11 @@ class MaterialAttributes(BaseModel):
     # meaning of a value, and of its absence, belongs to the OAR policy.
 
     mrp_type: str | None = None
-    """MARC.DISMM. ``None`` means not maintained -- which is *unknown*, not
-    "not OAR". 47% of rows in the live scan had no value."""
+    """MARC.DISMM. ``None`` means not maintained. 47% of rows in the live
+    scan had no value; the current OAR rule business-confirms that a blank
+    value here counts as OAR (see policy.oar's module docstring) -- the
+    field itself still just reports what SAP holds, the interpretation
+    belongs to the policy, not to this contract."""
 
     material_status: str | None = None
     """MARA.MSTAE. ``'01'`` marks an obsolete material and excludes it from OAR

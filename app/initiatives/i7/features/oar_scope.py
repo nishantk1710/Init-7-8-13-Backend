@@ -8,10 +8,14 @@ string explaining *which* predicate decided, and the unresolved roll-up state.
 No MRP type or material status value appears here. Configuration owns those, and
 a leakage test fails the build if one leaks out.
 
-Three states, and UNKNOWN is the one that matters. A blank DISMM means "not
-maintained", which is not "not OAR" -- 47% of rows in the live scan had no value.
-Folding those into OUT_OF_SCOPE would drop half the catalogue out of the OAR
-population with nothing to show it happened.
+Three states are still possible in general (OUT_OF_SCOPE / UNKNOWN / IN_SCOPE),
+but for the current OAR rule specifically, UNKNOWN no longer arises from a
+blank/unmaintained MRP type: that case is now business-confirmed as IN_SCOPE
+(see ``policy.oar``'s module docstring and ``current_oar_policy``'s
+``blank_means_in_scope=True``). 47% of rows in the live scan had no DISMM
+value at all; all of them are now OAR-in-scope by this rule, not UNKNOWN.
+UNKNOWN can still occur for a *different* predicate that has not opted into
+that exception.
 """
 
 from typing import NamedTuple

@@ -7,6 +7,19 @@ Reads the latest successful run of each upstream phase in two grouped queries
 and assembles one recommendation per material-plant in memory, batching the
 insert. No query and no external call happens per material.
 
+**The forecast run is pinned to the selected inventory run, not independently
+re-derived.** ``forecast_run_id`` is read from
+``i7_inventory_run.forecast_run_id`` -- the exact forecast run the selected
+inventory calculation was actually built from -- rather than from
+``latest_forecast_run(latest feature_run_id)``. The two can drift apart once
+the feature store has advanced past the last executed forecast run: an
+independent "latest forecast run for the latest feature generation" lookup
+then returns ``None`` even though the selected inventory run's own forecast
+join succeeded and already produced real SS/ROP values (Part 28 audit
+finding). Pinning to the inventory run's own value means the recommendation's
+forecast join can never disagree with the run its SS/ROP were actually
+computed from.
+
 **Idempotent by the same pattern as every earlier phase.** A recommendation's
 identity is the tuple of upstream run ids plus the policy and formula
 versions; the unique constraint on ``i7_recommendation`` makes a repeat run
@@ -159,14 +172,23 @@ def generate_recommendations(
 
     try:
         with session_factory() as session:
-            feature_run_id = repository.latest_feature_run(session)
-            # Scoped to feature_run_id: an unscoped "global latest" forecast
-            # run can predate the feature generation being built for and
-            # silently miss materials that generation newly classified as
-            # SUFFICIENT (Phase 9 SIT finding).
-            forecast_run_id = repository.latest_forecast_run(session, feature_run_id)
             inventory_run_id = repository.latest_inventory_run(session)
             oar_run_id = repository.latest_oar_run(session)
+            # Pinned to the selected inventory run's own forecast_run_id, not
+            # independently re-derived from the latest feature run: the two
+            # can drift apart once the feature store has advanced past the
+            # last executed forecast run, at which point an independent
+            # "latest forecast run for the latest feature run" lookup returns
+            # None even though the selected inventory run's own forecast join
+            # succeeded and already produced real SS/ROP values (Part 28
+            # audit finding). Reading the inventory run's own forecast_run_id
+            # instead means this can never disagree with the run SS/ROP were
+            # actually computed from.
+            forecast_run_id = (
+                repository.forecast_run_for_inventory_run(session, inventory_run_id)
+                if inventory_run_id is not None
+                else None
+            )
 
             built: list[BuiltRecommendation] = []
 

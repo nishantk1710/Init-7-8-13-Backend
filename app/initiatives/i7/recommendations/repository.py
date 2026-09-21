@@ -117,6 +117,25 @@ def latest_inventory_run(session: Session) -> int | None:
     ).scalar()
 
 
+def forecast_run_for_inventory_run(session: Session, inventory_run_id: int) -> int | None:
+    """The forecast run the given inventory run actually used.
+
+    The recommendation builder used to re-derive its own "latest forecast
+    run for the latest feature run" independently of which inventory run it
+    was joining against (see ``latest_forecast_run``'s own history: a feature
+    generation can outrun forecasting, in which case that independent lookup
+    returns ``None`` even when the selected inventory run's own forecast join
+    succeeded and produced real SS/ROP values). Reading
+    ``i7_inventory_run.forecast_run_id`` instead ties the recommendation's
+    forecast join to the exact run its SS/ROP were actually computed from --
+    the two can never disagree, because they are the same run.
+    """
+    return session.execute(
+        text("select forecast_run_id from i7_inventory_run where id = :inventory_run_id"),
+        {"inventory_run_id": inventory_run_id},
+    ).scalar()
+
+
 def latest_oar_run(session: Session) -> int | None:
     return session.execute(
         text("select max(id) from i7_oar_run where status = 'succeeded'")

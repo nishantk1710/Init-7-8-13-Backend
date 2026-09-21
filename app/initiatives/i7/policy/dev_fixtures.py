@@ -194,6 +194,28 @@ def default_policy():
     existed. The two flags are independent: the service-level mock alone
     unblocks safety stock and ROP, and the Max Stock mock alone unblocks
     nothing, because Max Stock is itself computed from ROP.
+
+    **``policy_id`` changes to ``"i07-default-dev-mock"`` when the
+    service-level mock is active** (Part 25). Without this, a DEV-mocked run
+    and a real/unconfigured run would share the exact same identity --
+    ``(feature_run_id, forecast_run_id, policy_id="i07-default",
+    policy_version=1, formula_version)`` -- which is also
+    ``i7_inventory_run``'s and ``i7_recommendation``'s own idempotency key
+    (``uq_i7_inventory_run_inputs`` / ``uq_i7_recommendation_inputs``). A run
+    already on file under that identity would then be silently reused
+    instead of the mock ever taking effect (``run_inventory_calculations``
+    read-path), or a second run under the same identity would fail outright
+    on the unique constraint (``force=True`` does not help: it skips the
+    read-side reuse check but still collides on insert). Giving the
+    DEV-mocked policy its own id makes it a genuinely distinct, independently
+    identified run -- coexisting with, never overwriting or being shadowed
+    by, a real/unmocked one -- without touching the idempotency logic or the
+    constraint itself. Only the service-level flag changes ``policy_id``:
+    it is the one that changes ``service_level_status``/``safety_stock_status``
+    at the inventory-calculation layer; the Max Stock mock does not need its
+    own id for this same reason (Max Stock is computed from ROP, so its
+    result already varies with whatever ROP the service-level mock produced,
+    under the same run).
     """
     from app.core.config import get_settings
     from app.initiatives.i7.policy.document import PolicyDocument
@@ -202,6 +224,7 @@ def default_policy():
     overrides = {}
     if settings.i7_dev_mock_service_level:
         overrides["service_level"] = load_mock_service_level_policy()
+        overrides["policy_id"] = "i07-default-dev-mock"
     if settings.i7_dev_mock_max_stock:
         overrides["max_stock"] = load_mock_max_stock_policy()
     if not overrides:

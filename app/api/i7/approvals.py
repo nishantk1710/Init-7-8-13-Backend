@@ -53,6 +53,25 @@ def _state_response(row: Recommendation, policy: PolicyDocument) -> WorkflowStat
     )
 
 
+@router.get(
+    "/recommendations/{recommendation_id}/workflow-state",
+    response_model=WorkflowStateResponse,
+    summary="Get the current workflow state (read-only)",
+    description="The same route/pending-role computation POST .../submit "
+    "and POST .../actions already return, exposed as a plain GET for "
+    "callers that only need to display current state (e.g. an approvals "
+    "queue) without taking an action. Computes nothing new -- calls the "
+    "exact same _state_response the mutating endpoints use.",
+    responses={404: {"description": "Recommendation not found"}},
+)
+def get_workflow_state(
+    recommendation_id: str, session: Annotated[Session, Depends(get_session)]
+) -> WorkflowStateResponse:
+    row = load_latest_recommendation(session, recommendation_id)
+    policy = PolicyDocument()
+    return _state_response(row, policy)
+
+
 @router.post(
     "/recommendations/{recommendation_id}/submit",
     response_model=WorkflowStateResponse,

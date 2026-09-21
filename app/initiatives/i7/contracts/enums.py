@@ -95,12 +95,17 @@ class ConfidenceGrade(StrEnum):
 
 
 class ScopeDecision(StrEnum):
-    """Three-state answer to "is this material-plant OAR?".
+    """Three-state answer to "is this material-plant in scope?".
 
-    UNKNOWN exists because a blank MRP type means "not maintained", which is not
-    the same as "not OAR" -- 47% of rows in the live scan had no DISMM at all.
-    Collapsing UNKNOWN into OUT_OF_SCOPE would silently drop those materials out
-    of the OAR population and nobody would see it happen.
+    UNKNOWN exists so a genuinely unmaintained field is never silently
+    collapsed into OUT_OF_SCOPE -- "we don't know" and "no" are different
+    claims, and folding one into the other would drop materials out of a
+    scope population with nothing to show it happened. The historical
+    example: 47% of rows in the live scan had no DISMM at all. For the
+    current OAR rule specifically, that blank case is now business-confirmed
+    as IN_SCOPE rather than UNKNOWN (see policy.oar's module docstring) --
+    this type's three states remain available for any predicate that has not
+    opted into that same exception.
     """
 
     IN_SCOPE = "IN_SCOPE"

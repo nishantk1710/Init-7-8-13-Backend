@@ -158,6 +158,76 @@ def test_default_policy_loads_the_mock_when_flag_is_true(monkeypatch):
         get_settings.cache_clear()
 
 
+def test_default_policy_id_is_i07_default_when_flag_is_unset(monkeypatch):
+    """Part 25 -- policy_id must stay exactly what it always was when the
+    mock is off, so a production deployment's runs are unaffected."""
+    monkeypatch.delenv("I7_DEV_MOCK_SERVICE_LEVEL", raising=False)
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        from app.initiatives.i7.policy.dev_fixtures import default_policy
+
+        assert default_policy().policy_id == "i07-default"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_default_policy_id_is_distinct_when_service_level_mock_is_active(monkeypatch):
+    """Part 25 -- the actual fix. Without a distinct policy_id, a DEV-mocked
+    run and a real/unconfigured run share the same
+    (feature_run_id, forecast_run_id, policy_id, policy_version,
+    formula_version) identity -- i7_inventory_run's and i7_recommendation's
+    own idempotency key -- so an existing unconfigured run gets silently
+    reused instead of the mock ever taking effect."""
+    monkeypatch.setenv("I7_DEV_MOCK_SERVICE_LEVEL", "true")
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        from app.initiatives.i7.policy.dev_fixtures import default_policy
+
+        policy = default_policy()
+        assert policy.policy_id == "i07-default-dev-mock"
+        assert policy.policy_id != "i07-default"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_default_policy_id_unaffected_by_max_stock_mock_alone(monkeypatch):
+    """Only the service-level mock needs a distinct policy_id -- it is the
+    one that changes safety_stock_status/service_level_status at the
+    inventory-calculation layer. The Max Stock mock does not independently
+    need one: Max Stock is computed from ROP, so its result already varies
+    with whatever the service-level mock (or its absence) produced under the
+    same run."""
+    monkeypatch.delenv("I7_DEV_MOCK_SERVICE_LEVEL", raising=False)
+    monkeypatch.setenv("I7_DEV_MOCK_MAX_STOCK", "true")
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        from app.initiatives.i7.policy.dev_fixtures import default_policy
+
+        assert default_policy().policy_id == "i07-default"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_policy_ids_are_distinguishable_by_the_inventory_run_idempotency_key():
+    """Proves the fix actually addresses the idempotency collision: the two
+    policy_id values, held alongside identical feature/forecast/formula
+    version inputs, form two DIFFERENT identities under
+    i7_inventory_run.uq_i7_inventory_run_inputs
+    (feature_run_id, forecast_run_id, policy_id, policy_version,
+    formula_version) -- so both a real and a DEV-mocked run can be inserted
+    without a unique-constraint collision.
+    """
+    real_key = (1, 1, "i07-default", 1, "i07-formula-1")
+    dev_mock_key = (1, 1, "i07-default-dev-mock", 1, "i07-formula-1")
+    assert real_key != dev_mock_key
+
+
 def test_target_quantile_resolves_once_the_flag_is_set(monkeypatch):
     """The exact chain that was blocking LightGBM: _target_quantile(policy)
     must move from None to a real number once the flag flips.

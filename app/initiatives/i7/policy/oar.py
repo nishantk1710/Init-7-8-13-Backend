@@ -18,17 +18,26 @@ part of *this* predicate.
 but a predicate may not name it -- :meth:`OarPolicy.validate` refuses -- so the
 retirement is enforced rather than merely documented.
 
-**Three-state evaluation.** A blank or unrecognised MRP type means "not
-maintained", which is *unknown*, not "not OAR": 47% of rows in the live scan
-had no value, and folding them into OUT_OF_SCOPE would drop half the catalogue
-out of the OAR population silently. Every predicate therefore declares which
-raw values mean unknown, and one unknown among otherwise-satisfied predicates
-yields UNKNOWN.
+**Blank DISMM now counts as OAR too -- business-confirmed.** Until this
+change, a blank/unmaintained MRP type evaluated to UNKNOWN, on the reasoning
+that "not maintained" is not the same claim as "not OAR": 47% of rows in the
+live scan had no value at all, and folding them into OUT_OF_SCOPE would have
+silently dropped half the catalogue out of the OAR population. The business
+has now confirmed the opposite treatment for OAR specifically: an unmaintained
+MRP type is itself evidence of OAR (a Min-Max-managed material is expected to
+carry an explicit VB, so blank is closer to "never set up for Min-Max" than to
+"genuinely unknown"). The active rule below therefore includes the empty
+string in ``values``, not in ``unknown_values`` -- blank now matches
+IN_SCOPE, the same as ND/PD, rather than yielding UNKNOWN. This roughly
+doubles OAR-scope coverage relative to the ND/PD-only rule. An unrecognised
+(non-blank, non-VB, non-ND/PD) MRP type -- e.g. the six undocumented codes
+V1/M0/RP/VI/VH/V2 -- still evaluates OUT_OF_SCOPE, not IN_SCOPE and not
+UNKNOWN; only blank changed.
 
-**Still not confirmed.** ``confirmed`` defaults to ``False`` and the roll-up
-policy defaults to unset. The live scan found ND+PD = 46.4% of the catalogue
-against a plan that wanted under 40%, plus six undocumented MRP codes (which
-remain OUT_OF_SCOPE, not UNKNOWN -- see
+**Still not confirmed on roll-up.** ``confirmed`` defaults to ``False`` and
+the roll-up policy defaults to unset. The live scan found ND+PD = 46.4% of the
+catalogue against a plan that wanted under 40%, plus six undocumented MRP
+codes (which remain OUT_OF_SCOPE -- see
 ``test_undocumented_mrp_codes_are_out_of_scope_not_unknown``). Roll-up across a
 material's plants is a team-lead call this module still does not make.
 """
@@ -91,7 +100,19 @@ class ScopePredicate(BaseModel):
     values: tuple[str, ...] = ()
     unknown_values: tuple[str, ...] = ("",)
     """Raw values meaning "not maintained". A blank string by default, so an
-    empty DISMM is UNKNOWN rather than OUT_OF_SCOPE."""
+    empty DISMM is UNKNOWN rather than OUT_OF_SCOPE. Note this only covers a
+    *string* blank -- the staging adapter's own ``clean()`` collapses a blank
+    cell to Python ``None`` before it ever reaches here (blank and NULL are
+    the same fact), so in practice ``raw is None`` (handled separately below)
+    is what a real unmaintained field looks like, not a value in this tuple."""
+
+    blank_means_in_scope: bool = False
+    """Business-confirmed exception, OAR-specific: when set, a genuinely
+    unmaintained field (``raw is None``) evaluates IN_SCOPE instead of
+    UNKNOWN. Off by default -- most predicates should still treat "not
+    maintained" as "not known", per ScopeDecision's own three-state design;
+    this exists because the OAR rule specifically was confirmed the other
+    way (see oar.py's module docstring)."""
 
     @model_validator(mode="after")
     def _values_match_operator(self) -> "ScopePredicate":
@@ -105,7 +126,9 @@ class ScopePredicate(BaseModel):
     def evaluate(self, attributes: MaterialAttributes) -> ScopeDecision:
         """Apply this predicate to one material-plant."""
         raw = getattr(attributes, self.field.value)
-        if raw is None or raw in self.unknown_values:
+        if raw is None:
+            return ScopeDecision.IN_SCOPE if self.blank_means_in_scope else ScopeDecision.UNKNOWN
+        if raw in self.unknown_values:
             return ScopeDecision.UNKNOWN
 
         matched = self._matches(raw)
@@ -170,9 +193,15 @@ class OarPolicy(BaseModel):
 
 
 def current_oar_policy() -> OarPolicy:
-    """The rule in force: ``MRP_TYPE in {ND, PD}``.
+    """The rule in force: ``MRP_TYPE in {ND, PD}``, blank also counts as OAR.
 
-    Ships unconfirmed with no roll-up. Changing the rule means editing this
+    ``blank_means_in_scope=True`` is what actually implements the blank
+    exception: the staging adapter's ``clean()`` collapses an empty DISMM
+    cell to Python ``None`` (see ``ScopePredicate.unknown_values``'s
+    docstring), so a real blank material-plant reaches this predicate as
+    ``raw is None`` -- ``values=("ND", "PD")`` alone would never see it.
+
+    Ships unconfirmed on roll-up only. Changing the rule means editing this
     function or supplying a different policy -- no business logic elsewhere
     names an MRP type.
     """
@@ -182,13 +211,16 @@ def current_oar_policy() -> OarPolicy:
                 field=PredicateField.MRP_TYPE,
                 operator=PredicateOperator.IN,
                 values=("ND", "PD"),
+                blank_means_in_scope=True,
             ),
         ),
         rollup=None,
         confirmed=False,
         notes=(
-            "MRP-type value set and roll-up policy both pending team-lead "
+            "MRP-type value set: ND, PD and blank all count as OAR "
+            "(business-confirmed). Roll-up policy still pending team-lead "
             "confirmation. Live scan: ND+PD = 46.4% of catalogue, 47% of rows "
-            "have no DISMM, six undocumented MRP codes (V1, M0, RP, VI, VH, V2)."
+            "have no DISMM (now also IN_SCOPE), six undocumented MRP codes "
+            "(V1, M0, RP, VI, VH, V2, still OUT_OF_SCOPE)."
         ),
     )

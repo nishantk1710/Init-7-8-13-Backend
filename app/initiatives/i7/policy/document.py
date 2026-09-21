@@ -35,6 +35,7 @@ from app.initiatives.i7.policy.thresholds import (
     LeadTimePolicy,
     ModelAdoptionPolicy,
     SimilarityPolicy,
+    current_conversion_trigger_policy,
 )
 from app.initiatives.i7.policy.unresolved import MaxStockStrategy, ServiceLevelPolicy
 
@@ -59,7 +60,7 @@ class PolicyDocument(BaseModel):
     similarity: SimilarityPolicy = Field(default_factory=SimilarityPolicy)
     confidence: ConfidencePolicy = Field(default_factory=ConfidencePolicy)
     lead_time: LeadTimePolicy = Field(default_factory=LeadTimePolicy)
-    conversion_triggers: ConversionTriggerPolicy = Field(default_factory=ConversionTriggerPolicy)
+    conversion_triggers: ConversionTriggerPolicy = Field(default_factory=current_conversion_trigger_policy)
     adoption: AdoptionPolicy = Field(default_factory=AdoptionPolicy)
     approval_routing: ApprovalRoutingPolicy = Field(default_factory=ApprovalRoutingPolicy)
 
