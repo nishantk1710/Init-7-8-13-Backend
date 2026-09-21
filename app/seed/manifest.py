@@ -1,9 +1,18 @@
 """Which extract workbook lands in which table.
 
+SECONDARY ROUTE. Live SAP through CPI is now the primary source -- see
+``app.ingest``, which pulls all 21 entity sets into ``odata_*`` tables. This
+loader covers only what OData does not expose: EXTWG and the other ~237 MARA
+columns, ZZCRITIC, and the ZMM065 and GR reports, which have no entity set at
+all. Everything a CPI pull can reach should come from there instead, because it
+carries all 13 plants where these files carry two.
+
 This mapping cannot be derived. The July delivery names files four different
 ways -- ``Mara.XLSX``, ``MARC Extract.XLSX``, ``EXPORT_EKPO.XLSX``,
 ``Mseg_1.XLSX`` -- and four tables arrive split across two files because SAP's
 export hit Excel's 1,048,576-row ceiling. So it is written down, once, here.
+(``app.ingest`` derives its manifest instead: entity set to table name is
+mechanical, so writing it down there would only let a new set go unnoticed.)
 
 Every table lands in the RAW layer, named ``raw_<table>``:
 

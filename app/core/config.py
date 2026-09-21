@@ -81,6 +81,16 @@ class Settings(BaseSettings):
     # Empty by default so the app starts with no storage configured.
     storage_url: str = ""
 
+    # Where `python -m app.ingest` lands what it pulls from CPI, as a key
+    # prefix inside STORAGE_URL. A setting rather than a constant so one
+    # environment's landing area can be moved, or a trial run pointed at a
+    # scratch prefix, without a code change.
+    #
+    # Writing requires 'Storage Blob Data Contributor' on the identity. Reader
+    # is enough for every other path in this app, so the fetch stage is the
+    # first thing here that needs the stronger grant.
+    ingest_prefix: str = "odata"
+
     # Optional. The Data Lake adapter authenticates with DefaultAzureCredential
     # by default -- the App Service's managed identity when deployed, the
     # developer's `az login` session locally -- so no secret is stored anywhere.

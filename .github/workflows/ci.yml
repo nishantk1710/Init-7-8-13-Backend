@@ -5,9 +5,17 @@
 # workflows are ever folded back into a single repo, every path below and the
 # `working-directory` need revisiting.
 #
-# What this protects: 287 of 289 tests. The 2 that skip need the ~800 MB SAP
-# extract delivery, which will never live in CI. That is by design, not a gap --
-# see the "storage" note on the test step.
+# What this protects: everything that does not need Azure. That includes the
+# storage conformance suite against its fake, the SAP client against injected
+# transports, and the CPI ingestion package against a stubbed client and an
+# in-memory store -- so `app.ingest`'s delta rules, key batching and duplicate
+# accounting are all covered here without a single request leaving the runner.
+#
+# What skips, by design rather than by omission: the handful of tests needing
+# the ~800 MB SAP extract delivery (STORAGE_URL is deliberately empty below).
+# `-rs` on the test step lists them with their reason, so a skip stays a
+# visible choice instead of a silent hole. A deliberate count is not recorded
+# here -- it goes stale on the next PR and nobody notices which way.
 
 name: CI
 
