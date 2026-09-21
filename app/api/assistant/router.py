@@ -42,6 +42,8 @@ from sqlalchemy.orm import Session as DbSession
 from app.api.assistant.schemas import (
     AnswerRequest,
     AnswerResponse,
+    AskRequest,
+    AskResponse,
     ChoiceModel,
     FieldModel,
     JustificationListResponse,
@@ -59,6 +61,7 @@ from app.api.assistant.schemas import (
     TurnModel,
 )
 from app.api.i13.deps import Actor, get_current_actor
+from app.assistant import intents
 from app.assistant import session as session_service
 from app.assistant import turns as turn_service
 from app.assistant.models import (
@@ -551,3 +554,49 @@ def list_justifications(
             "supplies its own."
         ),
     )
+
+
+# --- The free-text box (section 4.6) --------------------------------------
+#
+# A small, explicit set of intents over deterministic read models. No model is
+# involved in this path. General question-answering over the whole dataset is a
+# SEPARATE scope item that has not been agreed, and every refusal here says so
+# rather than letting the boundary blur.
+
+
+@router.post(
+    "/ask",
+    response_model=AskResponse,
+    summary="Ask one of a fixed set of business questions",
+)
+def ask(body: AskRequest, db: DbDep) -> AskResponse:
+    """Answer from the platform's own read models, or say plainly that it cannot.
+
+    Never a 4xx for an unrecognised question: "I do not know" is a valid answer
+    and the commonest one, and a 422 would make the frontend render a failure
+    where the honest response is a sentence.
+    """
+    result = intents.answer(db, body.question)
+    return AskResponse(
+        intent=result.intent.value,
+        answered=result.answered,
+        text=result.text,
+        sources=list(result.sources),
+        data=result.data,
+        suggestions=list(result.suggestions),
+        note=result.note,
+    )
+
+
+@router.get(
+    "/ask/suggestions",
+    response_model=list[str],
+    summary="The questions the free-text box can actually answer",
+)
+def ask_suggestions() -> list[str]:
+    """What to put in the suggestion chips above the input.
+
+    Served rather than hard-coded in the frontend so the chips cannot offer a
+    question the backend has stopped answering.
+    """
+    return list(intents.ANSWERABLE)

@@ -273,3 +273,31 @@ class JustificationListResponse(AssistantModel):
     total: int
     reason_categories: list[str]
     note: str
+
+
+# --- the free-text box (section 4.6) ---------------------------------------
+
+
+class AskRequest(AssistantModel):
+    question: str
+
+
+class AskResponse(AssistantModel):
+    """A deterministic answer, or a plain statement that there is none.
+
+    ``answered`` is false for a question this assistant does not cover, and
+    ``text`` then says so and lists what it does. A free-text box that silently
+    does nothing teaches people it is broken; one that guesses teaches them it
+    is unreliable.
+
+    ``sources`` names the endpoints every number came from. Nothing here is
+    generated -- no model is involved in this path at all.
+    """
+
+    intent: str
+    answered: bool
+    text: str
+    sources: list[str] = []
+    data: dict[str, Any] = {}
+    suggestions: list[str] = []
+    note: str

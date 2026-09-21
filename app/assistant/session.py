@@ -50,7 +50,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.assistant import ids
+from app.assistant import narrative as narrative_module
 from app.assistant.models import AssistantSession, AssistantTurn
+from app.assistant.narrative import write as write_narrative
 from app.assistant.router import Flow, RoutedFlow, route
 from app.assistant.script import next_step
 from app.assistant.steps import Step
@@ -207,6 +209,25 @@ def suggestion_for(assessment, planned_quantity: Decimal) -> QuantitySuggestion:
     return suggest(assessment.metric, planned_quantity, build_quantity_config())
 
 
+def _readable_facts(record: dict) -> str:
+    """The assessment as flat ``name: value`` lines, for the prompt.
+
+    Plain lines rather than JSON. The model is being asked to write one English
+    sentence around numbers that are already decided, and handing it a nested
+    document invites it to explore the structure instead -- which is how a
+    narrative ends up quoting a field nobody meant to publish. Lists and nested
+    objects are dropped for the same reason: the headline already carries
+    whatever they contributed.
+    """
+    return "\n".join(
+        f"{key}: {value}"
+        for key, value in sorted(record.items())
+        if value is not None
+        and not isinstance(value, (list, dict))
+        and key not in ("headline",)
+    )
+
+
 def start(
     db: DbSession,
     *,
@@ -248,6 +269,26 @@ def start(
         i13_config=i13_config,
     )
 
+    record = assessment.as_record(today)
+    headline = record["headline"]
+
+    # Optional, off by default, and it cannot fail the turn: the advice is
+    # already complete by this point, and a provider outage must not cost the
+    # requester their answer. See app/assistant/narrative.py for the deviation
+    # this implements and why it needs sign-off.
+    narrative = write_narrative(
+        prompt_id=(
+            narrative_module.I08_PROMPT
+            if routed.flow is Flow.I08
+            else narrative_module.I13_PROMPT
+        ),
+        headline=headline,
+        facts=_readable_facts(record),
+        settings=settings,
+    )
+    if not narrative.served and narrative.reason:
+        logger.debug("No narrative for this session: %s", narrative.reason)
+
     issued_at = datetime.now(timezone.utc)
     session = AssistantSession(
         id=ids.mint(settings),
@@ -264,7 +305,11 @@ def start(
         expires_at=issued_at + timedelta(hours=settings.assistant_session_ttl_hours),
         # The advice AS SERVED. Recomputing this later would answer a different
         # question -- the register and the stock both move.
-        assessment=json.dumps(assessment.as_record(today), sort_keys=True),
+        assessment=json.dumps(record, sort_keys=True),
+        narrative=narrative.text,
+        narrative_prompt_id=narrative.prompt_id,
+        narrative_prompt_version=narrative.prompt_version,
+        narrative_model=narrative.model,
     )
     db.add(session)
     db.commit()
