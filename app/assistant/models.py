@@ -372,9 +372,17 @@ class ConsumptionPlanRecord(Base):
     ``i13_cost_centre_attribution_enabled`` is off by default."""
 
     status: Mapped[str] = mapped_column(String(16), index=True)
-    """``ACTIVE``. The CSV's vocabulary, kept so the reader projects one shape.
+    """``OPEN`` or ``CLOSED`` -- **the reference CSV's vocabulary, not one of
+    our own.**
 
-    Append-only means a plan is never edited to ``CANCELLED`` in place; a
+    This is not cosmetic. ACT detection tests ``plan.status != "OPEN"`` before
+    it will treat a plan as a live commitment, so a captured plan written with
+    any other word parses as one that has been withdrawn: the requester told us
+    their plan and the engine records ``SESSION_WITHOUT_PLAN`` anyway. The first
+    version of this column said ``ACTIVE`` and did exactly that, which the
+    step-8 end-to-end test caught.
+
+    Append-only means a plan is never edited to ``CLOSED`` in place; a
     superseding row would record that, the same way an attestation amendment
     does. Nothing captures that yet and nothing pretends to."""
 

@@ -58,7 +58,7 @@ def _attribute(
     reservation_rows = reservation_repo.get_reservations(
         reservation_number=reservation_number, pr_number=pr_number, material=material, plant=plant
     )
-    plans = load_consumption_plans(data_dir)
+    plans = load_consumption_plans(data_dir, db)
 
     service = ConsumptionAttributionService(cost_centre_enabled=config.attribution.cost_centre_enabled)
     return service.attribute_entries(entries, reservation_rows, plans)

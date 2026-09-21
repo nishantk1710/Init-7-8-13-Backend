@@ -166,6 +166,7 @@ def _assessment_for(
         material=routed.material_id,
         plant=routed.plant,
         as_of=today,
+        db=db,
     )
     metric = next(
         (

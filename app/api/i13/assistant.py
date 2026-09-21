@@ -176,7 +176,13 @@ def post_consumption_plan(
         window_end=body.window_end,
         cost_centre=(body.cost_centre or "").strip() or None,
         order_number=(body.order_number or "").strip() or None,
-        status="ACTIVE",
+        # "OPEN", not a vocabulary of our own. Detection tests
+        # `plan.status != "OPEN"` before it will treat a plan as a live
+        # commitment, and the reference CSV uses OPEN/CLOSED. A captured
+        # plan written as "ACTIVE" parsed as a plan that had been
+        # withdrawn -- found by the step-8 end-to-end test, which is
+        # exactly the class of mistake it exists to catch.
+        status="OPEN",
         captured_by=actor.id,
     )
     db.add(plan)
@@ -291,6 +297,7 @@ def get_quantity_suggestion(
         data_dir,
         material=material_key,
         plant=plant_key,
+        db=db,
     )
     metric = next(
         (m for m in metrics if m.material == material_key and m.plant == plant_key),

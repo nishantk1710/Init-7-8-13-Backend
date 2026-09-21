@@ -35,6 +35,7 @@ def list_watch_metrics(
     metrics = compute_watch_metrics(
         movement_repo, procurement_repo, reservation_repo, material_scope_index, config, data_dir,
         material=material, plant=plant,
+        db=db,
     )
     if aging_band:
         metrics = [metric for metric in metrics if metric.aging_band.value == aging_band.upper()]

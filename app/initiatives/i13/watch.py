@@ -28,6 +28,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.models import AcquiredVsPlanStatus, AgingBand, ReservationLedgerEntry, WatchMetric
 from app.initiatives.i13.movement_metrics import compute_all_movement_metrics
@@ -134,6 +136,7 @@ def compute_watch_metrics(
     material: str | None = None,
     plant: str | None = None,
     as_of: date | None = None,
+    db: Session | None = None,
 ) -> list[WatchMetric]:
     as_of = as_of or date.today()
     calculated_at = datetime.now(timezone.utc)
@@ -161,7 +164,12 @@ def compute_watch_metrics(
     )
     ledger_by_key = _group_ledger_by_material_plant(ledger_entries)
 
-    plans = load_consumption_plans(data_dir)
+    # `db` is optional and defaults to None, so a caller with no database --
+    # every unit test here uses fake repositories -- gets the reference CSV
+    # and nothing else, exactly as before. A caller that HAS a session passes
+    # it and acquired-vs-plan starts measuring against plans real requesters
+    # captured, not only the 742 the generator wrote.
+    plans = load_consumption_plans(data_dir, db)
     plans_by_key: dict[tuple[str, str], list] = defaultdict(list)
     for plan in plans:
         plans_by_key[(plan.material, plan.plant)].append(plan)

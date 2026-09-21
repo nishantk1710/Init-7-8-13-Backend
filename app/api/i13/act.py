@@ -212,7 +212,11 @@ def run_detect_exceptions(
         plant=payload.plant,
         include_out_of_scope=True,
     )
-    plans = load_consumption_plans(data_dir)
+    # `db` passed so detection sees plans CAPTURED through the assistant, not
+    # only the 742 fabricated rows in the CSV. This is the join the whole of
+    # WS7 exists to make: the first real plan is the first time detection has
+    # ever seen data it did not author.
+    plans = load_consumption_plans(data_dir, db)
     if payload.material:
         plans = [plan for plan in plans if plan.material == payload.material]
     if payload.plant:

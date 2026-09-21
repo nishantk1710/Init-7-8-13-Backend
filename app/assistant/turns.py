@@ -211,7 +211,13 @@ def _record_plan(
         window_end=_date(answer.get("window_end"), "window_end"),
         cost_centre=answer.get("cost_centre"),
         order_number=answer.get("order_number"),
-        status="ACTIVE",
+        # "OPEN", not a vocabulary of our own. Detection tests
+        # `plan.status != "OPEN"` before it will treat a plan as a live
+        # commitment, and the reference CSV uses OPEN/CLOSED. A captured
+        # plan written as "ACTIVE" parsed as a plan that had been
+        # withdrawn -- found by the step-8 end-to-end test, which is
+        # exactly the class of mistake it exists to catch.
+        status="OPEN",
         captured_by=actor,
     )
     db.add(plan)
