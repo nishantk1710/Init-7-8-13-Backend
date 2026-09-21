@@ -221,3 +221,45 @@ PAGING_PROOF_UNORDERED_DISTINCT = 1618
 # Sets whose $count answered HTTP 500 at some sweep. The client demotes to
 # short-page paging for these rather than failing.
 COUNT_UNRELIABLE_SETS = frozenset({"PurchaseRequisitionSet", "GoodsMovementItemSet"})
+
+# Sets whose $count answers successfully and WRONGLY. A cap, not an error.
+#
+# Measured 2026-09-21 on ReservationItemSet:
+#
+#     /$count                : 1000
+#     $inlinecount=allpages  : 7088
+#     page-until-short-page  : 7088 rows, 7088 distinct (Rsnum, Rspos)
+#
+# This is more dangerous than the 500s above, which announce themselves. A
+# plausible wrong total is believed: paging stops once it has read as many rows
+# as the total claims, so a caller asks for every reservation and is handed 1000
+# of 7088 with no indication that 86% is missing. Every reservation-dependent
+# figure -- I13 STITCH, I08 session traceability -- would be computed on a
+# seventh of the data and look complete.
+#
+# Listed here rather than fixed in paging: the defect is that this service's
+# $count cannot be trusted, which is a fact about SAP, and this module is where
+# facts about SAP live. The client turns it into behaviour by declining to ask.
+COUNT_CAPPED_SETS = frozenset({"ReservationItemSet"})
+
+# Entity sets whose DECLARED key does not uniquely address a row.
+#
+# CDPOS declares (Objectclas, Objectid, Changenr) but one change document
+# touches many fields, so those three repeat. Measured 2026-09-21 over a
+# 500-row MATERIAL/MARC sample: 478 distinct on the declared key, 500 on the
+# composite -- 22 rows (4%) unaddressable.
+#
+# This matters beyond tidiness. Duplicate-key counting is how every pull proves
+# it did not lose rows; run against a key that is not unique it reports
+# duplicates that are not there, and a correct extract is refused as corrupt.
+NON_UNIQUE_DECLARED_KEYS = {
+    "ChangeDocItemSet": (
+        "Objectclas",
+        "Objectid",
+        "Changenr",
+        "Tabname",
+        "Tabkey",
+        "Fname",
+        "Chngind",
+    ),
+}

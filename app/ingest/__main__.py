@@ -27,7 +27,7 @@ from app.ingest.fetch import (
     fetch_set,
     read_manifest,
 )
-from app.ingest.load import STATUS_FAILED, load_set, latest_prefix
+from app.ingest.load import STATUS_FAILED, latest_prefixes, load_set
 from app.ingest.manifest import (
     IngestSpec,
     check_delta_filters,
@@ -110,20 +110,28 @@ def _list() -> int:
         storage = None
         print(f"STORAGE_URL is not set, so landed files cannot be checked.\n  {exc}\n")
 
+    # One listing for all 21, rather than a round trip per set.
+    found: dict[str, str] = {}
+    listing_error: str | None = None
+    if storage is not None:
+        try:
+            found = latest_prefixes(storage, root=root)
+        except Exception as exc:  # a listing problem must not stop the listing
+            listing_error = f"{type(exc).__name__}: {exc}"
+
     print(f"{'ENTITY SET':<30} {'TABLE':<28} {'DELTA':<30} LANDED")
     for spec in specs():
-        landed = "-"
-        if storage is not None:
+        landed = "-" if listing_error is None else "?"
+        prefix = found.get(spec.name)
+        if prefix:
             try:
-                prefix = latest_prefix(storage, spec, root=root)
-                if prefix:
-                    manifest = read_manifest(storage, prefix)
-                    mark = "" if manifest.get("usable") else "  [UNUSABLE]"
-                    landed = (
-                        f"{manifest.get('run_date')} "
-                        f"{manifest.get('rows')} rows{mark}"
-                    )
-            except Exception as exc:  # a listing problem must not stop the listing
+                manifest = read_manifest(storage, prefix)
+                mark = "" if manifest.get("usable") else "  [UNUSABLE]"
+                landed = (
+                    f"{manifest.get('run_date')} "
+                    f"{manifest.get('rows')} rows{mark}"
+                )
+            except Exception as exc:
                 landed = f"? ({type(exc).__name__})"
 
         delta = spec.delta
@@ -136,6 +144,9 @@ def _list() -> int:
 
         note = "" if spec.expects_rows else "  (empty in this client)"
         print(f"{spec.name:<30} {spec.raw_table:<28} {how:<30} {landed}{note}")
+
+    if listing_error:
+        print(f"\nCould not read the landing area: {listing_error}")
 
     problems = check_delta_filters()
     print(f"\n{len(specs())} entity sets. Landing area: {root}/ inside STORAGE_URL.")

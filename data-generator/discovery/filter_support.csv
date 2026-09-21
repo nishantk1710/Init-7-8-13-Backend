@@ -26,7 +26,7 @@ ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Flief,Edm.String,1568,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Ebeln,Edm.String,1568,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Ebelp,Edm.String,1568,,REJECTED_HTTP_500
 ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Bsmng,Edm.String,1568,,REJECTED_HTTP_500
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Ebakz,Edm.Boolean,,,NOT_TESTED
+ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Ebakz,Edm.Boolean,1568,,NOT_TESTED
 ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Rsnum,Edm.String,1568,,REJECTED_HTTP_500
 ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Mblnr,Edm.String,68618,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Mjahr,Edm.String,68618,0,HONOURED
@@ -56,12 +56,12 @@ ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,CpudtMkpf,Edm.DateTime,68618,,REJECTE
 ZVZI_KPI02_SHARED_SRV,InfoRecordSet,Infnr,Edm.String,553,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,InfoRecordSet,Matnr,Edm.String,553,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,InfoRecordSet,Lifnr,Edm.String,553,0,HONOURED
-ZVZI_KPI02_SHARED_SRV,InfoRecordSet,Loekz,Edm.Boolean,,,NOT_TESTED
+ZVZI_KPI02_SHARED_SRV,InfoRecordSet,Loekz,Edm.Boolean,553,,NOT_TESTED
 ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Infnr,Edm.String,588,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Ekorg,Edm.String,588,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Esokz,Edm.String,588,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Werks,Edm.String,588,0,HONOURED
-ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Loekz,Edm.Boolean,,,NOT_TESTED
+ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Loekz,Edm.Boolean,588,,NOT_TESTED
 ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Waers,Edm.String,588,,REJECTED_HTTP_500
 ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Aplfz,Edm.String,588,,REJECTED_HTTP_500
 ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Netpr,Edm.String,588,,REJECTED_HTTP_500
@@ -87,7 +87,7 @@ ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Meins,Edm.String,11097,,REJECTED_HTTP
 ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Netpr,Edm.String,11097,,REJECTED_HTTP_500
 ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Peinh,Edm.String,11097,,REJECTED_HTTP_500
 ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Netwr,Edm.String,11097,,REJECTED_HTTP_500
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Elikz,Edm.Boolean,,,NOT_TESTED
+ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Elikz,Edm.Boolean,11097,,NOT_TESTED
 ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Pstyp,Edm.String,11097,,REJECTED_HTTP_500
 ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Knttp,Edm.String,11097,,REJECTED_HTTP_500
 ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Plifz,Edm.String,11097,,REJECTED_HTTP_500
@@ -96,12 +96,12 @@ ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Bnfpo,Edm.String,11097,,REJECTED_HTTP
 ZVZI_KPI02_SHARED_SRV,VendorSet,Lifnr,Edm.String,227,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,VendorSet,Name1,Edm.String,227,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,VendorSet,Ktokk,Edm.String,227,0,HONOURED
-ZVZI_KPI02_SHARED_SRV,VendorSet,Loevm,Edm.Boolean,,,NOT_TESTED
+ZVZI_KPI02_SHARED_SRV,VendorSet,Loevm,Edm.Boolean,227,,NOT_TESTED
 ZVZI_KPI02_SHARED_SRV,MaterialDescriptionSet,Matnr,Edm.String,2042,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,MaterialDescriptionSet,Spras,Edm.String,2042,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,MaterialDescriptionSet,Maktx,Edm.String,2042,,REJECTED_HTTP_500
 ZVZI_KPI02_SHARED_SRV,MaterialSet,Matnr,Edm.String,2040,0,HONOURED
-ZVZI_KPI02_SHARED_SRV,MaterialSet,Lvorm,Edm.Boolean,,,NOT_TESTED
+ZVZI_KPI02_SHARED_SRV,MaterialSet,Lvorm,Edm.Boolean,2040,,NOT_TESTED
 ZVZI_KPI02_SHARED_SRV,MaterialSet,Mtart,Edm.String,2040,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,MaterialSet,Matkl,Edm.String,2040,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,MaterialSet,Bismt,Edm.String,2040,,REJECTED_HTTP_500
@@ -109,7 +109,7 @@ ZVZI_KPI02_SHARED_SRV,MaterialSet,Meins,Edm.String,2040,,REJECTED_HTTP_500
 ZVZI_KPI02_SHARED_SRV,MaterialSet,Mstae,Edm.String,2040,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Matnr,Edm.String,2183,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Werks,Edm.String,2183,0,HONOURED
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Lvorm,Edm.Boolean,,,NOT_TESTED
+ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Lvorm,Edm.Boolean,2183,,NOT_TESTED
 ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Dismm,Edm.String,2183,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Dispo,Edm.String,2183,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Plifz,Edm.String,2183,,REJECTED_HTTP_500
@@ -155,8 +155,8 @@ ZVZI_KPI02_SHARED_SRV,POHistorySet,Matnr,Edm.String,3881,0,HONOURED
 ZVZI_KPI02_SHARED_SRV,POHistorySet,Werks,Edm.String,3881,0,HONOURED
 ZMM_KPI02_SRV,ReservationItemSet,Rsnum,Edm.String,1000,0,HONOURED
 ZMM_KPI02_SRV,ReservationItemSet,Rspos,Edm.String,1000,0,HONOURED
-ZMM_KPI02_SRV,ReservationItemSet,Xloek,Edm.Boolean,,,NOT_TESTED
-ZMM_KPI02_SRV,ReservationItemSet,Kzear,Edm.Boolean,,,NOT_TESTED
+ZMM_KPI02_SRV,ReservationItemSet,Xloek,Edm.Boolean,1000,,NOT_TESTED
+ZMM_KPI02_SRV,ReservationItemSet,Kzear,Edm.Boolean,1000,,NOT_TESTED
 ZMM_KPI02_SRV,ReservationItemSet,Matnr,Edm.String,1000,0,HONOURED
 ZMM_KPI02_SRV,ReservationItemSet,Werks,Edm.String,1000,0,HONOURED
 ZMM_KPI02_SRV,ReservationItemSet,Lgort,Edm.String,1000,0,HONOURED
@@ -166,7 +166,7 @@ ZMM_KPI02_SRV,ReservationItemSet,Meins,Edm.String,1000,,REJECTED_HTTP_500
 ZMM_KPI02_SRV,ReservationItemSet,Enmng,Edm.Decimal,1000,0,HONOURED
 ZMM_KPI02_SRV,ReservationItemSet,Enwrt,Edm.Decimal,1000,0,HONOURED
 ZMM_KPI02_SRV,ReservationItemSet,Banfn,Edm.String,1000,0,HONOURED
-ZMM_KPI02_SRV,ReservationItemSet,Bnfpo,Edm.String,1000,1000,IGNORED
+ZMM_KPI02_SRV,ReservationItemSet,Bnfpo,Edm.String,1000,7031,PARTIAL_OR_ODD
 ZMM_KPI02_SRV,ReservationItemSet,Aufnr,Edm.String,1000,0,HONOURED
 ZMM_KPI02_SRV,ReservationItemSet,Bwart,Edm.String,1000,0,HONOURED
 ZMM_KPI02_SRV,ReservationItemSet,Umwrk,Edm.String,1000,0,HONOURED
