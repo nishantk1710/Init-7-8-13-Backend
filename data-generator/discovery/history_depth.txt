@@ -1,4 +1,4 @@
-Movement history depth, 2026-09-21T16:31:10Z
+Movement history depth, 2026-09-22T05:27:03Z
 
 I13 s7.2: the SOP bands need 731 days to separate Slow (366-730) from Non-moving (over 730).
 The delivered extract spans 08-Aug-2025 to 20-Aug-2026, about 409 days, so 40,868 of 44,394 OAR
