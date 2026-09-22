@@ -180,9 +180,53 @@ class ExecutiveSummary(BaseModel):
     total_recommendations: int
     ready_for_review_count: int
     pending_approval_count: int
+    pending_approval_percentage: Decimal | None
+    """``pending_approval_count / total_recommendations * 100``. ``None``
+    only if ``total_recommendations`` is 0 -- never a fabricated 0%."""
+
     not_evaluable_count: int
     oar_count: int
     approval_ledger_entries: int
+
+
+# --------------------------------------------------------------------------
+# 2b. Management Summary -- mockup KPIs with no defined business rule today
+# --------------------------------------------------------------------------
+
+
+class UndefinedManagementMetric(BaseModel):
+    """One management-facing KPI a business stakeholder has asked for (a
+    stockout-risk severity tier, an excess-inventory rule, a working-capital
+    currency figure, a monthly risk trend) that has no defined business rule
+    or computation anywhere in I07 today -- confirmed by a full source-tree
+    audit, not merely unimplemented. Each such KPI is reported explicitly as
+    ``NOT_CONFIGURED`` with a factual reason, rather than silently omitted or
+    approximated by a proxy metric (e.g. demand-pattern classification is a
+    genuinely different concept from stockout-risk severity and must never
+    stand in for it)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    status: AvailabilityStatus = AvailabilityStatus.NOT_CONFIGURED
+    reason: str
+
+
+class ManagementSummary(BaseModel):
+    """The mockup's KPI-row/distribution concepts that are not yet backed by
+    any I07 business rule. Every field here is ``UndefinedManagementMetric``
+    -- there is no numeric value anywhere in this section, by design, until
+    the business defines the underlying rule (stockout-risk severity tiers,
+    an excess-inventory threshold, a working-capital cost-of-capital/holding
+    formula with a resolved currency, or a monthly historical snapshot
+    mechanism)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    critical_stockout_risk: UndefinedManagementMetric
+    excess_inventory_candidates: UndefinedManagementMetric
+    working_capital_impact: UndefinedManagementMetric
+    stockout_risk_distribution: UndefinedManagementMetric
+    stockout_risk_trend: UndefinedManagementMetric
 
 
 # --------------------------------------------------------------------------
@@ -331,6 +375,23 @@ class ReorderPointSection(BaseModel):
     """``recommended - current``, averaged over ``both_available_count`` rows
     only. ``None`` when that count is 0."""
 
+    current_sap_value_reused_note: str = (
+        "For SMOOTH/ERRATIC-demand materials, I07's inventory service reuses "
+        "the current MARC reorder point as-is rather than calculating a new "
+        "one (a confirmed 2026-09-22 product decision -- see "
+        "app/initiatives/i7/inventory/service.py's _apply_current_sap_baseline). "
+        "For that subset, 'Recommended' equals 'Current' by construction, so a "
+        "small Mean Delta above reflects agreement I07 built in, not "
+        "independent validation of the SAP value. This report's own "
+        "i7_recommendation rows do not carry which subset that was for, so "
+        "the affected count cannot be broken out here without a second query "
+        "against i7_inventory_calculation -- out of scope for this section."
+    )
+    """Disclosure, not a computed metric: see the field's own text. Present so
+    a reader of Mean Delta above is not misled into treating it as
+    independent evidence I07's ROP recommendation was checked against SAP,
+    when for part of the row set it is definitionally identical to SAP."""
+
 
 # --------------------------------------------------------------------------
 # 8. Max Stock
@@ -364,6 +425,16 @@ class MaxStockSection(BaseModel):
     """Always ``NOT_CONFIGURED`` in production today -- ``MAX_STOCK_STRATEGY``
     is an explicitly unresolved business-policy decision."""
 
+    current_sap_value_reused_note: str = (
+        "For SMOOTH/ERRATIC-demand materials, I07's inventory service reuses "
+        "the current MARC maximum stock as-is rather than calculating a new "
+        "one (the same 2026-09-22 product decision as Reorder Point's -- see "
+        "app/initiatives/i7/inventory/service.py's _apply_current_sap_baseline). "
+        "'Recommended' equals 'Current' by construction for that subset."
+    )
+    """Same disclosure as ``ReorderPointSection.current_sap_value_reused_note``,
+    for the same reason -- Max Stock goes through the identical reuse path."""
+
 
 # --------------------------------------------------------------------------
 # 9. OAR / Min-Max
@@ -387,6 +458,47 @@ class OarSection(BaseModel):
     is_oar_false_count: int
     is_oar_null_count: int
     conversion_eligibility_breakdown: list[ConversionEligibilityCount]
+
+
+# --------------------------------------------------------------------------
+# 9b. Material Criticality
+# --------------------------------------------------------------------------
+
+
+class CriticalityTierCount(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    criticality: str | None
+    """The exact ZMM065 tier value, verbatim (``CRITICAL``/``IMPACT``/
+    ``INSURANCE``/``NORMAL``/``OBSOLETE``) -- never collapsed into an invented
+    A/B/C or Critical/Important/Standard 3-bucket grouping, since no such
+    grouping is defined anywhere in policy or code (see
+    ``app/core/criticality.py``'s own docstring: the five tiers are nominal,
+    not an ordinal ranking that folds cleanly into three buckets).
+    ``None`` groups rows where ``criticality`` itself is NULL -- the large
+    majority on this extract, see ``populated_percentage`` below."""
+
+    count: int
+
+
+class MaterialCriticalitySection(BaseModel):
+    """Real distribution of ``i7_recommendation.criticality`` for rows
+    generated in this quarter -- the same column, and the same quarter scope,
+    every other section in this report uses. Not sourced from the portfolio-
+    wide (all-time) ``/recommendations/summary`` endpoint's ``by_criticality``,
+    which would misrepresent a Q3 report with an all-time distribution."""
+
+    model_config = ConfigDict(frozen=True)
+
+    total: int
+    by_tier: list[CriticalityTierCount]
+    populated_count: int
+    populated_percentage: Decimal | None
+    """Coverage caveat: criticality is staged from MARA (joined to MARC),
+    reaching a documented ~1.7% of material-plants overall (see
+    ``docs/i07_staging.md``) -- this percentage is surfaced alongside the
+    distribution so a reader never mistakes a sparse sample for the full
+    catalogue's criticality mix."""
 
 
 # --------------------------------------------------------------------------
@@ -499,6 +611,16 @@ class BaselineComparisonRow(BaseModel):
     have ``current_safety_stock`` populated), which still appears as a full
     row in this table rather than being omitted."""
 
+    self_referential: bool = False
+    """``True`` only for the Lead Time row: the baseline and I07-recommendation
+    columns are the SAME persisted column (``Recommendation.lead_time_days``,
+    MARC-PLIFZ), because I07 has no separately-calculated lead time to compare
+    against (see ``app/initiatives/i7/inventory/lead_time.py``). A ``True``
+    row's ``delta``/``delta_percentage`` are non-informative by construction
+    -- they measure agreement with itself, not I07 validating against an
+    independent source -- and a reader must be told this explicitly rather
+    than reading a near-zero delta as evidence of anything."""
+
 
 class BaselineComparisonSection(BaseModel):
     """Section 12 of the report. Always exactly four rows, one per metric,
@@ -570,20 +692,22 @@ class QuarterlyReport(BaseModel):
     """The I07 Quarterly Deep-Dive Report -- the complete response of the
     report-generation API and the payload the quarterly CLI writes.
 
-    Composed of the fourteen sections above, each independently pure data --
-    no cross-section computation happens at this level; every aggregate
-    value was computed once, upstream, by the reporting service."""
+    Composed of the sections above, each independently pure data -- no
+    cross-section computation happens at this level; every aggregate value
+    was computed once, upstream, by the reporting service."""
 
     model_config = ConfigDict(frozen=True)
 
     metadata: ReportMetadata
     executive_summary: ExecutiveSummary
+    management_summary: ManagementSummary
     scope_and_data_quality: ScopeAndDataQuality
     demand_classification: DemandClassification
     forecasting: ForecastingSection
     safety_stock: SafetyStockSection
     reorder_point: ReorderPointSection
     max_stock: MaxStockSection
+    material_criticality: MaterialCriticalitySection
     oar: OarSection
     recommendations: RecommendationsSection
     approval: ApprovalSection

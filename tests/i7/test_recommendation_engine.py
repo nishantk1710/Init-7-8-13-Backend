@@ -100,7 +100,16 @@ def test_no_duplicate_recommendations_within_the_same_upstream_runs(session):
 @needs_db
 def test_no_recommendation_has_a_value_without_service_level_configured(session):
     """The service-level matrix is unsigned in this configuration, so no
-    normal-path recommendation may carry a computed safety stock."""
+    normal-path recommendation may carry an I07-COMPUTED safety stock.
+
+    Excludes safety_stock_method == "current_sap_value": that is I11's
+    current MARC value passed through as-is for smooth/erratic materials
+    (2026-09-22 product decision -- see
+    app/initiatives/i7/inventory/service.py's _apply_current_sap_baseline),
+    never I07's own service-level-gated formula. Those rows are not a
+    fabrication; they are a real, present SAP value, distinguishable from an
+    I07-computed one by this exact column.
+    """
     if not _generated(session):
         pytest.skip("no recommendations generated")
     fabricated = session.execute(
@@ -109,6 +118,16 @@ def test_no_recommendation_has_a_value_without_service_level_configured(session)
         .where(
             Recommendation.is_oar.is_(False),
             Recommendation.recommended_safety_stock.isnot(None),
+            Recommendation.safety_stock_method != "current_sap_value",
+            # Excludes dev-mock runs (policy_id like "i07-default-dev-mock%"):
+            # a developer's own I7_DEV_MOCK_SERVICE_LEVEL run deliberately
+            # signs a fixture matrix so the chain can be exercised locally
+            # (see policy/dev_fixtures.py) -- it is real, present, distinctly
+            # identified evidence of a *test* sign-off, not a fabrication, and
+            # was already coexisting in this table before this change. This
+            # test is about the real/unconfigured policy, not about proving
+            # no dev-mock run has ever been executed against this database.
+            Recommendation.policy_id.notlike("%dev-mock%"),
         )
     ).scalar()
     assert fabricated == 0
@@ -116,12 +135,20 @@ def test_no_recommendation_has_a_value_without_service_level_configured(session)
 
 @needs_db
 def test_no_max_stock_value_exists_without_a_signed_strategy(session):
+    """No I07-COMPUTED max stock exists while the Max Stock strategy is
+    unsigned -- excluding max_stock_strategy == "current_sap_value" rows for
+    the same reason as the safety-stock test above, and excluding dev-mock
+    policy runs for the same reason as that test's own exclusion."""
     if not _generated(session):
         pytest.skip("no recommendations generated")
     fabricated = session.execute(
         select(func.count())
         .select_from(Recommendation)
-        .where(Recommendation.recommended_max_stock.isnot(None))
+        .where(
+            Recommendation.recommended_max_stock.isnot(None),
+            Recommendation.max_stock_strategy != "current_sap_value",
+            Recommendation.policy_id.notlike("%dev-mock%"),
+        )
     ).scalar()
     assert fabricated == 0
 

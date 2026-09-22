@@ -89,6 +89,17 @@ class CalculationStatus(StrEnum):
     """No usable history, so parameters come from the Phase 6 similarity engine.
     Not a failure: it is the documented route for cold-start materials."""
 
+    SUCCESS_FROM_CURRENT_SAP_VALUE = "SUCCESS_FROM_CURRENT_SAP_VALUE"
+    """Smooth/erratic demand only. By explicit product decision, I11's SAP-
+    native planning baseline (the material-plant's current MARC value) is used
+    as-is for this field rather than I07's own SES/Auto-ARIMA-derived
+    calculation, because a current value already exists. Deliberately a
+    distinct status from SUCCESS: the value did not come from this module's
+    own formula, and every caller (trace, explanation, API) must be able to
+    tell the two apart rather than silently blending them. I07's own
+    calculation still runs underneath and is recorded in the trace for
+    benchmarking, but this status marks the SAP value as what was recommended."""
+
     CALCULATION_ERROR = "CALCULATION_ERROR"
     """An invariant was violated -- a negative quantity, a non-finite value.
     Surfaced rather than clamped, because clamping hides the cause."""

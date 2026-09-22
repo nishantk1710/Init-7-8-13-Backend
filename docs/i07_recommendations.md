@@ -78,10 +78,30 @@ path's mandatory inputs actually computed. A blocked calculation stays
 
 ## Normal path
 
-Material-plants Phase 3 classified as `SUFFICIENT`. `READY_FOR_REVIEW` only
-when Phase 5's `safety_stock_status` and `rop_status` are both `SUCCESS`.
-**Today: 0 of 471** — the service-level matrix is unsigned, so every normal
-recommendation is `NOT_EVALUABLE`.
+Material-plants Phase 3 classified as `SUFFICIENT`. `READY_FOR_REVIEW` when
+Phase 5's `safety_stock_status` and `rop_status` are each either `SUCCESS`
+(I07's own SES/Auto-ARIMA-derived calculation) or, since the 2026-09-22 I11
+baseline decision below, `SUCCESS_FROM_CURRENT_SAP_VALUE` (I11's current MARC
+value, for SMOOTH/ERRATIC materials that have one) — the two are equally
+reviewable, and `builder.py` treats them identically for gating purposes
+while keeping `safety_stock_method`/`max_stock_strategy` on the persisted row
+as the record of which one actually produced the value. Without either, a
+normal recommendation is `NOT_EVALUABLE`, which remains the outcome for every
+SMOOTH/ERRATIC material-plant with no current MARC value and an unsigned
+service-level matrix, and for every LUMPY/INTERMITTENT material-plant (this
+override never applies there).
+
+### I11 baseline override (2026-09-22)
+
+For SMOOTH/ERRATIC demand only, per field: I11's current SAP-configured
+safety-stock/ROP/max-stock value wins over I07's own calculation whenever one
+exists, deliberately extending the 2026-09-21 decision that had confined
+"I11 baseline" to the quarterly reporting comparison
+(`reporting/baseline_comparison.py`) into the actual recommendation
+calculation. Full formula-level detail, including why circuit/current-MARC
+was chosen over a literal I11 system read (none is staged anywhere), lives in
+`docs/i07_inventory_calculations.md`'s "I11 baseline override" section —
+this file only records the consequence for recommendation gating.
 
 ## OAR / cold-start path
 
@@ -288,15 +308,41 @@ criticality-tier set, the I13 HOD ledger, the obsolescence trigger, the
 lead-time ownership question. `Max Stock = 2 × ROP` does not exist anywhere
 in this package — checked by a dedicated test.
 
+**One exception, by deliberate 2026-09-22 product decision, not a resolution
+of the policy itself:** for SMOOTH/ERRATIC material-plants that have a
+current MARC safety-stock/ROP/max-stock value, that value is used as the
+recommendation regardless of whether the service-level matrix or Max Stock
+strategy is signed — see "I11 baseline override" above. The service-level
+matrix and Max Stock strategy remain exactly as unsigned as before; this
+does not sign either policy, it routes around the gate for the one case
+where I11's own SAP-native value already stands in for it, per the FRS's
+description of I11 as the baseline for "regular-pattern materials." A
+SMOOTH/ERRATIC material-plant with no current MARC value is still blocked by
+these same unsigned policies exactly as it always was.
+
 ## Current development-data results
 
-45,409 material-plants, all covered exactly once, **all `NOT_EVALUABLE`**:
+The counts below predate the 2026-09-22 I11 baseline override and describe
+the state before it: with no signed service-level matrix and no I11 baseline
+override, every normal-path and OAR-path recommendation was `NOT_EVALUABLE`.
 
 | Path | Status | Count | Why |
 | --- | --- | --- | --- |
 | Normal | NOT_EVALUABLE | 471 | service-level matrix unsigned |
 | OAR, similarity AVAILABLE | NOT_EVALUABLE | 741 | estimate blocked (`SERVICE_LEVEL_UNSET`) |
 | OAR, similarity NOT_AVAILABLE | NOT_EVALUABLE | 44,197 | `NO_ELIGIBLE_NEIGHBORS` |
+
+**Since the I11 baseline override, this table is no longer exhaustive for the
+normal path.** Any SMOOTH/ERRATIC material-plant with a current MARC
+safety-stock/ROP value now reaches `READY_FOR_REVIEW` via
+`SUCCESS_FROM_CURRENT_SAP_VALUE`, regardless of the service-level matrix's
+sign-off state. The exact count depends on how many material-plants in the
+currently-live feature/staging generation actually carry a current MARC
+value and varies run to run; it is not restated here as a fixed number to
+avoid this document going stale the next time staging data changes. Query
+`i7_recommendation` for `safety_stock_method = 'current_sap_value'` /
+`max_stock_strategy = 'current_sap_value'` against the current run for the
+live figure.
 
 Conversion eligibility: **44,938 UNKNOWN** (criticality tiers unresolved, no
 I13 ledger). SAP adoption: not yet exercised against real evidence — no

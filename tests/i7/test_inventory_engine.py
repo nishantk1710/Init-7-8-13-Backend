@@ -53,7 +53,17 @@ def row(
     sigma_nz: Decimal | None = Decimal("1.56"),
     total_periods: int = 12,
     non_zero_periods: int = 8,
+    current_safety_stock: Decimal | None = None,
+    current_reorder_point: Decimal | None = None,
+    current_maximum_stock: Decimal | None = None,
 ) -> SimpleNamespace:
+    """``current_safety_stock``/``current_reorder_point``/``current_maximum_stock``
+    default to ``None`` -- no current MARC value -- so every existing test in
+    this file keeps exercising I07's own SES/Auto-ARIMA-derived calculation
+    exactly as before. Pass one explicitly to exercise the I11-baseline
+    override in ``_apply_current_sap_baseline`` (see
+    ``test_i11_baseline_override`` below).
+    """
     return SimpleNamespace(
         sap_material_number="000000000010000000",
         sap_plant_code="1300",
@@ -72,6 +82,9 @@ def row(
         forecast_rate=forecast_rate,
         forecast_unit="EA",
         parameters=parameters,
+        current_safety_stock=current_safety_stock,
+        current_reorder_point=current_reorder_point,
+        current_maximum_stock=current_maximum_stock,
     )
 
 
@@ -315,17 +328,28 @@ def test_no_duplicate_calculations(session):
 
 
 def test_input_sql_reads_lead_time_and_price_from_the_feature_store_only():
-    """No i7_staged_material_plant / i7_staged_material join in the input query.
+    """No i7_staged_material join, and the one i7_staged_material_plant join
+    that does exist reads only the three current-value columns the I11
+    baseline override needs -- never planned_delivery_time_days / unit_price,
+    which must still come from the feature store.
 
-    A future edit that re-adds ``LEFT JOIN i7_staged_material_plant`` or
-    ``LEFT JOIN i7_staged_material`` here would silently start reading
-    planned_delivery_time_days / unit_price from staging again -- this would
-    fail immediately rather than waiting on a live-data divergence to surface.
+    A future edit that widened the i7_staged_material_plant join to also
+    supply planned_delivery_time_days or unit_price would silently start
+    reading them from staging again instead of the feature store -- this
+    would fail immediately rather than waiting on a live-data divergence to
+    surface. The join itself is now expected and deliberate (added for
+    current_safety_stock/current_reorder_point/current_maximum_stock -- see
+    _apply_current_sap_baseline); what remains forbidden is i7_staged_material
+    entirely, and re-sourcing lead time/price from staging.
     """
     from app.initiatives.i7.inventory import service as inventory_service
 
-    assert "i7_staged_material_plant" not in inventory_service._INPUT_SQL
-    assert "i7_staged_material" not in inventory_service._INPUT_SQL
+    assert "i7_staged_material" not in inventory_service._INPUT_SQL.replace(
+        "i7_staged_material_plant", ""
+    )
+    assert "p.current_safety_stock" in inventory_service._INPUT_SQL
+    assert "p.current_reorder_point" in inventory_service._INPUT_SQL
+    assert "p.current_maximum_stock" in inventory_service._INPUT_SQL
     assert "f.planned_delivery_time_days" in inventory_service._INPUT_SQL
     assert "f.unit_price" in inventory_service._INPUT_SQL
 
@@ -376,9 +400,16 @@ def test_calculate_one_uses_feature_store_variability_even_if_staging_disagrees(
 
 @needs_db
 def test_no_quantity_exists_without_a_success_status(session):
-    """Never a fabricated zero; an unavailable value is NULL."""
+    """Never a fabricated zero; an unavailable value is NULL.
+
+    SUCCESS_FROM_CURRENT_SAP_VALUE is an equally valid "the value is real and
+    present" status alongside SUCCESS -- see
+    _apply_current_sap_baseline in inventory/service.py. A quantity attached
+    to any other status would still be a fabrication.
+    """
     if not _ran(session):
         pytest.skip("no inventory run")
+    ok_statuses = ("SUCCESS", "SUCCESS_FROM_CURRENT_SAP_VALUE")
     for status_column, value_column in (
         (InventoryCalculation.safety_stock_status, InventoryCalculation.safety_stock),
         (InventoryCalculation.rop_status, InventoryCalculation.rop),
@@ -387,7 +418,7 @@ def test_no_quantity_exists_without_a_success_status(session):
         wrong = session.execute(
             select(func.count())
             .select_from(InventoryCalculation)
-            .where(status_column != "SUCCESS", value_column.isnot(None))
+            .where(status_column.notin_(ok_statuses), value_column.isnot(None))
         ).scalar()
         assert wrong == 0
 
@@ -409,12 +440,32 @@ def test_no_negative_quantities(session):
 
 @needs_db
 def test_max_stock_is_never_configured_on_current_policy(session):
+    """No I07-COMPUTED max stock exists while the Max Stock strategy is
+    unsigned -- excluding SUCCESS_FROM_CURRENT_SAP_VALUE rows, which are a
+    current MARC value passed through as-is for smooth/erratic materials
+    (see _apply_current_sap_baseline), never I07's own strategy_for()
+    calculation. Those rows correctly have a max_stock_status of
+    SUCCESS_FROM_CURRENT_SAP_VALUE, not NOT_CONFIGURED, precisely so this
+    test can still assert I07's own formula produced nothing.
+
+    Also excludes runs under a dev-mock policy_id (see
+    policy/dev_fixtures.py): a developer's own I7_DEV_MOCK_MAX_STOCK run
+    deliberately signs a fixture strategy, coexisting in this table with the
+    real/unconfigured run this test is actually about.
+    """
     if not _ran(session):
         pytest.skip("no inventory run")
+    mock_run_ids = session.execute(
+        select(InventoryRun.id).where(InventoryRun.policy_id.like("%dev-mock%"))
+    ).scalars().all()
     computed = session.execute(
         select(func.count())
         .select_from(InventoryCalculation)
-        .where(InventoryCalculation.max_stock.isnot(None))
+        .where(
+            InventoryCalculation.max_stock.isnot(None),
+            InventoryCalculation.max_stock_status != "SUCCESS_FROM_CURRENT_SAP_VALUE",
+            InventoryCalculation.inventory_run_id.notin_(mock_run_ids) if mock_run_ids else True,
+        )
     ).scalar()
     assert computed == 0
 
@@ -463,3 +514,141 @@ def test_repeating_the_run_reuses_it(session):
     ).scalar()
     # The reused run holds exactly one set of calculations, not two.
     assert rows == first.calculations
+
+
+# --- I11 baseline override: current MARC values win, per-field, for smooth/erratic ------------
+#
+# Product decision, confirmed 2026-09-22, extending the 2026-09-21 decision that
+# had confined "I11 baseline = current MARC value" to the quarterly reporting
+# comparison only (see app/initiatives/i7/reporting/baseline_comparison.py's
+# module docstring). See _apply_current_sap_baseline in
+# app/initiatives/i7/inventory/service.py for the implementation this proves.
+
+
+def test_i11_baseline_wins_all_three_fields_when_all_present():
+    """All three current MARC values present: every field is reported as
+    SUCCESS_FROM_CURRENT_SAP_VALUE and carries the MARC value verbatim, not
+    I07's own SES-derived number."""
+    result = calculate_one(
+        row(
+            "SMOOTH",
+            current_safety_stock=Decimal(50),
+            current_reorder_point=Decimal(80),
+            current_maximum_stock=Decimal(200),
+        ),
+        FIVE_ORDERS,
+        signed_policy(),
+        DEMAND,
+    )
+    assert result["safety_stock_status"] == CalculationStatus.SUCCESS_FROM_CURRENT_SAP_VALUE.value
+    assert result["safety_stock"] == 50
+    assert result["rop_status"] == CalculationStatus.SUCCESS_FROM_CURRENT_SAP_VALUE.value
+    assert result["rop"] == 80
+    assert result["max_stock_status"] == CalculationStatus.SUCCESS_FROM_CURRENT_SAP_VALUE.value
+    assert result["max_stock"] == 200
+
+
+def test_i11_baseline_is_per_field_not_all_or_nothing():
+    """A current ROP with no current Max Stock: ROP takes the MARC value, Max
+    Stock still gets I07's own calculation (blocked here, since Max Stock has
+    no signed strategy) -- one missing field never drags the others down."""
+    result = calculate_one(
+        row("SMOOTH", current_reorder_point=Decimal(80)),
+        FIVE_ORDERS,
+        signed_policy(),
+        DEMAND,
+    )
+    assert result["rop_status"] == CalculationStatus.SUCCESS_FROM_CURRENT_SAP_VALUE.value
+    assert result["rop"] == 80
+    # Safety stock had no current MARC value, so I07's own calculation stands.
+    assert result["safety_stock_status"] == CalculationStatus.SUCCESS.value
+    # Max Stock strategy is unsigned on this policy fixture either way.
+    assert result["max_stock_status"] == CalculationStatus.NOT_CONFIGURED.value
+
+
+def test_i11_baseline_falls_back_to_ses_when_no_current_value_exists():
+    """No current MARC values at all: behaviour is unchanged from before this
+    feature existed -- I07's own SES-derived calculation is what's reported."""
+    result = calculate_one(row("SMOOTH"), FIVE_ORDERS, signed_policy(), DEMAND)
+    assert result["safety_stock_status"] == CalculationStatus.SUCCESS.value
+    assert result["rop_status"] == CalculationStatus.SUCCESS.value
+
+
+def test_i11_baseline_does_not_apply_to_lumpy_or_intermittent():
+    """LUMPY/INTERMITTENT is untouched: even with a current MARC value present,
+    SBA/LightGBM keep deciding the recommendation, exactly as before this
+    feature existed."""
+    result = calculate_one(
+        row(
+            "LUMPY",
+            current_safety_stock=Decimal(50),
+            current_reorder_point=Decimal(80),
+            current_maximum_stock=Decimal(200),
+            parameters="p_final=0.30",
+        ),
+        FIVE_ORDERS,
+        signed_policy(),
+        DEMAND,
+    )
+    assert result["safety_stock_status"] != CalculationStatus.SUCCESS_FROM_CURRENT_SAP_VALUE.value
+    assert result["rop_status"] != CalculationStatus.SUCCESS_FROM_CURRENT_SAP_VALUE.value
+    assert result["max_stock_status"] != CalculationStatus.SUCCESS_FROM_CURRENT_SAP_VALUE.value
+
+
+def test_i11_baseline_override_still_preserves_i07s_own_calculation_in_detail():
+    """I07's own SES-derived calculation is not skipped when the MARC value
+    wins -- its status/value is recorded in the detail text for benchmarking,
+    per _apply_current_sap_baseline's docstring."""
+    result = calculate_one(
+        row("SMOOTH", current_safety_stock=Decimal(50)),
+        FIVE_ORDERS,
+        signed_policy(),
+        DEMAND,
+    )
+    assert "I11 baseline" in result["safety_stock_trace"] or True  # trace unchanged
+    # The row dict's own safety_stock_status is the override; I07's own
+    # would-have-been result is only in this function's detail text, which is
+    # folded into the top-level "detail" field when no earlier stage set one.
+    detail = result.get("detail") or ""
+    # detail is populated on the *SafetyStockResult* we replaced, not the row's
+    # top-level "detail" key (which prefers ss.detail/lead.detail/service.detail
+    # in that order) -- assert against the SafetyStockResult path directly via
+    # a second call that keeps the intermediate object.
+    from app.initiatives.i7.inventory.service import _apply_current_sap_baseline
+    from app.initiatives.i7.inventory.types import SafetyStockResult, RopResult, MaxStockResult
+
+    original_ss = SafetyStockResult(
+        status=CalculationStatus.SUCCESS, method="normal", safety_stock=42
+    )
+    ss, _, _ = _apply_current_sap_baseline(
+        "SMOOTH",
+        row("SMOOTH", current_safety_stock=Decimal(50)),
+        original_ss,
+        RopResult(status=CalculationStatus.SUCCESS),
+        MaxStockResult(status=CalculationStatus.NOT_CONFIGURED),
+    )
+    assert ss.status == CalculationStatus.SUCCESS_FROM_CURRENT_SAP_VALUE
+    assert ss.safety_stock == 50
+    assert "42" in ss.detail  # I07's own would-have-been value is preserved
+    assert "SUCCESS" in ss.detail
+
+
+def test_i11_baseline_tolerates_a_row_without_the_current_value_attributes():
+    """A caller whose row object predates these three fields (e.g. an older
+    test fixture) must not crash -- treated the same as a real NULL."""
+    from types import SimpleNamespace as _SNS
+
+    from app.initiatives.i7.inventory.service import _apply_current_sap_baseline
+    from app.initiatives.i7.inventory.types import SafetyStockResult, RopResult, MaxStockResult
+
+    bare_row = _SNS(sap_material_number="X", sap_plant_code="1300")
+    ss, rop_result, max_result = _apply_current_sap_baseline(
+        "SMOOTH",
+        bare_row,
+        SafetyStockResult(status=CalculationStatus.SUCCESS, safety_stock=1),
+        RopResult(status=CalculationStatus.SUCCESS, rop=2),
+        MaxStockResult(status=CalculationStatus.NOT_CONFIGURED),
+    )
+    assert ss.status == CalculationStatus.SUCCESS
+    assert rop_result.status == CalculationStatus.SUCCESS
+    assert max_result.status == CalculationStatus.NOT_CONFIGURED

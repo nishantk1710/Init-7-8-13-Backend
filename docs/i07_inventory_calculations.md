@@ -145,6 +145,58 @@ With no signed strategy the engine returns `NOT_CONFIGURED` and a null maximum.
 name, and a test asserts its absence. An unrecognised strategy name also yields
 not-configured rather than falling back to a working formula.
 
+## I11 baseline override — smooth/erratic only
+
+**Product decision, confirmed 2026-09-22.** For SMOOTH and ERRATIC demand
+classes only, Initiative 11's current SAP-configured planning baseline
+(the material-plant's current MARC value) wins over I07's own SES/Auto-ARIMA-
+derived calculation, per field, whenever a current value exists:
+
+| Field | Source | Falls back to |
+| --- | --- | --- |
+| Safety stock | `i7_staged_material_plant.current_safety_stock` (MARC-EISBE) | I07's own `safety_stock.normal()` |
+| ROP | `i7_staged_material_plant.current_reorder_point` | I07's own `rop.calculate()` |
+| Max Stock | `i7_staged_material_plant.current_maximum_stock` | I07's own strategy (still `NOT_CONFIGURED` today, since Max Stock is separately unsigned) |
+
+**Per-field, not all-or-nothing.** A material-plant with a current ROP but no
+current Max Stock uses SAP's ROP and still gets I07's own Max Stock
+calculation (or its own block) — one missing field never drags the other two
+down.
+
+**LUMPY and INTERMITTENT are untouched.** SBA and LightGBM keep deciding those
+recommendations exactly as before this feature existed; the override only
+ever applies inside the SMOOTH/ERRATIC branch.
+
+**Never silently blended.** The new status `SUCCESS_FROM_CURRENT_SAP_VALUE`
+is distinct from `SUCCESS` everywhere it appears (`safety_stock_status`,
+`rop_status`, `max_stock_status`, and — carried through to the recommendation
+— `safety_stock_method`/`max_stock_strategy` as the literal string
+`"current_sap_value"`). I07's own SES/Auto-ARIMA-derived calculation is not
+skipped when the override applies: it still runs, and its own would-have-been
+status and value are recorded in the result's `detail` text, so the
+benchmark comparison is preserved even though the SAP value is what gets
+reported as the recommendation. No caller can mistake a passed-through SAP
+value for an I07-computed one without deliberately ignoring this status.
+
+**Relationship to the 2026-09-21 reporting decision.** A separate, earlier
+decision (`app/initiatives/i7/reporting/baseline_comparison.py`) had already
+established "I11 baseline = I07's own persisted current-state columns" for
+the *quarterly benchmarking report only*, explicitly stating that
+substitution did not change how any other part of the application treats
+I11. This section is where that boundary was deliberately extended, one day
+later, into the actual recommendation calculation for smooth/erratic
+materials specifically — not a reversal by accident, a further, distinct
+product decision.
+
+**Why current MARC values, not a literal I11 system read.** No live I11 VM/V2
+forecast-mechanism output (SAP's own segmentation and forecast selection) is
+staged anywhere in this database — only the material-plant's *current,
+already-configured* ROP/safety-stock/max-stock figures are. Those figures are
+the practical, buildable stand-in for "I11's baseline" per this decision;
+following the same "prefer the live source, fall back, tag the source"
+pattern this codebase already uses for lead time
+(`app/initiatives/i7/features/lead_time_provider.py`'s `I11LeadTimeProvider`).
+
 ## Rounding
 
 Safety stock, ROP and Max round **UP** to whole units, once, at the end.
@@ -158,11 +210,18 @@ A negative quantity is a `CALCULATION_ERROR`, surfaced rather than clamped.
 
 ## Statuses
 
-`SUCCESS` · `WARNING` · `LIMITED` · `NOT_EVALUABLE_NO_HISTORY` ·
-`NOT_EVALUABLE_LEAD_TIME` · `NOT_EVALUABLE_SERVICE_LEVEL_UNSET` ·
-`NOT_EVALUABLE_INVALID_FORECAST` · `NOT_EVALUABLE_INSUFFICIENT_DEMAND` ·
-`NOT_EVALUABLE_COST_DATA` · `NOT_APPLICABLE_OBSOLETE` · `NOT_CONFIGURED` ·
-`DEFERRED_TO_OAR` · `CALCULATION_ERROR`
+`SUCCESS` · `SUCCESS_FROM_CURRENT_SAP_VALUE` · `WARNING` · `LIMITED` ·
+`NOT_EVALUABLE_NO_HISTORY` · `NOT_EVALUABLE_LEAD_TIME` ·
+`NOT_EVALUABLE_SERVICE_LEVEL_UNSET` · `NOT_EVALUABLE_INVALID_FORECAST` ·
+`NOT_EVALUABLE_INSUFFICIENT_DEMAND` · `NOT_EVALUABLE_COST_DATA` ·
+`NOT_APPLICABLE_OBSOLETE` · `NOT_CONFIGURED` · `DEFERRED_TO_OAR` ·
+`CALCULATION_ERROR`
+
+`SUCCESS_FROM_CURRENT_SAP_VALUE` (see "I11 baseline override" above) means the
+value is real and present, sourced from I11's current MARC baseline rather
+than I07's own formula — an equally reviewable, equally non-fabricated
+result, deliberately kept distinct from `SUCCESS` so no caller conflates the
+two provenances.
 
 Per output, not per calculation: lead time can succeed while safety stock blocks
 on an unsigned service level, which is the state of 100% of the catalogue today.

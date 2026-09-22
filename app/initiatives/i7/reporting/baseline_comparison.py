@@ -40,6 +40,7 @@ def compare_metric(
     metric: str,
     baseline_column,
     recommendation_column,
+    self_referential: bool = False,
 ) -> BaselineComparisonRow:
     """Compute one metric's baseline-vs-I07 comparison row.
 
@@ -147,4 +148,5 @@ def compare_metric(
         recommendation_missing_count=recommendation_missing,
         not_evaluable_count=not_evaluable,
         availability_status=availability_status,
+        self_referential=self_referential,
     )

@@ -92,7 +92,10 @@ _INPUT_SQL = """
            c.model_name,
            c.forecast_rate,
            c.forecast_unit,
-           c.parameters
+           c.parameters,
+           p.current_safety_stock,
+           p.current_reorder_point,
+           p.current_maximum_stock
       FROM i7_material_feature f
       LEFT JOIN i7_forecast c
              ON c.sap_material_number = f.sap_material_number
@@ -100,8 +103,18 @@ _INPUT_SQL = """
             AND c.forecast_run_id = :forecast_run_id
             AND c.is_champion = true
             AND c.forecast_status = 'SUCCESS'
+      LEFT JOIN i7_staged_material_plant p
+             ON p.sap_material_number = f.sap_material_number
+            AND p.sap_plant_code = f.sap_plant_code
      ORDER BY f.sap_material_number, f.sap_plant_code
 """
+# current_safety_stock/current_reorder_point/current_maximum_stock: I11's
+# SAP-native planning baseline (current MARC values), joined in for the
+# smooth/erratic per-field override below -- see calculate_one's "I11 baseline
+# override" block. Read from staging, not the feature store: Phase 3 does not
+# carry these three fields through (they are stock-policy figures, not demand
+# statistics), so this is the one place Phase 5 reads i7_staged_material_plant
+# directly rather than exclusively through i7_material_feature.
 # planned_delivery_time_days and unit_price are read from the feature store
 # (f.), not re-joined from i7_staged_material_plant / i7_staged_material: the
 # Phase 3 builder already carried both through from staging (see
@@ -257,9 +270,103 @@ def calculate_one(
         )
     )
 
+    ss, rop_result, max_result = _apply_current_sap_baseline(
+        demand_class, row, ss, rop_result, max_result
+    )
+
     return _row(
         material, plant, demand_class, row, lead, variability, service, ss, rop_result, max_result
     )
+
+
+def _apply_current_sap_baseline(
+    demand_class: str,
+    row: Any,
+    ss: SafetyStockResult,
+    rop_result: RopResult,
+    max_result: MaxStockResult,
+) -> tuple[SafetyStockResult, RopResult, MaxStockResult]:
+    """Smooth/erratic only: I11's current MARC value wins over I07's own
+    calculation, per field, when a current value exists.
+
+    Product decision, confirmed 2026-09-22, extending the 2026-09-21 decision
+    that had confined "I11 baseline = current MARC value" to the quarterly
+    reporting comparison only (``reporting/baseline_comparison.py``). This
+    function is the one place that decision is now extended into the actual
+    recommendation calculation -- deliberately, and deliberately only for
+    SMOOTH/ERRATIC, matching the FRS's description of I11's SAP-native VM
+    baseline covering "regular-pattern materials" (docs/init7.txt, "Relationship
+    to Initiative 11"). LUMPY/INTERMITTENT is untouched: SBA/LightGBM keep
+    deciding those recommendations exactly as before.
+
+    Per-field, not all-or-nothing: a material-plant with a current ROP but no
+    current Max Stock uses SAP's ROP and still gets I07's own Max Stock
+    calculation, rather than losing the whole recommendation to one missing
+    field.
+
+    I07's own SES/Auto-ARIMA-derived calculation still ran above this point in
+    every case -- it is not skipped, so its trace is preserved for benchmarking
+    -- this function only decides which result is reported as the
+    recommendation. Never blended: the returned status is always
+    SUCCESS_FROM_CURRENT_SAP_VALUE, distinct from SUCCESS, so no caller can
+    mistake a passed-through SAP value for an I07-computed one.
+    """
+    if demand_class not in (DemandPattern.SMOOTH.value, DemandPattern.ERRATIC.value):
+        return ss, rop_result, max_result
+
+    # getattr, not row.current_safety_stock: some callers (in particular
+    # in-memory test fixtures built before this override existed) construct
+    # a row without these three columns at all. Treated the same as a real
+    # NULL from the database -- no current SAP value, so I07's own
+    # calculation above stands -- rather than raising AttributeError on a
+    # row shape this function does not strictly require.
+    current_safety_stock = getattr(row, "current_safety_stock", None)
+    current_reorder_point = getattr(row, "current_reorder_point", None)
+    current_maximum_stock = getattr(row, "current_maximum_stock", None)
+
+    if current_safety_stock is not None:
+        ss = SafetyStockResult(
+            status=CalculationStatus.SUCCESS_FROM_CURRENT_SAP_VALUE,
+            method="current_sap_value",
+            raw_safety_stock=current_safety_stock,
+            safety_stock=int(current_safety_stock),
+            trace=ss.trace,
+            detail=(
+                "I11 baseline: current MARC safety stock used as-is "
+                f"(I07's own SES/Auto-ARIMA-derived calculation: "
+                f"status={ss.status.value}, value={ss.safety_stock})"
+            ),
+        )
+
+    if current_reorder_point is not None:
+        rop_result = RopResult(
+            status=CalculationStatus.SUCCESS_FROM_CURRENT_SAP_VALUE,
+            expected_lead_time_demand=rop_result.expected_lead_time_demand,
+            raw_rop=current_reorder_point,
+            rop=int(current_reorder_point),
+            trace=rop_result.trace,
+            detail=(
+                "I11 baseline: current MARC reorder point used as-is "
+                f"(I07's own calculation: status={rop_result.status.value}, "
+                f"value={rop_result.rop})"
+            ),
+        )
+
+    if current_maximum_stock is not None:
+        max_result = MaxStockResult(
+            status=CalculationStatus.SUCCESS_FROM_CURRENT_SAP_VALUE,
+            strategy="current_sap_value",
+            raw_max_stock=current_maximum_stock,
+            max_stock=int(current_maximum_stock),
+            trace=max_result.trace,
+            detail=(
+                "I11 baseline: current MARC max stock used as-is "
+                f"(I07's own calculation: status={max_result.status.value}, "
+                f"value={max_result.max_stock})"
+            ),
+        )
+
+    return ss, rop_result, max_result
 
 
 def _review_period(policy: PolicyDocument, criticality: Criticality | None) -> Decimal | None:

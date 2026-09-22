@@ -127,9 +127,18 @@ def build_normal_recommendation(
     ``row`` is the joined Phase 3/5 record the repository provides -- see
     :func:`app.initiatives.i7.recommendations.repository.load_normal_inputs`.
     """
-    safety_stock_ok = row.safety_stock_status == "SUCCESS"
-    rop_ok = row.rop_status == "SUCCESS"
-    max_ok = row.max_stock_status == "SUCCESS"
+    # SUCCESS_FROM_CURRENT_SAP_VALUE (smooth/erratic materials where I11's
+    # current MARC value stood in for I07's own calculation -- see
+    # inventory/service.py's _apply_current_sap_baseline) is an equally valid,
+    # equally reviewable input as SUCCESS: it means a real, present value
+    # exists, just sourced from SAP's current planning baseline rather than
+    # I07's own formula. It is a distinct status precisely so this file (and
+    # the trace/API) can always say which one it was -- never so it is treated
+    # as unavailable.
+    _OK_STATUSES = ("SUCCESS", "SUCCESS_FROM_CURRENT_SAP_VALUE")
+    safety_stock_ok = row.safety_stock_status in _OK_STATUSES
+    rop_ok = row.rop_status in _OK_STATUSES
+    max_ok = row.max_stock_status in _OK_STATUSES
 
     if safety_stock_ok and rop_ok:
         status = LifecycleStatus.READY_FOR_REVIEW

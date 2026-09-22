@@ -64,6 +64,7 @@ from app.schemas.i7.reports import (
     BaselineComparisonSection,
     ChampionChallengerCounts,
     ConversionEligibilityCount,
+    CriticalityTierCount,
     DemandClassCount,
     DemandClassification,
     ExecutiveSummary,
@@ -71,6 +72,8 @@ from app.schemas.i7.reports import (
     ForecastingSection,
     HistoryStatusCount,
     LimitationsSection,
+    ManagementSummary,
+    MaterialCriticalitySection,
     MaxStockSection,
     OarSection,
     PopulationCount,
@@ -82,6 +85,7 @@ from app.schemas.i7.reports import (
     SafetyStockSection,
     SapAdoptionSection,
     ScopeAndDataQuality,
+    UndefinedManagementMetric,
 )
 
 logger = get_logger(__name__)
@@ -160,6 +164,7 @@ def generate_quarterly_report(session: Session, quarter: str) -> QuarterlyReport
     reorder_point = _reorder_point_section(session, recommendation_base)
     max_stock = _max_stock_section(session, recommendation_base)
     oar = _oar_section(session, recommendation_base)
+    material_criticality = _material_criticality_section(session, recommendation_base)
     recommendations = _recommendations_section(session, recommendation_base)
     approval = _approval_section(session, ledger_base)
     baseline_comparison = _baseline_comparison_section(session, recommendation_base)
@@ -177,10 +182,13 @@ def generate_quarterly_report(session: Session, quarter: str) -> QuarterlyReport
         total_recommendations=total_recommendations,
         ready_for_review_count=ready_for_review_count,
         pending_approval_count=pending_approval_count,
+        pending_approval_percentage=_pct(pending_approval_count, total_recommendations),
         not_evaluable_count=not_evaluable_count,
         oar_count=oar.is_oar_true_count,
         approval_ledger_entries=approval.ledger_entry_count,
     )
+
+    management_summary = _management_summary_section()
 
     metadata = ReportMetadata(
         quarter=quarter,
@@ -221,12 +229,14 @@ def generate_quarterly_report(session: Session, quarter: str) -> QuarterlyReport
     report = QuarterlyReport(
         metadata=metadata,
         executive_summary=executive_summary,
+        management_summary=management_summary,
         scope_and_data_quality=scope_and_data_quality,
         demand_classification=demand_classification,
         forecasting=forecasting,
         safety_stock=safety_stock,
         reorder_point=reorder_point,
         max_stock=max_stock,
+        material_criticality=material_criticality,
         oar=oar,
         recommendations=recommendations,
         approval=approval,
@@ -460,6 +470,79 @@ def _max_stock_section(session: Session, recommendation_base) -> MaxStockSection
     )
 
 
+def _material_criticality_section(session: Session, recommendation_base) -> MaterialCriticalitySection:
+    """Real distribution of ``Recommendation.criticality`` (the 5 ZMM065
+    tiers, verbatim) over the same quarter-scoped row set every other section
+    reads -- never an invented A/B/C 3-bucket collapse (no such grouping is
+    defined in policy or code) and never the portfolio-wide (all-time)
+    ``/recommendations/summary`` distribution, which would misrepresent this
+    quarter's report with an all-time figure."""
+    total = _count(session, recommendation_base)
+    by_tier_rows = session.execute(
+        recommendation_base.with_only_columns(Recommendation.criticality, func.count()).group_by(
+            Recommendation.criticality
+        )
+    ).all()
+    populated = sum(cnt for tier, cnt in by_tier_rows if tier is not None)
+
+    return MaterialCriticalitySection(
+        total=total,
+        by_tier=[CriticalityTierCount(criticality=tier, count=cnt) for tier, cnt in by_tier_rows],
+        populated_count=populated,
+        populated_percentage=_pct(populated, total),
+    )
+
+
+def _management_summary_section() -> ManagementSummary:
+    """Every field here is confirmed, by full source-tree audit, to have no
+    defined business rule or computation anywhere in I07 -- not merely
+    unimplemented. Reported as an explicit NOT_CONFIGURED status with a
+    factual reason so a management reader sees the gap, not a silently
+    missing section or (worse) a fabricated number."""
+    return ManagementSummary(
+        critical_stockout_risk=UndefinedManagementMetric(
+            reason=(
+                "No stockout-risk severity classification (Critical/High/"
+                "Medium/Low) exists anywhere in I07. This is not the same "
+                "concept as demand-pattern classification (Smooth/Erratic/"
+                "Intermittent/Lumpy, see Demand Classification above) and "
+                "must not be approximated by it."
+            )
+        ),
+        excess_inventory_candidates=UndefinedManagementMetric(
+            reason=(
+                "No 'excess inventory' business rule is defined anywhere in "
+                "I07 -- there is no confirmed threshold (e.g. current stock "
+                "vs. recommended stock by how much, over what period) for "
+                "calling a material excess."
+            )
+        ),
+        working_capital_impact=UndefinedManagementMetric(
+            reason=(
+                "No working-capital/currency-denominated impact figure is "
+                "computed anywhere in the reporting layer. unit_price (from "
+                "MBEW) carries no currency field in the extract, and the one "
+                "impact-calculation path that takes unit_price as an input "
+                "is blocked by an unconfigured holding_cost_rate policy -- "
+                "reporting a currency value here would misrepresent both the "
+                "missing currency and the unconfigured cost-of-holding rate."
+            )
+        ),
+        stockout_risk_distribution=UndefinedManagementMetric(
+            reason="Same gap as Critical Stockout Risk above -- no severity-tier classification exists."
+        ),
+        stockout_risk_trend=UndefinedManagementMetric(
+            reason=(
+                "No monthly historical time-series mechanism exists for any "
+                "risk/stockout metric. i7_quarterly_report itself stores one "
+                "row per quarter (upserted, not accumulated), so even a "
+                "quarter-over-quarter trend would require a new, dedicated "
+                "historical-snapshot capability that does not exist today."
+            )
+        ),
+    )
+
+
 def _oar_section(session: Session, recommendation_base) -> OarSection:
     is_oar_true = _count(session, recommendation_base.where(Recommendation.is_oar.is_(True)))
     is_oar_false = _count(session, recommendation_base.where(Recommendation.is_oar.is_(False)))
@@ -542,6 +625,7 @@ def _baseline_comparison_section(session: Session, recommendation_base) -> Basel
         metric="Lead Time",
         baseline_column=Recommendation.lead_time_days,
         recommendation_column=Recommendation.lead_time_days,
+        self_referential=True,
     )
 
     # The lead_time_method I07 recorded for the populated lead-time rows, if
