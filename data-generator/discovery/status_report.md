@@ -1,8 +1,8 @@
-# VZI CPI OData status, 2026-09-21T16:32:30Z
+# VZI CPI OData status, 2026-09-22T05:28:25Z
 
 Run mode: full sweep
 
-Calls: 349  |  failures: 124  |  total elapsed: 175s
+Calls: 349  |  failures: 124  |  total elapsed: 160s
 
 ## Services
 - ZVZI_KPI02_SHARED_SRV: reachable, 14 entity sets in $metadata.
@@ -36,11 +36,11 @@ Calls: 349  |  failures: 124  |  total elapsed: 175s
 - EKBE Vgabe distinct values over OData: none. Reconcile against the dictionary (1, 2) and I13 s7.1 (E).
 
 ## Slowest calls (W8.1 performance baseline)
-- 3.0s  /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/$metadata  
-- 3.0s  /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet  $top=1&$format=json
+- 3.4s  /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet  $top=1&$format=json
 - 3.0s  /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet  $inlinecount=allpages&$top=1&$format=json
-- 2.9s  /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet  $top=1000&$skip=0&$format=json
-- 2.5s  /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet  $top=1&$format=json
+- 3.0s  /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet  $top=1000&$skip=0&$format=json
+- 2.7s  /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet  $inlinecount=allpages&$top=1&$format=json
+- 2.6s  /sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet  $top=1000&$skip=40000&$format=json
 
 ## Confirmed defect register
 

@@ -1,4 +1,4 @@
-Plant coverage, 2026-09-21T16:30:50Z
+Plant coverage, 2026-09-22T05:26:50Z
 
 Counts are aggregated client-side from a full pull, because a server-side Werks filter may be ignored
 (see filter_support.csv). The question this answers: does OData expose plant 1500 (Gamsberg) on MARC,
