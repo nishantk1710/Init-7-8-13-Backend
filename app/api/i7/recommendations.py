@@ -6,6 +6,7 @@ recalculated here. Filtering and pagination happen in SQL; the full table is
 never loaded into Python to be filtered or sliced in memory.
 """
 
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -61,6 +62,8 @@ def _apply_filters(
     is_oar: bool | None,
     confidence: str | None,
     criticality: str | None,
+    generated_from: datetime | None,
+    generated_to: datetime | None,
 ) -> Select:
     """Every filter here maps to a real, indexed, persisted column. Nothing
     that would require loading rows into Python to evaluate."""
@@ -78,6 +81,10 @@ def _apply_filters(
         statement = statement.where(Recommendation.confidence == confidence)
     if criticality is not None:
         statement = statement.where(Recommendation.criticality == criticality)
+    if generated_from is not None:
+        statement = statement.where(Recommendation.generated_at >= generated_from)
+    if generated_to is not None:
+        statement = statement.where(Recommendation.generated_at < generated_to)
     return statement
 
 
@@ -115,8 +122,8 @@ def _latest_only(statement: Select) -> Select:
     summary="List I07 recommendations",
     description="Database-paginated, database-filtered. Supports the "
     "persisted fields status, plant, material, demand_class, is_oar, "
-    "confidence and criticality; a field with no backing column is not "
-    "offered as a filter (see docs/i07_api.md).",
+    "confidence, criticality and a generated_at date range; a field with no "
+    "backing column is not offered as a filter (see docs/i07_api.md).",
 )
 def list_recommendations(
     session: Annotated[Session, Depends(get_session)],
@@ -134,6 +141,14 @@ def list_recommendations(
     is_oar: bool | None = None,
     confidence: str | None = None,
     criticality: str | None = None,
+    generated_from: Annotated[
+        datetime | None,
+        Query(description="Inclusive lower bound on generated_at -- e.g. a report period's start."),
+    ] = None,
+    generated_to: Annotated[
+        datetime | None,
+        Query(description="Exclusive upper bound on generated_at -- e.g. a report period's end, plus one day."),
+    ] = None,
 ) -> RecommendationListResponse:
     if sort not in SORT_FIELDS:
         raise bad_request(
@@ -152,6 +167,8 @@ def list_recommendations(
             is_oar=is_oar,
             confidence=confidence,
             criticality=criticality,
+            generated_from=generated_from,
+            generated_to=generated_to,
         )
     )
 
@@ -223,6 +240,8 @@ def get_recommendation_summary(
             is_oar=is_oar,
             confidence=confidence,
             criticality=criticality,
+            generated_from=None,
+            generated_to=None,
         )
     )
 
