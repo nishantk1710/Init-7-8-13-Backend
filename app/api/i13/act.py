@@ -37,6 +37,7 @@ from app.initiatives.i13.act_stock_provider import PostgresCrossPlantStockProvid
 from app.initiatives.i13.act_watch_snapshot import build_grni_snapshot_index
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.plans import load_consumption_plans
+from app.initiatives.i13.quantity_suggestion_store import build_quantity_decision_records
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
 from app.initiatives.i13.watch_mart import get_watch_metric, list_watch_metrics
 from app.integrations.sap.postgres_material import fetch_material_scope_index
@@ -220,6 +221,14 @@ def run_detect_exceptions(
 
     grni_snapshots = build_grni_snapshot_index(list_watch_metrics(db, plant=payload.plant, material=payload.material))
 
+    # W7.4 is the quantity-suggestion source W6.6's QUANTITY_OVERRIDE rule was
+    # written against and then left idle ("suggested_quantity is None for every
+    # caller today"). These are the decided suggestions -- accepted or not --
+    # so the rule now has something to compare; before W7.4 this list was
+    # necessarily empty. See quantity_suggestion_store for why undecided
+    # suggestions are excluded.
+    quantity_decision_records = build_quantity_decision_records(db, material=payload.material, plant=payload.plant)
+
     result = detect_exceptions(
         as_of_time,
         ledger_entries=ledger_entries,
@@ -229,6 +238,7 @@ def run_detect_exceptions(
         notification_port=LoggingNotificationAdapter(),
         plan_breach_grace_days=config.exceptions.plan_breach_grace_days,
         requester_response_days=config.escalation.requester_response_days,
+        quantity_decision_records=quantity_decision_records,
     )
     db.commit()
     return DetectionRunResponse(**dataclasses.asdict(result))

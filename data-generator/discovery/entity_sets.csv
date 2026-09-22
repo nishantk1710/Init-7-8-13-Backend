@@ -1,5 +1,5 @@
 service,entity_set,entity_type,keys,property_count,sap_pageable
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,PurchaseRequisition,Banfn,29,false
+ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,PurchaseRequisition,Banfn;Bnfpo,29,false
 ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,GoodsMovementItem,Mblnr;Mjahr;Zeile,25,false
 ZVZI_KPI02_SHARED_SRV,InfoRecordSet,InfoRecord,Infnr,4,false
 ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,InfoRecordOrg,Ekorg;Esokz;Infnr,10,false

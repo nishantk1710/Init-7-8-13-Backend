@@ -9,8 +9,10 @@ to empty so the app -- and the health endpoint -- come up with no SAP, database
 or identity credentials present.
 """
 
+from decimal import Decimal
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -317,6 +319,59 @@ class Settings(BaseSettings):
     # leaves every escalation's routing explicitly PENDING rather than
     # inventing a recipient.
     i13_hod_recipients: str = ""
+
+    # --- W7.4: reservation-time quantity suggestion -----------------------
+    #
+    # Master gate. Off by default, and deliberately separate from the two
+    # values below: "the business has not given us the numbers yet" and "the
+    # feature is switched off for this environment" are different states and
+    # the engine reports them differently (NOT_CONFIGURED vs DISABLED).
+    i13_qty_suggestion_enabled: bool = False
+
+    # Cover ceiling, in months -- the months-of-cover guard rail a request is
+    # nudged down to. NO DEFAULT, on purpose. A guessed ceiling would produce
+    # plausible-looking but unsanctioned purchase advice, so with this unset
+    # the engine returns NO_SUGGESTION/NOT_CONFIGURED rather than inventing
+    # one -- the same posture i13_hod_recipients above already takes (empty
+    # means routing is explicitly Pending, never a fabricated recipient).
+    # Open VZI item; see FRS §10.
+    #
+    # Decimal, not float: every quantity this engine touches is fixed-point
+    # (see app/models/i13_watch_mart.py), and a ceiling of 0.1 that is really
+    # 0.100000000000000005 would put a rounding artefact into a purchase
+    # figure.
+    i13_qty_cover_ceiling_months: Decimal | None = None
+
+    # Minimum consumption history before the engine will speak at all,
+    # measured as a count of consumption events inside the look-back window
+    # (WatchMetricMart.consumption_count_12m). Also no default, for the same
+    # reason -- and this single value decides how often the engine speaks:
+    # against the current WATCH mart (7,184 positions), "any consumption"
+    # would cover 3,086 of them and ">= 4 in 12 months" only 459.
+    i13_qty_minimum_history_count: int | None = None
+
+    # Look-back window for the consumption rate the suggestion is built on.
+    # Defaults to the same 12 months i13_consumption_window_months already
+    # uses, because the AMC the engine reads IS that window's figure -- it is
+    # repeated here only so a divergent W7.4 window stays a config change.
+    # Setting it to anything else today is recorded on the suggestion but
+    # does not re-derive AMC; see app/initiatives/i13/quantity_suggestion.py.
+    i13_qty_lookback_months: int = 12
+
+    @field_validator("i13_qty_cover_ceiling_months", "i13_qty_minimum_history_count", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        """Treat an empty environment value as "not set".
+
+        These two are the settings most likely to appear in a .env or an App
+        Service configuration with the key present and no value yet -- they
+        are exactly the numbers VZI has not given us. Blank must mean the same
+        as absent (the engine declines with NOT_CONFIGURED), not a startup
+        crash that takes the whole application, and its health endpoint, down
+        with it."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @property
     def cors_origins(self) -> list[str]:

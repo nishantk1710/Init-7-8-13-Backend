@@ -1,6 +1,6 @@
 service,entity_set,property,type,nullable,is_key,maxlength,precision,scale,sap_filterable,sap_sortable,sap_label
 ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Banfn,Edm.String,false,K,10,,,false,false,Purchase Req.
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Bnfpo,Edm.String,false,,5,,,false,false,Requisn Item
+ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Bnfpo,Edm.String,false,K,5,,,false,false,Requisn Item
 ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Bsart,Edm.String,false,,4,,,false,false,Document Type
 ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Loekz,Edm.String,false,,1,,,false,false,Deletion Ind.
 ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Statu,Edm.String,false,,1,,,false,false,Processing stat

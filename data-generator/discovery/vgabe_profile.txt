@@ -1,0 +1,7 @@
+POHistorySet (EKBE) Vgabe profile, 2026-09-21T12:54:59Z: 0 rows in 0 page(s)
+
+The entity dictionary scopes EKBE to VGABE 1 (GR) and 2 (IR). I13 FRS s7.1 filters to VGABE = E.
+Only one of those can be right against this service. Distinct values:
+
+
+Bwart on the goods-receipt rows (whichever Vgabe value carries them):

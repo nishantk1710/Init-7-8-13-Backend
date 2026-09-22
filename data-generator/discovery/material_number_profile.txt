@@ -1,4 +1,4 @@
-MaterialSet full pull, 2026-09-09T13:20:44Z: 2035 rows in 5 page(s)
+MaterialSet full pull, 2026-09-21T12:54:39Z: 2040 rows in 3 page(s)
 
 Matnr length distribution:
   len  3: 2
@@ -13,11 +13,11 @@ Matnr length distribution:
   len 12: 8
   len 13: 1
   len 14: 1
-  len 18: 1973
+  len 18: 1978
 
 Leading two characters after stripping leading zeros:
   43   338
-  50   271
+  50   276
   20   233
   28   208
   30   200
@@ -40,7 +40,7 @@ Material type (Mtart) distribution:
   ZOPC   203
   FERT   195
   ZMAC   146
-  ERSA   125
+  ERSA   130
   UNBW   71
   ROH    69
   PROD   48
@@ -54,3 +54,6 @@ Material type (Mtart) distribution:
   LEIH   3
   HERS   1
   WERB   1
+
+Extwg (retired as the OAR key on 08-Sep; informational only):
+  property not present on MaterialSet - as the FRS records. No longer a blocker.

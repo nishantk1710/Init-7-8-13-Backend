@@ -1,4 +1,5 @@
-Objectclas eq 'MATERIAL'                                -> 26419
-Objectclas eq 'MATERIAL' and Tabname eq 'MARC'          -> 7221
-Objectclas eq 'BANF'                                    -> 2914
-(Property names Objectclas / Tabname confirmed against live $metadata on 2026-09-08. Field-level counts for DISMM/EISBE/MINBE/MABST are in probes.csv.)
+Objectclas eq 'MATERIAL'                                -> 27069
+Objectclas eq 'MATERIAL' and Tabname eq 'MARC'          -> 7244
+Objectclas eq 'BANF'                                    -> 2937
+
+I07 FRS s7 (21-Sep-2026) records zero CDPOS rows for Objectclas='MATERIAL', which leaves FR-9 adoption tracking unevidenced and every adoption result reading 'Unknown'. A non-zero MATERIAL count here would supersede that finding. Field-level counts for DISMM/EISBE/MINBE/MABST are in probes.csv.
