@@ -18,6 +18,7 @@ from app.api.i13 import exceptions as exceptions_routes
 from app.api.i13 import ledger as ledger_routes
 from app.api.i13 import movement_metrics as movement_metrics_routes
 from app.api.i13 import procurement_chain as procurement_chain_routes
+from app.api.i13 import quantity_suggestion as quantity_suggestion_routes
 from app.api.i13 import reclassification as reclassification_routes
 from app.api.i13 import reservation_ledger as reservation_ledger_routes
 from app.api.i13 import validation as validation_routes
@@ -50,8 +51,7 @@ router.include_router(exceptions_routes.router)
 router.include_router(reclassification_routes.router)
 router.include_router(validation_routes.router)
 router.include_router(act_routes.router)
-# W7: the consumption-plan write path plans.py never had, and FR-3 on its own.
-router.include_router(assistant_routes.router)
+router.include_router(quantity_suggestion_routes.router)
 
 # The raw extract tables I13 actually reads -- see app/seed/manifest.py for
 # the full delivery; this is the I13-relevant subset.

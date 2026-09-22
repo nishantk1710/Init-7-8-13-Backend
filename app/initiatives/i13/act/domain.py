@@ -215,8 +215,13 @@ class WatchGrniSnapshot:
 class QuantityDecisionRecord:
     """One reservation-time quantity decision to evaluate for an override.
     ``suggested_quantity`` is ``None`` whenever no quantity-suggestion source
-    is wired in (true for every caller today -- the suggestion engine is
-    W7.4, out of scope for W6.6) -- see ``detection.detect_quantity_override``."""
+    answered -- see ``detection.detect_quantity_override``, which reports that
+    as SOURCE_UNAVAILABLE rather than "no override".
+
+    W7.4 is the source that fills it: ``app.initiatives.i13
+    .quantity_suggestion_store.build_quantity_decision_records`` builds these
+    from decided suggestions, and ``requested_quantity`` there is the quantity
+    the requester actually kept."""
 
     material: str
     plant: str

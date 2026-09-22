@@ -89,10 +89,17 @@ class NotificationPort(Protocol):
 
 
 class QuantitySuggestionProvider(Protocol):
-    """Reservation-time quantity-suggestion source (W7.4 -- not implemented
-    in this codebase). The only implementation today is
-    ``NullQuantitySuggestionProvider``, which always returns ``None`` --
-    SOURCE_UNAVAILABLE, never a fabricated suggestion."""
+    """Reservation-time quantity-suggestion source, for a caller that has a
+    material/plant (or reservation) and wants the latest suggested figure for
+    it.
+
+    W7.4 built the engine itself (``app.initiatives.i13.quantity_suggestion``)
+    and W6.6's detection is fed from its persisted rows through
+    ``quantity_suggestion_store.build_quantity_decision_records``, which is a
+    batch read rather than this per-key lookup -- so this port has no
+    implementation today and is not on the detection path. Whatever
+    implements it later must return ``None`` where nothing was suggested:
+    SOURCE_UNAVAILABLE, never a fabricated quantity."""
 
     def get_suggested_quantity(
         self, *, material: str, plant: str, reservation_number: str | None, reservation_item: str | None

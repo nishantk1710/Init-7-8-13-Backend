@@ -1,0 +1,45 @@
+SAP field exposure requests generated from live $metadata, 2026-09-21T12:53:43Z
+
+Each item below is a field one of the I07/I08/I13 FRS documents says the build reads, which is
+not in the OData projection today. These are exposure requests, not design questions.
+
+MSEG.SOBKZ  ->  GoodsMovementItemSet   [I08]
+    Special stock indicator. A 541 dispatch posts a vendor row (SOBKZ 'O') and a plant row; without it both are summed and every dispatch quantity doubles. Fails silently. I08 FRS s7.
+
+EKPO.ERDAT  ->  PurchaseOrderItemSet   [I08]
+    Line creation date. PurchaseOrderItemSet publishes no date property at all; ERDAT anchors aging, overdue and lead-time comparison, and EKKO has no header row for 37% of repair lines. I08 FRS s7.
+
+RESB.BEDNR  ->  ReservationItemSet   [I08/I13]
+    Requirement tracking number, Edm.String(10). Designated carrier of the assistant session identifier. Live on PurchaseRequisitionSet and PurchaseOrderItemSet, absent from ReservationItemSet. Hard dependency for I08 FR-8 and FR-4.
+
+RESB.SGTXT  ->  ReservationItemSet   [I08/I13]
+    Item text. Named as a session-field candidate in I08 s10; not in the projection.
+
+RESB.ABLAD  ->  ReservationItemSet   [I08/I13]
+    Unloading point. Named as a session-field candidate in I08 s10; not in the projection.
+
+RESB.ZZAISESSION  ->  ReservationItemSet   [I13]
+    Z-append session identifier. I13 s7.2: the single field linking the platform consumption plan to the SAP reservation. Read model carries the placeholder and maps it to null.
+
+MARA.EXTWG  ->  MaterialSet   [I07/I13]
+    External material group. RETIRED as the OAR identifier (I07 s7 supersession note, I13 s7.3). Informational only now; its absence is no longer BLOCKING and s8/s10 of both FRS should be updated.
+
+MBEW.WAERS  ->  MaterialValuationSet   [I07]
+    Currency. A price with no currency is ambiguous; ZAR is assumed by context, not by data. I07 FRS s7.
+
+EKKO.BEDAT  ->  PurchaseOrderSet   [I07]
+    PO document date. Not exposed; EKKO.AEDAT is the interim release-date proxy for the I11 lead-time program.
+
+Entity-key changes requested:
+
+CDPOS.TABNAME  ->  ChangeDocItemSet   [I07]
+    Declared key is 3 columns; the true CDPOS key is 7. See key_collapse.txt.
+
+CDPOS.TABKEY  ->  ChangeDocItemSet   [I07]
+    As above.
+
+CDPOS.FNAME  ->  ChangeDocItemSet   [I07]
+    As above.
+
+CDPOS.CHNGIND  ->  ChangeDocItemSet   [I07]
+    As above.
