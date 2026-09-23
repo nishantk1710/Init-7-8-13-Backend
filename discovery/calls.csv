@@ -1,0 +1,3 @@
+utc,sap_path,odata_query,http_status,elapsed_s,bytes
+2026-09-22T07:01:14Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/$metadata,,200,6.7,37159
+2026-09-22T07:01:14Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/$metadata,,200,0.2,19129

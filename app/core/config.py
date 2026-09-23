@@ -358,6 +358,68 @@ class Settings(BaseSettings):
     # does not re-derive AMC; see app/initiatives/i13/quantity_suggestion.py.
     i13_qty_lookback_months: int = 12
 
+    # --- FR-3 as the assistant serves it ----------------------------------
+    #
+    # Read by app/initiatives/i13/quantity.py, which the reservation-time
+    # conversation calls (app/assistant/session.py suggestion_for) and which
+    # /api/i13/quantity-suggestion does NOT -- that endpoint runs the gated
+    # W7.4 engine on the i13_qty_* values above.
+    #
+    # So there are deliberately two sets, and they take opposite positions on
+    # the same open VZI number: the W7.4 engine ships no ceiling and declines
+    # with NOT_CONFIGURED, while these carry the WS7 notes' working defaults so
+    # the conversation has something to say. That divergence is a live
+    # decision, not an oversight -- W7.4's plan argues a guessed ceiling is
+    # unsanctioned purchase advice, and if that argument wins for the
+    # assistant too, this block goes and quantity.py reads i13_qty_* instead.
+    #
+    # Decimal rather than float: a ceiling of 0.1 that is really
+    # 0.100000000000000005 would put a rounding artefact into a purchase
+    # figure, which is the same reason i13_qty_cover_ceiling_months is Decimal.
+    i13_quantity_cover_ceiling_months: Decimal = Decimal("12.0")
+    i13_quantity_lookback_months: int = 12
+    i13_quantity_min_history_consumptions: int = 3
+
+    # --- WS7: the shared reservation-time assistant ------------------------
+    #
+    # Read by app/assistant/* and app/api/assistant/router.py. Every value
+    # here has a working default, so the assistant runs with nothing set.
+
+    # Session reference format. The length is the whole string including the
+    # prefix and its separator -- app/assistant/ids.py refuses a length that
+    # leaves no room for a payload rather than minting a truncated reference.
+    # assistant_session.id is deliberately wider than this, so raising it is
+    # a config change and not a migration.
+    assistant_session_id_prefix: str = "S"
+    assistant_session_id_length: int = 10
+
+    # How long a session stays OPEN before it is derived as ABANDONED. The
+    # row is append-only and nothing writes a status, so this value alone
+    # decides where that boundary falls -- see app/assistant/session.py.
+    assistant_session_ttl_hours: int = 72
+
+    # The optional model-written sentence (app/assistant/narrative.py). OFF BY
+    # DEFAULT AND MUST STAY THAT WAY until VZI signs off: both FRSs say
+    # responses come from the LLM layer, and serving one before that
+    # conversation happens is the visible deviation the WS7 notes record.
+    # Every number is computed either way; this only phrases them.
+    assistant_narrative_enabled: bool = False
+
+    # Justification reason categories -- configuration, not an enum, because
+    # both FRSs say "a reason category plus free text" and neither lists the
+    # categories (open question 9). These three are PLACEHOLDERS; the day VZI
+    # supplies its own vocabulary is a .env change, not a migration. Order is
+    # preserved: it is the order the options appear on the form.
+    assistant_justification_reason_categories: str = (
+        "URGENT_BREAKDOWN,NO_SUITABLE_REPAIRABLE,OTHER"
+    )
+
+    # The free-text box (section 4.6), answered from deterministic read models
+    # by a fixed set of intents -- no model is involved. Off means the box
+    # declines and says so; it never falls through to general
+    # question-answering, which is separate unagreed scope.
+    assistant_free_text_intents_enabled: bool = True
+
     @field_validator("i13_qty_cover_ceiling_months", "i13_qty_minimum_history_count", mode="before")
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:
