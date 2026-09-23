@@ -33,6 +33,28 @@ reuses the same row (and routes it if a requester has since become
 resolvable), and a ``RESOLVED`` exception is never reopened by a later run
 against the same key -- only a genuinely new business key (e.g. a new plan,
 a new reservation) creates a new exception record.
+
+Where the owner comes from, and why there are two sources
+----------------------------------------------------------
+An exception with no owner routes to nobody and escalates to nobody, so
+FR-9's whole second half is dead for it. The owner used to come from
+``ConsumptionPlan.requester`` alone -- and a ``NO_PLAN`` exception, by
+definition, has no plan. Every one of them was therefore unowned, which is
+how 42,649 exceptions came to sit unrouted.
+
+So the owner is resolved in two steps, in descending order of authority:
+
+1. ``plan.requester`` -- the person who actually spoke to the assistant.
+   Unchanged, and still preferred wherever it exists.
+2. ``requester_by_reservation`` -- W6.4's attribution, resolved from
+   ``RESB.WEMPF`` for roughly four reservations in five.
+
+The second is passed in already resolved, exactly like ``grni_snapshots``:
+this function still does no I/O of its own. W6.4's conflict rule travels with
+it -- where RESB and the plan name different people, it yields *no* entry
+rather than a guess, so an AMBIGUOUS attribution leaves the exception unowned.
+That is deliberate. An exception routed to the wrong named person is worse
+than one routed to nobody, because somebody answers it.
 """
 
 from __future__ import annotations
@@ -314,17 +336,42 @@ def detect_exceptions(
     plan_breach_grace_days: int,
     requester_response_days: int,
     quantity_decision_records: Sequence[QuantityDecisionRecord] = (),
+    requester_by_reservation: Mapping[tuple[str, str], str] = {},
 ) -> DetectionRunResult:
     """Run PLAN_BREACH, NO_PLAN/NO_PLAN_GRNI and QUANTITY_OVERRIDE detection
     for the given already-fetched evidence, and persist/update/resolve
     exceptions accordingly. Fetching ``ledger_entries``/``plans``/
-    ``grni_snapshots`` (from W6.2/W6.3/CAPTURE) is the caller's job -- this
-    function does no I/O of its own beyond the injected ports, so it is
-    trivially unit-testable and callable from a route, a script, or a
-    future scheduler without any change."""
+    ``grni_snapshots``/``requester_by_reservation`` (from W6.2/W6.3/W6.4/
+    CAPTURE) is the caller's job -- this function does no I/O of its own
+    beyond the injected ports, so it is trivially unit-testable and callable
+    from a route, a script, or a future scheduler without any change.
+
+    ``requester_by_reservation`` maps ``(reservation_number,
+    reservation_item)`` to the requester W6.4 resolved from ``RESB.WEMPF``.
+    Defaulting it to empty keeps every existing caller and test working
+    unchanged, and reproduces exactly the old behaviour: plan requester only.
+    """
     grace_period = timedelta(days=plan_breach_grace_days)
     response_period = timedelta(days=requester_response_days)
     created = reused = resolved = routed = 0
+
+    def owner_for(
+        plan: ConsumptionPlan | None,
+        reservation_number: str | None,
+        reservation_item: str | None,
+    ) -> str | None:
+        """The requester to route to, preferring the one who spoke to us.
+
+        Returns ``None`` when neither source knows, which is a real answer:
+        the exception is persisted unowned and routed by a later run once a
+        requester becomes resolvable (``_apply_detection`` handles that), and
+        never routed to a guess in the meantime.
+        """
+        if plan is not None and plan.requester:
+            return plan.requester
+        if reservation_number is None or reservation_item is None:
+            return None
+        return requester_by_reservation.get((reservation_number, reservation_item))
 
     ledger_by_reservation: dict[tuple[str, str], list[ReservationLedgerEntry]] = defaultdict(list)
     for entry in ledger_entries:
@@ -347,7 +394,10 @@ def detect_exceptions(
             reservation_item=plan.reservation_item,
             session_id=plan.session_id,
             ledger_entry_id=entries[0].ledger_id if entries else None,
-            owner_requester_id=plan.requester,
+            # A plan breach always has a plan, so this is almost always
+            # plan.requester. The fallback covers a plan captured with no
+            # requester recorded against it.
+            owner_requester_id=owner_for(plan, plan.reservation_number, plan.reservation_item),
             reason=(
                 f"Consumption plan {plan.plan_id} planned use {plan.planned_use_date} plus "
                 f"{plan_breach_grace_days}-day grace has expired with no goods issue evidence"
@@ -388,7 +438,10 @@ def detect_exceptions(
             reservation_item=entry.reservation_item,
             session_id=plan.session_id if plan else None,
             ledger_entry_id=entry.ledger_id,
-            owner_requester_id=plan.requester if plan else None,
+            # THE case this fallback exists for: a NO_PLAN exception has no
+            # plan by definition, so before W6.4 was consulted here the owner
+            # was unconditionally None and nothing ever routed.
+            owner_requester_id=owner_for(plan, entry.reservation_number, entry.reservation_item),
             reason=f"OAR reservation has no valid plan/session ({no_plan_reason.value if no_plan_reason else 'n/a'})",
             evidence=evidence,
             as_of_time=as_of_time,
@@ -418,7 +471,8 @@ def detect_exceptions(
             reservation_item=entry.reservation_item,
             session_id=plan.session_id if plan else None,
             ledger_entry_id=entry.ledger_id,
-            owner_requester_id=plan.requester if plan else None,
+            # Same reasoning as NO_PLAN above -- this is its GRNI sibling.
+            owner_requester_id=owner_for(plan, entry.reservation_number, entry.reservation_item),
             reason="No valid plan/session and W6.3's GRNI threshold is exceeded (reused from the WATCH mart, not recalculated)",
             evidence=grni_evidence,
             as_of_time=as_of_time,
@@ -453,7 +507,13 @@ def detect_exceptions(
             reservation_item=record.reservation_item,
             session_id=record.session_id,
             ledger_entry_id=None,
-            owner_requester_id=record.requester_id,
+            # W7.4 already carries the requester on the decision record -- the
+            # person who chose the quantity. Falls back to W6.4 only where the
+            # suggestion was recorded without one.
+            owner_requester_id=(
+                record.requester_id
+                or owner_for(None, record.reservation_number, record.reservation_item)
+            ),
             reason="Requester-confirmed quantity differs from the system suggestion",
             evidence=evidence,
             as_of_time=as_of_time,

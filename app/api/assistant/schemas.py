@@ -198,9 +198,17 @@ class PlanModel(AssistantModel):
     ``reservationNumber`` is null until FR-8 links it, which is the normal state
     and not a gap: the assistant runs while the reservation is being created, so
     it has no number yet.
+
+    ``sessionId`` is the plan's origin, and FR-4 is explicit that a plan is
+    stored *against* it -- "traceability from a plan back to the advice that
+    shaped it". It was stored on the record and left off this model, so a caller
+    reading a plan could not reach the conversation that produced it even though
+    the list route already filters by it. With the reservation link blocked on
+    ``RESB.BEDNR``, this is currently the ONLY link a plan has to anything.
     """
 
     id: str
+    session_id: str
     material: str
     plant: str
     purpose: str

@@ -36,6 +36,7 @@ from app.initiatives.i13.act_notifications import LoggingNotificationAdapter
 from app.initiatives.i13.act_stock_provider import PostgresCrossPlantStockProvider
 from app.initiatives.i13.act_watch_snapshot import build_grni_snapshot_index
 from app.initiatives.i13.config import I13Config, get_i13_config
+from app.initiatives.i13.consumption_attribution import ConsumptionAttributionService
 from app.initiatives.i13.plans import load_consumption_plans
 from app.initiatives.i13.quantity_suggestion_store import build_quantity_decision_records
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
@@ -84,11 +85,21 @@ def list_act_utilisation(
     aging_band: str | None = Query(None),
     grni: bool | None = Query(None, description="Filter by W6.3's gr_not_issued_flag"),
     acquired_vs_plan_status: str | None = Query(None),
+    limit: int = Query(1000, ge=1, le=5000, description="See the note on pagination below."),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ) -> list[WatchMetricResponse]:
     """Read-only over the persisted W6.3 mart -- never recalculates months
     of cover, aging, GRNI or acquired-vs-plan (see
-    ``app.initiatives.i13.watch_mart.list_watch_metrics``)."""
+    ``app.initiatives.i13.watch_mart.list_watch_metrics``).
+
+    ``limit``/``offset`` were added after the mart reached 7,184 rows against
+    an OAR population of 44,394: the route had been returning the whole
+    filtered set in one response, and the dashboard had been rendering it. The
+    default is generous rather than small (1,000) so no existing caller loses
+    data it was relying on, and the frontend discloses on screen when a
+    response was capped -- an undisclosed cap reads as "that is all there is".
+    """
     rows = list_watch_metrics(
         db,
         plant=plant,
@@ -97,7 +108,8 @@ def list_act_utilisation(
         gr_not_issued_flag=grni,
         acquired_vs_plan_status=acquired_vs_plan_status,
     )
-    return [WatchMetricResponse.model_validate(row) for row in rows]
+    page = rows[offset : offset + limit]
+    return [WatchMetricResponse.model_validate(row) for row in page]
 
 
 @router.get("/utilisation/{material}/{plant}", response_model=WatchMetricResponse)
@@ -118,8 +130,18 @@ def list_act_exceptions(
     exception_type: str | None = Query(None, alias="type"),
     exception_status: str | None = Query(None, alias="status"),
     owner_requester_id: str | None = Query(None),
+    limit: int = Query(1000, ge=1, le=5000, description="See the note on pagination below."),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ) -> list[ActExceptionResponse]:
+    """The FR-9 exception queue.
+
+    ``limit``/``offset`` matter more here than anywhere else in I13: detection
+    has raised 42,649 exceptions, and this route had no bound at all -- one
+    unfiltered call serialised every one of them. The default of 1,000 is a
+    readable screenful rather than a small page, and the frontend says when a
+    response was capped instead of presenting a truncated queue as the queue.
+    """
     repository = _repository(db)
     items = repository.list(
         material=material,
@@ -128,7 +150,8 @@ def list_act_exceptions(
         status=_parse_enum(ExceptionStatus, exception_status, "status"),
         owner_requester_id=owner_requester_id,
     )
-    return [ActExceptionResponse.model_validate(item) for item in items]
+    page = items[offset : offset + limit]
+    return [ActExceptionResponse.model_validate(item) for item in page]
 
 
 @router.get("/exceptions/{exception_id}", response_model=ActExceptionDetailResponse)
@@ -233,6 +256,34 @@ def run_detect_exceptions(
     # suggestions are excluded.
     quantity_decision_records = build_quantity_decision_records(db, material=payload.material, plant=payload.plant)
 
+    # W6.4's requester, so a NO_PLAN exception has somebody to route to.
+    #
+    # Without this the owner came from `ConsumptionPlan.requester` alone, and a
+    # NO_PLAN exception has no plan by definition -- so every one of them was
+    # unowned and FR-9's routing and escalation never fired for any of them.
+    # W6.4 resolves a requester from RESB.WEMPF for roughly four reservations in
+    # five and has always been sitting right here, unread.
+    #
+    # `reservation_repo` is the same instance build_reservation_ledger just
+    # used, and its reads are memoized per instance, so this is a cache hit
+    # rather than a second pass over the reservations.
+    attribution_service = ConsumptionAttributionService(
+        cost_centre_enabled=config.attribution.cost_centre_enabled
+    )
+    attributions = attribution_service.attribute_entries(
+        ledger_entries,
+        reservation_repo.get_reservations(material=payload.material, plant=payload.plant),
+        plans,
+    )
+    # Only the resolved ones. An AMBIGUOUS attribution yields requester_id=None
+    # and is left out entirely, so a conflict leaves the exception unowned
+    # rather than routing it to whichever name sorted first.
+    requester_by_reservation = {
+        (a.reservation_number, a.reservation_item): a.requester_id
+        for a in attributions
+        if a.requester_id
+    }
+
     result = detect_exceptions(
         as_of_time,
         ledger_entries=ledger_entries,
@@ -243,6 +294,7 @@ def run_detect_exceptions(
         plan_breach_grace_days=config.exceptions.plan_breach_grace_days,
         requester_response_days=config.escalation.requester_response_days,
         quantity_decision_records=quantity_decision_records,
+        requester_by_reservation=requester_by_reservation,
     )
     db.commit()
     return DetectionRunResponse(**dataclasses.asdict(result))

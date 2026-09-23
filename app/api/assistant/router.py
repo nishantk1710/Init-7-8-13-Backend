@@ -251,6 +251,7 @@ def post_turn(
 def _plan_model(plan: ConsumptionPlanRecord) -> PlanModel:
     return PlanModel(
         id=plan.id,
+        session_id=plan.session_id,
         material=plan.material,
         plant=plan.plant,
         purpose=plan.purpose,
