@@ -54,6 +54,7 @@ from app.api.assistant.schemas import (
     JustificationListResponse,
     JustificationModel,
     JustificationRequest,
+    NarrativeModel,
     PlanModel,
     RoutingModel,
     SessionListResponse,
@@ -130,6 +131,28 @@ def _step_model(step: Step) -> StepModel:
     )
 
 
+def _narrative_model(session: AssistantSession) -> NarrativeModel | None:
+    """The stored narrative, where one was written.
+
+    Read back off the session rather than taken from the writer's return value,
+    so what the requester is shown is the same string the audit record holds. A
+    narrative served from memory and stored separately could drift from it, and
+    the stored one is the one somebody will be asked about months later.
+
+    ``None`` whenever no narrative was written -- off, unconfigured, the stub
+    provider, or the provider failed. All four are ordinary and none of them is
+    an error: the deterministic advice is complete either way.
+    """
+    if not session.narrative:
+        return None
+    return NarrativeModel(
+        text=session.narrative,
+        prompt_id=session.narrative_prompt_id,
+        prompt_version=session.narrative_prompt_version,
+        model=session.narrative_model,
+    )
+
+
 def _routing_model(routed) -> RoutingModel:
     return RoutingModel(
         flow=routed.flow.value,
@@ -190,6 +213,7 @@ def start_session(
         session_id=started.session.id,
         expires_at=started.session.expires_at,
         step=_step_model(started.step),
+        narrative=_narrative_model(started.session),
     )
 
 

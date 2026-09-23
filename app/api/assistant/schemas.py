@@ -121,6 +121,21 @@ class RoutingModel(AssistantModel):
     reason: str
 
 
+class NarrativeModel(AssistantModel):
+    """A model-written sentence, and the prompt behind it.
+
+    The provenance is not optional decoration. This programme is human-gated and
+    audited, and "the model said so" is not an acceptable account of where a
+    sentence came from -- so the prompt id, its version and the deployment travel
+    with the text to whoever is reading it.
+    """
+
+    text: str
+    prompt_id: str | None = None
+    prompt_version: int | None = None
+    model: str | None = None
+
+
 class StartSessionResponse(AssistantModel):
     """``session`` and ``step`` are null together, and only when out of scope.
 
@@ -133,6 +148,18 @@ class StartSessionResponse(AssistantModel):
     session_id: str | None = None
     expires_at: datetime | None = None
     step: StepModel | None = None
+    narrative: NarrativeModel | None = None
+    """The model-written phrasing of the advice, where one was served.
+
+    Null whenever the narrative layer is off, unconfigured or failed -- all of
+    which are normal. It is served **beside** ``step.facts`` and never instead of
+    them: the deterministic assessment is the answer of record, and a client that
+    rendered this in its place would be showing phrasing where a number belongs.
+
+    It was stored on the session from the day the narrative was written and never
+    returned here, so nobody in a live conversation had ever seen one. Only the
+    trace showed it, to whoever read the audit record afterwards -- which is the
+    one person it was not written for."""
 
 
 class AnswerRequest(AssistantModel):

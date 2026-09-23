@@ -56,9 +56,23 @@ from app.integrations.ai.stub import STUB_MODEL
 
 logger = get_logger(__name__)
 
-#: The registry prompt ids. Both are already routed in ``model_registry.py``.
+#: The registry prompt ids. Both are routed in ``model_registry.py``.
 I08_PROMPT = "reservation_assistant"
-I13_PROMPT = "i13_quantity_suggestion"
+
+#: **Not** ``i13_quantity_suggestion``, which this used to point at.
+#:
+#: That prompt belongs to W7.4's suggestion engine
+#: (``app/initiatives/i13/quantity_suggestion_reason.py``) and its placeholders
+#: are that engine's inputs -- ``stock_on_hand``, ``suggested_quantity``,
+#: ``cover_ceiling_months`` and four more. :func:`write` supplies ``headline``
+#: and ``facts``, so every I13 narrative failed to render and degraded to
+#: "prompt unavailable". The deterministic answer was served throughout, which
+#: is why nothing looked broken -- but the I13 flow had no working narrative at
+#: all, and the failure was silent because this layer is designed to be.
+#:
+#: Reusing one prompt for two callers with different variables could not have
+#: worked. They are two prompts now.
+I13_PROMPT = "i13_reservation_assistant"
 
 
 @dataclass(frozen=True)

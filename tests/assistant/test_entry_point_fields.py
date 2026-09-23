@@ -235,3 +235,54 @@ class TestQuantityIsNoLongerCollected:
 
         assert "quantity" not in StartSessionRequest.model_fields
         assert "requestedFor" in StartSessionRequest.model_json_schema()["properties"]
+
+
+class TestTheNarrativeReachesTheLiveScreen:
+    """Gap B: it was written, stored, and never served to the conversation.
+
+    ``StartSessionResponse`` had no narrative field, so the only place a
+    model-written sentence ever appeared was the trace -- read afterwards, by
+    whoever audits the record, and not by the person the sentence was written
+    for.
+
+    These tests assert the field exists and carries its provenance. They do not
+    assert a narrative is *present*: the layer is off by default and must stay
+    that way until sign-off, so on a default configuration null is the correct
+    answer and asserting otherwise would fail for the right reason.
+    """
+
+    def test_the_start_response_carries_the_field(self, in_scope_material) -> None:
+        material, plant = in_scope_material
+        assert "narrative" in _open(material, plant)
+
+    def test_a_served_narrative_carries_its_provenance(self, in_scope_material) -> None:
+        """"The model said so" is not acceptable provenance on an audited
+        programme, so the prompt and deployment travel with the text."""
+        material, plant = in_scope_material
+        narrative = _open(material, plant).get("narrative")
+
+        if narrative is None:
+            pytest.skip("narrative layer is off or unconfigured -- the default")
+
+        assert narrative["text"].strip()
+        assert narrative["promptId"]
+        assert narrative["promptVersion"] is not None
+        assert narrative["model"]
+
+    def test_what_is_served_is_what_was_stored(self, in_scope_material) -> None:
+        """The requester and the audit record must see the same sentence.
+
+        Serving from memory while storing separately would let the two drift,
+        and the stored one is what somebody is asked about months later.
+        """
+        material, plant = in_scope_material
+        body = _open(material, plant)
+
+        with get_sessionmaker()() as db:
+            stored = db.execute(
+                text("SELECT narrative FROM assistant_session WHERE id = :id"),
+                {"id": body["sessionId"]},
+            ).scalar_one()
+
+        served = body.get("narrative")
+        assert (served["text"] if served else None) == stored
