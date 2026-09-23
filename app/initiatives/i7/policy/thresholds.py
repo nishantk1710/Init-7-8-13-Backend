@@ -273,9 +273,13 @@ class AdoptionPolicy(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    monitoring_window_days: int | None = None
-    """**Unset.** The FRS calls the window configurable and to be tuned during
-    calibration, and never states a value."""
+    monitoring_window_days: int | None = 15
+    """Default 15 days, per business direction (2026-09-22) -- the FRS calls
+    the window configurable and to be tuned during calibration but never
+    itself states a value, so this is a deliberate starting default, not a
+    value drawn from the FRS. Still overridable per policy document; a future
+    calibration exercise may confirm a different number without a code
+    change."""
 
     converted_mrp_type: str = "VB"
     """Conversion is adopted when MRP type becomes VB with MINBE and MABST

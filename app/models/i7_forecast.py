@@ -1,18 +1,24 @@
 """I07 forecasting persistence.
 
-Three tables, each earning its place:
+Four tables, each earning its place:
 
-* ``i7_forecast_run``      one execution, with the policy that governed it
-* ``i7_forecast``          the demand forecast per material-plant and model
-* ``i7_segment_decision``  the champion/challenger audit log, one row per
-                           material-plant per run (despite the table's name --
-                           see below)
+* ``i7_forecast_run``           one execution, with the policy that governed it
+* ``i7_forecast``                the demand forecast per material-plant and model
+* ``i7_segment_decision``        the champion/challenger audit log, one row per
+                                 material-plant per run (despite the table's name --
+                                 see below)
+* ``i7_forecast_backtest_path``  one predicted/actual pair per rolling origin
+                                 and horizon step -- see its own docstring for
+                                 why this table exists despite the note below.
 
-The origin-by-origin paths are **not** persisted. A full run produces roughly
-450 material-plants x 4 models x 10 origins of rows, and nothing downstream
-reads them -- Phase 5 needs the forecast rate, and the audit trail needs the
-decision and its metrics. The paths stay available in memory during a run, which
-is where the metrics are computed from.
+**Origin-by-origin paths were not persisted before 2026-09-22.** A full run
+produces roughly 450 material-plants x 4 models x 10 origins of rows; until a
+"Forecast vs Actual Demand" chart needed the real, per-period predicted/actual
+history, nothing downstream read them beyond the in-memory aggregate metrics
+computed at the end of each run. That reasoning no longer holds for the
+champion model specifically -- see ``ForecastBacktestPath``. The champion's
+paths are now persisted; every non-champion model's paths remain
+unpersisted, for the same volume reason as before.
 
 **Adoption grain moved from segment to material-plant.** The FRS is explicit,
 twice, in Section 3.1 and FR-3: "Per-material model selection... the winning
@@ -234,3 +240,68 @@ class SegmentModelDecision(Base):
 
     def __repr__(self) -> str:
         return f"<SegmentModelDecision {self.segment_key} {self.adoption_status}>"
+
+
+class ForecastBacktestPath(Base):
+    """One rolling-origin predicted/actual pair, for the CHAMPION model only.
+
+    Added 2026-09-22 to back a real "Forecast vs Actual Demand" chart with
+    the model's own historical predictions, rather than a client-side
+    approximation computed from raw consumption alone (which is what the
+    frontend's existing ForecastVsActualChart falls back to today when this
+    table has nothing for a material-plant -- see that component).
+
+    **Champion only, not every model.** Persisting every model's full path
+    set (baseline + challenger, times every origin) would multiply row count
+    several-fold over what the chart can ever show (it plots one series: what
+    was actually recommended). ``backtest.run()`` already computes every
+    model's ``BacktestResult.paths`` in memory regardless -- this table saves
+    only the one path (``forecast_result.model == champion``) that
+    corresponds to the forecast_rate actually feeding the recommendation,
+    identified via ``Forecast.is_champion`` at write time in
+    ``run_forecasting()``.
+
+    ``predicted``/``actual`` reproduce ``OriginForecast`` exactly (see
+    ``forecasting/types.py``) -- this table is that dataclass, persisted,
+    nothing recomputed or reshaped.
+
+    First data point exists only from the first forecast run generated after
+    this table shipped; there is no way to reconstruct history for forecast
+    runs that predate it, since the in-memory paths from those runs were
+    already discarded.
+    """
+
+    __tablename__ = "i7_forecast_backtest_path"
+    __table_args__ = (
+        Index(
+            "ix_i7_forecast_backtest_path_material_plant",
+            "sap_material_number",
+            "sap_plant_code",
+        ),
+        Index("ix_i7_forecast_backtest_path_run", "forecast_run_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    forecast_run_id: Mapped[int] = mapped_column(Integer, index=True)
+    sap_material_number: Mapped[str] = mapped_column(String(40))
+    sap_plant_code: Mapped[str] = mapped_column(String(8))
+    model_name: Mapped[str] = mapped_column(String(32))
+    """The champion model's name for this material-plant on this run --
+    denormalised from ``Forecast.model_name`` so a caller can read this table
+    alone without a join, and so a model swap between runs is visible
+    directly on the path rows themselves."""
+
+    origin_period: Mapped[date] = mapped_column(Date)
+    horizon_step: Mapped[int] = mapped_column(Integer)
+    forecast_period: Mapped[date] = mapped_column(Date)
+    """The month this specific prediction was FOR -- what the chart plots
+    against, not ``origin_period`` (the month the model was standing at when
+    it made the prediction)."""
+
+    predicted: Mapped[Decimal] = mapped_column(RATE)
+    actual: Mapped[Decimal] = mapped_column(RATE)
+
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

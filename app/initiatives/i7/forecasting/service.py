@@ -72,7 +72,12 @@ from app.initiatives.i7.forecasting.types import (
     ModelStatus,
 )
 from app.initiatives.i7.policy import PolicyDocument
-from app.models.i7_forecast import Forecast, ForecastRun, SegmentModelDecision
+from app.models.i7_forecast import (
+    Forecast,
+    ForecastBacktestPath,
+    ForecastRun,
+    SegmentModelDecision,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -384,6 +389,12 @@ def run_forecasting(policy: PolicyDocument | None = None) -> ForecastRunResult:
 
             rows: list[dict[str, Any]] = []
             decisions: list[Any] = []
+            # One entry per Forecast row, same index, holding that row's own
+            # BacktestResult -- so once is_champion is finalised below (after
+            # _apply_decision_to_rows may have flipped it from is_baseline),
+            # the champion's own paths can be found by row index alone,
+            # without re-running or re-matching anything.
+            backtest_by_row_index: list[BacktestResult] = []
 
             for candidate in candidates:
                 material_plant_key = f"{candidate.material}/{candidate.plant}"
@@ -408,6 +419,7 @@ def run_forecasting(policy: PolicyDocument | None = None) -> ForecastRunResult:
                     by_model[forecast_result.model] = backtest_result
                     if is_baseline:
                         baseline_index = len(rows)
+                    backtest_by_row_index.append(backtest_result)
 
                     metrics = backtest_result.metrics
                     rows.append(
@@ -462,6 +474,32 @@ def run_forecasting(policy: PolicyDocument | None = None) -> ForecastRunResult:
 
             session.bulk_insert_mappings(Forecast, rows)
             result.forecasts_written = len(rows)
+
+            # Champion backtest paths -- persisted after is_champion is final
+            # (decisions above may have flipped it from is_baseline), one
+            # path row per rolling-origin/horizon-step pair, for the row that
+            # actually won this material-plant's comparison. See
+            # ForecastBacktestPath's docstring for why only the champion.
+            path_rows: list[dict[str, Any]] = []
+            for row, backtest_result in zip(rows, backtest_by_row_index):
+                if not row["is_champion"] or not backtest_result.paths:
+                    continue
+                for path in backtest_result.paths:
+                    path_rows.append(
+                        {
+                            "forecast_run_id": run_id,
+                            "sap_material_number": row["sap_material_number"],
+                            "sap_plant_code": row["sap_plant_code"],
+                            "model_name": row["model_name"],
+                            "origin_period": path.origin_period,
+                            "horizon_step": path.horizon_step,
+                            "forecast_period": path.forecast_period,
+                            "predicted": path.predicted,
+                            "actual": path.actual,
+                        }
+                    )
+            if path_rows:
+                session.bulk_insert_mappings(ForecastBacktestPath, path_rows)
 
             for decision in decisions:
                 session.add(

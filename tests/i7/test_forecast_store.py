@@ -16,7 +16,12 @@ from app.initiatives.i7.forecasting.types import (
     ModelName,
     ModelStatus,
 )
-from app.models.i7_forecast import Forecast, ForecastRun, SegmentModelDecision
+from app.models.i7_forecast import (
+    Forecast,
+    ForecastBacktestPath,
+    ForecastRun,
+    SegmentModelDecision,
+)
 
 needs_db = pytest.mark.skipif(not get_settings().database_url, reason="DATABASE_URL not set")
 
@@ -285,3 +290,95 @@ def test_no_inventory_parameter_is_stored(session):
     columns = {column.name for column in Forecast.__table__.columns}
     for forbidden in ("safety_stock", "reorder_point", "maximum_stock", "rop", "eoq"):
         assert forbidden not in columns
+
+
+# --- Champion backtest paths (2026-09-22) -----------------------------------
+
+
+@needs_db
+def test_backtest_paths_exist_only_for_champion_rows(session):
+    """Every persisted path's (run, material, plant, model) must correspond
+    to a Forecast row with is_champion=True on that same run -- proving the
+    write in run_forecasting() actually filters by the FINAL is_champion
+    flag (post _apply_decision_to_rows), not the initial is_baseline guess."""
+    if not session.execute(
+        select(func.count()).select_from(ForecastBacktestPath)
+    ).scalar():
+        pytest.skip("no backtest paths persisted yet")
+
+    mismatched = session.execute(
+        text(
+            """
+            select count(*) from i7_forecast_backtest_path p
+            where not exists (
+                select 1 from i7_forecast f
+                 where f.forecast_run_id = p.forecast_run_id
+                   and f.sap_material_number = p.sap_material_number
+                   and f.sap_plant_code = p.sap_plant_code
+                   and f.model_name = p.model_name
+                   and f.is_champion = true
+            )
+            """
+        )
+    ).scalar()
+    assert mismatched == 0
+
+
+@needs_db
+def test_at_most_one_champion_model_per_material_plant_per_run_has_paths(session):
+    """A material-plant must never show paths from two different models on
+    the same run -- exactly one champion, exactly one path set."""
+    if not session.execute(
+        select(func.count()).select_from(ForecastBacktestPath)
+    ).scalar():
+        pytest.skip("no backtest paths persisted yet")
+
+    multiple_models = session.execute(
+        text(
+            """
+            select count(*) from (
+                select forecast_run_id, sap_material_number, sap_plant_code,
+                       count(distinct model_name) as n
+                  from i7_forecast_backtest_path
+                 group by 1, 2, 3
+                having count(distinct model_name) > 1
+            ) d
+            """
+        )
+    ).scalar()
+    assert multiple_models == 0
+
+
+@needs_db
+def test_forecast_period_never_before_origin_period(session):
+    """forecast_period is what the prediction was FOR; origin_period is where
+    the model was standing when it made it -- forecast_period must never
+    precede origin_period, which would mean predicting the past."""
+    if not session.execute(
+        select(func.count()).select_from(ForecastBacktestPath)
+    ).scalar():
+        pytest.skip("no backtest paths persisted yet")
+
+    backwards = session.execute(
+        select(func.count())
+        .select_from(ForecastBacktestPath)
+        .where(ForecastBacktestPath.forecast_period < ForecastBacktestPath.origin_period)
+    ).scalar()
+    assert backwards == 0
+
+
+@needs_db
+def test_predicted_and_actual_are_never_negative(session):
+    if not session.execute(
+        select(func.count()).select_from(ForecastBacktestPath)
+    ).scalar():
+        pytest.skip("no backtest paths persisted yet")
+
+    negative = session.execute(
+        select(func.count())
+        .select_from(ForecastBacktestPath)
+        .where(
+            (ForecastBacktestPath.predicted < 0) | (ForecastBacktestPath.actual < 0)
+        )
+    ).scalar()
+    assert negative == 0

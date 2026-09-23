@@ -50,6 +50,85 @@ class ConsumptionHistoryEntry(BaseModel):
     quantity: Decimal
 
 
+class ForecastHistoryPoint(BaseModel):
+    """One rolling-origin prediction from the CHAMPION model's own backtest,
+    for the "Forecast vs Actual Demand" chart -- real model output, read from
+    ``i7_forecast_backtest_path`` (added 2026-09-22), never a client-side
+    approximation computed from raw consumption alone."""
+
+    model_config = ConfigDict(frozen=True)
+
+    forecast_period: date
+    """The month this prediction was FOR -- what the chart's x-axis uses."""
+
+    predicted: Decimal
+    actual: Decimal
+
+
+class ForecastHistoryResponse(BaseModel):
+    """The champion model's predicted/actual history for one
+    material-plant's most recent forecast run that has any persisted paths.
+
+    ``points`` is empty, never fabricated, when no forecast run since
+    2026-09-22 has produced paths for this material-plant (either it predates
+    the table, or its backtest never produced a scoreable path -- see
+    ForecastBacktestPath's own docstring on why history cannot be
+    retroactively reconstructed)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    sap_material_number: str
+    sap_plant_code: str
+    model_name: str | None
+    """The champion model these points came from, or None when points is
+    empty."""
+
+    points: tuple[ForecastHistoryPoint, ...]
+
+
+class ForecastHistoryAggregatePoint(BaseModel):
+    """One period's SUMMED predicted/actual across every in-scope
+    material-plant that has a persisted champion path for that period --
+    real model output, aggregated, never recomputed or blended with the
+    flat forecast_rate fallback."""
+
+    model_config = ConfigDict(frozen=True)
+
+    forecast_period: date
+    predicted: Decimal
+    actual: Decimal
+    material_count: int
+    """How many distinct material-plants contributed to this period's sum --
+    varies period to period since not every material's history covers the
+    same span."""
+
+
+class ForecastHistoryAggregateResponse(BaseModel):
+    """Portfolio-wide (optionally filtered, same filters as the list/summary
+    endpoints) real backtest history, summed per period across every
+    material-plant that has one -- for the Overview page's Forecast vs
+    Actual chart, which shows many materials at once and cannot call the
+    per-recommendation endpoint once per row.
+
+    ``points`` is empty when NO in-scope material-plant has any persisted
+    backtest path yet -- never fabricated as a flat line here; the caller
+    (frontend) falls back to its own flat-line-of-forecast_rate display in
+    that case, exactly as it already does per-material."""
+
+    model_config = ConfigDict(frozen=True)
+
+    materials_with_history_count: int
+    """How many distinct material-plants (within the current filter scope)
+    contributed at least one point -- always <= materials_in_scope_count."""
+
+    materials_in_scope_count: int
+    """Total material-plants matching the current filters, regardless of
+    whether they have persisted history -- the denominator for an honest
+    "N of M materials have real history" caption."""
+
+    points: tuple[ForecastHistoryAggregatePoint, ...]
+
+
 class DemandInfo(BaseModel):
     """Demand classification and forecast, as far as the recommendation row
     carries it. ADI and CV-squared are Phase 3 feature-store fields, not
@@ -401,6 +480,28 @@ class RecommendationSummaryStats(BaseModel):
     computed safety stock rarely coincide on the same row) -- never
     defaulted to 0, which would silently claim "no impact" instead of "not
     computable yet\"."""
+
+    critical_stockout_risk_count: int
+    """COUNT of material-plants where current on-hand stock
+    (SUM(i7_staged_stock.unrestricted_use_stock) across storage locations)
+    is below ``recommended_rop`` -- both values present and ``recommended_rop``
+    not NULL. An I07-derived proxy, not a Vedanta-confirmed KPI definition:
+    "current stock has already fallen below the newly-calculated reorder
+    point." Rows with no staged stock record or no recommended ROP are
+    excluded from the count, never counted as either at-risk or safe."""
+
+    excess_inventory_candidates_count: int
+    """COUNT of material-plants where ``current_max_stock >
+    recommended_max_stock`` (both present, any positive gap, no minimum
+    margin). An I07-derived proxy, not a Vedanta-confirmed KPI definition."""
+
+    excess_inventory_opportunity: Decimal | None
+    """SUM(unit_price * (current_max_stock - recommended_max_stock)) over
+    rows in the excess-inventory count above where unit_price is also
+    present -- the same "current vs recommended, priced" pattern as
+    ``net_safety_stock_value_impact``, applied to Max Stock instead of
+    Safety Stock. ``None`` when no in-scope row has all three values
+    available, never defaulted to 0."""
 
 
 class RecommendationDetail(BaseModel):

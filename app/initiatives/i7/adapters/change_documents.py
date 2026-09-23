@@ -35,8 +35,16 @@ _CHANGE_DOCUMENT_SQL = """
        AND h.object_value = :padded_material
        AND p.table_name = 'MARC'
        AND p.field_name = ANY(:tracked_fields)
+       AND (CAST(:window_start AS text) IS NULL OR h.date >= CAST(:window_start AS text))
+       AND (CAST(:window_end AS text) IS NULL OR h.date <= CAST(:window_end AS text))
      ORDER BY h.date, h.time
 """
+# h.date is `text`, not a real date column (see CLAUDE.md's "every raw column
+# is text on purpose") -- but it is always a plain ISO "YYYY-MM-DD" string in
+# this extract, which sorts identically under text and chronological
+# comparison, so a direct >=/<= text comparison against two ISO date strings
+# is correct without a CAST. window_start/window_end are None (never
+# filtered) when the caller has no recommendation date or window to apply.
 # The join key is CDHDR/CDPOS's shared natural key (object class + object
 # value + document number) -- CDPOS carries no separate change-document
 # identity of its own. table_key (MARC's own primary key, MATNR+WERKS) is
@@ -65,17 +73,32 @@ class ChangeDocumentRow(NamedTuple):
 
 
 def material_marc_changes(
-    session: Session, padded_material: str, tracked_fields: tuple[str, ...]
+    session: Session,
+    padded_material: str,
+    tracked_fields: tuple[str, ...],
+    window_start: str | None = None,
+    window_end: str | None = None,
 ) -> list[ChangeDocumentRow]:
     """Every MARC field-change event for one (already zero-padded) material.
 
     Scoped exactly to FR-9: ``Objectclas=MATERIAL``, ``Tabname=MARC``,
     ``Fname`` in ``tracked_fields``. Ordered oldest-to-newest so a caller
     can take the last value per field as "current".
+
+    ``window_start``/``window_end`` are inclusive ISO date strings
+    (``"YYYY-MM-DD"``) -- FR-9's "within a configurable window after the
+    recommendation date". ``None`` means unbounded on that side; a caller
+    with no recommendation date or no configured window passes ``None`` for
+    both, matching the pre-window behaviour exactly.
     """
     rows = session.execute(
         text(_CHANGE_DOCUMENT_SQL),
-        {"padded_material": padded_material, "tracked_fields": list(tracked_fields)},
+        {
+            "padded_material": padded_material,
+            "tracked_fields": list(tracked_fields),
+            "window_start": window_start,
+            "window_end": window_end,
+        },
     ).all()
     return [
         ChangeDocumentRow(

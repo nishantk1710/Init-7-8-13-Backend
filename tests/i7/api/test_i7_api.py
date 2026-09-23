@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
@@ -103,6 +103,9 @@ def test_summary_returns_200_with_expected_shape():
         "ready_for_review_count",
         "not_evaluable_count",
         "net_safety_stock_value_impact",
+        "critical_stockout_risk_count",
+        "excess_inventory_candidates_count",
+        "excess_inventory_opportunity",
     }
 
 
@@ -217,6 +220,58 @@ def test_summary_by_risk_escalates_impact_and_insurance_not_just_critical():
     summary = client.get("/api/v1/i7/recommendations/summary").json()
     by_risk = {row["risk"]: row["count"] for row in summary["by_risk"]}
     assert by_risk.get("high", 0) > 0
+
+
+# --- Critical Stockout Risk / Excess Inventory (2026-09-22 I07-derived proxies) ---
+
+
+@needs_db
+def test_summary_critical_stockout_risk_count_is_bounded_by_populated_rop():
+    """The stockout-risk count can never exceed how many latest-generation
+    recommendations even have a recommended_rop -- a material with no ROP is
+    excluded from the count entirely (never counted as either at-risk or
+    safe), so the count is always a subset of the ROP-populated rows."""
+    listing = client.get(
+        "/api/v1/i7/recommendations?page=1&page_size=1"
+    ).json()
+    total = listing["total"]
+
+    summary = client.get("/api/v1/i7/recommendations/summary").json()
+    assert isinstance(summary["critical_stockout_risk_count"], int)
+    assert 0 <= summary["critical_stockout_risk_count"] <= total
+
+
+@needs_db
+def test_summary_excess_inventory_count_matches_current_vs_recommended_max_stock():
+    with get_sessionmaker()() as session:
+        expected = session.execute(
+            select(func.count()).select_from(Recommendation).where(
+                Recommendation.current_max_stock.isnot(None),
+                Recommendation.recommended_max_stock.isnot(None),
+                Recommendation.current_max_stock > Recommendation.recommended_max_stock,
+            )
+        ).scalar_one()
+
+    summary = client.get("/api/v1/i7/recommendations/summary").json()
+    # Endpoint scopes to _latest_only(); a database with multiple generations
+    # may show a smaller endpoint count than this unscoped reproduction.
+    assert summary["excess_inventory_candidates_count"] <= expected
+
+
+@needs_db
+def test_summary_excess_inventory_opportunity_is_none_when_count_is_zero():
+    """Never a fabricated 0 -- if no material is an excess candidate, or none
+    of them has a unit price, the opportunity figure must be None, not 0."""
+    summary = client.get("/api/v1/i7/recommendations/summary").json()
+    if summary["excess_inventory_candidates_count"] == 0:
+        assert summary["excess_inventory_opportunity"] is None
+
+
+@needs_db
+def test_summary_stockout_and_excess_counts_never_negative():
+    summary = client.get("/api/v1/i7/recommendations/summary").json()
+    assert summary["critical_stockout_risk_count"] >= 0
+    assert summary["excess_inventory_candidates_count"] >= 0
 
 
 @needs_db

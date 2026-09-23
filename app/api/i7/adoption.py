@@ -2,12 +2,22 @@
 
 Calls the existing Phase 7 evaluators directly -- no SAP client is imported
 here, and none exists to import. ``RawChangeDocumentProvider`` reads the raw
-``raw_cdhdr``/``raw_cdpos`` extract tables (real data, no SAP call); on the
+``raw_cdhdr``/``raw_cdpos`` extract tables (real data, no SAP call), scoped to
+FR-9's configurable monitoring window (``PolicyDocument().adoption.
+monitoring_window_days``, default 15 days per the 2026-09-22 business
+direction) after each recommendation's own ``generated_at`` date. On the
 current extract every result is still UNKNOWN, because that extract's CDPOS
 table contains no MATERIAL/MARC change rows at all -- see
 ``sap_change_documents.py`` for the verification.
-"""
 
+Every evaluated result is also persisted to ``i7_sap_adoption``
+(``SapAdoptionResult``) -- FR-9's "recommendation ledger" -- as a side effect
+of being viewed through either endpoint below, upserted by
+``recommendation_id`` so repeated views of the same recommendation update the
+one row rather than accumulating history (the ledger records the latest
+known reconciliation, not an append-only log of every request)."""
+
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -16,20 +26,39 @@ from sqlalchemy.orm import Session
 
 from app.api.i7.deps import get_session, load_latest_recommendation
 from app.api.i7.recommendations import _apply_filters, _latest_only
+from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations.adoption import (
     evaluate_conversion_adoption,
     evaluate_parameter_adoption,
 )
 from app.initiatives.i7.recommendations.sap_change_documents import RawChangeDocumentProvider
 from app.initiatives.i7.recommendations.types import AdoptionResult
-from app.models.i7_recommendation import Recommendation
-from app.schemas.i7.adoption import AdoptionListItem, AdoptionListResponse, AdoptionResponse
+from app.models.i7_recommendation import Recommendation, SapAdoptionResult
+from app.schemas.i7.adoption import (
+    AdoptionListItem,
+    AdoptionListResponse,
+    AdoptionResponse,
+    AdoptionStatusCount,
+    AdoptionSummary,
+)
 
 router = APIRouter(tags=["i7-adoption"])
 
 MAX_PAGE_SIZE = 200
 """Same bound as the recommendations list endpoint -- this is a table, not a
 bulk export."""
+
+
+def _provider_for(session: Session, row: Recommendation, policy: PolicyDocument) -> RawChangeDocumentProvider:
+    """One provider per recommendation, windowed to FR-9's monitoring period
+    starting at that row's own ``generated_at`` -- never a single
+    session-wide provider, since each recommendation's window starts on a
+    different date."""
+    return RawChangeDocumentProvider(
+        session,
+        recommendation_date=row.generated_at.date() if row.generated_at else None,
+        monitoring_window_days=policy.adoption.monitoring_window_days,
+    )
 
 
 def _evaluate_row(row: Recommendation, provider: RawChangeDocumentProvider) -> tuple[AdoptionResult, bool]:
@@ -46,16 +75,46 @@ def _evaluate_row(row: Recommendation, provider: RawChangeDocumentProvider) -> t
         result = evaluate_parameter_adoption(
             row.sap_material_number,
             row.sap_plant_code,
+            # `is not None`, never bare truthiness -- a real recommended
+            # value of 0 (a legitimate "hold none of this" recommendation)
+            # is falsy in Python and would otherwise be silently dropped as
+            # if it were never calculated, which is a different claim.
             approved_safety_stock=(
-                int(row.recommended_safety_stock) if row.recommended_safety_stock else None
+                int(row.recommended_safety_stock) if row.recommended_safety_stock is not None else None
             ),
-            approved_rop=int(row.recommended_rop) if row.recommended_rop else None,
+            approved_rop=int(row.recommended_rop) if row.recommended_rop is not None else None,
             approved_max_stock=(
-                int(row.recommended_max_stock) if row.recommended_max_stock else None
+                int(row.recommended_max_stock) if row.recommended_max_stock is not None else None
             ),
             provider=provider,
         )
     return result, is_conversion_adoption
+
+
+def _persist_result(session: Session, recommendation_id: str, result: AdoptionResult, detail: str) -> None:
+    """Upsert FR-9's ledger entry for one recommendation -- get-then-update-
+    or-insert, the same pattern ``save_report`` uses for the quarterly report
+    (see ``reporting/repository.py``), never a database-specific ``ON
+    CONFLICT`` (the portability rule rules that out here too)."""
+    existing = session.execute(
+        select(SapAdoptionResult).where(SapAdoptionResult.recommendation_id == recommendation_id)
+    ).scalar_one_or_none()
+
+    fields = dict(
+        status=result.status.value,
+        expected_fields=", ".join(f"{k}={v}" for k, v in result.expected),
+        observed_fields=", ".join(f"{k}={v}" for k, v in result.observed),
+        matched_fields=", ".join(result.matched_fields),
+        mismatched_fields=", ".join(result.mismatched_fields),
+        detail=detail,
+        evaluated_at=datetime.now(timezone.utc),
+    )
+    if existing is None:
+        session.add(SapAdoptionResult(recommendation_id=recommendation_id, **fields))
+    else:
+        for key, value in fields.items():
+            setattr(existing, key, value)
+    session.commit()
 
 
 @router.get(
@@ -63,17 +122,21 @@ def _evaluate_row(row: Recommendation, provider: RawChangeDocumentProvider) -> t
     response_model=AdoptionResponse,
     summary="Get SAP adoption reconciliation status",
     description="ADOPTED / PARTIALLY_ADOPTED / NOT_ADOPTED / UNKNOWN, "
-    "computed read-only through the existing Phase 7 adoption evaluators. "
-    "UNKNOWN means no SAP evidence is available -- it is never reported as "
-    "NOT_ADOPTED. No SAP call is made; the current extract has no staged "
-    "CDHDR/CDPOS, so every result on this data is UNKNOWN today.",
+    "computed read-only through the existing Phase 7 adoption evaluators, "
+    "scoped to FR-9's configurable monitoring window after the "
+    "recommendation's own date, and persisted to the recommendation ledger "
+    "(i7_sap_adoption) as a side effect. UNKNOWN means no SAP evidence is "
+    "available -- it is never reported as NOT_ADOPTED. No SAP call is made; "
+    "the current extract has no staged CDHDR/CDPOS, so every result on this "
+    "data is UNKNOWN today.",
     responses={404: {"description": "Recommendation not found"}},
 )
 def get_adoption(
     recommendation_id: str, session: Annotated[Session, Depends(get_session)]
 ) -> AdoptionResponse:
     row: Recommendation = load_latest_recommendation(session, recommendation_id)
-    provider = RawChangeDocumentProvider(session)
+    policy = PolicyDocument()
+    provider = _provider_for(session, row, policy)
     result, is_conversion_adoption = _evaluate_row(row, provider)
 
     detail = result.detail
@@ -84,6 +147,8 @@ def get_adoption(
         # alone -- conversion adoption is a distinct check (ND/PD -> VB +
         # MINBE + MABST), not inferred from any other field changing.
         detail = "Awaiting SAP test change: " + detail
+
+    _persist_result(session, recommendation_id, result, detail)
 
     return AdoptionResponse(
         recommendation_id=recommendation_id,
@@ -137,6 +202,8 @@ def list_adoption(
             is_oar=is_oar,
             confidence=confidence,
             criticality=criticality,
+            generated_from=None,
+            generated_to=None,
         )
     ).where(
         # Only list material-plants a value was actually calculated for --
@@ -159,10 +226,12 @@ def list_adoption(
     )
     rows = session.execute(statement).scalars().all()
 
-    provider = RawChangeDocumentProvider(session)
+    policy = PolicyDocument()
     items = []
     for row in rows:
+        provider = _provider_for(session, row, policy)
         result, is_conversion_adoption = _evaluate_row(row, provider)
+        _persist_result(session, row.recommendation_id, result, result.detail)
         items.append(
             AdoptionListItem(
                 recommendation_id=row.recommendation_id,
@@ -175,3 +244,47 @@ def list_adoption(
         )
 
     return AdoptionListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.get(
+    "/recommendations/adoption/summary",
+    response_model=AdoptionSummary,
+    summary="Portfolio-wide adoption rate, from the recommendation ledger",
+    description="Real COUNT/GROUP BY over i7_sap_adoption -- FR-9's persisted "
+    "ledger -- never a live re-evaluation of every recommendation on each "
+    "call. Reflects only recommendations someone has actually viewed through "
+    "the adoption endpoints so far (the ledger fills in as pages are "
+    "viewed), so this number grows as more of the portfolio is evaluated -- "
+    "it is not a claim about the whole portfolio's adoption on day one. "
+    "Feeds the Inventory Planning overview's adoption-rate card and the "
+    "quarterly report's SAP Adoption section.",
+)
+def get_adoption_summary(session: Annotated[Session, Depends(get_session)]) -> AdoptionSummary:
+    total_evaluated = session.execute(select(func.count()).select_from(SapAdoptionResult)).scalar_one()
+
+    by_status_rows = session.execute(
+        select(SapAdoptionResult.status, func.count()).group_by(SapAdoptionResult.status)
+    ).all()
+    counts = {status: count for status, count in by_status_rows}
+
+    adopted = counts.get("ADOPTED", 0)
+    partially_adopted = counts.get("PARTIALLY_ADOPTED", 0)
+    not_adopted = counts.get("NOT_ADOPTED", 0)
+    unknown = counts.get("UNKNOWN", 0)
+
+    # Rate is over KNOWN evidence only -- excluding UNKNOWN rows from the
+    # denominator, never counting them as "observed and not adopted". An
+    # all-UNKNOWN portfolio (the current state of this extract) must report
+    # None, not a fabricated 0%.
+    known_count = total_evaluated - unknown
+    adoption_rate = round((adopted + partially_adopted) / known_count * 100, 1) if known_count > 0 else None
+
+    return AdoptionSummary(
+        total_evaluated=total_evaluated,
+        by_status=[AdoptionStatusCount(status=status, count=count) for status, count in by_status_rows],
+        adopted_count=adopted,
+        partially_adopted_count=partially_adopted,
+        not_adopted_count=not_adopted,
+        unknown_count=unknown,
+        adoption_rate_percentage=adoption_rate,
+    )

@@ -53,6 +53,8 @@ day a CDPOS extract that actually includes MARC changes is delivered,
 without any change to this code.
 """
 
+from datetime import date, timedelta
+
 from app.initiatives.i7.adapters.change_documents import (
     ChangeDocumentRow,
     material_marc_changes,
@@ -125,12 +127,33 @@ class RawChangeDocumentProvider:
     not need to know which provider they were given.
     """
 
-    def __init__(self, session: Session):
+    def __init__(
+        self,
+        session: Session,
+        *,
+        recommendation_date: date | None = None,
+        monitoring_window_days: int | None = None,
+    ):
         self._session = session
+        # FR-9's "within a configurable window after the recommendation
+        # date" -- both must be present to bound the query; either missing
+        # means unbounded (matches the behaviour before the window existed).
+        self._window_start = recommendation_date.isoformat() if recommendation_date else None
+        self._window_end = (
+            (recommendation_date + timedelta(days=monitoring_window_days)).isoformat()
+            if recommendation_date is not None and monitoring_window_days is not None
+            else None
+        )
 
     def current_state(self, material: str, plant: str) -> dict[str, str] | None:
         padded = _pad_material(material)
-        rows = material_marc_changes(self._session, padded, _TRACKED_FIELDS)
+        rows = material_marc_changes(
+            self._session,
+            padded,
+            _TRACKED_FIELDS,
+            window_start=self._window_start,
+            window_end=self._window_end,
+        )
         rows = _dedupe(rows)
         rows = _rows_for_plant(rows, plant)
 

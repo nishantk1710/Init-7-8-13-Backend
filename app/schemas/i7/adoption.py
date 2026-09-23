@@ -1,13 +1,12 @@
 """SAP adoption reconciliation API schema.
 
-Computed on read from ``app.initiatives.i7.recommendations.adoption`` -- the
-``i7_sap_adoption`` table exists but nothing in Phase 7 writes to it yet
-(there is no persisted adoption result to read), and adoption evaluation is
-cheap and pure, so recomputing it per request is both correct and simpler than
-introducing a write path this phase does not otherwise need. Still read-only:
-the evaluator's ``SapStateProvider`` has exactly one implementation today
-(``NoSapStateAvailable``), so this endpoint never reaches SAP and always
-resolves to UNKNOWN on the current extract.
+Computed on read from ``app.initiatives.i7.recommendations.adoption``, then
+persisted to ``i7_sap_adoption`` as a side effect (FR-9's "recommendation
+ledger") -- see ``app/api/i7/adoption.py``. Still read-only: on the current
+extract the evaluator's real provider (``RawChangeDocumentProvider``) finds
+no matching CDHDR/CDPOS evidence for any material-plant, so every result
+still resolves to UNKNOWN, but that is a fact about this data delivery, not
+a stub in this code path.
 """
 
 from pydantic import BaseModel, ConfigDict
@@ -55,3 +54,37 @@ class AdoptionListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class AdoptionStatusCount(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: str
+    count: int
+
+
+class AdoptionSummary(BaseModel):
+    """Portfolio-wide counts straight from the recommendation ledger
+    (``i7_sap_adoption``) -- FR-9's persisted evaluation results, not a
+    live re-evaluation of every recommendation on each call. Only reflects
+    recommendations someone has actually viewed through the adoption
+    endpoints so far (the ledger fills in as pages are viewed -- see
+    ``app/api/i7/adoption.py``'s module docstring), never a claim about
+    portfolio-wide adoption before any evaluation has happened."""
+
+    model_config = ConfigDict(frozen=True)
+
+    total_evaluated: int
+    by_status: list[AdoptionStatusCount]
+    adopted_count: int
+    partially_adopted_count: int
+    not_adopted_count: int
+    unknown_count: int
+    adoption_rate_percentage: float | None
+    """``(adopted_count + partially_adopted_count) / known_count * 100``,
+    where ``known_count = total_evaluated - unknown_count`` -- i.e. the rate
+    among recommendations SAP evidence actually exists for. ``None`` when
+    ``known_count`` is 0 (including when every evaluated row is UNKNOWN, the
+    current state of this extract) -- an all-UNKNOWN portfolio must never
+    report a 0% rate, which would misrepresent "nothing observed yet" as
+    "observed and none adopted"."""

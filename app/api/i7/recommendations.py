@@ -16,13 +16,16 @@ from sqlalchemy.orm import Session
 from app.api.i7.deps import get_session, load_latest_recommendation
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations import routing
+from app.models.i7_forecast import ForecastBacktestPath
 from app.models.i7_recommendation import Recommendation
-from app.models.i7_staging import StagedConsumption
+from app.models.i7_staging import StagedConsumption, StagedStock
 from app.schemas.i7.errors import bad_request
 from app.schemas.i7.recommendations import (
     CircuitCount,
     ConsumptionHistoryEntry,
     CriticalityCount,
+    ForecastHistoryPoint,
+    ForecastHistoryResponse,
     PlantCount,
     RecommendationDetail,
     RecommendationListResponse,
@@ -230,9 +233,36 @@ def get_recommendation_summary(
     confidence: str | None = None,
     criticality: str | None = None,
 ) -> RecommendationSummaryStats:
-    base = _latest_only(
-        _apply_filters(
-            select(Recommendation),
+    # Performance (2026-09-22): _latest_only(base) wraps a row_number() OVER
+    # (...) window function computed across the WHOLE table. Reusing the
+    # `base` Select object across ~12 separate aggregate queries below does
+    # NOT share that computation between them -- each session.execute() call
+    # re-plans and re-runs the window function from scratch, independently.
+    # Measured on the real 113k-row table: ~2.2s per re-run x 12+ queries =
+    # this endpoint took over 60s.
+    #
+    # Fix: GROUP BY sap_material_number, sap_plant_code, MAX(id) is the same
+    # "latest row per material-plant" answer as the row_number() rank (id is
+    # autoincrement, so MAX(id) agrees with _latest_only's
+    # generated_at DESC, id DESC ordering), computed as ONE subquery kept in
+    # SQL and reused across every aggregate below via a JOIN -- never
+    # materialised into a Python list (an id.in_([...]) over 113k ids was
+    # tried first and hit Postgres's 65535-bind-parameter limit outright).
+    # Measured: ~0.3s once, join cost is then part of each aggregate's own
+    # (already fast) query plan -- roughly a 10x+ reduction, and no
+    # parameter-count ceiling to hit as the table grows.
+    latest_per_material_plant = (
+        select(func.max(Recommendation.id).label("id"))
+        .group_by(Recommendation.sap_material_number, Recommendation.sap_plant_code)
+        .subquery()
+    )
+
+    def _scope(statement: Select) -> Select:
+        return _apply_filters(
+            statement.join(
+                latest_per_material_plant,
+                latest_per_material_plant.c.id == Recommendation.id,
+            ),
             status=status,
             plant=plant,
             material=material,
@@ -243,7 +273,8 @@ def get_recommendation_summary(
             generated_from=None,
             generated_to=None,
         )
-    )
+
+    base = _scope(select(Recommendation))
 
     total = session.execute(select(func.count()).select_from(base.subquery())).scalar_one()
 
@@ -319,6 +350,53 @@ def get_recommendation_summary(
         )
     ).scalar()
 
+    # --- Critical Stockout Risk: current on-hand stock < recommended ROP ---
+    # I07-derived proxy (2026-09-22), not a Vedanta-confirmed severity tier --
+    # see RecommendationSummaryStats.critical_stockout_risk_count's docstring.
+    # i7_staged_stock is material-plant-storage-location grain; aggregate to
+    # material-plant before comparing, same as Phase 3's own assumption
+    # (unrestricted_use_stock only -- see StagedStock's class docstring).
+    on_hand_stock = (
+        select(
+            StagedStock.sap_material_number,
+            StagedStock.sap_plant_code,
+            func.sum(StagedStock.unrestricted_use_stock).label("on_hand"),
+        )
+        .group_by(StagedStock.sap_material_number, StagedStock.sap_plant_code)
+        .subquery()
+    )
+    stockout_risk_base = base.join(
+        on_hand_stock,
+        (on_hand_stock.c.sap_material_number == Recommendation.sap_material_number)
+        & (on_hand_stock.c.sap_plant_code == Recommendation.sap_plant_code),
+    ).where(
+        Recommendation.recommended_rop.isnot(None),
+        on_hand_stock.c.on_hand < Recommendation.recommended_rop,
+    )
+    stockout_risk_count = session.execute(
+        select(func.count()).select_from(stockout_risk_base.subquery())
+    ).scalar_one()
+
+    # --- Excess Inventory Candidates: current Max Stock > recommended ------
+    # I07-derived proxy (2026-09-22): any positive gap counts, no minimum
+    # margin -- see RecommendationSummaryStats.excess_inventory_candidates_count.
+    excess_base = base.where(
+        Recommendation.current_max_stock.isnot(None),
+        Recommendation.recommended_max_stock.isnot(None),
+        Recommendation.current_max_stock > Recommendation.recommended_max_stock,
+    )
+    excess_inventory_count = session.execute(
+        select(func.count()).select_from(excess_base.subquery())
+    ).scalar_one()
+    excess_opportunity_row = session.execute(
+        excess_base.with_only_columns(
+            func.sum(
+                Recommendation.unit_price
+                * (Recommendation.current_max_stock - Recommendation.recommended_max_stock)
+            )
+        ).where(Recommendation.unit_price.isnot(None))
+    ).scalar()
+
     return RecommendationSummaryStats(
         total=total,
         by_status=[StatusCount(status=s, count=c) for s, c in by_status],
@@ -332,6 +410,9 @@ def get_recommendation_summary(
         ready_for_review_count=ready_for_review_count,
         not_evaluable_count=not_evaluable_count,
         net_safety_stock_value_impact=net_value_row,
+        critical_stockout_risk_count=stockout_risk_count,
+        excess_inventory_candidates_count=excess_inventory_count,
+        excess_inventory_opportunity=excess_opportunity_row,
     )
 
 
@@ -375,3 +456,65 @@ def get_recommendation_trace(
 ) -> RecommendationTrace:
     row = load_latest_recommendation(session, recommendation_id)
     return RecommendationTrace.from_model(row)
+
+
+@router.get(
+    "/recommendations/{recommendation_id}/forecast-history",
+    response_model=ForecastHistoryResponse,
+    summary="Champion model's predicted-vs-actual history",
+    description="Real rolling-origin predictions from the CHAMPION model's "
+    "own backtest (i7_forecast_backtest_path, added 2026-09-22), for the "
+    "Forecast vs Actual Demand chart -- never a client-side approximation. "
+    "points is empty, never fabricated, when no forecast run since the "
+    "table shipped has produced paths for this material-plant.",
+    responses={404: {"description": "Recommendation not found"}},
+)
+def get_recommendation_forecast_history(
+    recommendation_id: str, session: Annotated[Session, Depends(get_session)]
+) -> ForecastHistoryResponse:
+    row = load_latest_recommendation(session, recommendation_id)
+
+    latest_run_with_paths = session.execute(
+        select(ForecastBacktestPath.forecast_run_id)
+        .where(
+            ForecastBacktestPath.sap_material_number == row.sap_material_number,
+            ForecastBacktestPath.sap_plant_code == row.sap_plant_code,
+        )
+        .order_by(ForecastBacktestPath.forecast_run_id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    if latest_run_with_paths is None:
+        return ForecastHistoryResponse(
+            sap_material_number=row.sap_material_number,
+            sap_plant_code=row.sap_plant_code,
+            model_name=None,
+            points=(),
+        )
+
+    path_rows = session.execute(
+        select(
+            ForecastBacktestPath.model_name,
+            ForecastBacktestPath.forecast_period,
+            ForecastBacktestPath.predicted,
+            ForecastBacktestPath.actual,
+        )
+        .where(
+            ForecastBacktestPath.sap_material_number == row.sap_material_number,
+            ForecastBacktestPath.sap_plant_code == row.sap_plant_code,
+            ForecastBacktestPath.forecast_run_id == latest_run_with_paths,
+        )
+        .order_by(ForecastBacktestPath.forecast_period)
+    ).all()
+
+    return ForecastHistoryResponse(
+        sap_material_number=row.sap_material_number,
+        sap_plant_code=row.sap_plant_code,
+        model_name=path_rows[0].model_name if path_rows else None,
+        points=tuple(
+            ForecastHistoryPoint(
+                forecast_period=r.forecast_period, predicted=r.predicted, actual=r.actual
+            )
+            for r in path_rows
+        ),
+    )

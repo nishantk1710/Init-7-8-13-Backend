@@ -13,7 +13,7 @@ initiative.
 
 from app.models.base import Base
 from app.models.i7_features import FeatureBuildRun, MaterialFeature
-from app.models.i7_forecast import Forecast, ForecastRun, SegmentModelDecision
+from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun, SegmentModelDecision
 from app.models.i7_inventory import InventoryCalculation, InventoryRun
 from app.models.i7_oar import OarNeighbour, OarRun, OarTargetResult
 from app.models.i7_recommendation import (
@@ -39,6 +39,7 @@ __all__ = [
     "Base",
     "FeatureBuildRun",
     "Forecast",
+    "ForecastBacktestPath",
     "ForecastRun",
     "IngestionRun",
     "InventoryCalculation",
