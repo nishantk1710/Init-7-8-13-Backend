@@ -65,19 +65,40 @@ class StepModel(AssistantModel):
 class StartSessionRequest(AssistantModel):
     """What the BAdI pop-up (or the platform) sends to open the assistant.
 
-    Note what is **not** here: the requester. Identity is taken from the caller
-    -- today an ``X-Actor-Id`` header, tomorrow an Entra token -- and never from
-    the body. A session whose owner is self-declared is not an audit record.
+    Note what is **not** here: who is operating the assistant. That identity is
+    taken from the caller -- today an ``X-Actor-Id`` header, tomorrow an Entra
+    token -- and never from the body. A session whose *author* is self-declared
+    is not an audit record.
+
+    ``requestedFor`` is not an exception to that rule. It names the person the
+    part is for, typed by whoever is operating the assistant, and it lands in a
+    different column from the author for exactly that reason.
+
+    Note also what is **no longer** here: ``quantity``. The number that matters
+    is the planned quantity captured inside the conversation, against a stated
+    purpose and a window. Asking for one at the door was asking the same question
+    twice, and the answer given first was the one nobody had thought about.
     """
 
     material_id: str
     plant: str
-    quantity: str | None = PydanticField(
+    department: str | None = PydanticField(
         default=None,
+        max_length=64,
         description=(
-            "What the requester was about to reserve, if known. Optional: the "
-            "pop-up may fire before a quantity is entered, and a defaulted zero "
-            "would be indistinguishable from a real one."
+            "Which department the part is for -- the requester's, not the "
+            "operator's. Optional: the BAdI pop-up carries a material and a "
+            "plant and cannot supply this, so a session opened from SAP "
+            "legitimately has none."
+        ),
+    )
+    requested_for: str | None = PydanticField(
+        default=None,
+        max_length=128,
+        description=(
+            "Who the part is for, as typed by whoever is operating the "
+            "assistant. Free text and NOT identity -- nobody verified it. "
+            "Optional for the same reason department is."
         ),
     )
     origin: Literal["BADI", "PLATFORM"] = "PLATFORM"
@@ -218,8 +239,19 @@ class SessionTraceResponse(AssistantModel):
     outcome: Literal["OPEN", "COMPLETED", "ABANDONED"]
     material_id: str
     plant: str
+    department: str | None = None
+    requested_for: str | None = None
+    """Who the part was for. Null for a session opened before the field existed,
+    or from SAP, which cannot supply one."""
     requested_quantity: str | None = None
+    """Null on every session minted since the entry point stopped asking.
+    Sessions from before that carry a real value, which is why the field stays.
+    Null has always meant "not stated" here and never zero."""
     requester: str
+    """Who **operated** the assistant. Served because this is the FR-8 evidence
+    view and an audit record without its author is not one -- but no screen
+    displays it: one coordinator opens every session, so it says the same thing
+    on every row."""
     origin: str
     issued_at: datetime
     expires_at: datetime
@@ -240,6 +272,8 @@ class SessionSummary(AssistantModel):
     outcome: str
     material_id: str
     plant: str
+    department: str | None = None
+    requested_for: str | None = None
     requester: str
     origin: str
     issued_at: datetime
