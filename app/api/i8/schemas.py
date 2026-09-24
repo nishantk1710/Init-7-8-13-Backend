@@ -39,7 +39,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 
@@ -248,6 +248,15 @@ class RepairChain(I8Model):
     reversals: int = 0
     schedule_lines: int = 0
 
+    criticality: str | None = None
+    """The material's criticality at this plant, from the shared W3.4 source
+    via the universe. Null where no source has a tier for the pair -- unknown,
+    not NORMAL."""
+
+    po_blocked: bool = False
+    """The PO line is blocked in SAP (EKPO.LOEKZ). Still a live repair, so it
+    stays in the register; deleted lines do not appear at all."""
+
 
 class RegisterMeta(I8Model):
     total_lines: int
@@ -270,6 +279,11 @@ class RegisterMeta(I8Model):
     distinct_vendors: int
     vendors_resolved_to_a_name: int
     candidates_scanned: int
+    excluded_deleted_lines: int = 0
+    """Repair lines deleted in SAP, left out of every figure above."""
+
+    blocked_lines: int = 0
+    """Repair lines blocked in SAP -- counted above, and flagged per row."""
 
 
 class RegisterResponse(I8Model):
@@ -338,32 +352,36 @@ class AttestationRequest(I8Model):
     Note what is NOT here: ``attestor``, ``attestedAt`` and ``sessionId``. The
     first two are set by the server from the authenticated caller and the clock
     -- an audit record whose author and timestamp are the author's to choose is
-    not an audit record. The third is always null: FR-8 session linkage is not
-    I08's scope.
+    not an audit record. The third is always null for now: linking an
+    attestation to its session is FR-4 / FR-8 and ours, but nothing supplies the
+    id until the reservation carries it (RESB.BEDNR, not yet exposed).
     """
 
-    material_id: str
-    plant: str
+    # Lengths are the column widths in app/initiatives/i8/models.py. Without
+    # them an overlong value reaches the database and comes back as a 500
+    # rather than as a 422 that says which field was wrong.
+    material_id: str = Field(max_length=40)
+    plant: str = Field(max_length=8)
     quantity: Decimal
     condition_description: str
     """Free text. The part a human actually reads."""
 
-    fault_category: str
+    fault_category: str = Field(max_length=64)
     """Must be one of the configured list -- see ``GET /api/i8/config``. Not a
     free string: the list is VZI's vocabulary and is validated against it."""
 
     recommendation: Literal["REPAIRABLE", "BEYOND_ECONOMICAL_REPAIR", "SCRAP"]
 
-    serial_number: str | None = None
+    serial_number: str | None = Field(default=None, max_length=64)
     """Optional. I08 works at material-plant grain today; capturing a serial
     when somebody knows it costs nothing now and is unrecoverable later."""
 
-    evidence_reference: str | None = None
+    evidence_reference: str | None = Field(default=None, max_length=500)
     """**A reference string only.** File upload is descoped and SharePoint is
     not provisioned, so this holds a pointer somebody can follow -- the platform
     does not pretend to store the artefact."""
 
-    supersedes: str | None = None
+    supersedes: str | None = Field(default=None, max_length=32)
     """The attestation this one amends. Attestations are never edited: an
     amendment is a new record pointing at the one it replaces, and the original
     stays readable. Must be for the same material and plant."""
@@ -504,20 +522,28 @@ class ExceptionQueueItem(I8Model):
     material: MaterialReference
     plant: PlantReference | None = None
     repair_line: SAPDocumentReference
+    """The repair line the exception is about. For ``UNJUSTIFIED_ACQUISITION``
+    it is the repair that was open when the new unit was bought."""
+
+    acquisition_line: SAPDocumentReference | None = None
+    """``UNJUSTIFIED_ACQUISITION`` only: the purchase line that bought a new
+    unit while ``repairLine`` was still out. Null for every other type."""
+
     title: str
     detail: str
     """Says what is missing AND what was searched for, so a reader can tell a
     real gap from a matching rule that did not fit."""
 
     raised_at: date | None = None
-    """The repair line's own date, not the moment the check ran."""
+    """The date of the line the exception is about -- the repair line, or for
+    an acquisition the purchase line -- not the moment the check ran."""
 
     is_open_repair: bool
 
     pre_automation: bool = False
-    """The line predates the attestation control, so the gap is explained by
-    when it was raised rather than by anyone failing to act. Always false while
-    no cutover date is configured."""
+    """The line predates the control it is measured against, so the gap is
+    explained by when it was raised rather than by anyone failing to act.
+    Always false while no cutover date is configured."""
 
 
 class ExceptionMeta(I8Model):
@@ -538,9 +564,21 @@ class ExceptionMeta(I8Model):
     configured, which is the current state."""
 
     types_raised: list[str]
-    """Which exception types I08 actually raises. MISSING_SESSION_ID and
-    UNJUSTIFIED_ACQUISITION are FR-5/7/8 and are declared but never raised here,
-    so a caller can tell an empty count from an unimplemented check."""
+    """Which exception types I08 actually raises, so a caller can tell an empty
+    count from an unimplemented check. ``MISSING_SESSION_ID`` is declared and
+    not raised: it needs the session id read back off the reservation, and
+    RESB.BEDNR is not exposed on ReservationItemSet yet."""
+
+    acquisitions_checked: int = 0
+    """New 80-series purchase lines the UNJUSTIFIED_ACQUISITION check ran over."""
+
+    justification_window_days: int = 0
+    """How far from a purchase a NEW_ACQUISITION justification may sit and
+    still cover it."""
+
+    justification_cutover_date: date | None = None
+    """The cutover the acquisition counts were measured against. Null means
+    none is configured."""
 
 
 class ExceptionResponse(I8Model):

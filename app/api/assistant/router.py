@@ -498,6 +498,32 @@ def post_justification(
             ),
         )
 
+    from app.initiatives.i8.material_number import is_eighty_series, normalise
+    from app.shared.plant_scope import IN_SCOPE_PLANTS, is_in_scope
+
+    # The table is append-only, so a justification for a plant the platform
+    # does not serve, or a new purchase of a part that is not repairable, would
+    # be a permanent row nothing could ever read correctly.
+    if not is_in_scope(body.plant):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"plant {body.plant!r} is outside the platform's scope: "
+                f"{', '.join(IN_SCOPE_PLANTS)}"
+            ),
+        )
+    if body.kind == "NEW_ACQUISITION" and not is_eighty_series(
+        normalise(body.material_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"materialId {body.material_id!r} is not an 80-series repairable "
+                "part. A NEW_ACQUISITION justification answers the I08 challenge, "
+                "which only 80-series parts receive."
+            ),
+        )
+
     if body.session_id is not None:
         # Validated so a justification cannot be hung off an ID that was never
         # issued. The table is append-only, so an orphan is permanent.
@@ -507,8 +533,6 @@ def post_justification(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
             ) from error
-
-    from app.initiatives.i8.material_number import normalise
 
     justification = Justification(
         session_id=body.session_id,

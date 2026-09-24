@@ -80,8 +80,8 @@ class StartSessionRequest(AssistantModel):
     twice, and the answer given first was the one nobody had thought about.
     """
 
-    material_id: str
-    plant: str
+    material_id: str = PydanticField(max_length=40)
+    plant: str = PydanticField(max_length=8)
     department: str | None = PydanticField(
         default=None,
         max_length=64,
@@ -329,12 +329,12 @@ class JustificationRequest(AssistantModel):
     """``author`` is absent on purpose -- it comes from the caller."""
 
     kind: Literal["NEW_ACQUISITION", "QUANTITY_OVERRIDE", "PLAN_BREACH", "NO_PLAN"]
-    reason_category: str
+    reason_category: str = PydanticField(max_length=64)
     free_text: str
-    material_id: str
-    plant: str
-    session_id: str | None = None
-    exception_id: str | None = None
+    material_id: str = PydanticField(max_length=40)
+    plant: str = PydanticField(max_length=8)
+    session_id: str | None = PydanticField(default=None, max_length=32)
+    exception_id: str | None = PydanticField(default=None, max_length=120)
 
 
 class JustificationListResponse(AssistantModel):

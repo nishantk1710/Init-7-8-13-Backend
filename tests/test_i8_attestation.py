@@ -118,11 +118,34 @@ class TestValidation:
             ({"condition_description": "   "}, "conditionDescription"),
             ({"fault_category": "NOT_A_CATEGORY"}, "faultCategory"),
             ({"recommendation": "PROBABLY"}, "recommendation"),
+            # The table is append-only: each of these would be a permanent row.
+            ({"material_id": "1000000123"}, "80-series"),
+            ({"plant": "1600"}, "outside the platform's scope"),
+            ({"quantity": Decimal(1001)}, "typo"),
         ],
     )
     def test_rejects(self, overrides, expected) -> None:
         with pytest.raises(AttestationError, match=expected):
             validate(a_draft(**overrides))
+
+    def test_the_quantity_ceiling_is_configuration(self) -> None:
+        from app.initiatives.i8.config import I8Settings
+
+        cfg = I8Settings(_env_file=None, attestation_max_quantity=5)
+        assert validate(a_draft(quantity=Decimal(5)), cfg).quantity == 5
+        with pytest.raises(AttestationError, match="more than 5"):
+            validate(a_draft(quantity=Decimal(6)), cfg)
+
+    def test_a_material_the_universe_does_not_know_is_refused(self) -> None:
+        known = {"8000005632"}
+        assert validate(a_draft(), known_materials=known).material_id == "8000005632"
+        with pytest.raises(AttestationError, match="repairable universe"):
+            validate(a_draft(material_id="8099999999"), known_materials=known)
+
+    def test_without_a_universe_the_existence_check_is_skipped(self) -> None:
+        """Callers that do not hold the snapshot -- the demo seeder, the unit
+        tests -- still get every other rule."""
+        assert validate(a_draft(material_id="8099999999")).material_id == "8099999999"
 
     def test_the_fault_category_list_comes_from_config_not_code(self) -> None:
         """The list is VZI's vocabulary and will change. It must be one .env
@@ -386,12 +409,14 @@ class TestMissingAttestationException:
         assert stats.attestation_cutover_date == date(2026, 10, 1)
 
     def test_the_type_column_is_open_for_the_ones_we_do_not_raise(self) -> None:
-        """MISSING_SESSION_ID and UNJUSTIFIED_ACQUISITION are FR-5/7/8. They are
-        declared so adding them later is a detector, not a migration -- and the
-        API says which are actually raised, so an empty count is distinguishable
-        from an unimplemented check."""
+        """MISSING_SESSION_ID is FR-8 and ours, and is not raised until
+        RESB.BEDNR is exposed. It is declared so adding it is a detector, not a
+        migration -- and the API says which are actually raised, so an empty
+        count is distinguishable from an unimplemented check."""
         assert {t.value for t in ExceptionType} > {t.value for t in RAISED_BY_I8}
-        assert RAISED_BY_I8 == frozenset({ExceptionType.MISSING_ATTESTATION})
+        assert RAISED_BY_I8 == frozenset(
+            {ExceptionType.MISSING_ATTESTATION, ExceptionType.UNJUSTIFIED_ACQUISITION}
+        )
 
     def test_a_line_with_no_plant_is_not_reported(self) -> None:
         """The material-plant key cannot be formed, so an exception for it could
@@ -663,6 +688,111 @@ class TestTheApi:
         ).json()
         assert created["attestor"] != "somebody.else"
 
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"materialId": "1000000123"},  # not 80-series
+            {"plant": "1600"},  # out of the two-plant scope
+            {"materialId": "8099999999"},  # 80-series, but nothing knows it
+            {"quantity": 1000000000},  # a typo that could never be corrected
+            {"serialNumber": "X" * 65},  # wider than the column
+            {"evidenceReference": "X" * 501},
+        ],
+    )
+    def test_what_could_never_be_taken_back_is_refused(self, overrides) -> None:
+        response = client.post(ATTESTATIONS, json=self.body(**overrides))
+        assert response.status_code == 422
+        assert client.get(ATTESTATIONS).json()["total"] == 0
+
+
+@needs_views
+class TestTheViewNoticesWritesFromElsewhere:
+    """Explicit invalidation only covers writes through this process's router.
+
+    `demo_seed` runs in another process, and justifications arrive through the
+    WS7 endpoints -- so the view compares a fingerprint of its source tables on
+    every read. Observed before this: after `demo_seed --clear` a running server
+    kept reporting the seeded lines as covered until it was restarted.
+    """
+
+    @pytest.fixture(autouse=True)
+    def clean_table(self):
+        from app.core.db import get_sessionmaker
+        from app.initiatives.i8.service import reset_attestation_view
+
+        def wipe():
+            with get_sessionmaker()() as db:
+                db.execute(
+                    text(
+                        "ALTER TABLE i8_attestation DISABLE TRIGGER "
+                        "i8_attestation_no_update_or_delete"
+                    )
+                )
+                db.execute(text("DELETE FROM i8_attestation"))
+                db.execute(
+                    text(
+                        "ALTER TABLE i8_attestation ENABLE TRIGGER "
+                        "i8_attestation_no_update_or_delete"
+                    )
+                )
+                db.commit()
+            reset_attestation_view()
+
+        wipe()
+        yield
+        wipe()
+
+    def test_an_unchanged_table_serves_the_cached_view(self) -> None:
+        from app.core.db import get_sessionmaker
+        from app.initiatives.i8.service import get_attestation_view, get_snapshot
+
+        with get_sessionmaker()() as db:
+            snapshot = get_snapshot(db)
+            first = get_attestation_view(db, snapshot)
+            assert get_attestation_view(db, snapshot) is first
+
+    def test_an_attestation_written_outside_the_router_rebuilds_it(self) -> None:
+        from app.core.db import get_sessionmaker
+        from app.initiatives.i8.service import get_attestation_view, get_snapshot
+
+        with get_sessionmaker()() as db:
+            snapshot = get_snapshot(db)
+            first = get_attestation_view(db, snapshot)
+            record(db, a_draft(), attestor="another.process")  # no reset call
+            second = get_attestation_view(db, snapshot)
+        assert second is not first
+        assert second.source_fingerprint != first.source_fingerprint
+
+    def test_a_new_justification_rebuilds_it(self) -> None:
+        """Flushed, never committed -- the append-only table is left as found."""
+        from app.assistant.models import Justification
+        from app.core.db import get_sessionmaker
+        from app.initiatives.i8.service import (
+            get_attestation_view,
+            get_snapshot,
+            reset_attestation_view,
+        )
+
+        with get_sessionmaker()() as db:
+            snapshot = get_snapshot(db)
+            first = get_attestation_view(db, snapshot)
+            db.add(
+                Justification(
+                    kind="NEW_ACQUISITION",
+                    reason_category="OTHER",
+                    free_text="Fingerprint test.",
+                    material_id="8000005632",
+                    plant="1300",
+                    author="test",
+                )
+            )
+            db.flush()
+            try:
+                assert get_attestation_view(db, snapshot) is not first
+            finally:
+                db.rollback()
+                reset_attestation_view()
+
 
 @needs_views
 class TestAgainstTheSeededRegister:
@@ -697,7 +827,7 @@ class TestAgainstTheSeededRegister:
 
     def test_every_repair_line_is_in_the_declaration_queue(self) -> None:
         meta = client.get(f"{DECLARATIONS}?pageSize=1").json()["meta"]
-        assert meta["total"] == 1225
+        assert meta["total"] == 1181  # 1,225 less the 44 lines SAP deleted
 
     def test_with_no_attestations_everything_is_an_exception(self) -> None:
         """**This number is the business case.** 1,225 repair lines, zero
@@ -707,15 +837,35 @@ class TestAgainstTheSeededRegister:
         check has been weakened rather than satisfied.
         """
         meta = client.get(f"{EXCEPTIONS}?pageSize=1").json()["meta"]
-        assert meta["total"] == 1225
-        assert meta["linesChecked"] == 1225
+        assert meta["linesChecked"] == 1181
         assert meta["linesCovered"] == 0
-        assert meta["byType"] == {"MISSING_ATTESTATION": 1225}
+        assert meta["byType"]["MISSING_ATTESTATION"] == 1181
+        assert meta["total"] == sum(meta["byType"].values())
 
     def test_open_lines_are_warnings_and_closed_ones_are_information(self) -> None:
+        missing = f"{EXCEPTIONS}?type=MISSING_ATTESTATION"
+        assert client.get(f"{missing}&openOnly=true&pageSize=1").json()["total"] == 744
         meta = client.get(f"{EXCEPTIONS}?pageSize=1").json()["meta"]
-        assert meta["bySeverity"] == {"warning": 788, "info": 437}
-        assert client.get(f"{EXCEPTIONS}?openOnly=true&pageSize=1").json()["total"] == 788
+        # 744 open repair lines, plus every UNJUSTIFIED_ACQUISITION -- a warning
+        # whatever became of the repair, because the money was committed.
+        assert meta["bySeverity"] == {
+            "warning": 744 + meta["byType"]["UNJUSTIFIED_ACQUISITION"],
+            "info": 437,
+        }
+
+    def test_unjustified_acquisitions_against_the_seeded_register(self) -> None:
+        """2,331 new 80-series purchases; 345 were raised while a repair of the
+        same part was open at the same plant, and none has a justification --
+        the control did not exist when they were bought."""
+        body = client.get(f"{EXCEPTIONS}?type=UNJUSTIFIED_ACQUISITION&pageSize=500").json()
+        assert body["meta"]["acquisitionsChecked"] == 2331
+        assert body["meta"]["byType"]["UNJUSTIFIED_ACQUISITION"] == 345
+        assert "UNJUSTIFIED_ACQUISITION" in body["meta"]["typesRaised"]
+        for item in body["items"]:
+            assert item["acquisitionLine"]["documentNumber"]
+            assert item["repairLine"]["documentNumber"] != item["acquisitionLine"]["documentNumber"]
+        missing = client.get(f"{EXCEPTIONS}?type=MISSING_ATTESTATION&pageSize=1").json()
+        assert missing["items"][0]["acquisitionLine"] is None
 
     def test_the_meta_counts_do_not_change_when_the_list_is_filtered(self) -> None:
         """"How much of the register is uncovered" must not move because
@@ -750,8 +900,8 @@ class TestAgainstTheSeededRegister:
 
         # And those lines now read as declared rather than required.
         statuses = client.get(f"{DECLARATIONS}?pageSize=1").json()["meta"]["byStatus"]
-        assert statuses.get("Required", 0) < 1225
-        assert sum(statuses.values()) == 1225
+        assert statuses.get("Required", 0) < 1181
+        assert sum(statuses.values()) == 1181
 
     def test_declaration_field_names_match_the_frontend_type(self) -> None:
         """Checked against src/features/initiative-8/types/repair.ts.
@@ -828,7 +978,7 @@ class TestTheRegisterCarriesTheRealDeclarationStatus:
         return counts
 
     def test_with_no_attestations_every_line_reads_required(self) -> None:
-        assert self._statuses() == {"Required": 1225}
+        assert self._statuses() == {"Required": 1181}
 
     def test_seeding_moves_the_register_column_too(self) -> None:
         """Not just the declaration queue -- the register the UI actually renders."""
@@ -841,9 +991,9 @@ class TestTheRegisterCarriesTheRealDeclarationStatus:
         reset_attestation_view()
 
         counts = self._statuses()
-        assert counts.get("Required", 0) < 1225
+        assert counts.get("Required", 0) < 1181
         assert counts.get("Completed", 0) >= 1
-        assert sum(counts.values()) == 1225
+        assert sum(counts.values()) == 1181
 
     def test_the_repair_detail_agrees_with_the_register(self) -> None:
         """Two endpoints, one answer. A detail page that disagrees with the row

@@ -44,6 +44,7 @@ UI collapses them.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -54,8 +55,9 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.initiatives.i8.config import I8Settings, get_i8_settings
-from app.initiatives.i8.material_number import normalise
+from app.initiatives.i8.material_number import is_eighty_series, normalise
 from app.initiatives.i8.models import RepairAttestation
+from app.shared.plant_scope import IN_SCOPE_PLANTS, is_in_scope
 
 logger = get_logger(__name__)
 
@@ -108,12 +110,22 @@ class AttestationDraft:
     supersedes: str | None = None
 
 
-def validate(draft: AttestationDraft, cfg: I8Settings | None = None) -> AttestationDraft:
+def validate(
+    draft: AttestationDraft,
+    cfg: I8Settings | None = None,
+    *,
+    known_materials: Collection[str] | None = None,
+) -> AttestationDraft:
     """Check a draft and return it normalised, or raise :class:`AttestationError`.
 
     Separate from :func:`record` so the same rules can be unit-tested without a
     database, and so the API layer can turn one exception type into one status
     code rather than guessing at a dozen.
+
+    The table is append-only, so everything that can be checked is checked
+    here: a row that gets past this can never be taken back. ``known_materials``
+    is the repairable universe when the caller holds it -- the API does -- and
+    None skips that one check for callers that do not.
     """
     cfg = cfg or get_i8_settings()
 
@@ -121,12 +133,37 @@ def validate(draft: AttestationDraft, cfg: I8Settings | None = None) -> Attestat
     if not material_id:
         raise AttestationError("materialId is required")
 
+    if not is_eighty_series(material_id, cfg):
+        raise AttestationError(
+            f"materialId {material_id!r} is not an 80-series repairable part, so "
+            "there is no repair for a condition-to-repair attestation to cover"
+        )
+
+    if known_materials is not None and material_id not in known_materials:
+        raise AttestationError(
+            f"materialId {material_id!r} is not in the repairable universe -- no "
+            "material master, stock or purchasing record knows it"
+        )
+
     plant = (draft.plant or "").strip()
     if not plant:
         raise AttestationError("plant is required")
 
+    if not is_in_scope(plant):
+        raise AttestationError(
+            f"plant {plant!r} is outside the platform's scope: "
+            f"{', '.join(IN_SCOPE_PLANTS)}"
+        )
+
     if draft.quantity is None or Decimal(draft.quantity) <= 0:
         raise AttestationError("quantity must be greater than zero")
+
+    if Decimal(draft.quantity) > cfg.attestation_max_quantity:
+        raise AttestationError(
+            f"quantity {draft.quantity} is more than {cfg.attestation_max_quantity} "
+            "-- almost certainly a typo, and the record could never be corrected "
+            "in place"
+        )
 
     description = (draft.condition_description or "").strip()
     if not description:
@@ -171,6 +208,7 @@ def record(
     *,
     attestor: str,
     cfg: I8Settings | None = None,
+    known_materials: Collection[str] | None = None,
 ) -> RepairAttestation:
     """Store one attestation and return it. Never updates anything.
 
@@ -178,7 +216,7 @@ def record(
     the authenticated caller, not from the request body.
     """
     cfg = cfg or get_i8_settings()
-    clean = validate(draft, cfg)
+    clean = validate(draft, cfg, known_materials=known_materials)
 
     if clean.supersedes is not None:
         original = db.get(RepairAttestation, clean.supersedes)
@@ -209,7 +247,9 @@ def record(
         # Server-set, UTC. Not client-supplied -- the value of the record is
         # that the time is not the attestor's to choose.
         attested_at=datetime.now(timezone.utc),
-        # Always null today: FR-8 session linkage is not I08's scope.
+        # Always null today. Linking an attestation to its assistant session is
+        # FR-4 / FR-8 and ours; nothing supplies the id yet -- the reservation
+        # that would carry it (RESB.BEDNR) is not exposed.
         session_id=None,
         supersedes=clean.supersedes,
     )

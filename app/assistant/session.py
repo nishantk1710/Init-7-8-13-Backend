@@ -58,6 +58,7 @@ from app.assistant.script import next_step
 from app.assistant.steps import Step
 from app.core.config import Settings, get_settings
 from app.core.logging import get_logger
+from app.shared.plant_scope import IN_SCOPE_PLANTS, is_in_scope
 from app.initiatives.i13.act_stock_provider import PostgresCrossPlantStockProvider
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.quantity import QuantitySuggestion, build_quantity_config, suggest
@@ -283,6 +284,15 @@ def start(
     settings = settings or get_settings()
     i13_config = i13_config or get_i13_config()
     today = today or date.today()
+
+    # Refused before routing, not after: a session is an append-only record, and
+    # one opened for a plant the platform does not serve would be advice about
+    # stock and repairs nothing here is allowed to count.
+    if not is_in_scope(plant):
+        raise SessionError(
+            f"plant {plant!r} is outside the platform's scope: "
+            f"{', '.join(IN_SCOPE_PLANTS)}"
+        )
 
     routed = route(db, material_id, plant)
     if not routed.in_scope:

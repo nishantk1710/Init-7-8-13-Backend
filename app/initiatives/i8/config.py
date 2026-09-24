@@ -59,6 +59,23 @@ class I8Settings(BaseSettings):
     # get this value silently drops 37% of the register.
     repair_doc_type: str = "ZREP"
 
+    # EKPO.LOEKZ. A line carrying the deleted value is not a repair anybody is
+    # waiting on, so it is left out of the register entirely. Before this was
+    # read, 44 deleted repair lines sat in the register as open, and most of
+    # them as overdue -- a repair that was cancelled in SAP being chased here.
+    po_deleted_indicator: str = "L"
+
+    # EKPO.LOEKZ, the blocked value. Blocked is not cancelled: the line can be
+    # released again, so it STAYS in the register and is flagged (72 lines in
+    # the July extract) rather than dropped on a guess about what happens next.
+    po_blocked_indicator: str = "S"
+
+    # PSTYP of a standard purchase line -- a new unit bought outright. On an
+    # 80-series material this is the population the reservation assistant
+    # challenges (FRS s4.1: document types ZDOM, AN and WK, item category 0),
+    # and what UNJUSTIFIED_ACQUISITION is measured over.
+    new_purchase_item_category: str = "0"
+
     # --- Movement conventions (W5.2 lifecycle) ---------------------------
     #
     # Standard SAP movement types rather than VZI conventions, so these are far
@@ -184,6 +201,32 @@ class I8Settings(BaseSettings):
     # lines on the other.
     attestation_cutover_date: str = ""
 
+    # The largest quantity one attestation may record. A typo guard, not a
+    # business rule: every repair line in the July extract is for quantity 1,
+    # and the largest quantity on ANY 80-series PO line is 400. The table is
+    # append-only, so a mistyped 1000000000 would otherwise be permanent.
+    attestation_max_quantity: int = 1000
+
+    # --- Justification (FR-7 / FR-8) ----------------------------------------
+
+    # How far from a new purchase's raised date a NEW_ACQUISITION justification
+    # may sit and still count as covering it. Symmetric, like the attestation
+    # window and for the same reason: material + plant + a date is the only key
+    # both sides share until RESB.BEDNR carries the session id. The assistant
+    # normally records the reason before the PO is raised, sometimes after.
+    #
+    # A PROPOSAL, NOT A CONFIRMED RULE -- it mirrors attestation_window_days so
+    # the two controls are measured the same way until VZI says otherwise.
+    justification_window_days: int = 30
+
+    # The date the justification control starts applying. Blank means no
+    # cutover. Separate from attestation_cutover_date because the two controls
+    # go live with different things -- the form with the platform, the
+    # justification prompt with the reservation BAdI -- and may not share a
+    # date. A purchase raised before it is labelled "before Spares Automation"
+    # rather than accused, exactly as a pre-cutover repair line is.
+    justification_cutover_date: str = ""
+
     # --- Coding candidates (W5.5) -----------------------------------------
 
     # The repair language that makes a PO line worth screening.
@@ -306,6 +349,17 @@ class I8Settings(BaseSettings):
         if not self.attestation_cutover_date.strip():
             return None
         return date.fromisoformat(self.attestation_cutover_date.strip())
+
+    @property
+    def justification_cutover_date_value(self) -> date | None:
+        """``justification_cutover_date`` as a date, or None meaning "not set".
+
+        Raises on malformed input, for the same reason the attestation cutover
+        does: a wrong date silently decides which purchases get accused.
+        """
+        if not self.justification_cutover_date.strip():
+            return None
+        return date.fromisoformat(self.justification_cutover_date.strip())
 
     @property
     def reference_date_value(self) -> date | None:

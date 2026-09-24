@@ -31,9 +31,16 @@ import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
+from app.initiatives.i8.acquisitions import (
+    NEW_ACQUISITION_KIND,
+    NewAcquisition,
+    find_new_acquisitions,
+    load_justifications,
+)
 from app.initiatives.i8.attestation import AttestationCoverage, coverage as attestation_coverage
 from app.initiatives.i8.coding_candidates import CodingCandidate, ScreenStats, screen
 from app.initiatives.i8.config import I8Settings, get_i8_settings
@@ -42,6 +49,7 @@ from app.initiatives.i8.exceptions import ExceptionItem, ExceptionStats, build_e
 from app.initiatives.i8.register import (
     RegisterStats,
     RepairLine,
+    fetch_candidate_lines,
     load_repair_lines,
     open_repair_index,
 )
@@ -66,6 +74,10 @@ class Snapshot:
     universe_stats: UniverseStats
 
     vendors: tuple[VendorTurnaround, ...]
+
+    acquisitions: tuple[NewAcquisition, ...] = ()
+    """New 80-series purchase lines, for the UNJUSTIFIED_ACQUISITION check.
+    From the same EKPO pull as the register, so it shares its lifetime."""
 
     def line(self, document: str, item: str) -> RepairLine | None:
         """One repair line by its (EBELN, EBELP) key."""
@@ -100,7 +112,12 @@ def build_snapshot(
     reference_date = today or cfg.reference_date_value or date.today()
     started = time.monotonic()
 
-    lines, register_stats = load_repair_lines(db, cfg, today=reference_date)
+    # One EKPO pull for both readings of it: repair lines and new purchases.
+    candidates = fetch_candidate_lines(db)
+    lines, register_stats = load_repair_lines(
+        db, cfg, today=reference_date, candidates=candidates
+    )
+    acquisitions = find_new_acquisitions(candidates, cfg)
     universe, universe_stats = load_universe(
         db, cfg, open_repair_index=open_repair_index(lines)
     )
@@ -123,6 +140,7 @@ def build_snapshot(
         universe=tuple(universe),
         universe_stats=universe_stats,
         vendors=tuple(vendors),
+        acquisitions=tuple(acquisitions),
     )
 
 
@@ -172,6 +190,14 @@ def reset_snapshot() -> None:
 # So: same batch shape, separate lifetime. One pass over the register, one query
 # for the whole attestation table, invalidated explicitly when a write happens.
 # What the task plan rules out is a query PER LINE, and there is not one here.
+#
+# Explicit invalidation only covers writes made through THIS process's router.
+# Two other writers exist: `demo_seed` (a separate process -- after `--clear`
+# a running server kept serving the demo coverage until it restarted) and the
+# WS7 justification endpoints, which the UNJUSTIFIED_ACQUISITION check reads.
+# So every read also compares a cheap fingerprint of both tables -- a count and
+# a latest timestamp each, two aggregate queries -- and rebuilds when it moved.
+# The tables are append-only apart from the demo clear, which changes the count.
 
 
 @dataclass(frozen=True)
@@ -189,6 +215,9 @@ class AttestationView:
     exceptions: tuple[ExceptionItem, ...]
     exception_stats: ExceptionStats
     built_at: datetime
+    source_fingerprint: tuple | None = None
+    """What the attestation and justification tables looked like when this was
+    built. A different fingerprint on read means another writer moved them."""
 
     @property
     def declaration_status_by_line(self) -> dict[tuple[str, str], str]:
@@ -213,14 +242,46 @@ class AttestationView:
         return cached
 
 
+def source_fingerprint(db: Session) -> tuple:
+    """A cheap summary of every table the attestation view is derived from.
+
+    Count and latest timestamp of the attestation table, and of the
+    NEW_ACQUISITION justifications. Two aggregate queries, portable across
+    Postgres and Azure SQL.
+    """
+    from app.assistant.models import Justification
+    from app.initiatives.i8.models import RepairAttestation
+
+    attestations = db.execute(
+        select(func.count(), func.max(RepairAttestation.attested_at))
+    ).one()
+    justifications = db.execute(
+        select(func.count(), func.max(Justification.recorded_at)).where(
+            Justification.kind == NEW_ACQUISITION_KIND
+        )
+    ).one()
+    return (tuple(attestations), tuple(justifications))
+
+
 def build_attestation_view(
-    db: Session, snapshot: Snapshot, cfg: I8Settings | None = None
+    db: Session,
+    snapshot: Snapshot,
+    cfg: I8Settings | None = None,
+    *,
+    fingerprint: tuple | None = None,
 ) -> AttestationView:
-    """Match every repair line against the attestation table. Always does the work."""
+    """Match every repair line against the attestation table, and every new
+    purchase against the justifications. Always does the work."""
     cfg = cfg or get_i8_settings()
     cover = attestation_coverage(db, snapshot.lines, cfg)
     exceptions, exception_stats = build_exceptions(
-        snapshot.lines, cover, cutover=cfg.attestation_cutover_date_value
+        snapshot.lines,
+        cover,
+        cutover=cfg.attestation_cutover_date_value,
+        acquisitions=snapshot.acquisitions,
+        justifications=load_justifications(db),
+        justification_window_days=cfg.justification_window_days,
+        justification_cutover=cfg.justification_cutover_date_value,
     )
     return AttestationView(
         coverage=cover,
@@ -228,6 +289,7 @@ def build_attestation_view(
         exceptions=tuple(exceptions),
         exception_stats=exception_stats,
         built_at=datetime.now(timezone.utc),
+        source_fingerprint=fingerprint,
     )
 
 
@@ -242,11 +304,19 @@ def get_attestation_view(
     *,
     refresh: bool = False,
 ) -> AttestationView:
-    """The cached attestation view, rebuilt on first use and after any write."""
+    """The cached attestation view, rebuilt on first use, after any write
+    through this process, and whenever the source tables moved underneath it."""
     global _attestation_view
+    fingerprint = source_fingerprint(db)
     with _attestation_lock:
-        if _attestation_view is None or refresh:
-            _attestation_view = build_attestation_view(db, snapshot, cfg)
+        if (
+            _attestation_view is None
+            or refresh
+            or _attestation_view.source_fingerprint != fingerprint
+        ):
+            _attestation_view = build_attestation_view(
+                db, snapshot, cfg, fingerprint=fingerprint
+            )
         return _attestation_view
 
 
