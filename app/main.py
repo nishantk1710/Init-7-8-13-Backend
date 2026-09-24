@@ -37,9 +37,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-        """Log unexpected failures instead of leaking internals to the caller."""
+        """Log unexpected failures instead of leaking internals to the caller.
+
+        Registering on the bare ``Exception`` class makes Starlette treat this as
+        the ServerErrorMiddleware handler, which sits *outside* CORSMiddleware in
+        the stack -- so its response never gets CORS headers added automatically.
+        A browser then refuses to expose the response to JS at all and fetch()
+        reports "Failed to fetch", indistinguishable from the backend being
+        unreachable. Add the header by hand so real 500s surface as 500s.
+        """
         logger.exception("Unhandled error on %s %s", request.method, request.url.path)
-        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+        response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
+        origin = request.headers.get("origin")
+        if origin in settings.cors_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response
 
     logger.info(
         "%s v%s ready (env=%s, api_prefix=%s, cors=%s)",
