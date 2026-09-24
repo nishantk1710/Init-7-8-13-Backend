@@ -114,13 +114,58 @@ class AssistantSession(Base):
 
     plant: Mapped[str] = mapped_column(String(8), index=True)
 
+    department: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    """Which department the requester is reserving for.
+
+    Asked at the entry point rather than derived, because there is no
+    deterministic source for it: nothing the platform loads maps a person to a
+    cost-bearing department, and ``consumption_plan.cost_centre`` is the plan's
+    charge target rather than the requester's own team. Inferring one would
+    attribute a reservation to a department that never asked for it.
+
+    Nullable, and that is not a gap to be closed by defaulting it. The BAdI
+    pop-up carries a material and a plant; it does not carry a department, so a
+    session opened from SAP legitimately has none until the SAP team adds it to
+    the deep link. A blank here is the honest record of that."""
+
+    requested_for: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, index=True
+    )
+    """Who the part is actually for -- **typed, and not identity.**
+
+    One person runs the assistant for everybody, so ``requester`` below records
+    the same operator on every row and cannot answer "who wanted this". This
+    column can: the operator types the name in, the same way they type the
+    material number.
+
+    Never treat it as identity. Nobody verified it; one person typed another
+    person's name into a text box. It is a property of the reservation, and when
+    Entra sign-in lands it does not become authenticated -- ``requester`` becomes
+    the real one and this stays a typed name.
+
+    Named ``requested_for`` rather than ``requested_by`` on purpose: one
+    character between that and ``requester`` is an invitation to read the wrong
+    one in review.
+
+    Nullable for the same reason ``department`` is -- the BAdI pop-up has no name
+    to give, and a blank is the honest record of that."""
+
     requested_quantity: Mapped[Decimal | None] = mapped_column(
         Numeric(18, 3), nullable=True
     )
-    """What the requester was about to reserve when the assistant opened, where
-    the caller supplied it. Optional: the BAdI pop-up may fire before a quantity
-    is entered, and a defaulted zero would be indistinguishable from a real
-    one."""
+    """What the requester was about to reserve when the assistant opened.
+
+    **No longer collected at the entry point.** The quantity that matters is
+    ``consumption_plan.planned_quantity``, captured inside the conversation
+    against a stated purpose and a window -- which is the number FR-3 suggests
+    against and FR-7 measures. A second quantity asked before any of that was
+    two answers to one question, and the one asked first was the one nobody had
+    thought about.
+
+    The column stays because the table is append-only: sessions minted before
+    the field was dropped carry a real value, and deleting the column would
+    destroy that history. New sessions record NULL, which the schema has always
+    treated as "not stated" rather than as zero."""
 
     # --- how it was routed (W7.1) ----------------------------------------
     #
@@ -135,9 +180,15 @@ class AssistantSession(Base):
     # --- who and when ----------------------------------------------------
 
     requester: Mapped[str] = mapped_column(String(128), index=True)
-    """Server-set from the caller, never from the body. Every session today is
-    ``UNAUTHENTICATED_LOCAL_USER`` because Entra is not wired in -- that is
-    visible rather than hidden, which is the point."""
+    """**Who operated the assistant** -- server-set from the caller, never from
+    the body. Every session today is ``UNAUTHENTICATED_LOCAL_USER`` because Entra
+    is not wired in -- that is visible rather than hidden, which is the point.
+
+    Not the person who wanted the part; that is ``requested_for``. One
+    coordinator runs the assistant for the whole site, so this column says the
+    same thing on every row and no screen displays it. It keeps being written
+    because it is the author of an append-only audit record, and an audit record
+    with no author is not one."""
 
     origin: Mapped[str] = mapped_column(String(16))
     """``BADI`` or ``PLATFORM`` -- whether SAP opened this or somebody started

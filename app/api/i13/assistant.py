@@ -17,6 +17,19 @@ traceability from a plan back to the advice that shaped it, and a plan with no
 session has no origin to trace. The assistant's own flow captures plans through
 the conversation; this endpoint exists for a caller that already holds a session
 and wants to record a plan directly.
+
+Why the suggestion route is ``/quantity-suggestion/compute``
+------------------------------------------------------------
+Because ``/quantity-suggestion`` is taken, by a router that answers a different
+question. ``app/api/i13/quantity_suggestion.py`` is the W7.4 **store**: it lists
+and retrieves suggestions that were recorded, with ids, justifications and
+acceptances hanging off them. This one **computes** a suggestion for a material,
+a plant and a quantity, stores nothing, and has no id to return.
+
+Both were written against the same path. Only one can win, and whichever loses
+becomes unreachable rather than failing loudly -- so the compute route is named
+for what it does. See the mounting note in ``routes.py``: the ordering there is
+load-bearing.
 """
 
 from __future__ import annotations
@@ -191,6 +204,7 @@ def post_consumption_plan(
 
     return PlanModel(
         id=plan.id,
+        session_id=plan.session_id,
         material=plan.material,
         plant=plan.plant,
         purpose=plan.purpose,
@@ -246,6 +260,7 @@ def list_consumption_plans(
     return [
         PlanModel(
             id=p.id,
+            session_id=p.session_id,
             material=p.material,
             plant=p.plant,
             purpose=p.purpose,
@@ -265,7 +280,7 @@ def list_consumption_plans(
 
 
 @router.get(
-    "/quantity-suggestion",
+    "/quantity-suggestion/compute",
     response_model=QuantitySuggestionResponse,
     summary="FR-3: how many should they reserve?",
 )

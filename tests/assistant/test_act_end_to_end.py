@@ -104,7 +104,12 @@ def _capture_plan_through_the_chat(material: str, plant: str) -> str:
     started = client.post(
         "/api/assistant/sessions",
         headers=ACTOR,
-        json={"materialId": material, "plant": plant, "quantity": "1"},
+        json={
+            "materialId": material,
+            "plant": plant,
+            "department": "Concentrator",
+            "requestedFor": "T. Mokoena",
+        },
     )
     assert started.status_code == 200, started.text
     body = started.json()

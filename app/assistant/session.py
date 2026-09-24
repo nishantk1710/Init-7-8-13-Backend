@@ -200,6 +200,21 @@ def _assessment_for(
     )
 
 
+def _stated(value: str | None) -> str | None:
+    """A typed field, trimmed -- or ``None`` where nothing was typed.
+
+    Whitespace is not an answer. A department of ``"  "`` would be stored as a
+    value, count as one in the per-department adoption figure both FRSs ask for,
+    and be indistinguishable on screen from a blank -- so it is collapsed to the
+    NULL that already means "not stated". Append-only means this cannot be
+    tidied up afterwards.
+    """
+    if value is None:
+        return None
+    trimmed = value.strip()
+    return trimmed or None
+
+
 def suggestion_for(assessment, planned_quantity: Decimal) -> QuantitySuggestion:
     """FR-3's suggestion for an I13 assessment and a planned quantity.
 
@@ -235,6 +250,8 @@ def start(
     material_id: str,
     plant: str,
     requester: str | None = None,
+    department: str | None = None,
+    requested_for: str | None = None,
     origin: Origin = Origin.PLATFORM,
     requested_quantity: Decimal | None = None,
     today: date | None = None,
@@ -243,9 +260,25 @@ def start(
 ) -> StartedSession:
     """Route a material, and mint a session if there is anything to say.
 
-    ``requester`` is passed separately from any request body by every caller --
-    a session whose owner is self-declared is not an audit record. It defaults
-    to the named placeholder rather than to blank.
+    Three names arrive here and they are not interchangeable.
+
+    ``requester`` is **who operated the assistant**. It is passed separately from
+    any request body by every caller -- a session whose owner is self-declared is
+    not an audit record -- and defaults to the named placeholder rather than to
+    blank.
+
+    ``requested_for`` is **who wanted the part**, typed by the operator. It comes
+    from the body precisely because it is not identity: it is a property of the
+    reservation, like the material number. Passing it through ``requester`` would
+    turn a typed name into an audit author, which is the one thing the split
+    between these two columns exists to prevent.
+
+    ``department`` is the requester's, not the operator's.
+
+    ``requested_quantity`` is **no longer sent by the entry point** -- the
+    quantity of record is captured inside the conversation against a purpose and
+    a window. The argument stays because :mod:`app.assistant.turns` replays
+    sessions minted before the field was dropped, and those carry a real value.
     """
     settings = settings or get_settings()
     i13_config = i13_config or get_i13_config()
@@ -296,6 +329,8 @@ def start(
         flow=routed.flow.value,
         material_id=routed.material_id,
         plant=routed.plant,
+        department=_stated(department),
+        requested_for=_stated(requested_for),
         requested_quantity=requested_quantity,
         eighty_series=routed.eighty_series,
         material_scope=routed.material_scope.value,
@@ -326,11 +361,14 @@ def start(
     )
 
     logger.info(
-        "Assistant session %s minted: %s flow for %s at %s, requester %s (%s)",
+        "Assistant session %s minted: %s flow for %s at %s, for %s (%s), "
+        "opened by %s (%s)",
         session.id,
         session.flow,
         session.material_id,
         session.plant,
+        session.requested_for or "nobody named",
+        session.department or "no department",
         session.requester,
         session.origin,
     )

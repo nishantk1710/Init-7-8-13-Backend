@@ -353,8 +353,12 @@ But Gamsberg carries more transactions than Black Mountain does:
 ### B5 — Two of three reclassification indicators cannot fire *(degrades W6.5)*
 Critical flag and HOD-justified flag both resolve to `null`. The HOD flag is circularly blocked on W6.6's confirmation workflow. See Section 4.6.
 
-### B6 — Reconciliation reference data absent *(blocks FR-6 acceptance)*
-No ZMM065 export or 30-Day GR Report is loaded, so `/api/i13/validation` cannot self-reconcile. Counts must be typed in by hand. **Needs:** both reports as files, plus the agreed tolerance.
+### B6 — Reconciliation references are loaded but not wired *(blocks FR-6 acceptance)*
+**Corrected 21-Sep:** both references *are* in the database — ZMM065 (`raw_zmm065_bmm` 10,521 rows + `raw_zmm065_gb` 7,449) and the 30-Day GR Report (`raw_gr_30day`, 108 rows). ZMM065 is already consumed by the W3.4 criticality module.
+
+The gap is in code, not data: `/api/i13/validation` does not read either table — it accepts the reference counts as hand-typed query parameters and otherwise returns `REFERENCE_UNAVAILABLE`. **Needs:** wire the endpoint to `raw_gr_30day` and the ZMM065 tables, plus the agreed tolerance from VZI.
+
+Worth noting: `raw_gr_30day` carries a **`supervisor`** column — a named accountable person per GR line, and the only such field in any delivered source besides `RESB.WEMPF`. Potentially useful for W6.6 routing on GRNI exceptions.
 
 ### B7 — `data-sources` under-reports MSEG by 56% *(cosmetic but misleading)*
 `raw_mseg` was loaded in two batches (102,631 + 130,514 = 233,145) with identical timestamps. `GET /api/i13/data-sources` picks one arbitrarily via a non-deterministic `ORDER BY finished_at DESC LIMIT 1` tie-break and reports **102,631** against an actual **233,145**. Also affects `raw_cdhdr`, `raw_s031`, `raw_s032`. **Fix:** sum all successful runs per table. Small code change.

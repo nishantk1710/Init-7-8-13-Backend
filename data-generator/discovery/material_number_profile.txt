@@ -1,4 +1,4 @@
-MaterialSet full pull, 2026-09-17T20:52:10Z: 2040 rows in 5 page(s)
+MaterialSet full pull, 2026-09-23T10:02:14Z: 2040 rows in 3 page(s)
 
 Matnr length distribution:
   len  3: 2
@@ -54,3 +54,14 @@ Material type (Mtart) distribution:
   LEIH   3
   HERS   1
   WERB   1
+
+Extwg (retired as the OAR key on 08-Sep; informational only):
+  <blank>  1940
+  100      52
+  01       14
+  20       11
+  110      10
+  40       9
+  60       2
+  30       1
+  AAA      1

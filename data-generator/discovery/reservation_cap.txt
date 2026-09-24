@@ -1,0 +1,15 @@
+ReservationItemSet page-cap test, 2026-09-23T10:01:59Z
+I08 FRS s7 records exactly 1,000 rows over OData; the delivered extract holds 105,848 RESB rows.
+A cap means every reservation-dependent figure (I13 STITCH, I08 session traceability) is computed on 1%.
+
+  /$count                    : 7088
+  $inlinecount=allpages      : 7088
+  $top=5&$skip=0             : HTTP 200, 5 row(s)
+  $top=5&$skip=999           : HTTP 200, 5 row(s)
+  $top=5&$skip=1000          : HTTP 200, 5 row(s)
+  $top=5&$skip=1500          : HTTP 200, 5 row(s)
+  $top=5&$skip=5000          : HTTP 200, 5 row(s)
+
+  page-until-short-page      : 7088 rows in 8 page(s), 7088 distinct (Rsnum, Rspos)
+
+  VERDICT: $count and paging agree at 7088 rows.

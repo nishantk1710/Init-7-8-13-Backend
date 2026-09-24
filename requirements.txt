@@ -29,6 +29,10 @@ pydantic==2.13.5
 SQLAlchemy==2.0.52
 pyodbc==5.3.0
 alembic==1.19.2
+# Driver for the local Postgres stand-in (compose.yaml) -- DATABASE_URL there
+# uses postgresql+psycopg://. Not needed against Azure SQL, but required for
+# every local run; leaving it out makes every DB-touching endpoint 500.
+psycopg[binary]==3.3.1
 
 # --- Azure ---
 # Data Lake storage (stvziaicomnonprod) behind the Storage port, and the managed

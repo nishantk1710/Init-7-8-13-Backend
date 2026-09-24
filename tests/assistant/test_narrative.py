@@ -184,3 +184,26 @@ class TestBothPromptsExist:
         from app.core.prompts import get_prompt
 
         assert "arithmetic is not your job" in get_prompt(narrative.I13_PROMPT).template
+
+    def test_the_two_i13_prompts_are_not_the_same_prompt(self) -> None:
+        """The bug this pair of assertions exists to prevent from returning.
+
+        ``I13_PROMPT`` used to point at ``i13_quantity_suggestion``, which is
+        W7.4's suggestion-engine prompt. Its placeholders are that engine's
+        inputs, and :func:`narrative.write` supplies ``headline`` and ``facts``
+        -- so every I13 narrative raised PromptError and degraded to no
+        narrative at all. Nothing looked broken, because this layer is designed
+        to fail silently and the deterministic advice was served throughout.
+
+        Two callers with different variables cannot share one prompt. If these
+        ids are ever collapsed back into one, the I13 narrative stops working
+        and nothing says so.
+        """
+        from app.core.prompts import get_prompt
+
+        assert narrative.I13_PROMPT != "i13_quantity_suggestion"
+
+        for prompt_id in (narrative.I08_PROMPT, narrative.I13_PROMPT):
+            assert get_prompt(prompt_id).placeholders == {"headline", "facts"}, (
+                f"{prompt_id} must take exactly what narrative.write supplies"
+            )

@@ -7,6 +7,7 @@ worse, repeats the threshold as a literal) at each call site.
 """
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 from app.core.config import Settings, get_settings
 from app.core.criticality import CriticalityTier
@@ -85,6 +86,45 @@ class AttributionConfig:
 
 
 @dataclass(frozen=True)
+class QuantitySuggestionConfig:
+    """W7.4: the months-of-cover basis the reservation-time quantity
+    suggestion is computed on.
+
+    ``cover_ceiling_months`` and ``minimum_history_count`` are ``None`` until
+    VZI supplies them (FRS §10 carries both as open). That is a first-class
+    state, not a missing default: with either unset the engine declines with
+    NOT_CONFIGURED rather than inventing a purchase figure -- see
+    ``app.initiatives.i13.quantity_suggestion``.
+
+    ``enabled`` is a separate master gate, so "switched off here" and "the
+    business has not given us the numbers" stay distinguishable in the
+    persisted reason code."""
+
+    enabled: bool
+    cover_ceiling_months: Decimal | None
+    minimum_history_count: int | None
+    lookback_months: int
+
+    def __post_init__(self) -> None:
+        if self.cover_ceiling_months is not None and self.cover_ceiling_months <= 0:
+            raise ValueError(
+                f"i13_qty_cover_ceiling_months must be positive months when set, got {self.cover_ceiling_months}"
+            )
+        if self.minimum_history_count is not None and self.minimum_history_count < 0:
+            raise ValueError(
+                f"i13_qty_minimum_history_count cannot be negative, got {self.minimum_history_count}"
+            )
+        if self.lookback_months <= 0:
+            raise ValueError(f"i13_qty_lookback_months must be positive, got {self.lookback_months}")
+
+    @property
+    def thresholds_configured(self) -> bool:
+        """Whether VZI's two open values are both present. ``enabled`` is
+        deliberately not part of this -- see the class docstring."""
+        return self.cover_ceiling_months is not None and self.minimum_history_count is not None
+
+
+@dataclass(frozen=True)
 class I13Config:
     aging: AgingThresholds
     watch: WatchConfig
@@ -93,6 +133,7 @@ class I13Config:
     reconciliation: ReconciliationConfig
     attribution: AttributionConfig
     escalation: EscalationConfig
+    quantity_suggestion: QuantitySuggestionConfig
 
 
 def build_i13_config(settings: Settings) -> I13Config:
@@ -115,6 +156,12 @@ def build_i13_config(settings: Settings) -> I13Config:
         escalation=EscalationConfig(
             requester_response_days=settings.i13_requester_response_days,
             hod_recipients_raw=settings.i13_hod_recipients,
+        ),
+        quantity_suggestion=QuantitySuggestionConfig(
+            enabled=settings.i13_qty_suggestion_enabled,
+            cover_ceiling_months=settings.i13_qty_cover_ceiling_months,
+            minimum_history_count=settings.i13_qty_minimum_history_count,
+            lookback_months=settings.i13_qty_lookback_months,
         ),
     )
 

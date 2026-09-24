@@ -24,15 +24,20 @@ Identity comes from the caller
 Every write takes its author from ``get_current_actor`` -- today an
 ``X-Actor-Id`` header, tomorrow an Entra token -- and never from the request
 body. A session or a justification whose author is self-declared is not an audit
-record. Requests do not carry a requester field at all, so there is nothing for
-a caller to spoof.
+record. No request carries an author field, so there is nothing for a caller to
+spoof.
+
+``requestedFor`` on ``StartSessionRequest`` is not a hole in that. One
+coordinator operates the assistant for everybody, and the name they type is who
+the *part* is for -- a property of the reservation, like the material number.
+It is stored in its own column, never in ``requester``, and nothing treats it as
+having been authenticated.
 """
 
 from __future__ import annotations
 
 import json
 from datetime import date
-from decimal import Decimal, InvalidOperation
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -49,6 +54,7 @@ from app.api.assistant.schemas import (
     JustificationListResponse,
     JustificationModel,
     JustificationRequest,
+    NarrativeModel,
     PlanModel,
     RoutingModel,
     SessionListResponse,
@@ -95,29 +101,6 @@ LINKAGE_NOTE = (
 )
 
 
-def _quantity(raw: str | None, label: str) -> Decimal | None:
-    """Parse a quantity that arrived as a string.
-
-    Strings on the wire, Decimals in the domain. A JSON number would round-trip
-    through a float and reach an append-only record as 2.0999999999999996.
-    """
-    if raw is None or str(raw).strip() == "":
-        return None
-    try:
-        value = Decimal(str(raw).strip())
-    except InvalidOperation as error:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"{label} must be a number, got {raw!r}",
-        ) from error
-    if value <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"{label} must be greater than zero, got {value}",
-        )
-    return value
-
-
 def _step_model(step: Step) -> StepModel:
     return StepModel(
         id=step.id,
@@ -145,6 +128,28 @@ def _step_model(step: Step) -> StepModel:
         facts=step.facts,
         footnote=step.footnote,
         session_id=step.session_id,
+    )
+
+
+def _narrative_model(session: AssistantSession) -> NarrativeModel | None:
+    """The stored narrative, where one was written.
+
+    Read back off the session rather than taken from the writer's return value,
+    so what the requester is shown is the same string the audit record holds. A
+    narrative served from memory and stored separately could drift from it, and
+    the stored one is the one somebody will be asked about months later.
+
+    ``None`` whenever no narrative was written -- off, unconfigured, the stub
+    provider, or the provider failed. All four are ordinary and none of them is
+    an error: the deterministic advice is complete either way.
+    """
+    if not session.narrative:
+        return None
+    return NarrativeModel(
+        text=session.narrative,
+        prompt_id=session.narrative_prompt_id,
+        prompt_version=session.narrative_prompt_version,
+        model=session.narrative_model,
     )
 
 
@@ -182,9 +187,14 @@ def start_session(
             db,
             material_id=body.material_id,
             plant=body.plant,
+            # Two different people. `requester` is whoever is operating the
+            # assistant, taken from the caller and never from the body;
+            # `requested_for` is the name they typed for whoever wants the part.
+            # They land in different columns and must not be crossed over.
             requester=actor.id,
+            department=body.department,
+            requested_for=body.requested_for,
             origin=Origin(body.origin),
-            requested_quantity=_quantity(body.quantity, "quantity"),
         )
     except SessionError as error:
         # A real data gap -- an OAR part WATCH has never seen. Reported rather
@@ -203,6 +213,7 @@ def start_session(
         session_id=started.session.id,
         expires_at=started.session.expires_at,
         step=_step_model(started.step),
+        narrative=_narrative_model(started.session),
     )
 
 
@@ -240,6 +251,7 @@ def post_turn(
 def _plan_model(plan: ConsumptionPlanRecord) -> PlanModel:
     return PlanModel(
         id=plan.id,
+        session_id=plan.session_id,
         material=plan.material,
         plant=plan.plant,
         purpose=plan.purpose,
@@ -333,6 +345,8 @@ def list_sessions(
                 outcome=session_service.outcome(row, turn_rows).value,
                 material_id=row.material_id,
                 plant=row.plant,
+                department=row.department,
+                requested_for=row.requested_for,
                 requester=row.requester,
                 origin=row.origin,
                 issued_at=row.issued_at,
@@ -403,6 +417,8 @@ def get_session(session_id: str, db: DbDep) -> SessionTraceResponse:
         outcome=session_service.outcome(session, turn_rows).value,
         material_id=session.material_id,
         plant=session.plant,
+        department=session.department,
+        requested_for=session.requested_for,
         requested_quantity=(
             None if session.requested_quantity is None else str(session.requested_quantity)
         ),

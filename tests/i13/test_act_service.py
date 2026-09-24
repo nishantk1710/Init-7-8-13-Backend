@@ -85,7 +85,16 @@ def _ledger_entry(*, issued_quantity: Decimal = Decimal("0"), **overrides) -> Re
     return ReservationLedgerEntry(**defaults)
 
 
-def _detect(as_of_time, *, plans=(), ledger_entries=(), repository=None, notification_port=None, grni_snapshots=None):
+def _detect(
+    as_of_time,
+    *,
+    plans=(),
+    ledger_entries=(),
+    repository=None,
+    notification_port=None,
+    grni_snapshots=None,
+    requester_by_reservation=None,
+):
     repository = repository or FakeExceptionRepository()
     notification_port = notification_port or FakeNotificationPort()
     result = detect_exceptions(
@@ -97,6 +106,7 @@ def _detect(as_of_time, *, plans=(), ledger_entries=(), repository=None, notific
         notification_port=notification_port,
         plan_breach_grace_days=7,
         requester_response_days=5,
+        requester_by_reservation=requester_by_reservation or {},
     )
     return repository, notification_port, result
 
@@ -127,6 +137,84 @@ def test_no_plan_exception_detected_for_oar_reservation_without_a_plan() -> None
     no_plan = repository.list(exception_type=ExceptionType.NO_PLAN)
     assert len(no_plan) == 1
     assert no_plan[0].status is ExceptionStatus.OPEN  # no requester known -> stays unrouted
+
+
+# --- owner resolution: plan requester, then W6.4 attribution ---
+#
+# A NO_PLAN exception has no plan by definition, so before the second source
+# existed its owner was unconditionally None: nothing routed, nothing
+# escalated, and FR-9's second half was dead for every one of them.
+
+
+def test_no_plan_routes_to_the_requester_w6_4_resolved_from_resb() -> None:
+    as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
+    repository, notification_port, result = _detect(
+        as_of_time,
+        ledger_entries=[_ledger_entry()],
+        requester_by_reservation={("1000000000", "0001"): "WEMPF-USER"},
+    )
+
+    assert result.routed == 1
+    exception = repository.list(exception_type=ExceptionType.NO_PLAN)[0]
+    assert exception.owner_requester_id == "WEMPF-USER"
+    assert exception.status is ExceptionStatus.AWAITING_REQUESTER
+    assert exception.requester_due_at == as_of_time + timedelta(days=5)
+    assert len(notification_port.sent) == 2  # platform queue + email
+
+
+def test_the_plan_requester_wins_over_the_attributed_one() -> None:
+    """The person who actually spoke to the assistant outranks a field on a
+    reservation row. Both exist here and they disagree."""
+    as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
+    repository, _, _ = _detect(
+        as_of_time,
+        plans=[_plan()],
+        requester_by_reservation={("1000000000", "0001"): "WEMPF-USER"},
+    )
+
+    exception = repository.list(exception_type=ExceptionType.PLAN_BREACH)[0]
+    assert exception.owner_requester_id == "REQ1"
+
+
+def test_an_unresolved_reservation_stays_unowned_rather_than_guessing() -> None:
+    """W6.4 reports no requester for an AMBIGUOUS attribution, so nothing is
+    in the map for it. That must leave the exception unrouted -- routing it to
+    the wrong named person is worse, because somebody answers it."""
+    as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
+    repository, notification_port, result = _detect(
+        as_of_time,
+        ledger_entries=[_ledger_entry()],
+        requester_by_reservation={("9999999999", "0001"): "SOMEBODY-ELSE"},
+    )
+
+    assert result.routed == 0
+    exception = repository.list(exception_type=ExceptionType.NO_PLAN)[0]
+    assert exception.owner_requester_id is None
+    assert exception.status is ExceptionStatus.OPEN
+    assert notification_port.sent == []
+
+
+def test_an_existing_unowned_exception_is_routed_once_a_requester_resolves() -> None:
+    """Run 1 has no owner; run 2 does. The same row is reused and routed --
+    detection is idempotent, but resolving an owner is not a no-op."""
+    as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
+    repository = FakeExceptionRepository()
+    _detect(as_of_time, ledger_entries=[_ledger_entry()], repository=repository)
+    assert repository.list(exception_type=ExceptionType.NO_PLAN)[0].status is ExceptionStatus.OPEN
+
+    _, _, result = _detect(
+        as_of_time,
+        ledger_entries=[_ledger_entry()],
+        repository=repository,
+        requester_by_reservation={("1000000000", "0001"): "WEMPF-USER"},
+    )
+
+    assert result.created == 0
+    assert result.routed == 1
+    exceptions = repository.list(exception_type=ExceptionType.NO_PLAN)
+    assert len(exceptions) == 1  # still one row, not a second
+    assert exceptions[0].owner_requester_id == "WEMPF-USER"
+    assert exceptions[0].status is ExceptionStatus.AWAITING_REQUESTER
 
 
 # --- idempotency / dedup ---

@@ -1,316 +1,507 @@
 utc,sap_path,odata_query,http_status,elapsed_s,bytes
-2026-09-17T20:51:16Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/$metadata,,200,1.0,37159
-2026-09-17T20:51:16Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,,200,0.2,4
-2026-09-17T20:51:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet/$count,,200,1.1,5
-2026-09-17T20:51:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordSet/$count,,200,0.1,3
-2026-09-17T20:51:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet/$count,,200,0.1,3
-2026-09-17T20:51:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet/$count,,200,0.1,4
-2026-09-17T20:51:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count,,200,0.2,5
-2026-09-17T20:51:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/VendorSet/$count,,200,0.1,3
-2026-09-17T20:51:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDescriptionSet/$count,,200,0.1,4
-2026-09-17T20:51:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count,,200,0.1,4
-2026-09-17T20:51:18Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,,200,0.1,4
-2026-09-17T20:51:18Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet/$count,,200,0.1,4
-2026-09-17T20:51:18Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet/$count,,200,0.2,5
-2026-09-17T20:51:18Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet/$count,,200,0.1,4
-2026-09-17T20:51:18Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet/$count,,200,0.1,4
-2026-09-17T20:51:18Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/$metadata,,200,0.1,19129
-2026-09-17T20:51:19Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,,200,0.3,4
-2026-09-17T20:51:19Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/MaterialValuationSet/$count,,400,0.8,174
-2026-09-17T20:51:20Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/MaterialValuationSet,$inlinecount=allpages&$top=1&$format=json,400,0.6,208
-2026-09-17T20:51:21Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet/$count,,400,0.6,172
-2026-09-17T20:51:21Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet,$inlinecount=allpages&$top=1&$format=json,400,0.6,206
-2026-09-17T20:51:22Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet/$count,,400,0.6,170
-2026-09-17T20:51:22Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$inlinecount=allpages&$top=1&$format=json,400,0.6,204
-2026-09-17T20:51:23Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/BatchStockSet/$count,,400,0.6,167
-2026-09-17T20:51:24Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/BatchStockSet,$inlinecount=allpages&$top=1&$format=json,400,0.7,201
-2026-09-17T20:51:24Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/MonthlyMovementStatisticSet/$count,,400,0.6,181
-2026-09-17T20:51:25Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/MonthlyMovementStatisticSet,$inlinecount=allpages&$top=1&$format=json,400,0.6,215
-2026-09-17T20:51:25Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,,200,0.1,4
-2026-09-17T20:51:25Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL',200,0.4,5
-2026-09-17T20:51:26Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC',200,0.2,4
-2026-09-17T20:51:26Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'BANF',200,0.2,4
-2026-09-17T20:51:26Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet,$top=1&$format=json,200,0.2,753
-2026-09-17T20:51:27Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/MaterialValuationSet,$top=1&$format=json,400,0.6,186
-2026-09-17T20:51:27Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/MonthlyMovementStatisticSet,$top=1&$format=json,400,0.7,193
-2026-09-17T20:51:30Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$top=1&$format=json,500,2.3,196
-2026-09-17T20:51:33Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$top=1&$format=json,500,3.0,194
-2026-09-17T20:51:33Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$top=5&$format=json,400,0.7,182
-2026-09-17T20:51:34Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$top=5&$skip=5&$format=json,400,0.6,190
-2026-09-17T20:51:35Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$inlinecount=allpages&$top=1&$format=json,400,0.7,204
-2026-09-17T20:51:37Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet,$top=1000&$skip=40000&$format=json,500,2.4,214
-2026-09-17T20:51:39Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet,$orderby=Aedat desc&$top=3&$format=json,500,2.2,212
-2026-09-17T20:51:39Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC' and Fname eq 'DISMM',200,0.1,2
-2026-09-17T20:51:39Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC' and Fname eq 'EISBE',200,0.1,1
-2026-09-17T20:51:39Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC' and Fname eq 'MINBE',200,0.1,2
-2026-09-17T20:51:40Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC' and Fname eq 'MABST',200,0.1,2
-2026-09-17T20:51:40Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC' and Fname eq 'DISMM' and Value_new eq 'VB',200,0.1,2
-2026-09-17T20:51:40Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet,$filter=Objectclas eq 'MATERIAL'&$top=3&$format=json,200,0.1,1637
-2026-09-17T20:51:40Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'VB',200,0.1,2
-2026-09-17T20:51:40Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'ND',200,0.1,3
-2026-09-17T20:51:40Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'PD',200,0.1,3
-2026-09-17T20:51:40Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'V1',200,0.1,2
-2026-09-17T20:51:40Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=Dismm eq '',200,0.1,4
-2026-09-17T20:51:41Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'VB' and Minbe gt 0,400,0.6,226
-2026-09-17T20:51:41Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=(Dismm eq 'ND' or Dismm eq 'PD') and Minbe gt 0,400,0.5,253
-2026-09-17T20:51:43Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count,$filter=Pstyp eq '3',500,2.2,206
-2026-09-17T20:51:44Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet/$count,$filter=Bsart eq 'ZREP',200,0.1,1
-2026-09-17T20:51:44Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count,"$filter=startswith(Matnr,'80')",200,0.1,1
-2026-09-17T20:51:46Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count,"$filter=startswith(Matnr,'80')",500,2.2,203
-2026-09-17T20:51:46Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count,$filter=Matnr eq '',200,0.1,3
-2026-09-17T20:51:48Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$inlinecount=allpages&$top=1&$format=json,500,2.2,218
-2026-09-17T20:51:51Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$inlinecount=allpages&$top=1&$format=json,500,2.8,216
-2026-09-17T20:51:53Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count,"$filter=startswith(Matnr,'2227')",500,2.3,205
-2026-09-17T20:51:53Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count,$filter=Matnr ge '80000000' and Matnr le '80999999',200,0.1,1
-2026-09-17T20:51:53Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count,$filter=Matnr ge '000000000080000000' and Matnr le '000000000080999999',200,0.1,1
-2026-09-17T20:51:53Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$top=2&$format=json,200,0.1,1207
-2026-09-17T20:51:54Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$top=2&$format=json,200,0.1,1409
-2026-09-17T20:51:54Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,"$select=Matnr,Werks,Dismm&$top=2&$format=json",200,0.1,777
-2026-09-17T20:51:54Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,,200,0.1,4
-2026-09-17T20:51:54Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$top=500&$format=json,200,0.2,274043
-2026-09-17T20:51:54Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=500&$skip=0&$format=json,200,0.2,274732
-2026-09-17T20:51:54Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=500&$skip=500&$format=json,200,0.2,274437
-2026-09-17T20:51:54Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=500&$skip=1000&$format=json,200,0.2,277052
-2026-09-17T20:51:55Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=500&$skip=1500&$format=json,200,0.2,273517
-2026-09-17T20:51:55Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=500&$skip=2000&$format=json,200,0.2,273093
-2026-09-17T20:51:55Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=500&$skip=2500&$format=json,200,0.2,275959
-2026-09-17T20:51:55Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=500&$skip=3000&$format=json,200,0.2,276695
-2026-09-17T20:51:55Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=500&$skip=3500&$format=json,200,0.1,275503
-2026-09-17T20:51:55Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=500&$skip=4000&$format=json,200,0.1,276131
-2026-09-17T20:51:56Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=500&$skip=4500&$format=json,200,0.2,277131
-2026-09-17T20:51:56Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=500&$skip=5000&$format=json,200,0.2,276828
-2026-09-17T20:51:56Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=500&$skip=5500&$format=json,200,0.2,275328
-2026-09-17T20:51:56Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=500&$skip=6000&$format=json,200,0.2,273595
-2026-09-17T20:51:56Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=500&$skip=6500&$format=json,200,0.2,275355
-2026-09-17T20:51:56Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=500&$skip=7000&$format=json,200,0.1,128229
-2026-09-17T20:51:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$top=500&$skip=0&$format=json,200,0.1,296646
-2026-09-17T20:51:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$top=500&$skip=500&$format=json,200,0.1,297211
-2026-09-17T20:51:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$top=500&$skip=1000&$format=json,200,0.1,298288
-2026-09-17T20:51:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$top=500&$skip=1500&$format=json,200,0.1,298183
-2026-09-17T20:51:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$top=500&$skip=2000&$format=json,200,0.1,107193
-2026-09-17T20:51:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$top=500&$skip=0&$format=json,200,0.1,296646
-2026-09-17T20:51:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$top=500&$skip=500&$format=json,200,0.1,297211
-2026-09-17T20:51:58Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$top=500&$skip=1000&$format=json,200,0.1,298288
-2026-09-17T20:51:58Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$top=500&$skip=1500&$format=json,200,0.1,298183
-2026-09-17T20:51:58Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$top=500&$skip=2000&$format=json,200,0.1,107193
-2026-09-17T20:52:00Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,"$orderby=Matnr,Werks&$top=500&$skip=0&$format=json",500,2.2,221
-2026-09-17T20:52:00Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'VB',200,0.1,2
-2026-09-17T20:52:02Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,"$filter=Dismm eq 'VB'&$orderby=Matnr,Werks&$top=500&$skip=0&$format=json",500,2.1,247
-2026-09-17T20:52:02Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'ND',200,0.1,3
-2026-09-17T20:52:04Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,"$filter=Dismm eq 'ND'&$orderby=Matnr,Werks&$top=500&$skip=0&$format=json",500,2.2,247
-2026-09-17T20:52:05Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'PD',200,0.1,3
-2026-09-17T20:52:07Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,"$filter=Dismm eq 'PD'&$orderby=Matnr,Werks&$top=500&$skip=0&$format=json",500,2.2,247
-2026-09-17T20:52:07Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'V1',200,0.1,2
-2026-09-17T20:52:09Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,"$filter=Dismm eq 'V1'&$orderby=Matnr,Werks&$top=500&$skip=0&$format=json",500,2.1,247
-2026-09-17T20:52:09Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet,$orderby=Matnr&$top=500&$skip=0&$format=json,200,0.1,189048
-2026-09-17T20:52:09Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet,$orderby=Matnr&$top=500&$skip=500&$format=json,200,0.1,189697
-2026-09-17T20:52:09Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet,$orderby=Matnr&$top=500&$skip=1000&$format=json,200,0.1,190072
-2026-09-17T20:52:10Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet,$orderby=Matnr&$top=500&$skip=1500&$format=json,200,0.1,189019
-2026-09-17T20:52:10Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet,$orderby=Matnr&$top=500&$skip=2000&$format=json,200,0.1,13805
-2026-09-17T20:52:12Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet,$filter=Bsart eq 'ZREP'&$top=500&$skip=0&$format=json,500,2.2,228
-2026-09-17T20:52:12Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=Matnr ne '22271519',200,0.1,4
-2026-09-17T20:52:12Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=Matnr ge '8000000000' and Matnr le '8099999999',200,0.1,2
-2026-09-17T20:52:12Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=Matnr gt '5',200,0.1,4
-2026-09-17T20:52:12Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'ND' or Dismm eq 'PD',200,0.1,4
-2026-09-17T20:52:13Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,"$filter=startswith(Matnr,'8')",500,0.5,207
-2026-09-17T20:52:13Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,"$filter=startswith(Matnr,'8')&$inlinecount=allpages&$top=1&$format=json",500,0.6,242
-2026-09-17T20:52:14Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,"$filter=substringof('800',Matnr)&$inlinecount=allpages&$top=1&$format=json",500,0.6,245
-2026-09-17T20:52:14Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Werks eq '1300' and Dismm eq 'PD'&$inlinecount=allpages&$top=1&$format=json,200,0.1,633
-2026-09-17T20:52:14Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet/$count,$filter=Budat ge datetime'2026-01-01T00:00:00',200,0.1,1
-2026-09-17T20:52:14Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet/$count,$filter=Budat ge datetime'2013-01-01T00:00:00' and Budat lt datetime'2014-01-01T00:00:00',200,0.2,5
-2026-09-17T20:52:14Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet/$count,$filter=Budat eq datetime'2013-09-27T00:00:00',200,0.1,3
-2026-09-17T20:52:14Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet/$count,$filter=Aedat ge datetime'2026-01-01T00:00:00',200,0.1,2
-2026-09-17T20:52:15Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet,$filter=Udate ge datetime'2026-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,400,0.5,257
-2026-09-17T20:52:15Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet,$filter=Objectclas eq 'MATERIAL' and Udate ge datetime'2018-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,200,0.1,568
-2026-09-17T20:52:16Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and (Tabname eq 'MARC' or Tabname eq 'MARA')&$inlinecount=allpages&$top=1&$format=json,400,0.6,302
-2026-09-17T20:52:16Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count,$filter=Ebeln eq '4500000001' or Ebeln eq '4500000002',200,0.1,1
-2026-09-17T20:52:16Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Letztbew ge datetime'2020-01-01T00:00:00',200,0.1,2
-2026-09-17T20:52:16Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Banfn eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:16Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Bnfpo eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:16Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Bsart eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:16Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Loekz eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:16Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Statu eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:16Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Frgkz eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:16Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Frgzu eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:16Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Ekgrp eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:16Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Ernam eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Afnam eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Txz01 eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Lgort eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Bednr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Matkl eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Reswk eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:18Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Menge eq 'ZZ~NOPE',500,0.6,216
-2026-09-17T20:52:18Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,251
-2026-09-17T20:52:18Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:52:18Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Badat eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:52:19Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Lfdat eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:52:19Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Preis eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.5,251
-2026-09-17T20:52:20Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,251
-2026-09-17T20:52:20Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Flief eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:52:20Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Ebeln eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:52:20Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Ebelp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,251
-2026-09-17T20:52:21Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Bsmng eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.5,251
-2026-09-17T20:52:22Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Rsnum eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,251
-2026-09-17T20:52:22Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet/$count,$filter=Mblnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:22Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet/$count,$filter=Mjahr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:22Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet/$count,$filter=Zeile eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:22Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet/$count,$filter=Bwart eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:22Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:22Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:23Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet/$count,$filter=Lgort eq 'ZZ~NOPE',500,0.5,214
-2026-09-17T20:52:23Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Lgort eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:24Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Lifnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:24Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Shkzg eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:25Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Dmbtr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:26Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:26Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:27Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Ebeln eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:27Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Ebelp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:28Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Sgtxt eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:28Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Wempf eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.5,249
-2026-09-17T20:52:29Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Kostl eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:30Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Aufnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:30Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Rsnum eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:31Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Rspos eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:31Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Umwrk eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:32Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Umlgo eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:33Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Grund eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:33Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=BudatMkpf eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,500,0.6,271
-2026-09-17T20:52:34Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=CpudtMkpf eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,500,0.5,271
-2026-09-17T20:52:34Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordSet/$count,$filter=Infnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:34Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:34Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordSet/$count,$filter=Lifnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:34Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet/$count,$filter=Infnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:34Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet/$count,$filter=Ekorg eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:34Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet/$count,$filter=Esokz eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:34Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:35Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet/$count,$filter=Waers eq 'ZZ~NOPE',500,0.5,210
-2026-09-17T20:52:35Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet,$filter=Waers eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,245
-2026-09-17T20:52:36Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet,$filter=Aplfz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,245
-2026-09-17T20:52:37Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet,$filter=Netpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.5,245
-2026-09-17T20:52:37Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet,$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,245
-2026-09-17T20:52:38Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet,$filter=Effpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,245
-2026-09-17T20:52:38Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet/$count,$filter=Ebeln eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:38Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet/$count,$filter=Bsart eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:38Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet/$count,$filter=Aedat eq datetime'1900-01-01T00:00:00',200,0.1,1
-2026-09-17T20:52:38Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet/$count,$filter=Lifnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:38Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet/$count,$filter=Ekorg eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:38Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet/$count,$filter=Ekgrp eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:38Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet/$count,$filter=Waers eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:38Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count,$filter=Ebeln eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:38Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count,$filter=Ebelp eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:38Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count,$filter=Loekz eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:39Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count,$filter=Txz01 eq 'ZZ~NOPE',500,0.6,214
-2026-09-17T20:52:40Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Txz01 eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:40Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Matnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:52:40Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Werks eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:52:40Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Lgort eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:41Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Bednr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:42Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:42Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:43Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Netpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:43Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.5,249
-2026-09-17T20:52:44Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Netwr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.5,249
-2026-09-17T20:52:44Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Pstyp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:45Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Knttp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:46Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Plifz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:46Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Banfn eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:52:46Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Bnfpo eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,249
-2026-09-17T20:52:46Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/VendorSet/$count,$filter=Lifnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:46Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/VendorSet/$count,$filter=Name1 eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:46Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/VendorSet/$count,$filter=Ktokk eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:47Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDescriptionSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:47Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDescriptionSet/$count,$filter=Spras eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:47Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDescriptionSet/$count,$filter=Maktx eq 'ZZ~NOPE',500,0.5,216
-2026-09-17T20:52:48Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDescriptionSet,$filter=Maktx eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,251
-2026-09-17T20:52:48Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:48Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count,$filter=Mtart eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:48Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count,$filter=Matkl eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:49Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count,$filter=Bismt eq 'ZZ~NOPE',500,0.6,205
-2026-09-17T20:52:49Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet,$filter=Bismt eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,240
-2026-09-17T20:52:50Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,240
-2026-09-17T20:52:50Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet,$filter=Mstae eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:52:50Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Matnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:52:50Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Werks eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:52:50Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Dismm eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:52:50Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Dispo eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:52:51Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Plifz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,245
-2026-09-17T20:52:52Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Webaz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,245
-2026-09-17T20:52:52Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Minbe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,245
-2026-09-17T20:52:53Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Eisbe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,245
-2026-09-17T20:52:53Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Bstmi eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,245
-2026-09-17T20:52:54Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Bstma eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,245
-2026-09-17T20:52:54Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Mabst eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.5,245
-2026-09-17T20:52:54Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:55Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:55Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet/$count,$filter=Lgort eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:55Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet/$count,$filter=Labst eq 'ZZ~NOPE',500,0.6,217
-2026-09-17T20:52:56Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet,$filter=Labst eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,252
-2026-09-17T20:52:56Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet,$filter=Insme eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,252
-2026-09-17T20:52:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet,$filter=Speme eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,252
-2026-09-17T20:52:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet,$filter=Lgpbe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:52:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet/$count,$filter=Mblnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet/$count,$filter=Mjahr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet/$count,$filter=Budat eq datetime'1900-01-01T00:00:00',200,0.1,1
-2026-09-17T20:52:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet/$count,$filter=Cpudt eq datetime'1900-01-01T00:00:00',200,0.1,1
-2026-09-17T20:52:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet/$count,$filter=Xblnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:58Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet/$count,$filter=Ebeln eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:58Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet/$count,$filter=Ebelp eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:58Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet/$count,$filter=Etenr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:52:58Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet/$count,$filter=Eindt eq datetime'1900-01-01T00:00:00',200,0.1,1
-2026-09-17T20:52:58Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet/$count,$filter=Menge eq 'ZZ~NOPE',500,0.6,211
-2026-09-17T20:52:59Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,246
-2026-09-17T20:53:00Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet,$filter=Wemng eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,246
-2026-09-17T20:53:00Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet/$count,$filter=Ebeln eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:00Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet/$count,$filter=Ebelp eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:00Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet/$count,$filter=Zekkn eq 'ZZ~NOPE',500,0.6,206
-2026-09-17T20:53:01Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Zekkn eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,241
-2026-09-17T20:53:01Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Vgabe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,241
-2026-09-17T20:53:02Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Gjahr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,241
-2026-09-17T20:53:02Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Belnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:53:03Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Buzei eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.5,241
-2026-09-17T20:53:03Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Bewtp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,241
-2026-09-17T20:53:04Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Bwart eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.5,241
-2026-09-17T20:53:04Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Budat eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,500,0.5,259
-2026-09-17T20:53:05Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,241
-2026-09-17T20:53:05Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Dmbtr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,241
-2026-09-17T20:53:06Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Shkzg eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,241
-2026-09-17T20:53:07Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Cpudt eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,500,0.6,259
-2026-09-17T20:53:07Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Matnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:53:07Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Werks eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
-2026-09-17T20:53:07Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Rsnum eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:07Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Rspos eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:07Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:07Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:07Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Lgort eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:07Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Bdter eq datetime'1900-01-01T00:00:00',200,0.1,1
-2026-09-17T20:53:07Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Bdmng eq 987654321.123M,200,0.1,1
-2026-09-17T20:53:08Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Meins eq 'ZZ~NOPE',500,0.6,204
-2026-09-17T20:53:08Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,239
-2026-09-17T20:53:09Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Enmng eq 987654321.123M,200,0.1,1
-2026-09-17T20:53:09Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Enwrt eq 987654321.123M,200,0.1,1
-2026-09-17T20:53:09Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Banfn eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:09Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Bnfpo eq 'ZZ~NOPE',200,0.2,4
-2026-09-17T20:53:09Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Aufnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:09Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Bwart eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:09Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Umwrk eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:09Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Umlgo eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:09Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Wempf eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:09Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:09Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Lgort eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:10Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:10Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Dispo eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:10Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Mtart eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:10Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Matkl eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:10Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Dismm eq 'ZZ~NOPE',200,0.1,1
-2026-09-17T20:53:10Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Mbwbest eq 987654321.123M,200,0.1,1
-2026-09-17T20:53:10Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Wbwbest eq 987654321.123M,200,0.1,1
-2026-09-17T20:53:11Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Letztzug eq datetime'1900-01-01T00:00:00',400,0.6,232
-2026-09-17T20:53:11Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet,$filter=Letztzug eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,400,0.5,267
-2026-09-17T20:53:11Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Letztabg eq datetime'1900-01-01T00:00:00',200,0.1,1
-2026-09-17T20:53:11Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Letztver eq datetime'1900-01-01T00:00:00',200,0.1,1
-2026-09-17T20:53:11Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Letztbew eq datetime'1900-01-01T00:00:00',200,0.1,1
-2026-09-17T20:53:11Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Eisbe eq 987654321.123M,200,0.1,1
+2026-09-23T10:01:26Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/$metadata,,200,1.1,37975
+2026-09-23T10:01:26Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,,200,0.2,4
+2026-09-23T10:01:27Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,,200,1.1,5
+2026-09-23T10:01:28Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordSet/$count,,200,0.1,3
+2026-09-23T10:01:28Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet/$count,,200,0.2,3
+2026-09-23T10:01:28Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderSet/$count,,200,0.2,4
+2026-09-23T10:01:28Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,,200,0.4,5
+2026-09-23T10:01:29Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/VendorSet/$count,,200,0.2,3
+2026-09-23T10:01:29Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDescriptionSet/$count,,200,0.2,4
+2026-09-23T10:01:29Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,,200,0.2,4
+2026-09-23T10:01:29Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,,200,0.2,4
+2026-09-23T10:01:29Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet/$count,,200,0.2,4
+2026-09-23T10:01:30Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count,,200,0.3,5
+2026-09-23T10:01:30Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet/$count,,200,0.2,4
+2026-09-23T10:01:30Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet/$count,,200,0.3,4
+2026-09-23T10:01:30Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/$metadata,,200,0.2,19850
+2026-09-23T10:01:31Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count,,200,0.2,4
+2026-09-23T10:01:31Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet/$count,,200,0.2,4
+2026-09-23T10:01:32Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet/$count,,200,1.0,6
+2026-09-23T10:01:35Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,,200,3.6,6
+2026-09-23T10:01:36Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/BatchStockSet/$count,,200,0.3,5
+2026-09-23T10:01:36Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet/$count,,200,0.1,4
+2026-09-23T10:01:36Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet/$count,,200,0.2,4
+2026-09-23T10:01:36Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL',200,0.3,5
+2026-09-23T10:01:37Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC',200,0.2,4
+2026-09-23T10:01:37Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'BANF',200,0.2,4
+2026-09-23T10:01:37Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$top=1&$format=json,200,0.2,840
+2026-09-23T10:01:37Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet,$top=1&$format=json,200,0.2,563
+2026-09-23T10:01:37Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet,$top=1&$format=json,200,0.1,718
+2026-09-23T10:01:38Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$top=1&$format=json,200,0.2,855
+2026-09-23T10:01:38Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1&$format=json,200,0.5,786
+2026-09-23T10:01:38Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$inlinecount=allpages&$top=1&$format=json,200,0.2,872
+2026-09-23T10:01:39Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$inlinecount=allpages&$top=1&$format=json,200,0.5,804
+2026-09-23T10:01:43Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet,$top=5&$format=json,200,3.9,3716
+2026-09-23T10:01:47Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet,$top=5&$skip=5&$format=json,200,4.0,3755
+2026-09-23T10:01:51Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet,$inlinecount=allpages&$top=1&$format=json,200,4.0,778
+2026-09-23T10:01:51Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet,$top=1000&$skip=40000&$format=json,200,0.5,288050
+2026-09-23T10:01:51Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderSet,$orderby=Aedat desc&$top=3&$format=json,200,0.1,1294
+2026-09-23T10:01:52Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC' and Fname eq 'DISMM',200,0.2,2
+2026-09-23T10:01:52Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC' and Fname eq 'EISBE',200,0.2,1
+2026-09-23T10:01:52Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC' and Fname eq 'MINBE',200,0.2,2
+2026-09-23T10:01:52Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC' and Fname eq 'MABST',200,0.1,2
+2026-09-23T10:01:52Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC' and Fname eq 'DISMM' and Value_new eq 'VB',200,0.1,2
+2026-09-23T10:01:55Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet,$filter=Objectclas eq 'MATERIAL'&$top=3&$format=json,500,2.7,974
+2026-09-23T10:01:55Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'VB',200,0.2,2
+2026-09-23T10:01:55Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'ND',200,0.2,3
+2026-09-23T10:01:55Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'PD',200,0.2,3
+2026-09-23T10:01:56Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'V1',200,0.2,2
+2026-09-23T10:01:56Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Dismm eq '',200,0.2,4
+2026-09-23T10:01:56Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'VB' and Minbe gt 0,200,0.2,2
+2026-09-23T10:01:56Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=(Dismm eq 'ND' or Dismm eq 'PD') and Minbe gt 0,200,0.2,1
+2026-09-23T10:01:56Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet,"$select=Matnr,Extwg&$top=2&$format=json",200,0.2,615
+2026-09-23T10:01:56Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Pstyp eq '3',200,0.2,2
+2026-09-23T10:01:57Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderSet/$count,$filter=Bsart eq 'ZREP',200,0.1,1
+2026-09-23T10:01:57Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,"$filter=startswith(Matnr,'80')",200,0.2,1
+2026-09-23T10:01:57Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,"$filter=startswith(Matnr,'80')",200,0.1,1
+2026-09-23T10:01:57Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Matnr eq '',200,0.2,3
+2026-09-23T10:01:57Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,"$filter=startswith(Matnr,'2227')",200,0.1,1
+2026-09-23T10:01:57Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,$filter=Matnr ge '80000000' and Matnr le '80999999',200,0.2,1
+2026-09-23T10:01:57Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,$filter=Matnr ge '000000000080000000' and Matnr le '000000000080999999',200,0.2,1
+2026-09-23T10:01:58Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Bwart eq '541',200,0.1,3
+2026-09-23T10:01:58Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Bwart eq '201',200,0.1,4
+2026-09-23T10:01:58Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Bwart eq '261',200,0.2,4
+2026-09-23T10:01:58Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$top=2&$format=json,200,0.2,1155
+2026-09-23T10:01:58Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$top=2&$format=json,200,0.2,1453
+2026-09-23T10:01:59Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,"$select=Matnr,Werks,Dismm&$top=2&$format=json",200,0.3,753
+2026-09-23T10:01:59Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,,200,0.2,4
+2026-09-23T10:01:59Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$top=500&$format=json,200,0.4,360567
+2026-09-23T10:01:59Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count,,200,0.2,4
+2026-09-23T10:02:00Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$inlinecount=allpages&$top=1&$format=json,200,0.2,879
+2026-09-23T10:02:00Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$top=5&$skip=0&$format=json,200,0.2,3470
+2026-09-23T10:02:00Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$top=5&$skip=999&$format=json,200,0.2,3483
+2026-09-23T10:02:00Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$top=5&$skip=1000&$format=json,200,0.2,3487
+2026-09-23T10:02:00Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$top=5&$skip=1500&$format=json,200,0.2,3399
+2026-09-23T10:02:00Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$top=5&$skip=5000&$format=json,200,0.2,3486
+2026-09-23T10:02:01Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,"$orderby=Rsnum,Rspos&$top=1000&$skip=0&$format=json",200,0.5,660904
+2026-09-23T10:02:01Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,"$orderby=Rsnum,Rspos&$top=1000&$skip=1000&$format=json",200,0.5,660280
+2026-09-23T10:02:02Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,"$orderby=Rsnum,Rspos&$top=1000&$skip=2000&$format=json",200,0.4,658252
+2026-09-23T10:02:02Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,"$orderby=Rsnum,Rspos&$top=1000&$skip=3000&$format=json",200,0.5,662882
+2026-09-23T10:02:03Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,"$orderby=Rsnum,Rspos&$top=1000&$skip=4000&$format=json",200,0.8,665649
+2026-09-23T10:02:04Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,"$orderby=Rsnum,Rspos&$top=1000&$skip=5000&$format=json",200,0.5,664966
+2026-09-23T10:02:04Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,"$orderby=Rsnum,Rspos&$top=1000&$skip=6000&$format=json",200,0.5,665960
+2026-09-23T10:02:04Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,"$orderby=Rsnum,Rspos&$top=1000&$skip=7000&$format=json",200,0.2,58368
+2026-09-23T10:02:05Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=1000&$skip=0&$format=json,200,0.5,726522
+2026-09-23T10:02:05Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=1000&$skip=1000&$format=json,200,0.4,729474
+2026-09-23T10:02:06Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=1000&$skip=2000&$format=json,200,0.5,726249
+2026-09-23T10:02:06Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=1000&$skip=3000&$format=json,200,0.6,729469
+2026-09-23T10:02:07Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=1000&$skip=4000&$format=json,200,0.5,730555
+2026-09-23T10:02:07Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=1000&$skip=5000&$format=json,200,0.5,728521
+2026-09-23T10:02:08Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=1000&$skip=6000&$format=json,200,0.9,722775
+2026-09-23T10:02:09Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC'&$orderby=Changenr&$top=1000&$skip=7000&$format=json,200,0.3,177056
+2026-09-23T10:02:09Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$top=1000&$skip=0&$format=json,200,0.5,567869
+2026-09-23T10:02:10Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$top=1000&$skip=1000&$format=json,200,0.4,570549
+2026-09-23T10:02:10Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$top=1000&$skip=2000&$format=json,200,0.3,102439
+2026-09-23T10:02:10Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$top=1000&$skip=0&$format=json,200,0.3,567869
+2026-09-23T10:02:11Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$top=1000&$skip=1000&$format=json,200,0.4,570549
+2026-09-23T10:02:11Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$top=1000&$skip=2000&$format=json,200,0.2,102439
+2026-09-23T10:02:11Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,"$orderby=Matnr,Werks&$top=1000&$skip=0&$format=json",200,0.4,567869
+2026-09-23T10:02:12Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,"$orderby=Matnr,Werks&$top=1000&$skip=1000&$format=json",200,0.4,570549
+2026-09-23T10:02:12Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,"$orderby=Matnr,Werks&$top=1000&$skip=2000&$format=json",200,0.2,102439
+2026-09-23T10:02:12Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'VB',200,0.2,2
+2026-09-23T10:02:12Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,"$filter=Dismm eq 'VB'&$orderby=Matnr,Werks&$top=1000&$skip=0&$format=json",200,0.2,25783
+2026-09-23T10:02:12Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'ND',200,0.2,3
+2026-09-23T10:02:12Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,"$filter=Dismm eq 'ND'&$orderby=Matnr,Werks&$top=1000&$skip=0&$format=json",200,0.2,104723
+2026-09-23T10:02:13Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'PD',200,0.2,3
+2026-09-23T10:02:13Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,"$filter=Dismm eq 'PD'&$orderby=Matnr,Werks&$top=1000&$skip=0&$format=json",200,0.5,471287
+2026-09-23T10:02:13Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'V1',200,0.1,2
+2026-09-23T10:02:13Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,"$filter=Dismm eq 'V1'&$orderby=Matnr,Werks&$top=1000&$skip=0&$format=json",200,0.2,44663
+2026-09-23T10:02:14Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet,$orderby=Matnr&$top=1000&$skip=0&$format=json,200,0.4,377750
+2026-09-23T10:02:14Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet,$orderby=Matnr&$top=1000&$skip=1000&$format=json,200,0.3,378311
+2026-09-23T10:02:14Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet,$orderby=Matnr&$top=1000&$skip=2000&$format=json,200,0.1,13765
+2026-09-23T10:02:15Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet,$top=1000&$skip=0&$format=json,200,0.3,518455
+2026-09-23T10:02:15Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet,$top=1000&$skip=1000&$format=json,200,0.4,518423
+2026-09-23T10:02:15Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet,$top=1000&$skip=2000&$format=json,200,0.2,156483
+2026-09-23T10:02:16Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=0&$format=json,200,1.1,769023
+2026-09-23T10:02:18Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=1000&$format=json,200,1.1,768070
+2026-09-23T10:02:19Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=2000&$format=json,200,1.1,763665
+2026-09-23T10:02:19Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=3000&$format=json,200,0.7,765128
+2026-09-23T10:02:20Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=4000&$format=json,200,0.8,764219
+2026-09-23T10:02:21Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=5000&$format=json,200,0.8,758019
+2026-09-23T10:02:22Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=6000&$format=json,200,0.9,758033
+2026-09-23T10:02:23Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=7000&$format=json,200,0.9,758025
+2026-09-23T10:02:24Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=8000&$format=json,200,0.9,758019
+2026-09-23T10:02:25Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=9000&$format=json,200,0.7,758651
+2026-09-23T10:02:25Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=10000&$format=json,200,0.7,758019
+2026-09-23T10:02:26Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=11000&$format=json,200,1.1,758019
+2026-09-23T10:02:27Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=12000&$format=json,200,0.8,762776
+2026-09-23T10:02:28Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=13000&$format=json,200,1.0,758019
+2026-09-23T10:02:29Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=14000&$format=json,200,0.8,758019
+2026-09-23T10:02:30Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=15000&$format=json,200,0.9,758019
+2026-09-23T10:02:31Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=16000&$format=json,200,0.9,758019
+2026-09-23T10:02:32Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=17000&$format=json,200,0.7,758019
+2026-09-23T10:02:32Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=18000&$format=json,200,0.7,758019
+2026-09-23T10:02:33Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=19000&$format=json,200,0.8,758019
+2026-09-23T10:02:34Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=20000&$format=json,200,0.7,758019
+2026-09-23T10:02:35Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=21000&$format=json,200,0.9,758375
+2026-09-23T10:02:36Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=22000&$format=json,200,0.9,758019
+2026-09-23T10:02:37Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=23000&$format=json,200,0.9,758019
+2026-09-23T10:02:37Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=24000&$format=json,200,0.9,758019
+2026-09-23T10:02:38Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=25000&$format=json,200,0.9,758151
+2026-09-23T10:02:39Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=26000&$format=json,200,1.1,758019
+2026-09-23T10:02:40Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=27000&$format=json,200,0.9,758019
+2026-09-23T10:02:41Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=28000&$format=json,200,0.9,758019
+2026-09-23T10:02:42Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=29000&$format=json,200,0.8,758019
+2026-09-23T10:02:43Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=30000&$format=json,200,0.8,758019
+2026-09-23T10:02:44Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=31000&$format=json,200,1.1,758019
+2026-09-23T10:02:45Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=32000&$format=json,200,0.9,758019
+2026-09-23T10:02:46Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=33000&$format=json,200,1.2,758031
+2026-09-23T10:02:47Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=34000&$format=json,200,1.0,758271
+2026-09-23T10:02:48Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=35000&$format=json,200,0.9,758019
+2026-09-23T10:02:49Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=36000&$format=json,200,1.0,758535
+2026-09-23T10:02:50Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=37000&$format=json,200,1.0,758019
+2026-09-23T10:02:51Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=38000&$format=json,200,0.9,758019
+2026-09-23T10:02:52Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=39000&$format=json,200,0.7,758019
+2026-09-23T10:02:53Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=40000&$format=json,200,1.0,758019
+2026-09-23T10:02:54Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=41000&$format=json,200,1.3,758019
+2026-09-23T10:02:55Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=42000&$format=json,200,1.1,758019
+2026-09-23T10:02:57Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=43000&$format=json,200,1.1,758019
+2026-09-23T10:02:58Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=44000&$format=json,200,1.2,758019
+2026-09-23T10:02:59Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=45000&$format=json,200,0.9,758019
+2026-09-23T10:03:00Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=46000&$format=json,200,1.0,758019
+2026-09-23T10:03:01Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=47000&$format=json,200,1.0,765101
+2026-09-23T10:03:01Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=48000&$format=json,200,0.8,768009
+2026-09-23T10:03:03Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=49000&$format=json,200,1.1,768019
+2026-09-23T10:03:03Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=50000&$format=json,200,0.8,768634
+2026-09-23T10:03:04Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=51000&$format=json,200,0.9,768019
+2026-09-23T10:03:05Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=52000&$format=json,200,0.9,768019
+2026-09-23T10:03:06Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=53000&$format=json,200,1.1,767751
+2026-09-23T10:03:07Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=54000&$format=json,200,0.8,774099
+2026-09-23T10:03:08Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=55000&$format=json,200,0.9,770363
+2026-09-23T10:03:09Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=56000&$format=json,200,0.7,773278
+2026-09-23T10:03:10Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=57000&$format=json,200,0.8,770235
+2026-09-23T10:03:10Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=58000&$format=json,200,0.8,770335
+2026-09-23T10:03:11Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=59000&$format=json,200,0.7,770019
+2026-09-23T10:03:12Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=60000&$format=json,200,1.0,770019
+2026-09-23T10:03:13Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=61000&$format=json,200,0.7,770019
+2026-09-23T10:03:14Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=62000&$format=json,200,0.8,770019
+2026-09-23T10:03:15Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=63000&$format=json,200,0.8,770019
+2026-09-23T10:03:16Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=64000&$format=json,200,0.9,770019
+2026-09-23T10:03:17Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=65000&$format=json,200,1.0,770374
+2026-09-23T10:03:17Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=66000&$format=json,200,0.8,770302
+2026-09-23T10:03:19Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=67000&$format=json,200,1.2,773773
+2026-09-23T10:03:19Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$top=1000&$skip=68000&$format=json,200,0.8,478218
+2026-09-23T10:03:20Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$top=1000&$skip=0&$format=json,200,0.9,830363
+2026-09-23T10:03:21Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$top=1000&$skip=1000&$format=json,200,0.3,469654
+2026-09-23T10:03:21Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$top=1000&$skip=0&$format=json,200,0.5,660883
+2026-09-23T10:03:22Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$top=1000&$skip=1000&$format=json,200,0.4,660259
+2026-09-23T10:03:22Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$top=1000&$skip=2000&$format=json,200,0.6,658231
+2026-09-23T10:03:23Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$top=1000&$skip=3000&$format=json,200,0.5,662861
+2026-09-23T10:03:23Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$top=1000&$skip=4000&$format=json,200,0.5,665628
+2026-09-23T10:03:24Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$top=1000&$skip=5000&$format=json,200,0.6,664945
+2026-09-23T10:03:24Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$top=1000&$skip=6000&$format=json,200,0.4,665939
+2026-09-23T10:03:25Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$top=1000&$skip=7000&$format=json,200,0.2,58368
+2026-09-23T10:03:25Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$top=1000&$skip=0&$format=json,200,0.6,711645
+2026-09-23T10:03:26Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$top=1000&$skip=1000&$format=json,200,0.5,708140
+2026-09-23T10:03:26Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$top=1000&$skip=2000&$format=json,200,0.5,712309
+2026-09-23T10:03:27Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$top=1000&$skip=3000&$format=json,200,0.4,704088
+2026-09-23T10:03:27Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$top=1000&$skip=4000&$format=json,200,0.5,706673
+2026-09-23T10:03:28Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$top=1000&$skip=5000&$format=json,200,0.5,692569
+2026-09-23T10:03:28Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$top=1000&$skip=6000&$format=json,200,0.7,689019
+2026-09-23T10:03:29Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$top=1000&$skip=7000&$format=json,200,0.5,689019
+2026-09-23T10:03:30Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$top=1000&$skip=8000&$format=json,200,0.7,689019
+2026-09-23T10:03:30Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$top=1000&$skip=9000&$format=json,200,0.8,689532
+2026-09-23T10:03:31Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$top=1000&$skip=10000&$format=json,200,0.5,699988
+2026-09-23T10:03:31Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$top=1000&$skip=11000&$format=json,200,0.2,66178
+2026-09-23T10:03:32Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet,$orderby=Budat asc&$top=1&$format=json,200,0.4,456
+2026-09-23T10:03:32Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet,$orderby=Budat desc&$top=1&$format=json,200,0.3,465
+2026-09-23T10:03:35Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$top=1000&$skip=0&$format=json,500,3.0,942
+2026-09-23T10:03:35Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderSet,$filter=Bsart eq 'ZREP'&$top=1000&$skip=0&$format=json,200,0.2,1719
+2026-09-23T10:03:35Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Ebeln eq '4500000000'&$top=1000&$skip=0&$format=json,200,0.2,716
+2026-09-23T10:03:35Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Ebeln eq '4500000001'&$top=1000&$skip=0&$format=json,200,0.2,745
+2026-09-23T10:03:36Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Ebeln eq '4500000002'&$top=1000&$skip=0&$format=json,200,0.2,745
+2026-09-23T10:03:36Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Ebeln eq '4500000003'&$top=1000&$skip=0&$format=json,200,0.2,744
+2026-09-23T10:03:36Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Matnr ne '22271519',200,0.2,4
+2026-09-23T10:03:36Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Matnr ge '8000000000' and Matnr le '8099999999',200,0.2,2
+2026-09-23T10:03:37Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Matnr gt '5',200,0.2,4
+2026-09-23T10:03:37Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'ND' or Dismm eq 'PD',200,0.2,4
+2026-09-23T10:03:37Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,"$filter=startswith(Matnr,'8')",200,0.1,1
+2026-09-23T10:03:37Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,"$filter=substringof('800',Matnr)",200,0.1,2
+2026-09-23T10:03:37Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Werks eq '1300' and Dismm eq 'PD',200,0.2,3
+2026-09-23T10:03:37Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count,$filter=Budat ge datetime'2026-01-01T00:00:00',200,0.2,1
+2026-09-23T10:03:38Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count,$filter=Budat ge datetime'2013-01-01T00:00:00' and Budat lt datetime'2014-01-01T00:00:00',200,0.4,5
+2026-09-23T10:03:38Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count,$filter=Budat eq datetime'2013-09-27T00:00:00',200,0.2,3
+2026-09-23T10:03:38Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderSet/$count,$filter=Aedat ge datetime'2026-01-01T00:00:00',200,0.1,2
+2026-09-23T10:03:38Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet/$count,$filter=Udate ge datetime'2026-01-01T00:00:00',200,0.2,3
+2026-09-23T10:03:38Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet/$count,$filter=Objectclas eq 'MATERIAL' and Udate ge datetime'2018-01-01T00:00:00',200,0.2,4
+2026-09-23T10:03:39Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL' and (Tabname eq 'MARC' or Tabname eq 'MARA'),200,0.2,5
+2026-09-23T10:03:39Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Ebeln eq '4500000001' or Ebeln eq '4500000002',200,0.2,1
+2026-09-23T10:03:39Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet/$count,$filter=Letztbew ge datetime'2020-01-01T00:00:00',200,0.2,2
+2026-09-23T10:03:39Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Banfn eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:03:39Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Bnfpo eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:03:39Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Bsart eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:03:40Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Loekz eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:03:40Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Statu eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:03:40Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Frgkz eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:03:40Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Frgzu eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:03:40Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Ekgrp eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:03:40Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Ernam eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:03:41Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Afnam eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:03:41Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Txz01 eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:03:41Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:03:41Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:03:41Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Lgort eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:03:41Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Bednr eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:03:42Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Matkl eq 'ZZ~NOPE',200,0.3,1
+2026-09-23T10:03:42Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Reswk eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:03:43Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Menge eq 'ZZ~NOPE',500,0.7,961
+2026-09-23T10:03:43Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,996
+2026-09-23T10:03:44Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.2,34
+2026-09-23T10:03:44Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$filter=Badat eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.2,34
+2026-09-23T10:03:44Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$filter=Lfdat eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
+2026-09-23T10:03:45Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$filter=Preis eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,996
+2026-09-23T10:03:45Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,996
+2026-09-23T10:03:45Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$filter=Flief eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.2,34
+2026-09-23T10:03:46Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$filter=Ebeln eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.2,34
+2026-09-23T10:03:46Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$filter=Ebelp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,871
+2026-09-23T10:03:46Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$filter=Bsmng eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,996
+2026-09-23T10:03:47Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$filter=Rsnum eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.3,872
+2026-09-23T10:03:47Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Mblnr eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:03:47Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Mjahr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:03:47Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Zeile eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:03:47Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Bwart eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:03:48Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:03:48Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:03:48Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Lgort eq 'ZZ~NOPE',400,0.8,1023
+2026-09-23T10:03:49Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Lgort eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1058
+2026-09-23T10:03:49Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Sobkz eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:03:50Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Lifnr eq 'ZZ~NOPE',400,0.8,1023
+2026-09-23T10:03:51Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Lifnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.9,1058
+2026-09-23T10:03:52Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Shkzg eq 'ZZ~NOPE',400,0.7,1023
+2026-09-23T10:03:53Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Shkzg eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1058
+2026-09-23T10:03:53Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Dmbtr eq 'ZZ~NOPE',400,0.7,1023
+2026-09-23T10:03:54Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Dmbtr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1058
+2026-09-23T10:03:55Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Menge eq 'ZZ~NOPE',400,0.7,1023
+2026-09-23T10:03:55Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1058
+2026-09-23T10:03:56Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Meins eq 'ZZ~NOPE',400,0.9,1023
+2026-09-23T10:03:57Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1058
+2026-09-23T10:03:58Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Ebeln eq 'ZZ~NOPE',400,0.9,1023
+2026-09-23T10:03:59Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Ebeln eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1058
+2026-09-23T10:04:00Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Ebelp eq 'ZZ~NOPE',400,0.8,1023
+2026-09-23T10:04:01Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Ebelp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1058
+2026-09-23T10:04:01Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Sgtxt eq 'ZZ~NOPE',400,0.8,1023
+2026-09-23T10:04:02Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Sgtxt eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1058
+2026-09-23T10:04:03Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Wempf eq 'ZZ~NOPE',400,0.8,1023
+2026-09-23T10:04:04Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Wempf eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1058
+2026-09-23T10:04:04Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Kostl eq 'ZZ~NOPE',400,0.8,1023
+2026-09-23T10:04:05Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Kostl eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1058
+2026-09-23T10:04:06Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Aufnr eq 'ZZ~NOPE',400,0.8,1023
+2026-09-23T10:04:07Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Aufnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1058
+2026-09-23T10:04:08Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Rsnum eq 'ZZ~NOPE',400,1.0,1023
+2026-09-23T10:04:09Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Rsnum eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,1.0,1058
+2026-09-23T10:04:09Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Rspos eq 'ZZ~NOPE',400,0.7,1023
+2026-09-23T10:04:10Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Rspos eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1058
+2026-09-23T10:04:11Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Umwrk eq 'ZZ~NOPE',400,0.7,1023
+2026-09-23T10:04:12Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Umwrk eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1058
+2026-09-23T10:04:12Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Umlgo eq 'ZZ~NOPE',400,0.8,1023
+2026-09-23T10:04:13Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Umlgo eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1058
+2026-09-23T10:04:14Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Grund eq 'ZZ~NOPE',400,0.8,1023
+2026-09-23T10:04:15Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Grund eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1058
+2026-09-23T10:04:16Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=BudatMkpf eq 'ZZ~NOPE',400,0.8,1037
+2026-09-23T10:04:16Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=BudatMkpf eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1072
+2026-09-23T10:04:17Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=CpudtMkpf eq 'ZZ~NOPE',400,0.9,1037
+2026-09-23T10:04:18Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=CpudtMkpf eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1072
+2026-09-23T10:04:18Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordSet/$count,$filter=Infnr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:19Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.3,1
+2026-09-23T10:04:19Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordSet/$count,$filter=Lifnr eq 'ZZ~NOPE',200,0.8,1
+2026-09-23T10:04:20Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet/$count,$filter=Infnr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:20Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet/$count,$filter=Ekorg eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:20Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet/$count,$filter=Esokz eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:20Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:21Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet/$count,$filter=Waers eq 'ZZ~NOPE',500,0.7,1181
+2026-09-23T10:04:22Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet,$filter=Waers eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,1216
+2026-09-23T10:04:22Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet,$filter=Aplfz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,1216
+2026-09-23T10:04:23Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet,$filter=Netpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.9,1216
+2026-09-23T10:04:24Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet,$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,1216
+2026-09-23T10:04:25Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet,$filter=Effpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,1216
+2026-09-23T10:04:25Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderSet/$count,$filter=Ebeln eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:26Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderSet/$count,$filter=Bsart eq 'ZZ~NOPE',200,0.5,1
+2026-09-23T10:04:26Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderSet/$count,$filter=Aedat eq datetime'1900-01-01T00:00:00',200,0.2,1
+2026-09-23T10:04:26Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderSet/$count,$filter=Bedat eq datetime'1900-01-01T00:00:00',200,0.2,1
+2026-09-23T10:04:26Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderSet/$count,$filter=Lifnr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:26Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderSet/$count,$filter=Ekorg eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:27Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderSet/$count,$filter=Ekgrp eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:27Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderSet/$count,$filter=Waers eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:27Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Ebeln eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:27Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Ebelp eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:27Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Loekz eq 'ZZ~NOPE',200,0.3,1
+2026-09-23T10:04:28Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Aedat eq datetime'1900-01-01T00:00:00',200,0.1,1
+2026-09-23T10:04:28Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Txz01 eq 'ZZ~NOPE',400,0.6,1023
+2026-09-23T10:04:29Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Txz01 eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1058
+2026-09-23T10:04:29Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:29Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:31Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Lgort eq 'ZZ~NOPE',400,1.1,1023
+2026-09-23T10:04:31Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Lgort eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1058
+2026-09-23T10:04:32Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Bednr eq 'ZZ~NOPE',400,1.1,1023
+2026-09-23T10:04:33Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Bednr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1058
+2026-09-23T10:04:34Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Menge eq 'ZZ~NOPE',400,0.8,1023
+2026-09-23T10:04:35Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1058
+2026-09-23T10:04:35Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Meins eq 'ZZ~NOPE',400,0.7,1023
+2026-09-23T10:04:36Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,1.0,1058
+2026-09-23T10:04:37Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Netpr eq 'ZZ~NOPE',400,0.7,1023
+2026-09-23T10:04:38Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Netpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1058
+2026-09-23T10:04:38Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Peinh eq 'ZZ~NOPE',400,0.7,1023
+2026-09-23T10:04:39Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1058
+2026-09-23T10:04:40Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Netwr eq 'ZZ~NOPE',400,0.7,1023
+2026-09-23T10:04:41Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Netwr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1058
+2026-09-23T10:04:41Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Pstyp eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:41Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Knttp eq 'ZZ~NOPE',400,0.7,1023
+2026-09-23T10:04:42Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Knttp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1058
+2026-09-23T10:04:43Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Plifz eq 'ZZ~NOPE',400,0.7,1023
+2026-09-23T10:04:44Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Plifz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1058
+2026-09-23T10:04:44Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Banfn eq 'ZZ~NOPE',200,0.3,1
+2026-09-23T10:04:45Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Bnfpo eq 'ZZ~NOPE',400,0.8,1023
+2026-09-23T10:04:46Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Bnfpo eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1058
+2026-09-23T10:04:46Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/VendorSet/$count,$filter=Lifnr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:46Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/VendorSet/$count,$filter=Name1 eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:46Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/VendorSet/$count,$filter=Ktokk eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:04:46Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDescriptionSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:04:46Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDescriptionSet/$count,$filter=Spras eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:04:47Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDescriptionSet/$count,$filter=Maktx eq 'ZZ~NOPE',500,0.7,1187
+2026-09-23T10:04:48Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDescriptionSet,$filter=Maktx eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,1222
+2026-09-23T10:04:48Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:48Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,$filter=Mtart eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:48Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,$filter=Matkl eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:49Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,$filter=Bismt eq 'ZZ~NOPE',400,0.7,1014
+2026-09-23T10:04:50Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet,$filter=Bismt eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1049
+2026-09-23T10:04:51Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,$filter=Meins eq 'ZZ~NOPE',400,0.9,1014
+2026-09-23T10:04:52Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1049
+2026-09-23T10:04:52Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,$filter=Mstae eq 'ZZ~NOPE',200,0.4,1
+2026-09-23T10:04:52Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,$filter=Extwg eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:52Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:53Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:53Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:04:53Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Dispo eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:04:54Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Plifz eq 'ZZ~NOPE',400,0.7,1019
+2026-09-23T10:04:54Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$filter=Plifz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1054
+2026-09-23T10:04:55Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Webaz eq 'ZZ~NOPE',400,0.7,1019
+2026-09-23T10:04:56Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$filter=Webaz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,1054
+2026-09-23T10:04:56Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Minbe eq 987654321.123M,200,0.2,1
+2026-09-23T10:04:57Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Eisbe eq 'ZZ~NOPE',400,0.7,1019
+2026-09-23T10:04:57Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$filter=Eisbe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1054
+2026-09-23T10:04:58Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Bstmi eq 'ZZ~NOPE',400,1.0,1019
+2026-09-23T10:04:59Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$filter=Bstmi eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1054
+2026-09-23T10:05:00Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Bstma eq 'ZZ~NOPE',400,0.8,1019
+2026-09-23T10:05:01Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$filter=Bstma eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1054
+2026-09-23T10:05:01Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Mabst eq 'ZZ~NOPE',400,0.8,1019
+2026-09-23T10:05:02Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$filter=Mabst eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1054
+2026-09-23T10:05:02Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:02Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:03Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet/$count,$filter=Lgort eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:04Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet/$count,$filter=Labst eq 'ZZ~NOPE',500,0.8,962
+2026-09-23T10:05:04Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet,$filter=Labst eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,997
+2026-09-23T10:05:05Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet,$filter=Insme eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,997
+2026-09-23T10:05:06Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet,$filter=Speme eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,997
+2026-09-23T10:05:06Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet,$filter=Lgpbe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.2,34
+2026-09-23T10:05:06Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count,$filter=Mblnr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:06Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count,$filter=Mjahr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:07Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count,$filter=Budat eq datetime'1900-01-01T00:00:00',200,0.2,1
+2026-09-23T10:05:07Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count,$filter=Cpudt eq datetime'1900-01-01T00:00:00',200,0.2,1
+2026-09-23T10:05:07Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count,$filter=Xblnr eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:07Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet/$count,$filter=Ebeln eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:07Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet/$count,$filter=Ebelp eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:08Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet/$count,$filter=Etenr eq 'ZZ~NOPE',200,0.4,1
+2026-09-23T10:05:09Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet/$count,$filter=Eindt eq datetime'1900-01-01T00:00:00',200,0.8,1
+2026-09-23T10:05:09Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet/$count,$filter=Menge eq 'ZZ~NOPE',500,0.7,956
+2026-09-23T10:05:10Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,991
+2026-09-23T10:05:11Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet,$filter=Wemng eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,991
+2026-09-23T10:05:11Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet/$count,$filter=Ebeln eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:11Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet/$count,$filter=Ebelp eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:12Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet/$count,$filter=Zekkn eq 'ZZ~NOPE',500,0.8,1177
+2026-09-23T10:05:12Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Zekkn eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,1212
+2026-09-23T10:05:13Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Vgabe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,1212
+2026-09-23T10:05:14Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Gjahr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,986
+2026-09-23T10:05:14Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Belnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.2,34
+2026-09-23T10:05:15Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Buzei eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,1212
+2026-09-23T10:05:16Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Bewtp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,1212
+2026-09-23T10:05:16Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Bwart eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,1212
+2026-09-23T10:05:17Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Budat eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,500,0.7,1230
+2026-09-23T10:05:18Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,1212
+2026-09-23T10:05:19Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Dmbtr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,1.0,1212
+2026-09-23T10:05:19Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Shkzg eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,1212
+2026-09-23T10:05:20Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Cpudt eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,500,0.7,1230
+2026-09-23T10:05:20Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Matnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
+2026-09-23T10:05:20Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Werks eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.2,34
+2026-09-23T10:05:21Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count,$filter=Rsnum eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:21Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count,$filter=Rspos eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:21Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:21Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:21Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count,$filter=Lgort eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:22Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count,$filter=Bdter eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:22Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count,$filter=Bdmng eq 987654321.123M,200,0.1,1
+2026-09-23T10:05:22Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count,$filter=Meins eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:23Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count,$filter=Enmng eq 'ZZ~NOPE',500,0.7,957
+2026-09-23T10:05:24Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$filter=Enmng eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.9,992
+2026-09-23T10:05:24Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$filter=Enwrt eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,992
+2026-09-23T10:05:25Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$filter=Banfn eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.3,34
+2026-09-23T10:05:25Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$filter=Bnfpo eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.2,912
+2026-09-23T10:05:25Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$filter=Aufnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
+2026-09-23T10:05:25Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$filter=Bwart eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.2,34
+2026-09-23T10:05:25Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$filter=Umwrk eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
+2026-09-23T10:05:26Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$filter=Umlgo eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
+2026-09-23T10:05:26Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$filter=Wempf eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.2,34
+2026-09-23T10:05:26Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$filter=Sgtxt eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.2,34
+2026-09-23T10:05:26Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$filter=Ablad eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
+2026-09-23T10:05:26Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$filter=Zzxblnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.2,34
+2026-09-23T10:05:26Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:27Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet/$count,$filter=Bwkey eq 'ZZ~NOPE',200,0.3,1
+2026-09-23T10:05:27Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet/$count,$filter=Lbkum eq 987654321.123M,200,0.1,1
+2026-09-23T10:05:28Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet/$count,$filter=Salk3 eq 'ZZ~NOPE',500,0.8,959
+2026-09-23T10:05:29Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet,$filter=Salk3 eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.9,994
+2026-09-23T10:05:29Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet,$filter=Vprsv eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.2,34
+2026-09-23T10:05:30Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet,$filter=Verpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,994
+2026-09-23T10:05:30Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet,$filter=Stprs eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,994
+2026-09-23T10:05:31Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet,$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,994
+2026-09-23T10:05:31Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet,$filter=Bklas eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.1,34
+2026-09-23T10:05:31Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet,$filter=Waers eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,200,0.2,34
+2026-09-23T10:05:31Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet/$count,$filter=Objectclas eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:32Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet/$count,$filter=Objectid eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:32Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet/$count,$filter=Changenr eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:32Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet/$count,$filter=Username eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:32Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet/$count,$filter=Udate eq datetime'1900-01-01T00:00:00',200,0.1,1
+2026-09-23T10:05:33Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet/$count,$filter=Utime eq 'ZZ~NOPE',400,0.8,1064
+2026-09-23T10:05:34Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet,$filter=Utime eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,1099
+2026-09-23T10:05:34Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet/$count,$filter=Tcode eq 'ZZ~NOPE',200,0.3,1
+2026-09-23T10:05:34Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:34Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectid eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:34Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Changenr eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:34Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Tabname eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:35Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Tabkey eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:35Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Fname eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:35Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Chngind eq 'ZZ~NOPE',200,0.3,1
+2026-09-23T10:05:35Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Value_new eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:35Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Value_old eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:36Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/BatchStockSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:36Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/BatchStockSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:36Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/BatchStockSet/$count,$filter=Lgort eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:36Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/BatchStockSet/$count,$filter=Charg eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:36Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/BatchStockSet/$count,$filter=Clabs eq 987654321.123M,200,0.2,1
+2026-09-23T10:05:36Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet/$count,$filter=Spmon eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:36Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:37Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:37Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet/$count,$filter=Lgort eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:37Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet/$count,$filter=Basme eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:38Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet/$count,$filter=Mzubb eq 'ZZ~NOPE',500,0.6,966
+2026-09-23T10:05:39Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet,$filter=Mzubb eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,1001
+2026-09-23T10:05:39Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet,$filter=Wzubb eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.9,1001
+2026-09-23T10:05:40Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet,$filter=Magbb eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,1001
+2026-09-23T10:05:41Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet,$filter=Wagbb eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,1.1,1001
+2026-09-23T10:05:42Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet,$filter=Ambwg eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,1001
+2026-09-23T10:05:43Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet,$filter=Muvbr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,1.3,1001
+2026-09-23T10:05:44Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet,$filter=Wuvbr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,1001
+2026-09-23T10:05:44Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet/$count,$filter=Werks eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:44Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet/$count,$filter=Lgort eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:45Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet/$count,$filter=Matnr eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:45Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet/$count,$filter=Dispo eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:45Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet/$count,$filter=Mtart eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:45Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet/$count,$filter=Matkl eq 'ZZ~NOPE',200,0.1,1
+2026-09-23T10:05:45Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet/$count,$filter=Dismm eq 'ZZ~NOPE',200,0.2,1
+2026-09-23T10:05:46Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet/$count,$filter=Mbwbest eq 'ZZ~NOPE',500,0.7,966
+2026-09-23T10:05:47Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet,$filter=Mbwbest eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,1001
+2026-09-23T10:05:47Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet,$filter=Wbwbest eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,1001
+2026-09-23T10:05:48Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet,$filter=Letztzug eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,400,0.8,1090
+2026-09-23T10:05:49Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet,$filter=Letztabg eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,200,0.4,34
+2026-09-23T10:05:49Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet,$filter=Letztver eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,200,0.2,34
+2026-09-23T10:05:49Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet,$filter=Letztbew eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,200,0.2,34
+2026-09-23T10:05:50Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet,$filter=Eisbe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,999

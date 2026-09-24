@@ -1,0 +1,13 @@
+SAP field exposure requests generated from live $metadata, 2026-09-23T10:01:36Z
+
+Each item below is a field one of the I07/I08/I13 FRS documents says the build reads, which is
+not in the OData projection today. These are exposure requests, not design questions.
+
+EKPO.ERDAT  ->  PurchaseOrderItemSet   [I08]
+    Line creation date. PurchaseOrderItemSet publishes no date property at all; ERDAT anchors aging, overdue and lead-time comparison, and EKKO has no header row for 37% of repair lines. I08 FRS s7.
+
+RESB.BEDNR  ->  ReservationItemSet   [I08/I13]
+    Requirement tracking number, Edm.String(10). Designated carrier of the assistant session identifier. Live on PurchaseRequisitionSet and PurchaseOrderItemSet, absent from ReservationItemSet. Hard dependency for I08 FR-8 and FR-4.
+
+RESB.ZZAISESSION  ->  ReservationItemSet   [I13]
+    Z-append session identifier. I13 s7.2: the single field linking the platform consumption plan to the SAP reservation. Read model carries the placeholder and maps it to null.

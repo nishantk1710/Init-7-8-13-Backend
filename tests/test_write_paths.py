@@ -106,6 +106,21 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "I13 FR-4 -> consumption_plan. The write path plans.py never had; it "
         "has only ever read 742 fabricated rows from a CSV."
     ),
+    ("/api/i13/quantity-suggestion", "post"): (
+        "I13 FR-3 (W7.4) -> quantity_suggestion. Records a suggestion and the "
+        "arithmetic behind it, so the number can be argued with later rather "
+        "than recomputed against data that has since moved."
+    ),
+    ("/api/i13/quantity-suggestion/{suggestion_id}/justification", "post"): (
+        "I13 FR-3/FR-7 -> justification, for a requester who keeps a quantity "
+        "the platform did not suggest. Appended against the suggestion it "
+        "disagrees with; the suggestion row itself is never edited."
+    ),
+    ("/api/i13/quantity-suggestion/{suggestion_id}/acceptance", "post"): (
+        "I13 FR-3 -> quantity_suggestion acceptance. FRS §8 counts avoided "
+        "purchase benefit only where the requester accepted the suggestion, "
+        "so this is the row that attribution is measured from."
+    ),
 }
 
 

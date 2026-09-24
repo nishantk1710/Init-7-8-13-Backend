@@ -18,6 +18,7 @@ from app.api.i13 import exceptions as exceptions_routes
 from app.api.i13 import ledger as ledger_routes
 from app.api.i13 import movement_metrics as movement_metrics_routes
 from app.api.i13 import procurement_chain as procurement_chain_routes
+from app.api.i13 import quantity_suggestion as quantity_suggestion_routes
 from app.api.i13 import reclassification as reclassification_routes
 from app.api.i13 import reservation_ledger as reservation_ledger_routes
 from app.api.i13 import validation as validation_routes
@@ -50,8 +51,24 @@ router.include_router(exceptions_routes.router)
 router.include_router(reclassification_routes.router)
 router.include_router(validation_routes.router)
 router.include_router(act_routes.router)
-# W7: the consumption-plan write path plans.py never had, and FR-3 on its own.
+# WS7's I13 paths: the FR-4 consumption-plan capture, and the FR-3 suggestion
+# computed on demand.
+#
+# THIS MOUNT WAS MISSING. `assistant_routes` was imported at the top of this
+# module and never included, so `POST /api/i13/consumption-plans` -- the capture
+# point the FRS calls the single one (§3.1, D8) -- answered 404 at runtime while
+# reading as built in the source. `tests/test_write_paths.py` had been failing
+# on it in both directions. `test_every_imported_router_is_mounted` in
+# tests/i13/test_i13_routes.py now makes a repeat impossible.
+#
+# It MUST be registered before quantity_suggestion_routes, for the same reason
+# procurement_chain_routes precedes reservation_ledger_routes above: its
+# "/quantity-suggestion/compute" is a literal that would otherwise be matched
+# first by that router's "/quantity-suggestion/{suggestion_id}". Suggestion ids
+# are `uuid4().hex`, so "compute" can never be a real one -- the two are
+# distinguishable, and only the ordering makes them distinguished.
 router.include_router(assistant_routes.router)
+router.include_router(quantity_suggestion_routes.router)
 
 # The raw extract tables I13 actually reads -- see app/seed/manifest.py for
 # the full delivery; this is the I13-relevant subset.

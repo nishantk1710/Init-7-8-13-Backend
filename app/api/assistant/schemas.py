@@ -65,19 +65,40 @@ class StepModel(AssistantModel):
 class StartSessionRequest(AssistantModel):
     """What the BAdI pop-up (or the platform) sends to open the assistant.
 
-    Note what is **not** here: the requester. Identity is taken from the caller
-    -- today an ``X-Actor-Id`` header, tomorrow an Entra token -- and never from
-    the body. A session whose owner is self-declared is not an audit record.
+    Note what is **not** here: who is operating the assistant. That identity is
+    taken from the caller -- today an ``X-Actor-Id`` header, tomorrow an Entra
+    token -- and never from the body. A session whose *author* is self-declared
+    is not an audit record.
+
+    ``requestedFor`` is not an exception to that rule. It names the person the
+    part is for, typed by whoever is operating the assistant, and it lands in a
+    different column from the author for exactly that reason.
+
+    Note also what is **no longer** here: ``quantity``. The number that matters
+    is the planned quantity captured inside the conversation, against a stated
+    purpose and a window. Asking for one at the door was asking the same question
+    twice, and the answer given first was the one nobody had thought about.
     """
 
     material_id: str
     plant: str
-    quantity: str | None = PydanticField(
+    department: str | None = PydanticField(
         default=None,
+        max_length=64,
         description=(
-            "What the requester was about to reserve, if known. Optional: the "
-            "pop-up may fire before a quantity is entered, and a defaulted zero "
-            "would be indistinguishable from a real one."
+            "Which department the part is for -- the requester's, not the "
+            "operator's. Optional: the BAdI pop-up carries a material and a "
+            "plant and cannot supply this, so a session opened from SAP "
+            "legitimately has none."
+        ),
+    )
+    requested_for: str | None = PydanticField(
+        default=None,
+        max_length=128,
+        description=(
+            "Who the part is for, as typed by whoever is operating the "
+            "assistant. Free text and NOT identity -- nobody verified it. "
+            "Optional for the same reason department is."
         ),
     )
     origin: Literal["BADI", "PLATFORM"] = "PLATFORM"
@@ -100,6 +121,21 @@ class RoutingModel(AssistantModel):
     reason: str
 
 
+class NarrativeModel(AssistantModel):
+    """A model-written sentence, and the prompt behind it.
+
+    The provenance is not optional decoration. This programme is human-gated and
+    audited, and "the model said so" is not an acceptable account of where a
+    sentence came from -- so the prompt id, its version and the deployment travel
+    with the text to whoever is reading it.
+    """
+
+    text: str
+    prompt_id: str | None = None
+    prompt_version: int | None = None
+    model: str | None = None
+
+
 class StartSessionResponse(AssistantModel):
     """``session`` and ``step`` are null together, and only when out of scope.
 
@@ -112,6 +148,18 @@ class StartSessionResponse(AssistantModel):
     session_id: str | None = None
     expires_at: datetime | None = None
     step: StepModel | None = None
+    narrative: NarrativeModel | None = None
+    """The model-written phrasing of the advice, where one was served.
+
+    Null whenever the narrative layer is off, unconfigured or failed -- all of
+    which are normal. It is served **beside** ``step.facts`` and never instead of
+    them: the deterministic assessment is the answer of record, and a client that
+    rendered this in its place would be showing phrasing where a number belongs.
+
+    It was stored on the session from the day the narrative was written and never
+    returned here, so nobody in a live conversation had ever seen one. Only the
+    trace showed it, to whoever read the audit record afterwards -- which is the
+    one person it was not written for."""
 
 
 class AnswerRequest(AssistantModel):
@@ -150,9 +198,17 @@ class PlanModel(AssistantModel):
     ``reservationNumber`` is null until FR-8 links it, which is the normal state
     and not a gap: the assistant runs while the reservation is being created, so
     it has no number yet.
+
+    ``sessionId`` is the plan's origin, and FR-4 is explicit that a plan is
+    stored *against* it -- "traceability from a plan back to the advice that
+    shaped it". It was stored on the record and left off this model, so a caller
+    reading a plan could not reach the conversation that produced it even though
+    the list route already filters by it. With the reservation link blocked on
+    ``RESB.BEDNR``, this is currently the ONLY link a plan has to anything.
     """
 
     id: str
+    session_id: str
     material: str
     plant: str
     purpose: str
@@ -218,8 +274,19 @@ class SessionTraceResponse(AssistantModel):
     outcome: Literal["OPEN", "COMPLETED", "ABANDONED"]
     material_id: str
     plant: str
+    department: str | None = None
+    requested_for: str | None = None
+    """Who the part was for. Null for a session opened before the field existed,
+    or from SAP, which cannot supply one."""
     requested_quantity: str | None = None
+    """Null on every session minted since the entry point stopped asking.
+    Sessions from before that carry a real value, which is why the field stays.
+    Null has always meant "not stated" here and never zero."""
     requester: str
+    """Who **operated** the assistant. Served because this is the FR-8 evidence
+    view and an audit record without its author is not one -- but no screen
+    displays it: one coordinator opens every session, so it says the same thing
+    on every row."""
     origin: str
     issued_at: datetime
     expires_at: datetime
@@ -240,6 +307,8 @@ class SessionSummary(AssistantModel):
     outcome: str
     material_id: str
     plant: str
+    department: str | None = None
+    requested_for: str | None = None
     requester: str
     origin: str
     issued_at: datetime

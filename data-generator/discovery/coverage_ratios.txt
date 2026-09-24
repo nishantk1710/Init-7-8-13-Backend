@@ -1,0 +1,11 @@
+Population coverage, 2026-09-23T10:03:35Z
+
+  MaterialSet (MARA)            : 2040
+  MaterialDescriptionSet (MAKT) : 2042
+  MaterialPlantSet (MARC)       : 2183
+
+  MAKT / MARA  : 100.1%   (I13 FR-10 dashboard labels; extract showed 8.2%)
+  MARA / MARC  : 93.4%   (I07 s7: MARA covers only ~8% of the MARC population)
+
+If these ratios are materially better over OData than in the delivered extract, the coverage problem
+is an extraction problem and is fixed by re-extracting, not by a SAP change request.
