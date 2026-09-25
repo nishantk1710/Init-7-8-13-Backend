@@ -22,21 +22,25 @@ actual fix; treat an unfiltered call as a diagnostic escape hatch, not a
 page a UI should call routinely.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
+from app.api.i13.deps import page, snapshot_or_live
 from app.core.db import get_db
 from app.initiatives.i13.ledger_compat import build_legacy_ledger
+from app.initiatives.i13.snapshot import I13Snapshot
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
 from app.schemas.i13 import UtilisationLedgerEntryResponse
+from app.shared.material_scope import MaterialScope
 
 router = APIRouter()
 
 
 @router.get("/ledger", response_model=list[UtilisationLedgerEntryResponse])
 def list_ledger_entries(
+    response: Response,
     plant: str | None = Query(None),
     material: str | None = Query(None),
     include_out_of_scope: bool = Query(
@@ -45,17 +49,23 @@ def list_ledger_entries(
     limit: int = Query(100, ge=1, le=1000, description="Not in the original contract -- see module docstring."),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
 ) -> list[UtilisationLedgerEntryResponse]:
-    procurement_repo = PostgresProcurementRepository(db)
-    reservation_repo = PostgresReservationRepository(db)
-    material_scope_index = fetch_material_scope_index(db, material=material, plant=plant)
-
-    entries = build_legacy_ledger(
-        procurement_repo, reservation_repo, material_scope_index,
-        material=material, plant=plant, include_out_of_scope=include_out_of_scope,
-    )
-    page = entries[offset : offset + limit]
-    return [UtilisationLedgerEntryResponse.model_validate(entry) for entry in page]
+    if snapshot is not None:
+        source = snapshot.legacy_ledger if include_out_of_scope else snapshot.legacy_ledger_oar
+        entries = [e for e in source if (not plant or e.plant == plant) and (not material or e.material == material)]
+    else:
+        procurement_repo = PostgresProcurementRepository(db)
+        reservation_repo = PostgresReservationRepository(db)
+        material_scope_index = fetch_material_scope_index(db, material=material, plant=plant)
+        entries = build_legacy_ledger(
+            procurement_repo, reservation_repo, material_scope_index,
+            material=material, plant=plant, include_out_of_scope=include_out_of_scope,
+        )
+    return [
+        UtilisationLedgerEntryResponse.model_validate(entry)
+        for entry in page(entries, response, limit=limit, offset=offset)
+    ]
 
 
 @router.get("/ledger/{ledger_id}", response_model=UtilisationLedgerEntryResponse)
@@ -63,11 +73,19 @@ def get_ledger_entry(
     ledger_id: str,
     include_out_of_scope: bool = Query(False, description="See /ledger."),
     db: Session = Depends(get_db),
+    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
 ) -> UtilisationLedgerEntryResponse:
+    if snapshot is not None:
+        entry = snapshot.legacy_ledger_by_id.get(ledger_id)
+        if entry is not None and (
+            include_out_of_scope or snapshot.scope_of(entry.material, entry.plant) is MaterialScope.OAR
+        ):
+            return UtilisationLedgerEntryResponse.model_validate(entry)
+        raise HTTPException(status_code=404, detail="Ledger entry not found")
+
     procurement_repo = PostgresProcurementRepository(db)
     reservation_repo = PostgresReservationRepository(db)
     material_scope_index = fetch_material_scope_index(db)
-
     entries = build_legacy_ledger(
         procurement_repo, reservation_repo, material_scope_index, include_out_of_scope=include_out_of_scope
     )

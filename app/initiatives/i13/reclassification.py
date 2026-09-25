@@ -73,14 +73,24 @@ def build_reclassification_candidates(
         )
     }
 
+    oar_keys = [
+        key
+        for key, dismm in material_scope_index.items()
+        if (not material or key[0] == material)
+        and (not plant or key[1] == plant)
+        and classify_material_scope(dismm) is MaterialScope.OAR
+    ]
+    # One batched lookup rather than one `get` per key. `get` opens a session
+    # and runs a query per call, which over the ~44k OAR positions was the bulk
+    # of this function's runtime; `get_many` answers identically key for key
+    # (the criticality conformance suite asserts it) in a single round trip.
+    get_many = getattr(criticality_source, "get_many", None)
+    criticality_by_key = (
+        get_many(oar_keys) if get_many is not None else {key: criticality_source.get(*key) for key in oar_keys}
+    )
+
     candidates: list[ReclassificationCandidate] = []
-    for key, dismm in material_scope_index.items():
-        if material and key[0] != material:
-            continue
-        if plant and key[1] != plant:
-            continue
-        if classify_material_scope(dismm) is not MaterialScope.OAR:
-            continue
+    for key in oar_keys:
 
         # An OAR material with no movement history at all is a legitimate
         # zero-consumption candidate, not an omission -- unlike
@@ -90,7 +100,7 @@ def build_reclassification_candidates(
         consumption_count_12m = metric.consumption_count_12m if metric else 0
         consumed_more_than_threshold = consumption_count_12m > config.reclassification.min_consumption_count
 
-        criticality_result = criticality_source.get(key[0], key[1])
+        criticality_result = criticality_by_key[key]
         critical_impact_indicator = (
             criticality_result.tier in config.reclassification.critical_tiers
             if criticality_result.found

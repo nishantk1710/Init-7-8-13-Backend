@@ -60,7 +60,6 @@ than one routed to nobody, because somebody answers it.
 from __future__ import annotations
 
 import dataclasses
-from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -99,7 +98,7 @@ from app.initiatives.i13.act.ports import (
 )
 from app.initiatives.i13.act.state_machine import validate_transition
 from app.initiatives.i13.models import ReservationLedgerEntry
-from app.initiatives.i13.plans import ConsumptionPlan
+from app.initiatives.i13.plans import ConsumptionPlan, PlanMatcher
 from app.shared.material_scope import MaterialScope
 
 _AUTO_RESOLVABLE_STATUSES = frozenset(
@@ -373,16 +372,14 @@ def detect_exceptions(
             return None
         return requester_by_reservation.get((reservation_number, reservation_item))
 
-    ledger_by_reservation: dict[tuple[str, str], list[ReservationLedgerEntry]] = defaultdict(list)
-    for entry in ledger_entries:
-        ledger_by_reservation[(entry.reservation_number, entry.reservation_item)].append(entry)
-
-    plan_by_reservation: dict[tuple[str, str], ConsumptionPlan] = {
-        (plan.reservation_number, plan.reservation_item): plan for plan in plans
-    }
+    # Reference plans match reservations by number; captured plans not yet
+    # linked to one (FR-8) match by material, plant and window -- see
+    # PlanMatcher. Keying every plan by reservation number, as this did,
+    # collided all unlinked captured plans on ("", "") (gaps G3/G4).
+    matcher = PlanMatcher(list(plans), list(ledger_entries))
 
     for plan in plans:
-        entries = ledger_by_reservation.get((plan.reservation_number, plan.reservation_item), [])
+        entries = matcher.entries_for(plan)
         breached = detect_plan_breach(plan, entries, as_of_time=as_of_time, grace_period=grace_period)
         c, r, res, rt = _apply_detection(
             exception_id=build_exception_id("PLAN_BREACH", plan.plan_id),
@@ -390,8 +387,9 @@ def detect_exceptions(
             exception_type=ExceptionType.PLAN_BREACH,
             material=plan.material,
             plant=plan.plant,
-            reservation_number=plan.reservation_number,
-            reservation_item=plan.reservation_item,
+            # An unlinked captured plan has no reservation yet; "" is not one.
+            reservation_number=plan.reservation_number or None,
+            reservation_item=plan.reservation_item or None,
             session_id=plan.session_id,
             ledger_entry_id=entries[0].ledger_id if entries else None,
             # A plan breach always has a plan, so this is almost always
@@ -399,10 +397,10 @@ def detect_exceptions(
             # requester recorded against it.
             owner_requester_id=owner_for(plan, plan.reservation_number, plan.reservation_item),
             reason=(
-                f"Consumption plan {plan.plan_id} planned use {plan.planned_use_date} plus "
+                f"Consumption plan {plan.plan_id} planned use {plan.breach_reference_date} plus "
                 f"{plan_breach_grace_days}-day grace has expired with no goods issue evidence"
             ),
-            evidence={"plan_id": plan.plan_id, "planned_use_date": str(plan.planned_use_date)},
+            evidence={"plan_id": plan.plan_id, "planned_use_date": str(plan.breach_reference_date)},
             as_of_time=as_of_time,
             response_period=response_period,
             repository=repository,
@@ -416,7 +414,7 @@ def detect_exceptions(
     for entry in ledger_entries:
         if entry.material_scope is not MaterialScope.OAR:
             continue
-        plan = plan_by_reservation.get((entry.reservation_number, entry.reservation_item))
+        plan = matcher.plan_for(entry)
         no_plan_reason = classify_no_plan_reason(plan)
         grni_snapshot = grni_snapshots.get((entry.material, entry.plant))
         grni_flag = grni_snapshot.gr_not_issued_flag if grni_snapshot else None

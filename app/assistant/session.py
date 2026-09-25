@@ -156,26 +156,36 @@ def _assessment_for(
         )
 
     movement_repository = PostgresMovementRepository(db)
-    metrics = compute_watch_metrics(
-        movement_repository,
-        PostgresProcurementRepository(db),
-        PostgresReservationRepository(db),
-        fetch_material_scope_index(db, material=routed.material_id, plant=routed.plant),
-        i13_config,
-        Path(settings.i13_data_dir),
-        material=routed.material_id,
-        plant=routed.plant,
-        as_of=today,
-        db=db,
-    )
-    metric = next(
-        (
-            m
-            for m in metrics
-            if m.material == routed.material_id and m.plant == routed.plant
-        ),
-        None,
-    )
+    # The I13 snapshot's WATCH row when there is one measured as of today: the
+    # same numbers the WATCH screen shows, and no recompute on every turn (gap
+    # G10). Otherwise the single-material live compute, as before. Never waits
+    # for, or triggers, a snapshot build.
+    from app.initiatives.i13.snapshot import peek_i13_snapshot
+
+    snapshot = peek_i13_snapshot() if settings.i13_snapshot_enabled else None
+    if snapshot is not None and snapshot.reference_date == today:
+        metric = snapshot.watch.get((routed.material_id, routed.plant))
+    else:
+        metrics = compute_watch_metrics(
+            movement_repository,
+            PostgresProcurementRepository(db),
+            PostgresReservationRepository(db),
+            fetch_material_scope_index(db, material=routed.material_id, plant=routed.plant),
+            i13_config,
+            Path(settings.i13_data_dir),
+            material=routed.material_id,
+            plant=routed.plant,
+            as_of=today,
+            db=db,
+        )
+        metric = next(
+            (
+                m
+                for m in metrics
+                if m.material == routed.material_id and m.plant == routed.plant
+            ),
+            None,
+        )
     if metric is None:
         # WATCH computes over materials with movement or ledger activity. A part
         # that is OAR but has never moved has no row, and there is genuinely

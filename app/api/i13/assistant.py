@@ -46,12 +46,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.api.assistant.schemas import PlanModel
-from app.api.i13.deps import Actor, get_current_actor, get_data_dir
+from app.api.i13.deps import Actor, get_current_actor, get_data_dir, snapshot_or_live
 from app.assistant import session as session_service
 from app.assistant.models import ConsumptionPlanRecord
 from app.assistant.session import SessionError
 from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
+from app.initiatives.i13.snapshot import I13Snapshot
 from app.initiatives.i13.quantity import build_quantity_config, suggest
 from app.initiatives.i13.watch import compute_watch_metrics
 from app.integrations.sap.postgres_material import fetch_material_scope_index
@@ -291,6 +292,7 @@ def get_quantity_suggestion(
     quantity: Annotated[str, Query(description="What the requester wants to reserve")],
     config: Annotated[I13Config, Depends(get_i13_config)],
     data_dir: Annotated[Path, Depends(get_data_dir)],
+    snapshot: Annotated[I13Snapshot | None, Depends(snapshot_or_live)],
 ) -> QuantitySuggestionResponse:
     """The suggestion on its own, without a conversation.
 
@@ -303,21 +305,24 @@ def get_quantity_suggestion(
     material_key = normalise(material) or material
     plant_key = plant.strip()
 
-    metrics = compute_watch_metrics(
-        PostgresMovementRepository(db),
-        PostgresProcurementRepository(db),
-        PostgresReservationRepository(db),
-        fetch_material_scope_index(db, material=material_key, plant=plant_key),
-        config,
-        data_dir,
-        material=material_key,
-        plant=plant_key,
-        db=db,
-    )
-    metric = next(
-        (m for m in metrics if m.material == material_key and m.plant == plant_key),
-        None,
-    )
+    if snapshot is not None:
+        metric = snapshot.watch.get((material_key, plant_key))
+    else:
+        metrics = compute_watch_metrics(
+            PostgresMovementRepository(db),
+            PostgresProcurementRepository(db),
+            PostgresReservationRepository(db),
+            fetch_material_scope_index(db, material=material_key, plant=plant_key),
+            config,
+            data_dir,
+            material=material_key,
+            plant=plant_key,
+            db=db,
+        )
+        metric = next(
+            (m for m in metrics if m.material == material_key and m.plant == plant_key),
+            None,
+        )
     if metric is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

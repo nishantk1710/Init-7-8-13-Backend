@@ -16,13 +16,14 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.api.i13.deps import get_data_dir
+from app.api.i13.deps import get_data_dir, snapshot_or_live
 from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.exceptions import build_exception_queue
 from app.initiatives.i13.models import ExceptionType
 from app.initiatives.i13.procurement_chain import build_procurement_chain
 from app.initiatives.i13.reconciliation import reconcile
+from app.initiatives.i13.snapshot import I13Snapshot, current_plans, exception_queue
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
@@ -41,16 +42,21 @@ def get_validation(
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
     data_dir: Path = Depends(get_data_dir),
+    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
 ) -> ValidationResponse:
-    procurement_repo = PostgresProcurementRepository(db)
-    movement_repo = PostgresMovementRepository(db)
-    reservation_repo = PostgresReservationRepository(db)
-    material_scope_index = fetch_material_scope_index(db)
+    if snapshot is not None:
+        procurement_entries = snapshot.procurement_chain
+        exceptions = exception_queue(snapshot, current_plans(db, snapshot))
+    else:
+        procurement_repo = PostgresProcurementRepository(db)
+        movement_repo = PostgresMovementRepository(db)
+        reservation_repo = PostgresReservationRepository(db)
+        material_scope_index = fetch_material_scope_index(db)
 
-    procurement_entries = build_procurement_chain(procurement_repo)
-    exceptions = build_exception_queue(
-        movement_repo, procurement_repo, reservation_repo, material_scope_index, config, data_dir
-    )
+        procurement_entries = build_procurement_chain(procurement_repo)
+        exceptions = build_exception_queue(
+            movement_repo, procurement_repo, reservation_repo, material_scope_index, config, data_dir
+        )
     gr_not_issued_count = sum(1 for item in exceptions if item.type is ExceptionType.GR_NOT_ISSUED_30_DAY)
 
     results = [

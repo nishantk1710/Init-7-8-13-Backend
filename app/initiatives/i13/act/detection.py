@@ -48,15 +48,16 @@ def detect_plan_breach(
     """breach_due_at = planned_window_end + grace_period; plan_breach =
     as_of_time > breach_due_at AND no matching issue exists.
 
-    ``plan.planned_use_date`` is this codebase's "planned_consumption_window
-    end" (``ConsumptionPlan`` carries no separate window-start/end pair --
-    see ``plans.py``). A plan with no ``planned_use_date`` or that is not
+    ``plan.breach_reference_date`` is the planned consumption window end: a
+    captured plan's ``window_end`` when it has one, else the single
+    ``planned_use_date`` the reference CSV carries (see ``plans.py``). A plan with no ``planned_use_date`` or that is not
     ``OPEN`` cannot breach: there is no window to measure against, and a
     closed/cancelled plan is not an active commitment.
     """
-    if plan.planned_use_date is None or plan.status != "OPEN":
+    breach_from = plan.breach_reference_date
+    if breach_from is None or plan.status != "OPEN":
         return False
-    breach_due_at = datetime.combine(plan.planned_use_date, datetime.min.time(), tzinfo=as_of_time.tzinfo) + grace_period
+    breach_due_at = datetime.combine(breach_from, datetime.min.time(), tzinfo=as_of_time.tzinfo) + grace_period
     if as_of_time <= breach_due_at:
         return False
     return not has_matching_issue(ledger_entries)

@@ -118,3 +118,11 @@ class EscalationRunResponse(BaseModel):
     as_of_time: datetime
     escalated: int
     routing_pending: int
+
+
+class ActConfirmationWithExceptionResponse(BaseModel):
+    """``GET /i13/act/confirmations``: one requester confirmation and the
+    exception it answers."""
+
+    confirmation: RequesterConfirmationResponse
+    exception: ActExceptionResponse

@@ -17,14 +17,13 @@ import dataclasses
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
-from app.api.i13.deps import Actor, get_current_actor, get_data_dir
+from app.api.i13.deps import Actor, get_current_actor, get_data_dir, page, snapshot_or_live
 from app.core.db import get_db
 from app.initiatives.i13.act.domain import ExceptionStatus, ExceptionType
 from app.initiatives.i13.act.service import (
-    detect_exceptions,
     get_cross_plant_stock,
     process_escalations,
     submit_confirmation,
@@ -33,20 +32,16 @@ from app.initiatives.i13.act.state_machine import InvalidTransitionError
 from app.initiatives.i13.act_exception_store import SqlExceptionRepository
 from app.initiatives.i13.act_hod_provider import ConfigEscalationRecipientProvider
 from app.initiatives.i13.act_notifications import LoggingNotificationAdapter
+from app.initiatives.i13.act_runner import run_detection
 from app.initiatives.i13.act_stock_provider import PostgresCrossPlantStockProvider
-from app.initiatives.i13.act_watch_snapshot import build_grni_snapshot_index
 from app.initiatives.i13.config import I13Config, get_i13_config
-from app.initiatives.i13.consumption_attribution import ConsumptionAttributionService
-from app.initiatives.i13.plans import load_consumption_plans
-from app.initiatives.i13.quantity_suggestion_store import build_quantity_decision_records
-from app.initiatives.i13.reservation_ledger import build_reservation_ledger
+from app.initiatives.i13.snapshot import I13Snapshot
 from app.initiatives.i13.watch_mart import get_watch_metric, list_watch_metrics
-from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
-from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
-from app.integrations.sap.postgres_reservation import PostgresReservationRepository
 from app.schemas.i13 import WatchMetricResponse
+from app.shared.material_scope import MaterialScope
 from app.schemas.i13_act import (
+    ActConfirmationWithExceptionResponse,
     ActExceptionDetailResponse,
     ActExceptionEventResponse,
     ActExceptionResponse,
@@ -80,6 +75,7 @@ def _parse_enum(enum_cls, raw: str | None, field_name: str):
 
 @router.get("/utilisation", response_model=list[WatchMetricResponse])
 def list_act_utilisation(
+    response: Response,
     plant: str | None = Query(None),
     material: str | None = Query(None),
     aging_band: str | None = Query(None),
@@ -88,6 +84,7 @@ def list_act_utilisation(
     limit: int = Query(1000, ge=1, le=5000, description="See the note on pagination below."),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
 ) -> list[WatchMetricResponse]:
     """Read-only over the persisted W6.3 mart -- never recalculates months
     of cover, aging, GRNI or acquired-vs-plan (see
@@ -100,21 +97,41 @@ def list_act_utilisation(
     data it was relying on, and the frontend discloses on screen when a
     response was capped -- an undisclosed cap reads as "that is all there is".
     """
-    rows = list_watch_metrics(
-        db,
-        plant=plant,
-        material=material,
-        aging_band=aging_band,
-        gr_not_issued_flag=grni,
-        acquired_vs_plan_status=acquired_vs_plan_status,
-    )
-    page = rows[offset : offset + limit]
-    return [WatchMetricResponse.model_validate(row) for row in page]
+    if snapshot is not None:
+        # The snapshot's WATCH rows, OAR only -- the same population the mart
+        # held by design (oar_only=True), but complete and current.
+        band = aging_band.upper() if aging_band else None
+        status_filter = acquired_vs_plan_status.upper() if acquired_vs_plan_status else None
+        rows = [
+            m
+            for m in snapshot.watch_sorted
+            if m.material_scope is MaterialScope.OAR
+            and (not plant or m.plant == plant)
+            and (not material or m.material == material)
+            and (band is None or m.aging_band.value == band)
+            and (grni is None or m.gr_not_issued_flag is grni)
+            and (status_filter is None or m.acquired_vs_plan_status.value == status_filter)
+        ]
+    else:
+        rows = list_watch_metrics(
+            db,
+            plant=plant,
+            material=material,
+            aging_band=aging_band,
+            gr_not_issued_flag=grni,
+            acquired_vs_plan_status=acquired_vs_plan_status,
+        )
+    return [WatchMetricResponse.model_validate(row) for row in page(rows, response, limit=limit, offset=offset)]
 
 
 @router.get("/utilisation/{material}/{plant}", response_model=WatchMetricResponse)
-def get_act_utilisation(material: str, plant: str, db: Session = Depends(get_db)) -> WatchMetricResponse:
-    row = get_watch_metric(db, material, plant)
+def get_act_utilisation(
+    material: str,
+    plant: str,
+    db: Session = Depends(get_db),
+    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+) -> WatchMetricResponse:
+    row = snapshot.watch.get((material, plant)) if snapshot is not None else get_watch_metric(db, material, plant)
     if row is None:
         raise HTTPException(status_code=404, detail="no WATCH mart row for this material/plant yet -- run the W6.3 refresh first")
     return WatchMetricResponse.model_validate(row)
@@ -125,6 +142,7 @@ def get_act_utilisation(material: str, plant: str, db: Session = Depends(get_db)
 
 @router.get("/exceptions", response_model=list[ActExceptionResponse])
 def list_act_exceptions(
+    response: Response,
     plant: str | None = Query(None),
     material: str | None = Query(None),
     exception_type: str | None = Query(None, alias="type"),
@@ -143,15 +161,41 @@ def list_act_exceptions(
     response was capped instead of presenting a truncated queue as the queue.
     """
     repository = _repository(db)
-    items = repository.list(
+    filters = dict(
         material=material,
         plant=plant,
         exception_type=_parse_enum(ExceptionType, exception_type, "type"),
         status=_parse_enum(ExceptionStatus, exception_status, "status"),
         owner_requester_id=owner_requester_id,
     )
-    page = items[offset : offset + limit]
-    return [ActExceptionResponse.model_validate(item) for item in page]
+    # Paged in SQL: this used to read every matching row (42,649 unfiltered)
+    # and slice in Python. The total travels in X-Total-Count.
+    items = repository.list(**filters, limit=limit, offset=offset)
+    response.headers["X-Total-Count"] = str(repository.count(**filters))
+    return [ActExceptionResponse.model_validate(item) for item in items]
+
+
+@router.get("/confirmations", response_model=list[ActConfirmationWithExceptionResponse])
+def list_act_confirmations(
+    response: Response,
+    plant: str | None = Query(None),
+    material: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+) -> list[ActConfirmationWithExceptionResponse]:
+    """Every requester confirmation with the exception it answers, newest
+    first -- one query, replacing the dashboard's list-then-detail fan-out
+    (up to 33 requests) for the justification log."""
+    pairs, total = _repository(db).list_confirmations(material=material, plant=plant, limit=limit, offset=offset)
+    response.headers["X-Total-Count"] = str(total)
+    return [
+        ActConfirmationWithExceptionResponse(
+            confirmation=RequesterConfirmationResponse.model_validate(confirmation),
+            exception=ActExceptionResponse.model_validate(exception),
+        )
+        for confirmation, exception in pairs
+    ]
 
 
 @router.get("/exceptions/{exception_id}", response_model=ActExceptionDetailResponse)
@@ -220,81 +264,21 @@ def run_detect_exceptions(
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
     data_dir: Path = Depends(get_data_dir),
+    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
 ) -> DetectionRunResponse:
+    """Evidence gathering lives in ``app.initiatives.i13.act_runner`` -- shared
+    with the assistant, which runs this scoped to one material after a capture.
+    From the I13 snapshot when there is one, so GRNI evidence covers every
+    material rather than the stale mart's 7,184 rows."""
     payload = payload or DetectionRunRequest()
-    as_of_time = payload.as_of_time or datetime.now(timezone.utc)
-
-    procurement_repo = PostgresProcurementRepository(db)
-    reservation_repo = PostgresReservationRepository(db)
-    material_scope_index = fetch_material_scope_index(db, material=payload.material, plant=payload.plant)
-
-    ledger_entries = build_reservation_ledger(
-        reservation_repo,
-        procurement_repo,
-        material_scope_index=material_scope_index,
+    result = run_detection(
+        db,
+        config,
+        data_dir,
+        as_of_time=payload.as_of_time or datetime.now(timezone.utc),
         material=payload.material,
         plant=payload.plant,
-        include_out_of_scope=True,
-    )
-    # `db` passed so detection sees plans CAPTURED through the assistant, not
-    # only the 742 fabricated rows in the CSV. This is the join the whole of
-    # WS7 exists to make: the first real plan is the first time detection has
-    # ever seen data it did not author.
-    plans = load_consumption_plans(data_dir, db)
-    if payload.material:
-        plans = [plan for plan in plans if plan.material == payload.material]
-    if payload.plant:
-        plans = [plan for plan in plans if plan.plant == payload.plant]
-
-    grni_snapshots = build_grni_snapshot_index(list_watch_metrics(db, plant=payload.plant, material=payload.material))
-
-    # W7.4 is the quantity-suggestion source W6.6's QUANTITY_OVERRIDE rule was
-    # written against and then left idle ("suggested_quantity is None for every
-    # caller today"). These are the decided suggestions -- accepted or not --
-    # so the rule now has something to compare; before W7.4 this list was
-    # necessarily empty. See quantity_suggestion_store for why undecided
-    # suggestions are excluded.
-    quantity_decision_records = build_quantity_decision_records(db, material=payload.material, plant=payload.plant)
-
-    # W6.4's requester, so a NO_PLAN exception has somebody to route to.
-    #
-    # Without this the owner came from `ConsumptionPlan.requester` alone, and a
-    # NO_PLAN exception has no plan by definition -- so every one of them was
-    # unowned and FR-9's routing and escalation never fired for any of them.
-    # W6.4 resolves a requester from RESB.WEMPF for roughly four reservations in
-    # five and has always been sitting right here, unread.
-    #
-    # `reservation_repo` is the same instance build_reservation_ledger just
-    # used, and its reads are memoized per instance, so this is a cache hit
-    # rather than a second pass over the reservations.
-    attribution_service = ConsumptionAttributionService(
-        cost_centre_enabled=config.attribution.cost_centre_enabled
-    )
-    attributions = attribution_service.attribute_entries(
-        ledger_entries,
-        reservation_repo.get_reservations(material=payload.material, plant=payload.plant),
-        plans,
-    )
-    # Only the resolved ones. An AMBIGUOUS attribution yields requester_id=None
-    # and is left out entirely, so a conflict leaves the exception unowned
-    # rather than routing it to whichever name sorted first.
-    requester_by_reservation = {
-        (a.reservation_number, a.reservation_item): a.requester_id
-        for a in attributions
-        if a.requester_id
-    }
-
-    result = detect_exceptions(
-        as_of_time,
-        ledger_entries=ledger_entries,
-        plans=plans,
-        grni_snapshots=grni_snapshots,
-        repository=_repository(db),
-        notification_port=LoggingNotificationAdapter(),
-        plan_breach_grace_days=config.exceptions.plan_breach_grace_days,
-        requester_response_days=config.escalation.requester_response_days,
-        quantity_decision_records=quantity_decision_records,
-        requester_by_reservation=requester_by_reservation,
+        snapshot=snapshot,
     )
     db.commit()
     return DetectionRunResponse(**dataclasses.asdict(result))

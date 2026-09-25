@@ -74,6 +74,10 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
     ("/api/i13/act/run/escalate", "post"): (
         "Advances the ACT state machine past the requester-response window."
     ),
+    ("/api/i13/snapshot/refresh", "post"): (
+        "Rebuilds the in-memory I13 snapshot in the background. Writes no table: "
+        "it re-reads raw_* and swaps the process's cached copy."
+    ),
     ("/api/i13/act/exceptions/{exception_id}/confirmation", "post"): (
         "Records a requester's confirmation and justification against an "
         "exception."

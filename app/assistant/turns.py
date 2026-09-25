@@ -480,4 +480,15 @@ def answer(
         )
         db.commit()
 
+        # An I13 conversation that captured a plan changes WATCH and the ACT
+        # exceptions for this material -- apply that now, not at the next
+        # refresh nobody triggers. Never fails the conversation (see
+        # app.assistant.downstream).
+        if Flow(session.flow) is Flow.I13 and script.I13_CAPTURE_PLAN in session_module.answers_of(
+            session_module.turns(db, session.id)
+        ):
+            from app.assistant.downstream import apply_capture
+
+            apply_capture(db, material=session.material_id, plant=session.plant, session_id=session.id)
+
     return following, session

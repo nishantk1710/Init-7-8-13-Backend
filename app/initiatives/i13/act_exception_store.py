@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.initiatives.i13.act.domain import (
@@ -114,16 +114,16 @@ class SqlExceptionRepository:
             self._session.add(row)
         self._session.flush()
 
-    def list(
+    def _filtered(
         self,
+        stmt,
         *,
-        material: str | None = None,
-        plant: str | None = None,
-        exception_type: ExceptionType | None = None,
-        status: ExceptionStatus | None = None,
-        owner_requester_id: str | None = None,
-    ) -> list[ActException]:
-        stmt = select(ActExceptionRecord)
+        material: str | None,
+        plant: str | None,
+        exception_type: ExceptionType | None,
+        status: ExceptionStatus | None,
+        owner_requester_id: str | None,
+    ):
         if material:
             stmt = stmt.where(ActExceptionRecord.material == material)
         if plant:
@@ -134,8 +134,100 @@ class SqlExceptionRepository:
             stmt = stmt.where(ActExceptionRecord.status == status.value)
         if owner_requester_id:
             stmt = stmt.where(ActExceptionRecord.owner_requester_id == owner_requester_id)
-        rows = self._session.execute(stmt.order_by(ActExceptionRecord.detected_at.desc())).scalars().all()
+        return stmt
+
+    def list(
+        self,
+        *,
+        material: str | None = None,
+        plant: str | None = None,
+        exception_type: ExceptionType | None = None,
+        status: ExceptionStatus | None = None,
+        owner_requester_id: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[ActException]:
+        """``limit``/``offset`` page in SQL. Omitted, every matching row is
+        returned, as before -- detection and the service layer rely on that."""
+        stmt = self._filtered(
+            select(ActExceptionRecord),
+            material=material,
+            plant=plant,
+            exception_type=exception_type,
+            status=status,
+            owner_requester_id=owner_requester_id,
+        ).order_by(ActExceptionRecord.detected_at.desc(), ActExceptionRecord.exception_id)
+        if offset:
+            stmt = stmt.offset(offset)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        rows = self._session.execute(stmt).scalars().all()
         return [_row_to_exception(row) for row in rows]
+
+    def count(
+        self,
+        *,
+        material: str | None = None,
+        plant: str | None = None,
+        exception_type: ExceptionType | None = None,
+        status: ExceptionStatus | None = None,
+        owner_requester_id: str | None = None,
+    ) -> int:
+        stmt = self._filtered(
+            select(func.count()).select_from(ActExceptionRecord),
+            material=material,
+            plant=plant,
+            exception_type=exception_type,
+            status=status,
+            owner_requester_id=owner_requester_id,
+        )
+        return int(self._session.execute(stmt).scalar_one())
+
+    def list_confirmations(
+        self,
+        *,
+        material: str | None = None,
+        plant: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[tuple[RequesterConfirmation, ActException]], int]:
+        """Requester confirmations with the exception each answers, newest
+        first, in one query -- and the total, for paging."""
+        base = select(ActConfirmationRecord, ActExceptionRecord).join(
+            ActExceptionRecord, ActExceptionRecord.exception_id == ActConfirmationRecord.exception_id
+        )
+        count_stmt = select(func.count()).select_from(ActConfirmationRecord).join(
+            ActExceptionRecord, ActExceptionRecord.exception_id == ActConfirmationRecord.exception_id
+        )
+        if material:
+            base = base.where(ActExceptionRecord.material == material)
+            count_stmt = count_stmt.where(ActExceptionRecord.material == material)
+        if plant:
+            base = base.where(ActExceptionRecord.plant == plant)
+            count_stmt = count_stmt.where(ActExceptionRecord.plant == plant)
+        rows = self._session.execute(
+            base.order_by(ActConfirmationRecord.submitted_at.desc(), ActConfirmationRecord.confirmation_id.desc())
+            .offset(offset)
+            .limit(limit)
+        ).all()
+        total = int(self._session.execute(count_stmt).scalar_one())
+        return (
+            [
+                (
+                    RequesterConfirmation(
+                        exception_id=confirmation.exception_id,
+                        reason_category=confirmation.reason_category,
+                        free_text=confirmation.free_text,
+                        actor_id=confirmation.actor_id,
+                        submitted_at=confirmation.submitted_at,
+                        confirmation_id=str(confirmation.confirmation_id),
+                    ),
+                    _row_to_exception(exception),
+                )
+                for confirmation, exception in rows
+            ],
+            total,
+        )
 
     def append_event(self, event: ExceptionEvent) -> None:
         self._session.add(

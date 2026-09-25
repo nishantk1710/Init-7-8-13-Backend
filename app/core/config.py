@@ -264,6 +264,21 @@ class Settings(BaseSettings):
     # postgres_*.py); there is no CSV path for it any more.
     i13_data_dir: str = "data-generator/generated"
 
+    # The I13 in-memory snapshot (app/initiatives/i13/snapshot.py): every I13
+    # read route serves one precomputed snapshot instead of recomputing from
+    # raw_* per request. False puts every route back on the live compute --
+    # the escape hatch, and what `?live=true` does for a single request.
+    i13_snapshot_enabled: bool = True
+    # Build the snapshot in the background at start-up, so the first visitor
+    # does not pay for it. Off in tests, where the first use builds it lazily.
+    i13_snapshot_warm_on_startup: bool = True
+    # How often (seconds, at most) the fingerprint is re-checked for a reseed
+    # or a new day. One cheap grouped query over ingestion_run.
+    i13_snapshot_check_interval_seconds: int = 60
+    # ISO date to measure every snapshot metric as of. Empty = today, the date
+    # every live route has always used (plan decision D1 left open).
+    i13_snapshot_reference_date: str = ""
+
     # Current VZI OAR material-scope ruling (MARC.DISMM), comma-separated.
     # See app/shared/material_scope/policy.py -- this is shared platform
     # config, not owned by any single initiative.

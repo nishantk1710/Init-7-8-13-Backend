@@ -23,16 +23,18 @@ from app.api.i13 import reclassification as reclassification_routes
 from app.api.i13 import reservation_ledger as reservation_ledger_routes
 from app.api.i13 import validation as validation_routes
 from app.api.i13 import watch as watch_routes
-from app.api.i13.deps import get_data_dir
+from app.api.i13 import usage as usage_routes
+from app.api.i13.deps import get_data_dir, snapshot_or_live
 from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
-from app.initiatives.i13.summary import build_summary
+from app.initiatives.i13.snapshot import I13Snapshot, current_plans, snapshot_status, start_background_build
+from app.initiatives.i13.summary import build_summary, summary_from_snapshot
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
 from app.models import IngestionRun
-from app.schemas.i13 import DataSourceStatusResponse, I13SummaryResponse
+from app.schemas.i13 import DataSourceStatusResponse, I13SummaryResponse, SnapshotStatusResponse
 
 router = APIRouter(prefix="/i13", tags=["i13"])
 
@@ -69,6 +71,8 @@ router.include_router(act_routes.router)
 # distinguishable, and only the ordering makes them distinguished.
 router.include_router(assistant_routes.router)
 router.include_router(quantity_suggestion_routes.router)
+# GRNI and usage patterns: served from the snapshot only (see usage.py).
+router.include_router(usage_routes.router)
 
 # The raw extract tables I13 actually reads -- see app/seed/manifest.py for
 # the full delivery; this is the I13-relevant subset.
@@ -80,7 +84,11 @@ def get_summary(
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
     data_dir: Path = Depends(get_data_dir),
+    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
 ) -> I13SummaryResponse:
+    if snapshot is not None:
+        return I13SummaryResponse(**asdict(summary_from_snapshot(snapshot, current_plans(db, snapshot))))
+
     movement_repo = PostgresMovementRepository(db)
     procurement_repo = PostgresProcurementRepository(db)
     reservation_repo = PostgresReservationRepository(db)
@@ -88,6 +96,21 @@ def get_summary(
 
     summary = build_summary(movement_repo, procurement_repo, reservation_repo, material_scope_index, config, data_dir)
     return I13SummaryResponse(**asdict(summary))
+
+
+@router.get("/snapshot", response_model=SnapshotStatusResponse)
+def get_snapshot_status() -> SnapshotStatusResponse:
+    """What the I13 screens are being served from: when it was built, as of
+    which date, and whether a rebuild is running."""
+    return SnapshotStatusResponse(**snapshot_status())
+
+
+@router.post("/snapshot/refresh", response_model=SnapshotStatusResponse, status_code=202)
+def refresh_snapshot() -> SnapshotStatusResponse:
+    """Rebuild the I13 snapshot in the background. The current one keeps
+    serving until the new one is ready; poll ``GET /i13/snapshot``."""
+    start_background_build("manual refresh")
+    return SnapshotStatusResponse(**snapshot_status())
 
 
 @router.get("/data-sources", response_model=list[DataSourceStatusResponse])

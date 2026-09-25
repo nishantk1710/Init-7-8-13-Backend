@@ -15,7 +15,9 @@ from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.exceptions import build_exception_queue
 from app.initiatives.i13.models import AgingBand, ExceptionType
 from app.initiatives.i13.movement_metrics import compute_all_movement_metrics
+from app.initiatives.i13.plans import ConsumptionPlan
 from app.initiatives.i13.reclassification import build_reclassification_candidates
+from app.initiatives.i13.snapshot import I13Snapshot, exception_queue
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
@@ -87,5 +89,32 @@ def build_summary(
         plan_breach_count=exception_counts[ExceptionType.PLAN_BREACH],
         no_plan_count=exception_counts[ExceptionType.NO_PLAN],
         reclassification_candidate_count=candidate_count,
+        valuation_is_mocked=True,
+    )
+
+
+def summary_from_snapshot(snapshot: I13Snapshot, plans: list[ConsumptionPlan]) -> I13Summary:
+    """:func:`build_summary`'s counts, read from the I13 snapshot.
+
+    The aging bands and reclassification count depend only on SAP data and
+    were counted when the snapshot was built, exactly as ``build_summary``
+    counts them. The exception counts depend on consumption plans, which a
+    requester can add at any moment through the assistant -- so they come from
+    the legacy exception queue recomputed over the snapshot with ``plans`` (the
+    live set), and move as soon as a plan is captured.
+    """
+    exception_counts = {exception_type: 0 for exception_type in ExceptionType}
+    for exception in exception_queue(snapshot, plans):
+        exception_counts[exception.type] += 1
+
+    return I13Summary(
+        total_oar_positions=snapshot.oar_position_count,
+        fast_moving_count=snapshot.band_counts[AgingBand.FAST.value],
+        slow_moving_count=snapshot.band_counts[AgingBand.SLOW.value],
+        non_moving_count=snapshot.band_counts[AgingBand.NON_MOVING.value],
+        gr_not_issued_30_day_count=exception_counts[ExceptionType.GR_NOT_ISSUED_30_DAY],
+        plan_breach_count=exception_counts[ExceptionType.PLAN_BREACH],
+        no_plan_count=exception_counts[ExceptionType.NO_PLAN],
+        reclassification_candidate_count=sum(1 for c in snapshot.reclassification if c.candidate_flag),
         valuation_is_mocked=True,
     )

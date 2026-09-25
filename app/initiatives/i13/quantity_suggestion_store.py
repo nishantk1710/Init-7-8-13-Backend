@@ -143,8 +143,13 @@ def issue_quantity_suggestion(
     reservation_item: str | None = None,
     requester_id: str | None = None,
     settings: Settings | None = None,
+    watch_row=None,
 ) -> QuantitySuggestionRecord:
     """Compute one suggestion from the W6.3 mart and persist it.
+
+    ``watch_row``, when given, is the WATCH row to compute from instead of the
+    mart's -- the I13 snapshot's ``WatchMetric`` for this material-plant, which
+    carries the same fields and, unlike the mart, is complete and current.
 
     The caller owns the transaction boundary (this codebase's convention):
     this function flushes so the row is readable back, and does not commit.
@@ -152,7 +157,7 @@ def issue_quantity_suggestion(
     Raises ``WatchMetricNotFoundError`` when W6.3 has no row for this
     material-plant.
     """
-    row = session.get(WatchMetricMart, (material, plant))
+    row = watch_row if watch_row is not None else session.get(WatchMetricMart, (material, plant))
     if row is None:
         raise WatchMetricNotFoundError(f"no W6.3 WATCH mart row for {material}/{plant}")
 
@@ -368,3 +373,68 @@ def build_quantity_decision_records(
             )
         )
     return records
+
+
+def build_assistant_quantity_decision_records(
+    session: Session,
+    *,
+    material: str | None = None,
+    plant: str | None = None,
+) -> list[QuantityDecisionRecord]:
+    """The reservation assistant's FR-3 decisions, as ``QuantityDecisionRecord``s.
+
+    Gap G5: the assistant records what it suggested and what the requester kept
+    in its own ``quantity_suggestion`` table, and its override reason as a
+    ``justification`` of kind ``QUANTITY_OVERRIDE`` -- neither of which W6.6's
+    QUANTITY_OVERRIDE rule ever read, so an override kept in the conversation
+    never raised an exception. This reads them in the same shape as
+    :func:`build_quantity_decision_records`, so detection sees both sources.
+
+    Only rows with a suggestion are included: with no suggested figure there is
+    nothing to have overridden (the same exclusion as the W7.4 store's
+    ``NO_SUGGESTION``). ``requested_quantity`` is what was **kept** -- the
+    accepted quantity -- so ``requested != suggested`` means an override.
+    Business key: the session ID (the reservation does not exist yet, FR-8).
+    """
+    from app.assistant.models import AssistantSession, Justification
+    from app.assistant.models import QuantitySuggestionRecord as AssistantSuggestionRecord
+
+    stmt = (
+        select(AssistantSuggestionRecord, AssistantSession.requester)
+        .join(AssistantSession, AssistantSession.id == AssistantSuggestionRecord.session_id)
+        .where(AssistantSuggestionRecord.suggested_quantity.is_not(None))
+    )
+    if material:
+        stmt = stmt.where(AssistantSuggestionRecord.material == material)
+    if plant:
+        stmt = stmt.where(AssistantSuggestionRecord.plant == plant)
+    stmt = stmt.order_by(AssistantSuggestionRecord.suggested_at, AssistantSuggestionRecord.id)
+    rows = session.execute(stmt).all()
+    if not rows:
+        return []
+
+    session_ids = [row.session_id for row, _ in rows]
+    reasons: dict[str, str] = {}
+    justification_stmt = (
+        select(Justification)
+        .where(Justification.session_id.in_(session_ids), Justification.kind == "QUANTITY_OVERRIDE")
+        .order_by(Justification.recorded_at)
+    )
+    for justification in session.execute(justification_stmt).scalars().all():
+        reasons[justification.session_id] = f"{justification.reason_category}: {justification.free_text}"
+
+    return [
+        QuantityDecisionRecord(
+            material=row.material,
+            plant=row.plant,
+            reservation_number=None,
+            reservation_item=None,
+            session_id=row.session_id,
+            requester_id=requester,
+            requested_quantity=row.accepted_quantity,
+            suggested_quantity=row.suggested_quantity,
+            suggestion_reason="ASSISTANT_FR3",
+            override_justification=reasons.get(row.session_id),
+        )
+        for row, requester in rows
+    ]

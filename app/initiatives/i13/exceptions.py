@@ -13,9 +13,11 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from sqlalchemy.orm import Session
+
 from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.models import ExceptionQueueItem, ExceptionStatus, ExceptionType, ReservationLedgerEntry
-from app.initiatives.i13.plans import ConsumptionPlan, load_consumption_plans
+from app.initiatives.i13.plans import ConsumptionPlan, PlanMatcher, load_consumption_plans
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
 from app.initiatives.i13.watch import compute_watch_metrics
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
@@ -24,35 +26,27 @@ from app.integrations.sap.postgres_reservation import PostgresReservationReposit
 from app.shared.material_scope import MaterialScope
 
 
-def _index_ledger_by_reservation(
-    entries: list[ReservationLedgerEntry],
-) -> dict[tuple[str, str], list[ReservationLedgerEntry]]:
-    index: dict[tuple[str, str], list[ReservationLedgerEntry]] = defaultdict(list)
-    for entry in entries:
-        index[(entry.reservation_number, entry.reservation_item)].append(entry)
-    return index
-
-
 def _has_issuance_evidence(entries: list[ReservationLedgerEntry]) -> bool:
     return any(entry.issued_quantity > 0 for entry in entries)
 
 
 def _plan_breach_exceptions(
     plans: list[ConsumptionPlan],
-    ledger_by_reservation: dict[tuple[str, str], list[ReservationLedgerEntry]],
+    matcher: PlanMatcher,
     *,
     grace_days: int,
     as_of: date,
 ) -> list[ExceptionQueueItem]:
     exceptions: list[ExceptionQueueItem] = []
     for plan in plans:
-        if plan.status != "OPEN" or plan.planned_use_date is None:
+        breach_from = plan.breach_reference_date
+        if plan.status != "OPEN" or breach_from is None:
             continue
-        due_date = plan.planned_use_date + timedelta(days=grace_days)
+        due_date = breach_from + timedelta(days=grace_days)
         if as_of <= due_date:
             continue
 
-        matching_entries = ledger_by_reservation.get((plan.reservation_number, plan.reservation_item), [])
+        matching_entries = matcher.entries_for(plan)
         if _has_issuance_evidence(matching_entries):
             continue
 
@@ -64,7 +58,7 @@ def _plan_breach_exceptions(
                 status=ExceptionStatus.OPEN,
                 material=plan.material,
                 plant=plan.plant,
-                reservation_number=plan.reservation_number,
+                reservation_number=plan.reservation_number or None,
                 pr_number=matching_entries[0].pr_number if matching_entries else None,
                 po_number=matching_entries[0].po_number if matching_entries else None,
                 owner_id=plan.requester,
@@ -73,10 +67,14 @@ def _plan_breach_exceptions(
                 due_at=datetime.combine(due_date, datetime.min.time(), tzinfo=timezone.utc),
                 days_overdue=days_overdue,
                 reason=(
-                    f"Consumption plan {plan.plan_id} planned use {plan.planned_use_date.isoformat()} "
+                    f"Consumption plan {plan.plan_id} planned use {breach_from.isoformat()} "
                     f"plus {grace_days}-day grace has expired with no goods issue evidence"
                 ),
-                evidence=f"Rsnum {plan.reservation_number}/{plan.reservation_item}, purpose: {plan.purpose}",
+                evidence=(
+                    f"Rsnum {plan.reservation_number}/{plan.reservation_item}, purpose: {plan.purpose}"
+                    if plan.reservation_number
+                    else f"Captured plan (session {plan.session_id}), purpose: {plan.purpose}"
+                ),
             )
         )
     return exceptions
@@ -84,13 +82,13 @@ def _plan_breach_exceptions(
 
 def _no_plan_exceptions(
     entries: list[ReservationLedgerEntry],
-    planned_reservations: set[tuple[str, str]],
+    matcher: PlanMatcher,
 ) -> list[ExceptionQueueItem]:
     exceptions: list[ExceptionQueueItem] = []
     for entry in entries:
         if entry.material_scope is not MaterialScope.OAR:
             continue
-        if (entry.reservation_number, entry.reservation_item) in planned_reservations:
+        if matcher.plan_for(entry) is not None:
             continue
 
         exceptions.append(
@@ -127,7 +125,6 @@ def _gr_not_issued_exceptions(
     plant: str | None = None,
     as_of: date,
 ) -> list[ExceptionQueueItem]:
-    exceptions: list[ExceptionQueueItem] = []
     metrics = compute_watch_metrics(
         movement_repository,
         procurement_repository,
@@ -139,6 +136,11 @@ def _gr_not_issued_exceptions(
         plant=plant,
         as_of=as_of,
     )
+    return _grni_items(metrics, config)
+
+
+def _grni_items(metrics, config: I13Config) -> list[ExceptionQueueItem]:
+    exceptions: list[ExceptionQueueItem] = []
     for metric in metrics:
         if not metric.gr_not_issued_flag:
             continue
@@ -182,8 +184,13 @@ def build_exception_queue(
     material: str | None = None,
     plant: str | None = None,
     as_of: date | None = None,
+    db: Session | None = None,
 ) -> list[ExceptionQueueItem]:
-    """``material``/``plant`` push down into every underlying build (real SQL
+    """``db``, when given, adds plans captured through the assistant to the
+    CSV reference plans (gap G2) -- the same optional-session convention as
+    ``compute_watch_metrics``.
+
+    ``material``/``plant`` push down into every underlying build (real SQL
     filters, not a client-side trim afterwards) -- without them, this scans
     the entire tenant's reservations/movements regardless of what an API
     caller asked for. Measured against real data: a plant-scoped call still
@@ -203,21 +210,18 @@ def build_exception_queue(
         plant=plant,
         include_out_of_scope=True,
     )
-    ledger_by_reservation = _index_ledger_by_reservation(ledger_entries)
-    plans = load_consumption_plans(data_dir)
+    plans = load_consumption_plans(data_dir, db)
     if material:
         plans = [plan for plan in plans if plan.material == material]
     if plant:
         plans = [plan for plan in plans if plan.plant == plant]
-    planned_reservations = {(plan.reservation_number, plan.reservation_item) for plan in plans}
 
+    matcher = PlanMatcher(plans, ledger_entries)
     exceptions: list[ExceptionQueueItem] = []
     exceptions.extend(
-        _plan_breach_exceptions(
-            plans, ledger_by_reservation, grace_days=config.exceptions.plan_breach_grace_days, as_of=as_of
-        )
+        _plan_breach_exceptions(plans, matcher, grace_days=config.exceptions.plan_breach_grace_days, as_of=as_of)
     )
-    exceptions.extend(_no_plan_exceptions(ledger_entries, planned_reservations))
+    exceptions.extend(_no_plan_exceptions(ledger_entries, matcher))
     exceptions.extend(
         _gr_not_issued_exceptions(
             movement_repository,
@@ -231,4 +235,31 @@ def build_exception_queue(
             as_of=as_of,
         )
     )
+    return exceptions
+
+
+def exception_queue_from(
+    ledger_entries: list[ReservationLedgerEntry],
+    plans: list[ConsumptionPlan],
+    watch_metrics,
+    config: I13Config,
+    *,
+    as_of: date,
+) -> list[ExceptionQueueItem]:
+    """The same queue as :func:`build_exception_queue`, over components the
+    caller already holds -- the I13 snapshot's reservation ledger and WATCH
+    rows plus the current plans -- instead of rebuilding them.
+
+    Identical rules, identical order (plan breaches, then no-plan, then GRNI).
+    GRNI does not depend on plans, so the snapshot's WATCH rows (computed with
+    captured plans) flag exactly what the plan-less recompute in
+    :func:`_gr_not_issued_exceptions` would.
+    """
+    matcher = PlanMatcher(plans, ledger_entries)
+    exceptions: list[ExceptionQueueItem] = []
+    exceptions.extend(
+        _plan_breach_exceptions(plans, matcher, grace_days=config.exceptions.plan_breach_grace_days, as_of=as_of)
+    )
+    exceptions.extend(_no_plan_exceptions(ledger_entries, matcher))
+    exceptions.extend(_grni_items(watch_metrics, config))
     return exceptions

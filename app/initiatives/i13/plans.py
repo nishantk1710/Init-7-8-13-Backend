@@ -79,9 +79,62 @@ class ConsumptionPlan:
     """Defaulted to the CSV so existing callers that construct one in a test
     keep working unchanged, and so a plan is never *silently* presented as real."""
 
+    window_end: date | None = None
+    """The end of a captured plan's window (FR-2(b)). ``None`` for the CSV,
+    which carries a single use date only."""
+
+    captured_on: date | None = None
+    """When a captured plan was recorded. ``None`` for the CSV."""
+
     @property
     def is_fabricated(self) -> bool:
         return self.source is PlanSource.REFERENCE_CSV
+
+    @property
+    def is_unlinked_capture(self) -> bool:
+        """A captured plan not yet linked to a SAP reservation.
+
+        The normal state of every captured plan until FR-8 (blocker B2): the
+        assistant runs while the reservation is being created, so there is no
+        reservation number to record.
+        """
+        return self.source is PlanSource.CAPTURED and not self.reservation_number
+
+    @property
+    def breach_reference_date(self) -> date | None:
+        """The date a plan breach is measured from: the window END.
+
+        FR-7 breaches on "window end plus grace". The CSV has one date, which
+        is both; a captured plan has a window, and measuring from its start
+        (as the narrow read used to) raised breaches before the window had
+        even closed (gap G4).
+        """
+        return self.window_end or self.planned_use_date
+
+    def covers(self, entry) -> bool:
+        """Whether this unlinked captured plan stands for ``entry``'s reservation.
+
+        Until a captured plan is linked by reservation number (FR-8), it is
+        matched the only way the data allows: same material and plant, and a
+        reservation requirement date inside the plan's window. With only a
+        window start, anything required from that day on; with no window at
+        all, anything required on or after the day the plan was captured. A
+        reservation with no requirement date is never matched -- there is
+        nothing to place it in the window with.
+        """
+        if not self.is_unlinked_capture or self.status != "OPEN":
+            return False
+        if (entry.material, entry.plant) != (self.material, self.plant):
+            return False
+        required = getattr(entry, "requirement_date", None)
+        if required is None:
+            return False
+        start = self.planned_use_date or self.captured_on
+        if start is not None and required < start:
+            return False
+        if self.window_end is not None and required > self.window_end:
+            return False
+        return start is not None or self.window_end is not None
 
 
 def load_reference_plans(data_dir: Path) -> list[ConsumptionPlan]:
@@ -147,16 +200,65 @@ def load_captured_plans(db: Session) -> list[ConsumptionPlan]:
             requester=row.captured_by,
             purpose=row.purpose,
             planned_quantity=row.planned_quantity,
-            # The NARROW read: the window's start stands in for the single
-            # planned use date today's detection understands. See the module
-            # docstring -- widening this changes breach behaviour and belongs in
-            # its own change with its own tests.
+            # The window's start is still the plan's "use date" for anything
+            # that reads one date. Breach timing reads `breach_reference_date`
+            # (the window end), and reservation matching reads the whole
+            # window -- see ConsumptionPlan.covers and PlanMatcher below.
             planned_use_date=row.window_start,
             status=row.status,
             source=PlanSource.CAPTURED,
+            window_end=row.window_end,
+            captured_on=row.captured_at.date() if row.captured_at else None,
         )
         for row in rows
     ]
+
+
+class PlanMatcher:
+    """Which plan stands for which reservation-ledger entry, and back.
+
+    Reference plans (and any captured plan once FR-8 links it) match on
+    reservation number and item, exactly as before. A captured plan with no
+    reservation number used to be keyed on ``("", "")``: every one of them
+    collided on that key and none could ever match a real reservation, so it
+    could neither clear a NO_PLAN exception nor be satisfied by an issue (gaps
+    G3/G4). Those now match through :meth:`ConsumptionPlan.covers`.
+
+    A direct reservation match always wins over a window match.
+    """
+
+    def __init__(self, plans: list[ConsumptionPlan], ledger_entries) -> None:
+        self._direct: dict[tuple[str, str], ConsumptionPlan] = {
+            (plan.reservation_number, plan.reservation_item): plan
+            for plan in plans
+            if not plan.is_unlinked_capture
+        }
+        self._unlinked_by_key: dict[tuple[str, str], list[ConsumptionPlan]] = {}
+        for plan in plans:
+            if plan.is_unlinked_capture:
+                self._unlinked_by_key.setdefault((plan.material, plan.plant), []).append(plan)
+
+        self._entries_by_reservation: dict[tuple[str, str], list] = {}
+        self._entries_by_key: dict[tuple[str, str], list] = {}
+        for entry in ledger_entries:
+            self._entries_by_reservation.setdefault((entry.reservation_number, entry.reservation_item), []).append(entry)
+            if (entry.material, entry.plant) in self._unlinked_by_key:
+                self._entries_by_key.setdefault((entry.material, entry.plant), []).append(entry)
+
+    def plan_for(self, entry) -> ConsumptionPlan | None:
+        direct = self._direct.get((entry.reservation_number, entry.reservation_item))
+        if direct is not None:
+            return direct
+        # The most recently captured covering plan, if several overlap.
+        for plan in reversed(self._unlinked_by_key.get((entry.material, entry.plant), [])):
+            if plan.covers(entry):
+                return plan
+        return None
+
+    def entries_for(self, plan: ConsumptionPlan) -> list:
+        if not plan.is_unlinked_capture:
+            return self._entries_by_reservation.get((plan.reservation_number, plan.reservation_item), [])
+        return [entry for entry in self._entries_by_key.get((plan.material, plan.plant), []) if plan.covers(entry)]
 
 
 def load_consumption_plans(

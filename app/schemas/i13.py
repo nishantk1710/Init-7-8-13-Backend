@@ -330,3 +330,73 @@ class I13SummaryResponse(BaseModel):
     no_plan_count: int
     reclassification_candidate_count: int
     valuation_is_mocked: bool
+
+
+class SnapshotStatusResponse(BaseModel):
+    """What the I13 read routes are serving from (app/initiatives/i13/snapshot.py)."""
+
+    status: str
+    enabled: bool
+    version: int | None = None
+    reference_date: date | None = None
+    built_at: datetime | None = None
+    build_seconds: float | None = None
+    fingerprint: str | None = None
+    building_since: datetime | None = None
+    rebuilding: bool = False
+    last_error: str | None = None
+
+
+class GrniEntryResponse(BaseModel):
+    """One reservation-ledger entry received and not issued for at least the
+    GR-not-issued threshold (FRS FR-6) -- the per-entry form of WATCH's flag."""
+
+    ledger_id: str
+    reservation_number: str
+    reservation_item: str
+    material: str
+    plant: str
+    material_scope: str
+    pr_number: str | None
+    po_number: str | None
+    po_item: str | None
+    received_quantity: Decimal
+    issued_quantity: Decimal
+    outstanding_quantity: Decimal
+    first_gr_date: date | None
+    last_gr_date: date
+    days_since_gr: int
+    threshold_days: int
+    requirement_date: date | None
+    lifecycle_status: str
+
+
+class MonthlyConsumptionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    month: str
+    issued_quantity: Decimal
+    issue_count: int
+    received_quantity: Decimal
+
+
+class UsagePatternResponse(BaseModel):
+    """One material-plant's month-by-month goods issues and receipts.
+
+    ``months`` covers every month in the delivered history (``history_months``
+    on the list response's header), with zero months filled in, so a gap in
+    consumption reads as a gap rather than disappearing.
+    """
+
+    material: str
+    plant: str
+    material_scope: str
+    aging_band: str | None
+    stock_on_hand: Decimal | None
+    average_monthly_consumption: Decimal | None
+    months_of_cover: Decimal | None
+    issued_quantity_total: Decimal
+    issue_count_total: int
+    active_months: int
+    last_issue_month: str | None
+    months: list[MonthlyConsumptionResponse]
