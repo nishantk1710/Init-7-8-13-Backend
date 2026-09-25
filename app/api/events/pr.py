@@ -35,14 +35,21 @@ puts the decision back where the tolerance lives.
 """
 
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.core.storage import get_storage
 
 logger = get_logger(__name__)
+
+# Everything this endpoint keeps lives under one prefix inside STORAGE_URL,
+# which points at the `landing` container root.
+PR_PREFIX = "pr"
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -106,6 +113,14 @@ class PREvent(BaseModel):
 
 class PREventAccepted(BaseModel):
     status: str
+    stored: str | None = Field(
+        default=None,
+        description=(
+            "Storage key the event was appended to, or null when STORAGE_URL "
+            "is unset or the append failed. Null never means the event was "
+            "refused -- it was accepted and logged either way."
+        ),
+    )
 
 
 def _reject(reason: str, content_type: str, raw: bytes) -> HTTPException:
@@ -185,4 +200,49 @@ async def receive_pr_event(request: Request) -> PREventAccepted:
     if not banfn:
         logger.warning("PR event has no BANFN; the requisition cannot be identified")
 
-    return PREventAccepted(status="received")
+    stored = _append_event(payload, raw, banfn)
+
+    return PREventAccepted(status="received", stored=stored)
+
+
+def _append_event(payload: dict, raw: bytes, banfn: str | None) -> str | None:
+    """Append one event to the day's JSONL file. Never raises.
+
+    JSONL rather than one file per event, or a JSON array: an array cannot be
+    appended to without rewriting it, and rewriting a growing file on every
+    event is how a busy hour turns into a race. A line is atomic to read and
+    cheap to add.
+
+    The envelope keeps ``received_utc`` and the raw body alongside the parsed
+    fields. SAP's schema is theirs to change, and an event we recorded but
+    parsed wrongly is recoverable from the raw text; one we parsed wrongly and
+    discarded is not.
+
+    Failures are swallowed for the reason the whole endpoint exists: a PR event
+    refused because OUR storage is unset or unwritable is an event SAP will not
+    send again.
+    """
+    if not get_settings().storage_url:
+        logger.debug("STORAGE_URL is not set; PR event not persisted")
+        return None
+
+    now = datetime.now(timezone.utc)
+    key = f"{PR_PREFIX}/{now:%Y-%m-%d}/events.jsonl"
+
+    envelope = {
+        "received_utc": now.isoformat(timespec="seconds"),
+        "banfn": banfn,
+        "event": payload,
+        # Decoded leniently: this is the fallback for a payload we misread, so
+        # it must survive bytes the parser choked on.
+        "raw": raw.decode("utf-8", errors="replace"),
+    }
+
+    try:
+        line = json.dumps(envelope, ensure_ascii=False, default=str) + "\n"
+        get_storage().append(key, line.encode("utf-8"))
+        logger.info("PR event appended to %s", key)
+        return key
+    except Exception:
+        logger.exception("PR event not persisted at %s; it is logged above", key)
+        return None

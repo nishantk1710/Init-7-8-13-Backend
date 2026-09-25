@@ -8,8 +8,8 @@ What the repository actually proves, and nothing beyond it:
   document for field ``ZZCRITIC`` (change indicator ``U``, count 1). So a
   Z-append named ZZCRITIC is real and maintained on MARC in the live system,
   alongside ``ZZSTYPE`` (562 changes) and ``ZZPURCLASS`` (1).
-* The OData metadata for both services -- ``ZVZI_KPI02_SHARED_SRV`` and
-  ``ZMM_KPI02_SRV`` -- declares **no property whose name begins with Zz**.
+* The OData metadata for both services -- ``ZMM_KPI02_ADD_SRV`` and
+  ``ZMM_KPI02_TAB_SRV`` -- declares **no property whose name begins with Zz**.
   ``MaterialPlantSet`` exposes exactly twelve: Matnr, Werks, Lvorm, Dismm,
   Dispo, Plifz, Webaz, Minbe, Eisbe, Bstmi, Bstma, Mabst.
 * No pulled ``MaterialPlantSet`` row carries a ZZ field, and the change-document

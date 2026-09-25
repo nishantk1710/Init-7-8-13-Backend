@@ -251,7 +251,7 @@ class TestChunkLanding:
     def test_the_table_is_identified_from_the_header(self, landing) -> None:
         body = post_chunk(f"{EKPO_HEADER}\n800,4500000001,00010,\n").json()
 
-        assert body["stored"].startswith("EKPO/")
+        assert body["stored"].startswith("csv/EKPO/")
         assert body["stored"].endswith("/EKPO.csv")
 
     def test_two_tables_land_in_separate_files(self, landing) -> None:

@@ -141,8 +141,8 @@ def test_every_discovered_set_has_a_spec() -> None:
     """Derived, not written down -- a set added to discovery appears here."""
     assert len(specs()) == 21
     assert {s.service for s in specs()} == {
-        "ZVZI_KPI02_SHARED_SRV",
-        "ZMM_KPI02_SRV",
+        "ZMM_KPI02_ADD_SRV",
+        "ZMM_KPI02_TAB_SRV",
     }
 
 
@@ -189,7 +189,7 @@ def test_fetch_path_is_dated_so_a_rerun_keeps_the_evidence(spec, storage) -> Non
     )
 
     assert result.prefix == (
-        "odata/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/2026-09-21"
+        "odata/ZMM_KPI02_ADD_SRV/MaterialPlantSet/2026-09-21"
     )
 
 
@@ -200,7 +200,7 @@ def test_fetch_writes_a_manifest_carrying_the_integrity_verdict(spec, storage) -
     )
 
     manifest = fetch_mod.read_manifest(
-        storage, "odata/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/2026-09-21"
+        storage, "odata/ZMM_KPI02_ADD_SRV/MaterialPlantSet/2026-09-21"
     )
     assert manifest["rows"] == 2
     assert manifest["duplicate_keys"] == 0
@@ -359,7 +359,7 @@ def test_load_says_what_to_do_when_nothing_landed(spec, storage) -> None:
 def test_rows_stream_in_column_order_preserving_nulls(spec, storage) -> None:
     """None means SAP sent no value, which is not the same as a blank."""
     _land(storage, spec, rows=[{"Matnr": "11", "Werks": "1500"}])
-    key = "odata/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/2026-09-21/data.jsonl"
+    key = "odata/ZMM_KPI02_ADD_SRV/MaterialPlantSet/2026-09-21/data.jsonl"
 
     rows = list(load_mod._iter_rows(storage, key, ["Werks", "Matnr", "Eisbe"]))
 

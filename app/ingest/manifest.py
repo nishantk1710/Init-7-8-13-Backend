@@ -149,8 +149,47 @@ DELTAS: dict[str, Delta] = {
     "POScheduleLineSet": Delta(via="PurchaseOrderSet", via_key="Ebeln"),
     # EKBE: Budat is REJECTED here, so it rides on the PO numbers instead.
     "POHistorySet": Delta(via="PurchaseOrderSet", via_key="Ebeln"),
-    # MKPF by posting date, then MSEG by the document numbers.
-    "MaterialDocumentHeaderSet": Delta(field="Budat"),
+    # MKPF deliberately has NO delta on Budat, and it is not an oversight.
+    #
+    # Four probes of the 2026-09-25 sweep, all against ZMM_KPI02_ADD_SRV,
+    # set total 40,651 throughout (operator_support.csv rows 9-11 and
+    # filter_support.csv; the requests themselves are calls.csv lines 223-225
+    # and 400, each answering HTTP 200 with a 5-byte $count body -- "40651"):
+    #
+    #   Budat ge datetime'2026-01-01T00:00:00'              -> 40,651
+    #   Budat ge datetime'2013-01-01...' and lt '2014-01-01' -> 40,651
+    #   Budat eq datetime'2013-09-27T00:00:00'              -> 40,651
+    #       (the control: a real posting date sampled from this set, so it
+    #        should have matched a subset and did not)
+    #   Budat eq datetime'1900-01-01T00:00:00'              -> 40,651
+    #       (the impossible value filter_support probes with; this is the
+    #        row that reads IGNORED there)
+    #
+    # The control row is what settles it. A filter that only failed when it
+    # matched nothing would already be unusable for a delta -- `Budat ge
+    # <watermark>` matches nothing on any day when nothing was posted, and
+    # the pipeline would then load all 40,651 rows as if they were new. Budat
+    # is worse than that: it is dropped even when it WOULD have matched, so no
+    # watermark value makes it safe. MKPF pulls in full, like ChangeDocItemSet.
+    #
+    # Do not resurrect this from the older backend/discovery/ snapshot, where
+    # `ge 2026-01-01` returns 2 and `eq 2013-09-27` returns 919. That snapshot
+    # is a different service (ZVZI_KPI02_SHARED_SRV) and is not what
+    # contract.discovery_dir() reads. On the service we actually call, Budat
+    # is IGNORED.
+    #
+    # It could never have run anyway: _read_direct sends a set's own window
+    # with allow_unsupported_filter=False, and check_filter refuses an IGNORED
+    # property, so this entry raised UnsupportedFilterError rather than
+    # pulling anything.
+    #
+    # MSEG keeps its declaration. The shape is still the only right one -- its
+    # own filters are HTTP 500, so its parent's keys are the only route to a
+    # date-bounded read -- and this is what to revive if MKPF ever gains a
+    # filterable date. Until then there is no parent window, and fetch_set
+    # pulls MSEG in full and says so, rather than reading MKPF whole and
+    # asking for its children 50 keys at a time: 814 requests for the set one
+    # full pull already returns.
     "GoodsMovementItemSet": Delta(via="MaterialDocumentHeaderSet", via_key="Mblnr"),
     # CDHDR by change date. Only works alongside the Objectclas predicate this
     # set demands -- `Udate ge ...` on its own is HTTP 400, while

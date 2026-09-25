@@ -71,7 +71,7 @@ def classify(status: int, body: str, context: str) -> SapError:
     """Map an HTTP status to the right error type.
 
     ``context`` is what the caller was doing ("MaterialPlantSet", "$metadata for
-    ZMM_KPI02_SRV"), so the message says what failed rather than just how.
+    ZMM_KPI02_TAB_SRV"), so the message says what failed rather than just how.
     """
     if status in (401, 403):
         return AuthError(f"{context}: authentication rejected", status=status, body=body)

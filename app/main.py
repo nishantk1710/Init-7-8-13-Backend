@@ -4,6 +4,9 @@ Run locally:
     uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 """
 
+import contextlib
+from collections.abc import AsyncIterator
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -16,12 +19,41 @@ from app.core.logging import configure_logging, get_logger
 logger = get_logger(__name__)
 
 
+@contextlib.asynccontextmanager
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    """Start the delta timer with the app, and stop it with the app.
+
+    Imported here rather than at module scope so that importing app.main --
+    which the test suite and every CLI entry point do -- never reaches the
+    database. The scheduler decides for itself whether it is switched on.
+    """
+    from app.ingest import scheduler
+
+    task = None
+    try:
+        task = scheduler.start(application)
+    except Exception:
+        # A scheduler that cannot start must not take the API down with it.
+        logger.exception("the delta scheduler failed to start; the API is unaffected")
+
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(Exception):
+                await task
+            logger.info("delta scheduler stopped")
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build and configure the FastAPI application."""
     settings = settings or get_settings()
     configure_logging(settings)
 
-    application = FastAPI(title=settings.app_name, version=settings.app_version)
+    application = FastAPI(
+        title=settings.app_name, version=settings.app_version, lifespan=lifespan
+    )
 
     application.add_middleware(
         CORSMiddleware,
