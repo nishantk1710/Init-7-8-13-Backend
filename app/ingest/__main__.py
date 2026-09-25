@@ -77,9 +77,32 @@ def _parser() -> argparse.ArgumentParser:
         metavar="N",
         default="",
         help=(
-            "cap the extract, e.g. 100. Empty means no cap. Use a small value "
-            "to prove a table delivers before asking for all of it."
+            "cap the extract, e.g. 100. Empty (the default) means NO CAP -- "
+            "omit it entirely for a full pull. Use a small value to prove a "
+            "table delivers before asking for all of it."
         ),
+    )
+    parser.add_argument(
+        "--from-date",
+        metavar="YYYYMMDD",
+        help=(
+            "override the window start, e.g. 20130101. The default is three "
+            "years back for transaction tables, which is right for a live "
+            "client and near-empty in this one -- 99.3%% of its purchase orders "
+            "predate 2026, and the ZREP orders are from 2018. Use this to ask "
+            "for the period the data actually occupies."
+        ),
+    )
+    parser.add_argument(
+        "--to-date",
+        metavar="YYYYMMDD",
+        help="override the window end, e.g. 20261231. Must be given with --from-date.",
+    )
+    parser.add_argument(
+        "--years",
+        type=int,
+        metavar="N",
+        help="widen the transaction window to N years back instead of three",
     )
     parser.add_argument(
         "--no-wait",
@@ -244,11 +267,40 @@ def _csv(args) -> int:
     failures = 0
 
     if args.csv_pull:
-        print(f"CSV pull: {len(names)} table(s), one at a time\n")
+        # Both or neither: a start with no end silently falls back to the
+        # computed window, which is the behaviour the flag exists to avoid.
+        if bool(args.from_date) != bool(args.to_date):
+            print("--from-date and --to-date must be given together.")
+            return 2
+
+        window = {
+            "from_date": args.from_date,
+            "to_date": args.to_date,
+            "years": args.years,
+        }
+        if args.from_date:
+            span = f"{args.from_date}..{args.to_date} (explicit)"
+        elif args.years:
+            span = f"{args.years} year(s) back"
+        else:
+            span = "default (3 years for transaction tables)"
+
+        print(f"CSV pull: {len(names)} table(s), one at a time")
+        print(f"  window : {span}")
+        print(f"  rows   : {args.max_rows or 'no cap -- full pull'}")
+        print()
+
         results = (
-            pull_all(max_rows=args.max_rows, tables=names)
+            pull_all(max_rows=args.max_rows, tables=names, **window)
             if len(names) > 1
-            else [pull_one(names[0], max_rows=args.max_rows, wait=not args.no_wait)]
+            else [
+                pull_one(
+                    names[0],
+                    max_rows=args.max_rows,
+                    wait=not args.no_wait,
+                    **window,
+                )
+            ]
         )
         for result in results:
             mark = "ok " if result.ok else "FAIL"
