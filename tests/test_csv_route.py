@@ -396,3 +396,30 @@ class TestTableIdentification:
 
         assert not table_of(self.OBSERVED["CDHDR"]).startswith("UNKNOWN")
         assert not table_of(self.OBSERVED["CDPOS"]).startswith("UNKNOWN")
+
+
+class TestRequestIdLength:
+    """$metadata says MaxLength=20. Live SAP disagrees.
+
+    Measured 25-Sep: ids of 16 characters acknowledged and delivered nothing,
+    every time; ids of 9 to 11 delivered in seconds, every time. This was the
+    single cause of every failed CSV pull that day, and it surfaces as a
+    15-minute timeout rather than an error, so nothing points at it.
+    """
+
+    def test_ids_stay_under_the_measured_working_limit(self) -> None:
+        from app.ingest.csv_pull import REQUEST_ID_MAX, new_request_id
+
+        for table in ("MARA", "EKPO", "CDPOS", "MaterialDocumentHeaderSet"):
+            assert len(new_request_id(table)) <= REQUEST_ID_MAX
+
+    def test_the_limit_is_below_every_observed_failure(self) -> None:
+        from app.ingest.csv_pull import REQUEST_ID_MAX
+
+        assert REQUEST_ID_MAX < 16, "16-character ids delivered nothing"
+
+    def test_ids_are_still_unique(self) -> None:
+        """Short is no use if two fires collide -- SAP dedupes on this."""
+        from app.ingest.csv_pull import new_request_id
+
+        assert len({new_request_id("EKPO") for _ in range(5000)}) == 5000

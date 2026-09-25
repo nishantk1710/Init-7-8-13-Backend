@@ -96,9 +96,34 @@ class PullResult:
         return self.status == STATUS_COMPLETE
 
 
+# RequestId length. $metadata declares MaxLength=20 and that is NOT the working
+# limit: measured 25-Sep, every id of 16 characters acknowledged and delivered
+# nothing, while every id of 9 to 11 characters delivered in seconds.
+#
+#   REQ163623         9   delivered
+#   P17394600..20     9   delivered, all 21 tables
+#   FMARA191610..    11   delivered, all 17 tables that answered
+#   EKPO518A05164052 16   ack, no data
+#   MARA00A78AE3BE9D 16   ack, no data
+#   EKPOC4C06FFCD82D 16   ack, no data
+#
+# The declared maximum is therefore wrong, or something downstream truncates
+# and then fails to match its own key. Twelve leaves headroom under the
+# shortest failure seen without crowding the collision space.
+REQUEST_ID_MAX = 12
+
+
 def new_request_id(sap_table: str) -> str:
-    """Unique per fire. SAP dedupes on this and a repeat delivers nothing."""
-    return f"{sap_table[:8]}{uuid.uuid4().hex[:12].upper()}"
+    """Unique per fire, and short enough that SAP actually honours it.
+
+    Unique because SAP dedupes: refiring a used id returns the same cheerful
+    acknowledgement and sends nothing. Short because of REQUEST_ID_MAX above --
+    this was the cause of every failed pull on 25-Sep, and it reports as a
+    15-minute timeout rather than as an error.
+    """
+    prefix = sap_table[:4].upper()
+    suffix = uuid.uuid4().hex[: REQUEST_ID_MAX - len(prefix)].upper()
+    return f"{prefix}{suffix}"
 
 
 def extract_path(
