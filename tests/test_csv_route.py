@@ -11,9 +11,10 @@ Nothing here touches CPI, storage or a database.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import select
 
 from app.ingest import csv_pull
 from app.ingest.csv_tables import (
@@ -407,29 +408,357 @@ class TestRequestIdLength:
     15-minute timeout rather than an error, so nothing points at it.
     """
 
-    def test_ids_stay_under_the_measured_working_limit(self) -> None:
-        from app.ingest.csv_pull import REQUEST_ID_MAX, new_request_id
-
-        for table in ("MARA", "EKPO", "CDPOS", "MaterialDocumentHeaderSet"):
-            assert len(new_request_id(table)) <= REQUEST_ID_MAX
-
-    def test_the_limit_is_below_every_observed_failure(self) -> None:
-        from app.ingest.csv_pull import REQUEST_ID_MAX
-
-        assert REQUEST_ID_MAX < 16, "16-character ids delivered nothing"
-
-    def test_ids_are_still_unique(self) -> None:
-        """Short is no use if two fires collide -- SAP dedupes on this, so a
-        repeat acknowledges and delivers nothing, exactly as an over-long id
-        does. 1,000 is far above real use (21 tables a run)."""
+    def test_ids_never_begin_with_the_table_name(self) -> None:
+        """Every id SAP ever went silent on began with its table name."""
         from app.ingest.csv_pull import new_request_id
 
-        assert len({new_request_id("EKPO") for _ in range(1000)}) == 1000
+        for table in ("MARA", "EKPO", "CDPOS"):
+            assert not new_request_id(table).startswith(table)
 
-    def test_the_keyspace_is_wide_enough_that_collisions_are_not_the_risk(self) -> None:
-        """Six hex characters is 16.7M and was measurably colliding. Base 36
-        over the same width is 2.18 billion."""
-        from app.ingest.csv_pull import REQUEST_ID_MAX, _ALPHABET
+    def test_ids_are_letters_then_digits_only(self) -> None:
+        """Every id SAP ever delivered on was letters followed only by digits;
+        every silent one mixed letters back in after the digits began."""
+        import re
 
-        width = REQUEST_ID_MAX - 4
-        assert len(_ALPHABET) ** width > 1_000_000_000
+        from app.ingest.csv_pull import new_request_id
+
+        for table in ("MARA", "EKPO", "CDPOS"):
+            assert re.fullmatch(r"[A-Z]+[0-9]+", new_request_id(table))
+
+    def test_five_letter_tables_still_fit(self) -> None:
+        """FEINA90357571 (13) delivered; FEINA790357145 (14) never did. CDHDR
+        and CDPOS would reach 14 with their full name, so they lose a letter."""
+        from app.ingest.csv_pull import new_request_id
+
+        assert len(new_request_id("CDPOS")) == 13
+        assert len(new_request_id("CDHDR")) == 13
+        assert new_request_id("CDPOS", now=1)[:5] != new_request_id("CDHDR", now=1)[:5]
+
+    def test_ids_stay_within_the_declared_and_verified_length(self) -> None:
+        from app.ingest.csv_pull import REQUEST_ID_MAX, new_request_id
+
+        for table in ("MARA", "EKPO", "CDPOS"):
+            assert len(new_request_id(table)) <= REQUEST_ID_MAX
+        assert REQUEST_ID_MAX == 13, "13 delivered, 14 went silent -- measured 25-Sep"
+
+    def test_a_daily_sweep_at_the_same_second_gets_a_fresh_id(self) -> None:
+        """SAP dedupes on the id, so a scheduler that fires at 02:00:00 every
+        night must not produce yesterday's id again. Six wall-clock digits
+        would have."""
+        from app.ingest.csv_pull import new_request_id
+
+        today = 1_790_000_000
+        assert new_request_id("MARA", now=today) != new_request_id(
+            "MARA", now=today + 86_400
+        )
+
+    def test_one_sweep_gives_every_table_its_own_id(self) -> None:
+        """All 21 fire within seconds; the table name is what keeps them
+        apart, not the clock."""
+        from app.ingest.csv_pull import new_request_id
+        from app.ingest.csv_tables import CSV_TABLES
+
+        ids = {new_request_id(t.sap_table, now=1_790_000_000) for t in CSV_TABLES}
+        assert len(ids) == len(CSV_TABLES)
+
+
+# --- Firing the sweep as a batch --------------------------------------------
+
+
+@pytest.fixture
+def db(monkeypatch):
+    """An in-memory csv_extract_request table, wired into both modules.
+
+    csv_pull and csv_receipt each imported get_sessionmaker by name, so both
+    bindings have to be replaced or half the test runs against the real one.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.ingest import csv_receipt
+
+    engine = create_engine("sqlite://", future=True)
+    CsvExtractRequest.__table__.create(engine)
+    maker = sessionmaker(bind=engine, future=True)
+
+    monkeypatch.setattr(csv_pull, "get_sessionmaker", lambda: maker)
+    monkeypatch.setattr(csv_receipt, "get_sessionmaker", lambda: maker)
+    # No $count call: these tests are about firing order and attribution,
+    # and a real SapClient would reach for CPI credentials.
+    monkeypatch.setattr(csv_pull, "_default_client", lambda: None)
+    return maker
+
+
+def _open_row(maker, table: str, request_id: str) -> None:
+    spec = csv_table(table)
+    with maker() as session:
+        session.add(
+            CsvExtractRequest(
+                request_id=request_id,
+                sap_table=spec.sap_table,
+                entity_set=spec.entity_set,
+                from_date="20230101",
+                to_date="20260101",
+                fired_at=datetime.now(timezone.utc),
+            )
+        )
+        session.commit()
+
+
+class _Acks:
+    """A transport that acknowledges everything and remembers what it was sent."""
+
+    def __init__(self) -> None:
+        self.paths: list[str] = []
+
+    def get(self, path: str, context: str = "") -> str:
+        self.paths.append(path)
+        return "Success: extraction started in background chunks of 50,000"
+
+
+WINDOW = {"from_date": "20230101", "to_date": "20260101"}
+
+
+class TestBatchFiring:
+    """Fire all 21, then collect.
+
+    Serialised -- fire, wait, fire the next -- this route delivered nothing, a
+    dozen attempts running, while every batch fire delivered: 21 tables twice
+    over plus two smaller runs, 43 deliveries against a dozen silences. The
+    request id, the window, MaxRows, the preceding $count, the transport class
+    and the calling host were each varied alone and each cleared.
+    """
+
+    def test_another_table_in_flight_does_not_block(self, db) -> None:
+        """The reason serialisation existed is gone: a chunk names its own
+        table in its header, so two tables in flight are separable."""
+        _open_row(db, "MARA", "MARAAAAA")
+
+        result = csv_pull.fire("EKPO", transport=_Acks(), client=None, **WINDOW)
+
+        assert result.status == csv_pull.STATUS_OPEN
+
+    def test_the_same_table_twice_is_still_refused(self, db) -> None:
+        """Two extracts of one table push chunks with identical headers and
+        nothing else to tell them apart. That case stays impossible."""
+        _open_row(db, "EKPO", "EKPOAAAA")
+
+        result = csv_pull.fire("EKPO", transport=_Acks(), client=None, **WINDOW)
+
+        assert result.status == STATUS_FAILED
+        assert "EKPOAAAA" in result.error
+
+    def test_every_table_is_fired_before_any_is_waited_on(
+        self, db, monkeypatch
+    ) -> None:
+        """The whole point. A wait that begins before the last fire is the
+        serialised shape under a different name."""
+        real_fire = csv_pull.fire
+        transport = _Acks()
+        order: list[str] = []
+
+        def spy_fire(name, **kwargs):
+            order.append(f"fire:{name}")
+            return real_fire(name, transport=transport, client=None, **WINDOW)
+
+        monkeypatch.setattr(csv_pull, "fire", spy_fire)
+        monkeypatch.setattr(
+            csv_pull, "wait_for_all", lambda ids, **kw: order.append("wait") or []
+        )
+
+        csv_pull.pull_all(
+            tables=["MARA", "MAKT", "EKPO"], gap=0, sleeper=lambda s: None
+        )
+
+        assert order == ["fire:MARA", "fire:MAKT", "fire:EKPO", "wait"]
+
+    def test_a_refused_table_does_not_stop_the_rest(self, db, monkeypatch) -> None:
+        """A partial refresh beats no refresh, and one table failing used to be
+        reported as if the whole sweep had."""
+        _open_row(db, "MAKT", "MAKTAAAA")
+        monkeypatch.setattr(csv_pull, "wait_for_all", lambda ids, **kw: [])
+
+        results = csv_pull.pull_all(
+            tables=["MARA", "MAKT", "EKPO"],
+            gap=0,
+            sleeper=lambda s: None,
+            wait_for_open=False,
+            transport=_Acks(),
+            client=None,
+            **WINDOW,
+        )
+
+        by_table = {r.sap_table: r.status for r in results}
+        assert by_table["MAKT"] == STATUS_FAILED
+        assert by_table["MARA"] == csv_pull.STATUS_OPEN
+        assert by_table["EKPO"] == csv_pull.STATUS_OPEN
+
+    def test_no_wait_fires_and_returns(self, db, monkeypatch) -> None:
+        """For firing a sweep whose deliveries are watched on the receiving
+        side -- the App Service's own log -- rather than from here."""
+        waited: list[str] = []
+        monkeypatch.setattr(
+            csv_pull, "wait_for_all", lambda ids, **kw: waited.extend(ids) or []
+        )
+
+        results = csv_pull.pull_all(
+            tables=["MARA", "MAKT"],
+            wait=False,
+            gap=0,
+            sleeper=lambda s: None,
+            transport=_Acks(),
+            client=None,
+            **WINDOW,
+        )
+
+        assert waited == []
+        assert [r.status for r in results] == [csv_pull.STATUS_OPEN] * 2
+
+    def test_a_sweep_leaves_one_open_request_per_table(self, db, monkeypatch) -> None:
+        """Twenty-one open rows at once is now the normal state, and each must
+        name a different table for the receiver to resolve chunks against."""
+        monkeypatch.setattr(csv_pull, "wait_for_all", lambda ids, **kw: [])
+
+        csv_pull.pull_all(
+            tables=["MARA", "MAKT", "EKPO"],
+            gap=0,
+            sleeper=lambda s: None,
+            transport=_Acks(),
+            client=None,
+            **WINDOW,
+        )
+
+        with db() as session:
+            open_tables = [
+                r.sap_table
+                for r in session.scalars(select(CsvExtractRequest)).all()
+                if r.status == csv_pull.STATUS_OPEN
+            ]
+        assert sorted(open_tables) == ["EKPO", "MAKT", "MARA"]
+        assert len(open_tables) == len(set(open_tables))
+
+
+class TestChunkAttribution:
+    """A chunk goes to the request for the table its own header names."""
+
+    def test_a_chunk_is_counted_against_its_own_table(self, db) -> None:
+        """Not against the newest open request. During a sweep those differ,
+        and taking the newest credited one table's rows to another -- while the
+        bytes went to the right table's file, so the tally and the file
+        disagreed silently.
+        """
+        from app.ingest import csv_receipt
+
+        _open_row(db, "MARA", "MARAAAAA")
+        _open_row(db, "EKPO", "EKPOAAAA")     # newest
+
+        csv_receipt.record_chunk(
+            "MARA", "csv/MARA/MARAAAAA/MARA.csv", rows=40, raw_bytes=900
+        )
+
+        with db() as session:
+            assert session.get(CsvExtractRequest, "MARAAAAA").received_rows == 40
+            assert session.get(CsvExtractRequest, "EKPOAAAA").received_rows == 0
+
+    def test_a_chunk_for_a_table_with_nothing_open_is_not_counted(self, db) -> None:
+        """The bytes are already landed by the caller; there is simply no row to
+        tally them against, and crediting the nearest one would hide it."""
+        from app.ingest import csv_receipt
+
+        _open_row(db, "EKPO", "EKPOAAAA")
+
+        csv_receipt.record_chunk(
+            "MARA", "csv/MARA/unattributed-x/MARA.csv", rows=40, raw_bytes=900
+        )
+
+        with db() as session:
+            assert session.get(CsvExtractRequest, "EKPOAAAA").received_rows == 0
+
+    def test_the_tally_and_the_file_use_the_same_request(self, db) -> None:
+        """landing_keys picks the file by table; record_chunk has to pick the
+        row the same way, or a file and its counter drift apart."""
+        from app.ingest import csv_receipt
+
+        _open_row(db, "MARA", "MARAAAAA")
+        _open_row(db, "EKPO", "EKPOAAAA")
+
+        data_key, _ = csv_receipt.landing_keys("MARA")
+        csv_receipt.record_chunk("MARA", data_key, rows=7, raw_bytes=100)
+
+        with db() as session:
+            record = session.get(CsvExtractRequest, "MARAAAAA")
+            assert record.received_rows == 7
+            assert record.data_key == data_key == "csv/MARA/MARAAAAA/MARA.csv"
+
+
+class TestBatchWaiting:
+    """wait_for_all judges each request on the same two clocks as wait_for."""
+
+    def test_a_silent_request_times_out_without_holding_up_the_others(
+        self, db
+    ) -> None:
+        from app.models.csv_extract import STATUS_TIMEOUT
+
+        _open_row(db, "MARA", "MARAAAAA")
+        _open_row(db, "EKPO", "EKPOAAAA")
+        long_ago = datetime.now(timezone.utc) - timedelta(hours=2)
+        with db() as session:
+            silent = session.get(CsvExtractRequest, "MARAAAAA")
+            silent.fired_at = long_ago
+            delivered = session.get(CsvExtractRequest, "EKPOAAAA")
+            delivered.fired_at = long_ago
+            delivered.last_chunk_at = long_ago
+            delivered.received_rows = 500
+            delivered.received_chunks = 2
+            session.commit()
+
+        results = csv_pull.wait_for_all(
+            ["MARAAAAA", "EKPOAAAA"], sleeper=lambda s: None
+        )
+
+        by_id = {r.request_id: r.status for r in results}
+        assert by_id["MARAAAAA"] == STATUS_TIMEOUT
+        assert by_id["EKPOAAAA"] == STATUS_COMPLETE
+
+    def test_one_poll_covers_the_whole_batch(self, db) -> None:
+        """Waiting per table would charge a five-minute quiet period each and
+        stretch a 21-table sweep past two hours."""
+        ids = []
+        long_ago = datetime.now(timezone.utc) - timedelta(hours=2)
+        for table in ("MARA", "MAKT", "EKPO"):
+            request_id = f"{table}AAAA"
+            _open_row(db, table, request_id)
+            ids.append(request_id)
+        with db() as session:
+            for request_id in ids:
+                record = session.get(CsvExtractRequest, request_id)
+                record.fired_at = long_ago
+                record.last_chunk_at = long_ago
+                record.received_rows = 10
+            session.commit()
+
+        sleeps: list[int] = []
+        results = csv_pull.wait_for_all(ids, sleeper=sleeps.append)
+
+        assert [r.status for r in results] == [STATUS_COMPLETE] * 3
+        assert sleeps == [], "all three resolved in the first pass"
+
+    def test_results_come_back_in_the_order_fired(self, db) -> None:
+        """The CLI prints them as a table against the order it announced."""
+        ids = []
+        long_ago = datetime.now(timezone.utc) - timedelta(hours=2)
+        for table in ("EKPO", "MARA", "MAKT"):
+            request_id = f"{table}AAAA"
+            _open_row(db, table, request_id)
+            ids.append(request_id)
+        with db() as session:
+            for request_id in ids:
+                record = session.get(CsvExtractRequest, request_id)
+                record.fired_at = long_ago
+                record.last_chunk_at = long_ago
+                record.received_rows = 1
+            session.commit()
+
+        results = csv_pull.wait_for_all(ids, sleeper=lambda s: None)
+
+        assert [r.request_id for r in results] == ids
