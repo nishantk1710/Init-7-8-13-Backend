@@ -23,6 +23,8 @@ so the mapping to a tier happens here, in one place, via ``parse_tier``.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -76,6 +78,19 @@ _BY_MATERIAL = text(
 )
 
 _PROBE = text(f"SELECT 1 FROM ({_UNION}) z LIMIT 1")
+
+# Every row for a batch of materials, in one round trip. The plant is NOT
+# filtered here: one pass over the requested materials answers both the
+# per-plant keys and the any-plant keys, and the grouping happens in Python
+# where the ambiguity rule already lives.
+_MANY = text(
+    f"""
+    SELECT z.mat_code, z.plant, z.criticality
+      FROM ({_UNION}) z
+     WHERE z.mat_code = ANY(:materials)
+       AND NULLIF(z.criticality, '') IS NOT NULL
+    """
+)
 
 
 class Zmm065CriticalitySource(CriticalitySource):
@@ -135,6 +150,94 @@ class Zmm065CriticalitySource(CriticalitySource):
             source=self.name,
             reason=reason,
         )
+
+    def get_many(
+        self, keys: Iterable[tuple[str, str | None]]
+    ) -> dict[tuple[str, str | None], CriticalityResult]:
+        """The whole batch in one query and one session.
+
+        The base implementation is correct but opens a session per key, which is
+        26 seconds over I08's 3,802-row universe. This reads every row for the
+        requested materials once and groups them in Python, so the cost is one
+        round trip regardless of how many keys are asked for.
+
+        **The answers are identical to :meth:`get`, key for key** -- same plant
+        precedence, same ambiguity rule, same reason strings -- and the shared
+        conformance suite asserts exactly that. Only the number of queries
+        differs.
+        """
+        wanted = list(dict.fromkeys(keys))
+        if not wanted:
+            return {}
+
+        materials = sorted(
+            {(key[0] or "").strip() for key in wanted if (key[0] or "").strip()}
+        )
+
+        # by_material_plant answers the keys that name a plant; by_material
+        # collects every distinct tier a material carries, which is what the
+        # plant-less ambiguity rule needs.
+        by_material_plant: dict[tuple[str, str], str] = {}
+        by_material: dict[str, set[str]] = {}
+        if materials:
+            with self._session() as session:
+                rows = session.execute(_MANY, {"materials": materials}).fetchall()
+            for mat_code, plant, criticality in rows:
+                material = (mat_code or "").strip()
+                plant_code = (plant or "").strip() or None
+                if plant_code is not None:
+                    # LIMIT 1 in the single-key query means first row wins; the
+                    # same rule here, via setdefault.
+                    by_material_plant.setdefault((material, plant_code), criticality)
+                by_material.setdefault(material, set()).add(criticality)
+
+        results: dict[tuple[str, str | None], CriticalityResult] = {}
+        for key in wanted:
+            material = (key[0] or "").strip()
+            plant = (key[1] or "").strip() or None
+
+            if not material:
+                results[key] = CriticalityResult(
+                    sap_material_number=key[0],
+                    sap_plant_code=key[1],
+                    tier=None,
+                    source=self.name,
+                    reason="no material number given",
+                )
+                continue
+
+            if plant is not None:
+                raw = by_material_plant.get((material, plant))
+                reason = (
+                    None
+                    if raw is not None
+                    else f"{material} not present at plant {plant} in ZMM065"
+                )
+            else:
+                tiers = by_material.get(material, set())
+                if not tiers:
+                    raw, reason = None, f"{material} not present in ZMM065"
+                elif len(tiers) == 1:
+                    raw, reason = next(iter(tiers)), None
+                else:
+                    raw = None
+                    reason = (
+                        f"{material} carries differing tiers across plants "
+                        f"({', '.join(sorted(tiers))}); pass a plant to resolve it"
+                    )
+
+            tier = parse_tier(raw)
+            if raw is not None and tier is None:
+                reason = f"unrecognised ZMM065 criticality {raw!r}"
+
+            results[key] = CriticalityResult(
+                sap_material_number=material,
+                sap_plant_code=plant,
+                tier=tier,
+                source=self.name,
+                reason=reason,
+            )
+        return results
 
     def check_connection(self) -> None:
         """Prove both tables exist and are readable."""

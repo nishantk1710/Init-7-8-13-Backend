@@ -20,8 +20,23 @@ configured or where the data physically comes from.
 
 Criticality is per **material-plant**: the same material can be CRITICAL at one
 plant and NORMAL at another, so always pass the plant.
+
+**Plant scope** is the other platform-wide fact every initiative shares: the
+delivery covers plants 1300 and 1500 only. See ``app.shared.plant_scope`` --
+never hard-code a plant code against it::
+
+    from app.shared import IN_SCOPE_PLANTS, is_in_scope
 """
 
+from app.shared.numbers import plain
+from app.shared.plant_scope import (
+    IN_SCOPE_PLANTS,
+    PLANT_NAMES,
+    is_in_scope,
+    plant_name,
+    sql_literals,
+    sql_predicate,
+)
 from app.core.criticality import (
     SEVERITY_ORDER,
     CriticalityError,
@@ -34,6 +49,8 @@ from app.core.criticality import (
 )
 
 __all__ = [
+    "IN_SCOPE_PLANTS",
+    "PLANT_NAMES",
     "SEVERITY_ORDER",
     "CriticalityError",
     "CriticalityNotConfiguredError",
@@ -41,5 +58,10 @@ __all__ = [
     "CriticalitySource",
     "CriticalityTier",
     "get_criticality_source",
+    "is_in_scope",
     "parse_tier",
+    "plain",
+    "plant_name",
+    "sql_literals",
+    "sql_predicate",
 ]

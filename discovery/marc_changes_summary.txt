@@ -1,15 +1,15 @@
-MATERIAL/MARC change items, 2026-09-16T07:20:46Z: 7228 rows in 15 page(s)
+MATERIAL/MARC change items, 2026-09-22T07:02:50Z: 7244 rows in 8 page(s)
 
 Fname x Chngind:
   KEY          I  2183
   MMSTA        U  1009
-  PSTAT        U  904
-  LVORM        U  798
+  PSTAT        U  905
+  LVORM        U  799
   ZZSTYPE      U  561
   LOSGR        U  164
   AWSLS        U  158
   QMATV        U  104
-  DISMM        U  79
+  DISMM        U  80
   BESKZ        U  68
   DISPO        U  59
   VERKZ        U  59
@@ -18,8 +18,8 @@ Fname x Chngind:
   FEVOR        U  52
   MTVFP        U  50
   FHORI        U  49
+  MINBE        U  47
   SSQSS        U  43
-  MINBE        U  41
   ABCIN        U  41
   XCHPF        U  41
   LGFSB        U  39
@@ -37,10 +37,11 @@ Fname x Chngind:
   DZEIT        U  23
   RGEKZ        U  18
   CCFIX        U  17
+  AUTRU        U  16
   UEETK        U  16
-  AUTRU        U  15
   INSMK        U  13
   KAUTB        U  12
+  BSTMI        U  12
   EKGRP        U  11
   CUOBJ        U  11
   STDPD        U  11
@@ -48,19 +49,18 @@ Fname x Chngind:
   WEBAZ        U  10
   DISGR        U  9
   ALTSL        U  9
-  BSTMI        U  9
   EISBE        U  7
   LZEIH        U  7
   MAXLZ        U  7
   FABKZ        U  5
   AUSME        U  5
   SERNP        U  5
+  BSTMA        U  5
   EISLO        U  5
   QSSYS        U  4
   KZECH        U  4
   CUOBV        U  4
   KZDKZ        U  4
-  BSTMA        U  2
   LAGPR        U  2
   LOSFX        U  2
   VINT1        U  1
@@ -75,7 +75,7 @@ Fname x Chngind:
   SOBSK        U  1
   ZZCRITIC     U  1
 
-Planning-field changes (DISMM/EISBE/MINBE/MABST): 156
+Planning-field changes (DISMM/EISBE/MINBE/MABST): 163
 DISMM transitions old -> new:
   <blank> -> ND   19
   <blank> -> PD   14
@@ -93,4 +93,5 @@ DISMM transitions old -> new:
   PD   -> ND   1
   V1   -> ND   1
   PD   -> VH   1
+  V1   -> VM   1
 Distinct materials (Objectid) with a planning-field change: 70

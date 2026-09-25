@@ -78,32 +78,85 @@ try:
 except ImportError:
     sys.exit("pip install requests openpyxl")
 
-SERVICES = {
-    "ZVZI_KPI02_SHARED_SRV": ["GoodsMovementItemSet", "InfoRecordOrgSet", "InfoRecordSet", "MaterialDescriptionSet",
-                              "MaterialDocumentHeaderSet", "MaterialPlantSet", "MaterialSet", "POHistorySet",
-                              "POScheduleLineSet", "PurchaseOrderItemSet", "PurchaseOrderSet", "PurchaseRequisitionSet",
-                              "StorageLocationStockSet", "VendorSet"],
-    "ZMM_KPI02_SRV": ["BatchStockSet", "ChangeDocHeaderSet", "ChangeDocItemSet", "MaterialValuationSet",
-                      "MonthlyMovementStatisticSet", "ReservationItemSet", "StockMovementStatisticSet"],
+# SERVICE RENAME, 22-Sep-2026
+#
+# SAP republished both services under new names:
+#
+#     ZVZI_KPI02_SHARED_SRV  ->  ZMM_KPI02_ADD_SRV     14 sets
+#     ZMM_KPI02_SRV          ->  ZMM_KPI02_TAB_SRV      7 sets
+#
+# The ENTITY SETS DID NOT CHANGE. Every set name and every key in the new
+# services was read from live $metadata on 22-Sep and is identical to the old,
+# so nothing below the service name moves: MaterialPlantSet is still MARC,
+# PurchaseOrderSet is still EKKO.
+#
+# Both old and new answered on 22-Sep, so this is additive rather than a
+# cutover. The old names are kept here rather than deleted: if a sweep against
+# the new names fails, the first question is whether SAP moved something back,
+# and that is unanswerable without knowing what the previous names were.
+#
+# A caution for anyone reading SAP's spreadsheet of this change. Its EntitySet
+# column is shifted up by one row from InfoRecord downwards, so it pairs
+# MaterialPlantSet with MKPF and MaterialSet with MARC. Both are wrong, and the
+# key settles it without needing our records at all -- a set keyed Matnr;Werks
+# is MARC, and a set keyed Matnr alone is MARA. The Entity and Tables columns
+# in that sheet are correct; only EntitySet is misaligned.
+RENAMED_SERVICES = {
+    "ZVZI_KPI02_SHARED_SRV": "ZMM_KPI02_ADD_SRV",
+    "ZMM_KPI02_SRV": "ZMM_KPI02_TAB_SRV",
 }
 
-# ZMM_GP_SRV (gate pass) is descoped for I08 per the 15-Aug narrowing. Recorded so it is not re-added.
-DESCOPED_SERVICES = {"ZMM_GP_SRV": "I08 gate pass / RGP lifecycle removed 15-Aug-2026"}
+# The service names as bare strings. Several reports look results up by
+# (service, set); during the first attempt at this rename four of those lookups
+# still carried the old literal. They did not fail -- they returned None, and
+# the report printed a zero. Naming them once means the next rename is one edit
+# rather than a hunt through a thousand lines.
+ADD_SRV = RENAMED_SERVICES["ZVZI_KPI02_SHARED_SRV"]
+TAB_SRV = RENAMED_SERVICES["ZMM_KPI02_SRV"]
+
+SERVICES = {
+    ADD_SRV: ["GoodsMovementItemSet", "InfoRecordOrgSet", "InfoRecordSet", "MaterialDescriptionSet",
+              "MaterialDocumentHeaderSet", "MaterialPlantSet", "MaterialSet", "POHistorySet",
+              "POScheduleLineSet", "PurchaseOrderItemSet", "PurchaseOrderSet", "PurchaseRequisitionSet",
+              "StorageLocationStockSet", "VendorSet"],
+    TAB_SRV: ["BatchStockSet", "ChangeDocHeaderSet", "ChangeDocItemSet", "MaterialValuationSet",
+              "MonthlyMovementStatisticSet", "ReservationItemSet", "StockMovementStatisticSet"],
+}
+
+# Registered, reachable, and deliberately not swept.
+#
+# ZMM_KPI02_GP_SRV went live on 22-Sep with three real sets -- GatePassHeaderSet
+# (ZzgpNo;Zzyear), GatePassItemSet (+Zzposnr) and GatePassReturnSet (+Zcount).
+# Gate pass was descoped for I08 on 15-Aug, and a service existing again does not
+# reverse that: sweeping it would quietly widen the programme by three sets. It
+# is named rather than ignored so the next sweep does not rediscover it as news,
+# and so re-scoping it later is a one-line change with the decision visible.
+#
+# ZMM_GET_CSV_SRV is a different shape altogether. Its single set is keyed
+# RequestId;TabName;FromDate;ToDate;IsDelta;MaxRows -- a request, not a row. That
+# describes a generic table extract with a server-side date range and a delta
+# flag, which is precisely what the entity sets above cannot do. Not swept
+# because this script profiles entity sets and that is not one; it warrants its
+# own investigation rather than a column in these reports.
+DESCOPED_SERVICES = {
+    "ZMM_KPI02_GP_SRV": "I08 gate pass / RGP lifecycle removed 15-Aug-2026; live again 22-Sep but still out of scope",
+    "ZMM_GET_CSV_SRV": "Generic table extract (TableExtractSet); not an entity-set profile, investigate separately",
+}
 
 # SAP table -> (service, set). Dictionary rows are keyed on the table, so this survives the
 # dictionary's proposed set names differing from the names the services actually publish.
 TABLE_TO_SET = {
-    "MARA": ("ZVZI_KPI02_SHARED_SRV", "MaterialSet"), "MAKT": ("ZVZI_KPI02_SHARED_SRV", "MaterialDescriptionSet"),
-    "MARC": ("ZVZI_KPI02_SHARED_SRV", "MaterialPlantSet"), "MARD": ("ZVZI_KPI02_SHARED_SRV", "StorageLocationStockSet"),
-    "MSEG": ("ZVZI_KPI02_SHARED_SRV", "GoodsMovementItemSet"), "MKPF": ("ZVZI_KPI02_SHARED_SRV", "MaterialDocumentHeaderSet"),
-    "EBAN": ("ZVZI_KPI02_SHARED_SRV", "PurchaseRequisitionSet"), "EKKO": ("ZVZI_KPI02_SHARED_SRV", "PurchaseOrderSet"),
-    "EKPO": ("ZVZI_KPI02_SHARED_SRV", "PurchaseOrderItemSet"), "EKET": ("ZVZI_KPI02_SHARED_SRV", "POScheduleLineSet"),
-    "EKBE": ("ZVZI_KPI02_SHARED_SRV", "POHistorySet"), "EINA": ("ZVZI_KPI02_SHARED_SRV", "InfoRecordSet"),
-    "EINE": ("ZVZI_KPI02_SHARED_SRV", "InfoRecordOrgSet"), "LFA1": ("ZVZI_KPI02_SHARED_SRV", "VendorSet"),
-    "RESB": ("ZMM_KPI02_SRV", "ReservationItemSet"), "MBEW": ("ZMM_KPI02_SRV", "MaterialValuationSet"),
-    "CDHDR": ("ZMM_KPI02_SRV", "ChangeDocHeaderSet"), "CDPOS": ("ZMM_KPI02_SRV", "ChangeDocItemSet"),
-    "MCHB": ("ZMM_KPI02_SRV", "BatchStockSet"), "S031": ("ZMM_KPI02_SRV", "MonthlyMovementStatisticSet"),
-    "S032": ("ZMM_KPI02_SRV", "StockMovementStatisticSet"),
+    "MARA": (ADD_SRV, "MaterialSet"), "MAKT": (ADD_SRV, "MaterialDescriptionSet"),
+    "MARC": (ADD_SRV, "MaterialPlantSet"), "MARD": (ADD_SRV, "StorageLocationStockSet"),
+    "MSEG": (ADD_SRV, "GoodsMovementItemSet"), "MKPF": (ADD_SRV, "MaterialDocumentHeaderSet"),
+    "EBAN": (ADD_SRV, "PurchaseRequisitionSet"), "EKKO": (ADD_SRV, "PurchaseOrderSet"),
+    "EKPO": (ADD_SRV, "PurchaseOrderItemSet"), "EKET": (ADD_SRV, "POScheduleLineSet"),
+    "EKBE": (ADD_SRV, "POHistorySet"), "EINA": (ADD_SRV, "InfoRecordSet"),
+    "EINE": (ADD_SRV, "InfoRecordOrgSet"), "LFA1": (ADD_SRV, "VendorSet"),
+    "RESB": (TAB_SRV, "ReservationItemSet"), "MBEW": (TAB_SRV, "MaterialValuationSet"),
+    "CDHDR": (TAB_SRV, "ChangeDocHeaderSet"), "CDPOS": (TAB_SRV, "ChangeDocItemSet"),
+    "MCHB": (TAB_SRV, "BatchStockSet"), "S031": (TAB_SRV, "MonthlyMovementStatisticSet"),
+    "S032": (TAB_SRV, "StockMovementStatisticSet"),
 }
 
 # Tables the dictionary proposes that no registered service exposes. Reported as PROPOSED_NOT_EXPOSED
@@ -126,8 +179,19 @@ DICT_SET_ALIASES = {
     "StockStatsSet": "StockMovementStatisticSet",
 }
 
-SHARED = "sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV"
-ZMM = "sap/opu/odata/sap/ZMM_KPI02_SRV"
+# Kept named SHARED and ZMM rather than renamed to ADD and TAB. Every probe
+# below reads f"{SHARED}/MaterialPlantSet"; renaming the variables would touch
+# a hundred lines to say the same thing, and a large diff over a service rename
+# is how a real change gets lost in the noise of a cosmetic one.
+SHARED = f"sap/opu/odata/sap/{ADD_SRV}"
+ZMM = f"sap/opu/odata/sap/{TAB_SRV}"
+
+# The service lists above are written out for readability. These stop them
+# drifting from the constants when the next rename happens.
+assert set(SERVICES) == {ADD_SRV, TAB_SRV}, "SERVICES keys and the service constants disagree"
+assert {svc for svc, _ in TABLE_TO_SET.values()} == {ADD_SRV, TAB_SRV}, (
+    "TABLE_TO_SET names a service that SERVICES does not"
+)
 JSON = "$format=json"
 
 # ---------------------------------------------------------------------------------------------
@@ -835,7 +899,7 @@ def run_operator_support(s, token, out, totals, mp_rows):
 def run_paging_stability(s, token, out, totals):
     """Pull MaterialPlantSet twice without $orderby and once with; a stable pull has zero duplicate/missing keys."""
     api_path = f"{SHARED}/MaterialPlantSet"
-    total = totals.get(("ZVZI_KPI02_SHARED_SRV", "MaterialPlantSet"))
+    total = totals.get((ADD_SRV, "MaterialPlantSet"))
     def key(r):
         return (r.get("Matnr"), r.get("Werks"))
     a, token, _, _ = fetch_all(s, token, api_path)
@@ -1012,9 +1076,9 @@ def run_history_depth(s, token, out):
 def run_coverage_ratios(s, token, out, totals):
     """MAKT vs MARA vs MARC populations. I13 s7.1: MAKT covers 8.2% of materials, so most dashboard rows have no label."""
     g = lambda svc, st: totals.get((svc, st))
-    mara = g("ZVZI_KPI02_SHARED_SRV", "MaterialSet")
-    makt = g("ZVZI_KPI02_SHARED_SRV", "MaterialDescriptionSet")
-    marc = g("ZVZI_KPI02_SHARED_SRV", "MaterialPlantSet")
+    mara = g(ADD_SRV, "MaterialSet")
+    makt = g(ADD_SRV, "MaterialDescriptionSet")
+    marc = g(ADD_SRV, "MaterialPlantSet")
     lines = [f"Population coverage, {utcnow()}", "",
              f"  MaterialSet (MARA)            : {mara}",
              f"  MaterialDescriptionSet (MAKT) : {makt}",

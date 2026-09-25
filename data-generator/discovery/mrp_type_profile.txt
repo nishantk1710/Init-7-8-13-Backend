@@ -1,9 +1,69 @@
-MaterialPlantSet full pull, 2026-09-22T05:26:49Z: 0 rows in reused page(s)
+MaterialPlantSet full pull, 2026-09-23T10:02:13Z: 2183 rows in reused page(s)
 
 Dismm x Werks:
+  <blank>  1100   8
+  <blank>  1200   3
+  <blank>  1300   100
+  <blank>  1400   13
+  <blank>  1500   771
+  <blank>  1600   11
+  <blank>  2000   48
+  <blank>  3000   64
+  <blank>  3300   2
+  <blank>  3400   1
+  <blank>  PDWB   2
+  M0       1300   11
+  M0       1500   1
+  M0       3000   1
+  ND       1100   3
+  ND       1300   24
+  ND       1400   1
+  ND       1500   107
+  ND       1600   3
+  ND       2000   11
+  ND       3000   33
+  ND       3100   1
+  ND       PDWB   1
+  PD       1100   47
+  PD       1200   44
+  PD       1300   367
+  PD       1400   1
+  PD       1500   34
+  PD       1600   9
+  PD       2000   180
+  PD       3000   143
+  PD       3200   1
+  PD       PDWB   1
+  RP       2000   2
+  RP       3000   1
+  V1       1100   1
+  V1       1300   59
+  V1       1500   8
+  V1       2000   7
+  V1       3000   3
+  V2       2000   1
+  VB       1300   11
+  VB       1500   2
+  VB       2000   11
+  VB       3000   20
+  VB       3200   1
+  VH       3000   1
+  VI       2000   1
+  VM       1300   7
 
 Per MRP type: rows, with reorder point (Minbe>0), max stock (Mabst>0), safety stock (Eisbe>0):
+  <blank>    1023  rop=    1  max=    2  ss=    0
+  M0           13  rop=    0  max=    0  ss=    0
+  ND          184  rop=    1  max=    3  ss=    1
+  PD          827  rop=    8  max=   17  ss=   17
+  RP            3  rop=    0  max=    1  ss=    0
+  V1           78  rop=   78  max=   63  ss=   18
+  V2            1  rop=    1  max=    0  ss=    1
+  VB           45  rop=   45  max=   35  ss=    0
+  VH            1  rop=    0  max=    0  ss=    0
+  VI            1  rop=    0  max=    0  ss=    0
+  VM            7  rop=    7  max=    0  ss=    0
 
-OAR population under the 08-Sep ruling (Dismm in ND, PD): 0 of 0; VB (Min-Max): 0; excluded (V1, blank, other): 0
+OAR population under the 08-Sep ruling (Dismm in ND, PD): 1011 of 2183; VB (Min-Max): 45; excluded (V1, blank, other): 1127
 
 Eisbe population above matters for I07: the FRS records EISBE as exposed over OData but absent from the delivered 19-column extract. A zero here would mean exposed-but-unpopulated, which is a different problem.

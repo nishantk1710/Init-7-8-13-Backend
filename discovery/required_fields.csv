@@ -1,0 +1,31 @@
+sap_table,field,initiatives,frs_expected_state,entity_set,verdict,why_it_matters
+MSEG,SOBKZ,I08,absent,GoodsMovementItemSet,CONFIRMED_ABSENT,Special stock indicator. A 541 dispatch posts a vendor row (SOBKZ 'O') and a plant row; without it both are summed and every dispatch quantity doubles. Fails silently. I08 FRS s7.
+EKPO,ERDAT,I08,absent,PurchaseOrderItemSet,CONFIRMED_ABSENT,"Line creation date. PurchaseOrderItemSet publishes no date property at all; ERDAT anchors aging, overdue and lead-time comparison, and EKKO has no header row for 37% of repair lines. I08 FRS s7."
+RESB,BEDNR,I08/I13,absent,ReservationItemSet,CONFIRMED_ABSENT,"Requirement tracking number, Edm.String(10). Designated carrier of the assistant session identifier. Live on PurchaseRequisitionSet and PurchaseOrderItemSet, absent from ReservationItemSet. Hard dependency for I08 FR-8 and FR-4."
+RESB,WEMPF,I08/I13,present,ReservationItemSet,CONFIRMED_PRESENT,"Goods recipient, 12 chars. Exposed. Used as the I13 requester proxy (73.2% populated). Candidate session field only if BEDNR is refused."
+RESB,SGTXT,I08/I13,absent,ReservationItemSet,CONFIRMED_ABSENT,Item text. Named as a session-field candidate in I08 s10; not in the projection.
+RESB,ABLAD,I08/I13,absent,ReservationItemSet,CONFIRMED_ABSENT,Unloading point. Named as a session-field candidate in I08 s10; not in the projection.
+RESB,ZZAISESSION,I13,absent,ReservationItemSet,CONFIRMED_ABSENT,Z-append session identifier. I13 s7.2: the single field linking the platform consumption plan to the SAP reservation. Read model carries the placeholder and maps it to null.
+MARC,EISBE,I07,present,MaterialPlantSet,CONFIRMED_PRESENT,Current safety stock. Exposed over OData but absent from the delivered 19-column extract. Without it I07 shows what it recommends but not what SAP holds. I07 FRS s7.
+MARC,DISMM,I07/I13,present,MaterialPlantSet,CONFIRMED_PRESENT,"MRP type. THE OAR identifier under the 08-Sep ruling: OAR = DISMM in {ND, PD}. Single most important field in I13. I13 FRS s7.1."
+MARC,MINBE,I07,present,MaterialPlantSet,CONFIRMED_PRESENT,Reorder point. FR-3 comparison and FR-9 adoption tracking.
+MARC,MABST,I07,present,MaterialPlantSet,CONFIRMED_PRESENT,Max stock. FR-3 comparison and FR-9 adoption tracking.
+MARC,PLIFZ,I07,present,MaterialPlantSet,CONFIRMED_PRESENT,Planned delivery time. Placeholder lead time until the I11 Z-program lands.
+MARA,EXTWG,I07/I13,absent,MaterialSet,CONFIRMED_ABSENT,"External material group. RETIRED as the OAR identifier (I07 s7 supersession note, I13 s7.3). Informational only now; its absence is no longer BLOCKING and s8/s10 of both FRS should be updated."
+MBEW,WAERS,I07,absent,MaterialValuationSet,CONFIRMED_ABSENT,"Currency. A price with no currency is ambiguous; ZAR is assumed by context, not by data. I07 FRS s7."
+EKKO,BEDAT,I07,absent,PurchaseOrderSet,CONFIRMED_ABSENT,PO document date. Not exposed; EKKO.AEDAT is the interim release-date proxy for the I11 lead-time program.
+EKKO,AEDAT,I07,present,PurchaseOrderSet,CONFIRMED_PRESENT,Interim release-date proxy for the release-to-GRN lead time.
+EBAN,BNFPO,I13,present,PurchaseRequisitionSet,CONFIRMED_PRESENT,"Requisition item. Exposed, but check the KEY column below: I07 s10 asks for it to be ADDED TO THE ENTITY KEY so requisition items are uniquely addressable."
+EKPO,BANFN,I13,present,PurchaseOrderItemSet,CONFIRMED_PRESENT,PR-to-PO stitching key. 37.6% populated in the extract.
+RESB,AUFNR,I13,present,ReservationItemSet,CONFIRMED_PRESENT,"Order number. 39.2% populated; recommended as the next stitching increment (I13 s7.5), roughly thirty times the linkage of the BANFN route and needs no SAP change."
+RESB,BANFN,I13,present,ReservationItemSet,CONFIRMED_PRESENT,Reservation-to-PR link. Only 1.2% populated - the principal FR-5 obstacle.
+MKPF,BUDAT,I13,present,MaterialDocumentHeaderSet,CONFIRMED_PRESENT,Posting date. The single date basis for every movement metric.
+MSEG,BWART,I13,present,GoodsMovementItemSet,CONFIRMED_PRESENT,"Movement type. 201/261 = consumption, 541 = removal to repair (I08)."
+EKBE,VGABE,I13,present,POHistorySet,CONFIRMED_PRESENT,Transaction/event type. Goods-receipt filter for FR-6; see vgabe_profile.txt.
+
+sap_table,field,initiatives,entity_set,key_verdict,why_it_matters
+EBAN,BNFPO,I07/I13,PurchaseRequisitionSet,IS_KEY,I07 s10: add EBAN.BNFPO to the PurchaseRequisitionSet entity key so requisition items are uniquely addressable.
+CDPOS,TABNAME,I07,ChangeDocItemSet,PRESENT_BUT_NOT_KEY,Declared key is 3 columns; the true CDPOS key is 7. See key_collapse.txt.
+CDPOS,TABKEY,I07,ChangeDocItemSet,PRESENT_BUT_NOT_KEY,As above.
+CDPOS,FNAME,I07,ChangeDocItemSet,PRESENT_BUT_NOT_KEY,As above.
+CDPOS,CHNGIND,I07,ChangeDocItemSet,PRESENT_BUT_NOT_KEY,As above.

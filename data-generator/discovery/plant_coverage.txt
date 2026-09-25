@@ -1,11 +1,24 @@
-Plant coverage, 2026-09-22T05:26:50Z
+Plant coverage, 2026-09-23T10:02:14Z
 
 Counts are aggregated client-side from a full pull, because a server-side Werks filter may be ignored
 (see filter_support.csv). The question this answers: does OData expose plant 1500 (Gamsberg) on MARC,
 or is the hole in the extract only? I13 s7.2 records every 1500 material classifying as Excluded.
 
 MaterialPlantSet  (MARC - OAR scope. I13 s7.2: no MARC rows for plant 1500 in the extract.)
-  total rows: 0  pages: reused
+  total rows: 2183  pages: reused
+    1100     59
+    1200     47
+    1300     579
+    1400     15
+    1500     923
+    1600     23
+    2000     261
+    3000     266
+    3100     1
+    3200     2
+    3300     2
+    3400     1
+    PDWB     4
 
 StorageLocationStockSet  (MARD - stock on hand)
   total rows: 2304  pages: 3
@@ -22,10 +35,27 @@ StorageLocationStockSet  (MARD - stock on hand)
     PDWB     4
 
 GoodsMovementItemSet  (MSEG - movements. 1500 carries 122,868 movements in the extract.)
-  total rows: 0  pages: 0
+  total rows: 68618  pages: 69
+    1100     42
+    1200     24
+    1300     14928
+    1400     36
+    1500     1690
+    1600     158
+    2000     1858
+    3000     49879
+    PDWB     3
 
 PurchaseRequisitionSet  (EBAN - PRs. Extract is plant 1300 only.)
-  total rows: 0  pages: 0
+  total rows: 1569  pages: 2
+    1100     2
+    1200     1
+    1300     569
+    1400     6
+    1500     797
+    1600     13
+    2000     68
+    3000     113
 
 ReservationItemSet  (RESB - reservations. 1500 carries 10,333 in the extract.)
   total rows: 7088  pages: 8
@@ -50,6 +80,6 @@ PurchaseOrderItemSet  (EKPO - PO items. 1500 carries 35,083 in the extract.)
     <blank>  196
 
 Plants transacting with no MARC coverage (invisible to I07 and I13 OAR scope):
-  1100, 1200, 1300, 1400, 1500, 1600, 2000, 3000, 3100, 3200, 3400, PDWB
+  none - every transacting plant has MARC rows
 
-Plant 1500 (Gamsberg) has NO MARC rows over OData either. The gap is in the source or in the DPC selection - raise it with NTT as a selection question, not as a re-extract.
+Plant 1500 (Gamsberg) HAS MARC rows over OData. The gap recorded in I13 s7.2 is an extract gap, not a source gap - re-extract rather than raise it with NTT.

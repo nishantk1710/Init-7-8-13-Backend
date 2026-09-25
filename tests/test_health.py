@@ -42,7 +42,7 @@ SAP_PR_EVENT = {
 
 
 def test_pr_event_is_accepted() -> None:
-    response = client.post("/api/events/pr", json={"prNumber": "10012345", "plant": "1101"})
+    response = client.post("/api/events/pr", json={"prNumber": "10012345", "plant": "1300"})
 
     assert response.status_code == 202
     assert response.json() == {"status": "received"}

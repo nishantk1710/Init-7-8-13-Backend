@@ -125,6 +125,58 @@ class TestCriticalityConformance:
         tier = source.get("1000", "1300").tier
         assert tier is None or tier in set(CriticalityTier)
 
+    # --- get_many -------------------------------------------------------
+    #
+    # get_many exists so a consumer holding thousands of material-plants does
+    # not have to make thousands of calls. It ships as a concrete loop over
+    # get(), and a provider may override it with something faster -- so the
+    # single rule that matters is that the fast path and the slow path give the
+    # SAME answer. These tests are what let a caller trust the override.
+
+    def test_get_many_agrees_with_get(self, source: CriticalitySource) -> None:
+        """The whole point: batching must not change a single answer."""
+        keys: list[tuple[str, str | None]] = [
+            ("1000", "1300"),
+            ("1000", "1500"),
+            ("no-such-material", "1300"),
+            ("1000", None),
+            ("", "1300"),
+        ]
+        batch = source.get_many(keys)
+        for key in keys:
+            assert batch[key] == source.get(key[0], key[1]), (
+                f"get_many disagreed with get for {key}"
+            )
+
+    def test_get_many_answers_every_key_it_was_asked(
+        self, source: CriticalitySource
+    ) -> None:
+        """An unknown material is a result with no tier, never a missing key.
+
+        A caller must never have to tell "absent" apart from "not asked".
+        """
+        keys: list[tuple[str, str | None]] = [
+            ("1000", "1300"),
+            ("no-such-material", "9999"),
+        ]
+        batch = source.get_many(keys)
+        assert set(batch) == set(keys)
+        assert all(isinstance(r, CriticalityResult) for r in batch.values())
+
+    def test_get_many_tolerates_duplicate_keys(
+        self, source: CriticalitySource
+    ) -> None:
+        """Callers build key lists from rows, and rows repeat."""
+        batch = source.get_many([("1000", "1300"), ("1000", "1300")])
+        assert set(batch) == {("1000", "1300")}
+
+    def test_get_many_of_nothing_is_nothing(self, source: CriticalitySource) -> None:
+        assert source.get_many([]) == {}
+
+    def test_get_many_never_invents_a_tier(self, source: CriticalitySource) -> None:
+        for result in source.get_many([("1000", "1300"), ("1000", None)]).values():
+            assert result.tier is None or result.tier in set(CriticalityTier)
+
 
 # --- Tiers ----------------------------------------------------------------
 
@@ -350,6 +402,60 @@ class TestZmm065AgainstDeliveredData:
 
     def test_check_connection_passes(self) -> None:
         Zmm065CriticalitySource().check_connection()
+
+    def test_get_many_matches_get_over_real_rows(self) -> None:
+        """The fast override against the slow base, on delivered data.
+
+        The conformance class already asserts this for made-up keys. This one
+        uses real material-plants -- including materials present at both plants
+        and materials present at neither -- because the override's grouping
+        logic is exactly what made-up keys do not exercise.
+        """
+        from app.core.db import get_sessionmaker
+
+        with get_sessionmaker()() as session:
+            rows = session.execute(
+                text(
+                    "SELECT mat_code, plant FROM raw_zmm065_bmm "
+                    "WHERE NULLIF(criticality,'') IS NOT NULL LIMIT 40"
+                )
+            ).fetchall()
+            both = session.execute(
+                text(
+                    "SELECT b.mat_code FROM raw_zmm065_bmm b "
+                    "WHERE EXISTS (SELECT 1 FROM raw_zmm065_gb g "
+                    "              WHERE g.mat_code = b.mat_code) LIMIT 10"
+                )
+            ).fetchall()
+
+        source = Zmm065CriticalitySource()
+        keys: list[tuple[str, str | None]] = [(r[0], r[1]) for r in rows]
+        keys += [(r[0], None) for r in both]          # the ambiguity rule
+        keys += [(r[0], "1500") for r in both]        # the other plant
+        keys += [("0000000000", "1300"), ("0000000000", None)]
+
+        batch = source.get_many(keys)
+        for key in keys:
+            assert batch[key] == source.get(key[0], key[1]), key
+
+    def test_get_many_uses_one_round_trip(self) -> None:
+        """The reason the override exists. If this regresses, so does the build.
+
+        Counts sessions opened, not queries executed -- a session per key is the
+        specific cost that turned I08's universe build into 26 seconds.
+        """
+        source = Zmm065CriticalitySource()
+        opened = 0
+        original = source._session
+
+        def counting_session():
+            nonlocal opened
+            opened += 1
+            return original()
+
+        source._session = counting_session  # type: ignore[method-assign]
+        source.get_many([(f"800000{n:04d}", "1300") for n in range(200)])
+        assert opened == 1, f"expected one session for the batch, got {opened}"
 
 
 # --- The three initiatives ------------------------------------------------

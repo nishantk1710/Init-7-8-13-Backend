@@ -9,8 +9,10 @@ to empty so the app -- and the health endpoint -- come up with no SAP, database
 or identity credentials present.
 """
 
+from decimal import Decimal
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -265,10 +267,254 @@ class Settings(BaseSettings):
     azure_tenant_id: str = ""
     azure_client_id: str = ""
 
+    # --- Initiative 13: End-to-End Spares Utilisation Tracking. ---
+    # Root directory for platform-owned (non-SAP) reference data -- currently
+    # just consumption_plans.csv (see app/initiatives/i13/plans.py). All
+    # SAP-derived I13 data reads from Postgres (see app/integrations/sap/
+    # postgres_*.py); there is no CSV path for it any more.
+    i13_data_dir: str = "data-generator/generated"
+
+    # The I13 in-memory snapshot (app/initiatives/i13/snapshot.py): every I13
+    # read route serves one precomputed snapshot instead of recomputing from
+    # raw_* per request. False puts every route back on the live compute --
+    # the escape hatch, and what `?live=true` does for a single request.
+    i13_snapshot_enabled: bool = True
+    # Build the snapshot in the background at start-up, so the first visitor
+    # does not pay for it. Off in tests, where the first use builds it lazily.
+    i13_snapshot_warm_on_startup: bool = True
+    # How often (seconds, at most) the fingerprint is re-checked for a reseed
+    # or a new day. One cheap grouped query over ingestion_run.
+    i13_snapshot_check_interval_seconds: int = 60
+    # ISO date to measure every snapshot metric as of. Empty = today, the date
+    # every live route has always used (plan decision D1 left open).
+    i13_snapshot_reference_date: str = ""
+
+    # Session <-> reservation linking (app/initiatives/i13/session_link.py).
+    # The requester types the assistant's session ID into the reservation's item
+    # text, RESB.SGTXT, which the extract loads as raw_resb.text. BEDNR was the
+    # original carrier but is not in the extract (blocker B2).
+    #
+    # UAT only: overlay simulated reservations / SGTXT values from
+    # uat_reservation_sgtxt on top of raw_resb, standing in for "the requester
+    # typed it into SAP and a new extract was loaded". Never on in production:
+    # raw_resb itself is never modified either way.
+    i13_uat_simulation_enabled: bool = False
+    # Reservations required on or after this ISO date are expected to carry a
+    # session ID (the "reservations with no session" compliance count). Empty =
+    # the day the first assistant session was issued.
+    i13_assistant_go_live_date: str = ""
+
+    # Current VZI OAR material-scope ruling (MARC.DISMM), comma-separated.
+    # See app/shared/material_scope/policy.py -- this is shared platform
+    # config, not owned by any single initiative.
+    i13_oar_mrp_types: str = "ND,PD"
+    i13_min_max_mrp_types: str = "VB"
+
+    # Aging bands (days since last goods movement).
+    i13_aging_fast_max_days: int = 365
+    i13_aging_slow_max_days: int = 730
+
+    # Trailing consumption window used throughout WATCH/aging/reclassification.
+    i13_consumption_window_months: int = 12
+
+    # 30-day goods-received-not-issued exception threshold.
+    i13_gr_not_issued_threshold_days: int = 30
+
+    # Grace period after a consumption plan's planned-use window before it
+    # becomes a PLAN_BREACH exception.
+    i13_plan_breach_grace_days: int = 14
+
+    # SOP indicator for OAR -> Min-Max reclassification review.
+    i13_reclass_min_consumption_count: int = 4
+
+    # SOP 3.1.1 indicator 2: which ZMM065 criticality tiers (W3.4,
+    # app.core.criticality.CriticalityTier) count as "Critical" evidence for
+    # reclassification. The Dev Plan says "Critical flag"; the FRS also
+    # mentions "Critical or significant production impact" -- IMPACT is
+    # deliberately NOT enabled by default, since broadening the rule beyond
+    # the Dev Plan's own wording is a business decision, not one this code
+    # should make silently. Comma-separated tier names.
+    i13_reclass_critical_tiers: str = "CRITICAL"
+
+    # Reconciliation tolerance for local validation against reference reports.
+    i13_reconciliation_tolerance_pct: float = 5.0
+
+    # W6.4: gates cost-centre enrichment in consumption attribution. Off by
+    # default -- no deterministic cost-centre source (EKKN/AUFK) is loaded
+    # in this codebase yet (see app/initiatives/i13/cost_centre_provider.py),
+    # so leaving it on would silently do nothing; reservation/requester/order
+    # attribution is never gated by this flag.
+    i13_cost_centre_attribution_enabled: bool = False
+
+    # W6.6: how many days an ACT exception's requester has to confirm before
+    # it escalates to the responsible HOD (app.initiatives.i13.act.service
+    # .process_escalations). The 30-day GRNI fallback for no-plan cases
+    # reuses i13_gr_not_issued_threshold_days above -- it is not a second
+    # constant.
+    i13_requester_response_days: int = 5
+
+    # W6.6: local/config HOD routing -- "PLANT:identity,PLANT2:identity2".
+    # A placeholder for a future Entra/DOA-backed lookup (see
+    # app/initiatives/i13/act_hod_provider.py); empty by default, which
+    # leaves every escalation's routing explicitly PENDING rather than
+    # inventing a recipient.
+    i13_hod_recipients: str = ""
+
+    # --- W7.4: reservation-time quantity suggestion -----------------------
+    #
+    # Master gate. Off by default, and deliberately separate from the two
+    # values below: "the business has not given us the numbers yet" and "the
+    # feature is switched off for this environment" are different states and
+    # the engine reports them differently (NOT_CONFIGURED vs DISABLED).
+    i13_qty_suggestion_enabled: bool = False
+
+    # Cover ceiling, in months -- the months-of-cover guard rail a request is
+    # nudged down to. NO DEFAULT, on purpose. A guessed ceiling would produce
+    # plausible-looking but unsanctioned purchase advice, so with this unset
+    # the engine returns NO_SUGGESTION/NOT_CONFIGURED rather than inventing
+    # one -- the same posture i13_hod_recipients above already takes (empty
+    # means routing is explicitly Pending, never a fabricated recipient).
+    # Open VZI item; see FRS §10.
+    #
+    # Decimal, not float: every quantity this engine touches is fixed-point
+    # (see app/models/i13_watch_mart.py), and a ceiling of 0.1 that is really
+    # 0.100000000000000005 would put a rounding artefact into a purchase
+    # figure.
+    i13_qty_cover_ceiling_months: Decimal | None = None
+
+    # Minimum consumption history before the engine will speak at all,
+    # measured as a count of consumption events inside the look-back window
+    # (WatchMetricMart.consumption_count_12m). Also no default, for the same
+    # reason -- and this single value decides how often the engine speaks:
+    # against the current WATCH mart (7,184 positions), "any consumption"
+    # would cover 3,086 of them and ">= 4 in 12 months" only 459.
+    i13_qty_minimum_history_count: int | None = None
+
+    # Look-back window for the consumption rate the suggestion is built on.
+    # Defaults to the same 12 months i13_consumption_window_months already
+    # uses, because the AMC the engine reads IS that window's figure -- it is
+    # repeated here only so a divergent W7.4 window stays a config change.
+    # Setting it to anything else today is recorded on the suggestion but
+    # does not re-derive AMC; see app/initiatives/i13/quantity_suggestion.py.
+    i13_qty_lookback_months: int = 12
+
+    # --- FR-3 as the assistant serves it ----------------------------------
+    #
+    # Read by app/initiatives/i13/quantity.py, which the reservation-time
+    # conversation calls (app/assistant/session.py suggestion_for) and which
+    # /api/i13/quantity-suggestion does NOT -- that endpoint runs the gated
+    # W7.4 engine on the i13_qty_* values above.
+    #
+    # So there are deliberately two sets, and they take opposite positions on
+    # the same open VZI number: the W7.4 engine ships no ceiling and declines
+    # with NOT_CONFIGURED, while these carry the WS7 notes' working defaults so
+    # the conversation has something to say. That divergence is a live
+    # decision, not an oversight -- W7.4's plan argues a guessed ceiling is
+    # unsanctioned purchase advice, and if that argument wins for the
+    # assistant too, this block goes and quantity.py reads i13_qty_* instead.
+    #
+    # Decimal rather than float: a ceiling of 0.1 that is really
+    # 0.100000000000000005 would put a rounding artefact into a purchase
+    # figure, which is the same reason i13_qty_cover_ceiling_months is Decimal.
+    i13_quantity_cover_ceiling_months: Decimal = Decimal("12.0")
+    i13_quantity_lookback_months: int = 12
+    i13_quantity_min_history_consumptions: int = 3
+
+    # --- WS7: the shared reservation-time assistant ------------------------
+    #
+    # Read by app/assistant/* and app/api/assistant/router.py. Every value
+    # here has a working default, so the assistant runs with nothing set.
+
+    # Session reference format. The length is the whole string including the
+    # prefix and its separator -- app/assistant/ids.py refuses a length that
+    # leaves no room for a payload rather than minting a truncated reference.
+    # assistant_session.id is deliberately wider than this, so raising it is
+    # a config change and not a migration.
+    assistant_session_id_prefix: str = "S"
+    assistant_session_id_length: int = 10
+
+    # How long a session stays OPEN before it is derived as ABANDONED. The
+    # row is append-only and nothing writes a status, so this value alone
+    # decides where that boundary falls -- see app/assistant/session.py.
+    assistant_session_ttl_hours: int = 72
+
+    # The optional model-written sentence (app/assistant/narrative.py). OFF BY
+    # DEFAULT AND MUST STAY THAT WAY until VZI signs off: both FRSs say
+    # responses come from the LLM layer, and serving one before that
+    # conversation happens is the visible deviation the WS7 notes record.
+    # Every number is computed either way; this only phrases them.
+    assistant_narrative_enabled: bool = False
+
+    # Justification reason categories -- configuration, not an enum, because
+    # both FRSs say "a reason category plus free text" and neither lists the
+    # categories (open question 9). These three are PLACEHOLDERS; the day VZI
+    # supplies its own vocabulary is a .env change, not a migration. Order is
+    # preserved: it is the order the options appear on the form.
+    assistant_justification_reason_categories: str = (
+        "URGENT_BREAKDOWN,NO_SUITABLE_REPAIRABLE,OTHER"
+    )
+
+    # The free-text box (section 4.6), answered from deterministic read models
+    # by a fixed set of intents -- no model is involved. Off means the box
+    # declines and says so; it never falls through to general
+    # question-answering, which is separate unagreed scope.
+    assistant_free_text_intents_enabled: bool = True
+
+    @field_validator("i13_qty_cover_ceiling_months", "i13_qty_minimum_history_count", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        """Treat an empty environment value as "not set".
+
+        These two are the settings most likely to appear in a .env or an App
+        Service configuration with the key present and no value yet -- they
+        are exactly the numbers VZI has not given us. Blank must mean the same
+        as absent (the engine declines with NOT_CONFIGURED), not a startup
+        crash that takes the whole application, and its health endpoint, down
+        with it."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @property
     def cors_origins(self) -> list[str]:
         """Allowed CORS origins, parsed from ``FRONTEND_ORIGIN``."""
         return [origin.strip() for origin in self.frontend_origin.split(",") if origin.strip()]
+
+    @property
+    def i13_oar_mrp_type_set(self) -> frozenset[str]:
+        """Normalised MRP type codes that count as OAR (in-scope) materials."""
+        return frozenset(code.strip().upper() for code in self.i13_oar_mrp_types.split(",") if code.strip())
+
+    @property
+    def i13_min_max_mrp_type_set(self) -> frozenset[str]:
+        """Normalised MRP type codes that count as Min-Max (stocked) materials."""
+        return frozenset(code.strip().upper() for code in self.i13_min_max_mrp_types.split(",") if code.strip())
+
+    @property
+    def assistant_justification_reason_category_list(self) -> list[str]:
+        """The configured reason categories, normalised, order preserved.
+
+        A list rather than a set: the order is what the assistant offers them
+        in, and a set would reorder the options on a form between restarts.
+        """
+        seen: dict[str, None] = {}
+        for raw in self.assistant_justification_reason_categories.split(","):
+            category = raw.strip().upper()
+            if category:
+                seen.setdefault(category, None)
+        return list(seen)
+
+    @property
+    def i13_reclass_critical_tier_set(self):  # -> frozenset[CriticalityTier]
+        """Configured criticality tiers that count as reclassification
+        evidence. Local import to avoid a Settings <-> criticality import
+        cycle (``app.core.criticality`` itself imports ``Settings``).
+        Unrecognised tier names are dropped, never coerced -- the same
+        no-invention rule ``parse_tier`` itself follows."""
+        from app.core.criticality import parse_tier
+
+        tiers = (parse_tier(raw) for raw in self.i13_reclass_critical_tiers.split(","))
+        return frozenset(tier for tier in tiers if tier is not None)
 
 
 @lru_cache
