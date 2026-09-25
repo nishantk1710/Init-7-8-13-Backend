@@ -207,6 +207,31 @@ class AzureDataLakeStorage(Storage):
         finally:
             buffer.close()
 
+    def append(self, key: str, data: bytes) -> int:
+        """Append at the current end of file, using ADLS Gen2's own append API.
+
+        ``append_data`` stages bytes at an offset and ``flush_data`` commits the
+        new length; neither transfers what is already stored. The offset has to
+        be the current size, so it is read from the file properties rather than
+        tracked locally -- two workers appending to one file would otherwise
+        both believe they were at the end and one would overwrite the other.
+        """
+        path = self._path_of(key)
+        client = self._client().get_file_client(path)
+
+        if client.exists():
+            size = int(client.get_file_properties().get("size") or 0)
+        else:
+            client.create_file()
+            size = 0
+
+        if not data:
+            return size
+
+        client.append_data(data, offset=size, length=len(data))
+        client.flush_data(size + len(data))
+        return size + len(data)
+
     def exists(self, key: str) -> bool:
         return self._client().get_file_client(self._path_of(key)).exists()
 

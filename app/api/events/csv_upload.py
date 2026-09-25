@@ -28,11 +28,15 @@ import codecs
 import csv
 import hashlib
 import io
+import re
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
+from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.core.storage import get_storage
 
 logger = get_logger(__name__)
 
@@ -52,6 +56,72 @@ MAX_LOGGED_BODY_BYTES = 2_000
 # confidently wrong on short files.
 SNIFF_BYTES = 16_384
 CANDIDATE_DELIMITERS = ",;\t|"
+
+# Which table a chunk belongs to, read from its header row.
+#
+# Nothing else in the request says. The push carries no table name, no request
+# id and no sequence number -- the only thing that distinguishes an EKPO chunk
+# from an MSEG one is the columns. Matched on the leading key fields, longest
+# first, because EKKO's key is a prefix of EKPO's and MARA's of MARC's.
+#
+# A heuristic, and replaceable: if SAP can be persuaded to send the table name
+# as a header or a query parameter, that becomes the source and this becomes a
+# fallback. Until then an unrecognised header lands under a stable fingerprint
+# rather than being guessed at or refused.
+TABLE_SIGNATURES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("MANDT", "OBJECTCLAS", "OBJECTID", "CHANGENR", "TABNAME"), "CDPOS"),
+    (("MANDT", "OBJECTCLAS", "OBJECTID", "CHANGENR"), "CDHDR"),
+    (("MANDT", "EBELN", "EBELP", "ZEKKN"), "EKBE"),
+    (("MANDT", "EBELN", "EBELP"), "EKPO"),
+    (("MANDT", "EBELN"), "EKKO"),
+    (("MANDT", "MBLNR", "MJAHR", "ZEILE"), "MSEG"),
+    (("MANDT", "MBLNR", "MJAHR"), "MKPF"),
+    (("MANDT", "MATNR", "WERKS", "LGORT"), "MARD"),
+    (("MANDT", "MATNR", "WERKS"), "MARC"),
+    (("MANDT", "MATNR", "SPRAS"), "MAKT"),
+    (("MANDT", "MATNR"), "MARA"),
+    (("MANDT", "BANFN", "BNFPO"), "EBAN"),
+    (("MANDT", "RSNUM", "RSPOS"), "RESB"),
+    (("MANDT", "INFNR", "EKORG"), "EINE"),
+    (("MANDT", "INFNR"), "EINA"),
+    (("MANDT", "LIFNR"), "LFA1"),
+)
+
+
+# Which table is mid-delivery. Read by a chunk that arrives with no header row
+# and therefore nothing else to identify it.
+OPEN_TABLE_KEY = "_open_table.txt"
+
+# A SAP field name: starts with a letter, no spaces. Data values in these
+# tables are dominated by numeric keys -- MANDT is '800', EBELN '4500000001' --
+# so a single purely numeric cell is enough to say this row is not a header.
+_FIELD_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_/]*$")
+
+
+def looks_like_header(row: list[str]) -> bool:
+    """Whether ``row`` is a column list rather than the first record.
+
+    Needed because ``csv.reader`` will happily call anything row zero. If a
+    continuation chunk's data row is taken for a header, that record is lost
+    and the chunk is filed under a table that does not exist.
+    """
+    cells = [c.strip() for c in row if c.strip()]
+    if not cells:
+        return False
+    if any(c.replace(".", "").replace("-", "").isdigit() for c in cells):
+        return False
+    named = sum(1 for c in cells if _FIELD_NAME.match(c))
+    return named >= max(1, len(cells) // 2)
+
+
+def table_of(header: list[str]) -> str:
+    """The SAP table a header row describes, or a fingerprint if unrecognised."""
+    columns = tuple(c.strip().upper() for c in header)
+    for signature, table in TABLE_SIGNATURES:
+        if columns[: len(signature)] == signature:
+            return table
+    fingerprint = hashlib.sha256(",".join(columns).encode()).hexdigest()[:8]
+    return f"UNKNOWN_{fingerprint}"
 
 # Byte order marks first, longest first -- the UTF-32 LE mark begins with the
 # same two bytes as the UTF-16 LE one, so checking UTF-16 first would decode a
@@ -91,6 +161,14 @@ class CsvAccepted(BaseModel):
     encoding: str
     preview: list[list[str]] = Field(
         default_factory=list, description="Up to PREVIEW_ROWS rows, as parsed."
+    )
+    stored: str | None = Field(
+        default=None,
+        description=(
+            "Storage key this chunk was appended to, or null when STORAGE_URL "
+            "is unset or the write failed. A null here never means the upload "
+            "was refused."
+        ),
     )
     sha256: str = Field(description="Of the bytes as received, before any decoding.")
 
@@ -251,6 +329,8 @@ async def receive_csv(request: Request) -> CsvAccepted:
             delimiter,
         )
 
+    stored = _land(text, header)
+
     return CsvAccepted(
         status="received",
         rows=rows,
@@ -259,5 +339,111 @@ async def receive_csv(request: Request) -> CsvAccepted:
         delimiter_sniffed=sniffed,
         encoding=encoding,
         preview=preview,
+        stored=stored,
         sha256=hashlib.sha256(raw).hexdigest(),
     )
+
+
+def _land(text: str, first_row: list[str]) -> str | None:
+    """Append this chunk to its table's file, best effort.
+
+    SAP sends a table as chunks of 50,000 records, each its own POST. Three
+    cases have to be told apart, and only the first is obvious:
+
+    * a chunk whose first row is a header -- names the table and opens it;
+    * a later chunk that repeats that header -- the header is dropped;
+    * a later chunk with no header at all -- every row is data, and the chunk
+      carries nothing identifying it, so it is attributed to the table
+      currently open.
+
+    Which of the last two SAP does is not yet confirmed. Assuming headers
+    repeat would eat one real record per chunk; assuming they do not would
+    duplicate a header per chunk. Both are handled instead.
+
+    The open table is recorded in storage rather than in memory because chunks
+    may land on any worker and a restart mid-batch must not orphan the rest.
+
+    Every failure is swallowed. This endpoint refuses nothing but an empty
+    body; losing an extract because OUR storage is unset or unwritable would be
+    that same mistake wearing a different hat. SAP gets its 202 either way.
+    """
+    if not get_settings().storage_url:
+        logger.debug("STORAGE_URL is not set; CSV not landed")
+        return None
+
+    payload = text if text.endswith("\n") else text + "\n"
+    first_line, _, remainder = payload.partition("\n")
+    key = "(undetermined)"
+
+    try:
+        storage = get_storage()
+
+        if not looks_like_header(first_row):
+            return _append_continuation(storage, payload)
+
+        table = table_of(first_row)
+        key, header_key = _keys_for(table)
+
+        if not storage.exists(header_key):
+            with storage.open_write(header_key) as sink:
+                sink.write(first_line.rstrip("\r").encode("utf-8"))
+            with storage.open_write(key) as sink:
+                sink.write(payload.encode("utf-8"))
+            _set_open_table(storage, table)
+            logger.info("CSV landed at %s (new file, table=%s)", key, table)
+            return key
+
+        with storage.open_read(header_key) as source:
+            known = source.read().decode("utf-8")
+
+        body = remainder if first_line.rstrip("\r") == known else payload
+        if body:
+            size = storage.append(key, body.encode("utf-8"))
+            logger.info(
+                "CSV appended to %s (table=%s, header repeated, now %d bytes)",
+                key, table, size,
+            )
+        _set_open_table(storage, table)
+        return key
+    except Exception:
+        logger.exception("CSV not landed at %s", key)
+        return None
+
+
+def _append_continuation(storage, payload: str) -> str | None:
+    """A chunk with no header. Every row is data; attribute it to the open table."""
+    table = _get_open_table(storage)
+    if table is None:
+        logger.warning(
+            "CSV chunk has no header row and no table is open; it cannot be "
+            "attributed and has not been landed"
+        )
+        return None
+
+    key, _ = _keys_for(table)
+    size = storage.append(key, payload.encode("utf-8"))
+    logger.info(
+        "CSV appended to %s (table=%s, headerless chunk, now %d bytes)",
+        key, table, size,
+    )
+    return key
+
+
+def _keys_for(table: str) -> tuple[str, str]:
+    day = datetime.now(timezone.utc).date()
+    return (
+        f"{table}/{day:%Y-%m-%d}/{table}.csv",
+        f"{table}/{day:%Y-%m-%d}/_header.csv",
+    )
+
+
+def _set_open_table(storage, table: str) -> None:
+    with storage.open_write(OPEN_TABLE_KEY) as sink:
+        sink.write(table.encode("utf-8"))
+
+
+def _get_open_table(storage) -> str | None:
+    if not storage.exists(OPEN_TABLE_KEY):
+        return None
+    with storage.open_read(OPEN_TABLE_KEY) as source:
+        return source.read().decode("utf-8").strip() or None

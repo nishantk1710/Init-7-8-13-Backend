@@ -1,373 +1,666 @@
 utc,sap_path,api_query,http_status,elapsed_s,body
-2026-09-21T16:29:40Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/MaterialValuationSet/$count,,400,0.9,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/MaterialValuationSet/$count?sap-client=110& with statusCode: 400""
-}"
-2026-09-21T16:29:41Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/MaterialValuationSet,$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/MaterialValuationSet?sap-client=110&$inlinecount=allpages&$top=1&$format=json with statusCode: 400""
-}"
-2026-09-21T16:29:42Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet/$count,,400,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet/$count?sap-client=110& with statusCode: 400""
-}"
-2026-09-21T16:29:42Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet,$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet?sap-client=110&$inlinecount=allpages&$top=1&$format=json with statusCode: 400""
-}"
-2026-09-21T16:29:43Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet/$count,,400,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet/$count?sap-client=110& with statusCode: 400""
-}"
-2026-09-21T16:29:44Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$inlinecount=allpages&$top=1&$format=json,400,0.8,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet?sap-client=110&$inlinecount=allpages&$top=1&$format=json with statusCode: 400""
-}"
-2026-09-21T16:29:45Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/BatchStockSet/$count,,400,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/BatchStockSet/$count?sap-client=110& with statusCode: 400""
-}"
-2026-09-21T16:29:45Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/BatchStockSet,$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/BatchStockSet?sap-client=110&$inlinecount=allpages&$top=1&$format=json with statusCode: 400""
-}"
-2026-09-21T16:29:46Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/MonthlyMovementStatisticSet/$count,,400,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/MonthlyMovementStatisticSet/$count?sap-client=110& with statusCode: 400""
-}"
-2026-09-21T16:29:47Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/MonthlyMovementStatisticSet,$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/MonthlyMovementStatisticSet?sap-client=110&$inlinecount=allpages&$top=1&$format=json with statusCode: 400""
-}"
-2026-09-21T16:29:49Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/MaterialValuationSet,$top=1&$format=json,400,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/MaterialValuationSet?sap-client=110&$top=1&$format=json with statusCode: 400""
-}"
-2026-09-21T16:29:49Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/MonthlyMovementStatisticSet,$top=1&$format=json,400,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/MonthlyMovementStatisticSet?sap-client=110&$top=1&$format=json with statusCode: 400""
-}"
-2026-09-21T16:29:52Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?sap-client=110&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:29:55Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$top=1&$format=json,500,0.9,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:29:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?sap-client=110&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:30:00Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$inlinecount=allpages&$top=1&$format=json,500,1.0,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:30:01Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$top=5&$format=json,400,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet?sap-client=110&$top=5&$format=json with statusCode: 400""
-}"
-2026-09-21T16:30:02Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$top=5&$skip=5&$format=json,400,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet?sap-client=110&$top=5&$skip=5&$format=json with statusCode: 400""
-}"
-2026-09-21T16:30:02Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet?sap-client=110&$inlinecount=allpages&$top=1&$format=json with statusCode: 400""
-}"
-2026-09-21T16:30:05Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet,$top=1000&$skip=40000&$format=json,500,0.8,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet?sap-client=110&$top=1000&$skip=40000&$format=json with statusCode: 500""
-}"
-2026-09-21T16:30:07Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet,$orderby=Aedat desc&$top=3&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet?sap-client=110&$orderby=Aedat%20desc&$top=3&$format=json with statusCode: 500""
-}"
-2026-09-21T16:30:09Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=Dismm eq 'VB' and Minbe gt 0,400,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count?sap-client=110&$filter=Dismm%20eq%20'VB'%20and%20Minbe%20gt%200 with statusCode: 400""
-}"
-2026-09-21T16:30:10Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,$filter=(Dismm eq 'ND' or Dismm eq 'PD') and Minbe gt 0,400,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count?sap-client=110&$filter=(Dismm%20eq%20'ND'%20or%20Dismm%20eq%20'PD')%20and%20Minbe%20gt%200 with statusCode: 400""
-}"
-2026-09-21T16:30:11Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet,"$select=Matnr,Extwg&$top=2&$format=json",404,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet?sap-client=110&$select=Matnr,Extwg&$top=2&$format=json with statusCode: 404""
-}"
-2026-09-21T16:30:13Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count,$filter=Pstyp eq '3',500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count?sap-client=110&$filter=Pstyp%20eq%20'3' with statusCode: 500""
-}"
-2026-09-21T16:30:16Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count,"$filter=startswith(Matnr,'80')",500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count?sap-client=110&$filter=startswith(Matnr,'80') with statusCode: 500""
-}"
-2026-09-21T16:30:18Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count,"$filter=startswith(Matnr,'2227')",500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count?sap-client=110&$filter=startswith(Matnr,'2227') with statusCode: 500""
-}"
-2026-09-21T16:30:39Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,"$orderby=Matnr,Werks&$top=1000&$skip=0&$format=json",500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?sap-client=110&$orderby=Matnr,Werks&$top=1000&$skip=0&$format=json with statusCode: 500""
-}"
-2026-09-21T16:30:41Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,"$filter=Dismm eq 'VB'&$orderby=Matnr,Werks&$top=1000&$skip=0&$format=json",500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?sap-client=110&$filter=Dismm%20eq%20'VB'&$orderby=Matnr,Werks&$top=1000&$skip=0&$format=json with statusCode: 500""
-}"
-2026-09-21T16:30:44Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,"$filter=Dismm eq 'ND'&$orderby=Matnr,Werks&$top=1000&$skip=0&$format=json",500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?sap-client=110&$filter=Dismm%20eq%20'ND'&$orderby=Matnr,Werks&$top=1000&$skip=0&$format=json with statusCode: 500""
-}"
-2026-09-21T16:30:46Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,"$filter=Dismm eq 'PD'&$orderby=Matnr,Werks&$top=1000&$skip=0&$format=json",500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?sap-client=110&$filter=Dismm%20eq%20'PD'&$orderby=Matnr,Werks&$top=1000&$skip=0&$format=json with statusCode: 500""
-}"
-2026-09-21T16:30:49Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,"$filter=Dismm eq 'V1'&$orderby=Matnr,Werks&$top=1000&$skip=0&$format=json",500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?sap-client=110&$filter=Dismm%20eq%20'V1'&$orderby=Matnr,Werks&$top=1000&$skip=0&$format=json with statusCode: 500""
-}"
-2026-09-21T16:30:54Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$top=1000&$skip=0&$format=json,500,1.0,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$top=1000&$skip=0&$format=json with statusCode: 500""
-}"
-2026-09-21T16:30:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$top=1000&$skip=0&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?sap-client=110&$top=1000&$skip=0&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:11Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet,$orderby=Budat asc&$top=1&$format=json,500,0.8,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet?sap-client=110&$orderby=Budat%20asc&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:12Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet,$orderby=Budat desc&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDocumentHeaderSet?sap-client=110&$orderby=Budat%20desc&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:14Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$top=1000&$skip=0&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?sap-client=110&$top=1000&$skip=0&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet,$filter=Bsart eq 'ZREP'&$top=1000&$skip=0&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderSet?sap-client=110&$filter=Bsart%20eq%20'ZREP'&$top=1000&$skip=0&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:18Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count,"$filter=startswith(Matnr,'8')",500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet/$count?sap-client=110&$filter=startswith(Matnr,'8') with statusCode: 500""
-}"
-2026-09-21T16:31:19Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,"$filter=startswith(Matnr,'8')&$inlinecount=allpages&$top=1&$format=json",500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?sap-client=110&$filter=startswith(Matnr,'8')&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:19Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,"$filter=substringof('800',Matnr)&$inlinecount=allpages&$top=1&$format=json",500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?sap-client=110&$filter=substringof('800',Matnr)&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:21Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet,$filter=Udate ge datetime'2026-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocHeaderSet?sap-client=110&$filter=Udate%20ge%20datetime'2026-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400""
-}"
-2026-09-21T16:31:21Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet,$filter=Objectclas eq 'MATERIAL' and (Tabname eq 'MARC' or Tabname eq 'MARA')&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ChangeDocItemSet?sap-client=110&$filter=Objectclas%20eq%20'MATERIAL'%20and%20(Tabname%20eq%20'MARC'%20or%20Tabname%20eq%20'MARA')&$inlinecount=allpages&$top=1&$format=json with statusCode: 400""
-}"
-2026-09-21T16:31:24Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count,$filter=Menge eq 'ZZ~NOPE',500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet/$count?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE' with statusCode: 500""
-}"
-2026-09-21T16:31:25Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:26Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Preis eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?sap-client=110&$filter=Preis%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:26Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?sap-client=110&$filter=Peinh%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:27Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Ebelp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?sap-client=110&$filter=Ebelp%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:28Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Bsmng eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?sap-client=110&$filter=Bsmng%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:29Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet,$filter=Rsnum eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseRequisitionSet?sap-client=110&$filter=Rsnum%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:31Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet/$count,$filter=Lgort eq 'ZZ~NOPE',500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Lgort%20eq%20'ZZ%7ENOPE' with statusCode: 500""
-}"
-2026-09-21T16:31:31Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Lgort eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Lgort%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:32Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Lifnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Lifnr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:32Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Shkzg eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Shkzg%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:33Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Dmbtr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Dmbtr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:34Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:35Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Meins%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:36Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Ebeln eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Ebeln%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:36Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Ebelp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Ebelp%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:37Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Sgtxt eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Sgtxt%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:37Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Wempf eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Wempf%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:38Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Kostl eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Kostl%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:39Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Aufnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Aufnr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:40Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Rsnum eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Rsnum%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:40Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Rspos eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Rspos%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:41Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Umwrk eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Umwrk%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:42Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Umlgo eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Umlgo%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:42Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=Grund eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=Grund%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:43Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=BudatMkpf eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,500,0.8,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=BudatMkpf%20eq%20datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:44Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet,$filter=CpudtMkpf eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/GoodsMovementItemSet?sap-client=110&$filter=CpudtMkpf%20eq%20datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:45Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet/$count,$filter=Waers eq 'ZZ~NOPE',500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet/$count?sap-client=110&$filter=Waers%20eq%20'ZZ%7ENOPE' with statusCode: 500""
-}"
-2026-09-21T16:31:46Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet,$filter=Waers eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet?sap-client=110&$filter=Waers%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:46Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet,$filter=Aplfz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet?sap-client=110&$filter=Aplfz%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:47Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet,$filter=Netpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet?sap-client=110&$filter=Netpr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:48Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet,$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet?sap-client=110&$filter=Peinh%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:48Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet,$filter=Effpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/InfoRecordOrgSet?sap-client=110&$filter=Effpr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:50Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count,$filter=Txz01 eq 'ZZ~NOPE',500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet/$count?sap-client=110&$filter=Txz01%20eq%20'ZZ%7ENOPE' with statusCode: 500""
-}"
-2026-09-21T16:31:51Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Txz01 eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,1.0,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Txz01%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:52Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Lgort eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Lgort%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:53Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Bednr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Bednr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:54Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:54Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Meins%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:55Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Netpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Netpr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:56Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Peinh%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:56Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Netwr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Netwr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:57Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Pstyp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Pstyp%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:58Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Knttp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Knttp%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:58Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Plifz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Plifz%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:31:59Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet,$filter=Bnfpo eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Bnfpo%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:01Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDescriptionSet/$count,$filter=Maktx eq 'ZZ~NOPE',500,0.8,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDescriptionSet/$count?sap-client=110&$filter=Maktx%20eq%20'ZZ%7ENOPE' with statusCode: 500""
-}"
-2026-09-21T16:32:02Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDescriptionSet,$filter=Maktx eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialDescriptionSet?sap-client=110&$filter=Maktx%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:03Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count,$filter=Bismt eq 'ZZ~NOPE',500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet/$count?sap-client=110&$filter=Bismt%20eq%20'ZZ%7ENOPE' with statusCode: 500""
-}"
-2026-09-21T16:32:04Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet,$filter=Bismt eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet?sap-client=110&$filter=Bismt%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:04Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialSet?sap-client=110&$filter=Meins%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:06Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Plifz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?sap-client=110&$filter=Plifz%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:06Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Webaz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?sap-client=110&$filter=Webaz%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:07Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Minbe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?sap-client=110&$filter=Minbe%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:08Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Eisbe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?sap-client=110&$filter=Eisbe%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:08Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Bstmi eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?sap-client=110&$filter=Bstmi%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:09Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Bstma eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?sap-client=110&$filter=Bstma%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:10Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet,$filter=Mabst eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet?sap-client=110&$filter=Mabst%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:10Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet/$count,$filter=Labst eq 'ZZ~NOPE',500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet/$count?sap-client=110&$filter=Labst%20eq%20'ZZ%7ENOPE' with statusCode: 500""
-}"
-2026-09-21T16:32:11Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet,$filter=Labst eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet?sap-client=110&$filter=Labst%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:12Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet,$filter=Insme eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet?sap-client=110&$filter=Insme%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:12Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet,$filter=Speme eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/StorageLocationStockSet?sap-client=110&$filter=Speme%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:14Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet/$count,$filter=Menge eq 'ZZ~NOPE',500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet/$count?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE' with statusCode: 500""
-}"
-2026-09-21T16:32:15Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:16Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet,$filter=Wemng eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POScheduleLineSet?sap-client=110&$filter=Wemng%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:16Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet/$count,$filter=Zekkn eq 'ZZ~NOPE',500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet/$count?sap-client=110&$filter=Zekkn%20eq%20'ZZ%7ENOPE' with statusCode: 500""
-}"
-2026-09-21T16:32:17Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Zekkn eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.8,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?sap-client=110&$filter=Zekkn%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:18Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Vgabe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?sap-client=110&$filter=Vgabe%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:19Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Gjahr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?sap-client=110&$filter=Gjahr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:19Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Buzei eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?sap-client=110&$filter=Buzei%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:20Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Bewtp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?sap-client=110&$filter=Bewtp%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:21Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Bwart eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?sap-client=110&$filter=Bwart%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:21Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Budat eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?sap-client=110&$filter=Budat%20eq%20datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:22Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:23Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Dmbtr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?sap-client=110&$filter=Dmbtr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:23Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Shkzg eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?sap-client=110&$filter=Shkzg%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:24Z,/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet,$filter=Cpudt eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/POHistorySet?sap-client=110&$filter=Cpudt%20eq%20datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:26Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count,$filter=Meins eq 'ZZ~NOPE',500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet/$count?sap-client=110&$filter=Meins%20eq%20'ZZ%7ENOPE' with statusCode: 500""
-}"
-2026-09-21T16:32:26Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/ReservationItemSet?sap-client=110&$filter=Meins%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500""
-}"
-2026-09-21T16:32:29Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count,$filter=Letztzug eq datetime'1900-01-01T00:00:00',400,0.6,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet/$count?sap-client=110&$filter=Letztzug%20eq%20datetime'1900-01-01T00:00:00' with statusCode: 400""
-}"
-2026-09-21T16:32:29Z,/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet,$filter=Letztzug eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
-""errormessage"" : ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_SRV/StockMovementStatisticSet?sap-client=110&$filter=Letztzug%20eq%20datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400""
-}"
+2026-09-25T04:14:52Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet,$filter=Objectclas eq 'MATERIAL'&$top=3&$format=json,500,1.2,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet?sap-client=110&$filter=Objectclas%20eq%20'MATERIAL'&$top=3&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server error occurred\""},\""inne"
+2026-09-25T04:15:52Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$top=1000&$skip=0&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet?sap-client=110&$top=1000&$skip=0&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server error occurred\""},\""innererror\"":{\""transactionid\"":\""F9"
+2026-09-25T04:15:58Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,$filter=Menge eq 'ZZ~NOPE',500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE' with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server error occurred\""},\""innererror\"":{\""t"
+2026-09-25T04:15:58Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server er"
+2026-09-25T04:15:59Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$filter=Preis eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet?sap-client=110&$filter=Preis%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server er"
+2026-09-25T04:16:00Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet?sap-client=110&$filter=Peinh%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server er"
+2026-09-25T04:16:01Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet,$filter=Bsmng eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet?sap-client=110&$filter=Bsmng%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server er"
+2026-09-25T04:16:03Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Lgort eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Lgort%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: LGORT\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:03Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Lgort eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Lgort%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: LGORT\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:04Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Lifnr eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Lifnr%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: LIFNR\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:05Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Lifnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Lifnr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: LIFNR\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:05Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Shkzg eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Shkzg%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: SHKZG\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:06Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Shkzg eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Shkzg%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: SHKZG\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:07Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Dmbtr eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Dmbtr%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: DMBTR\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:07Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Dmbtr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Dmbtr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: DMBTR\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:08Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Menge eq 'ZZ~NOPE',400,0.8,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: MENGE\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:09Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: MENGE\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:10Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Meins eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Meins%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: MEINS\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:10Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Meins%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: MEINS\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:11Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Ebeln eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Ebeln%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: EBELN\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:12Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Ebeln eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Ebeln%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: EBELN\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:12Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Ebelp eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Ebelp%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: EBELP\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:13Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Ebelp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Ebelp%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: EBELP\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:14Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Sgtxt eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Sgtxt%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: SGTXT\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:14Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Sgtxt eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Sgtxt%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: SGTXT\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:15Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Wempf eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Wempf%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: WEMPF\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:16Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Wempf eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Wempf%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: WEMPF\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:16Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Kostl eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Kostl%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: KOSTL\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:17Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Kostl eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Kostl%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: KOSTL\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:18Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Aufnr eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Aufnr%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: AUFNR\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:18Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Aufnr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Aufnr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: AUFNR\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:19Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Rsnum eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Rsnum%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: RSNUM\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:20Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Rsnum eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Rsnum%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: RSNUM\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:20Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Rspos eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Rspos%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: RSPOS\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:21Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Rspos eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Rspos%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: RSPOS\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:22Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Umwrk eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Umwrk%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: UMWRK\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:22Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Umwrk eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Umwrk%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: UMWRK\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:23Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Umlgo eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Umlgo%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: UMLGO\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:24Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Umlgo eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Umlgo%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: UMLGO\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:24Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=Grund eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=Grund%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: GRUND\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:25Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=Grund eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=Grund%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: GRUND\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:26Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=BudatMkpf eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=BudatMkpf%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: BUDAT_MKPF\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"","
+2026-09-25T04:16:26Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=BudatMkpf eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=BudatMkpf%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: BUDAT_MKPF\""},\""innererror\"":{\""application\"":{\""component_id\"":\"""
+2026-09-25T04:16:27Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,$filter=CpudtMkpf eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count?sap-client=110&$filter=CpudtMkpf%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: CPUDT_MKPF\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"","
+2026-09-25T04:16:28Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet,$filter=CpudtMkpf eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet?sap-client=110&$filter=CpudtMkpf%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: CPUDT_MKPF\""},\""innererror\"":{\""application\"":{\""component_id\"":\"""
+2026-09-25T04:16:29Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet/$count,$filter=Waers eq 'ZZ~NOPE',500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet/$count?sap-client=110&$filter=Waers%20eq%20'ZZ%7ENOPE' with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service_id\"
+2026-09-25T04:16:30Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet,$filter=Waers eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet?sap-client=110&$filter=Waers%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_"
+2026-09-25T04:16:30Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet,$filter=Aplfz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet?sap-client=110&$filter=Aplfz%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_"
+2026-09-25T04:16:31Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet,$filter=Netpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet?sap-client=110&$filter=Netpr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_"
+2026-09-25T04:16:32Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet,$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet?sap-client=110&$filter=Peinh%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_"
+2026-09-25T04:16:32Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet,$filter=Effpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet?sap-client=110&$filter=Effpr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_"
+2026-09-25T04:16:34Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Txz01 eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count?sap-client=110&$filter=Txz01%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: TXZ01\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:35Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Txz01 eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Txz01%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: TXZ01\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:36Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Lgort eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count?sap-client=110&$filter=Lgort%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: LGORT\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:36Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Lgort eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Lgort%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: LGORT\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:37Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Bednr eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count?sap-client=110&$filter=Bednr%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: BEDNR\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:37Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Bednr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Bednr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: BEDNR\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:38Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Menge eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: MENGE\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:39Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: MENGE\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:39Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Meins eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count?sap-client=110&$filter=Meins%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: MEINS\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:40Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Meins%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: MEINS\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:41Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Netpr eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count?sap-client=110&$filter=Netpr%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: NETPR\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:41Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Netpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Netpr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: NETPR\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:42Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Peinh eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count?sap-client=110&$filter=Peinh%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: PEINH\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:43Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Peinh%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: PEINH\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:43Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Netwr eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count?sap-client=110&$filter=Netwr%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: NETWR\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:44Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Netwr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Netwr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: NETWR\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:45Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Knttp eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count?sap-client=110&$filter=Knttp%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: KNTTP\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:45Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Knttp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Knttp%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: KNTTP\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:46Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Plifz eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count?sap-client=110&$filter=Plifz%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: PLIFZ\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:46Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Plifz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Plifz%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: PLIFZ\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:47Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,$filter=Bnfpo eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count?sap-client=110&$filter=Bnfpo%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: BNFPO\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service"
+2026-09-25T04:16:48Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet,$filter=Bnfpo eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet?sap-client=110&$filter=Bnfpo%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: BNFPO\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""serv"
+2026-09-25T04:16:49Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDescriptionSet/$count,$filter=Maktx eq 'ZZ~NOPE',500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDescriptionSet/$count?sap-client=110&$filter=Maktx%20eq%20'ZZ%7ENOPE' with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""servi"
+2026-09-25T04:16:50Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDescriptionSet,$filter=Maktx eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDescriptionSet?sap-client=110&$filter=Maktx%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""se"
+2026-09-25T04:16:50Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,$filter=Bismt eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count?sap-client=110&$filter=Bismt%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: BISMT\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service_id\"":\""Z"
+2026-09-25T04:16:51Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet,$filter=Bismt eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet?sap-client=110&$filter=Bismt%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: BISMT\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_names"
+2026-09-25T04:16:52Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,$filter=Meins eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count?sap-client=110&$filter=Meins%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: MEINS\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service_id\"":\""Z"
+2026-09-25T04:16:52Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet,$filter=Meins eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet?sap-client=110&$filter=Meins%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: MEINS\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_names"
+2026-09-25T04:16:54Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Plifz eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count?sap-client=110&$filter=Plifz%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: PLIFZ\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service_id\"
+2026-09-25T04:16:54Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$filter=Plifz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet?sap-client=110&$filter=Plifz%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: PLIFZ\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_"
+2026-09-25T04:16:55Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Webaz eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count?sap-client=110&$filter=Webaz%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: WEBAZ\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service_id\"
+2026-09-25T04:16:56Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$filter=Webaz eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet?sap-client=110&$filter=Webaz%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: WEBAZ\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_"
+2026-09-25T04:16:56Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Eisbe eq 'ZZ~NOPE',400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count?sap-client=110&$filter=Eisbe%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: EISBE\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service_id\"
+2026-09-25T04:16:57Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$filter=Eisbe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet?sap-client=110&$filter=Eisbe%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: EISBE\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_"
+2026-09-25T04:16:58Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Bstmi eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count?sap-client=110&$filter=Bstmi%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: BSTMI\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service_id\"
+2026-09-25T04:16:58Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$filter=Bstmi eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet?sap-client=110&$filter=Bstmi%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: BSTMI\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_"
+2026-09-25T04:16:59Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Bstma eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count?sap-client=110&$filter=Bstma%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: BSTMA\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service_id\"
+2026-09-25T04:17:00Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$filter=Bstma eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet?sap-client=110&$filter=Bstma%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: BSTMA\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_"
+2026-09-25T04:17:00Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,$filter=Mabst eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count?sap-client=110&$filter=Mabst%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: MABST\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service_id\"
+2026-09-25T04:17:01Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet,$filter=Mabst eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet?sap-client=110&$filter=Mabst%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: MABST\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_"
+2026-09-25T04:17:02Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet/$count,$filter=Labst eq 'ZZ~NOPE',500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet/$count?sap-client=110&$filter=Labst%20eq%20'ZZ%7ENOPE' with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server error occurred\""},\""innererror\"":{\"""
+2026-09-25T04:17:03Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet,$filter=Labst eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet?sap-client=110&$filter=Labst%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server e"
+2026-09-25T04:17:03Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet,$filter=Insme eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet?sap-client=110&$filter=Insme%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server e"
+2026-09-25T04:17:04Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet,$filter=Speme eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet?sap-client=110&$filter=Speme%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server e"
+2026-09-25T04:17:06Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet/$count,$filter=Menge eq 'ZZ~NOPE',500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet/$count?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE' with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server error occurred\""},\""innererror\"":{\""transa"
+2026-09-25T04:17:07Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server error o"
+2026-09-25T04:17:07Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet,$filter=Wemng eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet?sap-client=110&$filter=Wemng%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server error o"
+2026-09-25T04:17:08Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet/$count,$filter=Zekkn eq 'ZZ~NOPE',500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet/$count?sap-client=110&$filter=Zekkn%20eq%20'ZZ%7ENOPE' with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP/\"",\""service_id\"":\"""
+2026-09-25T04:17:09Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Zekkn eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet?sap-client=110&$filter=Zekkn%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_name"
+2026-09-25T04:17:09Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Vgabe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet?sap-client=110&$filter=Vgabe%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_name"
+2026-09-25T04:17:10Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Gjahr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet?sap-client=110&$filter=Gjahr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server error occurr"
+2026-09-25T04:17:11Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Buzei eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet?sap-client=110&$filter=Buzei%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_name"
+2026-09-25T04:17:12Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Bewtp eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet?sap-client=110&$filter=Bewtp%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_name"
+2026-09-25T04:17:12Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Bwart eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet?sap-client=110&$filter=Bwart%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_name"
+2026-09-25T04:17:13Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Budat eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet?sap-client=110&$filter=Budat%20eq%20datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\"
+2026-09-25T04:17:14Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Menge eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet?sap-client=110&$filter=Menge%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_name"
+2026-09-25T04:17:14Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Dmbtr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet?sap-client=110&$filter=Dmbtr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_name"
+2026-09-25T04:17:15Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Shkzg eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet?sap-client=110&$filter=Shkzg%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_name"
+2026-09-25T04:17:16Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet,$filter=Cpudt eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet?sap-client=110&$filter=Cpudt%20eq%20datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""An exception was raised.\""},\""innererror\"":{\""application\"":{\""component_id\"":\"
+2026-09-25T04:17:17Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count,$filter=Enmng eq 'ZZ~NOPE',500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count?sap-client=110&$filter=Enmng%20eq%20'ZZ%7ENOPE' with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server error occurred\""},\""innererror\"":{\""trans"
+2026-09-25T04:17:18Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$filter=Enmng eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet?sap-client=110&$filter=Enmng%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server error "
+2026-09-25T04:17:18Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet,$filter=Enwrt eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet?sap-client=110&$filter=Enwrt%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server error "
+2026-09-25T04:17:20Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet/$count,$filter=Salk3 eq 'ZZ~NOPE',500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet/$count?sap-client=110&$filter=Salk3%20eq%20'ZZ%7ENOPE' with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server error occurred\""},\""innererror\"":{\""tra"
+2026-09-25T04:17:21Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet,$filter=Salk3 eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet?sap-client=110&$filter=Salk3%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server erro"
+2026-09-25T04:17:22Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet,$filter=Verpr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet?sap-client=110&$filter=Verpr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server erro"
+2026-09-25T04:17:23Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet,$filter=Stprs eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet?sap-client=110&$filter=Stprs%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server erro"
+2026-09-25T04:17:23Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet,$filter=Peinh eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet?sap-client=110&$filter=Peinh%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server erro"
+2026-09-25T04:17:25Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet/$count,$filter=Utime eq 'ZZ~NOPE',400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet/$count?sap-client=110&$filter=Utime%20eq%20'ZZ%7ENOPE' with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""/IWBEP/CM_MGW_RT/022\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: UTIME.\""},\""innererror\"":{\""application\"":{\""component_id\"":\""\"",\""service_namespace\"":\""/SAP"
+2026-09-25T04:17:25Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet,$filter=Utime eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,400,0.7,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet?sap-client=110&$filter=Utime%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""/IWBEP/CM_MGW_RT/022\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: UTIME.\""},\""innererror\"":{\""application\"":{\""component_id\"
+2026-09-25T04:17:28Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet/$count,$filter=Mzubb eq 'ZZ~NOPE',500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet/$count?sap-client=110&$filter=Mzubb%20eq%20'ZZ%7ENOPE' with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server error occurred\""},\""innererror\"""
+2026-09-25T04:17:28Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet,$filter=Mzubb eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet?sap-client=110&$filter=Mzubb%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal serv"
+2026-09-25T04:17:29Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet,$filter=Wzubb eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet?sap-client=110&$filter=Wzubb%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal serv"
+2026-09-25T04:17:30Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet,$filter=Magbb eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet?sap-client=110&$filter=Magbb%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal serv"
+2026-09-25T04:17:30Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet,$filter=Wagbb eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.7,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet?sap-client=110&$filter=Wagbb%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal serv"
+2026-09-25T04:17:31Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet,$filter=Ambwg eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet?sap-client=110&$filter=Ambwg%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal serv"
+2026-09-25T04:17:32Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet,$filter=Muvbr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet?sap-client=110&$filter=Muvbr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal serv"
+2026-09-25T04:17:32Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet,$filter=Wuvbr eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet?sap-client=110&$filter=Wuvbr%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal serv"
+2026-09-25T04:17:34Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet/$count,$filter=Mbwbest eq 'ZZ~NOPE',500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet/$count?sap-client=110&$filter=Mbwbest%20eq%20'ZZ%7ENOPE' with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server error occurred\""},\""innererror\"""
+2026-09-25T04:17:34Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet,$filter=Mbwbest eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet?sap-client=110&$filter=Mbwbest%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal serv"
+2026-09-25T04:17:35Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet,$filter=Wbwbest eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet?sap-client=110&$filter=Wbwbest%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal serv"
+2026-09-25T04:17:36Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet,$filter=Letztzug eq datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json,400,0.6,"{
+    ""statusCode"": ""400"",
+    ""statusText"": ""Bad Request"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet?sap-client=110&$filter=Letztzug%20eq%20datetime'1900-01-01T00:00:00'&$inlinecount=allpages&$top=1&$format=json with statusCode: 400"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""SY/530\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""Unsupported filter property: LETZTZUG\""},\""innererror\"":{\""application\"":"
+2026-09-25T04:17:37Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet,$filter=Eisbe eq 'ZZ~NOPE'&$inlinecount=allpages&$top=1&$format=json,500,0.6,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzidci:44300/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet?sap-client=110&$filter=Eisbe%20eq%20'ZZ%7ENOPE'&$inlinecount=allpages&$top=1&$format=json with statusCode: 500"",
+    ""errorResponse"": ""{\""error\"":{\""code\"":\""0050569259751EE4BA9710043F8A5115\"",\""message\"":{\""lang\"":\""en\"",\""value\"":\""In the context of Data Services an unknown internal server"

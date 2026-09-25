@@ -197,3 +197,171 @@ def test_columns_are_logged(caplog) -> None:
     logged = " | ".join(caplog.messages)
     assert "MATNR" in logged
     assert "2 rows" in logged
+
+
+# ---------------------------------------------------------------------------
+# Landing SAP's chunked push as one file per table.
+#
+# SAP sends a table as chunks of 50,000 records, each its own POST, and they
+# have to end up as a single readable CSV. Whether a chunk after the first
+# repeats the header row is NOT yet confirmed with SAP, so both are covered:
+# assuming either one costs a data row per chunk or duplicates a header.
+# ---------------------------------------------------------------------------
+
+import pytest
+
+from app.api.events import csv_upload
+from app.core import storage as storage_module
+from app.integrations.storage.adls import AzureDataLakeStorage
+from tests.fake_adls import FakeDataLakeServiceClient
+
+EKPO_HEADER = "MANDT,EBELN,EBELP,LOEKZ"
+MSEG_HEADER = "MANDT,MBLNR,MJAHR,ZEILE"
+
+
+@pytest.fixture
+def landing(monkeypatch):
+    """A real adapter over the in-memory fake, wired in as the app's storage."""
+    adapter = AzureDataLakeStorage(
+        "abfss://landing@stvziaicomnonprod.dfs.core.windows.net/",
+        service_client=FakeDataLakeServiceClient(),
+    )
+    monkeypatch.setattr(csv_upload, "get_storage", lambda: adapter)
+    monkeypatch.setattr(
+        csv_upload,
+        "get_settings",
+        lambda: type("S", (), {"storage_url": "abfss://landing@a.dfs.core.windows.net/"})(),
+    )
+    return adapter
+
+
+def post_chunk(body: str):
+    return client.post(
+        "/api/events/csv", content=body.encode("utf-8"),
+        headers={"Content-Type": "text/csv"},
+    )
+
+
+def read_stored(adapter, key: str) -> str:
+    with adapter.open_read(key) as handle:
+        return handle.read().decode("utf-8")
+
+
+class TestChunkLanding:
+    def test_the_table_is_identified_from_the_header(self, landing) -> None:
+        body = post_chunk(f"{EKPO_HEADER}\n800,4500000001,00010,\n").json()
+
+        assert body["stored"].startswith("EKPO/")
+        assert body["stored"].endswith("/EKPO.csv")
+
+    def test_two_tables_land_in_separate_files(self, landing) -> None:
+        ekpo = post_chunk(f"{EKPO_HEADER}\n800,4500000001,00010,\n").json()["stored"]
+        mseg = post_chunk(f"{MSEG_HEADER}\n800,4900000001,2026,0001\n").json()["stored"]
+
+        assert ekpo != mseg
+        assert "/EKPO.csv" in ekpo and "/MSEG.csv" in mseg
+
+    def test_chunks_repeating_the_header_keep_only_the_first(self, landing) -> None:
+        key = post_chunk(f"{EKPO_HEADER}\n800,4500000001,00010,\n").json()["stored"]
+        post_chunk(f"{EKPO_HEADER}\n800,4500000002,00020,\n")
+        post_chunk(f"{EKPO_HEADER}\n800,4500000003,00030,\n")
+
+        assert read_stored(landing, key) == (
+            f"{EKPO_HEADER}\n"
+            "800,4500000001,00010,\n"
+            "800,4500000002,00020,\n"
+            "800,4500000003,00030,\n"
+        )
+
+    def test_headerless_chunks_do_not_lose_their_first_row(self, landing) -> None:
+        """If SAP omits the header after chunk one, row one is DATA.
+
+        Stripping it unconditionally would discard one real record per chunk --
+        99 records across a 100-chunk batch, with a 202 on every one.
+        """
+        key = post_chunk(f"{EKPO_HEADER}\n800,4500000001,00010,\n").json()["stored"]
+        post_chunk("800,4500000002,00020,\n800,4500000003,00030,\n")
+
+        assert read_stored(landing, key) == (
+            f"{EKPO_HEADER}\n"
+            "800,4500000001,00010,\n"
+            "800,4500000002,00020,\n"
+            "800,4500000003,00030,\n"
+        )
+
+    def test_a_chunk_without_a_trailing_newline_still_joins_cleanly(self, landing) -> None:
+        """Otherwise the last row of one chunk and the first of the next merge."""
+        key = post_chunk(f"{EKPO_HEADER}\n800,4500000001,00010,").json()["stored"]
+        post_chunk(f"{EKPO_HEADER}\n800,4500000002,00020,")
+
+        assert read_stored(landing, key).splitlines() == [
+            EKPO_HEADER,
+            "800,4500000001,00010,",
+            "800,4500000002,00020,",
+        ]
+
+    def test_an_unrecognised_header_still_lands_under_a_stable_name(self, landing) -> None:
+        first = post_chunk("ZZONE,ZZTWO\n1,2\n").json()["stored"]
+        second = post_chunk("ZZONE,ZZTWO\n3,4\n").json()["stored"]
+
+        assert "UNKNOWN_" in first
+        assert first == second, "the same header must always resolve to one file"
+
+    def test_a_storage_failure_never_refuses_the_upload(self, monkeypatch) -> None:
+        """The whole point of this endpoint: packaging never loses an extract.
+
+        Our storage being broken is our problem, not a reason to hand SAP a
+        failure it will not retry.
+        """
+        def boom():
+            raise RuntimeError("storage is down")
+
+        monkeypatch.setattr(csv_upload, "get_storage", boom)
+        monkeypatch.setattr(
+            csv_upload, "get_settings",
+            lambda: type("S", (), {"storage_url": "abfss://x@y.dfs.core.windows.net/"})(),
+        )
+
+        response = post_chunk(f"{EKPO_HEADER}\n800,4500000001,00010,\n")
+
+        assert response.status_code == 202
+        assert response.json()["stored"] is None
+        assert response.json()["rows"] == 1
+
+    def test_nothing_is_written_when_storage_is_not_configured(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            csv_upload, "get_settings",
+            lambda: type("S", (), {"storage_url": ""})(),
+        )
+
+        response = post_chunk(f"{EKPO_HEADER}\n800,4500000001,00010,\n")
+
+        assert response.status_code == 202
+        assert response.json()["stored"] is None
+
+
+class TestTableOf:
+    @pytest.mark.parametrize(
+        ("header", "expected"),
+        [
+            (["MANDT", "EBELN", "EBELP", "LOEKZ"], "EKPO"),
+            (["MANDT", "EBELN", "BUKRS"], "EKKO"),
+            (["MANDT", "EBELN", "EBELP", "ZEKKN", "VGABE"], "EKBE"),
+            (["MANDT", "MBLNR", "MJAHR", "ZEILE"], "MSEG"),
+            (["MANDT", "MBLNR", "MJAHR", "VGART"], "MKPF"),
+            (["MANDT", "MATNR", "ERSDA"], "MARA"),
+            (["MANDT", "MATNR", "WERKS", "PSTAT"], "MARC"),
+            (["MANDT", "MATNR", "WERKS", "LGORT"], "MARD"),
+            (["MANDT", "BANFN", "BNFPO"], "EBAN"),
+            (["MANDT", "RSNUM", "RSPOS"], "RESB"),
+        ],
+    )
+    def test_longest_signature_wins(self, header, expected) -> None:
+        """EKKO's key is a prefix of EKPO's and MARA's of MARC's.
+
+        Matched shortest-first, every EKPO chunk would land in EKKO's file.
+        """
+        assert csv_upload.table_of(header) == expected
+
+    def test_case_and_whitespace_do_not_change_the_answer(self) -> None:
+        assert csv_upload.table_of([" mandt ", "ebeln", "ebelp"]) == "EKPO"
