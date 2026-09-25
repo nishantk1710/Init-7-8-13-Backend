@@ -3,9 +3,12 @@
 This table is the correlation mechanism, and it exists because the delivery
 carries none of its own. SAP's push arrives as a bare CSV body: no request id,
 no chunk number, no total, nothing tying a chunk to the request that asked for
-it. The only fact the receiver can rely on is that exactly one extract is in
-flight at a time -- which is true only because ``csv_pull`` refuses to fire a
-second one while a row here is still OPEN.
+it -- only a header naming its table. So the table is the correlation key: the
+receiver matches a chunk to the OPEN row for the table its header names, and
+``csv_pull`` guarantees that is unambiguous by refusing to fire a second
+extract for a table that already has one open. Several TABLES are in flight
+together during a sweep, and that is fine; two requests for one table would
+not be.
 
 So the sequence is: write the row, then fire. Never the other way round. A
 chunk that arrives before its row exists cannot be attributed to anything, and
@@ -25,7 +28,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
 # Lifecycle. OPEN is the only state in which the receiver will attribute a
-# chunk, and at most one row may hold it at a time.
+# chunk, and at most one row PER TABLE may hold it at a time.
 STATUS_OPEN = "open"
 STATUS_COMPLETE = "complete"
 STATUS_FAILED = "failed"

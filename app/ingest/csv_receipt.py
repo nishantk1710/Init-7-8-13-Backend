@@ -6,9 +6,12 @@ over its packaging; refusing it because our own database is unreachable would
 be the same mistake with a different cause. Every function here swallows its
 failures and says so in the log. SAP gets its 202 regardless.
 
-The attribution rule is the one ``csv_pull`` enforces from the other side:
-exactly one request is OPEN at a time, so an arriving chunk belongs to it. The
-chunk itself carries nothing -- no request id, no sequence number, no total.
+A chunk is attributed by the TABLE its own header names, which is what the
+caller has already resolved before calling in here. It carries nothing else --
+no request id, no sequence number, no total -- so the open request for that
+table is what it counts against. Several tables are in flight at once during a
+sweep; ``csv_pull`` guarantees only that no table has two requests open, which
+is exactly what this lookup needs.
 
 A chunk that arrives with no request open is still written to storage by the
 caller; it simply has nothing to be counted against. That is logged as a
@@ -88,29 +91,26 @@ def record_chunk(table: str, data_key: str, *, rows: int, raw_bytes: int) -> Non
 
     try:
         with sessionmaker() as session:
+            # Matched on the table, not on "whichever request is open". A
+            # sweep has twenty-one open at once, and taking the newest of
+            # those counted one table's rows against another table's request
+            # -- which is also the file landing_keys() appends them to, so the
+            # two must agree.
             record = session.scalars(
                 select(CsvExtractRequest)
-                .where(CsvExtractRequest.status == STATUS_OPEN)
+                .where(
+                    CsvExtractRequest.status == STATUS_OPEN,
+                    CsvExtractRequest.sap_table == table,
+                )
                 .order_by(CsvExtractRequest.fired_at.desc())
             ).first()
 
             if record is None:
                 logger.warning(
-                    "chunk for %s landed at %s with no extract request open -- "
-                    "the bytes are stored but nothing is tracking completeness",
+                    "chunk for %s landed at %s with no open request for that "
+                    "table -- the bytes are stored but nothing is tracking "
+                    "completeness",
                     table, data_key,
-                )
-                return
-
-            if record.sap_table != table:
-                # The header said one table, the open request asked for another.
-                # Counting it would corrupt the tally the completeness check
-                # rests on, so it is refused loudly and the bytes left alone.
-                logger.error(
-                    "chunk header says %s but the open request %s asked for %s. "
-                    "Not counting it: two extracts in flight would explain this, "
-                    "and csv_pull is meant to make that impossible.",
-                    table, record.request_id, record.sap_table,
                 )
                 return
 

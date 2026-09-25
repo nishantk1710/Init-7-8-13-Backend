@@ -107,7 +107,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-wait",
         action="store_true",
-        help="fire the extract and return, instead of waiting for the chunks",
+        help=(
+            "fire the extract(s) and return, instead of waiting for the "
+            "chunks. Useful when the deliveries are being watched on the "
+            "receiving side rather than here."
+        ),
     )
     parser.add_argument(
         "--csv-status",
@@ -285,13 +289,19 @@ def _csv(args) -> int:
         else:
             span = "default (3 years for transaction tables)"
 
-        print(f"CSV pull: {len(names)} table(s), one at a time")
+        shape = "fired together, then collected" if len(names) > 1 else "single table"
+        print(f"CSV pull: {len(names)} table(s), {shape}")
         print(f"  window : {span}")
         print(f"  rows   : {args.max_rows or 'no cap -- full pull'}")
         print()
 
         results = (
-            pull_all(max_rows=args.max_rows, tables=names, **window)
+            pull_all(
+                max_rows=args.max_rows,
+                tables=names,
+                wait=not args.no_wait,
+                **window,
+            )
             if len(names) > 1
             else [
                 pull_one(

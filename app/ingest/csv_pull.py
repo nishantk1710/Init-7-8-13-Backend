@@ -23,13 +23,29 @@ Four details in that string are load-bearing, all of them learned the hard way:
 * ``RequestId`` must be unique. Refiring a used one returns the same cheerful
   acknowledgement and delivers nothing at all.
 
-WHY ONE AT A TIME
+WHY THE WHOLE SWEEP IS FIRED AT ONCE
 
-The chunks SAP pushes carry no request id, no sequence number and no total.
-The receiver attributes them to whichever request is OPEN. That is sound only
-while exactly one is -- so ``fire`` refuses to start a second extract while any
-row is still open, rather than letting two tables interleave into one file with
-no way to separate them afterwards.
+Serialised -- fire one, wait for it, fire the next -- this route delivered
+nothing, a dozen attempts running. Fired as a batch it has never failed:
+
+    21 tables, 3s apart, twice from a laptop   38 deliveries
+    3 tables, 5s apart                          3 deliveries
+    2 tables, 20s apart                         2 deliveries
+    1 at a time, waiting in between             0 deliveries, every time
+
+The request id, the date window, ``MaxRows``, the preceding ``$count``, the
+transport class and the calling host were each varied on their own and each
+cleared. What is left is the firing pattern, and the evidence for it is 43
+deliveries against a dozen silences.
+
+Serialising was never actually required. It existed because the chunks SAP
+pushes carry no request id, no sequence number and no total -- so the receiver
+attributed each one to whichever request was OPEN, which is sound only while
+exactly one is. But a chunk DOES carry a header naming its table, and
+``csv_upload.table_of`` resolves all 21 from it. Attribution by table needs no
+serialisation: several tables may be in flight together, and only a second
+request for the SAME table is ambiguous, because those two would be
+indistinguishable. ``fire`` refuses that one case and nothing else.
 
 THE ACKNOWLEDGEMENT PROVES NOTHING
 
@@ -41,8 +57,8 @@ lands, never by what the trigger said.
 
 from __future__ import annotations
 
+import threading
 import time
-import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
@@ -59,6 +75,7 @@ from app.models.csv_extract import (
     STATUS_FAILED,
     STATUS_OPEN,
     STATUS_TIMEOUT,
+    TERMINAL_STATUSES,
     CsvExtractRequest,
 )
 
@@ -96,57 +113,67 @@ class PullResult:
         return self.status == STATUS_COMPLETE
 
 
-# RequestId length. $metadata declares MaxLength=20 and that is NOT the working
-# limit: measured 25-Sep, every id of 16 characters acknowledged and delivered
-# nothing, while every id of 9 to 11 characters delivered in seconds.
+# RequestId SHAPE. Every id that ever failed and every id that delivered,
+# 25-Sep, with the window, cap and transport held constant in each probe:
 #
-#   REQ163623         9   delivered
-#   P17394600..20     9   delivered, all 21 tables
-#   FMARA191610..    11   delivered, all 17 tables that answered
-#   EKPO518A05164052 16   ack, no data
-#   MARA00A78AE3BE9D 16   ack, no data
-#   EKPOC4C06FFCD82D 16   ack, no data
+#   delivered   REQ163623 (9)  P17394600 (9)  FMARA224319 (11)  X1790357579 (11)
+#               FEINA90357571 (13)  F<TABLE>224559 x 17 (11-12)
+#   silent      MARA8XR2WS (10)  MAKTVO2QGB (10)  MARA55AD19FF (12)
+#               FEINA790357145 (14)  FEINA790357363 (14)
+#               MARA00A78AE3BE9D (16)  EKPOC4C06FFCD82D (16)
 #
-#   MARA55AD19FF     12   ack, no data in 8m43s
+# Two rules, each shown by a side-by-side on the same table:
 #
-# The declared maximum is therefore wrong, or something downstream truncates
-# and then fails to match its own key. Ten sits below every id that has failed
-# and at or under every id that has worked, and still leaves 16.7 million
-# combinations after a four-character table prefix -- collisions are not the
-# risk here, a silent non-delivery is.
-REQUEST_ID_MAX = 10
+#   * TOTAL LENGTH OF AT MOST 13. FEINA90357571 delivered in six seconds;
+#     FEINA790357145 and FEINA790357363, one character longer, never did.
+#     $metadata declares MaxLength=20; that is the field, not the rule.
+#   * LETTERS THEN DIGITS, and not the bare table name in front. MARA8XR2WS
+#     and MAKTVO2QGB are short enough and never delivered; ids that mixed
+#     letters back in after the digits never did either. Ten digits after the
+#     letter are fine (X1790357579), so it is the mixing, not a digit count.
+#
+# Both failures look identical from here: SAP acknowledges and sends nothing,
+# and the pull reports a 15-minute timeout, not an error.
+REQUEST_ID_MAX = 13
+
+# Epoch seconds modulo 10^8: unique per second, cycle of 3.17 years.
+REQUEST_ID_DIGITS = 8
+
+# Letters first. Anything but the table name itself, and not a digit.
+_ID_PREFIX = "F"
+
+# 1 + 4 + 8 = 13. CDHDR and CDPOS lose their fifth letter; FCDHD and FCDPO
+# still tell them apart, and the row records the full table name anyway.
+_TABLE_LETTERS = REQUEST_ID_MAX - len(_ID_PREFIX) - REQUEST_ID_DIGITS
+
+# Last second issued per table, so a burst within one second stays unique.
+_issued: dict[str, int] = {}
+_issued_lock = threading.Lock()
 
 
-# Base 36, not hex. Both constraints here pull against each other: the id must
-# be SHORT enough that SAP honours it, and UNIQUE enough that SAP never sees a
-# repeat -- a reused id acknowledges and delivers nothing, identically to an
-# over-long one. Six hex characters is only 16.7 million combinations, which a
-# uniqueness test found colliding. The same six characters in base 36 give
-# 2.18 billion, for no extra length.
-_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-
-def new_request_id(sap_table: str) -> str:
-    """Unique per fire, and short enough that SAP actually honours it.
+def new_request_id(sap_table: str, *, now: float | None = None) -> str:
+    """``F<TABL><8 digits>`` -- thirteen characters, letters then digits.
 
     Unique because SAP dedupes: refiring a used id returns the same cheerful
-    acknowledgement and sends nothing. Short because of REQUEST_ID_MAX above --
-    this was the cause of every failed pull on 25-Sep, and it reports as a
-    15-minute timeout rather than as an error.
-
-    Both failure modes look exactly alike from our side, which is why neither
-    is traded off against the other here.
+    acknowledgement and sends nothing, exactly like a mis-shaped one. The
+    digits are epoch seconds, so a scheduled sweep firing at the same
+    wall-clock second every day still gets a fresh id. Within one sweep the
+    table letters keep the ids apart. Across processes, two fires of ONE
+    table in ONE second would collide, and fire() refuses a second open
+    request for a table.
     """
-    prefix = sap_table[:4].upper()
-    width = REQUEST_ID_MAX - len(prefix)
-
-    value = uuid.uuid4().int
-    suffix = ""
-    for _ in range(width):
-        value, index = divmod(value, len(_ALPHABET))
-        suffix += _ALPHABET[index]
-
-    return f"{prefix}{suffix}"
+    table = sap_table.upper()[:_TABLE_LETTERS]
+    seconds = int(time.time() if now is None else now) % 10**REQUEST_ID_DIGITS
+    with _issued_lock:
+        # Never re-issue a (table, second) this process has already used: a
+        # second fire of one table inside the same second steps forward one
+        # second instead of colliding. Ids may run marginally ahead of the
+        # clock under a burst; they only ever have to be unique and shaped.
+        last = _issued.get(table)
+        if last is not None and seconds <= last:
+            seconds = last + 1
+        _issued[table] = seconds
+    return f"{_ID_PREFIX}{table}{seconds:0{REQUEST_ID_DIGITS}d}"
 
 
 def extract_path(
@@ -165,11 +192,20 @@ def extract_path(
     return f"sap/opu/odata/SAP/{CSV_SERVICE}/{key}/$value"
 
 
-def open_request(session) -> CsvExtractRequest | None:
-    """The extract currently in flight, if any."""
-    return session.scalars(
-        select(CsvExtractRequest).where(CsvExtractRequest.status == STATUS_OPEN)
-    ).first()
+def open_request(
+    session, sap_table: str | None = None
+) -> CsvExtractRequest | None:
+    """The extract in flight for one table, or for any table at all.
+
+    Per table by default in the callers that matter, because the sweep now
+    fires all 21 together. Two requests for the SAME table are genuinely
+    inseparable -- their chunks carry identical headers and nothing else --
+    but two for different tables are told apart by that header.
+    """
+    query = select(CsvExtractRequest).where(CsvExtractRequest.status == STATUS_OPEN)
+    if sap_table is not None:
+        query = query.where(CsvExtractRequest.sap_table == sap_table)
+    return session.scalars(query.order_by(CsvExtractRequest.fired_at)).first()
 
 
 def _expected_rows(spec: CsvTable, client: SapClient | None) -> int | None:
@@ -212,14 +248,15 @@ def fire(
     sessionmaker = get_sessionmaker()
 
     with sessionmaker() as session:
-        blocking = open_request(session)
+        # Only this table blocks. Another table being in flight is fine --
+        # its chunks name themselves in their header.
+        blocking = open_request(session, spec.sap_table)
         if blocking is not None:
             detail = (
-                f"{blocking.sap_table} (request {blocking.request_id}) is still "
-                f"open, fired {blocking.fired_at:%Y-%m-%d %H:%M}Z. Chunks carry "
-                "no request id, so a second extract now would interleave with "
-                "it and neither could be separated afterwards. Wait for it, or "
-                "close it with --abandon."
+                f"{spec.sap_table} already has request {blocking.request_id} "
+                f"open, fired {blocking.fired_at:%Y-%m-%d %H:%M}Z. Two extracts "
+                "of one table push chunks with identical headers and nothing to "
+                "tell them apart. Wait for it, or close it with --abandon."
             )
             logger.error("%s: refusing to fire -- %s", spec.sap_table, detail)
             return PullResult(spec.sap_table, "", STATUS_FAILED, error=detail)
@@ -316,41 +353,16 @@ def wait_for(
                     error=f"request {request_id} is not in the database",
                 )
 
-            if record.status in (STATUS_COMPLETE, STATUS_FAILED, STATUS_TIMEOUT):
-                return _result(record, time.monotonic() - started)
-
-            now = datetime.now(timezone.utc)
-            fired_at = _aware(record.fired_at)
-            last = _aware(record.last_chunk_at)
-
-            if last is None:
-                waited = (now - fired_at).total_seconds()
-                if waited > first_chunk_timeout:
-                    detail = (
-                        f"no chunk arrived in {int(waited // 60)} minutes. SAP "
-                        f"acknowledged the request ({record.ack or 'no ack recorded'}) "
-                        "but delivered nothing -- the usual causes are a reused "
-                        "RequestId or a blank date window. Neither reports an error."
-                    )
-                    record.status = STATUS_TIMEOUT
-                    record.error = detail
-                    record.completed_at = now
-                    session.commit()
-                    logger.error("%s: %s", record.sap_table, detail)
-                    return _result(record, time.monotonic() - started)
-
-            elif (now - last).total_seconds() > quiet_period:
-                verdict, detail = _verdict(record)
-                record.status = verdict
-                record.error = detail
-                record.completed_at = now
-                session.commit()
-                log = logger.info if verdict == STATUS_COMPLETE else logger.error
-                log(
-                    "%s: delivery finished -- %d row(s) in %d chunk(s); %s",
-                    record.sap_table, record.received_rows,
-                    record.received_chunks, detail or "reconciled",
+            if record.status not in TERMINAL_STATUSES:
+                _judge(
+                    record,
+                    datetime.now(timezone.utc),
+                    first_chunk_timeout,
+                    quiet_period,
                 )
+                session.commit()
+
+            if record.status in TERMINAL_STATUSES:
                 return _result(record, time.monotonic() - started)
 
         sleeper(poll)
@@ -471,8 +483,13 @@ def pull_one(
     return wait_for(fired.request_id)
 
 
-def wait_for_clear(*, timeout: int | None = None, poll: int = POLL_SECONDS) -> bool:
-    """Block until no extract is open. True if the way is clear.
+def wait_for_clear(
+    tables: list[str] | None = None,
+    *,
+    timeout: int | None = None,
+    poll: int = POLL_SECONDS,
+) -> bool:
+    """Block until nothing is open for ``tables``. True if the way is clear.
 
     A sweep that finds a request already open used to fail all 21 tables in
     under a second -- one refusal per table, none of them the real problem, and
@@ -489,9 +506,19 @@ def wait_for_clear(*, timeout: int | None = None, poll: int = POLL_SECONDS) -> b
     started = time.monotonic()
     announced = False
 
+    wanted = set(tables) if tables else None
+
     while True:
         with sessionmaker() as session:
-            blocking = open_request(session)
+            blocking = None
+            for candidate in session.scalars(
+                select(CsvExtractRequest)
+                .where(CsvExtractRequest.status == STATUS_OPEN)
+                .order_by(CsvExtractRequest.fired_at)
+            ):
+                if wanted is None or candidate.sap_table in wanted:
+                    blocking = candidate
+                    break
             if blocking is None:
                 return True
             request_id, table = blocking.request_id, blocking.sap_table
@@ -518,22 +545,31 @@ def wait_for_clear(*, timeout: int | None = None, poll: int = POLL_SECONDS) -> b
     return False
 
 
+# Seconds between fires within a batch. Every batch that delivered used 2-20s.
+# Nothing suggests the exact value matters; the gap exists so 21 requests do
+# not arrive at CPI as a single burst.
+FIRE_GAP_SECONDS = 3
+
+
 def pull_all(
     *,
     max_rows: str = "",
     tables: list[str] | None = None,
+    wait: bool = True,
     wait_for_open: bool = True,
+    gap: int = FIRE_GAP_SECONDS,
+    sleeper=time.sleep,
     **window,
 ) -> list[PullResult]:
-    """Every table in turn, strictly one at a time.
+    """Fire every table, then collect whatever comes back.
 
-    Sequential by necessity, not by caution: see the module docstring. A table
-    that fails does not stop the run -- the others are independent, and a
-    partial refresh beats no refresh.
+    Fired as a batch, not one at a time -- see the module docstring. A table
+    that fails does not stop the run: the others are independent, and a partial
+    refresh beats no refresh.
     """
     names = tables or [t.sap_table for t in CSV_TABLES]
 
-    if wait_for_open and not wait_for_clear():
+    if wait_for_open and not wait_for_clear(names):
         detail = (
             "an earlier extract is still open and did not clear. Nothing was "
             "fired. Run --csv-status to see it, then --abandon to close it."
@@ -541,14 +577,121 @@ def pull_all(
         logger.error(detail)
         return [PullResult(name, "", STATUS_FAILED, error=detail) for name in names]
 
-    results: list[PullResult] = []
+    logger.info("firing %d extract(s), %ds apart", len(names), gap)
+    fired: list[PullResult] = []
     for index, name in enumerate(names, 1):
         logger.info("[%d/%d] %s", index, len(names), name)
-        result = pull_one(name, max_rows=max_rows, **window)
-        results.append(result)
-        if not result.ok:
-            # fire() and wait_for() have already logged the detail; repeating
-            # the whole message per table is what made one blocked sweep print
-            # the same paragraph twenty-one times.
-            logger.error("%s: %s", name, result.status)
-    return results
+        result = fire(name, max_rows=max_rows, **window)
+        fired.append(result)
+        if result.status != STATUS_OPEN:
+            logger.error("%s: %s -- %s", name, result.status, result.error or "")
+        elif index < len(names):
+            sleeper(gap)
+
+    accepted = [r.request_id for r in fired if r.status == STATUS_OPEN]
+    if not wait:
+        # Fired and left open on purpose: the deliveries are being watched
+        # somewhere else -- a receiver's own logs, or --csv-status later.
+        logger.info("%d of %d accepted; not waiting", len(accepted), len(names))
+        return fired
+
+    logger.info("%d of %d accepted; now waiting for deliveries",
+                len(accepted), len(names))
+    if not accepted:
+        return fired
+
+    collected = {r.request_id: r for r in wait_for_all(accepted, sleeper=sleeper)}
+    return [collected.get(r.request_id, r) for r in fired]
+
+
+def wait_for_all(
+    request_ids: list[str],
+    *,
+    first_chunk_timeout: int = FIRST_CHUNK_TIMEOUT_SECONDS,
+    quiet_period: int = QUIET_PERIOD_SECONDS,
+    poll: int = POLL_SECONDS,
+    sleeper=time.sleep,
+) -> list[PullResult]:
+    """Wait on a whole batch, judging each request by the clocks wait_for uses.
+
+    One shared poll, not one wait per table. Waiting on each in turn would
+    charge a five-minute quiet period per table and stretch a 21-table sweep
+    past two hours, when the deliveries themselves overlap.
+    """
+    sessionmaker = get_sessionmaker()
+    pending = list(request_ids)
+    done: dict[str, PullResult] = {}
+    started = time.monotonic()
+
+    while pending:
+        still_pending: list[str] = []
+        with sessionmaker() as session:
+            now = datetime.now(timezone.utc)
+            for request_id in pending:
+                record = session.get(CsvExtractRequest, request_id)
+                if record is None:
+                    done[request_id] = PullResult(
+                        "", request_id, STATUS_FAILED,
+                        error=f"request {request_id} is not in the database",
+                    )
+                    continue
+
+                if record.status not in TERMINAL_STATUSES:
+                    _judge(record, now, first_chunk_timeout, quiet_period)
+
+                if record.status in TERMINAL_STATUSES:
+                    done[request_id] = _result(record, time.monotonic() - started)
+                else:
+                    still_pending.append(request_id)
+            session.commit()
+
+        pending = still_pending
+        if pending:
+            waiting = ", ".join(sorted(pending)[:6])
+            logger.info(
+                "waiting on %d extract(s): %s%s",
+                len(pending), waiting, " ..." if len(pending) > 6 else "",
+            )
+            sleeper(poll)
+
+    return [done[r] for r in request_ids if r in done]
+
+
+def _judge(
+    record: CsvExtractRequest,
+    now: datetime,
+    first_chunk_timeout: int,
+    quiet_period: int,
+) -> None:
+    """Close the record if either clock has run out. Caller commits."""
+    last = _aware(record.last_chunk_at)
+
+    if last is None:
+        waited = (now - _aware(record.fired_at)).total_seconds()
+        if waited <= first_chunk_timeout:
+            return
+        detail = (
+            f"no chunk arrived in {int(waited // 60)} minutes. SAP "
+            f"acknowledged the request ({record.ack or 'no ack recorded'}) "
+            "but delivered nothing -- the usual causes are a reused "
+            "RequestId or a blank date window. Neither reports an error."
+        )
+        record.status = STATUS_TIMEOUT
+        record.error = detail
+        record.completed_at = now
+        logger.error("%s: %s", record.sap_table, detail)
+        return
+
+    if (now - last).total_seconds() <= quiet_period:
+        return
+
+    verdict, detail = _verdict(record)
+    record.status = verdict
+    record.error = detail
+    record.completed_at = now
+    log = logger.info if verdict == STATUS_COMPLETE else logger.error
+    log(
+        "%s: delivery finished -- %d row(s) in %d chunk(s); %s",
+        record.sap_table, record.received_rows,
+        record.received_chunks, detail or "reconciled",
+    )
