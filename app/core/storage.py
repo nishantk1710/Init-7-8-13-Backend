@@ -145,6 +145,22 @@ class Storage(ABC):
         """
 
     @abstractmethod
+    def append(self, key: str, data: bytes) -> int:
+        """Append ``data`` to ``key``, creating it if absent. Returns the new size.
+
+        Separate from ``open_write`` because it must NOT read the object first.
+        SAP delivers a table as chunks of 50,000 records and they are assembled
+        into one file; a read-modify-write would re-download everything already
+        landed on every chunk, which is quadratic and, on a multi-gigabyte
+        extract, not finishable.
+
+        Unlike ``open_write`` this is not atomic. A failure mid-append can leave
+        a partial trailing record, so a caller that cares must reconcile the
+        finished file against an expected row count rather than trusting that
+        the absence of an error means the whole chunk arrived.
+        """
+
+    @abstractmethod
     def exists(self, key: str) -> bool:
         """Whether ``key`` currently holds an object."""
 
