@@ -396,7 +396,59 @@ def pull_one(
     return wait_for(fired.request_id)
 
 
-def pull_all(*, max_rows: str = "", tables: list[str] | None = None) -> list[PullResult]:
+def wait_for_clear(*, timeout: int | None = None, poll: int = POLL_SECONDS) -> bool:
+    """Block until no extract is open. True if the way is clear.
+
+    A sweep that finds a request already open used to fail all 21 tables in
+    under a second -- one refusal per table, none of them the real problem, and
+    the actual cause buried at the top. An earlier run still finishing is a
+    reason to wait, not to give up: waiting costs minutes, and the alternative
+    is a report that reads like total failure when nothing is wrong.
+
+    The wait is bounded by the same clocks the delivery itself runs on, so a
+    genuinely stuck request still ends the sweep rather than holding it open
+    for ever.
+    """
+    limit = timeout if timeout is not None else FIRST_CHUNK_TIMEOUT_SECONDS + QUIET_PERIOD_SECONDS
+    sessionmaker = get_sessionmaker()
+    started = time.monotonic()
+    announced = False
+
+    while True:
+        with sessionmaker() as session:
+            blocking = open_request(session)
+            if blocking is None:
+                return True
+            request_id, table = blocking.request_id, blocking.sap_table
+
+        if not announced:
+            logger.info(
+                "waiting for %s (request %s) to finish before starting the sweep",
+                table, request_id,
+            )
+            announced = True
+
+        if time.monotonic() - started > limit:
+            logger.error(
+                "%s (request %s) is still open after %d minute(s). Close it with "
+                "--abandon, then re-run.",
+                table, request_id, int(limit // 60),
+            )
+            return False
+
+        # Let the open request run its own clocks out; wait_for closes it as
+        # timed out or complete, which clears the way here.
+        wait_for(request_id)
+
+    return False
+
+
+def pull_all(
+    *,
+    max_rows: str = "",
+    tables: list[str] | None = None,
+    wait_for_open: bool = True,
+) -> list[PullResult]:
     """Every table in turn, strictly one at a time.
 
     Sequential by necessity, not by caution: see the module docstring. A table
@@ -404,11 +456,23 @@ def pull_all(*, max_rows: str = "", tables: list[str] | None = None) -> list[Pul
     partial refresh beats no refresh.
     """
     names = tables or [t.sap_table for t in CSV_TABLES]
+
+    if wait_for_open and not wait_for_clear():
+        detail = (
+            "an earlier extract is still open and did not clear. Nothing was "
+            "fired. Run --csv-status to see it, then --abandon to close it."
+        )
+        logger.error(detail)
+        return [PullResult(name, "", STATUS_FAILED, error=detail) for name in names]
+
     results: list[PullResult] = []
     for index, name in enumerate(names, 1):
         logger.info("[%d/%d] %s", index, len(names), name)
         result = pull_one(name, max_rows=max_rows)
         results.append(result)
         if not result.ok:
-            logger.error("%s: %s (%s)", name, result.status, result.error or "")
+            # fire() and wait_for() have already logged the detail; repeating
+            # the whole message per table is what made one blocked sweep print
+            # the same paragraph twenty-one times.
+            logger.error("%s: %s", name, result.status)
     return results
