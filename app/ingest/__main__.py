@@ -92,6 +92,14 @@ def _parser() -> argparse.ArgumentParser:
         help="show recent CSV extract requests and what landed for each",
     )
     parser.add_argument(
+        "--csv-verify",
+        action="store_true",
+        help=(
+            "walk the whole chain per table -- request, file in storage, rows "
+            "in Azure SQL -- and report where each one stands"
+        ),
+    )
+    parser.add_argument(
         "--abandon",
         action="store_true",
         help=(
@@ -271,7 +279,119 @@ def _csv(args) -> int:
             if not result.ok:
                 failures += 1
 
+    if args.csv_verify:
+        failures += _csv_verify(names)
+
     return 1 if failures else 0
+
+
+def _csv_verify(names: list[str]) -> int:
+    """Per table: did the request complete, is the file there, are rows in SQL?
+
+    Returns the number of tables that did not make it the whole way. A table
+    nobody has pulled yet is reported, not counted as a failure -- absence of a
+    pull is not the same thing as a broken one.
+    """
+    from sqlalchemy import select, text
+
+    from app.core.db import get_engine, get_sessionmaker
+    from app.core.storage import get_storage
+    from app.ingest.csv_tables import csv_table
+    from app.models.csv_extract import CsvExtractRequest
+
+    storage = get_storage()
+    engine = get_engine()
+    gaps = 0
+
+    print("\n" + "=" * 96)
+    print("VERIFY: request -> file in storage -> rows in Azure SQL")
+    print("=" * 96)
+    print(f"{'TABLE':<8}{'REQUEST':<12}{'RECEIVED':>10}{'EXPECTED':>10}"
+          f"{'FILE':>14}{'SQL ROWS':>10}{'COLS':>6}  VERDICT")
+
+    with get_sessionmaker()() as session:
+        for name in names:
+            spec = csv_table(name)
+
+            record = session.scalars(
+                select(CsvExtractRequest)
+                .where(CsvExtractRequest.sap_table == spec.sap_table)
+                .order_by(CsvExtractRequest.fired_at.desc())
+            ).first()
+
+            if record is None:
+                print(f"{spec.sap_table:<8}{'-':<12}{'-':>10}{'-':>10}"
+                      f"{'-':>14}{'-':>10}{'-':>6}  never pulled")
+                continue
+
+            # Storage
+            size = "-"
+            if record.data_key:
+                try:
+                    size = f"{storage.stat(record.data_key).size:,}"
+                except Exception:
+                    size = "MISSING"
+
+            # Azure SQL
+            rows = cols = "-"
+            try:
+                with engine.connect() as connection:
+                    cols = connection.execute(
+                        text(
+                            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+                            "WHERE TABLE_NAME = :t"
+                        ),
+                        {"t": spec.raw_table},
+                    ).scalar()
+                    if cols:
+                        # Table name comes from our own register, never input.
+                        rows = connection.execute(
+                            text(f"SELECT COUNT(*) FROM {spec.raw_table}")
+                        ).scalar()
+                    else:
+                        cols, rows = 0, 0
+            except Exception as exc:
+                rows, cols = "ERR", "ERR"
+                logger.debug("%s: could not read SQL (%s)", spec.sap_table, exc)
+
+            verdict = _verdict_for(record, size, rows)
+            if verdict != "ok":
+                gaps += 1
+
+            expected = f"{record.expected_rows:,}" if record.expected_rows else "?"
+            print(
+                f"{spec.sap_table:<8}{record.status:<12}"
+                f"{record.received_rows:>10,}{expected:>10}"
+                f"{size:>14}{rows if isinstance(rows, str) else f'{rows:,}':>10}"
+                f"{cols:>6}  {verdict}"
+            )
+
+    print("=" * 96)
+    print(
+        f"{len(names) - gaps} of {len(names)} table(s) made it to Azure SQL."
+        if not gaps
+        else f"{gaps} of {len(names)} table(s) did not reach Azure SQL -- see above."
+    )
+    return gaps
+
+
+def _verdict_for(record, size, rows) -> str:
+    """One phrase saying where this table stopped."""
+    if record.status == "open":
+        return "delivery still open"
+    if record.status == "timeout":
+        return "SAP acked, delivered nothing"
+    if record.status == "failed":
+        return f"pull failed ({(record.error or '')[:40]})"
+    if size == "MISSING":
+        return "complete but the file is gone"
+    if record.loaded_at is None:
+        return "landed, not loaded -- run --csv-load"
+    if isinstance(rows, str):
+        return "loaded, SQL unreadable"
+    if rows == 0:
+        return "loaded 0 rows"
+    return "ok"
 
 
 def _csv_status() -> int:
@@ -333,7 +453,7 @@ def main(argv: list[str] | None = None) -> int:
         return _abandon()
     if args.csv_status:
         return _csv_status()
-    if args.csv_pull or args.csv_load:
+    if args.csv_pull or args.csv_load or args.csv_verify:
         return _csv(args)
 
     if not (args.fetch or args.load):
