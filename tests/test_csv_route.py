@@ -344,3 +344,55 @@ class TestWindowOverride:
         assert csv_table("EKPO").window(
             date(2026, 9, 25), from_date="20130101"
         ) == ("20230925", "20260925")
+
+
+class TestTableIdentification:
+    """Every header here was copied from SAP's live delivery on 25-Sep.
+
+    The first signature table was written from memory of SAP's key structure
+    and got four tables wrong: MBEW's rows were appended into MARA's file and
+    MCHB's into MARD's, because a prefix match falls into whichever shorter
+    signature a table happens to begin with. CDHDR and CDPOS matched nothing at
+    all -- they spell the client column MANDANT, not MANDT.
+    """
+
+    OBSERVED = {
+        "MARA": ["MANDT", "MATNR", "ERSDA", "ERNAM", "LAEDA"],
+        "MAKT": ["MANDT", "MATNR", "SPRAS", "MAKTX", "MAKTG"],
+        "MARC": ["MANDT", "MATNR", "WERKS", "", "UMLMC"],
+        "MARD": ["MANDT", "MATNR", "WERKS", "LGORT", "PSTAT"],
+        "MBEW": ["MANDT", "MATNR", "BWKEY", "BWTAR", "LVORM"],
+        "MCHB": ["MANDT", "MATNR", "WERKS", "LGORT", "CHARG"],
+        "EINA": ["MANDT", "INFNR", "MATNR", "MATKL", "LIFNR"],
+        "EINE": ["MANDT", "INFNR", "EKORG", "ESOKZ", "WERKS"],
+        "LFA1": ["MANDT", "LIFNR", "LAND1", "NAME1", "NAME2"],
+        "S031": ["MANDT", "SSOUR", "VRSIO", "SPMON", "SPTAG"],
+        "S032": ["MANDT", "SSOUR", "VRSIO", "WERKS", "LGORT"],
+        "EKPO": ["MANDT", "EBELN", "EBELP", "LOEKZ", "STATU"],
+        "EKBE": ["MANDT", "EBELN", "EBELP", "ZEKKN", "VGABE"],
+        "EBAN": ["MANDT", "BANFN", "BNFPO", "BSART", "BSTYP"],
+        "MKPF": ["MANDT", "MBLNR", "MJAHR", "VGART", "BLART"],
+        "MSEG": ["MANDT", "MBLNR", "MJAHR", "ZEILE", "LINE_ID"],
+        "RESB": ["MANDT", "RSNUM", "RSPOS", "RSART", "BDART"],
+        "CDHDR": ["MANDANT", "OBJECTCLAS", "OBJECTID", "CHANGENR", "USERNAME"],
+        "CDPOS": ["MANDANT", "OBJECTCLAS", "OBJECTID", "CHANGENR", "TABNAME"],
+    }
+
+    @pytest.mark.parametrize("table", sorted(OBSERVED))
+    def test_the_live_header_resolves_to_its_own_table(self, table: str) -> None:
+        from app.api.events.csv_upload import table_of
+
+        assert table_of(self.OBSERVED[table]) == table
+
+    def test_no_two_tables_resolve_to_the_same_file(self) -> None:
+        """The failure mode, stated directly: two tables sharing one file."""
+        from app.api.events.csv_upload import table_of
+
+        resolved = [table_of(h) for h in self.OBSERVED.values()]
+        assert len(set(resolved)) == len(resolved)
+
+    def test_change_documents_are_not_missed_for_spelling_mandant(self) -> None:
+        from app.api.events.csv_upload import table_of
+
+        assert not table_of(self.OBSERVED["CDHDR"]).startswith("UNKNOWN")
+        assert not table_of(self.OBSERVED["CDPOS"]).startswith("UNKNOWN")
