@@ -201,6 +201,11 @@ def fire(
         spec.sap_table, request_id, from_date, to_date,
         expected if expected is not None else "an unverified number of",
     )
+    # The whole APIPath, verbatim. Diagnosing a silent non-delivery means
+    # comparing what we sent against a request known to have worked, and
+    # reconstructing it from separate log fields wastes the one thing that
+    # matters here -- being able to see the difference at a glance.
+    logger.info("%s: APIPath %s", spec.sap_table, path)
 
     try:
         ack = (transport or CpiTransport()).get(path, context=f"csv extract {spec.sap_table}")
