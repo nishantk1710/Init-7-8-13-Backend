@@ -313,3 +313,34 @@ class TestCappedVerdict:
                     max_rows="", expected_rows=2040, received_rows=1200)
         )
         assert verdict == STATUS_FAILED
+
+
+class TestWindowOverride:
+    """Three years is right for production and near-empty in this client:
+    99.3% of its purchase orders predate 2026. The window has to be steerable
+    or a full pull asks SAP for a period the data does not occupy."""
+
+    def test_explicit_dates_win_over_everything(self) -> None:
+        assert csv_table("EKPO").window(
+            date(2026, 9, 25), from_date="20130101", to_date="20181231"
+        ) == ("20130101", "20181231")
+
+    def test_explicit_dates_override_master_tables_too(self) -> None:
+        assert csv_table("MARA").window(
+            date(2026, 9, 25), from_date="20130101", to_date="20181231"
+        ) == ("20130101", "20181231")
+
+    def test_years_widens_the_span_without_pinning_the_end(self) -> None:
+        start, end = csv_table("EKPO").window(date(2026, 9, 25), years=15)
+        assert start == "20110925"
+        assert end == "20260925"
+
+    def test_the_default_is_unchanged_when_nothing_is_passed(self) -> None:
+        assert csv_table("EKPO").window(date(2026, 9, 25)) == ("20230925", "20260925")
+
+    def test_a_half_given_override_is_ignored_not_half_applied(self) -> None:
+        """A start with no end must fall back to the computed window rather
+        than pairing a real start with a missing end."""
+        assert csv_table("EKPO").window(
+            date(2026, 9, 25), from_date="20130101"
+        ) == ("20230925", "20260925")

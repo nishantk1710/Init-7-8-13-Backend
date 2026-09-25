@@ -99,13 +99,34 @@ class CsvTable:
     def reconcile(self) -> Reconcile:
         return Reconcile.BOUNDED if self.windowed else Reconcile.EXACT
 
-    def window(self, today: date | None = None) -> tuple[str, str]:
-        """``(FromDate, ToDate)`` as SAP's DATS strings."""
+    def window(
+        self,
+        today: date | None = None,
+        *,
+        years: int | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> tuple[str, str]:
+        """``(FromDate, ToDate)`` as SAP's DATS strings.
+
+        An explicit ``from_date``/``to_date`` wins over everything. That escape
+        hatch is not decoration: three years is the right window for a live
+        client and returns almost nothing in this one. 99.3% of its purchase
+        orders predate 2026 -- `Aedat ge 2026-01-01` matches 23 rows of 3,140,
+        and the ZREP orders are all from 2018. A hardcoded window built from
+        today's date therefore asks SAP for a period the data does not occupy,
+        gets a cheerful acknowledgement, and receives nothing.
+
+        ``years`` overrides the span without pinning the end date, for a client
+        whose history is deeper than three years but still runs to today.
+        """
+        if from_date and to_date:
+            return from_date, to_date
+
         today = today or date.today()
         if self.windowed:
-            start = date(
-                today.year - TRANSACTION_WINDOW_YEARS, today.month, today.day
-            )
+            span = TRANSACTION_WINDOW_YEARS if years is None else years
+            start = date(today.year - span, today.month, today.day)
             return start.strftime(DATE_FORMAT), today.strftime(DATE_FORMAT)
 
         forward = today + timedelta(days=WIDE_WINDOW_FORWARD_DAYS)

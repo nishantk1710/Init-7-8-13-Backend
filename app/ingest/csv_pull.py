@@ -149,12 +149,17 @@ def fire(
     *,
     max_rows: str = "",
     today: date | None = None,
+    years: int | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
     transport: CpiTransport | None = None,
     client: SapClient | None = None,
 ) -> PullResult:
     """Record the request, then ask SAP for it. Never raises."""
     spec = csv_table(sap_table)
-    from_date, to_date = spec.window(today)
+    from_date, to_date = spec.window(
+        today, years=years, from_date=from_date, to_date=to_date
+    )
     started = time.monotonic()
     sessionmaker = get_sessionmaker()
 
@@ -465,6 +470,7 @@ def pull_all(
     max_rows: str = "",
     tables: list[str] | None = None,
     wait_for_open: bool = True,
+    **window,
 ) -> list[PullResult]:
     """Every table in turn, strictly one at a time.
 
@@ -485,7 +491,7 @@ def pull_all(
     results: list[PullResult] = []
     for index, name in enumerate(names, 1):
         logger.info("[%d/%d] %s", index, len(names), name)
-        result = pull_one(name, max_rows=max_rows)
+        result = pull_one(name, max_rows=max_rows, **window)
         results.append(result)
         if not result.ok:
             # fire() and wait_for() have already logged the detail; repeating
