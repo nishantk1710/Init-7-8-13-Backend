@@ -311,6 +311,23 @@ def _verdict(record: CsvExtractRequest) -> tuple[str, str | None]:
             "unverified -- the file is loadable but its completeness is not proven"
         )
 
+    # A capped request cannot be expected to match the whole table, whatever
+    # the set's usual rule. MaxRows is a probe -- asking for 100 rows of a
+    # 2,040-row master table and then failing it for returning 100 would call
+    # a working delivery broken, which is worse than not checking at all.
+    cap = (record.max_rows or "").strip()
+    if cap.isdigit() and int(cap) > 0:
+        limit = int(cap)
+        if received > limit:
+            return STATUS_FAILED, (
+                f"{received} row(s) landed against a cap of MaxRows={limit}. "
+                "More arrived than was asked for -- chunks were delivered twice."
+            )
+        return STATUS_COMPLETE, (
+            f"capped at MaxRows={limit}, so this is a probe and not a whole "
+            f"extract; the set holds {expected:,} row(s)"
+        )
+
     if record.reconcile == "exact":
         if received == expected:
             return STATUS_COMPLETE, None
