@@ -1,0 +1,40 @@
+# I07 -- Criticality -> Service Level mock matrix. DEVELOPMENT FIXTURE ONLY.
+#
+# NOT a Vedanta-signed business decision. These percentages are placeholders
+# so LightGBM (which needs a target quantile derived from the signed
+# service-level matrix) and the safety-stock/ROP/Z-factor chain can be
+# exercised end to end during development, without waiting on the real
+# Criticality x Circuit matrix the Solution Design requires (Rule 1):
+#
+#   THIS MUST COME FROM VEDANTA, NOT FROM CODE
+#   Do NOT invent percentages. Do NOT assume 98% for critical.
+#
+# This file exists BECAUSE of that rule, not despite it: the values below
+# are never loaded by default (see app/initiatives/i7/policy/dev_fixtures.py
+# and app/core/config.py's i7_dev_mock_service_level flag), and a
+# PolicyDocument built from them still has status=DRAFT, so
+# require_ready_for_recommendations() still blocks real recommendation
+# output unless a caller separately and deliberately marks it SIGNED.
+#
+# Replace this file's values (never this file's *shape*) the moment Vedanta
+# signs the real matrix, and delete the dev flag once that lands.
+#
+# Keys are the five ZMM065 tiers as they actually occur in the data
+# (app.core.criticality.CriticalityTier) -- CRITICAL, IMPACT, INSURANCE,
+# NORMAL, OBSOLETE. OBSOLETE is present in the shared enum but deliberately
+# has no entry here: I07 never recommends safety stock for OBSOLETE
+# materials (inventory/service.py's OBSOLETE_TIER short-circuit), so a
+# service level for it would never be looked up and including one here
+# would misleadingly suggest it matters.
+#
+# No circuit dimension: the FRS (Initiative_07_FRS_v1.3.pdf) settles this --
+# the service-level matrix is keyed on criticality alone, and "circuit"
+# (Crushing/Milling/Pumping/Filtration) is illustrative filler from an
+# earlier draft, not a real second key. See ServiceLevelKey(circuit=None)
+# as the wildcard this matrix relies on.
+
+service_level_by_criticality:
+  CRITICAL: 0.98
+  IMPACT: 0.95
+  INSURANCE: 0.90
+  NORMAL: 0.85

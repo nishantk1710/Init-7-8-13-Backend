@@ -34,6 +34,7 @@ to work with zero configuration. Instead the engine is built on first use and
 cached, so a process that never touches the database never connects to one.
 """
 
+import os
 from collections.abc import Iterator
 from functools import lru_cache
 
@@ -78,7 +79,16 @@ def require_supported_backend(url: str) -> None:
     query with a driver error, and the actual problem -- that this system
     only knows how to run against Postgres or Azure SQL -- would not be
     obvious from it.
+
+    ``ALLOW_NON_AZURE_SQL=1`` lifts this gate. It exists because Azure SQL sits
+    behind a private endpoint that only the VNet can reach, so neither a GitHub
+    Actions runner nor most local machines can reach it at all -- CI still needs
+    *some* database to prove migrations and app code work. Default is unset, so
+    the gate is on everywhere unless this is set deliberately (ci.yml, or a
+    developer's own shell); it must never be set in a deployed environment.
     """
+    if os.environ.get("ALLOW_NON_AZURE_SQL") == "1":
+        return
     backend = backend_of(url)
     if backend and backend not in SUPPORTED_BACKENDS:
         raise DatabaseNotConfiguredError(
@@ -87,7 +97,9 @@ def require_supported_backend(url: str) -> None:
             "<password>@127.0.0.1:5432/spares_ai) or Azure SQL (the deployed "
             "target, e.g. mssql+pyodbc://...@sql-vzi-aicom-nonprod-san"
             ".database.windows.net:1433/sqldb-aicom?driver=ODBC+Driver+18+for+"
-            "SQL+Server&Encrypt=yes). See README, 'Database'."
+            "SQL+Server&Encrypt=yes). See README, 'Database'. Set "
+            "ALLOW_NON_AZURE_SQL=1 to use a non-Azure database anyway (CI/local "
+            "dev only -- never in a deployed environment)."
         )
 
 
@@ -108,21 +120,21 @@ def get_engine() -> Engine:
         )
     require_supported_backend(settings.database_url)
 
-    # Bound how long a connection attempt waits -- the connect-timeout keyword
-    # itself is driver-specific, so it has to be chosen per backend. Without
-    # this, a database that is unreachable (no local Postgres container
-    # running; outside the VNet for Azure SQL, which has public network
-    # access disabled) makes the caller HANG on the OS default rather than
-    # failing fast and saying why.
-    backend = backend_of(settings.database_url)
-    if backend == MSSQL:
-        # pyodbc's login timeout.
-        connect_args: dict[str, object] = {"timeout": settings.database_connect_timeout_seconds}
-    elif backend == POSTGRESQL:
-        # psycopg's connect timeout -- a different keyword, not "timeout".
-        connect_args = {"connect_timeout": settings.database_connect_timeout_seconds}
-    else:
-        connect_args = {}
+    # Bound how long a connection attempt waits. Without this pyodbc waits on the
+    # OS default, and a database that is unreachable -- which, with public
+    # network access disabled on sql-vzi-aicom-nonprod-san, is what anything
+    # outside the VNet sees -- makes the caller HANG with no output rather than
+    # failing. Same lesson as the storage root: fail fast and say why.
+    #
+    # The option name is driver-specific: pyodbc's login timeout is ``timeout``,
+    # psycopg's is ``connect_timeout``. Only pyodbc's name applied here before --
+    # invisible while Azure SQL was the only backend anyone actually connected
+    # with, but a psycopg connection (ALLOW_NON_AZURE_SQL, see require_azure_sql)
+    # rejects an option it does not recognise rather than ignoring it.
+    timeout_option = "timeout" if backend_of(settings.database_url) == MSSQL else "connect_timeout"
+    connect_args: dict[str, object] = {
+        timeout_option: settings.database_connect_timeout_seconds
+    }
 
     return create_engine(
         settings.database_url,
