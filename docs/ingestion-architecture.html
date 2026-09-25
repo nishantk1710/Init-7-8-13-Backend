@@ -1,0 +1,349 @@
+<title>Dual-Path Ingestion</title>
+<meta name="description" content="How the initial CSV pull and the ongoing OData delta share one Azure pipeline, and why the split exists.">
+<style>
+  :root{
+    --bg:#f5f6f8; --surface:#ffffff; --surface-2:#eef0f4; --border:#d4d9e1;
+    --text:#1a2130; --text-dim:#626d7d;
+    --sync:#2458c9; --async:#c9720f; --azure:#6231c9;
+    --ok:#1f8a55; --warn:#c9403f;
+    --sync-bg:#eaf0fd; --async-bg:#fbeee0; --azure-bg:#f1ecfb;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#10141b; --surface:#171d27; --surface-2:#1e2632; --border:#2c3646;
+      --text:#e7ebf1; --text-dim:#93a0b3;
+      --sync:#5b8def; --async:#e8a552; --azure:#a186ea;
+      --ok:#4cc38a; --warn:#e8636b;
+      --sync-bg:#1a2740; --async-bg:#2e2416; --azure-bg:#241c38;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#10141b; --surface:#171d27; --surface-2:#1e2632; --border:#2c3646;
+    --text:#e7ebf1; --text-dim:#93a0b3;
+    --sync:#5b8def; --async:#e8a552; --azure:#a186ea;
+    --ok:#4cc38a; --warn:#e8636b;
+    --sync-bg:#1a2740; --async-bg:#2e2416; --azure-bg:#241c38;
+    color-scheme: dark;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:"IBM Plex Sans",-apple-system,Segoe UI,sans-serif;
+    padding:0 16px; padding-block:28px;
+  }
+  .wrap{max-width:1080px; margin:0 auto; display:flex; flex-direction:column; gap:34px;}
+
+  header h1{
+    font-family:"IBM Plex Sans",sans-serif; font-weight:650; font-size:clamp(1.6rem,4vw,2.1rem);
+    margin:0 0 6px; letter-spacing:-0.01em; text-wrap:balance;
+  }
+  header p{margin:0; color:var(--text-dim); font-size:0.98rem; max-width:62ch;}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,monospace;}
+
+  figure{margin:0; display:flex; flex-direction:column; gap:10px;}
+  figure svg{width:100%; height:auto; display:block; overflow:visible;}
+  figcaption{font-size:0.86rem; color:var(--text-dim); max-width:70ch;}
+  figcaption b{color:var(--text); font-weight:600;}
+
+  .legend{display:flex; flex-wrap:wrap; gap:16px 22px; font-size:0.82rem; color:var(--text-dim);}
+  .legend span{display:inline-flex; align-items:center; gap:7px;}
+  .swatch{width:22px; height:3px; border-radius:2px; display:inline-block;}
+  .dash{background-image:linear-gradient(90deg, currentColor 60%, transparent 0%); background-size:8px 3px; height:3px;}
+
+  h2{font-size:1.15rem; font-weight:650; margin:0 0 4px; letter-spacing:-0.005em;}
+  .section-note{color:var(--text-dim); font-size:0.9rem; margin:0 0 14px; max-width:72ch;}
+
+  table{width:100%; border-collapse:collapse; font-size:0.88rem; background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden;}
+  caption{caption-side:top; text-align:left; font-weight:650; padding:2px 0 10px; font-size:1rem;}
+  th,td{text-align:left; padding:10px 14px; border-bottom:1px solid var(--border); vertical-align:top;}
+  thead th{background:var(--surface-2); color:var(--text-dim); font-weight:600; font-size:0.78rem; text-transform:uppercase; letter-spacing:0.04em;}
+  tbody tr:last-child td{border-bottom:none;}
+  td.csv{border-left:3px solid var(--async);}
+  td.odata{border-left:3px solid var(--sync);}
+  .tbl-wrap{overflow-x:auto; border-radius:10px;}
+
+  .callouts{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px;}
+  .callout{background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px 16px; border-top:3px solid var(--callout-c, var(--text-dim));}
+  .callout h3{margin:0 0 6px; font-size:0.92rem; font-weight:650; display:flex; gap:8px; align-items:center;}
+  .callout p{margin:0; font-size:0.85rem; color:var(--text-dim); line-height:1.5;}
+  .callout.warn{--callout-c:var(--warn);}
+  .callout.ok{--callout-c:var(--ok);}
+  .callout.azure{--callout-c:var(--azure);}
+
+  @media (max-width:640px){
+    th,td{padding:8px 10px; font-size:0.82rem;}
+  }
+</style>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;650;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<div class="wrap">
+
+  <header>
+    <h1>Dual-Path Ingestion</h1>
+    <p>One initial load through the CSV extract interface, one ongoing delta through OData &mdash; and where each one hands off to the other inside the Azure boundary.</p>
+  </header>
+
+  <div class="legend">
+    <span><i class="swatch" style="background:var(--sync)"></i> Interface&nbsp;1 &middot; OData &middot; sync</span>
+    <span><i class="swatch dash" style="color:var(--async)"></i> Interface&nbsp;2 &middot; CSV push &middot; async</span>
+    <span><i class="swatch" style="background:var(--text-dim)"></i> storage / load</span>
+    <span><i class="swatch" style="background:var(--ok)"></i> gated on row-count reconciliation</span>
+    <span><i class="swatch dash" style="color:var(--azure)"></i> platform service</span>
+  </div>
+
+  <!-- ============ FIGURE 1 : full system ============ -->
+  <figure>
+    <svg viewBox="0 0 1040 830" role="img" aria-label="SAP ECC exposes two CPI interfaces: interface 1, a synchronous OData consumer used both for delta pulls and to trigger the CSV extract; and interface 2, an asynchronous push that delivers CSV chunks and PR events. Both cross into the Azure VNet at the App Service, flanked by Key Vault for secrets and AI Foundry for the AI gateway. The App Service writes to ADLS Gen2, which loads into Azure SQL only once its row count reconciles against interface 1's count -- that same load seeds the watermark table for the next OData delta. Azure SQL serves the Static Web App frontend, which signs users in through Entra ID.">
+      <defs>
+        <marker id="ah-sync" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--sync)"/>
+        </marker>
+        <marker id="ah-async" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--async)"/>
+        </marker>
+        <marker id="ah-dim" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--text-dim)"/>
+        </marker>
+      </defs>
+
+      <!-- ===== Band A: SAP ECC ===== -->
+      <rect x="240" y="18" width="560" height="140" rx="10" fill="var(--surface)" stroke="var(--border)"/>
+      <text x="256" y="38" font-size="12.5" font-weight="650" fill="var(--text)">SAP ECC</text>
+      <text x="256" y="52" font-size="11" fill="var(--text-dim)" class="mono">vhvedzidci:44300</text>
+
+      <rect x="256" y="62" width="250" height="40" rx="6" fill="var(--sync-bg)" stroke="var(--sync)"/>
+      <text x="381" y="79" text-anchor="middle" font-size="11.5" fill="var(--text)" class="mono">ZMM_KPI02_ADD_SRV</text>
+      <text x="381" y="93" text-anchor="middle" font-size="10" fill="var(--text-dim)">14 entity sets</text>
+
+      <rect x="256" y="108" width="250" height="40" rx="6" fill="var(--sync-bg)" stroke="var(--sync)"/>
+      <text x="381" y="125" text-anchor="middle" font-size="11.5" fill="var(--text)" class="mono">ZMM_KPI02_TAB_SRV</text>
+      <text x="381" y="139" text-anchor="middle" font-size="10" fill="var(--text-dim)">7 entity sets</text>
+
+      <rect x="524" y="62" width="260" height="86" rx="6" fill="var(--async-bg)" stroke="var(--async)"/>
+      <text x="654" y="83" text-anchor="middle" font-size="11.5" fill="var(--text)" class="mono">ZMM_GET_CSV_SRV</text>
+      <text x="654" y="98" text-anchor="middle" font-size="10" fill="var(--text-dim)" class="mono">TableExtractSet</text>
+      <text x="654" y="114" text-anchor="middle" font-size="9.5" fill="var(--text-dim)">chunks of 50,000 rows</text>
+      <text x="654" y="128" text-anchor="middle" font-size="9.5" fill="var(--text-dim)">277 cols on EKPO vs 19 over OData</text>
+
+      <!-- ===== Band B: CPI ===== -->
+      <rect x="140" y="196" width="760" height="140" rx="10" fill="none" stroke="var(--azure)" stroke-dasharray="5 4"/>
+      <text x="156" y="216" font-size="12" font-weight="650" fill="var(--azure)">SAP Integration Suite &middot; CPI</text>
+
+      <rect x="160" y="230" width="340" height="90" rx="6" fill="var(--surface)" stroke="var(--sync)"/>
+      <text x="330" y="250" text-anchor="middle" font-size="11" font-weight="600" fill="var(--text)">Interface 1</text>
+      <text x="330" y="264" text-anchor="middle" font-size="9.5" fill="var(--text-dim)" class="mono">IF_Generic_SAPECC_OData_Consumer</text>
+      <text x="330" y="282" text-anchor="middle" font-size="9.5" fill="var(--text-dim)">delta pulls (21 sets)</text>
+      <text x="330" y="296" text-anchor="middle" font-size="9.5" fill="var(--text-dim)">+ fires the CSV extract trigger</text>
+
+      <rect x="540" y="230" width="340" height="90" rx="6" fill="var(--surface)" stroke="var(--async)"/>
+      <text x="710" y="250" text-anchor="middle" font-size="11" font-weight="600" fill="var(--text)">Interface 2</text>
+      <text x="710" y="264" text-anchor="middle" font-size="9.5" fill="var(--text-dim)" class="mono">IF_GenericData_SAPECC_to_Azure</text>
+      <text x="710" y="282" text-anchor="middle" font-size="9.5" fill="var(--text-dim)">CSV chunk delivery</text>
+      <text x="710" y="296" text-anchor="middle" font-size="9.5" fill="var(--text-dim)">+ PR event push</text>
+
+      <!-- A -> B arrows -->
+      <line x1="381" y1="158" x2="330" y2="230" stroke="var(--sync)" stroke-width="2" marker-end="url(#ah-sync)" marker-start="url(#ah-sync)"/>
+      <text x="330" y="180" text-anchor="middle" font-size="10" fill="var(--sync)">$filter / $orderby / $count</text>
+
+      <line x1="654" y1="158" x2="580" y2="230" stroke="var(--sync)" stroke-width="2" marker-end="url(#ah-sync)" marker-start="url(#ah-sync)"/>
+      <text x="654" y="180" text-anchor="middle" font-size="10" fill="var(--sync)">trigger &amp; ack (sync)</text>
+
+      <line x1="654" y1="200" x2="710" y2="230" stroke="var(--async)" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ah-async)"/>
+      <text x="762" y="212" text-anchor="middle" font-size="9.5" fill="var(--async)">chunks arrive later</text>
+
+      <!-- ===== Band C: Azure ===== -->
+      <rect x="20" y="366" width="1000" height="444" rx="12" fill="none" stroke="var(--azure)" stroke-dasharray="5 4"/>
+      <text x="38" y="390" font-size="12" font-weight="650" fill="var(--azure)">Azure &middot; VNet</text>
+      <text x="38" y="404" font-size="10" fill="var(--text-dim)" class="mono">app-vzi-aicom-nonprod-san</text>
+
+      <!-- App Service -->
+      <rect x="330" y="416" width="380" height="120" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+      <text x="520" y="436" text-anchor="middle" font-size="11.5" font-weight="650" fill="var(--text)">App Service &middot; FastAPI</text>
+
+      <rect x="346" y="446" width="348" height="26" rx="5" fill="var(--sync-bg)"/>
+      <text x="360" y="463" font-size="10" fill="var(--text)" class="mono">app/ingest &mdash; delta puller</text>
+
+      <rect x="346" y="476" width="348" height="26" rx="5" fill="var(--async-bg)"/>
+      <text x="360" y="493" font-size="10" fill="var(--text)" class="mono">POST /api/events/csv &mdash; chunk receiver</text>
+
+      <rect x="346" y="506" width="348" height="22" rx="5" fill="var(--surface-2)"/>
+      <text x="360" y="521" font-size="9.5" fill="var(--text-dim)" class="mono">POST /api/events/pr &mdash; event receiver</text>
+
+      <!-- CPI -> App Service -->
+      <line x1="330" y1="320" x2="470" y2="416" stroke="var(--sync)" stroke-width="2" marker-end="url(#ah-sync)"/>
+      <text x="360" y="378" font-size="10" fill="var(--sync)">① delta pages</text>
+
+      <line x1="710" y1="320" x2="580" y2="416" stroke="var(--async)" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ah-async)"/>
+      <text x="676" y="378" font-size="10" fill="var(--async)">② chunk POSTs</text>
+
+      <!-- Key Vault (flanks App Service, left) -->
+      <rect x="46" y="424" width="150" height="56" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+      <text x="121" y="448" text-anchor="middle" font-size="10.5" fill="var(--text)">Key Vault</text>
+      <text x="121" y="463" text-anchor="middle" font-size="9.5" fill="var(--text-dim)">secrets, no code</text>
+      <line x1="196" y1="452" x2="330" y2="460" stroke="var(--text-dim)" stroke-width="1.6" stroke-dasharray="3 3" marker-end="url(#ah-dim)"/>
+
+      <!-- AI Foundry (flanks App Service, right -- mirrors Key Vault, so its -->
+      <!-- connector never has to cross the storage row below) -->
+      <rect x="844" y="424" width="150" height="56" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+      <text x="919" y="448" text-anchor="middle" font-size="10.5" fill="var(--text)">AI Foundry</text>
+      <text x="919" y="463" text-anchor="middle" font-size="9.5" fill="var(--text-dim)">GPT-4o</text>
+      <line x1="844" y1="452" x2="710" y2="460" stroke="var(--text-dim)" stroke-width="1.6" stroke-dasharray="3 3" marker-end="url(#ah-dim)"/>
+      <text x="777" y="410" text-anchor="middle" font-size="9" fill="var(--text-dim)">AI gateway calls</text>
+
+      <!-- storage row -->
+      <rect x="90" y="576" width="400" height="110" rx="8" fill="var(--surface)" stroke="var(--text-dim)"/>
+      <text x="290" y="598" text-anchor="middle" font-size="11.5" font-weight="650" fill="var(--text)">ADLS Gen2</text>
+      <text x="290" y="611" text-anchor="middle" font-size="9.5" fill="var(--text-dim)" class="mono">stvziaicomnonprod</text>
+      <rect x="106" y="620" width="368" height="24" rx="4" fill="var(--async-bg)"/>
+      <text x="118" y="636" font-size="9.5" fill="var(--text)" class="mono">landing/&lt;TABLE&gt;/&lt;date&gt;/&lt;TABLE&gt;.csv</text>
+      <rect x="106" y="648" width="368" height="24" rx="4" fill="var(--sync-bg)"/>
+      <text x="118" y="664" font-size="9.5" fill="var(--text)" class="mono">odata/&lt;service&gt;/&lt;set&gt;/&lt;date&gt;/data.jsonl</text>
+
+      <rect x="560" y="576" width="380" height="110" rx="8" fill="var(--surface)" stroke="var(--text-dim)"/>
+      <text x="750" y="598" text-anchor="middle" font-size="11.5" font-weight="650" fill="var(--text)">Azure SQL</text>
+      <text x="750" y="611" text-anchor="middle" font-size="9.5" fill="var(--text-dim)" class="mono">sqldb-aicom</text>
+      <rect x="576" y="620" width="348" height="24" rx="4" fill="var(--surface-2)"/>
+      <text x="588" y="636" font-size="9.5" fill="var(--text)" class="mono">material_plant &middot; facts &middot; criticality</text>
+      <rect x="576" y="648" width="348" height="24" rx="4" fill="var(--surface-2)" stroke="var(--ok)" stroke-width="1"/>
+      <text x="588" y="664" font-size="9.5" fill="var(--text)" class="mono">ingest_watermark</text>
+      <text x="915" y="664" text-anchor="end" font-size="8.5" fill="var(--ok)">&larr; seeded on load</text>
+
+      <!-- App Service -> ADLS -->
+      <line x1="440" y1="536" x2="330" y2="576" stroke="var(--text-dim)" stroke-width="2" marker-end="url(#ah-dim)"/>
+      <text x="330" y="558" text-anchor="middle" font-size="9.5" fill="var(--text-dim)">write chunks / pages</text>
+
+      <!-- ADLS -> SQL: the one gate everything else depends on. Both the -->
+      <!-- fact load and the watermark seed happen only past this arrow. -->
+      <line x1="490" y1="631" x2="560" y2="660" stroke="var(--ok)" stroke-width="2.2" marker-end="url(#ah-dim)"/>
+      <text x="525" y="612" text-anchor="middle" font-size="9.5" fill="var(--ok)">only if rows</text>
+      <text x="525" y="624" text-anchor="middle" font-size="9.5" fill="var(--ok)">reconcile</text>
+
+      <!-- bottom row: consumers -->
+      <rect x="290" y="726" width="300" height="66" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+      <text x="440" y="750" text-anchor="middle" font-size="11" font-weight="600" fill="var(--text)">Static Web App</text>
+      <text x="440" y="765" text-anchor="middle" font-size="9.5" fill="var(--text-dim)">frontend</text>
+      <line x1="700" y1="686" x2="500" y2="726" stroke="var(--text-dim)" stroke-width="1.6" marker-end="url(#ah-dim)"/>
+      <text x="640" y="712" text-anchor="middle" font-size="9.5" fill="var(--text-dim)">serving API reads</text>
+
+      <rect x="620" y="726" width="220" height="66" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+      <text x="730" y="750" text-anchor="middle" font-size="11" font-weight="600" fill="var(--text)">Entra ID</text>
+      <text x="730" y="765" text-anchor="middle" font-size="9.5" fill="var(--text-dim)">SSO</text>
+      <line x1="620" y1="759" x2="590" y2="759" stroke="var(--text-dim)" stroke-width="1.6" stroke-dasharray="3 3" marker-end="url(#ah-dim)"/>
+    </svg>
+    <figcaption><b>Two SAP interfaces, one Azure landing zone.</b> Interface&nbsp;1 (sync) runs the delta pulls and also fires the CSV extract trigger, which comes back as an immediate ack &mdash; not data. Interface&nbsp;2 (async) is the only channel that ever delivers the CSV chunks. Both write into ADLS; the load into Azure SQL only happens once a landed file's row count matches Interface&nbsp;1's <span class="mono">$count</span> for that table &mdash; and that same load is what seeds <span class="mono">ingest_watermark</span> from the CSV's own max date. Skip the seed and the next OData delta has nothing to start from.</figcaption>
+  </figure>
+
+  <!-- ============ FIGURE 2 : chunk assembly mechanism ============ -->
+  <figure>
+    <svg viewBox="0 0 1040 300" role="img" aria-label="State machine for one CSV extract: a synchronous trigger and ack, then an asynchronous wait, then each arriving chunk is appended to the table's single file, then the landed row count is checked against interface 1's dollar-count; if short, the flow loops back to wait for the next chunk, and only once the counts match does the batch promote to normalise, load and seed the watermark.">
+      <defs>
+        <marker id="ah-sync2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--sync)"/>
+        </marker>
+        <marker id="ah-async2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--async)"/>
+        </marker>
+        <marker id="ah-ok2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--ok)"/>
+        </marker>
+        <marker id="ah-warn2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--warn)"/>
+        </marker>
+      </defs>
+
+      <rect x="10" y="70" width="168" height="64" rx="8" fill="var(--sync-bg)" stroke="var(--sync)"/>
+      <text x="94" y="96" text-anchor="middle" font-size="10.5" fill="var(--text)">fire</text>
+      <text x="94" y="110" text-anchor="middle" font-size="9" fill="var(--text-dim)" class="mono">TableExtractSet/$value</text>
+
+      <line x1="178" y1="102" x2="212" y2="102" stroke="var(--sync)" stroke-width="2" marker-end="url(#ah-sync2)"/>
+
+      <rect x="214" y="70" width="150" height="64" rx="8" fill="var(--sync-bg)" stroke="var(--sync)"/>
+      <text x="289" y="96" text-anchor="middle" font-size="10.5" fill="var(--text)">SAP ack</text>
+      <text x="289" y="110" text-anchor="middle" font-size="9" fill="var(--text-dim)">"started, 50k/chunk"</text>
+
+      <line x1="364" y1="102" x2="404" y2="102" stroke="var(--async)" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ah-async2)"/>
+      <text x="384" y="88" text-anchor="middle" font-size="9" fill="var(--async)">async wait</text>
+
+      <rect x="406" y="70" width="168" height="64" rx="8" fill="var(--async-bg)" stroke="var(--async)"/>
+      <text x="490" y="93" text-anchor="middle" font-size="10.5" fill="var(--text)">chunk arrives</text>
+      <text x="490" y="107" text-anchor="middle" font-size="9" fill="var(--text-dim)" class="mono">POST /events/csv</text>
+      <text x="490" y="120" text-anchor="middle" font-size="8.5" fill="var(--text-dim)">&le; 50,000 rows</text>
+
+      <line x1="574" y1="102" x2="608" y2="102" stroke="var(--async)" stroke-width="2" marker-end="url(#ah-async2)"/>
+
+      <rect x="610" y="70" width="168" height="64" rx="8" fill="var(--surface)" stroke="var(--text-dim)"/>
+      <text x="694" y="93" text-anchor="middle" font-size="10.5" fill="var(--text)">append</text>
+      <text x="694" y="107" text-anchor="middle" font-size="9" fill="var(--text-dim)" class="mono">&lt;TABLE&gt;.csv</text>
+      <text x="694" y="120" text-anchor="middle" font-size="8.5" fill="var(--text-dim)">header written once</text>
+
+      <line x1="778" y1="102" x2="812" y2="102" stroke="var(--text-dim)" stroke-width="2" marker-end="url(#ah-dim)"/>
+
+      <rect x="814" y="60" width="210" height="84" rx="8" fill="var(--surface)" stroke="var(--text-dim)"/>
+      <text x="919" y="86" text-anchor="middle" font-size="10.5" fill="var(--text)">rows landed</text>
+      <text x="919" y="100" text-anchor="middle" font-size="10.5" fill="var(--text)">== interface&nbsp;1 $count ?</text>
+
+      <!-- loop back: no -->
+      <path d="M 919 60 C 919 20, 490 20, 490 70" fill="none" stroke="var(--warn)" stroke-width="2" marker-end="url(#ah-warn2)"/>
+      <text x="704" y="18" text-anchor="middle" font-size="9.5" fill="var(--warn)">no &mdash; wait for the next chunk</text>
+
+      <!-- yes: promote -->
+      <line x1="919" y1="144" x2="919" y2="196" stroke="var(--ok)" stroke-width="2.2" marker-end="url(#ah-ok2)"/>
+      <text x="960" y="172" font-size="9.5" fill="var(--ok)">yes</text>
+
+      <rect x="784" y="198" width="270" height="80" rx="8" fill="var(--surface)" stroke="var(--ok)"/>
+      <text x="919" y="222" text-anchor="middle" font-size="11" font-weight="600" fill="var(--text)">promote</text>
+      <text x="919" y="238" text-anchor="middle" font-size="9.5" fill="var(--text-dim)">normalise &rarr; load &rarr; Azure SQL</text>
+      <text x="919" y="253" text-anchor="middle" font-size="9.5" fill="var(--text-dim)">seed ingest_watermark from max date</text>
+      <text x="919" y="268" text-anchor="middle" font-size="8.5" fill="var(--warn)">a partial batch never reaches this box</text>
+    </svg>
+    <figcaption><b>What a single extract request goes through.</b> Nothing in the push carries a request id or a chunk number today, so completeness can only be proven by comparing the landed row count against Interface&nbsp;1's own <span class="mono">$count</span> for the same table &mdash; which is why Interface&nbsp;1 stays in the picture even for a CSV-driven load.</figcaption>
+  </figure>
+
+  <!-- ============ TABLE : which path for which need ============ -->
+  <section>
+    <div class="tbl-wrap">
+      <table>
+        <caption>Which path handles what</caption>
+        <thead>
+          <tr><th>Concern</th><th>Interface&nbsp;2 &middot; CSV</th><th>Interface&nbsp;1 &middot; OData</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Used for</td><td class="csv">initial full load, and tables whose OData filters can't be trusted</td><td class="odata">watermark deltas, ad-hoc lookups, PR event follow-up reads</td></tr>
+          <tr><td>Columns on EKPO</td><td class="csv">277</td><td class="odata">19</td></tr>
+          <tr><td>Page / chunk size</td><td class="csv">50,000 rows</td><td class="odata">1,000 rows</td></tr>
+          <tr><td>Row-level filter</td><td class="csv">FromDate / ToDate only</td><td class="odata">arbitrary $filter</td></tr>
+          <tr><td>Completeness signal</td><td class="csv">none of its own</td><td class="odata">$count &mdash; reconciles the CSV path too</td></tr>
+          <tr><td>MaterialDocumentHeaderSet (MKPF)</td><td class="csv">use this &mdash; the only route in</td><td class="odata"><span class="mono">Budat</span> is IGNORED even on a matching date; a watermark delta would silently return the whole table</td></tr>
+          <tr><td>GoodsMovementItemSet (MSEG)</td><td class="csv">use this for the full load</td><td class="odata">no delta of its own possible until MKPF has one &mdash; falls back to a full pull</td></tr>
+          <tr><td>POHistorySet (EKBE)</td><td class="csv">confirm this reads real rows &mdash; OData returns 0 against $count&nbsp;=&nbsp;3,881</td><td class="odata">currently broken for this set</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ CALLOUTS ============ -->
+  <section>
+    <h2>Before this runs live</h2>
+    <p class="section-note">Three things the diagram assumes that aren't true yet.</p>
+    <div class="callouts">
+      <div class="callout warn">
+        <h3>&#9888;&nbsp; Storage grant missing</h3>
+        <p>The App Service identity holds Reader on the storage account. The CSV receiver and the delta writer both need <span class="mono">Storage Blob Data Contributor</span> to land anything.</p>
+      </div>
+      <div class="callout warn">
+        <h3>&#9888;&nbsp; One extract at a time</h3>
+        <p>Chunks carry no request id or sequence number. The "append to the currently open table" logic only holds if extracts are fired serially, never in parallel.</p>
+      </div>
+      <div class="callout ok">
+        <h3>&#10003;&nbsp; Watermark handoff</h3>
+        <p>A CSV load writes no watermark by itself. The loader must seed <span class="mono">ingest_watermark</span> from the max date column in the landed file, or the next OData delta has nothing to start from.</p>
+      </div>
+    </div>
+  </section>
+
+</div>

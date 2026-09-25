@@ -12,8 +12,15 @@ initiative.
 """
 
 from app.models.base import Base
+from app.models.csv_extract import CsvExtractRequest
 from app.models.ingest_watermark import IngestWatermark
 from app.models.ingestion import IngestionRun
 from app.models.serving import MaterialPlant
 
-__all__ = ["Base", "IngestionRun", "IngestWatermark", "MaterialPlant"]
+__all__ = [
+    "Base",
+    "CsvExtractRequest",
+    "IngestionRun",
+    "IngestWatermark",
+    "MaterialPlant",
+]

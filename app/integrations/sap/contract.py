@@ -1,7 +1,7 @@
 """What SAP exposes, read from the discovery snapshot.
 
 This is what lets a caller say ``MaterialPlantSet`` instead of building
-``sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet``: the mapping from
+``sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet``: the mapping from
 entity set to owning service, its key fields and its property types all come
 from ``data-generator/discovery/``, captured from live ``$metadata``.
 

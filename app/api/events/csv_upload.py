@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.core.storage import get_storage
+from app.ingest.csv_receipt import landing_keys, record_chunk
 
 logger = get_logger(__name__)
 
@@ -88,9 +89,13 @@ TABLE_SIGNATURES: tuple[tuple[tuple[str, ...], str], ...] = (
 )
 
 
+# Everything this endpoint writes lives under one prefix inside STORAGE_URL,
+# which points at the `landing` container root.
+CSV_PREFIX = "csv"
+
 # Which table is mid-delivery. Read by a chunk that arrives with no header row
 # and therefore nothing else to identify it.
-OPEN_TABLE_KEY = "_open_table.txt"
+OPEN_TABLE_KEY = f"{CSV_PREFIX}/_open_table.txt"
 
 # A SAP field name: starts with a letter, no spaces. Data values in these
 # tables are dominated by numeric keys -- MANDT is '800', EBELN '4500000001' --
@@ -329,7 +334,7 @@ async def receive_csv(request: Request) -> CsvAccepted:
             delimiter,
         )
 
-    stored = _land(text, header)
+    stored = _land(text, header, data_rows=rows, raw_bytes=len(raw))
 
     return CsvAccepted(
         status="received",
@@ -344,7 +349,13 @@ async def receive_csv(request: Request) -> CsvAccepted:
     )
 
 
-def _land(text: str, first_row: list[str]) -> str | None:
+def _land(
+    text: str,
+    first_row: list[str],
+    *,
+    data_rows: int = 0,
+    raw_bytes: int = 0,
+) -> str | None:
     """Append this chunk to its table's file, best effort.
 
     SAP sends a table as chunks of 50,000 records, each its own POST. Three
@@ -379,7 +390,9 @@ def _land(text: str, first_row: list[str]) -> str | None:
         storage = get_storage()
 
         if not looks_like_header(first_row):
-            return _append_continuation(storage, payload)
+            return _append_continuation(
+                storage, payload, data_rows=data_rows, raw_bytes=raw_bytes
+            )
 
         table = table_of(first_row)
         key, header_key = _keys_for(table)
@@ -391,26 +404,37 @@ def _land(text: str, first_row: list[str]) -> str | None:
                 sink.write(payload.encode("utf-8"))
             _set_open_table(storage, table)
             logger.info("CSV landed at %s (new file, table=%s)", key, table)
+            record_chunk(table, key, rows=data_rows, raw_bytes=raw_bytes)
             return key
 
         with storage.open_read(header_key) as source:
             known = source.read().decode("utf-8")
 
-        body = remainder if first_line.rstrip("\r") == known else payload
+        repeats_header = first_line.rstrip("\r") == known
+        body = remainder if repeats_header else payload
         if body:
             size = storage.append(key, body.encode("utf-8"))
             logger.info(
-                "CSV appended to %s (table=%s, header repeated, now %d bytes)",
-                key, table, size,
+                "CSV appended to %s (table=%s, header repeated=%s, now %d bytes)",
+                key, table, repeats_header, size,
             )
         _set_open_table(storage, table)
+        # A repeated header row is not a record. Counting it would inflate the
+        # tally the completeness check depends on.
+        record_chunk(
+            table, key,
+            rows=data_rows if repeats_header else data_rows + 1,
+            raw_bytes=raw_bytes,
+        )
         return key
     except Exception:
         logger.exception("CSV not landed at %s", key)
         return None
 
 
-def _append_continuation(storage, payload: str) -> str | None:
+def _append_continuation(
+    storage, payload: str, *, data_rows: int = 0, raw_bytes: int = 0
+) -> str | None:
     """A chunk with no header. Every row is data; attribute it to the open table."""
     table = _get_open_table(storage)
     if table is None:
@@ -426,15 +450,19 @@ def _append_continuation(storage, payload: str) -> str | None:
         "CSV appended to %s (table=%s, headerless chunk, now %d bytes)",
         key, table, size,
     )
+    # Headerless: csv.reader took row zero for a header, so the count is one
+    # short of the records actually in this chunk.
+    record_chunk(table, key, rows=data_rows + 1, raw_bytes=raw_bytes)
     return key
 
 
 def _keys_for(table: str) -> tuple[str, str]:
-    day = datetime.now(timezone.utc).date()
-    return (
-        f"{table}/{day:%Y-%m-%d}/{table}.csv",
-        f"{table}/{day:%Y-%m-%d}/_header.csv",
-    )
+    """Where this table's assembled file lives.
+
+    Scoped to the open extract request rather than to the date -- see
+    ``csv_receipt.landing_keys`` for why the calendar version lost rows.
+    """
+    return landing_keys(table)
 
 
 def _set_open_table(storage, table: str) -> None:

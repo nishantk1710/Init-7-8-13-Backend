@@ -362,11 +362,16 @@ class TestDecoding:
 
 class TestContract:
     def test_all_21_sets_across_two_services(self) -> None:
+        """SAP renamed both services 22-Sep-2026 (ZVZI_KPI02_SHARED_SRV ->
+        ZMM_KPI02_ADD_SRV, ZMM_KPI02_SRV -> ZMM_KPI02_TAB_SRV). Verified twice:
+        entity_sets.csv from the live re-sweep, and a live $metadata probe
+        against both new names on the same day. Set membership is unaffected.
+        """
         sets = contract()
         assert len(sets) == 21
         assert {s.service for s in sets.values()} == {
-            "ZVZI_KPI02_SHARED_SRV",
-            "ZMM_KPI02_SRV",
+            "ZMM_KPI02_ADD_SRV",
+            "ZMM_KPI02_TAB_SRV",
         }
 
     def test_every_set_has_a_key_and_properties(self) -> None:
@@ -388,9 +393,10 @@ class TestContract:
         assert entity_set("PurchaseRequisitionSet").keys == ("Banfn", "Bnfpo")
 
     def test_api_path_is_built_from_the_owning_service(self) -> None:
+        """MaterialPlantSet's owning service, post-rename (see test above)."""
         assert (
             entity_set("MaterialPlantSet").api_path
-            == "sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet"
+            == "sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet"
         )
 
     def test_unknown_set_lists_the_alternatives(self) -> None:
@@ -467,12 +473,22 @@ class TestClient:
         assert result.is_empty and len(result) == 0
 
     def test_read_refuses_an_ignored_filter_before_calling(self) -> None:
+        """Pstyp on PurchaseOrderItemSet was the original example (B1/F1), but
+        it is HONOURED as of the 22-Sep discovery re-sweep -- see
+        filter_support.csv, verdict HONOURED, impossible-value probe 0/11097.
+        Swapped to Budat on MaterialDocumentHeaderSet, which is still IGNORED
+        (40651/40651, the MKPF date-range defect) and is the guard's most
+        consequential live case today.
+        """
         calls: list[dict] = []
         client = SapClient(
             settings(), transport_returning(FakeResponse(text=feed([])), capture=calls)
         )
         with pytest.raises(UnsupportedFilterError):
-            client.read("PurchaseOrderItemSet", filter="Pstyp eq '3'")
+            client.read(
+                "MaterialDocumentHeaderSet",
+                filter="Budat ge datetime'2013-01-01T00:00:00'",
+            )
         assert calls == [], "the guard must fire before any HTTP call"
 
     def test_count_returns_none_when_sap_500s(self) -> None:

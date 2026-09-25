@@ -25,6 +25,7 @@ from app.ingest.fetch import (
     MODE_FULL,
     collect_parent_keys,
     fetch_set,
+    has_window,
     read_manifest,
 )
 from app.ingest.load import STATUS_FAILED, latest_prefixes, load_set
@@ -50,6 +51,53 @@ def _parser() -> argparse.ArgumentParser:
         "--list",
         action="store_true",
         help="show every entity set and what has landed; touches nothing",
+    )
+
+    # --- The CSV route ----------------------------------------------------
+    parser.add_argument(
+        "--csv-pull",
+        action="store_true",
+        help=(
+            "ask SAP for a full table over the CSV extract route, then wait for "
+            "the chunks to land. Strictly one table at a time."
+        ),
+    )
+    parser.add_argument(
+        "--csv-load",
+        action="store_true",
+        help="file a reconciled CSV extract into raw_<table> in Azure SQL",
+    )
+    parser.add_argument(
+        "--table",
+        metavar="NAME",
+        help="one SAP table for the CSV verbs, e.g. EKPO. Omit with --all.",
+    )
+    parser.add_argument(
+        "--max-rows",
+        metavar="N",
+        default="",
+        help=(
+            "cap the extract, e.g. 100. Empty means no cap. Use a small value "
+            "to prove a table delivers before asking for all of it."
+        ),
+    )
+    parser.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="fire the extract and return, instead of waiting for the chunks",
+    )
+    parser.add_argument(
+        "--csv-status",
+        action="store_true",
+        help="show recent CSV extract requests and what landed for each",
+    )
+    parser.add_argument(
+        "--abandon",
+        action="store_true",
+        help=(
+            "close any open CSV request so a new one can be fired. For a "
+            "delivery that died; it does not recover the rows."
+        ),
     )
 
     scope = parser.add_mutually_exclusive_group()
@@ -139,8 +187,13 @@ def _list() -> int:
             how = "full pull only"
         elif delta.field:
             how = f"{delta.field} ge ..."
-        else:
+        elif has_window(spec_for(delta.via or "")):
             how = f"via {delta.via}.{delta.via_key}"
+        else:
+            # Declared, but its parent has no date SAP will filter on, so
+            # fetch pulls this set in full. Say that here rather than promise
+            # an increment the run will not perform.
+            how = f"via {delta.via} (no window: full)"
 
         note = "" if spec.expects_rows else "  (empty in this client)"
         print(f"{spec.name:<30} {spec.raw_table:<28} {how:<30} {landed}{note}")
@@ -167,6 +220,107 @@ def _report(title: str, rows: list[tuple[str, str, int, float]]) -> None:
         print(f"{name:<30} {status:<12} {count:>10,}  {seconds:>8.1f}")
 
 
+def _csv(args) -> int:
+    """The CSV route: pull, load, or both, for one table or all of them."""
+    from app.ingest.csv_load import load_all, load_table
+    from app.ingest.csv_pull import pull_all, pull_one
+    from app.ingest.csv_tables import CSV_TABLES
+
+    if not (args.all or args.table):
+        print("Nothing selected: pass --all or --table NAME. See --help.")
+        return 2
+
+    names = (
+        [t.sap_table for t in CSV_TABLES] if args.all else [args.table.upper()]
+    )
+    failures = 0
+
+    if args.csv_pull:
+        print(f"CSV pull: {len(names)} table(s), one at a time\n")
+        results = (
+            pull_all(max_rows=args.max_rows, tables=names)
+            if len(names) > 1
+            else [pull_one(names[0], max_rows=args.max_rows, wait=not args.no_wait)]
+        )
+        for result in results:
+            mark = "ok " if result.ok else "FAIL"
+            expected = result.expected_rows
+            print(
+                f"  [{mark}] {result.sap_table:<8} {result.status:<9} "
+                f"{result.received_rows:>9,} row(s)"
+                + (f" of {expected:,}" if expected else " (count unverified)")
+                + f"  {result.received_chunks} chunk(s)"
+            )
+            if result.error:
+                print(f"         {result.error}")
+            if not result.ok:
+                failures += 1
+
+    if args.csv_load:
+        print(f"\nCSV load into Azure SQL\n")
+        results = load_all(names) if len(names) > 1 else [load_table(names[0])]
+        for result in results:
+            mark = "ok " if result.ok else "FAIL"
+            print(
+                f"  [{mark}] {result.sap_table:<8} {result.rows:>9,} row(s), "
+                f"{result.columns} column(s) -> {result.table}"
+                + (f"  watermark={result.watermark}" if result.watermark else "")
+            )
+            if result.error:
+                print(f"         {result.error}")
+            if not result.ok:
+                failures += 1
+
+    return 1 if failures else 0
+
+
+def _csv_status() -> int:
+    """Recent extract requests, newest first."""
+    from sqlalchemy import select
+
+    from app.core.db import get_sessionmaker
+    from app.models.csv_extract import CsvExtractRequest
+
+    with get_sessionmaker()() as session:
+        rows = list(
+            session.scalars(
+                select(CsvExtractRequest)
+                .order_by(CsvExtractRequest.fired_at.desc())
+                .limit(25)
+            )
+        )
+
+    if not rows:
+        print("No CSV extract requests recorded yet.")
+        return 0
+
+    print(f"{'REQUEST':<22}{'TABLE':<8}{'STATUS':<10}{'ROWS':>12}"
+          f"{'EXPECTED':>12}{'CHUNKS':>8}  LOADED")
+    for row in rows:
+        print(
+            f"{row.request_id:<22}{row.sap_table:<8}{row.status:<10}"
+            f"{row.received_rows:>12,}"
+            f"{(f'{row.expected_rows:,}' if row.expected_rows else '-'):>12}"
+            f"{row.received_chunks:>8}  "
+            f"{'yes' if row.loaded_at else 'no'}"
+        )
+        if row.error:
+            print(f"    {row.error}")
+    return 0
+
+
+def _abandon() -> int:
+    from app.ingest.csv_pull import abandon_open
+
+    closed = abandon_open()
+    print(
+        f"Closed {closed} open request(s)."
+        if closed
+        else "No open request; nothing to abandon."
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     settings = get_settings()
@@ -174,6 +328,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.list:
         return _list()
+
+    if args.abandon:
+        return _abandon()
+    if args.csv_status:
+        return _csv_status()
+    if args.csv_pull or args.csv_load:
+        return _csv(args)
 
     if not (args.fetch or args.load):
         print("Nothing to do: pass --fetch, --load, or both. See --help.")
@@ -219,7 +380,7 @@ def main(argv: list[str] | None = None) -> int:
         for spec in _fetch_order(chosen):
             parent_keys = None
             delta = spec.delta if mode == MODE_DELTA else None
-            if delta is not None and delta.via:
+            if delta is not None and delta.via and has_window(spec_for(delta.via)):
                 cache_key = (delta.via, delta.via_key or "")
                 if cache_key not in key_cache:
                     try:

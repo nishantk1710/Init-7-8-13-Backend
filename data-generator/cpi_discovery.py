@@ -1208,7 +1208,40 @@ def run_mrp_profile(s, token, out, rows=None):
                   "the delivered 19-column extract. A zero here would mean exposed-but-unpopulated, which is a different problem."]
     (out / "mrp_type_profile.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n" + "\n".join(lines))
+
+    write_value_domains(out, ADD_SRV, "MaterialPlantSet", "Dismm", rows)
     return token, rows
+
+
+def write_value_domains(out, service, set_name, field, rows):
+    """Record ``field``'s value distribution, from rows already pulled.
+
+    Restores the value_domains.csv this discovery folder shipped until 18-Sep,
+    when a refactor left no code path writing it -- test_sap_contract.py's
+    TestValueDomains and its self-consistency check have named the missing
+    file ever since (see the 18-Sep handover note in git log).
+
+    Deliberately reuses whatever full pull the caller already made rather than
+    re-fetching: MaterialPlantSet's Dismm distribution is exactly what
+    run_mrp_profile just computed for mrp_type_profile.txt, and a second live
+    pull to populate a second report would be the same 2,183-row cost paid
+    twice for one answer. "(blank)" matches the value known_conditions.py's
+    DISMM_VALUE_DOMAIN maps to "" -- see test_sap.py's translation of it.
+
+    Only one field is profiled here today (Dismm). This module previously also
+    profiled Mstae from a standing VALUE_DOMAIN_PROBES list; that list is not
+    restored, so a caller adding a second field back must decide then whether
+    this write should accumulate across a run or, as here, start the file
+    fresh each sweep -- "w" mode, matching every other report in this script.
+    """
+    tally = Counter(r.get(field) or "(blank)" for r in rows)
+    total = sum(tally.values())
+    with open(out / "value_domains.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["service", "entity_set", "field", "value", "count", "pct_of_scanned_total"])
+        for value, count in tally.most_common():
+            pct = f"{count / total * 100:.1f}%" if total else ""
+            w.writerow([service, set_name, field, value, count, pct])
 
 
 def run_material_profile(s, token, out):

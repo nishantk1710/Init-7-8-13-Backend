@@ -268,6 +268,16 @@ def _read_derived(
     return rows, worst, requests
 
 
+def has_window(parent: IngestSpec) -> bool:
+    """Whether this set can be read by a date, i.e. can drive a derived delta.
+
+    Public because the CLI asks the same question twice: once to skip
+    collecting keys it cannot collect, and once so ``--list`` does not print a
+    derived delta that cannot run.
+    """
+    return parent.delta is not None and parent.delta.field is not None
+
+
 def collect_parent_keys(
     client: SapClient, delta: Delta, since: str | None
 ) -> list[str]:
@@ -280,6 +290,10 @@ def collect_parent_keys(
     parent = spec_for(delta.via or "")
     parent_delta = parent.delta
     if parent_delta is None or parent_delta.field is None:
+        # Callers that route through fetch_set never reach this -- it degrades
+        # such a child to a full pull instead. Kept as a guard for a direct
+        # call, because the alternative is silently reading the parent whole
+        # and calling the result an increment.
         raise ValueError(
             f"{parent.name} is the parent of a derived delta but has no direct "
             "delta of its own, so there is no window to read it by."
@@ -372,6 +386,22 @@ def fetch_set(
         elif delta.field is not None:
             result.since = since or get_watermark(spec.name, delta.field)
             rows, verdict, requests = _read_direct(client, spec, delta, result.since)
+        elif parent_keys is None and not has_window(spec_for(delta.via or "")):
+            # A derived delta's window is its parent's date window, and this
+            # parent has none SAP will honour -- MKPF's Budat is IGNORED, so
+            # MSEG sits here. Reading the parent in full and then asking for
+            # its children 50 keys at a time would be the whole child set in
+            # hundreds of requests, slower than the full pull it pretends to
+            # improve on. So: full pull, and say which parent caused it.
+            logger.info(
+                "%s: parent %s has no delta of its own, so there is no window "
+                "to read it by. This runs as a full pull.",
+                spec.name,
+                delta.via,
+            )
+            delta = None
+            result.mode = mode = MODE_FULL
+            rows, verdict, requests = _read_whole(client, spec)
         else:
             parent = spec_for(delta.via or "")
             parent_field = (parent.delta.field if parent.delta else None) or ""
@@ -402,6 +432,27 @@ def fetch_set(
     # pull of that set as corrupt.
     result.duplicate_keys = count_duplicate_keys(rows, spec.identity_keys)
     result.stable = result.duplicate_keys == 0
+
+    # A pull that returns FEWER rows than SAP's own count is a pull that lost
+    # rows, and until now nothing said so: `stable` only ever asked about
+    # duplicates, so a short file scored ok=True and loaded cleanly.
+    #
+    # POHistorySet is the live example -- it returns 0 rows against a $count of
+    # 3,881 on every sweep. That would have landed an empty file, passed the
+    # duplicate check perfectly, and told I13 that EKBE has no goods receipts.
+    #
+    # Only for a full pull. A delta returns a window by design, and its count
+    # is the whole set.
+    if (
+        not result.is_delta
+        and result.counted is not None
+        and result.rows < result.counted
+    ):
+        result.stable = False
+        result.error = (
+            f"read {result.rows} row(s) against a $count of {result.counted}. "
+            "Rows were lost in paging; the file would look complete and not be."
+        )
 
     try:
         result.bytes_written = _write_jsonl(storage, result.data_key, rows)
