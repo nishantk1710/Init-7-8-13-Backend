@@ -23,6 +23,7 @@ from app.api.i13 import reclassification as reclassification_routes
 from app.api.i13 import reservation_ledger as reservation_ledger_routes
 from app.api.i13 import validation as validation_routes
 from app.api.i13 import watch as watch_routes
+from app.api.i13 import session_links as session_link_routes
 from app.api.i13 import usage as usage_routes
 from app.api.i13.deps import get_data_dir, snapshot_or_live
 from app.core.db import get_db
@@ -73,6 +74,8 @@ router.include_router(assistant_routes.router)
 router.include_router(quantity_suggestion_routes.router)
 # GRNI and usage patterns: served from the snapshot only (see usage.py).
 router.include_router(usage_routes.router)
+# Session <-> reservation links via RESB.SGTXT, FR-4 compliance, UAT stand-in.
+router.include_router(session_link_routes.router)
 
 # The raw extract tables I13 actually reads -- see app/seed/manifest.py for
 # the full delivery; this is the I13-relevant subset.

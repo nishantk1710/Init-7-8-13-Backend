@@ -90,6 +90,7 @@ from app.initiatives.i13.plans import ConsumptionPlan, load_captured_plans, load
 from app.initiatives.i13.procurement_chain import build_procurement_chain, compute_chain_diagnostics
 from app.initiatives.i13.reclassification import build_reclassification_candidates
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
+from app.initiatives.i13.session_link import sync_links
 from app.initiatives.i13.watch import compute_watch_metrics
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
@@ -188,6 +189,11 @@ class I13Snapshot:
     # depend only on SAP data; the plan-dependent counts are not stored here.
     oar_position_count: int
     band_counts: Mapping[str, int]
+
+    #: RESB.SGTXT per reservation item, where non-empty -- where the requester
+    #: types the assistant's session ID (see session_link). Includes the UAT
+    #: overlay when that is on.
+    sgtxt_by_reservation: Mapping[Key, str] = field(default_factory=dict)
 
     notes: tuple[str, ...] = field(default=())
 
@@ -308,6 +314,13 @@ def compute_fingerprint(db: Session, *, settings: Settings | None = None, config
     plans_stamp = plans_file.stat().st_mtime_ns if plans_file.exists() else 0
     parts = [f"{table}:{run_id}:{finished}" for table, run_id, finished in rows]
     parts += [f"date:{reference_date_for(settings).isoformat()}", f"config:{config!r}", f"plans:{plans_stamp}"]
+    if settings.i13_uat_simulation_enabled:
+        from app.models.i13_session_link import UatReservationSgtxt
+
+        uat_count, uat_last = db.execute(
+            select(func.count(UatReservationSgtxt.id), func.max(UatReservationSgtxt.created_at))
+        ).one()
+        parts.append(f"uat:{uat_count}:{uat_last}")
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
@@ -385,6 +398,15 @@ def build_i13_snapshot(
     monthly = timed("monthly consumption", lambda: _monthly_consumption(movement_repo.get_movement_history()))
     stock_by_key = dict(movement_repo.get_current_stock())
 
+    # Session IDs typed into the reservations' item text (SGTXT): keep the
+    # text, and bring session_reservation_link in step with it. The same rows
+    # the ledger was built from (memoized), so this is no extra read.
+    reservation_rows = reservation_repo.get_reservations()
+    sgtxt_by_reservation = {(r["Rsnum"], r["Rspos"]): r["Sgtxt"] for r in reservation_rows if r.get("Sgtxt")}
+    linked = timed("session links", lambda: sync_links(db, reservation_rows))
+    db.commit()
+    logger.info("I13 snapshot: session links %s", linked)
+
     # The summary's band counts, exactly as summary.build_summary counts them:
     # OAR keys only, and an OAR key with no movement history is NON_MOVING.
     oar_keys = {key for key, dismm in scope_index.items() if classify_material_scope(dismm) is MaterialScope.OAR}
@@ -425,6 +447,7 @@ def build_i13_snapshot(
         monthly_consumption=monthly,
         stock_by_key=stock_by_key,
         reference_plans=reference_plans,
+        sgtxt_by_reservation=sgtxt_by_reservation,
         oar_position_count=len(oar_keys),
         band_counts=band_counts,
     )
@@ -573,24 +596,31 @@ def check_fingerprint(db: Session, *, min_interval_seconds: float | None = None)
     return start_background_build("data changed")
 
 
-def refresh_key(db: Session, material: str, plant: str) -> bool:
-    """Recompute one material-plant's WATCH row and swap it into the snapshot.
+def refresh_material(db: Session, material: str, plant: str, *, reservations: bool = False) -> bool:
+    """Recompute one material-plant and swap it into the snapshot.
 
-    Called after the assistant captures a plan: acquired-vs-plan for that
-    material now has a plan to measure against. Scoped, so it costs what the
-    assistant's own assessment costs (well under a second), not a rebuild.
-    Returns False when there is no snapshot to update.
+    Always its WATCH row (a plan captured through the assistant gives
+    acquired-vs-plan something to measure against). With ``reservations=True``
+    also its reservation-ledger entries, attributions and SGTXT -- after a UAT
+    reservation is simulated or stamped -- and it re-syncs that material's
+    session links. Scoped, so it costs about what the assistant's own
+    assessment costs, not a rebuild. Returns False when there is no snapshot.
     """
     snapshot = peek_i13_snapshot()
     if snapshot is None:
         return False
     settings = get_settings()
     config = get_i13_config()
+    key = (material, plant)
+    movement_repo = PostgresMovementRepository(db)
+    procurement_repo = PostgresProcurementRepository(db)
+    reservation_repo = PostgresReservationRepository(db)
+    scope_index = fetch_material_scope_index(db, material=material, plant=plant)
     metrics = compute_watch_metrics(
-        PostgresMovementRepository(db),
-        PostgresProcurementRepository(db),
-        PostgresReservationRepository(db),
-        fetch_material_scope_index(db, material=material, plant=plant),
+        movement_repo,
+        procurement_repo,
+        reservation_repo,
+        scope_index,
         config,
         Path(settings.i13_data_dir),
         material=material,
@@ -598,19 +628,62 @@ def refresh_key(db: Session, material: str, plant: str) -> bool:
         as_of=snapshot.reference_date,
         db=db,
     )
-    fresh = next((m for m in metrics if m.material == material and m.plant == plant), None)
+    fresh = next((m for m in metrics if (m.material, m.plant) == key), None)
+
+    entries: list[ReservationLedgerEntry] = []
+    attributions: list[ConsumptionAttribution] = []
+    rows: list[Row] = []
+    if reservations:
+        rows = reservation_repo.get_reservations(material=material, plant=plant)
+        # Same memoized repository, so this is the ledger WATCH just used.
+        entries = build_reservation_ledger(
+            reservation_repo,
+            procurement_repo,
+            material_scope_index=scope_index,
+            material=material,
+            plant=plant,
+            include_out_of_scope=True,
+        )
+        plans = list(snapshot.reference_plans) + load_captured_plans(db)
+        attributions = ConsumptionAttributionService(
+            cost_centre_enabled=config.attribution.cost_centre_enabled
+        ).attribute_entries(entries, rows, plans)
+        sync_links(db, rows, scope=key)
+
     with _lock:
         current = _state.snapshot
         if current is None:
             return False
         watch = dict(current.watch)
         if fresh is None:
-            watch.pop((material, plant), None)
+            watch.pop(key, None)
         else:
-            watch[(material, plant)] = fresh
-        _state.snapshot = replace(current, version=current.version + 1, watch=watch)
-    logger.info("I13 snapshot: refreshed WATCH row %s/%s", material, plant)
+            watch[key] = fresh
+        changes: dict[str, Any] = {"version": current.version + 1, "watch": watch}
+        if reservations:
+            changes["reservation_ledger"] = tuple(
+                e for e in current.reservation_ledger if (e.material, e.plant) != key
+            ) + tuple(entries)
+            changes["consumption_attribution"] = tuple(
+                a for a in current.consumption_attribution if (a.material, a.plant) != key
+            ) + tuple(attributions)
+            # Computed once: this material's reservation keys, whose SGTXT is replaced.
+            replaced = {
+                (e.reservation_number, e.reservation_item)
+                for e in current.reservation_ledger
+                if (e.material, e.plant) == key
+            }
+            sgtxt = {k: v for k, v in current.sgtxt_by_reservation.items() if k not in replaced}
+            sgtxt.update({(r["Rsnum"], r["Rspos"]): r["Sgtxt"] for r in rows if r.get("Sgtxt")})
+            changes["sgtxt_by_reservation"] = sgtxt
+        _state.snapshot = replace(current, **changes)
+    logger.info("I13 snapshot: refreshed %s/%s (reservations=%s)", material, plant, reservations)
     return True
+
+
+def refresh_key(db: Session, material: str, plant: str) -> bool:
+    """One material-plant's WATCH row -- see :func:`refresh_material`."""
+    return refresh_material(db, material, plant)
 
 
 def reset_i13_snapshot() -> None:

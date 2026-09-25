@@ -258,26 +258,12 @@ def list_consumption_plans(
     if plant:
         statement = statement.where(ConsumptionPlanRecord.plant == plant.strip())
 
-    return [
-        PlanModel(
-            id=p.id,
-            session_id=p.session_id,
-            material=p.material,
-            plant=p.plant,
-            purpose=p.purpose,
-            planned_quantity=str(p.planned_quantity),
-            window_start=p.window_start,
-            window_end=p.window_end,
-            cost_centre=p.cost_centre,
-            order_number=p.order_number,
-            status=p.status,
-            reservation_number=p.reservation_number,
-            reservation_item=p.reservation_item,
-            captured_by=p.captured_by,
-            captured_at=p.captured_at,
-        )
-        for p in db.execute(statement.limit(limit)).scalars()
-    ]
+    from app.api.assistant.router import _plan_model
+    from app.initiatives.i13.session_link import links_by_session
+
+    # The reservation each plan's session ID was typed into (SGTXT), if any.
+    links = links_by_session(db)
+    return [_plan_model(p, links.get(p.session_id)) for p in db.execute(statement.limit(limit)).scalars()]
 
 
 @router.get(

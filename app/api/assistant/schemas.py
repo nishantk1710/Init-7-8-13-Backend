@@ -222,6 +222,23 @@ class PlanModel(AssistantModel):
     reservation_item: str | None = None
     captured_by: str
     captured_at: datetime
+    linked_reservations: list["LinkedReservationModel"] = []
+    """Reservations whose item text (SGTXT) carries this plan's session ID.
+    ``reservationNumber`` shows the first of them when the plan has none of its
+    own."""
+
+
+class LinkedReservationModel(AssistantModel):
+    """A reservation item whose SGTXT names the session (session_reservation_link)."""
+
+    reservation_number: str
+    reservation_item: str
+    material: str
+    plant: str
+    source: str
+    """``SGTXT`` from the loaded extract, or ``UAT_SGTXT`` from the UAT overlay."""
+    sgtxt: str | None = None
+    first_seen_at: datetime
 
 
 class SuggestionModel(AssistantModel):
@@ -298,6 +315,7 @@ class SessionTraceResponse(AssistantModel):
     plans: list[PlanModel] = []
     quantity_suggestions: list[SuggestionModel] = []
     justifications: list[JustificationModel] = []
+    linked_reservations: list[LinkedReservationModel] = []
     linkage_note: str
 
 
@@ -370,3 +388,6 @@ class AskResponse(AssistantModel):
     data: dict[str, Any] = {}
     suggestions: list[str] = []
     note: str
+
+
+PlanModel.model_rebuild()

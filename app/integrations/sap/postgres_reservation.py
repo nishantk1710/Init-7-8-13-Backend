@@ -82,9 +82,13 @@ def _to_reservation_row(record: Any) -> Row:
         "Umwrk": _text_or_none(record.receiving_plant),
         "Umlgo": _text_or_none(record.receiving_stor_loc),
         "Wempf": _text_or_none(record.goods_recipient),
-        # Not present in the raw RESB extract. The designated session/tracking
-        # field is a later BAdI-contract addition (see the implementation
-        # plan, W6.2 §6.2) -- not invented here.
+        # RESB.SGTXT, the item text -- loaded by the extract as `text`. The
+        # requester types the assistant's session ID here (the carrier agreed
+        # while BEDNR is not in the extract, blocker B2). Free text: people also
+        # write names and notes in it, so it is read, never trusted --
+        # app.initiatives.i13.session_link finds and validates the ID.
+        "Sgtxt": _text_or_none(record.text),
+        # A dedicated session field that never arrived; kept for shape.
         "Zzaisession": None,
     }
 
@@ -104,7 +108,7 @@ _RESERVATION_FETCH_QUERY = """
         material, plant, storage_location, requirement_date, requirement_quantity,
         base_unit_of_measure, quantity_withdrawn, value_withdrawn,
         purchase_requisition, item_of_requisition, "order", movement_type,
-        receiving_plant, receiving_stor_loc, goods_recipient
+        receiving_plant, receiving_stor_loc, goods_recipient, text
     FROM raw_resb
     WHERE material <> '' AND plant <> '' AND {plant_scope}
       {reservation_filter}
@@ -149,7 +153,88 @@ def fetch_reservations(
             plant_scope=_PLANT_SCOPE,
         )
     )
-    return [_to_reservation_row(r) for r in db.execute(query, params).fetchall()]
+    rows = [_to_reservation_row(r) for r in db.execute(query, params).fetchall()]
+
+    from app.core.config import get_settings
+
+    if get_settings().i13_uat_simulation_enabled:
+        rows = _with_uat_overlay(
+            db, rows, reservation_number=reservation_number, pr_number=pr_number, material=material, plant=plant
+        )
+    return rows
+
+
+def _with_uat_overlay(
+    db: Session,
+    rows: list[Row],
+    *,
+    reservation_number: str | None,
+    pr_number: str | None,
+    material: str | None,
+    plant: str | None,
+) -> list[Row]:
+    """UAT only: what the extract would contain had the requester done it in SAP.
+
+    ``uat_reservation_sgtxt`` rows either replace a real reservation's SGTXT
+    (a *stamp*) or add a reservation that exists nowhere else (a *simulation*).
+    Applied to the rows fetched above, never to ``raw_resb`` itself, and only
+    while ``I13_UAT_SIMULATION_ENABLED`` is on -- see app/models/i13_session_link.py.
+    """
+    from sqlalchemy import select
+
+    from app.models.i13_session_link import UatReservationSgtxt
+
+    overlay = db.execute(select(UatReservationSgtxt)).scalars().all()
+    if not overlay:
+        return rows
+
+    stamps = {(u.reservation_number, u.reservation_item): u for u in overlay if not u.simulated}
+    if stamps:
+        for row in rows:
+            stamp = stamps.get((row["Rsnum"], row["Rspos"]))
+            if stamp is not None:
+                row["Sgtxt"] = stamp.sgtxt
+                row["UatStamped"] = True
+
+    if pr_number:
+        # A simulated reservation has no purchase requisition.
+        return rows
+    for u in overlay:
+        if not u.simulated:
+            continue
+        if reservation_number and u.reservation_number != reservation_number:
+            continue
+        if material and u.material != material:
+            continue
+        if plant and u.plant != plant:
+            continue
+        rows.append(
+            {
+                "Rsnum": u.reservation_number,
+                "Rspos": u.reservation_item,
+                "Xloek": False,
+                "Kzear": False,
+                "Matnr": u.material,
+                "Werks": u.plant,
+                "Lgort": None,
+                "Bdter": u.requirement_date,
+                "Bdmng": u.requirement_quantity,
+                "Meins": None,
+                "Enmng": None,
+                "Enwrt": None,
+                "Banfn": None,
+                "Bnfpo": None,
+                "Aufnr": None,
+                "Bwart": None,
+                "Umwrk": None,
+                "Umlgo": None,
+                "Wempf": None,
+                "Sgtxt": u.sgtxt,
+                "Zzaisession": None,
+                "UatSimulated": True,
+            }
+        )
+    return rows
 
 
 # --- W6.2 §9: goods issue -> Reservation, the strong GI link ----------------

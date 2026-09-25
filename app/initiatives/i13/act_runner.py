@@ -25,7 +25,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from app.initiatives.i13.act.domain import WatchGrniSnapshot
+from app.initiatives.i13.act.domain import NoPlanReason, WatchGrniSnapshot
 from app.initiatives.i13.act.service import DetectionRunResult, detect_exceptions
 from app.initiatives.i13.act_exception_store import SqlExceptionRepository
 from app.initiatives.i13.act_notifications import LoggingNotificationAdapter
@@ -38,6 +38,7 @@ from app.initiatives.i13.quantity_suggestion_store import (
     build_quantity_decision_records,
 )
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
+from app.initiatives.i13.session_link import COVERED, load_sessions, session_by_reservation, session_status
 from app.initiatives.i13.snapshot import I13Snapshot, current_plans
 from app.initiatives.i13.watch_mart import list_watch_metrics
 from app.integrations.sap.postgres_material import fetch_material_scope_index
@@ -110,6 +111,9 @@ def run_detection(
         (a.reservation_number, a.reservation_item): a.requester_id for a in attributions if a.requester_id
     }
 
+    # FR-4: which session, if any, each reservation's item text (SGTXT) names.
+    no_plan_reason_by_reservation = _no_plan_reasons(db, ledger_entries, snapshot)
+
     return detect_exceptions(
         as_of_time,
         ledger_entries=ledger_entries,
@@ -121,4 +125,24 @@ def run_detection(
         requester_response_days=config.escalation.requester_response_days,
         quantity_decision_records=quantity_decision_records,
         requester_by_reservation=requester_by_reservation,
+        no_plan_reason_by_reservation=no_plan_reason_by_reservation,
     )
+
+
+def _no_plan_reasons(db: Session, ledger_entries, snapshot: I13Snapshot | None) -> dict[tuple[str, str], NoPlanReason]:
+    """The no-plan reason SGTXT supports for each reservation that has one.
+
+    Without a snapshot (live path) there is no SGTXT map to hand, and the
+    reason stays the plan-based default.
+    """
+    if snapshot is None:
+        return {}
+    linked = session_by_reservation(db)
+    sessions = load_sessions(db, set(linked.values()))
+    reasons: dict[tuple[str, str], NoPlanReason] = {}
+    for entry in ledger_entries:
+        key = (entry.reservation_number, entry.reservation_item)
+        status = session_status(snapshot.sgtxt_by_reservation.get(key), linked.get(key), sessions)
+        if status != COVERED:
+            reasons[key] = NoPlanReason(status)
+    return reasons

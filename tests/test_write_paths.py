@@ -74,6 +74,17 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
     ("/api/i13/act/run/escalate", "post"): (
         "Advances the ACT state machine past the requester-response window."
     ),
+    ("/api/i13/uat/reservations/simulate", "post"): (
+        "UAT only (404 unless I13_UAT_SIMULATION_ENABLED): writes uat_reservation_sgtxt, "
+        "a simulated reservation standing in for SAP. raw_resb is never touched."
+    ),
+    ("/api/i13/uat/reservations/stamp", "post"): (
+        "UAT only: writes uat_reservation_sgtxt, a session ID stamped onto an existing "
+        "reservation's item text, overlaid on raw_resb (which is never touched)."
+    ),
+    ("/api/i13/uat/reservations/{uat_id}/remove", "post"): (
+        "UAT only: removes one uat_reservation_sgtxt row and the session link it produced."
+    ),
     ("/api/i13/snapshot/refresh", "post"): (
         "Rebuilds the in-memory I13 snapshot in the background. Writes no table: "
         "it re-reads raw_* and swaps the process's cached copy."

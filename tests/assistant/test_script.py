@@ -257,7 +257,7 @@ class TestTheSessionIdIsAlwaysHandedBack:
 
     def test_it_says_what_to_do_with_it(self) -> None:
         step = i08_step({script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}})
-        assert "Type it into the reservation in SAP" in step.prompt
+        assert "Type it into the reservation's item text in SAP (field SGTXT)" in step.prompt
 
 
 class TestReasonCategoriesAreConfiguration:

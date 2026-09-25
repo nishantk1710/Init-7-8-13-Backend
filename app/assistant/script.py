@@ -120,8 +120,8 @@ def _terminal(step_id: str, session_id: str, message: str) -> Step:
         kind=StepKind.TERMINAL,
         prompt=(
             f"{message}\n\nYour session reference is {session_id}. Type it into "
-            "the reservation in SAP so this advice can be linked to what you "
-            "actually reserve."
+            "the reservation's item text in SAP (field SGTXT) so this advice can "
+            "be linked to what you actually reserve."
         ),
         session_id=session_id,
     )

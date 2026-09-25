@@ -86,6 +86,11 @@ class ConsumptionPlan:
     captured_on: date | None = None
     """When a captured plan was recorded. ``None`` for the CSV."""
 
+    linked_reservations: tuple[tuple[str, str], ...] = ()
+    """Reservation items whose item text (SGTXT) carries this plan's session ID
+    -- ``session_reservation_link``. A plan linked this way matches those
+    reservations exactly, like a reference plan does."""
+
     @property
     def is_fabricated(self) -> bool:
         return self.source is PlanSource.REFERENCE_CSV
@@ -98,7 +103,7 @@ class ConsumptionPlan:
         assistant runs while the reservation is being created, so there is no
         reservation number to record.
         """
-        return self.source is PlanSource.CAPTURED and not self.reservation_number
+        return self.source is PlanSource.CAPTURED and not self.reservation_number and not self.linked_reservations
 
     @property
     def breach_reference_date(self) -> date | None:
@@ -184,34 +189,62 @@ def load_captured_plans(db: Session) -> list[ConsumptionPlan]:
     captured, and linking it is FR-8 (blocker B2).
     """
     from app.assistant.models import ConsumptionPlanRecord
+    from app.models.i13_session_link import SessionReservationLink
 
     rows = db.execute(
         select(ConsumptionPlanRecord).order_by(ConsumptionPlanRecord.captured_at)
     ).scalars()
 
-    return [
-        ConsumptionPlan(
-            plan_id=row.id,
-            session_id=row.session_id,
-            reservation_number=row.reservation_number or "",
-            reservation_item=row.reservation_item or "",
-            material=row.material,
-            plant=row.plant,
-            requester=row.captured_by,
-            purpose=row.purpose,
-            planned_quantity=row.planned_quantity,
-            # The window's start is still the plan's "use date" for anything
-            # that reads one date. Breach timing reads `breach_reference_date`
-            # (the window end), and reservation matching reads the whole
-            # window -- see ConsumptionPlan.covers and PlanMatcher below.
-            planned_use_date=row.window_start,
-            status=row.status,
-            source=PlanSource.CAPTURED,
-            window_end=row.window_end,
-            captured_on=row.captured_at.date() if row.captured_at else None,
+    # Reservations that carry each session's ID in their item text (SGTXT).
+    # Only for the plan's own material and plant -- the linker already
+    # guarantees that, and the filter keeps it true if a link row is stale.
+    linked: dict[str, list[tuple[str, str, str, str]]] = {}
+    for link in db.execute(
+        select(SessionReservationLink).order_by(
+            SessionReservationLink.reservation_number, SessionReservationLink.reservation_item
         )
-        for row in rows
-    ]
+    ).scalars():
+        linked.setdefault(link.session_id, []).append(
+            (link.reservation_number, link.reservation_item, link.material, link.plant)
+        )
+
+    def links_for(row) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (number, item)
+            for number, item, material, plant in linked.get(row.session_id, [])
+            if (material, plant) == (row.material, row.plant)
+        )
+
+    plans = []
+    for row in rows:
+        links = links_for(row)
+        first = links[0] if links else ("", "")
+        plans.append(_captured_plan(row, links, first))
+    return plans
+
+
+def _captured_plan(row, links: tuple[tuple[str, str], ...], first: tuple[str, str]) -> ConsumptionPlan:
+    return ConsumptionPlan(
+        plan_id=row.id,
+        session_id=row.session_id,
+        reservation_number=row.reservation_number or first[0],
+        reservation_item=row.reservation_item or first[1],
+        material=row.material,
+        plant=row.plant,
+        requester=row.captured_by,
+        purpose=row.purpose,
+        planned_quantity=row.planned_quantity,
+        # The window's start is still the plan's "use date" for anything
+        # that reads one date. Breach timing reads `breach_reference_date`
+        # (the window end), and reservation matching reads the whole
+        # window -- see ConsumptionPlan.covers and PlanMatcher below.
+        planned_use_date=row.window_start,
+        status=row.status,
+        source=PlanSource.CAPTURED,
+        window_end=row.window_end,
+        captured_on=row.captured_at.date() if row.captured_at else None,
+        linked_reservations=links,
+    )
 
 
 class PlanMatcher:
@@ -228,11 +261,12 @@ class PlanMatcher:
     """
 
     def __init__(self, plans: list[ConsumptionPlan], ledger_entries) -> None:
-        self._direct: dict[tuple[str, str], ConsumptionPlan] = {
-            (plan.reservation_number, plan.reservation_item): plan
-            for plan in plans
-            if not plan.is_unlinked_capture
-        }
+        self._direct: dict[tuple[str, str], ConsumptionPlan] = {}
+        for plan in plans:
+            if plan.is_unlinked_capture:
+                continue
+            for key in plan.linked_reservations or ((plan.reservation_number, plan.reservation_item),):
+                self._direct[key] = plan
         self._unlinked_by_key: dict[tuple[str, str], list[ConsumptionPlan]] = {}
         for plan in plans:
             if plan.is_unlinked_capture:
@@ -256,6 +290,8 @@ class PlanMatcher:
         return None
 
     def entries_for(self, plan: ConsumptionPlan) -> list:
+        if plan.linked_reservations:
+            return [e for key in plan.linked_reservations for e in self._entries_by_reservation.get(key, [])]
         if not plan.is_unlinked_capture:
             return self._entries_by_reservation.get((plan.reservation_number, plan.reservation_item), [])
         return [entry for entry in self._entries_by_key.get((plan.material, plan.plant), []) if plan.covers(entry)]

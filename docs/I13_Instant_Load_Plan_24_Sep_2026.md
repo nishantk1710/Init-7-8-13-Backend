@@ -72,6 +72,27 @@
 | `<Suspense>` per dashboard section, URL paging past 1,000 rows | Every section now answers in under 100 ms, so the all-or-nothing wait is gone. Screens still cap at 1,000 rows, now with the true total shown |
 | Phase B (persisted marts), §4.5 build speed-ups | Not needed at 40 s / 1.3 GB |
 
+### 0.2 Session <-> reservation via SGTXT (25-Sep)
+
+The SAP team agreed that **RESB.SGTXT**, the item text, carries the session ID instead of BEDNR. It is in the loaded extract as `raw_resb.text` (25,806 of 105,848 rows already hold free text; none hold a session ID yet). Postgres only; `raw_resb` is never modified.
+
+| Piece | Where |
+|---|---|
+| Migration `a9e3d51c7f20`: `session_reservation_link` (derived; re-synced from SGTXT) and `uat_reservation_sgtxt` (UAT overlay) | `app/models/i13_session_link.py` |
+| Reservation rows carry `Sgtxt`; the UAT overlay is applied only when `I13_UAT_SIMULATION_ENABLED=true` | `integrations/sap/postgres_reservation.py` |
+| Linker: finds IDs in free text (checksum-validated, typo-repaired, grouped or lower case), same material/plant only; FR-4 status per reservation (covered / session without plan / invalid / missing) | `initiatives/i13/session_link.py` |
+| Links re-synced on every snapshot build; per-material refresh after a UAT action | `snapshot.py` (`refresh_material`) |
+| A linked plan matches its reservation exactly; the window rule is only the fallback | `plans.py` |
+| NO_PLAN reason from SGTXT (MISSING / INVALID / SESSION_WITHOUT_PLAN) | `act/service.py`, `act_runner.py` |
+| `GET /i13/session-links`, `GET /i13/session-compliance`, `/i13/uat/*` (simulate, stamp, candidates, remove; 404 unless UAT is on) | `app/api/i13/session_links.py` |
+| Assistant says "item text (SGTXT)"; trace, plans and ledger show the link | `assistant/script.py`, `api/assistant/router.py` |
+| Frontend: Ledger **Reservations** view with a Session column; trace "Link to the reservation" plus UAT tools; UAT tools on the finished conversation; counted "Reservations with no session" | `Init-7-8-13-Frontend`, `feat/vp/ws7-assistant-frontend` |
+
+Limits:
+- **The go-live check uses the requirement date:** the extract has no reservation creation date, so the count covers reservations *required* on or after go-live.
+- **Simulated reservations stop at the reservation stage:** they have no PO, GR or GI.
+- **Resolved exceptions stay resolved:** removing a UAT stamp does not reopen its NO_PLAN exception (the ACT rule).
+
 ---
 
 ## 1. Measured today (24-Sep, `curl` against the running API, 90 s cut-off)

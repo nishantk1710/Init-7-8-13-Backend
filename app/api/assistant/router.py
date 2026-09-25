@@ -44,6 +44,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
+from app.initiatives.i13.session_link import links_by_session
 from app.api.assistant.schemas import (
     AnswerRequest,
     AnswerResponse,
@@ -54,6 +55,7 @@ from app.api.assistant.schemas import (
     JustificationListResponse,
     JustificationModel,
     JustificationRequest,
+    LinkedReservationModel,
     NarrativeModel,
     PlanModel,
     RoutingModel,
@@ -95,9 +97,12 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 LINKAGE_NOTE = (
     "No reservation is linked to this session yet. The assistant runs while the "
     "reservation is being created, so it has no document number to record -- the "
-    "requester types the session reference into SAP and the link is made "
-    "afterwards. Reading it back needs Bednr exposed on ReservationItemSet, "
-    "which is blocker B2 with the SAP team."
+    "requester types the session ID into the reservation's item text (SGTXT) in "
+    "SAP, and the link is made when a SAP extract carrying it is loaded."
+)
+LINKED_NOTE = (
+    "Linked through the reservation's item text (SGTXT), which carries this "
+    "session's ID."
 )
 
 
@@ -248,7 +253,22 @@ def post_turn(
     return AnswerResponse(session_id=session.id, step=_step_model(step))
 
 
-def _plan_model(plan: ConsumptionPlanRecord) -> PlanModel:
+def _linked_model(link) -> LinkedReservationModel:
+    return LinkedReservationModel(
+        reservation_number=link.reservation_number,
+        reservation_item=link.reservation_item,
+        material=link.material,
+        plant=link.plant,
+        source=link.source,
+        sgtxt=link.sgtxt,
+        first_seen_at=link.first_seen_at,
+    )
+
+
+def _plan_model(plan: ConsumptionPlanRecord, links: list | None = None) -> PlanModel:
+    """``links``: this plan's session's reservation links, same material/plant."""
+    linked = [l for l in (links or []) if (l.material, l.plant) == (plan.material, plan.plant)]
+    first = linked[0] if linked else None
     return PlanModel(
         id=plan.id,
         session_id=plan.session_id,
@@ -261,10 +281,11 @@ def _plan_model(plan: ConsumptionPlanRecord) -> PlanModel:
         cost_centre=plan.cost_centre,
         order_number=plan.order_number,
         status=plan.status,
-        reservation_number=plan.reservation_number,
-        reservation_item=plan.reservation_item,
+        reservation_number=plan.reservation_number or (first.reservation_number if first else None),
+        reservation_item=plan.reservation_item or (first.reservation_item if first else None),
         captured_by=plan.captured_by,
         captured_at=plan.captured_at,
+        linked_reservations=[_linked_model(l) for l in linked],
     )
 
 
@@ -411,6 +432,8 @@ def get_session(session_id: str, db: DbDep) -> SessionTraceResponse:
         ).scalars()
     )
 
+    links = links_by_session(db).get(session.id, [])
+
     return SessionTraceResponse(
         session_id=session.id,
         flow=session.flow,
@@ -442,10 +465,11 @@ def get_session(session_id: str, db: DbDep) -> SessionTraceResponse:
             )
             for t in turn_rows
         ],
-        plans=[_plan_model(p) for p in plans],
+        plans=[_plan_model(p, links) for p in plans],
         quantity_suggestions=[_suggestion_model(s) for s in suggestions],
         justifications=[_justification_model(j) for j in justifications],
-        linkage_note=LINKAGE_NOTE,
+        linked_reservations=[_linked_model(l) for l in links],
+        linkage_note=LINKED_NOTE if links else LINKAGE_NOTE,
     )
 
 

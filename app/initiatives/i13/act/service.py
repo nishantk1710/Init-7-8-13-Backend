@@ -73,6 +73,7 @@ from app.initiatives.i13.act.detection import (
     quantity_override_business_key,
 )
 from app.initiatives.i13.act.domain import (
+    NoPlanReason,
     ActException,
     AssigneeType,
     CrossPlantStockInfo,
@@ -336,6 +337,7 @@ def detect_exceptions(
     requester_response_days: int,
     quantity_decision_records: Sequence[QuantityDecisionRecord] = (),
     requester_by_reservation: Mapping[tuple[str, str], str] = {},
+    no_plan_reason_by_reservation: Mapping[tuple[str, str], NoPlanReason] = {},
 ) -> DetectionRunResult:
     """Run PLAN_BREACH, NO_PLAN/NO_PLAN_GRNI and QUANTITY_OVERRIDE detection
     for the given already-fetched evidence, and persist/update/resolve
@@ -416,6 +418,13 @@ def detect_exceptions(
             continue
         plan = matcher.plan_for(entry)
         no_plan_reason = classify_no_plan_reason(plan)
+        if plan is None:
+            # What the reservation's item text (SGTXT) says, when known: a
+            # mistyped or foreign session ID, or a real session that never
+            # captured a plan, is a different finding from no ID at all.
+            no_plan_reason = no_plan_reason_by_reservation.get(
+                (entry.reservation_number, entry.reservation_item), no_plan_reason
+            )
         grni_snapshot = grni_snapshots.get((entry.material, entry.plant))
         grni_flag = grni_snapshot.gr_not_issued_flag if grni_snapshot else None
 

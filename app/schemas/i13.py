@@ -152,6 +152,13 @@ class ReservationLedgerEntryResponse(BaseModel):
     attribution_status: AttributionStatus | None = None
     attribution_evidence: str | None = None
 
+    #: The assistant session this reservation's item text (SGTXT) names.
+    session_id: str | None = None
+    #: RESB.SGTXT as loaded (or as the UAT overlay says).
+    sgtxt: str | None = None
+    #: A reservation that exists only in the UAT overlay (simulated).
+    uat_simulated: bool = False
+
 
 class UtilisationLedgerEntryResponse(BaseModel):
     """Compatibility contract for ``GET /api/i13/ledger`` -- see
@@ -400,3 +407,74 @@ class UsagePatternResponse(BaseModel):
     active_months: int
     last_issue_month: str | None
     months: list[MonthlyConsumptionResponse]
+
+
+class SessionLinkResponse(BaseModel):
+    """A reservation item whose item text (SGTXT) names an assistant session."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    session_id: str
+    reservation_number: str
+    reservation_item: str
+    material: str
+    plant: str
+    source: str
+    sgtxt: str | None = None
+    first_seen_at: datetime
+
+
+class SessionComplianceResponse(BaseModel):
+    """FR-4: OAR reservations required since go-live, by what their SGTXT says."""
+
+    go_live_date: date
+    reservations: int
+    covered: int
+    session_without_plan: int
+    invalid_session: int
+    missing_session: int
+
+
+class UatStatusResponse(BaseModel):
+    enabled: bool
+    go_live_date: date
+
+
+class UatReservationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    reservation_number: str
+    reservation_item: str
+    material: str
+    plant: str
+    simulated: bool
+    requirement_date: date | None
+    requirement_quantity: Decimal | None
+    sgtxt: str
+    original_sgtxt: str | None
+    session_id: str | None
+    created_by: str
+    created_at: datetime
+
+
+class UatCandidateResponse(BaseModel):
+    """An existing reservation (loaded extract) the session ID could be stamped on."""
+
+    reservation_number: str
+    reservation_item: str
+    requirement_date: date | None
+    reservation_quantity: Decimal
+    sgtxt: str | None
+    session_id: str | None
+    lifecycle_status: str
+
+
+class UatSimulateRequest(BaseModel):
+    session_id: str
+
+
+class UatStampRequest(BaseModel):
+    session_id: str
+    reservation_number: str
+    reservation_item: str

@@ -279,6 +279,21 @@ class Settings(BaseSettings):
     # every live route has always used (plan decision D1 left open).
     i13_snapshot_reference_date: str = ""
 
+    # Session <-> reservation linking (app/initiatives/i13/session_link.py).
+    # The requester types the assistant's session ID into the reservation's item
+    # text, RESB.SGTXT, which the extract loads as raw_resb.text. BEDNR was the
+    # original carrier but is not in the extract (blocker B2).
+    #
+    # UAT only: overlay simulated reservations / SGTXT values from
+    # uat_reservation_sgtxt on top of raw_resb, standing in for "the requester
+    # typed it into SAP and a new extract was loaded". Never on in production:
+    # raw_resb itself is never modified either way.
+    i13_uat_simulation_enabled: bool = False
+    # Reservations required on or after this ISO date are expected to carry a
+    # session ID (the "reservations with no session" compliance count). Empty =
+    # the day the first assistant session was issued.
+    i13_assistant_go_live_date: str = ""
+
     # Current VZI OAR material-scope ruling (MARC.DISMM), comma-separated.
     # See app/shared/material_scope/policy.py -- this is shared platform
     # config, not owned by any single initiative.
