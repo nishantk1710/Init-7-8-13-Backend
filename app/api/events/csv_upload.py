@@ -70,21 +70,49 @@ CANDIDATE_DELIMITERS = ",;\t|"
 # fallback. Until then an unrecognised header lands under a stable fingerprint
 # rather than being guessed at or refused.
 TABLE_SIGNATURES: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("MANDT", "OBJECTCLAS", "OBJECTID", "CHANGENR", "TABNAME"), "CDPOS"),
-    (("MANDT", "OBJECTCLAS", "OBJECTID", "CHANGENR"), "CDHDR"),
-    (("MANDT", "EBELN", "EBELP", "ZEKKN"), "EKBE"),
-    (("MANDT", "EBELN", "EBELP"), "EKPO"),
-    (("MANDT", "EBELN"), "EKKO"),
-    (("MANDT", "MBLNR", "MJAHR", "ZEILE"), "MSEG"),
-    (("MANDT", "MBLNR", "MJAHR"), "MKPF"),
+    # Longest first: matching is a prefix test, so a shorter signature listed
+    # earlier would swallow every table that begins the same way. That is not
+    # hypothetical -- MBEW once matched MARA and MCHB matched MARD, and their
+    # rows were appended into the wrong files without a word of complaint.
+    #
+    # Change documents spell it MANDANT, not MANDT. They are first because
+    # nothing else starts that way.
+    (("MANDANT", "OBJECTCLAS", "OBJECTID", "CHANGENR", "TABNAME"), "CDPOS"),
+    (("MANDANT", "OBJECTCLAS", "OBJECTID", "CHANGENR"), "CDHDR"),
+
+    # LIS statistics: SSOUR/VRSIO in positions two and three, then the period
+    # key (S031) or the plant (S032).
+    (("MANDT", "SSOUR", "VRSIO", "SPMON"), "S031"),
+    (("MANDT", "SSOUR", "VRSIO", "WERKS"), "S032"),
+
+    # Material master family. MARD and MCHB are identical for four columns and
+    # diverge at the fifth, so both need five to be told apart.
+    (("MANDT", "MATNR", "WERKS", "LGORT", "CHARG"), "MCHB"),
     (("MANDT", "MATNR", "WERKS", "LGORT"), "MARD"),
     (("MANDT", "MATNR", "WERKS"), "MARC"),
+    (("MANDT", "MATNR", "BWKEY"), "MBEW"),
     (("MANDT", "MATNR", "SPRAS"), "MAKT"),
     (("MANDT", "MATNR"), "MARA"),
+
+    # Purchasing. EKPO, EKBE and EKET share MANDT,EBELN,EBELP and separate at
+    # the fourth column.
+    (("MANDT", "EBELN", "EBELP", "ZEKKN"), "EKBE"),
+    (("MANDT", "EBELN", "EBELP", "ETENR"), "EKET"),
+    (("MANDT", "EBELN", "EBELP"), "EKPO"),
+    (("MANDT", "EBELN"), "EKKO"),
+
+    # Movements.
+    (("MANDT", "MBLNR", "MJAHR", "ZEILE"), "MSEG"),
+    (("MANDT", "MBLNR", "MJAHR"), "MKPF"),
+
+    # Requisitions and reservations.
     (("MANDT", "BANFN", "BNFPO"), "EBAN"),
     (("MANDT", "RSNUM", "RSPOS"), "RESB"),
+
+    # Info records: EINE carries the purchasing org where EINA carries MATNR.
     (("MANDT", "INFNR", "EKORG"), "EINE"),
-    (("MANDT", "INFNR"), "EINA"),
+    (("MANDT", "INFNR", "MATNR"), "EINA"),
+
     (("MANDT", "LIFNR"), "LFA1"),
 )
 
