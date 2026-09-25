@@ -126,7 +126,11 @@ class ScopePredicate(BaseModel):
     def evaluate(self, attributes: MaterialAttributes) -> ScopeDecision:
         """Apply this predicate to one material-plant."""
         raw = getattr(attributes, self.field.value)
-        if raw is None:
+        # An empty or whitespace-only string is the same fact as None ("not
+        # maintained"). The staging adapter's clean() normally collapses it
+        # first, but a predicate that has opted into blank-means-in-scope must
+        # not send an uncleaned "" to UNKNOWN via unknown_values below.
+        if raw is None or (self.blank_means_in_scope and not raw.strip()):
             return ScopeDecision.IN_SCOPE if self.blank_means_in_scope else ScopeDecision.UNKNOWN
         if raw in self.unknown_values:
             return ScopeDecision.UNKNOWN

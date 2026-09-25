@@ -12,6 +12,15 @@ All three must hold. A challenger that wins on loss while drifting badly on bias
 is not adopted, and neither is one whose evidence is thin -- which is every
 challenger on the current extract.
 
+**Every applicable condition is checked, not just the first one that fails.**
+A challenger can fail more than one bar at once -- insufficient origins AND a
+bias blowout is the common case on this extract's short series -- and
+``decide_intermittent`` reports all of them in ``decision_reason``, in a fixed
+order (origins, improvement, bias). The final ``adoption_status`` still
+follows the documented precedence (evidence before merit: an insufficient-
+origins challenger is always ``NOT_ELIGIBLE_INSUFFICIENT_ORIGINS``, regardless
+of what else it also failed) -- only the reporting stopped short-circuiting.
+
 **Smooth/Erratic, SES vs Auto-ARIMA.** The documents require backtesting but
 state no numeric threshold. So none is invented: the comparison is computed and
 reported, and the outcome is
@@ -125,35 +134,45 @@ def decide_intermittent(
             bias_change,
         )
 
-    # Evidence is checked before merit. A challenger that looks better over 8
-    # origins has not met the standard, and reporting it as adopted-but-for-the-
-    # origins would invite exactly the wrong reading.
-    if challenger.origins_evaluated < challenger.required_origins:
-        return build(
-            AdoptionStatus.NOT_ELIGIBLE_INSUFFICIENT_ORIGINS,
+    # All three documented conditions are evaluated independently, every time
+    # -- never short-circuited on the first one that fails. A challenger can
+    # fail more than one bar at once (thin evidence AND a bias blowout is the
+    # common case on this extract), and reporting only whichever check ran
+    # first would hide the others: a later fix to the origins shortfall alone
+    # would then surface the bias failure as if it were new, when it was
+    # there the whole time. The final status and precedence are unchanged --
+    # only the reason now names every bar this material actually failed.
+    origins_ok = challenger.origins_evaluated >= challenger.required_origins
+    improvement_ok = improvement > minimum_improvement
+    bias_ok = bias_change is None or bias_change <= maximum_bias_deterioration
+
+    failures: list[str] = []
+    if not origins_ok:
+        failures.append(
             f"{challenger.origins_evaluated} of {challenger.required_origins} "
             "required rolling origins; development data cannot support production "
-            "adoption evidence",
-            improvement,
-            bias_change,
+            "adoption evidence"
         )
-
-    if improvement <= minimum_improvement:
-        return build(
-            AdoptionStatus.BASELINE_RETAINED,
+    if not improvement_ok:
+        failures.append(
             f"pinball improvement {improvement:.4f} does not exceed "
-            f"{minimum_improvement}",
-            improvement,
-            bias_change,
+            f"{minimum_improvement}"
         )
+    if not bias_ok:
+        failures.append(f"bias worsened by {bias_change:.4f}, above {maximum_bias_deterioration}")
 
-    if bias_change is not None and bias_change > maximum_bias_deterioration:
-        return build(
-            AdoptionStatus.BASELINE_RETAINED,
-            f"bias worsened by {bias_change:.4f}, above {maximum_bias_deterioration}",
-            improvement,
-            bias_change,
+    if failures:
+        # Evidence outranks merit for the STATUS (an insufficient-origins
+        # challenger is NOT_ELIGIBLE_INSUFFICIENT_ORIGINS even if it also
+        # failed on bias, exactly as before) -- but the reason lists every
+        # failed bar, in the same fixed order (origins, improvement, bias),
+        # regardless of which one decided the status.
+        status = (
+            AdoptionStatus.NOT_ELIGIBLE_INSUFFICIENT_ORIGINS
+            if not origins_ok
+            else AdoptionStatus.BASELINE_RETAINED
         )
+        return build(status, "; ".join(failures), improvement, bias_change)
 
     return build(
         AdoptionStatus.CHALLENGER_ELIGIBLE,

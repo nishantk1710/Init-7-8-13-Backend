@@ -52,6 +52,13 @@ SORT_FIELDS: dict[str, "object"] = {
     "plant": Recommendation.sap_plant_code,
     "demand_class": Recommendation.demand_class,
     "confidence": Recommendation.confidence,
+    # Magnitude of the reorder-point change, sign-independent (a swing from
+    # 50->10 matters as much as 10->50) -- func.abs() is portable across the
+    # Postgres dev stand-in and Azure SQL, unlike a dialect-specific ABS
+    # syntax. A null rop_delta (no recommendation computed) sorts last on
+    # both ascending and descending requests via NULLS LAST, so "top reorder
+    # changes" never surfaces not-yet-evaluated rows ahead of real ones.
+    "rop_delta_magnitude": func.abs(Recommendation.rop_delta),
 }
 
 
@@ -89,6 +96,34 @@ def _apply_filters(
     if generated_to is not None:
         statement = statement.where(Recommendation.generated_at < generated_to)
     return statement
+
+
+def _order_by(sort: str, sort_desc: bool) -> tuple:
+    """Validated ``ORDER BY`` clause for ``sort``/``sort_desc`` against
+    ``SORT_FIELDS`` -- shared by every list endpoint that exposes a ``sort``
+    query param (recommendations, adoption) so the NULLS-LAST emulation and
+    ``id`` tiebreaker can never drift between them.
+
+    Raises the same ``INVALID_SORT_FIELD`` error a caller would raise
+    inline, so this can be called before any query executes."""
+    if sort not in SORT_FIELDS:
+        raise bad_request(
+            "INVALID_SORT_FIELD",
+            f"'{sort}' is not a sortable field.",
+            allowed=list(SORT_FIELDS),
+        )
+    sort_column = SORT_FIELDS[sort]
+    # rop_delta_magnitude is nullable (func.abs(NULL) is NULL). SQLAlchemy's
+    # .nulls_last() emits raw "NULLS LAST", which Postgres accepts but MSSQL
+    # (this system's real target -- see app/core/db.py) rejects outright, so
+    # it is emulated portably with a CASE-based "is null" tiebreaker column
+    # ordered first instead, ahead of the real sort column, on both
+    # directions -- keeps not-yet-evaluated rows out of the "top changes"
+    # ranking without a dialect-specific ORDER BY clause.
+    nulls_last_flag = case((sort_column.is_(None), 1), else_=0)
+    if sort_desc:
+        return (nulls_last_flag, sort_column.desc(), Recommendation.id.desc())
+    return (nulls_last_flag, sort_column.asc(), Recommendation.id)
 
 
 def _latest_only(statement: Select) -> Select:
@@ -153,12 +188,7 @@ def list_recommendations(
         Query(description="Exclusive upper bound on generated_at -- e.g. a report period's end, plus one day."),
     ] = None,
 ) -> RecommendationListResponse:
-    if sort not in SORT_FIELDS:
-        raise bad_request(
-            "INVALID_SORT_FIELD",
-            f"'{sort}' is not a sortable field.",
-            allowed=list(SORT_FIELDS),
-        )
+    order = _order_by(sort, sort_desc)
 
     base = _latest_only(
         _apply_filters(
@@ -179,14 +209,6 @@ def list_recommendations(
         select(func.count()).select_from(base.subquery())
     ).scalar_one()
 
-    # A secondary, always-present tiebreaker column keeps ordering
-    # deterministic when the sort field has duplicate values -- otherwise two
-    # rows with the same status could swap position between page 1 and page 2.
-    # The tiebreaker follows the same direction as the primary sort so a
-    # descending page and an ascending page never interleave the same tied
-    # group differently.
-    sort_column = SORT_FIELDS[sort]
-    order = (sort_column.desc(), Recommendation.id.desc()) if sort_desc else (sort_column, Recommendation.id)
     statement = (
         base.order_by(*order)
         .offset((page - 1) * page_size)

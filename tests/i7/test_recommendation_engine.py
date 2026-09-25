@@ -170,11 +170,18 @@ def test_ready_for_review_only_when_the_path_actually_computed(session):
     ).scalar()
     assert wrong_normal == 0
 
+    # oar_neighbour_count is required evidence only on the cold-start (Phase 6
+    # similarity) OAR path, i.e. history_status != SUFFICIENT. An OAR material
+    # (MRP type ND/PD/blank) WITH sufficient history goes through the normal
+    # forecast -> SS -> ROP -> Max path instead -- it is is_oar=True with no
+    # neighbours by design, because it never reaches the similarity engine at
+    # all. See build_normal_recommendation's is_oar wiring.
     wrong_oar = session.execute(
         select(func.count())
         .select_from(Recommendation)
         .where(
             Recommendation.is_oar.is_(True),
+            Recommendation.history_status != "SUFFICIENT",
             Recommendation.status == LifecycleStatus.READY_FOR_REVIEW.value,
             Recommendation.oar_neighbour_count.is_(None),
         )

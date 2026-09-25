@@ -46,3 +46,15 @@ def resolve_quarter(quarter: str) -> tuple[date, date]:
     period_start = date(year, start_month, 1)
     period_end = date(year, end_month, end_day)
     return period_start, period_end
+
+
+def most_recently_completed_quarter(today: date) -> str:
+    """The last calendar quarter that has fully elapsed as of ``today``, as
+    ``"Q<1-4> <year>"``. Used by the scheduled/CLI trigger so it does not need
+    a hardcoded quarter string -- e.g. on any day in Q1 2027 this returns
+    ``"Q4 2026"``, never the still-in-progress current quarter.
+    """
+    current_q = (today.month - 1) // 3 + 1
+    if current_q == 1:
+        return f"Q4 {today.year - 1}"
+    return f"Q{current_q - 1} {today.year}"

@@ -149,6 +149,37 @@ def test_all_movement_types_covers_issues_and_reversals():
     assert set(ConsumptionMovementPolicy().all_movement_types) == {"201", "261", "202", "262"}
 
 
+def test_consumption_sql_counts_issue_count_by_movement_type_filter():
+    """Regression for the 2026-09-17 migration (7c3b9a1e5f42) that added
+    ``issue_count``/``reversal_count`` with ``server_default='0'``: every row
+    staged before that migration kept the backfilled 0 because staging was
+    never re-run, not because the classification itself was ever wrong. This
+    pins the SQL's own shape so a future edit cannot silently reintroduce a
+    real classification bug under the same symptom.
+    """
+    from app.initiatives.i7.adapters.extract import _CONSUMPTION_SQL
+
+    assert "COUNT(*) FILTER (WHERE movement_type = ANY(:issue_types)) AS issue_count" in (
+        " ".join(_CONSUMPTION_SQL.split())
+    )
+    assert "COUNT(*) FILTER (WHERE movement_type = ANY(:reversal_types)) AS reversal_count" in (
+        " ".join(_CONSUMPTION_SQL.split())
+    )
+
+
+def test_consumption_sql_issue_and_reversal_types_come_from_policy_not_literals():
+    """The FILTER clauses bind ``:issue_types``/``:reversal_types`` -- supplied
+    by the caller from :class:`ConsumptionMovementPolicy` -- never a literal
+    ``('201','261')`` in the SQL text, so a re-scoped policy changes behaviour
+    without editing this query."""
+    from app.initiatives.i7.adapters.extract import _CONSUMPTION_SQL
+
+    assert "201" not in _CONSUMPTION_SQL
+    assert "261" not in _CONSUMPTION_SQL
+    assert ":issue_types" in _CONSUMPTION_SQL
+    assert ":reversal_types" in _CONSUMPTION_SQL
+
+
 # --- Field map ---------------------------------------------------------
 
 

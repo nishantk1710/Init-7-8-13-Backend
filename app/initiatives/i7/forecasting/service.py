@@ -56,6 +56,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_sessionmaker
 from app.initiatives.i7.adapters import consumption_series_for
 from app.initiatives.i7.contracts import DemandPattern
+from app.initiatives.i7.contracts.enums import Criticality
 from app.initiatives.i7.features import BaselineModel, HistoryStatus
 from app.initiatives.i7.forecasting import arima, lightgbm_model, sba, ses, tsb
 from app.initiatives.i7.forecasting import backtest as backtest_engine
@@ -71,6 +72,7 @@ from app.initiatives.i7.forecasting.types import (
     ModelName,
     ModelStatus,
 )
+from app.initiatives.i7.errors import PolicyNotConfiguredError
 from app.initiatives.i7.policy import PolicyDocument
 from app.models.i7_forecast import (
     Forecast,
@@ -121,6 +123,12 @@ class _Candidate:
     ``PLANNED_DELIVERY_TIME``, per
     :class:`app.initiatives.i7.contracts.enums.LeadTimeSource`. ``None`` when
     the feature store has no resolved lead time at all."""
+    criticality: Criticality | None
+    """This material-plant's own ZMM065 tier, read from the feature store --
+    what ``_scoring_quantile`` resolves against so a NORMAL material's models
+    are scored at NORMAL's own target, never at whichever tier happens to sit
+    highest in the matrix. ``None`` when the tier is absent or unrecognised
+    (see ``_criticality``'s own docstring)."""
     series: PreparedSeries
 
 
@@ -131,7 +139,8 @@ _ROUTED_SQL = """
            f.history_status,
            f.baseline_model,
            f.lead_time_days,
-           f.lead_time_source
+           f.lead_time_source,
+           f.criticality
       FROM i7_material_feature f
      WHERE f.history_status = :sufficient
        AND f.baseline_model IS NOT NULL
@@ -155,6 +164,22 @@ def _horizon_months(lead_time_days: Decimal | None) -> int | None:
         return None
     months = Decimal(str(lead_time_days)) / DAYS_PER_MONTH
     return max(1, int(months.to_integral_value(rounding="ROUND_CEILING")))
+
+
+def _criticality(raw: str | None) -> Criticality | None:
+    """The feature store's raw tier string, as the ``Criticality`` enum.
+
+    Mirrors ``inventory/service.py``'s own ``_criticality`` -- same shape,
+    same "unrecognised is None, never a guessed tier" rule -- kept as a
+    second, small copy rather than importing across from Phase 5, since
+    forecasting does not otherwise depend on the inventory module.
+    """
+    if raw is None:
+        return None
+    try:
+        return Criticality(raw.strip().upper())
+    except ValueError:
+        return None
 
 
 def _load_candidates(session: Session) -> list[_Candidate]:
@@ -190,6 +215,7 @@ def _load_candidates(session: Session) -> list[_Candidate]:
                 baseline_model=row.baseline_model,
                 lead_time_months=_horizon_months(row.lead_time_days),
                 lead_time_source=row.lead_time_source,
+                criticality=_criticality(row.criticality),
                 series=prepared,
             )
         )
@@ -197,20 +223,61 @@ def _load_candidates(session: Session) -> list[_Candidate]:
 
 
 def _target_quantile(policy: PolicyDocument) -> float | None:
-    """The LightGBM quantile, from the signed service-level matrix.
+    """The pooled LightGBM's *training* quantile, from the signed
+    service-level matrix.
 
     ``None`` while unsigned. Deliberately not defaulted -- the quantile *is* the
     service level, and choosing one here would set inventory policy in a
     forecasting module.
+
+    This is a training-time constant, not a per-material value, and that is a
+    real, unavoidable architectural fact: LightGBM's own ``objective="quantile"``
+    bakes its target quantile into the trees at training time (see
+    ``lightgbm_model.train``'s ``alpha=quantile``) -- a booster trained once
+    cannot be asked for a different quantile at predict time, and the Solution
+    Design requires exactly one pooled model, not one per material. Training at
+    the highest signed level -- the most demanding target in play -- is the
+    defensible choice given that constraint. **It must never be read as the
+    quantile any specific material's pinball loss is scored at** -- that is
+    ``_scoring_quantile``'s job, and conflating the two is exactly the "assume
+    98% for critical [for everyone]" the Solution Design's Rule 1 explicitly
+    forbids (``policy/unresolved.py``'s own docstring quotes it verbatim).
     """
     if not policy.service_level.is_configured:
         return None
     levels = [level for _, level in policy.service_level.matrix]
     if not levels:
         return None
-    # Several tiers may be signed with different levels; the pooled model is one
-    # model, so it trains at the highest -- the most demanding target in play.
     return max(levels)
+
+
+def _scoring_quantile(policy: PolicyDocument, criticality: Criticality | None) -> float | None:
+    """The quantile THIS material-plant's own models are scored at.
+
+    Pinball loss is well-defined against any target regardless of what a
+    forecast was optimised for -- it simply asks "how good is this forecast
+    against quantile q?" -- so a fixed forecast (from SBA, SES, or the pooled
+    LightGBM trained at ``_target_quantile``) can be, and must be, scored at
+    THIS material's own signed service level, not at whichever tier happens to
+    be highest across the whole matrix. Reuses
+    ``ServiceLevelPolicy.service_level_for`` -- the same per-criticality lookup
+    ``inventory/service_level.py::resolve`` already uses for Safety Stock's Z
+    factor -- rather than a second, differently-shaped resolution invented
+    here.
+
+    ``None`` whenever the material's own tier has no signed level: unsigned
+    matrix, missing criticality, or a criticality the signed matrix is simply
+    silent on. Never falls back to a neighbouring tier's level or to
+    ``_target_quantile``'s pooled value -- an unresolvable quantile is
+    reported as ``NOT_EVALUABLE`` downstream (see ``pinball_loss``), not
+    guessed.
+    """
+    if not policy.service_level.is_configured or criticality is None:
+        return None
+    try:
+        return policy.service_level.service_level_for(criticality)
+    except PolicyNotConfiguredError:
+        return None
 
 
 def _run_models(
@@ -219,9 +286,16 @@ def _run_models(
     pooled_status: ModelStatus,
     pooled_detail: str,
     obsolescence_trigger_configured: bool,
-    quantile: float | None,
+    scoring_quantile: float | None,
 ) -> list[tuple[ForecastResult, BacktestResult, bool]]:
     """Forecast and backtest every model applicable to one material-plant.
+
+    ``scoring_quantile`` is THIS material-plant's own target (see
+    ``_scoring_quantile``) -- never the pooled LightGBM training quantile
+    (``_target_quantile``). Every model here (SES, Auto-ARIMA, SBA, LightGBM,
+    TSB alike) has its backtest pinball loss scored against it, because
+    pinball loss is a valid, meaningful metric against any target regardless
+    of what quantile (if any) the forecast itself was optimised for.
 
     Returns ``(forecast, backtest, is_baseline)`` per model.
     """
@@ -301,7 +375,7 @@ def _run_models(
                 backtest_result = backtest_result._replace(
                     metrics=metric_functions.evaluate(
                         list(backtest_result.paths),
-                        quantile=quantile,
+                        quantile=scoring_quantile,
                         # Unit price and holding rate are unavailable, so
                         # holding cost reports NOT_EVALUABLE rather than a
                         # number built on an invented rate.
@@ -408,7 +482,7 @@ def run_forecasting(policy: PolicyDocument | None = None) -> ForecastRunResult:
                     pooled_status,
                     pooled_detail,
                     obsolescence_trigger_configured,
-                    quantile,
+                    _scoring_quantile(policy, candidate.criticality),
                 ):
                     result.model_status_counts[forecast_result.status.value] = (
                         result.model_status_counts.get(forecast_result.status.value, 0) + 1

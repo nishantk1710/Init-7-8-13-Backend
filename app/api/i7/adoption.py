@@ -25,7 +25,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.i7.deps import get_session, load_latest_recommendation
-from app.api.i7.recommendations import _apply_filters, _latest_only
+from app.api.i7.recommendations import _apply_filters, _latest_only, _order_by
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations.adoption import (
     evaluate_conversion_adoption,
@@ -174,13 +174,20 @@ def get_adoption(
     "recommended reorder point, safety stock or max stock) are listed -- "
     "there is nothing to reconcile adoption of for the far larger set that "
     "never reached a calculated value (see docs on the upstream data gaps). "
-    "Supports the same filters as GET /recommendations. Registered before "
-    "/{recommendation_id} so 'adoption' is never read as one.",
+    "Supports the same filters as GET /recommendations. Defaults to "
+    "rop_delta_magnitude descending, not generated_at, so a material-plant "
+    "where the recommended value actually differs from current surfaces "
+    "before one where the two happen to be equal (recommended IS NOT NULL "
+    "alone doesn't mean a real change was proposed -- see SORT_FIELDS's own "
+    "docstring in recommendations.py). Registered before /{recommendation_id} "
+    "so 'adoption' is never read as one.",
 )
 def list_adoption(
     session: Annotated[Session, Depends(get_session)],
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 50,
+    sort: str = "rop_delta_magnitude",
+    sort_desc: bool = True,
     status: str | None = None,
     plant: str | None = None,
     material: str | None = None,
@@ -189,6 +196,8 @@ def list_adoption(
     confidence: str | None = None,
     criticality: str | None = None,
 ) -> AdoptionListResponse:
+    order = _order_by(sort, sort_desc)
+
     # Adoption tracking is a per-material-plant view, not a per-run history --
     # see _latest_only's docstring for why a material-plant can have more
     # than one Recommendation row and why only the newest is eligible here.
@@ -220,7 +229,7 @@ def list_adoption(
     total = session.execute(select(func.count()).select_from(base.subquery())).scalar_one()
 
     statement = (
-        base.order_by(Recommendation.generated_at.desc(), Recommendation.id.desc())
+        base.order_by(*order)
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
@@ -257,14 +266,40 @@ def list_adoption(
     "viewed), so this number grows as more of the portfolio is evaluated -- "
     "it is not a claim about the whole portfolio's adoption on day one. "
     "Feeds the Inventory Planning overview's adoption-rate card and the "
-    "quarterly report's SAP Adoption section.",
+    "quarterly report's SAP Adoption section. Optional `plant` narrows to one "
+    "SAP plant code -- i7_sap_adoption itself carries no plant column, so "
+    "this joins to Recommendation on recommendation_id to get it (the ledger "
+    "is written keyed by recommendation_id alone, never by plant).",
 )
-def get_adoption_summary(session: Annotated[Session, Depends(get_session)]) -> AdoptionSummary:
-    total_evaluated = session.execute(select(func.count()).select_from(SapAdoptionResult)).scalar_one()
+def get_adoption_summary(
+    session: Annotated[Session, Depends(get_session)],
+    plant: str | None = None,
+) -> AdoptionSummary:
+    # i7_sap_adoption itself carries no plant column, so a plant filter joins
+    # to Recommendation on recommendation_id to get one. A recommendation_id
+    # has more than one Recommendation row (see _latest_only's own docstring
+    # -- the pipeline regenerating under a new run id produces a second row
+    # for the same material-plant), so joining without _latest_only fans out
+    # every ledger row by however many Recommendation rows share its id,
+    # overstating every count. _latest_only's own subquery-of-ids restricts
+    # the join to exactly the one current row per recommendation_id.
+    recommendation_ids_for_plant = None
+    if plant is not None:
+        latest_at_plant = _latest_only(select(Recommendation)).where(
+            Recommendation.sap_plant_code == plant
+        ).subquery()
+        recommendation_ids_for_plant = select(latest_at_plant.c.recommendation_id)
 
-    by_status_rows = session.execute(
-        select(SapAdoptionResult.status, func.count()).group_by(SapAdoptionResult.status)
-    ).all()
+    base = select(SapAdoptionResult)
+    if recommendation_ids_for_plant is not None:
+        base = base.where(SapAdoptionResult.recommendation_id.in_(recommendation_ids_for_plant))
+
+    total_evaluated = session.execute(select(func.count()).select_from(base.subquery())).scalar_one()
+
+    status_query = select(SapAdoptionResult.status, func.count())
+    if recommendation_ids_for_plant is not None:
+        status_query = status_query.where(SapAdoptionResult.recommendation_id.in_(recommendation_ids_for_plant))
+    by_status_rows = session.execute(status_query.group_by(SapAdoptionResult.status)).all()
     counts = {status: count for status, count in by_status_rows}
 
     adopted = counts.get("ADOPTED", 0)

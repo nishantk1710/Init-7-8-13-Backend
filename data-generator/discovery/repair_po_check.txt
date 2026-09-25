@@ -1,1 +1,14 @@
-ZREP purchase orders, 2026-09-17T14:03:49Z: 0 header(s)
+ZREP purchase orders, 2026-09-23T07:25:44Z: 4 header(s)
+I08 D7 proposes Pstyp 3 as the primary repair-PO filter, corroborated by Bsart ZREP and Knttp F.
+
+  4500000000  vendor 0000400000  /Date(1535493600000)/  items=1  pstyp={'0': 1}  knttp={'': 1}
+  4500000001  vendor 0000400000  /Date(1537308000000)/  items=1  pstyp={'3': 1}  knttp={'F': 1}
+  4500000002  vendor 0000400000  /Date(1537308000000)/  items=1  pstyp={'3': 1}  knttp={'F': 1}
+  4500000003  vendor 0000400001  /Date(1539036000000)/  items=1  pstyp={'3': 1}  knttp={'F': 1}
+
+Across all ZREP lines: Pstyp x Knttp:
+  pstyp=3 knttp=F 3
+  pstyp=0 knttp=<blank> 1
+Lines with a material number: 4 of 4; 80-series: 4
+Note: if every Ebeln filter returned the full set, the Ebeln filter is ignored too; see filter_support.csv.
+Note: PurchaseOrderItemSet publishes no date property (I08 s7, EKPO.ERDAT request), so per-stage aging cannot be computed from this set as exposed today.

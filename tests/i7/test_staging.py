@@ -283,6 +283,79 @@ def test_movement_count_is_recorded_for_provenance(session):
     )
 
 
+@needs_db
+def test_issue_or_reversal_count_is_populated_wherever_movements_exist(session):
+    """Regression for the staleness the 2026-09-17 migration left behind:
+    ``issue_count``/``reversal_count`` were added to an already-staged table
+    with ``server_default='0'``, and every row staged before that migration
+    kept the backfilled 0 until staging was re-run. This asserts against the
+    live staged data, not a fixture, so a re-staleing (a schema change staged
+    data is never rebuilt against) fails loudly instead of quietly reappearing
+    under the same symptom.
+
+    Not every staged month has an issue: a reversal (202/262) can be staged in
+    a month where the extract does not also carry the issue it reverses (that
+    issue predates the extract window, or was posted in a different month), so
+    ``issue_count == 0`` alongside ``reversal_count > 0`` is a real, correct
+    outcome, not the bug. What must never happen is BOTH staying 0 while
+    movements were actually staged -- that is the shape the stale backfill
+    produced everywhere.
+    """
+    if not _staged(session):
+        pytest.skip("staging not populated")
+    total, both_zero = session.execute(
+        select(
+            func.count(),
+            func.count().filter(
+                StagedConsumption.issue_count == 0, StagedConsumption.reversal_count == 0
+            ),
+        ).select_from(StagedConsumption)
+    ).one()
+    assert total > 0
+    assert both_zero == 0, (
+        f"{both_zero} of {total} staged consumption rows have both "
+        "issue_count=0 and reversal_count=0 despite movement_count>0 -- "
+        "every staged month has at least one issue or reversal movement"
+    )
+
+
+@needs_db
+def test_issue_and_reversal_counts_match_a_known_movement_type_split(session):
+    """A specific material/plant/period this extract is known to carry both
+    issue and reversal movements for (raw_mseg movement types 201/261 vs
+    202/262), checked end to end against the staged aggregate rather than
+    only against the SQL string."""
+    if not _staged(session):
+        pytest.skip("staging not populated")
+    row = session.execute(
+        text(
+            """select material, plant, date_trunc('month', posting_date::date)::date as period,
+                      count(*) filter (where movement_type in ('201','261')) as issues,
+                      count(*) filter (where movement_type in ('202','262')) as reversals
+                 from raw_mseg
+                where movement_type in ('201','261','202','262')
+                  and NULLIF(material,'') is not null and NULLIF(plant,'') is not null
+                  and posting_date ~ '^\\d{4}-\\d{2}-\\d{2}$'
+                  and quantity ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                group by 1,2,3
+               having count(*) filter (where movement_type in ('202','262')) > 0
+               limit 1"""
+        )
+    ).one_or_none()
+    if row is None:
+        pytest.skip("no material/plant/period in this extract has a reversal movement")
+
+    staged = session.execute(
+        select(StagedConsumption.issue_count, StagedConsumption.reversal_count).where(
+            StagedConsumption.sap_material_number == row.material,
+            StagedConsumption.sap_plant_code == row.plant,
+            StagedConsumption.period == row.period,
+        )
+    ).one()
+    assert staged.issue_count == row.issues
+    assert staged.reversal_count == row.reversals
+
+
 # --- Purchase orders ---------------------------------------------------
 
 

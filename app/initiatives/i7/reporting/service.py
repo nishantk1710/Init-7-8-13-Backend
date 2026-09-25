@@ -164,7 +164,7 @@ def generate_quarterly_report(session: Session, quarter: str) -> QuarterlyReport
     reorder_point = _reorder_point_section(session, recommendation_base)
     max_stock = _max_stock_section(session, recommendation_base)
     oar = _oar_section(session, recommendation_base)
-    material_criticality = _material_criticality_section(session, recommendation_base)
+    material_criticality = _material_criticality_section(session)
     recommendations = _recommendations_section(session, recommendation_base)
     approval = _approval_section(session, ledger_base)
     baseline_comparison = _baseline_comparison_section(session, recommendation_base)
@@ -470,19 +470,35 @@ def _max_stock_section(session: Session, recommendation_base) -> MaxStockSection
     )
 
 
-def _material_criticality_section(session: Session, recommendation_base) -> MaterialCriticalitySection:
+def _material_criticality_section(session: Session) -> MaterialCriticalitySection:
     """Real distribution of ``Recommendation.criticality`` (the 5 ZMM065
-    tiers, verbatim) over the same quarter-scoped row set every other section
-    reads -- never an invented A/B/C 3-bucket collapse (no such grouping is
-    defined in policy or code) and never the portfolio-wide (all-time)
-    ``/recommendations/summary`` distribution, which would misrepresent this
-    quarter's report with an all-time figure."""
-    total = _count(session, recommendation_base)
+    tiers, verbatim) -- never an invented A/B/C 3-bucket collapse (no such
+    grouping is defined in policy or code).
+
+    Deliberately portfolio-wide (all-time ``i7_recommendation`` -- the same
+    table every other section already reads criticality from; deliberately
+    NOT the raw ``raw_zmm065_bmm``/``raw_zmm065_gb`` SAP extract tables,
+    which have no ORM model, no MATNR join to this table's identities, and
+    are explicitly documented as an un-normalized layer nothing else in this
+    report touches), unlike every other section in this module, which is
+    quarter-scoped -- a 2026-09-23 product decision. Almost no rows in this
+    extract carry a ``generated_at`` inside any specific quarter's window
+    (most predate the reporting feature and were never regenerated within
+    one), so a quarter-scoped count reads as zero across every tier even
+    though the real, current distribution over this table is substantial
+    (6,414 NORMAL / 228 IMPACT / 192 CRITICAL / 32 INSURANCE / 4 OBSOLETE /
+    447,586 unpopulated, at the time of that decision) -- an empty report
+    section here would misrepresent data that genuinely exists. Confirmed
+    acceptable specifically for this section because criticality is a
+    near-static material attribute (ZMM065 tier assignment does not
+    meaningfully change quarter to quarter the way recommendation counts or
+    approval activity do), so an all-time figure is still a materially
+    accurate answer to "what does the current portfolio look like," not a
+    stale one."""
     by_tier_rows = session.execute(
-        recommendation_base.with_only_columns(Recommendation.criticality, func.count()).group_by(
-            Recommendation.criticality
-        )
+        select(Recommendation.criticality, func.count()).group_by(Recommendation.criticality)
     ).all()
+    total = sum(cnt for _tier, cnt in by_tier_rows)
     populated = sum(cnt for tier, cnt in by_tier_rows if tier is not None)
 
     return MaterialCriticalitySection(

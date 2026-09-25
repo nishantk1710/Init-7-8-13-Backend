@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+from app.initiatives.i7.contracts import ScopeDecision
+from app.initiatives.i7.contracts.recommendation import RecommendationFactor
 from app.initiatives.i7.recommendations import explanation
 from app.initiatives.i7.recommendations.conversion import HodApprovalLookup, evaluate as evaluate_conversion
 from app.initiatives.i7.recommendations.types import (
@@ -119,6 +121,22 @@ def _trace_from_row(row: Any, fields: tuple[tuple[str, str], ...]) -> list[tuple
     return entries
 
 
+def _is_oar(oar_scope: str | None) -> bool | None:
+    """Phase 3's OAR verdict, read -- never re-derived.
+
+    ``oar_scope`` was computed by the one authoritative policy
+    (``policy.oar.current_oar_policy``: MRP type ND, PD or blank). UNKNOWN (or
+    no verdict at all) is ``None``, not ``False``: "could not determine" must
+    not be recorded as "not OAR". Under the current policy a blank MRP type is
+    IN_SCOPE, so UNKNOWN only appears on a feature run built before that rule.
+    """
+    if oar_scope == ScopeDecision.IN_SCOPE.value:
+        return True
+    if oar_scope == ScopeDecision.OUT_OF_SCOPE.value:
+        return False
+    return None
+
+
 def build_normal_recommendation(
     row: Any, policy: PolicyDocument, hod_lookup: HodApprovalLookup | None = None
 ) -> BuiltRecommendation:
@@ -126,6 +144,12 @@ def build_normal_recommendation(
 
     ``row`` is the joined Phase 3/5 record the repository provides -- see
     :func:`app.initiatives.i7.recommendations.repository.load_normal_inputs`.
+
+    An OAR material (MRP type ND/PD/blank) with sufficient history comes
+    through here too: it is forecast and sized like any other, because its
+    OAR -> Min-Max conversion suggestion needs a recommended ROP and Max. It
+    keeps those values, is marked ``is_oar=True``, and is evaluated for
+    conversion by the same triggers as the cold-start OAR path.
     """
     # SUCCESS_FROM_CURRENT_SAP_VALUE (smooth/erratic materials where I11's
     # current MARC value stood in for I07's own calculation -- see
@@ -155,7 +179,21 @@ def build_normal_recommendation(
             ("reason", blocking_reason),
         ]
 
-    conversion = None  # Conversion eligibility applies to OAR materials only.
+    is_oar = _is_oar(row.oar_scope)
+
+    # Conversion eligibility applies to OAR materials only.
+    conversion = (
+        evaluate_conversion(
+            material=row.sap_material_number,
+            plant=row.sap_plant_code,
+            consumption_count_12m=row.consumption_count_12m,
+            criticality=row.criticality,
+            policy=policy.conversion_triggers,
+            hod_lookup=hod_lookup,
+        )
+        if is_oar
+        else None
+    )
 
     impact = explanation.expected_impact(
         current_ss=row.current_safety_stock,
@@ -190,17 +228,30 @@ def build_normal_recommendation(
         service_level_configured=row.service_level is not None,
         recommended_rop=row.rop if rop_ok else None,
         current_rop=row.current_reorder_point,
+        # False on purpose even for an OAR material: is_oar here selects the
+        # cold-start explanation, and this material's numbers came from its
+        # own forecast, which is what the factors must describe.
         is_oar=False,
         history_status=row.history_status,
         oar_neighbour_count=None,
         oar_confidence=None,
     )
+    if conversion is not None:
+        factors = factors + (
+            RecommendationFactor(
+                label="OAR -> Min-Max conversion",
+                detail=(
+                    f"Material is OAR (MRP type {row.mrp_type or 'blank'}); "
+                    f"conversion {conversion.eligibility.value}: {conversion.detail}."
+                ),
+            ),
+        )
 
     return BuiltRecommendation(
         sap_material_number=row.sap_material_number,
         sap_plant_code=row.sap_plant_code,
         status=status,
-        is_oar=False,
+        is_oar=is_oar,
         demand_class=row.demand_class,
         history_status=row.history_status,
         criticality=row.criticality,

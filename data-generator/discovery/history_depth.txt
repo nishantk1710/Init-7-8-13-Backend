@@ -1,0 +1,14 @@
+Movement history depth, 2026-09-23T07:25:41Z
+
+I13 s7.2: the SOP bands need 731 days to separate Slow (366-730) from Non-moving (over 730).
+The delivered extract spans 08-Aug-2025 to 20-Aug-2026, about 409 days, so 40,868 of 44,394 OAR
+positions default to Non-moving. This checks what OData itself can supply.
+
+  $orderby=Budat asc    -> HTTP 200, Budat = /Date(1366668000000)/
+  $orderby=Budat desc   -> HTTP 200, Budat = /Date(1789509600000)/
+
+  Caution: if $orderby is not honoured (see operator_support.csv) these two are the same arbitrary row.
+
+  Span available over OData: 4894 days (160.8 months)
+  I13 FR-6 requirement     : 731 days (25 months)
+  VERDICT: SUFFICIENT - re-extract over this window and the aging bands become valid.

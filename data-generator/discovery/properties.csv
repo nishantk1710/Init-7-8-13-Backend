@@ -1,230 +1,238 @@
 service,entity_set,property,type,nullable,is_key,maxlength,precision,scale,sap_filterable,sap_sortable,sap_label
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Banfn,Edm.String,false,K,10,,,false,false,Purchase Req.
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Bnfpo,Edm.String,false,K,5,,,false,false,Requisn Item
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Bsart,Edm.String,false,,4,,,false,false,Document Type
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Loekz,Edm.String,false,,1,,,false,false,Deletion Ind.
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Statu,Edm.String,false,,1,,,false,false,Processing stat
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Frgkz,Edm.String,false,,1,,,false,false,Release ind.
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Frgzu,Edm.String,false,,8,,,false,false,Release status
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Ekgrp,Edm.String,false,,3,,,false,false,Purch. Group
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Ernam,Edm.String,false,,12,,,false,false,Created by
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Afnam,Edm.String,false,,12,,,false,false,Requisitioner
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Txz01,Edm.String,false,,40,,,false,false,Short Text
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Matnr,Edm.String,false,,18,,,false,false,Material
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Werks,Edm.String,false,,4,,,false,false,Plant
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Lgort,Edm.String,false,,4,,,false,false,Stor. Location
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Bednr,Edm.String,false,,10,,,false,false,Tracking Number
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Matkl,Edm.String,false,,9,,,false,false,Material Group
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Reswk,Edm.String,false,,4,,,false,false,Supplying Plant
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Menge,Edm.String,false,,20,,,false,false,Quantity
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Meins,Edm.String,false,,3,,,false,false,Unit of Measure
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Badat,Edm.DateTime,true,,,7,,false,false,Requisn Date
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Lfdat,Edm.DateTime,true,,,7,,false,false,Delivery Date
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Preis,Edm.String,false,,20,,,false,false,Valuation Price
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Peinh,Edm.String,false,,10,,,false,false,Price Unit
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Flief,Edm.String,false,,10,,,false,false,Fixed Vendor
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Ebeln,Edm.String,false,,10,,,false,false,Purchase Order
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Ebelp,Edm.String,false,,5,,,false,false,Item
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Bsmng,Edm.String,false,,20,,,false,false,PO Quantity
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Ebakz,Edm.Boolean,false,,,,,false,false,Closed
-ZVZI_KPI02_SHARED_SRV,PurchaseRequisitionSet,Rsnum,Edm.String,false,,10,,,false,false,Reservation
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Mblnr,Edm.String,false,K,10,,,false,false,Material Doc.
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Mjahr,Edm.String,false,K,4,,,false,false,Mat. Doc. Year
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Zeile,Edm.String,false,K,4,,,false,false,Mat. Doc.Item
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Bwart,Edm.String,false,,3,,,false,false,Movement Type
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Matnr,Edm.String,false,,18,,,false,false,Material
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Werks,Edm.String,false,,4,,,false,false,Plant
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Lgort,Edm.String,false,,4,,,false,false,Stor. Location
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Lifnr,Edm.String,false,,10,,,false,false,Supplier
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Shkzg,Edm.String,false,,1,,,false,false,Debit/Credit
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Dmbtr,Edm.String,false,,20,,,false,false,Amount in LC
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Menge,Edm.String,false,,20,,,false,false,Quantity
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Meins,Edm.String,false,,3,,,false,false,Base Unit
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Ebeln,Edm.String,false,,10,,,false,false,Purchase Order
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Ebelp,Edm.String,false,,5,,,false,false,Item
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Sgtxt,Edm.String,false,,50,,,false,false,Text
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Wempf,Edm.String,false,,12,,,false,false,Recipient
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Kostl,Edm.String,false,,10,,,false,false,Cost Center
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Aufnr,Edm.String,false,,12,,,false,false,Order
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Rsnum,Edm.String,false,,10,,,false,false,Reservation
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Rspos,Edm.String,false,,4,,,false,false,Item
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Umwrk,Edm.String,false,,4,,,false,false,Receiving Plant
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Umlgo,Edm.String,false,,4,,,false,false,Receiving SLoc.
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,Grund,Edm.String,false,,4,,,false,false,Reason for Mvmt
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,BudatMkpf,Edm.DateTime,true,,,7,,false,false,Posting Date
-ZVZI_KPI02_SHARED_SRV,GoodsMovementItemSet,CpudtMkpf,Edm.DateTime,true,,,7,,false,false,Entered on
-ZVZI_KPI02_SHARED_SRV,InfoRecordSet,Infnr,Edm.String,false,K,10,,,false,false,Info Record
-ZVZI_KPI02_SHARED_SRV,InfoRecordSet,Matnr,Edm.String,false,,18,,,false,false,Material
-ZVZI_KPI02_SHARED_SRV,InfoRecordSet,Lifnr,Edm.String,false,,10,,,false,false,Supplier
-ZVZI_KPI02_SHARED_SRV,InfoRecordSet,Loekz,Edm.Boolean,false,,,,,false,false,Complete
-ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Infnr,Edm.String,false,K,10,,,false,false,Info Record
-ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Ekorg,Edm.String,false,K,4,,,false,false,Purchasing Org.
-ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Esokz,Edm.String,false,K,1,,,false,false,Infotype
-ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Werks,Edm.String,false,,4,,,false,false,Plant
-ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Loekz,Edm.Boolean,false,,,,,false,false,Purch.org. data
-ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Waers,Edm.String,false,,5,,,false,false,Currency
-ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Aplfz,Edm.String,false,,20,,,false,false,Pl. Deliv. Time
-ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Netpr,Edm.String,false,,20,,,false,false,Net Price
-ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Peinh,Edm.String,false,,20,,,false,false,Price Unit
-ZVZI_KPI02_SHARED_SRV,InfoRecordOrgSet,Effpr,Edm.String,false,,20,,,false,false,Effect. Price
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderSet,Ebeln,Edm.String,false,K,10,,,false,false,Purchasing Doc.
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderSet,Bsart,Edm.String,false,,4,,,false,false,Document Type
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderSet,Aedat,Edm.DateTime,true,,,7,,false,false,Created On
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderSet,Lifnr,Edm.String,false,,10,,,false,false,Supplier
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderSet,Ekorg,Edm.String,false,,4,,,false,false,Purchasing Org.
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderSet,Ekgrp,Edm.String,false,,3,,,false,false,Purch. Group
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderSet,Waers,Edm.String,false,,5,,,false,false,Currency
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Ebeln,Edm.String,false,K,10,,,false,false,Purchasing Doc.
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Ebelp,Edm.String,false,K,5,,,false,false,Item
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Loekz,Edm.String,false,,1,,,false,false,Deletion Ind.
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Txz01,Edm.String,false,,40,,,false,false,Short Text
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Matnr,Edm.String,false,,18,,,false,false,Material
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Werks,Edm.String,false,,4,,,false,false,Plant
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Lgort,Edm.String,false,,4,,,false,false,Stor. Location
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Bednr,Edm.String,false,,10,,,false,false,Tracking Number
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Menge,Edm.String,false,,20,,,false,false,PO Quantity
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Meins,Edm.String,false,,3,,,false,false,Order Unit
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Netpr,Edm.String,false,,30,,,false,false,Net Price
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Peinh,Edm.String,false,,10,,,false,false,Price Unit
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Netwr,Edm.String,false,,30,,,false,false,Net Value
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Elikz,Edm.Boolean,false,,,,,false,false,Deliv. Compl.
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Pstyp,Edm.String,false,,1,,,false,false,Item Category
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Knttp,Edm.String,false,,1,,,false,false,Acct Assgt Cat.
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Plifz,Edm.String,false,,5,,,false,false,Pl. Deliv. Time
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Banfn,Edm.String,false,,10,,,false,false,Purchase Req.
-ZVZI_KPI02_SHARED_SRV,PurchaseOrderItemSet,Bnfpo,Edm.String,false,,5,,,false,false,Requisn Item
-ZVZI_KPI02_SHARED_SRV,VendorSet,Lifnr,Edm.String,false,K,10,,,false,false,Vendor
-ZVZI_KPI02_SHARED_SRV,VendorSet,Name1,Edm.String,false,,35,,,false,false,Name
-ZVZI_KPI02_SHARED_SRV,VendorSet,Ktokk,Edm.String,false,,4,,,false,false,Account Group
-ZVZI_KPI02_SHARED_SRV,VendorSet,Loevm,Edm.Boolean,false,,,,,false,false,Deletion flag
-ZVZI_KPI02_SHARED_SRV,MaterialDescriptionSet,Matnr,Edm.String,false,K,18,,,false,false,Material
-ZVZI_KPI02_SHARED_SRV,MaterialDescriptionSet,Spras,Edm.String,false,K,2,,,false,false,Language
-ZVZI_KPI02_SHARED_SRV,MaterialDescriptionSet,Maktx,Edm.String,false,,40,,,false,false,Description
-ZVZI_KPI02_SHARED_SRV,MaterialSet,Matnr,Edm.String,false,K,18,,,false,false,Material
-ZVZI_KPI02_SHARED_SRV,MaterialSet,Lvorm,Edm.Boolean,false,,,,,false,false,DF client level
-ZVZI_KPI02_SHARED_SRV,MaterialSet,Mtart,Edm.String,false,,4,,,false,false,Material Type
-ZVZI_KPI02_SHARED_SRV,MaterialSet,Matkl,Edm.String,false,,9,,,false,false,Material Group
-ZVZI_KPI02_SHARED_SRV,MaterialSet,Bismt,Edm.String,false,,18,,,false,false,Old matl number
-ZVZI_KPI02_SHARED_SRV,MaterialSet,Meins,Edm.String,false,,3,,,false,false,Base Unit
-ZVZI_KPI02_SHARED_SRV,MaterialSet,Mstae,Edm.String,false,,2,,,false,false,X-plant status
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Matnr,Edm.String,false,K,18,,,false,false,Material
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Werks,Edm.String,false,K,4,,,false,false,Plant
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Lvorm,Edm.Boolean,false,,,,,false,false,DF plant level
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Dismm,Edm.String,false,,2,,,false,false,MRP Type
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Dispo,Edm.String,false,,3,,,false,false,MRP Controller
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Plifz,Edm.String,false,,10,,,false,false,Pl. Deliv. Time
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Webaz,Edm.String,false,,10,,,false,false,GR Proc. Time
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Minbe,Edm.String,false,,20,,,false,false,Reorder Point
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Eisbe,Edm.String,false,,20,,,false,false,Safety Stock
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Bstmi,Edm.String,false,,20,,,false,false,Min. Lot Size
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Bstma,Edm.String,false,,20,,,false,false,Max. Lot Size
-ZVZI_KPI02_SHARED_SRV,MaterialPlantSet,Mabst,Edm.String,false,,20,,,false,false,Max.stock level
-ZVZI_KPI02_SHARED_SRV,StorageLocationStockSet,Matnr,Edm.String,false,K,18,,,false,false,Material
-ZVZI_KPI02_SHARED_SRV,StorageLocationStockSet,Werks,Edm.String,false,K,4,,,false,false,Plant
-ZVZI_KPI02_SHARED_SRV,StorageLocationStockSet,Lgort,Edm.String,false,K,4,,,false,false,Stor. Location
-ZVZI_KPI02_SHARED_SRV,StorageLocationStockSet,Labst,Edm.String,false,,20,,,false,false,Unrestricted
-ZVZI_KPI02_SHARED_SRV,StorageLocationStockSet,Insme,Edm.String,false,,20,,,false,false,In Qual. Insp.
-ZVZI_KPI02_SHARED_SRV,StorageLocationStockSet,Speme,Edm.String,false,,20,,,false,false,Blocked
-ZVZI_KPI02_SHARED_SRV,StorageLocationStockSet,Lgpbe,Edm.String,false,,10,,,false,false,Storage Bin
-ZVZI_KPI02_SHARED_SRV,MaterialDocumentHeaderSet,Mblnr,Edm.String,false,K,10,,,false,false,Material Doc.
-ZVZI_KPI02_SHARED_SRV,MaterialDocumentHeaderSet,Mjahr,Edm.String,false,K,4,,,false,false,Mat. Doc. Year
-ZVZI_KPI02_SHARED_SRV,MaterialDocumentHeaderSet,Budat,Edm.DateTime,true,,,7,,false,false,Posting Date
-ZVZI_KPI02_SHARED_SRV,MaterialDocumentHeaderSet,Cpudt,Edm.DateTime,true,,,7,,false,false,Entered on
-ZVZI_KPI02_SHARED_SRV,MaterialDocumentHeaderSet,Xblnr,Edm.String,false,,16,,,false,false,Reference
-ZVZI_KPI02_SHARED_SRV,POScheduleLineSet,Ebeln,Edm.String,false,K,10,,,false,false,Purchasing Doc.
-ZVZI_KPI02_SHARED_SRV,POScheduleLineSet,Ebelp,Edm.String,false,K,5,,,false,false,Item
-ZVZI_KPI02_SHARED_SRV,POScheduleLineSet,Etenr,Edm.String,false,K,4,,,false,false,Schedule Line
-ZVZI_KPI02_SHARED_SRV,POScheduleLineSet,Eindt,Edm.DateTime,true,,,7,,false,false,Delivery Date
-ZVZI_KPI02_SHARED_SRV,POScheduleLineSet,Menge,Edm.String,false,,20,,,false,false,Scheduled Qty
-ZVZI_KPI02_SHARED_SRV,POScheduleLineSet,Wemng,Edm.String,false,,20,,,false,false,Delivered
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Ebeln,Edm.String,false,K,10,,,false,false,Purchasing Doc.
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Ebelp,Edm.String,false,K,5,,,false,false,Item
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Zekkn,Edm.String,false,K,2,,,false,false,Seq.No.Acc.Ass.
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Vgabe,Edm.String,false,K,1,,,false,false,Trans./ev. type
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Gjahr,Edm.String,false,K,4,,,false,false,Mat. Doc. Year
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Belnr,Edm.String,false,K,10,,,false,false,Material Doc.
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Buzei,Edm.String,false,K,4,,,false,false,Mat. Doc.Item
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Bewtp,Edm.String,false,,1,,,false,false,PO History Cat.
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Bwart,Edm.String,false,,3,,,false,false,Movement Type
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Budat,Edm.DateTime,true,,,7,,false,false,Posting Date
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Menge,Edm.String,false,,20,,,false,false,Quantity
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Dmbtr,Edm.String,false,,20,,,false,false,Amount in LC
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Shkzg,Edm.String,false,,1,,,false,false,Debit/Credit
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Cpudt,Edm.DateTime,true,,,7,,false,false,Entered on
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Matnr,Edm.String,false,,18,,,false,false,Material
-ZVZI_KPI02_SHARED_SRV,POHistorySet,Werks,Edm.String,false,,4,,,false,false,Plant
-ZMM_KPI02_SRV,ReservationItemSet,Rsnum,Edm.String,false,K,10,,,false,false,Reservation
-ZMM_KPI02_SRV,ReservationItemSet,Rspos,Edm.String,false,K,4,,,false,false,Item
-ZMM_KPI02_SRV,ReservationItemSet,Xloek,Edm.Boolean,false,,,,,false,false,Deleted
-ZMM_KPI02_SRV,ReservationItemSet,Kzear,Edm.Boolean,false,,,,,false,false,Final Issue
-ZMM_KPI02_SRV,ReservationItemSet,Matnr,Edm.String,false,,18,,,false,false,Material
-ZMM_KPI02_SRV,ReservationItemSet,Werks,Edm.String,false,,4,,,false,false,Plant
-ZMM_KPI02_SRV,ReservationItemSet,Lgort,Edm.String,false,,4,,,false,false,Stor. Location
-ZMM_KPI02_SRV,ReservationItemSet,Bdter,Edm.DateTime,true,,,7,,false,false,Reqmt Date
-ZMM_KPI02_SRV,ReservationItemSet,Bdmng,Edm.Decimal,false,,,13,3,false,false,Reqmt Qty
-ZMM_KPI02_SRV,ReservationItemSet,Meins,Edm.String,false,,3,,,false,false,Base Unit
-ZMM_KPI02_SRV,ReservationItemSet,Enmng,Edm.Decimal,false,,,13,3,false,false,Withdrawal Qty
-ZMM_KPI02_SRV,ReservationItemSet,Enwrt,Edm.Decimal,false,,,14,3,false,false,Withdr. Value
-ZMM_KPI02_SRV,ReservationItemSet,Banfn,Edm.String,false,,10,,,false,false,Purchase Req.
-ZMM_KPI02_SRV,ReservationItemSet,Bnfpo,Edm.String,false,,5,,,false,false,Requisn Item
-ZMM_KPI02_SRV,ReservationItemSet,Aufnr,Edm.String,false,,12,,,false,false,Order
-ZMM_KPI02_SRV,ReservationItemSet,Bwart,Edm.String,false,,3,,,false,false,Movement Type
-ZMM_KPI02_SRV,ReservationItemSet,Umwrk,Edm.String,false,,4,,,false,false,Receiving Plant
-ZMM_KPI02_SRV,ReservationItemSet,Umlgo,Edm.String,false,,4,,,false,false,Receiving SLoc.
-ZMM_KPI02_SRV,ReservationItemSet,Wempf,Edm.String,false,,12,,,false,false,Recipient
-ZMM_KPI02_SRV,MaterialValuationSet,Matnr,Edm.String,false,K,18,,,false,false,Material
-ZMM_KPI02_SRV,MaterialValuationSet,Bwkey,Edm.String,false,K,4,,,false,false,Valuation Area
-ZMM_KPI02_SRV,MaterialValuationSet,Lbkum,Edm.Decimal,false,,,13,3,false,false,Total Stock
-ZMM_KPI02_SRV,MaterialValuationSet,Salk3,Edm.Decimal,false,,,14,3,false,false,Total Value
-ZMM_KPI02_SRV,MaterialValuationSet,Vprsv,Edm.String,false,,1,,,false,false,Price Control
-ZMM_KPI02_SRV,MaterialValuationSet,Verpr,Edm.Decimal,false,,,12,3,false,false,Moving price
-ZMM_KPI02_SRV,MaterialValuationSet,Stprs,Edm.Decimal,false,,,12,3,false,false,Standard price
-ZMM_KPI02_SRV,MaterialValuationSet,Peinh,Edm.Decimal,false,,,5,0,false,false,Price Unit
-ZMM_KPI02_SRV,MaterialValuationSet,Bklas,Edm.String,false,,4,,,false,false,Valuation Class
-ZMM_KPI02_SRV,ChangeDocHeaderSet,Objectclas,Edm.String,false,K,15,,,false,false,Change doc. object
-ZMM_KPI02_SRV,ChangeDocHeaderSet,Objectid,Edm.String,false,K,90,,,false,false,Object value
-ZMM_KPI02_SRV,ChangeDocHeaderSet,Changenr,Edm.String,false,K,10,,,false,false,Document Number
-ZMM_KPI02_SRV,ChangeDocHeaderSet,Username,Edm.String,false,,12,,,false,false,User
-ZMM_KPI02_SRV,ChangeDocHeaderSet,Udate,Edm.DateTime,true,,,7,,false,false,Date
-ZMM_KPI02_SRV,ChangeDocHeaderSet,Utime,Edm.Time,true,,,0,,false,false,Time
-ZMM_KPI02_SRV,ChangeDocHeaderSet,Tcode,Edm.String,false,,20,,,false,false,Transaction
-ZMM_KPI02_SRV,ChangeDocItemSet,Objectclas,Edm.String,false,K,15,,,false,false,Change doc. object
-ZMM_KPI02_SRV,ChangeDocItemSet,Objectid,Edm.String,false,K,90,,,false,false,Object value
-ZMM_KPI02_SRV,ChangeDocItemSet,Changenr,Edm.String,false,K,10,,,false,false,Document Number
-ZMM_KPI02_SRV,ChangeDocItemSet,Tabname,Edm.String,false,,30,,,false,false,Table Name
-ZMM_KPI02_SRV,ChangeDocItemSet,Tabkey,Edm.String,false,,70,,,false,false,Table Key
-ZMM_KPI02_SRV,ChangeDocItemSet,Fname,Edm.String,false,,30,,,false,false,Field Name
-ZMM_KPI02_SRV,ChangeDocItemSet,Chngind,Edm.String,false,,1,,,false,false,Change Ind.
-ZMM_KPI02_SRV,ChangeDocItemSet,Value_new,Edm.String,false,,254,,,false,false,New value
-ZMM_KPI02_SRV,ChangeDocItemSet,Value_old,Edm.String,false,,254,,,false,false,Old value
-ZMM_KPI02_SRV,BatchStockSet,Matnr,Edm.String,false,K,18,,,false,false,Material
-ZMM_KPI02_SRV,BatchStockSet,Werks,Edm.String,false,K,4,,,false,false,Plant
-ZMM_KPI02_SRV,BatchStockSet,Lgort,Edm.String,false,K,4,,,false,false,Stor. Location
-ZMM_KPI02_SRV,BatchStockSet,Charg,Edm.String,false,K,10,,,false,false,Batch
-ZMM_KPI02_SRV,BatchStockSet,Clabs,Edm.Decimal,false,,,13,3,false,false,Unrestricted
-ZMM_KPI02_SRV,MonthlyMovementStatisticSet,Spmon,Edm.String,false,K,7,,,false,false,Month
-ZMM_KPI02_SRV,MonthlyMovementStatisticSet,Werks,Edm.String,false,K,4,,,false,false,Plant
-ZMM_KPI02_SRV,MonthlyMovementStatisticSet,Matnr,Edm.String,false,K,18,,,false,false,Material
-ZMM_KPI02_SRV,MonthlyMovementStatisticSet,Lgort,Edm.String,false,K,4,,,false,false,Stor. Location
-ZMM_KPI02_SRV,MonthlyMovementStatisticSet,Basme,Edm.String,false,,3,,,false,false,Base Unit
-ZMM_KPI02_SRV,MonthlyMovementStatisticSet,Mzubb,Edm.Decimal,false,,,15,3,false,false,Val.stk rec qty
-ZMM_KPI02_SRV,MonthlyMovementStatisticSet,Wzubb,Edm.Decimal,false,,,16,3,false,false,ValStckRecValue
-ZMM_KPI02_SRV,MonthlyMovementStatisticSet,Magbb,Edm.Decimal,false,,,15,3,false,false,Val.stk iss qty
-ZMM_KPI02_SRV,MonthlyMovementStatisticSet,Wagbb,Edm.Decimal,false,,,16,3,false,false,ValStckIssValue
-ZMM_KPI02_SRV,MonthlyMovementStatisticSet,Ambwg,Edm.Decimal,false,,,9,0,false,false,NoMatMovements
-ZMM_KPI02_SRV,MonthlyMovementStatisticSet,Muvbr,Edm.Decimal,false,,,15,3,false,false,Unplanned usage
-ZMM_KPI02_SRV,MonthlyMovementStatisticSet,Wuvbr,Edm.Decimal,false,,,16,3,false,false,Unpl. usage val
-ZMM_KPI02_SRV,StockMovementStatisticSet,Werks,Edm.String,false,K,4,,,false,false,Plant
-ZMM_KPI02_SRV,StockMovementStatisticSet,Lgort,Edm.String,false,K,4,,,false,false,Stor. Location
-ZMM_KPI02_SRV,StockMovementStatisticSet,Matnr,Edm.String,false,K,18,,,false,false,Material
-ZMM_KPI02_SRV,StockMovementStatisticSet,Dispo,Edm.String,false,,3,,,false,false,MRP Controller
-ZMM_KPI02_SRV,StockMovementStatisticSet,Mtart,Edm.String,false,,4,,,false,false,Material Type
-ZMM_KPI02_SRV,StockMovementStatisticSet,Matkl,Edm.String,false,,9,,,false,false,Material Group
-ZMM_KPI02_SRV,StockMovementStatisticSet,Dismm,Edm.String,false,,2,,,false,false,MRP Type
-ZMM_KPI02_SRV,StockMovementStatisticSet,Mbwbest,Edm.Decimal,false,,,15,3,false,false,Valuated stock
-ZMM_KPI02_SRV,StockMovementStatisticSet,Wbwbest,Edm.Decimal,false,,,16,3,false,false,ValStockValue
-ZMM_KPI02_SRV,StockMovementStatisticSet,Letztzug,Edm.DateTime,true,,,7,,false,false,Last Receipt
-ZMM_KPI02_SRV,StockMovementStatisticSet,Letztabg,Edm.DateTime,true,,,7,,false,false,Last gds issue
-ZMM_KPI02_SRV,StockMovementStatisticSet,Letztver,Edm.DateTime,true,,,7,,false,false,Last consumptn.
-ZMM_KPI02_SRV,StockMovementStatisticSet,Letztbew,Edm.DateTime,true,,,7,,false,false,Last gds mvmt.
-ZMM_KPI02_SRV,StockMovementStatisticSet,Eisbe,Edm.Decimal,false,,,15,3,false,false,Safety Stck
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Banfn,Edm.String,false,K,10,,,false,false,Purchase Req.
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Bnfpo,Edm.String,false,K,5,,,false,false,Requisn Item
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Bsart,Edm.String,false,,4,,,false,false,Document Type
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Loekz,Edm.String,false,,1,,,false,false,Deletion Ind.
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Statu,Edm.String,false,,1,,,false,false,Processing stat
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Frgkz,Edm.String,false,,1,,,false,false,Release ind.
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Frgzu,Edm.String,false,,8,,,false,false,Release status
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Ekgrp,Edm.String,false,,3,,,false,false,Purch. Group
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Ernam,Edm.String,false,,12,,,false,false,Created by
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Afnam,Edm.String,false,,12,,,false,false,Requisitioner
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Txz01,Edm.String,false,,40,,,false,false,Short Text
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Matnr,Edm.String,false,,18,,,false,false,Material
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Werks,Edm.String,false,,4,,,false,false,Plant
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Lgort,Edm.String,false,,4,,,false,false,Stor. Location
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Bednr,Edm.String,false,,10,,,false,false,Tracking Number
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Matkl,Edm.String,false,,9,,,false,false,Material Group
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Reswk,Edm.String,false,,4,,,false,false,Supplying Plant
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Menge,Edm.String,false,,20,,,false,false,Quantity
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Meins,Edm.String,false,,3,,,false,false,Unit of Measure
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Badat,Edm.String,false,,10,,,false,false,Requisn Date
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Lfdat,Edm.String,false,,10,,,false,false,Delivery Date
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Preis,Edm.String,false,,20,,,false,false,Valuation Price
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Peinh,Edm.String,false,,10,,,false,false,Price Unit
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Flief,Edm.String,false,,10,,,false,false,Fixed Vendor
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Ebeln,Edm.String,false,,10,,,false,false,Purchase Order
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Ebelp,Edm.String,false,,5,,,false,false,Item
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Bsmng,Edm.String,false,,20,,,false,false,PO Quantity
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Ebakz,Edm.Boolean,false,,,,,false,false,Closed
+ZMM_KPI02_ADD_SRV,PurchaseRequisitionSet,Rsnum,Edm.String,false,,10,,,false,false,Reservation
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Mblnr,Edm.String,false,K,10,,,false,false,Material Doc.
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Mjahr,Edm.String,false,K,4,,,false,false,Mat. Doc. Year
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Zeile,Edm.String,false,K,4,,,false,false,Mat. Doc.Item
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Bwart,Edm.String,false,,3,,,false,false,Movement Type
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Matnr,Edm.String,false,,18,,,false,false,Material
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Werks,Edm.String,false,,4,,,false,false,Plant
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Lgort,Edm.String,false,,4,,,false,false,Stor. Location
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Sobkz,Edm.String,false,,1,,,false,false,Special Stock Indicator
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Lifnr,Edm.String,false,,10,,,false,false,Supplier
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Shkzg,Edm.String,false,,1,,,false,false,Debit/Credit
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Dmbtr,Edm.String,false,,20,,,false,false,Amount in LC
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Menge,Edm.String,false,,20,,,false,false,Quantity
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Meins,Edm.String,false,,3,,,false,false,Base Unit
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Ebeln,Edm.String,false,,10,,,false,false,Purchase Order
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Ebelp,Edm.String,false,,5,,,false,false,Item
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Sgtxt,Edm.String,false,,50,,,false,false,Text
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Wempf,Edm.String,false,,12,,,false,false,Recipient
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Kostl,Edm.String,false,,10,,,false,false,Cost Center
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Aufnr,Edm.String,false,,12,,,false,false,Order
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Rsnum,Edm.String,false,,10,,,false,false,Reservation
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Rspos,Edm.String,false,,4,,,false,false,Item
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Umwrk,Edm.String,false,,4,,,false,false,Receiving Plant
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Umlgo,Edm.String,false,,4,,,false,false,Receiving SLoc.
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,Grund,Edm.String,false,,4,,,false,false,Reason for Mvmt
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,BudatMkpf,Edm.String,false,,20,,,false,false,Posting Date
+ZMM_KPI02_ADD_SRV,GoodsMovementItemSet,CpudtMkpf,Edm.String,false,,20,,,false,false,Entered on
+ZMM_KPI02_ADD_SRV,InfoRecordSet,Infnr,Edm.String,false,K,10,,,false,false,Info Record
+ZMM_KPI02_ADD_SRV,InfoRecordSet,Matnr,Edm.String,false,,18,,,false,false,Material
+ZMM_KPI02_ADD_SRV,InfoRecordSet,Lifnr,Edm.String,false,,10,,,false,false,Supplier
+ZMM_KPI02_ADD_SRV,InfoRecordSet,Loekz,Edm.Boolean,false,,,,,false,false,Complete
+ZMM_KPI02_ADD_SRV,InfoRecordOrgSet,Infnr,Edm.String,false,K,10,,,false,false,Info Record
+ZMM_KPI02_ADD_SRV,InfoRecordOrgSet,Ekorg,Edm.String,false,K,4,,,false,false,Purchasing Org.
+ZMM_KPI02_ADD_SRV,InfoRecordOrgSet,Esokz,Edm.String,false,K,1,,,false,false,Infotype
+ZMM_KPI02_ADD_SRV,InfoRecordOrgSet,Werks,Edm.String,false,,4,,,false,false,Plant
+ZMM_KPI02_ADD_SRV,InfoRecordOrgSet,Loekz,Edm.Boolean,false,,,,,false,false,Purch.org. data
+ZMM_KPI02_ADD_SRV,InfoRecordOrgSet,Waers,Edm.String,false,,5,,,false,false,Currency
+ZMM_KPI02_ADD_SRV,InfoRecordOrgSet,Aplfz,Edm.String,false,,20,,,false,false,Pl. Deliv. Time
+ZMM_KPI02_ADD_SRV,InfoRecordOrgSet,Netpr,Edm.String,false,,20,,,false,false,Net Price
+ZMM_KPI02_ADD_SRV,InfoRecordOrgSet,Peinh,Edm.String,false,,20,,,false,false,Price Unit
+ZMM_KPI02_ADD_SRV,InfoRecordOrgSet,Effpr,Edm.String,false,,20,,,false,false,Effect. Price
+ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Ebeln,Edm.String,false,K,10,,,false,false,Purchasing Doc.
+ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Bsart,Edm.String,false,,4,,,false,false,Document Type
+ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Aedat,Edm.DateTime,true,,,7,,false,false,Created On
+ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Bedat,Edm.DateTime,true,,,7,,false,false,Created On
+ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Lifnr,Edm.String,false,,10,,,false,false,Supplier
+ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Ekorg,Edm.String,false,,4,,,false,false,Purchasing Org.
+ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Ekgrp,Edm.String,false,,3,,,false,false,Purch. Group
+ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Waers,Edm.String,false,,5,,,false,false,Currency
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Ebeln,Edm.String,false,K,10,,,false,false,Purchasing Doc.
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Ebelp,Edm.String,false,K,5,,,false,false,Item
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Loekz,Edm.String,false,,1,,,false,false,Deletion Ind.
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Aedat,Edm.DateTime,true,,,7,,false,false,Created On
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Txz01,Edm.String,false,,40,,,false,false,Short Text
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Matnr,Edm.String,false,,18,,,false,false,Material
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Werks,Edm.String,false,,4,,,false,false,Plant
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Lgort,Edm.String,false,,4,,,false,false,Stor. Location
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Bednr,Edm.String,false,,10,,,false,false,Tracking Number
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Menge,Edm.String,false,,20,,,false,false,PO Quantity
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Meins,Edm.String,false,,3,,,false,false,Order Unit
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Netpr,Edm.String,false,,30,,,false,false,Net Price
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Peinh,Edm.String,false,,10,,,false,false,Price Unit
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Netwr,Edm.String,false,,30,,,false,false,Net Value
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Elikz,Edm.Boolean,false,,,,,false,false,Deliv. Compl.
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Pstyp,Edm.String,false,,1,,,false,false,Item Category
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Knttp,Edm.String,false,,1,,,false,false,Acct Assgt Cat.
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Plifz,Edm.String,false,,5,,,false,false,Pl. Deliv. Time
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Banfn,Edm.String,false,,10,,,false,false,Purchase Req.
+ZMM_KPI02_ADD_SRV,PurchaseOrderItemSet,Bnfpo,Edm.String,false,,5,,,false,false,Requisn Item
+ZMM_KPI02_ADD_SRV,VendorSet,Lifnr,Edm.String,false,K,10,,,false,false,Vendor
+ZMM_KPI02_ADD_SRV,VendorSet,Name1,Edm.String,false,,35,,,false,false,Name
+ZMM_KPI02_ADD_SRV,VendorSet,Ktokk,Edm.String,false,,4,,,false,false,Account Group
+ZMM_KPI02_ADD_SRV,VendorSet,Loevm,Edm.Boolean,false,,,,,false,false,Deletion flag
+ZMM_KPI02_ADD_SRV,MaterialDescriptionSet,Matnr,Edm.String,false,K,18,,,false,false,Material
+ZMM_KPI02_ADD_SRV,MaterialDescriptionSet,Spras,Edm.String,false,K,2,,,false,false,Language
+ZMM_KPI02_ADD_SRV,MaterialDescriptionSet,Maktx,Edm.String,false,,40,,,false,false,Description
+ZMM_KPI02_ADD_SRV,MaterialSet,Matnr,Edm.String,false,K,18,,,false,false,Material
+ZMM_KPI02_ADD_SRV,MaterialSet,Lvorm,Edm.Boolean,false,,,,,false,false,DF client level
+ZMM_KPI02_ADD_SRV,MaterialSet,Mtart,Edm.String,false,,4,,,false,false,Material Type
+ZMM_KPI02_ADD_SRV,MaterialSet,Matkl,Edm.String,false,,9,,,false,false,Material Group
+ZMM_KPI02_ADD_SRV,MaterialSet,Bismt,Edm.String,false,,18,,,false,false,Old matl number
+ZMM_KPI02_ADD_SRV,MaterialSet,Meins,Edm.String,false,,3,,,false,false,Base Unit
+ZMM_KPI02_ADD_SRV,MaterialSet,Mstae,Edm.String,false,,2,,,false,false,X-plant status
+ZMM_KPI02_ADD_SRV,MaterialSet,Extwg,Edm.String,false,,18,,,false,false,External Material Group
+ZMM_KPI02_ADD_SRV,MaterialPlantSet,Matnr,Edm.String,false,K,18,,,false,false,Material
+ZMM_KPI02_ADD_SRV,MaterialPlantSet,Werks,Edm.String,false,K,4,,,false,false,Plant
+ZMM_KPI02_ADD_SRV,MaterialPlantSet,Lvorm,Edm.Boolean,false,,,,,false,false,DF plant level
+ZMM_KPI02_ADD_SRV,MaterialPlantSet,Dismm,Edm.String,false,,2,,,false,false,MRP Type
+ZMM_KPI02_ADD_SRV,MaterialPlantSet,Dispo,Edm.String,false,,3,,,false,false,MRP Controller
+ZMM_KPI02_ADD_SRV,MaterialPlantSet,Plifz,Edm.String,false,,10,,,false,false,Pl. Deliv. Time
+ZMM_KPI02_ADD_SRV,MaterialPlantSet,Webaz,Edm.String,false,,10,,,false,false,GR Proc. Time
+ZMM_KPI02_ADD_SRV,MaterialPlantSet,Minbe,Edm.String,false,,20,,,false,false,Reorder Point
+ZMM_KPI02_ADD_SRV,MaterialPlantSet,Eisbe,Edm.String,false,,20,,,false,false,Safety Stock
+ZMM_KPI02_ADD_SRV,MaterialPlantSet,Bstmi,Edm.String,false,,20,,,false,false,Min. Lot Size
+ZMM_KPI02_ADD_SRV,MaterialPlantSet,Bstma,Edm.String,false,,20,,,false,false,Max. Lot Size
+ZMM_KPI02_ADD_SRV,MaterialPlantSet,Mabst,Edm.String,false,,20,,,false,false,Max.stock level
+ZMM_KPI02_ADD_SRV,StorageLocationStockSet,Matnr,Edm.String,false,K,18,,,false,false,Material
+ZMM_KPI02_ADD_SRV,StorageLocationStockSet,Werks,Edm.String,false,K,4,,,false,false,Plant
+ZMM_KPI02_ADD_SRV,StorageLocationStockSet,Lgort,Edm.String,false,K,4,,,false,false,Stor. Location
+ZMM_KPI02_ADD_SRV,StorageLocationStockSet,Labst,Edm.String,false,,20,,,false,false,Unrestricted
+ZMM_KPI02_ADD_SRV,StorageLocationStockSet,Insme,Edm.String,false,,20,,,false,false,In Qual. Insp.
+ZMM_KPI02_ADD_SRV,StorageLocationStockSet,Speme,Edm.String,false,,20,,,false,false,Blocked
+ZMM_KPI02_ADD_SRV,StorageLocationStockSet,Lgpbe,Edm.String,false,,10,,,false,false,Storage Bin
+ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,Mblnr,Edm.String,false,K,10,,,false,false,Material Doc.
+ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,Mjahr,Edm.String,false,K,4,,,false,false,Mat. Doc. Year
+ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,Budat,Edm.DateTime,true,,,7,,false,false,Posting Date
+ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,Cpudt,Edm.DateTime,true,,,7,,false,false,Entered on
+ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,Xblnr,Edm.String,false,,16,,,false,false,Reference
+ZMM_KPI02_ADD_SRV,POScheduleLineSet,Ebeln,Edm.String,false,K,10,,,false,false,Purchasing Doc.
+ZMM_KPI02_ADD_SRV,POScheduleLineSet,Ebelp,Edm.String,false,K,5,,,false,false,Item
+ZMM_KPI02_ADD_SRV,POScheduleLineSet,Etenr,Edm.String,false,K,4,,,false,false,Schedule Line
+ZMM_KPI02_ADD_SRV,POScheduleLineSet,Eindt,Edm.DateTime,true,,,7,,false,false,Delivery Date
+ZMM_KPI02_ADD_SRV,POScheduleLineSet,Menge,Edm.String,false,,20,,,false,false,Scheduled Qty
+ZMM_KPI02_ADD_SRV,POScheduleLineSet,Wemng,Edm.String,false,,20,,,false,false,Delivered
+ZMM_KPI02_ADD_SRV,POHistorySet,Ebeln,Edm.String,false,K,10,,,false,false,Purchasing Doc.
+ZMM_KPI02_ADD_SRV,POHistorySet,Ebelp,Edm.String,false,K,5,,,false,false,Item
+ZMM_KPI02_ADD_SRV,POHistorySet,Zekkn,Edm.String,false,K,2,,,false,false,Seq.No.Acc.Ass.
+ZMM_KPI02_ADD_SRV,POHistorySet,Vgabe,Edm.String,false,K,1,,,false,false,Trans./ev. type
+ZMM_KPI02_ADD_SRV,POHistorySet,Gjahr,Edm.String,false,K,4,,,false,false,Mat. Doc. Year
+ZMM_KPI02_ADD_SRV,POHistorySet,Belnr,Edm.String,false,K,10,,,false,false,Material Doc.
+ZMM_KPI02_ADD_SRV,POHistorySet,Buzei,Edm.String,false,K,4,,,false,false,Mat. Doc.Item
+ZMM_KPI02_ADD_SRV,POHistorySet,Bewtp,Edm.String,false,,1,,,false,false,PO History Cat.
+ZMM_KPI02_ADD_SRV,POHistorySet,Bwart,Edm.String,false,,3,,,false,false,Movement Type
+ZMM_KPI02_ADD_SRV,POHistorySet,Budat,Edm.DateTime,true,,,7,,false,false,Posting Date
+ZMM_KPI02_ADD_SRV,POHistorySet,Menge,Edm.String,false,,20,,,false,false,Quantity
+ZMM_KPI02_ADD_SRV,POHistorySet,Dmbtr,Edm.String,false,,20,,,false,false,Amount in LC
+ZMM_KPI02_ADD_SRV,POHistorySet,Shkzg,Edm.String,false,,1,,,false,false,Debit/Credit
+ZMM_KPI02_ADD_SRV,POHistorySet,Cpudt,Edm.DateTime,true,,,7,,false,false,Entered on
+ZMM_KPI02_ADD_SRV,POHistorySet,Matnr,Edm.String,false,,18,,,false,false,Material
+ZMM_KPI02_ADD_SRV,POHistorySet,Werks,Edm.String,false,,4,,,false,false,Plant
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Rsnum,Edm.String,false,K,10,,,false,false,Reservation
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Rspos,Edm.String,false,K,4,,,false,false,Item
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Xloek,Edm.Boolean,false,,,,,false,false,Deleted
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Kzear,Edm.Boolean,false,,,,,false,false,Final Issue
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Matnr,Edm.String,false,,18,,,false,false,Material
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Werks,Edm.String,false,,4,,,false,false,Plant
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Lgort,Edm.String,false,,4,,,false,false,Stor. Location
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Bdter,Edm.String,false,,20,,,false,false,Reqmt Date
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Bdmng,Edm.Decimal,false,,,13,3,false,false,Reqmt Qty
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Meins,Edm.String,false,,3,,,false,false,Base Unit
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Enmng,Edm.String,false,,20,,,false,false,Withdrawal Qty
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Enwrt,Edm.String,false,,20,,,false,false,Withdr. Value
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Banfn,Edm.String,false,,10,,,false,false,Purchase Req.
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Bnfpo,Edm.String,false,,5,,,false,false,Requisn Item
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Aufnr,Edm.String,false,,12,,,false,false,Order
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Bwart,Edm.String,false,,3,,,false,false,Movement Type
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Umwrk,Edm.String,false,,4,,,false,false,Receiving Plant
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Umlgo,Edm.String,false,,4,,,false,false,Receiving SLoc.
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Wempf,Edm.String,false,,12,,,false,false,Recipient
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Sgtxt,Edm.String,false,,50,,,false,false,Item Text
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Ablad,Edm.String,false,,25,,,false,false,Unloading Point
+ZMM_KPI02_TAB_SRV,ReservationItemSet,Zzxblnr,Edm.String,false,,10,,,false,false,SharePoint MR ID
+ZMM_KPI02_TAB_SRV,MaterialValuationSet,Matnr,Edm.String,false,K,18,,,false,false,Material
+ZMM_KPI02_TAB_SRV,MaterialValuationSet,Bwkey,Edm.String,false,K,4,,,false,false,Valuation Area
+ZMM_KPI02_TAB_SRV,MaterialValuationSet,Lbkum,Edm.Decimal,false,,,13,3,false,false,Total Stock
+ZMM_KPI02_TAB_SRV,MaterialValuationSet,Salk3,Edm.String,false,,20,,,false,false,Total Value
+ZMM_KPI02_TAB_SRV,MaterialValuationSet,Vprsv,Edm.String,false,,1,,,false,false,Price Control
+ZMM_KPI02_TAB_SRV,MaterialValuationSet,Verpr,Edm.String,false,,20,,,false,false,Moving price
+ZMM_KPI02_TAB_SRV,MaterialValuationSet,Stprs,Edm.String,false,,20,,,false,false,Standard price
+ZMM_KPI02_TAB_SRV,MaterialValuationSet,Peinh,Edm.String,false,,20,,,false,false,Price Unit
+ZMM_KPI02_TAB_SRV,MaterialValuationSet,Bklas,Edm.String,false,,4,,,false,false,Valuation Class
+ZMM_KPI02_TAB_SRV,MaterialValuationSet,Waers,Edm.String,false,,20,,,false,false,Currency Key
+ZMM_KPI02_TAB_SRV,ChangeDocHeaderSet,Objectclas,Edm.String,false,K,15,,,false,false,Change doc. object
+ZMM_KPI02_TAB_SRV,ChangeDocHeaderSet,Objectid,Edm.String,false,K,90,,,false,false,Object value
+ZMM_KPI02_TAB_SRV,ChangeDocHeaderSet,Changenr,Edm.String,false,K,10,,,false,false,Document Number
+ZMM_KPI02_TAB_SRV,ChangeDocHeaderSet,Username,Edm.String,false,,12,,,false,false,User
+ZMM_KPI02_TAB_SRV,ChangeDocHeaderSet,Udate,Edm.String,false,,20,,,false,false,Date
+ZMM_KPI02_TAB_SRV,ChangeDocHeaderSet,Utime,Edm.String,false,,20,,,false,false,Time
+ZMM_KPI02_TAB_SRV,ChangeDocHeaderSet,Tcode,Edm.String,false,,20,,,false,false,Transaction
+ZMM_KPI02_TAB_SRV,ChangeDocItemSet,Objectclas,Edm.String,false,K,15,,,false,false,Change doc. object
+ZMM_KPI02_TAB_SRV,ChangeDocItemSet,Objectid,Edm.String,false,K,90,,,false,false,Object value
+ZMM_KPI02_TAB_SRV,ChangeDocItemSet,Changenr,Edm.String,false,K,10,,,false,false,Document Number
+ZMM_KPI02_TAB_SRV,ChangeDocItemSet,Tabname,Edm.String,false,K,30,,,false,false,Table Name
+ZMM_KPI02_TAB_SRV,ChangeDocItemSet,Tabkey,Edm.String,false,K,70,,,false,false,Table Key
+ZMM_KPI02_TAB_SRV,ChangeDocItemSet,Fname,Edm.String,false,K,30,,,false,false,Field Name
+ZMM_KPI02_TAB_SRV,ChangeDocItemSet,Chngind,Edm.String,false,K,1,,,false,false,Change Ind.
+ZMM_KPI02_TAB_SRV,ChangeDocItemSet,Value_new,Edm.String,false,,254,,,false,false,New value
+ZMM_KPI02_TAB_SRV,ChangeDocItemSet,Value_old,Edm.String,false,,254,,,false,false,Old value
+ZMM_KPI02_TAB_SRV,BatchStockSet,Matnr,Edm.String,false,K,18,,,false,false,Material
+ZMM_KPI02_TAB_SRV,BatchStockSet,Werks,Edm.String,false,K,4,,,false,false,Plant
+ZMM_KPI02_TAB_SRV,BatchStockSet,Lgort,Edm.String,false,K,4,,,false,false,Stor. Location
+ZMM_KPI02_TAB_SRV,BatchStockSet,Charg,Edm.String,false,K,10,,,false,false,Batch
+ZMM_KPI02_TAB_SRV,BatchStockSet,Clabs,Edm.Decimal,false,,,13,3,false,false,Unrestricted
+ZMM_KPI02_TAB_SRV,MonthlyMovementStatisticSet,Spmon,Edm.String,false,K,7,,,false,false,Month
+ZMM_KPI02_TAB_SRV,MonthlyMovementStatisticSet,Werks,Edm.String,false,K,4,,,false,false,Plant
+ZMM_KPI02_TAB_SRV,MonthlyMovementStatisticSet,Matnr,Edm.String,false,K,18,,,false,false,Material
+ZMM_KPI02_TAB_SRV,MonthlyMovementStatisticSet,Lgort,Edm.String,false,K,4,,,false,false,Stor. Location
+ZMM_KPI02_TAB_SRV,MonthlyMovementStatisticSet,Basme,Edm.String,false,,3,,,false,false,Base Unit
+ZMM_KPI02_TAB_SRV,MonthlyMovementStatisticSet,Mzubb,Edm.String,false,,20,,,false,false,Val.stk rec qty
+ZMM_KPI02_TAB_SRV,MonthlyMovementStatisticSet,Wzubb,Edm.String,false,,20,,,false,false,ValStckRecValue
+ZMM_KPI02_TAB_SRV,MonthlyMovementStatisticSet,Magbb,Edm.String,false,,20,,,false,false,Val.stk iss qty
+ZMM_KPI02_TAB_SRV,MonthlyMovementStatisticSet,Wagbb,Edm.String,false,,20,,,false,false,ValStckIssValue
+ZMM_KPI02_TAB_SRV,MonthlyMovementStatisticSet,Ambwg,Edm.String,false,,20,,,false,false,NoMatMovements
+ZMM_KPI02_TAB_SRV,MonthlyMovementStatisticSet,Muvbr,Edm.String,false,,20,,,false,false,Unplanned usage
+ZMM_KPI02_TAB_SRV,MonthlyMovementStatisticSet,Wuvbr,Edm.String,false,,20,,,false,false,Unpl. usage val
+ZMM_KPI02_TAB_SRV,StockMovementStatisticSet,Werks,Edm.String,false,K,4,,,false,false,Plant
+ZMM_KPI02_TAB_SRV,StockMovementStatisticSet,Lgort,Edm.String,false,K,4,,,false,false,Stor. Location
+ZMM_KPI02_TAB_SRV,StockMovementStatisticSet,Matnr,Edm.String,false,K,18,,,false,false,Material
+ZMM_KPI02_TAB_SRV,StockMovementStatisticSet,Dispo,Edm.String,false,,3,,,false,false,MRP Controller
+ZMM_KPI02_TAB_SRV,StockMovementStatisticSet,Mtart,Edm.String,false,,4,,,false,false,Material Type
+ZMM_KPI02_TAB_SRV,StockMovementStatisticSet,Matkl,Edm.String,false,,9,,,false,false,Material Group
+ZMM_KPI02_TAB_SRV,StockMovementStatisticSet,Dismm,Edm.String,false,,2,,,false,false,MRP Type
+ZMM_KPI02_TAB_SRV,StockMovementStatisticSet,Mbwbest,Edm.String,false,,20,,,false,false,Valuated stock
+ZMM_KPI02_TAB_SRV,StockMovementStatisticSet,Wbwbest,Edm.String,false,,20,,,false,false,ValStockValue
+ZMM_KPI02_TAB_SRV,StockMovementStatisticSet,Letztzug,Edm.DateTime,true,,,7,,false,false,Last Receipt
+ZMM_KPI02_TAB_SRV,StockMovementStatisticSet,Letztabg,Edm.DateTime,true,,,7,,false,false,Last gds issue
+ZMM_KPI02_TAB_SRV,StockMovementStatisticSet,Letztver,Edm.DateTime,true,,,7,,false,false,Last consumptn.
+ZMM_KPI02_TAB_SRV,StockMovementStatisticSet,Letztbew,Edm.DateTime,true,,,7,,false,false,Last gds mvmt.
+ZMM_KPI02_TAB_SRV,StockMovementStatisticSet,Eisbe,Edm.String,false,,20,,,false,false,Safety Stck

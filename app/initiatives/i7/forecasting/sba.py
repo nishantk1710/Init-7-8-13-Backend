@@ -18,7 +18,10 @@ lengthen ``q_t``, which is how the inter-arrival interval grows for a material
 that has gone quiet. Updating on every period instead would collapse the method
 back toward a plain moving average and lose the intermittency signal entirely.
 
-Approved alpha range is 0.05-0.20 (Formula Reference), tuned by backtesting.
+Approved alpha range is 0.05-0.20 (Formula Reference / Solution Design: "tune
+via grid search on backtest"), which is what ``select_alpha`` does -- each
+candidate is scored by its own rolling-origin backtest MAE, not by closeness
+to the training window's own mean.
 """
 
 from decimal import Decimal
@@ -80,9 +83,11 @@ def smooth(values: list[Decimal], alpha: Decimal) -> tuple[Decimal, Decimal, int
 def _in_sample_error(values: list[Decimal], alpha: Decimal) -> Decimal | None:
     """Absolute error of an alpha's per-period rate against observed demand.
 
-    SBA predicts a rate rather than a point, so the comparison is against mean
-    demand per period over the same window -- the quantity the rate is meant to
-    reproduce.
+    Retained only as ``select_alpha``'s fallback when no candidate can be
+    backtested at all (see its docstring) -- no longer the primary selection
+    method. SBA predicts a rate rather than a point, so the comparison is
+    against mean demand per period over the same window -- the quantity the
+    rate is meant to reproduce.
     """
     fitted = smooth(values, alpha)
     if fitted is None:
@@ -95,12 +100,66 @@ def _in_sample_error(values: list[Decimal], alpha: Decimal) -> Decimal | None:
     return abs(rate - observed)
 
 
-def select_alpha(values: list[Decimal], grid: tuple[Decimal, ...] = ALPHA_GRID) -> Decimal:
-    """Choose alpha within the approved range. Ties break toward the smaller."""
+def select_alpha(
+    series: PreparedSeries, horizon_months: int, grid: tuple[Decimal, ...] = ALPHA_GRID
+) -> Decimal:
+    """Choose alpha within the approved range by rolling-origin backtest.
+
+    The Solution Design is explicit: alpha is "0.05 to 0.20, tune via grid
+    search on backtest" -- the same rolling-origin protocol
+    (:mod:`app.initiatives.i7.forecasting.backtest`) the champion/challenger
+    decision already runs, not a fit against the training window's own mean.
+    Each candidate is backtested independently and scored by mean absolute
+    error over its own origins -- quantile-free on purpose: SBA is a point
+    forecast, and scoring it by pinball loss would tie its own tuning to the
+    service-level quantile that is LightGBM's business, not SBA's, and would
+    make alpha unselectable whenever that policy is unsigned.
+
+    Every candidate forecast call below passes ``alpha=`` explicitly so it
+    never re-enters this function -- the recursion guard that keeps a
+    12-origin backtest from itself running four nested 12-origin backtests
+    per origin.
+
+    Falls back to the in-sample fit only when no candidate could be
+    backtested at all (fewer than the 3-month minimum training window plus
+    one scorable origin) -- the same condition ``forecast`` already handles by
+    reporting ``INSUFFICIENT_NON_ZERO_OBSERVATIONS``/short-series statuses
+    downstream. Ties break toward the smaller alpha, both here and in the
+    fallback.
+    """
+    from app.initiatives.i7.forecasting import backtest as backtest_engine
+    from app.initiatives.i7.forecasting import metrics as metric_functions
+    from app.initiatives.i7.forecasting.types import ModelName
+
+    best_alpha = grid[0]
+    best_score: Decimal | None = None
+    for alpha in grid:
+        result = backtest_engine.run(
+            series,
+            ModelName.SBA,
+            MODEL_VERSIONS[ModelName.SBA],
+            lambda s, h, a=alpha: forecast(s, h, alpha=a),
+            horizon_months,
+        )
+        if not result.paths:
+            continue
+        score = metric_functions.mean_absolute_error(list(result.paths))
+        if score is None:
+            continue
+        if best_score is None or score < best_score:
+            best_alpha, best_score = alpha, score
+
+    if best_score is not None:
+        return best_alpha
+
+    # No candidate produced a single scorable origin (a short series, or one
+    # whose demand events are too sparse for any alpha to fit within the
+    # available training window) -- fall back to the in-sample fit rather
+    # than reporting no forecast at all.
     best_alpha = grid[0]
     best_error: Decimal | None = None
     for alpha in grid:
-        error = _in_sample_error(values, alpha)
+        error = _in_sample_error(series.values, alpha)
         if error is None:
             continue
         if best_error is None or error < best_error:
@@ -123,7 +182,7 @@ def forecast(
         )
 
     values = series.values
-    chosen = alpha if alpha is not None else select_alpha(values)
+    chosen = alpha if alpha is not None else select_alpha(series, horizon_months)
     fitted = smooth(values, chosen)
 
     if fitted is None:
