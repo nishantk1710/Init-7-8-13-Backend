@@ -285,3 +285,31 @@ class TestScheduledScope:
         uncovered = [name for name in skipped if name not in BY_ENTITY_SET]
 
         assert not uncovered, f"no route reaches {uncovered}"
+
+
+class TestCappedVerdict:
+    """MaxRows is a probe. Judging it against the whole table calls a working
+    delivery broken -- which is how every master table got reported as failed
+    on the first live sweep."""
+
+    def test_a_capped_master_table_is_not_failed_for_being_capped(self) -> None:
+        verdict, detail = csv_pull._verdict(
+            request(sap_table="MARA", reconcile="exact",
+                    max_rows="100", expected_rows=2040, received_rows=100)
+        )
+        assert verdict == STATUS_COMPLETE
+        assert "probe" in detail and "2,040" in detail
+
+    def test_more_than_the_cap_is_still_refused(self) -> None:
+        verdict, detail = csv_pull._verdict(
+            request(max_rows="100", expected_rows=2040, received_rows=250)
+        )
+        assert verdict == STATUS_FAILED
+        assert "twice" in detail
+
+    def test_an_uncapped_pull_still_reconciles_exactly(self) -> None:
+        verdict, _ = csv_pull._verdict(
+            request(sap_table="MARA", reconcile="exact",
+                    max_rows="", expected_rows=2040, received_rows=1200)
+        )
+        assert verdict == STATUS_FAILED
