@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
+from sqlalchemy import text
 
 from app.core.db import get_sessionmaker
 from app.initiatives.i8.config import I8Settings
@@ -71,18 +72,44 @@ def vendors(register):
 
 class TestRepairLineIdentification:
     def test_repair_line_count(self, register) -> None:
-        """1,225. If this says 770, someone inner-joined EKKO and 455 genuine
-        repair lines have silently disappeared."""
-        lines, _ = register
-        assert len(lines) == 1225
+        """1,181: the 1,225 item-category-3 lines less the 44 SAP has deleted.
+        If this says 743, someone inner-joined EKKO and 438 genuine repair lines
+        have silently disappeared."""
+        lines, stats = register
+        assert len(lines) == 1181
+        assert stats.excluded_deleted_lines == 44
+
+    def test_deleted_lines_are_excluded_and_blocked_ones_flagged(self, register) -> None:
+        """Measured against the view directly, not against the code's own count."""
+        from app.core.db import get_engine
+
+        lines, stats = register
+        with get_engine().connect() as connection:
+            deleted, blocked = connection.execute(
+                text(
+                    "select count(*) filter (where loekz = 'L'), "
+                    "count(*) filter (where loekz = 'S') "
+                    "from v_ekpo where pstyp = '3'"
+                )
+            ).one()
+            deleted_keys = {
+                (row.ebeln, row.ebelp)
+                for row in connection.execute(
+                    text("select ebeln, ebelp from v_ekpo where pstyp = '3' and loekz = 'L'")
+                )
+            }
+        assert stats.excluded_deleted_lines == deleted
+        assert stats.blocked_lines == blocked == sum(1 for line in lines if line.po_blocked)
+        assert not deleted_keys & {line.key for line in lines}
 
     def test_the_header_less_lines_are_still_present(self, register) -> None:
-        """455 repair lines have no EKKO header in this extract, because
-        raw_ekko starts at 07-Jan-2025 and raw_ekpo reaches further back.
-        They are real repair lines and must be in the register."""
+        """438 repair lines have no EKKO header in this extract (455 before
+        deleted lines were excluded), because raw_ekko starts at 07-Jan-2025 and
+        raw_ekpo reaches further back. They are real repair lines and must be in
+        the register."""
         lines, stats = register
-        assert stats.lines_with_po_header == 770
-        assert len(lines) - stats.lines_with_po_header == 455
+        assert stats.lines_with_po_header == 743
+        assert len(lines) - stats.lines_with_po_header == 438
 
     def test_zrep_corroborates_but_does_not_gate(self, register) -> None:
         """Every line that HAS a header says ZREP -- so the convention holds --
@@ -100,7 +127,7 @@ class TestRepairLineIdentification:
 
     def test_distinct_materials_on_repair_lines(self, register) -> None:
         _lines, stats = register
-        assert stats.distinct_materials == 371
+        assert stats.distinct_materials == 365
 
     def test_the_register_is_keyed_on_document_and_item(self, register) -> None:
         """Material + repair-PO-LINE grain, as the task name says. If the key
@@ -190,7 +217,8 @@ class TestPstypIsFilteredInPython:
 
 class TestLifecycleAndAging:
     def test_open_and_received_counts(self, register) -> None:
-        """437 received / 788 open, net of reversals.
+        """437 received / 744 open, net of reversals (788 open before the 44
+        deleted lines -- none of which had a receipt -- were excluded).
 
         The task plan quotes 444 / 781 from a raw count of 101 movements. The
         difference is the 7 lines whose only receipt was fully reversed -- and
@@ -198,7 +226,7 @@ class TestLifecycleAndAging:
         """
         _lines, stats = register
         assert stats.received_lines == 437
-        assert stats.open_lines == 788
+        assert stats.open_lines == 744
         assert stats.received_lines + stats.open_lines == stats.total_lines
 
     def test_reversals_are_netted_not_counted(self, register) -> None:
@@ -214,11 +242,12 @@ class TestLifecycleAndAging:
             assert line.is_open
 
     def test_no_due_date_lines(self, register) -> None:
-        """63 lines have no EKET schedule line at all; 61 of those are still
-        open and therefore chaseable. Neither is a silent "not overdue"."""
+        """59 lines have no EKET schedule line at all; 57 of those are still
+        open and therefore chaseable. Neither is a silent "not overdue". (63 /
+        61 before deleted lines were excluded.)"""
         _lines, stats = register
-        assert stats.lines_without_due_date == 63
-        assert stats.no_due_date_lines == 61
+        assert stats.lines_without_due_date == 59
+        assert stats.no_due_date_lines == 57
 
     def test_no_due_date_never_crashes_and_never_passes_silently(
         self, register
@@ -489,7 +518,7 @@ class TestVendorTurnaround:
     def test_header_less_lines_are_grouped_not_dropped(self, vendors, register) -> None:
         lines, _ = register
         unknown = next(v for v in vendors if v.vendor == UNKNOWN_VENDOR)
-        assert unknown.total_lines == 455
+        assert unknown.total_lines == 438
         assert sum(v.total_lines for v in vendors) == len(lines)
 
     def test_unnamed_vendors_keep_their_code(self, vendors) -> None:

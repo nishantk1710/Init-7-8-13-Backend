@@ -48,20 +48,34 @@ The cutover date is ``I8_ATTESTATION_CUTOVER_DATE`` and **is not set yet** --
 see the note on the setting. Blank means no line is treated as pre-automation
 and the behaviour is exactly what it was before this was built.
 
-The type column is deliberately open
--------------------------------------
-``MISSING_SESSION_ID`` and ``UNJUSTIFIED_ACQUISITION`` belong to FR-5/7/8 and are
-not ours to build. :class:`ExceptionType` carries them as declared-but-unraised
-values so that adding them later is a new detector and not a migration.
+Two detectors, one queue
+------------------------
+``UNJUSTIFIED_ACQUISITION`` (FR-8) is raised beside ``MISSING_ATTESTATION``: a
+new 80-series unit bought while a repair of the same part was open at the same
+plant, with no NEW_ACQUISITION justification recorded near it. The purchases
+and the repairs they overlapped come from :mod:`app.initiatives.i8.acquisitions`,
+which also says why stock on hand cannot be judged for a past purchase.
+
+``MISSING_SESSION_ID`` (FR-8) is ours too and is **not raised yet**, for one
+reason outside this repository: it needs the session id read back off the
+reservation, and RESB.BEDNR is not exposed on ReservationItemSet. It stays in
+:class:`ExceptionType` so adding the detector is new code, not a migration.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import Enum
 
 from app.core.logging import get_logger
+from app.initiatives.i8.acquisitions import (
+    JustificationRecord,
+    NewAcquisition,
+    open_repair_at,
+    repairs_by_material_plant,
+)
 from app.initiatives.i8.attestation import AttestationCoverage
 from app.initiatives.i8.register import RepairLine
 
@@ -69,27 +83,28 @@ logger = get_logger(__name__)
 
 
 class ExceptionType(str, Enum):
-    """Every exception the queue can carry.
+    """Every exception the queue can carry. All three are I08's -- FR-4 and FR-8.
 
-    Only the first is raised by I08 today. The other two are declared here, and
-    deliberately not implemented, so the column has room for them without a
-    migration -- they are FR-5/7/8 and belong to someone else's line.
+    ``MISSING_SESSION_ID`` is declared and not yet raised; see the module note.
     """
 
     MISSING_ATTESTATION = "MISSING_ATTESTATION"
-    """A repair line with no condition-to-repair attestation. W5.3, ours."""
+    """A repair line with no condition-to-repair attestation. FR-4 / FR-8."""
 
     MISSING_SESSION_ID = "MISSING_SESSION_ID"
-    """FR-8. Not raised by I08 -- session linkage is not in our scope."""
+    """FR-8, an 80-series reservation with no valid session id. Not raised yet:
+    blocked on RESB.BEDNR being exposed on ReservationItemSet (SAP team)."""
 
     UNJUSTIFIED_ACQUISITION = "UNJUSTIFIED_ACQUISITION"
-    """FR-5/7. Not raised by I08."""
+    """FR-8, a new unit bought while a repair was open, with no justification."""
 
 
 #: Which types this module actually raises. The difference between this and
 #: ExceptionType is the point: the vocabulary is wider than the implementation,
 #: and that is recorded rather than implied.
-RAISED_BY_I8: frozenset[ExceptionType] = frozenset({ExceptionType.MISSING_ATTESTATION})
+RAISED_BY_I8: frozenset[ExceptionType] = frozenset(
+    {ExceptionType.MISSING_ATTESTATION, ExceptionType.UNJUSTIFIED_ACQUISITION}
+)
 
 
 class Severity(str, Enum):
@@ -138,6 +153,11 @@ class ExceptionItem:
     what keeps 1,225 historical rows from reading as 1,225 violations. False
     whenever no cutover date is configured, which is the current state.
     """
+
+    acquisition_document: str | None = None
+    acquisition_item: str | None = None
+    """``UNJUSTIFIED_ACQUISITION`` only: the purchase line that bought the new
+    unit. ``purchasing_document``/``item`` are then the repair it overlapped."""
 
 
 def is_pre_automation(line: RepairLine, cutover: date | None) -> bool:
@@ -252,6 +272,132 @@ def missing_attestations(
     return items
 
 
+def _justified(
+    acquisition: NewAcquisition,
+    exception_id: str,
+    justifications: Sequence[JustificationRecord],
+    window_days: int,
+) -> bool:
+    """Whether a NEW_ACQUISITION justification answers this purchase.
+
+    Either one recorded against this exception's id, or one for the same
+    material and plant within ``window_days`` of the purchase, either side --
+    the assistant normally records the reason before the PO is raised.
+    """
+    for record in justifications:
+        if record.exception_id == exception_id:
+            return True
+        if (
+            record.material_id == acquisition.material_id
+            and record.plant == acquisition.plant
+            and acquisition.raised_at is not None
+            and abs((record.recorded_on - acquisition.raised_at).days) <= window_days
+        ):
+            return True
+    return False
+
+
+def unjustified_acquisitions(
+    acquisitions: Sequence[NewAcquisition],
+    lines: Sequence[RepairLine],
+    justifications: Sequence[JustificationRecord],
+    *,
+    window_days: int,
+    cutover: date | None = None,
+) -> list[ExceptionItem]:
+    """Raise UNJUSTIFIED_ACQUISITION for every new purchase of a part that was
+    already out for repair at the same plant, with no justification near it.
+
+    A purchase with no overlapping repair is not an exception -- buying a part
+    nobody is repairing is ordinary procurement. ``cutover`` labels purchases
+    raised before the justification control existed, exactly as
+    :func:`missing_attestations` labels pre-cutover repair lines.
+    """
+    repairs = repairs_by_material_plant(lines)
+    items: list[ExceptionItem] = []
+
+    for acquisition in sorted(acquisitions, key=lambda a: a.key):
+        repair = open_repair_at(acquisition, repairs)
+        if repair is None:
+            continue
+
+        exception_id = (
+            f"EX-{ExceptionType.UNJUSTIFIED_ACQUISITION.value}-"
+            f"{acquisition.purchasing_document}-{acquisition.item}"
+        )
+        if _justified(acquisition, exception_id, justifications, window_days):
+            continue
+
+        historical = (
+            cutover is not None
+            and acquisition.raised_at is not None
+            and acquisition.raised_at < cutover
+        )
+        bought = (
+            acquisition.raised_at.isoformat() if acquisition.raised_at else "an unknown date"
+        )
+        repair_state = (
+            "it is still out"
+            if repair.is_open
+            else f"it came back {repair.received_at.isoformat()}"
+        )
+
+        items.append(
+            ExceptionItem(
+                id=exception_id,
+                type=ExceptionType.UNJUSTIFIED_ACQUISITION.value,
+                # The money is committed at the purchase, whatever has happened
+                # to the repair since, so a missing reason is always worth
+                # asking for -- unless the control did not exist yet.
+                severity=(Severity.INFO if historical else Severity.WARNING).value,
+                material_id=acquisition.material_id,
+                description=acquisition.description or repair.description,
+                plant=acquisition.plant,
+                purchasing_document=repair.purchasing_document,
+                item=repair.item,
+                title=(
+                    "Raised before Spares Automation"
+                    if historical
+                    else "New unit bought while a repair was open"
+                ),
+                detail=(
+                    (
+                        f"Purchase {acquisition.purchasing_document}/{acquisition.item} "
+                        f"was raised on {bought}, before the justification control "
+                        f"was introduced on {cutover.isoformat() if cutover else 'the cutover date'}. "
+                        "No reason is on record because none was asked for at the "
+                        "time; this is not an outstanding action."
+                    )
+                    if historical
+                    else (
+                        f"Purchase {acquisition.purchasing_document}/{acquisition.item} "
+                        f"bought a new unit of {acquisition.material_id} at plant "
+                        f"{acquisition.plant} on {bought}, while repair "
+                        f"{repair.purchasing_document}/{repair.item}, raised "
+                        f"{repair.raised_at.isoformat() if repair.raised_at else 'on an unknown date'}, "
+                        f"was open ({repair_state}). No NEW_ACQUISITION justification "
+                        f"was recorded for this material and plant within "
+                        f"{window_days} days of the purchase."
+                    )
+                ),
+                raised_at=acquisition.raised_at,
+                is_open_repair=repair.is_open,
+                pre_automation=historical,
+                acquisition_document=acquisition.purchasing_document,
+                acquisition_item=acquisition.item,
+            )
+        )
+
+    logger.info(
+        "I08 exceptions: %d UNJUSTIFIED_ACQUISITION of %d new purchases checked "
+        "(%d pre-automation)",
+        len(items),
+        len(acquisitions),
+        sum(1 for i in items if i.pre_automation),
+    )
+    return items
+
+
 @dataclass(frozen=True)
 class ExceptionStats:
     """Counts, with the rule that produced them attached.
@@ -280,15 +426,32 @@ class ExceptionStats:
     """The cutover the counts above were measured against, so a number can be
     traced to the rule that produced it. None means none is configured."""
 
+    acquisitions_checked: int = 0
+    """New 80-series purchase lines the UNJUSTIFIED_ACQUISITION check ran over."""
+
+    justification_window_days: int = 0
+    justification_cutover_date: date | None = None
+
 
 def build_exceptions(
     lines,
     coverage: AttestationCoverage,
     *,
     cutover: date | None = None,
+    acquisitions: Sequence[NewAcquisition] = (),
+    justifications: Sequence[JustificationRecord] = (),
+    justification_window_days: int = 30,
+    justification_cutover: date | None = None,
 ) -> tuple[list[ExceptionItem], ExceptionStats]:
     """The whole exception queue for one snapshot, and its counts."""
     items = missing_attestations(lines, coverage, cutover=cutover)
+    items += unjustified_acquisitions(
+        acquisitions,
+        lines,
+        justifications,
+        window_days=justification_window_days,
+        cutover=justification_cutover,
+    )
 
     by_type: dict[str, int] = {}
     by_severity: dict[str, int] = {}
@@ -307,5 +470,8 @@ def build_exceptions(
         pre_automation=historical,
         actionable=len(items) - historical,
         attestation_cutover_date=cutover,
+        acquisitions_checked=len(acquisitions),
+        justification_window_days=justification_window_days,
+        justification_cutover_date=justification_cutover,
     )
     return items, stats

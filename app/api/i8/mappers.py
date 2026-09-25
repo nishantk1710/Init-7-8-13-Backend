@@ -87,6 +87,7 @@ def repair_chain(
     reorder_point=None,
     new_unit_lead_time_days: int | None = None,
     declaration_status: str = "Required",
+    criticality: str | None = None,
 ) -> RepairChain:
     """One register row.
 
@@ -149,6 +150,8 @@ def repair_chain(
         delivery_completed=line.delivery_completed,
         reversals=line.reversals,
         schedule_lines=line.schedule_lines,
+        criticality=criticality,
+        po_blocked=line.po_blocked,
     )
 
 
@@ -406,6 +409,15 @@ def exception_item(item: ExceptionItem, cfg: I8Settings) -> ExceptionQueueItem:
         repair_line=SAPDocumentReference(
             type="PO", document_number=item.purchasing_document, line=item.item
         ),
+        acquisition_line=(
+            SAPDocumentReference(
+                type="PO",
+                document_number=item.acquisition_document,
+                line=item.acquisition_item,
+            )
+            if item.acquisition_document
+            else None
+        ),
         title=item.title,
         detail=item.detail,
         raised_at=item.raised_at,
@@ -428,6 +440,9 @@ def exception_meta(stats: ExceptionStats) -> ExceptionMeta:
         # Which types are actually implemented, so an empty count is
         # distinguishable from an unimplemented check.
         types_raised=sorted(t.value for t in RAISED_BY_I8),
+        acquisitions_checked=stats.acquisitions_checked,
+        justification_window_days=stats.justification_window_days,
+        justification_cutover_date=stats.justification_cutover_date,
     )
 
 

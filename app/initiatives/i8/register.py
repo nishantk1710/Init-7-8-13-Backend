@@ -173,6 +173,11 @@ class RepairLine:
     days_remaining: int | None
     aging_bucket: str | None
 
+    po_blocked: bool = False
+    """EKPO.LOEKZ carries the blocked value. Kept in the register and flagged:
+    a blocked line can be released again, unlike a deleted one, which is not
+    in the register at all -- see :func:`is_deleted_line`."""
+
     @property
     def is_open(self) -> bool:
         """No repaired unit back yet. The 781-line figure the FRS cares about."""
@@ -240,6 +245,16 @@ def is_repair_line(row: Mapping, cfg: I8Settings) -> bool:
     ``$filter`` at cutover, and a function is something a test can point at.
     """
     return row["pstyp"] == cfg.repair_item_category
+
+
+def is_deleted_line(row: Mapping, cfg: I8Settings) -> bool:
+    """Whether SAP has deleted this PO line (EKPO.LOEKZ).
+
+    A deleted line is not a repair anybody is waiting on. Left in, all 44 in
+    the July extract read as open, most of them as overdue, and each raised a
+    missing-attestation exception for a repair that was cancelled.
+    """
+    return row["loekz"] == cfg.po_deleted_indicator
 
 
 # --- Layer 2: assemble the lifecycle per line -----------------------------
@@ -582,6 +597,7 @@ def _build_line(
         aging_bucket=aging_bucket(
             days_between(raised_at, today), cfg.aging_band_boundaries_list
         ),
+        po_blocked=row["loekz"] == cfg.po_blocked_indicator,
     )
 
 
@@ -649,6 +665,13 @@ class RegisterStats:
     vendors_resolved_to_a_name: int = 0
     candidates_scanned: int = 0
 
+    excluded_deleted_lines: int = 0
+    """Repair lines SAP has deleted, left out of every figure above. Reported so
+    the register total can be reconciled against a raw EKPO count."""
+
+    blocked_lines: int = 0
+    """Repair lines blocked in SAP -- still in the register, flagged."""
+
 
 def load_repair_lines(
     db: Session,
@@ -657,23 +680,33 @@ def load_repair_lines(
     today: date | None = None,
     plant: str | None = None,
     material: str | None = None,
+    candidates: Sequence[Mapping] | None = None,
 ) -> tuple[list[RepairLine], RegisterStats]:
     """Build the register. Layers 1 and 2, then the Layer 3 arithmetic.
 
     Returns every repair line, open or closed -- filtering to the open ones is
     a presentation concern and the closed ones are what vendor turnaround is
     computed from.
+
+    ``candidates`` lets a caller that already holds the EKPO pull pass it in,
+    so the snapshot reads the 82,718 rows once for both the register and the
+    new-acquisition check rather than twice.
     """
     cfg = cfg or get_i8_settings()
     today = today or cfg.reference_date_value or date.today()
 
-    candidates = fetch_candidate_lines(db, plant=plant, material=material)
+    if candidates is None:
+        candidates = fetch_candidate_lines(db, plant=plant, material=material)
 
     # Layer 1. The Pstyp ruling: in Python, over rows already fetched.
-    repair_rows = [row for row in candidates if is_repair_line(row, cfg)]
+    repair_candidates = [row for row in candidates if is_repair_line(row, cfg)]
+    repair_rows = [row for row in repair_candidates if not is_deleted_line(row, cfg)]
+    excluded_deleted = len(repair_candidates) - len(repair_rows)
 
     if not repair_rows:
-        return [], RegisterStats(candidates_scanned=len(candidates))
+        return [], RegisterStats(
+            candidates_scanned=len(candidates), excluded_deleted_lines=excluded_deleted
+        )
 
     documents = sorted({row["ebeln"] for row in repair_rows})
     materials = sorted({row["matnr"] for row in repair_rows if row["matnr"]})
@@ -734,13 +767,17 @@ def load_repair_lines(
             {line.vendor for line in lines if line.vendor and line.vendor_name}
         ),
         candidates_scanned=len(candidates),
+        excluded_deleted_lines=excluded_deleted,
+        blocked_lines=sum(1 for line in lines if line.po_blocked),
     )
     logger.info(
-        "I08 register: %d repair lines of %d candidates (%d open, %d overdue)",
+        "I08 register: %d repair lines of %d candidates (%d open, %d overdue, "
+        "%d deleted in SAP and excluded)",
         stats.total_lines,
         stats.candidates_scanned,
         stats.open_lines,
         stats.overdue_lines,
+        stats.excluded_deleted_lines,
     )
     return lines, stats
 

@@ -175,6 +175,7 @@ def _chain(
         reorder_point=row.reorder_point if row else None,
         new_unit_lead_time_days=row.planned_delivery_days if row else None,
         declaration_status=(declaration_statuses or {}).get(line.key, "Required"),
+        criticality=row.criticality if row else None,
     )
 
 
@@ -387,6 +388,10 @@ def get_repair_line(
     summary="Vendor turnaround analytics over completed repairs",
 )
 def get_vendor_turnaround(snapshot: SnapshotDep) -> VendorResponse:
+    stats = snapshot.register_stats
+    # Computed rather than quoted: excluding deleted PO lines moved every one of
+    # these, and a note that states last month's figures is worse than none.
+    headerless = stats.total_lines - stats.lines_with_po_header
     return VendorResponse(
         items=[vendor_item(v) for v in snapshot.vendors],
         total=len(snapshot.vendors),
@@ -394,9 +399,10 @@ def get_vendor_turnaround(snapshot: SnapshotDep) -> VendorResponse:
         note=(
             "Averages are over COMPLETED repairs only -- including open ones "
             "would make the slowest vendor look fastest. Vendors come from the "
-            "PO header, so the 455 repair lines with no header in this extract "
-            "are grouped under UNKNOWN rather than dropped. LFA1 resolves only "
-            "4 of the 61 repair vendors to a name; the rest show their code."
+            f"PO header, so the {headerless:,} repair lines with no header are "
+            "grouped under UNKNOWN rather than dropped. LFA1 resolves only "
+            f"{stats.vendors_resolved_to_a_name} of the {stats.distinct_vendors} "
+            "repair vendors to a name; the rest show their code."
         ),
     )
 
@@ -439,7 +445,13 @@ def post_attestation(
     )
     try:
         # The attestor comes from the caller, never from the body.
-        stored = record_attestation(db, draft, attestor=_current_user(), cfg=cfg)
+        stored = record_attestation(
+            db,
+            draft,
+            attestor=_current_user(),
+            cfg=cfg,
+            known_materials={row.material_id for row in snapshot.universe},
+        )
     except AttestationError as exc:
         # 422, not 400: the request was well-formed JSON that broke a business
         # rule -- an unknown fault category, a supersedes that points nowhere.

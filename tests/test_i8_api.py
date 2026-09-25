@@ -276,9 +276,22 @@ class TestUniverseEndpoint:
 class TestRegisterEndpoint:
     def test_serves_the_whole_register(self) -> None:
         body = client.get(f"{REGISTER}?pageSize=1").json()
-        assert body["total"] == 1225
-        assert body["meta"]["linesOnEightySeries"] == 1225
-        assert body["meta"]["linesWithPoHeader"] == 770
+        # 1,225 repair lines less the 44 SAP has deleted (EKPO.LOEKZ).
+        assert body["total"] == 1181
+        assert body["meta"]["linesOnEightySeries"] == 1181
+        assert body["meta"]["linesWithPoHeader"] == 743
+        assert body["meta"]["excludedDeletedLines"] == 44
+        assert body["meta"]["blockedLines"] == 72
+
+    def test_blocked_lines_are_flagged_and_rows_carry_criticality(self) -> None:
+        rows = client.get(f"{REGISTER}?pageSize=500").json()["items"]
+        assert all("poBlocked" in r and "criticality" in r for r in rows)
+        assert client.get(f"{REGISTER}?pageSize=1").json()["meta"]["blockedLines"] == sum(
+            1
+            for page in (1, 2, 3)
+            for r in client.get(f"{REGISTER}?page={page}&pageSize=500").json()["items"]
+            if r["poBlocked"]
+        )
 
     def test_a_row_is_at_po_line_grain(self) -> None:
         item = client.get(f"{REGISTER}?pageSize=1").json()["items"][0]
@@ -308,8 +321,9 @@ class TestRegisterEndpoint:
 
     def test_no_due_date_lines_are_reachable_not_hidden(self) -> None:
         meta = client.get(f"{REGISTER}?pageSize=1").json()["meta"]
-        assert meta["linesWithoutDueDate"] == 63
-        assert meta["noDueDateLines"] == 61
+        # 63 / 61 before the 4 deleted lines with no schedule line were excluded.
+        assert meta["linesWithoutDueDate"] == 59
+        assert meta["noDueDateLines"] == 57
 
     def test_detail_returns_the_full_lifecycle_timeline(self) -> None:
         first = client.get(f"{REGISTER}?pageSize=1").json()["items"][0]
@@ -343,7 +357,12 @@ class TestVendorEndpoint:
     def test_header_less_lines_are_grouped_under_unknown(self) -> None:
         items = client.get(VENDORS).json()["items"]
         unknown = next(v for v in items if v["vendor"] == "UNKNOWN")
-        assert unknown["totalLines"] == 455
+        # 455 before deleted repair lines were excluded.
+        assert unknown["totalLines"] == 438
+
+    def test_the_note_quotes_the_live_figures(self) -> None:
+        body = client.get(VENDORS).json()
+        assert "438 repair lines with no header" in body["note"]
 
     def test_an_average_always_publishes_its_sample_size(self) -> None:
         for vendor in client.get(VENDORS).json()["items"]:
@@ -358,7 +377,7 @@ class TestSnapshotEndpoint:
         assert body["rules"]["repairItemCategory"] == "3"
         assert body["rules"]["repairDocType"] == "ZREP"
         assert body["rules"]["seriesPrefixes"] == "80"
-        assert body["repairRegister"]["totalLines"] == 1225
+        assert body["repairRegister"]["totalLines"] == 1181
         # 3,605 before the two-plant scope ruling of 21-Sep-2026.
         assert body["universe"]["totalMaterials"] == 3145
 
