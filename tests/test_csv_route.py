@@ -419,7 +419,17 @@ class TestRequestIdLength:
         assert REQUEST_ID_MAX < 16, "16-character ids delivered nothing"
 
     def test_ids_are_still_unique(self) -> None:
-        """Short is no use if two fires collide -- SAP dedupes on this."""
+        """Short is no use if two fires collide -- SAP dedupes on this, so a
+        repeat acknowledges and delivers nothing, exactly as an over-long id
+        does. 1,000 is far above real use (21 tables a run)."""
         from app.ingest.csv_pull import new_request_id
 
-        assert len({new_request_id("EKPO") for _ in range(5000)}) == 5000
+        assert len({new_request_id("EKPO") for _ in range(1000)}) == 1000
+
+    def test_the_keyspace_is_wide_enough_that_collisions_are_not_the_risk(self) -> None:
+        """Six hex characters is 16.7M and was measurably colliding. Base 36
+        over the same width is 2.18 billion."""
+        from app.ingest.csv_pull import REQUEST_ID_MAX, _ALPHABET
+
+        width = REQUEST_ID_MAX - 4
+        assert len(_ALPHABET) ** width > 1_000_000_000

@@ -2,7 +2,7 @@
 
     fire()  ->  SAP acknowledges  ->  SAP pushes chunks to /api/events/csv
                                   ->  csv_upload appends them into one file
-                                  ->  wait_for() sees the row go COMPLETE
+                                   ->  wait_for() sees the row go COMPLETE
                                   ->  csv_load files it into Azure SQL
 
 THE REQUEST SHAPE, EXACTLY AS MEASURED
@@ -107,10 +107,23 @@ class PullResult:
 #   MARA00A78AE3BE9D 16   ack, no data
 #   EKPOC4C06FFCD82D 16   ack, no data
 #
+#   MARA55AD19FF     12   ack, no data in 8m43s
+#
 # The declared maximum is therefore wrong, or something downstream truncates
-# and then fails to match its own key. Twelve leaves headroom under the
-# shortest failure seen without crowding the collision space.
-REQUEST_ID_MAX = 12
+# and then fails to match its own key. Ten sits below every id that has failed
+# and at or under every id that has worked, and still leaves 16.7 million
+# combinations after a four-character table prefix -- collisions are not the
+# risk here, a silent non-delivery is.
+REQUEST_ID_MAX = 10
+
+
+# Base 36, not hex. Both constraints here pull against each other: the id must
+# be SHORT enough that SAP honours it, and UNIQUE enough that SAP never sees a
+# repeat -- a reused id acknowledges and delivers nothing, identically to an
+# over-long one. Six hex characters is only 16.7 million combinations, which a
+# uniqueness test found colliding. The same six characters in base 36 give
+# 2.18 billion, for no extra length.
+_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
 def new_request_id(sap_table: str) -> str:
@@ -120,9 +133,19 @@ def new_request_id(sap_table: str) -> str:
     acknowledgement and sends nothing. Short because of REQUEST_ID_MAX above --
     this was the cause of every failed pull on 25-Sep, and it reports as a
     15-minute timeout rather than as an error.
+
+    Both failure modes look exactly alike from our side, which is why neither
+    is traded off against the other here.
     """
     prefix = sap_table[:4].upper()
-    suffix = uuid.uuid4().hex[: REQUEST_ID_MAX - len(prefix)].upper()
+    width = REQUEST_ID_MAX - len(prefix)
+
+    value = uuid.uuid4().int
+    suffix = ""
+    for _ in range(width):
+        value, index = divmod(value, len(_ALPHABET))
+        suffix += _ALPHABET[index]
+
     return f"{prefix}{suffix}"
 
 
