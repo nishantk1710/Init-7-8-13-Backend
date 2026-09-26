@@ -1,9 +1,0 @@
-MaterialPlantSet full pull, 2026-09-22T07:03:05Z: 0 rows in reused page(s)
-
-Dismm x Werks:
-
-Per MRP type: rows, with reorder point (Minbe>0), max stock (Mabst>0), safety stock (Eisbe>0):
-
-OAR population under the 08-Sep ruling (Dismm in ND, PD): 0 of 0; VB (Min-Max): 0; excluded (V1, blank, other): 0
-
-Eisbe population above matters for I07: the FRS records EISBE as exposed over OData but absent from the delivered 19-column extract. A zero here would mean exposed-but-unpopulated, which is a different problem.
