@@ -1,4 +1,4 @@
-MATERIAL/MARC change items, 2026-09-25T04:15:00Z: 7244 rows in 8 page(s)
+MATERIAL/MARC change items, 2026-09-25T18:07:36Z: 7247 rows in 8 page(s)
 
 Fname x Chngind:
   KEY          I  2183
@@ -16,9 +16,9 @@ Fname x Chngind:
   DISLS        U  57
   SFCPF        U  53
   FEVOR        U  52
+  MINBE        U  50
   MTVFP        U  50
   FHORI        U  49
-  MINBE        U  47
   SSQSS        U  43
   ABCIN        U  41
   XCHPF        U  41
@@ -75,7 +75,7 @@ Fname x Chngind:
   SOBSK        U  1
   ZZCRITIC     U  1
 
-Planning-field changes (DISMM/EISBE/MINBE/MABST): 163
+Planning-field changes (DISMM/EISBE/MINBE/MABST): 166
 DISMM transitions old -> new:
   <blank> -> ND   19
   <blank> -> PD   14

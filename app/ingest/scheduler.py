@@ -20,11 +20,20 @@ crash cannot leave the schedule wedged forever. A lock in a table could.
 
 WHAT IT RUNS
 
-Deltas only, and only for the sets that HAVE one. Fifteen of the twenty-one
-have no declared delta, so running them in delta mode makes each one fall back
-to a full pull -- ChangeDocItemSet is 939,970 rows, and an hourly timer would
-have pulled all of them, every hour, forever. Those sets are covered by the
-CSV route instead, which is why they are skipped here rather than degraded.
+Deltas only, and only the ones that can RUN. Fifteen of the twenty-one sets
+have no declared delta, so running them in delta mode makes each one fall
+back to a full pull -- ChangeDocItemSet is 939,970 rows, and an hourly timer
+would have pulled all of them, every hour, forever. One more has a delta
+declared that cannot run (GoodsMovementItemSet: its parent has no date SAP
+filters on), and it used to be pulled in full every cycle for the same
+reason. All of those are covered by the CSV route instead, which is why they
+are skipped here rather than degraded. ``IngestSpec.runnable_delta`` is the
+test, and the CLI's ``--delta --all`` applies the same one.
+
+The pass itself is ``app.ingest.sweep``, shared with the CLI: windows read
+once up front, parents before children, a missing table pulled in full to
+build the baseline, and each watermark advanced only after its rows are
+loaded and every child read through it has succeeded too.
 
 The CSV full pull is deliberately NOT on a timer either: it is serialised
 across the whole system, it moves gigabytes, and firing one automatically while
@@ -89,6 +98,14 @@ class _Lock:
                 "EXEC sp_releaseapplock @Resource = ?, @LockOwner = 'Session';",
                 LOCK_NAME,
             )
+        # Discard the connection rather than return it to the pool. A
+        # session-owned lock lives on the connection, so if the release above
+        # failed, a pooled connection would carry the lock into whatever
+        # borrowed it next and the schedule would be wedged with nobody
+        # holding it on purpose. Closing the connection makes the server let
+        # go either way.
+        with contextlib.suppress(Exception):
+            self._connection.invalidate()
         with contextlib.suppress(Exception):
             self._connection.close()
         self._connection = None
@@ -102,14 +119,14 @@ def run_delta_cycle() -> dict:
     otherwise would block the event loop and stall the API for the length of a
     pull.
     """
-    from app.ingest.fetch import MODE_DELTA, fetch_set
-    from app.ingest.load import STATUS_SUCCEEDED, load_set
     from app.ingest.manifest import check_delta_filters, specs
+    from app.ingest.sweep import run_delta_sweep
+    from app.integrations.sap.client import SapClient
 
     settings = get_settings()
     root = settings.ingest_prefix
     summary = {"fetched": 0, "loaded": 0, "failed": 0, "rows": 0,
-               "skipped": 0, "errors": []}
+               "skipped": 0, "advanced": {}, "errors": []}
 
     # The same gate the CLI applies before its first request. An unverified
     # delta filter that SAP ignores returns HTTP 200 with the WHOLE set, so a
@@ -124,48 +141,35 @@ def run_delta_cycle() -> dict:
         )
         return summary
 
-    # Sets with no delta would each degrade to a full pull. See the module
-    # docstring: hourly full pulls of CDPOS are not an increment.
-    schedulable = [s for s in specs() if s.delta is not None]
-    summary["skipped"] = len(specs()) - len(schedulable)
+    # Runnable deltas only. See the module docstring: a set that would
+    # degrade to a full pull is the CSV route's, not this timer's.
+    schedulable = [s for s in specs() if s.runnable_delta is not None]
+    left_out = [s for s in specs() if s.runnable_delta is None]
+    summary["skipped"] = len(left_out)
     logger.info(
-        "delta cycle: %d set(s) with a delta, %d skipped (no delta -- the CSV "
-        "route covers those)",
-        len(schedulable), summary["skipped"],
+        "delta cycle: %d set(s) with a runnable delta (%s); %d left out",
+        len(schedulable), ", ".join(s.name for s in schedulable), len(left_out),
     )
+    for spec in left_out:
+        if spec.delta is not None and spec.blocked:
+            # Declared, and would run, but SAP cannot serve it. Worth one
+            # line per cycle: it is the thing to chase, not the sets that
+            # simply have no delta.
+            logger.warning("%s: delta declared but %s", spec.name, spec.blocked)
 
-    for spec in schedulable:
-        try:
-            result = fetch_set(spec, mode=MODE_DELTA, root=root)
-        except Exception as exc:
-            summary["failed"] += 1
-            summary["errors"].append(f"{spec.name}: fetch raised {exc}")
-            logger.exception("%s: delta fetch raised", spec.name)
-            continue
+    try:
+        report = run_delta_sweep(
+            schedulable, root=root, client=SapClient(), load=True
+        )
+    except Exception as exc:
+        summary["failed"] = len(schedulable)
+        summary["errors"] = [f"sweep raised before completing: {exc}"]
+        logger.exception("delta sweep raised")
+        return summary
 
-        if not result.ok:
-            summary["failed"] += 1
-            summary["errors"].append(f"{spec.name}: {result.error}")
-            logger.error("%s: delta fetch failed -- %s", spec.name, result.error)
-            continue
-
-        summary["fetched"] += 1
-
-        try:
-            loaded = load_set(spec, root=root, prefix=result.prefix)
-        except Exception as exc:
-            summary["failed"] += 1
-            summary["errors"].append(f"{spec.name}: load raised {exc}")
-            logger.exception("%s: delta load raised", spec.name)
-            continue
-
-        if loaded.status == STATUS_SUCCEEDED:
-            summary["loaded"] += 1
-            summary["rows"] += loaded.rows
-        else:
-            summary["failed"] += 1
-            summary["errors"].append(f"{spec.name}: {loaded.error}")
-
+    summary.update(report.summary())
+    for name in report.baselined:
+        logger.info("%s: baseline built by this cycle; incremental from the next", name)
     return summary
 
 

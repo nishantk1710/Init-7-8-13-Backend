@@ -19,7 +19,10 @@ from dataclasses import dataclass
 
 from app.integrations.sap.contract import EntitySet, contract
 from app.integrations.sap.filters import HONOURED, verdict_for
-from app.integrations.sap.known_conditions import NON_UNIQUE_DECLARED_KEYS
+from app.integrations.sap.known_conditions import (
+    NON_UNIQUE_DECLARED_KEYS,
+    READ_BROKEN_SETS,
+)
 
 # Raw tables from the live service. The prefix keeps them apart from the seed's
 # ``raw_`` tables, which hold the same SAP data under different column names.
@@ -277,6 +280,51 @@ class IngestSpec:
     def required_filter(self) -> str | None:
         """A predicate SAP will not serve this set without."""
         return REQUIRED_FILTER.get(self.entity_set.name)
+
+    @property
+    def blocked(self) -> str | None:
+        """Why this set cannot be read at all right now, or None.
+
+        A measured fact about SAP, from known_conditions.READ_BROKEN_SETS: a
+        set whose every row read is a server error has no delta to run and no
+        full pull to fall back to, and a sweep says so instead of trying.
+        """
+        return READ_BROKEN_SETS.get(self.entity_set.name)
+
+    @property
+    def runnable_delta(self) -> Delta | None:
+        """The delta this set can run today, or None.
+
+        Declared and runnable are different things. A derived delta reads its
+        parent by date, so it needs the parent to have a date SAP filters on.
+        GoodsMovementItemSet is declared through MaterialDocumentHeaderSet --
+        the only correct shape -- but MKPF's Budat is IGNORED, so there is no
+        window and the delta cannot run. A sweep that took ``delta`` at face
+        value pulled MSEG in full every cycle while calling it an increment.
+
+        And a set SAP cannot serve rows from (``blocked``) has nothing to run
+        either, whatever it declares.
+        """
+        delta = self.delta
+        if delta is None or self.blocked:
+            return None
+        if delta.field is not None:
+            return delta
+        parent = spec_for(delta.via or "").delta
+        if parent is not None and parent.field is not None:
+            return delta
+        return None
+
+    @property
+    def why_not_runnable(self) -> str | None:
+        """One phrase for a listing: why no increment runs for this set."""
+        if self.runnable_delta is not None:
+            return None
+        if self.blocked:
+            return f"blocked: {self.blocked}"
+        if self.delta is None:
+            return "full pull only"
+        return f"via {self.delta.via} (no window: full)"
 
 
 def check_delta_filters() -> list[str]:

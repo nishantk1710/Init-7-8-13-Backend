@@ -1,4 +1,4 @@
-ReservationItemSet page-cap test, 2026-09-25T04:14:55Z
+ReservationItemSet page-cap test, 2026-09-25T18:07:22Z
 I08 FRS s7 records exactly 1,000 rows over OData; the delivered extract holds 105,848 RESB rows.
 A cap means every reservation-dependent figure (I13 STITCH, I08 session traceability) is computed on 1%.
 

@@ -241,11 +241,17 @@ COUNT_UNRELIABLE_SETS = frozenset({"PurchaseRequisitionSet", "GoodsMovementItemS
 
 # Sets whose $count answers successfully and WRONGLY. A cap, not an error.
 #
-# Measured 2026-09-21 on ReservationItemSet:
+# Empty since 2026-09-25, and kept because the failure mode is worth a
+# permanent home. Measured 2026-09-21 on ReservationItemSet, on the service
+# as it was then (ZMM_KPI02_SRV):
 #
 #     /$count                : 1000
 #     $inlinecount=allpages  : 7088
 #     page-until-short-page  : 7088 rows, 7088 distinct (Rsnum, Rspos)
+#
+# Re-measured 2026-09-25 on its replacement, ZMM_KPI02_TAB_SRV: /$count
+# answers 7088, equal to $inlinecount and to the 7,088 rows the CSV route
+# delivered the same day. The cap went with the old service.
 #
 # This is more dangerous than the 500s above, which announce themselves. A
 # plausible wrong total is believed: paging stops once it has read as many rows
@@ -254,10 +260,45 @@ COUNT_UNRELIABLE_SETS = frozenset({"PurchaseRequisitionSet", "GoodsMovementItemS
 # figure -- I13 STITCH, I08 session traceability -- would be computed on a
 # seventh of the data and look complete.
 #
-# Listed here rather than fixed in paging: the defect is that this service's
+# Listed here rather than fixed in paging: the defect is that a service's
 # $count cannot be trusted, which is a fact about SAP, and this module is where
 # facts about SAP live. The client turns it into behaviour by declining to ask.
-COUNT_CAPPED_SETS = frozenset({"ReservationItemSet"})
+COUNT_CAPPED_SETS: frozenset[str] = frozenset()
+
+# Sets whose every row read answers HTTP 500, while their $count answers.
+#
+# Measured 2026-09-26 through the client's own query builder, one shape at a
+# time, each with the transport's three attempts:
+#
+#   POHistorySet        $top=1 | +$orderby (full key, Ebeln) | Ebeln eq '...'
+#                       | Ebeln eq +$orderby | two Ebeln (or)        all 500
+#   POScheduleLineSet   the same seven shapes                        all 500
+#   ChangeDocHeaderSet  Objectclas eq 'MATERIAL' alone | + Udate ge  | + any
+#                       $orderby | + $skip                           all 500
+#   PurchaseOrderItemSet, the same seven shapes, the same minute:   all 200
+#
+# $count is fine on all three (3,881 / 3,631 / 241,959), so the sets exist and
+# are authorised; the read itself dumps. An empty-bodied 500 is a backend
+# short dump -- SAP's to fix (ST22), ours to survive.
+#
+# A set listed here has no runnable delta and is left out of a sweep with the
+# reason shown, rather than failing every cycle: each failure is up to nine
+# requests as the client tries every ordering, and a "delta" that fails hourly
+# is noise that hides real ones. The CSV route still covers POHistorySet and
+# ChangeDocHeaderSet; POScheduleLineSet is undelivered on both routes.
+#
+# WHEN REMOVING A SET FROM THIS LIST: drop its odata_ table first, so the
+# next sweep rebuilds the baseline in full. Its parent's watermark has moved
+# on while it was out, and a delta from the parent's current mark would skip
+# everything changed in between with no way back.
+READ_BROKEN_SETS: dict[str, str] = {
+    "POHistorySet": "every row read is HTTP 500 since 2026-09-26; $count answers",
+    "POScheduleLineSet": "every row read is HTTP 500 since 2026-09-26; $count answers",
+    "ChangeDocHeaderSet": (
+        "every row read is HTTP 500 since 2026-09-26, with the Objectclas "
+        "predicate it requires; $count answers"
+    ),
+}
 
 # Entity sets whose DECLARED key does not uniquely address a row.
 #

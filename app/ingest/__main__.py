@@ -20,14 +20,7 @@ import sys
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.core.storage import StorageNotConfiguredError, get_storage
-from app.ingest.fetch import (
-    MODE_DELTA,
-    MODE_FULL,
-    collect_parent_keys,
-    fetch_set,
-    has_window,
-    read_manifest,
-)
+from app.ingest.fetch import MODE_DELTA, MODE_FULL, fetch_set, read_manifest
 from app.ingest.load import STATUS_FAILED, latest_prefixes, load_set
 from app.ingest.manifest import (
     IngestSpec,
@@ -35,6 +28,7 @@ from app.ingest.manifest import (
     spec_for,
     specs,
 )
+from app.ingest.sweep import run_delta_sweep
 from app.integrations.sap.client import SapClient
 
 logger = get_logger(__name__)
@@ -149,8 +143,11 @@ def _parser() -> argparse.ArgumentParser:
         "--delta",
         action="store_true",
         help=(
-            "read only what changed since the stored watermark. Sets with no "
-            "declared delta fall back to a full pull."
+            "read only what changed since the stored watermark. With --all, "
+            "only the sets whose delta can run (the rest belong to the CSV "
+            "route); with --set, a set with no delta falls back to a full "
+            "pull and says so. A set whose odata_ table does not exist yet is "
+            "pulled in full once, to build the baseline."
         ),
     )
     parser.add_argument(
@@ -166,22 +163,13 @@ def _parser() -> argparse.ArgumentParser:
         "--allow-unstable",
         action="store_true",
         help=(
-            "load a fetch whose duplicate-key check failed. For inspecting a bad "
-            "pull deliberately -- never for getting a sweep to finish."
+            "load a fetch whose duplicate-key check failed, or (with "
+            "--csv-load) a CSV extract whose row count did not reconcile. For "
+            "inspecting a bad pull deliberately -- never for getting a sweep "
+            "to finish."
         ),
     )
     return parser
-
-
-def _fetch_order(chosen: tuple[IngestSpec, ...]) -> list[IngestSpec]:
-    """Parents before the children that are read through them.
-
-    Only matters for the key cache below: a child fetched before its parent
-    would read that parent itself, and the sweep would then read it again for
-    the next child.
-    """
-    parents = {s.delta.via for s in chosen if s.delta and s.delta.via}
-    return sorted(chosen, key=lambda s: (s.name not in parents, s.name))
 
 
 def _list() -> int:
@@ -217,18 +205,15 @@ def _list() -> int:
             except Exception as exc:
                 landed = f"? ({type(exc).__name__})"
 
-        delta = spec.delta
+        delta = spec.runnable_delta
         if delta is None:
-            how = "full pull only"
+            # Nothing incremental will run for this set; say why rather than
+            # promise an increment the run will not perform.
+            how = spec.why_not_runnable or "full pull only"
         elif delta.field:
             how = f"{delta.field} ge ..."
-        elif has_window(spec_for(delta.via or "")):
-            how = f"via {delta.via}.{delta.via_key}"
         else:
-            # Declared, but its parent has no date SAP will filter on, so
-            # fetch pulls this set in full. Say that here rather than promise
-            # an increment the run will not perform.
-            how = f"via {delta.via} (no window: full)"
+            how = f"via {delta.via}.{delta.via_key}"
 
         note = "" if spec.expects_rows else "  (empty in this client)"
         print(f"{spec.name:<30} {spec.raw_table:<28} {how:<30} {landed}{note}")
@@ -328,7 +313,11 @@ def _csv(args) -> int:
 
     if args.csv_load:
         print(f"\nCSV load into Azure SQL\n")
-        results = load_all(names) if len(names) > 1 else [load_table(names[0])]
+        results = (
+            load_all(names, allow_unreconciled=args.allow_unstable)
+            if len(names) > 1
+            else [load_table(names[0], allow_unreconciled=args.allow_unstable)]
+        )
         for result in results:
             mark = "ok " if result.ok else "FAIL"
             print(
@@ -546,6 +535,26 @@ def main(argv: list[str] | None = None) -> int:
             print("\nRe-probe them, or run --full.")
             return 1
 
+        if args.all:
+            # The same rule the scheduler applies. A set with no runnable
+            # delta is not "pulled in full as a fallback" here: CDPOS is
+            # 940,000 rows over OData, and the CSV route already covers it.
+            chosen = tuple(s for s in specs() if s.runnable_delta is not None)
+            blocked = [s for s in specs() if s.delta is not None and s.blocked]
+            left_out = [
+                s.name for s in specs()
+                if s.runnable_delta is None and not (s.delta is not None and s.blocked)
+            ]
+            print(
+                f"--delta --all: {len(chosen)} set(s) have a delta that can run "
+                f"({', '.join(s.name for s in chosen)})."
+            )
+            for s in blocked:
+                print(f"  {s.name}: delta declared but {s.blocked}")
+            print(f"Left to the CSV route: {', '.join(left_out)}.\n")
+
+    loaded_by_sweep = False
+
     if args.fetch:
         try:
             storage = get_storage()
@@ -554,46 +563,41 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         client = SapClient()
-        # One read of each parent, shared by its children. PurchaseOrderSet has
-        # three; reading EKKO four times a run would be pure waste.
-        key_cache: dict[tuple[str, str], list[str]] = {}
-        results = []
 
-        for spec in _fetch_order(chosen):
-            parent_keys = None
-            delta = spec.delta if mode == MODE_DELTA else None
-            if delta is not None and delta.via and has_window(spec_for(delta.via)):
-                cache_key = (delta.via, delta.via_key or "")
-                if cache_key not in key_cache:
-                    try:
-                        key_cache[cache_key] = collect_parent_keys(
-                            client, delta, args.since
-                        )
-                    except Exception as exc:
-                        print(f"{spec.name}: could not read parent {delta.via}: {exc}")
-                        failures += 1
-                        results.append((spec.name, "FAILED", 0, 0.0))
-                        continue
-                parent_keys = key_cache[cache_key]
-
-            outcome = fetch_set(
-                spec,
-                root=root,
-                client=client,
-                storage=storage,
-                mode=mode,
-                since=args.since,
-                parent_keys=parent_keys,
+        if mode == MODE_DELTA:
+            report = run_delta_sweep(
+                chosen, root=root, client=client, storage=storage,
+                since=args.since, load=args.load,
             )
-            status = (
-                "ok" if outcome.ok
-                else ("UNSTABLE" if outcome.error is None else "FAILED")
-            )
-            failures += 0 if outcome.ok else 1
-            results.append((spec.name, status, outcome.rows, outcome.seconds))
-        _report("FETCHED", results)
+            _report("FETCHED", report.fetch_rows())
+            if args.load:
+                _report("LOADED", report.load_rows())
+                loaded_by_sweep = True
+            for name in report.baselined:
+                print(f"  {name}: no odata_ table yet, pulled in full to build it")
+            for name, mark in report.advanced.items():
+                print(f"  {name}: watermark -> {mark}")
+            for name, why in report.held.items():
+                print(f"  {name}: watermark HELD -- {why}")
+            for outcome in report.outcomes:
+                if outcome.status != "ok" and outcome.detail:
+                    print(f"  {outcome.name}: {outcome.detail}")
+            failures += report.failures
+        else:
+            results = []
+            for spec in chosen:
+                outcome = fetch_set(
+                    spec, root=root, client=client, storage=storage, mode=MODE_FULL
+                )
+                status = (
+                    "ok" if outcome.ok
+                    else ("UNSTABLE" if outcome.error is None else "FAILED")
+                )
+                failures += 0 if outcome.ok else 1
+                results.append((spec.name, status, outcome.rows, outcome.seconds))
+            _report("FETCHED", results)
 
-    if args.load:
+    if args.load and not loaded_by_sweep:
         results = []
         for spec in chosen:
             outcome = load_set(

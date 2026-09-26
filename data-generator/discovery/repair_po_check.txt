@@ -1,4 +1,4 @@
-ZREP purchase orders, 2026-09-25T04:15:53Z: 4 header(s)
+ZREP purchase orders, 2026-09-25T18:09:30Z: 4 header(s)
 I08 D7 proposes Pstyp 3 as the primary repair-PO filter, corroborated by Bsart ZREP and Knttp F.
 
   4500000000  vendor 0000400000  /Date(1535493600000)/  items=1  pstyp={'0': 1}  knttp={'': 1}

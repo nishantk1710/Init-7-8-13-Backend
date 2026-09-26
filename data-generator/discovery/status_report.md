@@ -1,8 +1,8 @@
-# VZI CPI OData status, 2026-09-25T04:17:37Z
+# VZI CPI OData status, 2026-09-25T18:11:15Z
 
 Run mode: full sweep
 
-Calls: 507  |  failures: 133  |  total elapsed: 197s
+Calls: 507  |  failures: 133  |  total elapsed: 261s
 
 ## Services
 - ZMM_KPI02_ADD_SRV: reachable, 14 entity sets in $metadata.
@@ -38,11 +38,11 @@ Calls: 507  |  failures: 133  |  total elapsed: 197s
 - EKBE Vgabe distinct values over OData: none. Reconcile against the dictionary (1, 2) and I13 s7.1 (E).
 
 ## Slowest calls (W8.1 performance baseline)
-- 4.3s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count  
-- 3.9s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet  $top=5&$format=json
+- 4.2s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count  
+- 4.0s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet  $top=5&$format=json
 - 3.9s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet  $top=5&$skip=5&$format=json
-- 3.9s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet  $inlinecount=allpages&$top=1&$format=json
-- 3.8s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/$metadata  
+- 3.8s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet  $inlinecount=allpages&$top=1&$format=json
+- 3.1s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet  $top=1000&$skip=52000&$format=json
 
 ## Confirmed defect register
 
