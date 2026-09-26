@@ -347,6 +347,7 @@ def test_detail_of_an_existing_recommendation_returns_200():
     assert response.json()["recommendation_id"] == row.recommendation_id
 
 
+@needs_db
 def test_detail_of_an_unknown_recommendation_returns_404():
     response = client.get("/api/v1/i7/recommendations/DOES-NOT-EXIST")
     assert response.status_code == 404
@@ -440,6 +441,7 @@ def test_trace_of_an_existing_recommendation_returns_200_with_expected_sections(
     }
 
 
+@needs_db
 def test_trace_of_an_unknown_recommendation_returns_404():
     response = client.get("/api/v1/i7/recommendations/DOES-NOT-EXIST/trace")
     assert response.status_code == 404
@@ -959,6 +961,7 @@ def test_adoption_never_claims_conversion_adoption_without_a_real_transition():
     assert "Awaiting SAP test change" in body["detail"]
 
 
+@needs_db
 def test_adoption_of_unknown_recommendation_returns_404():
     response = client.get("/api/v1/i7/recommendations/DOES-NOT-EXIST/adoption")
     assert response.status_code == 404
@@ -986,6 +989,7 @@ def test_get_one_run_by_type_and_id():
     assert response.json()["run_id"] == first["run_id"]
 
 
+@needs_db
 def test_get_unknown_run_returns_404():
     response = client.get("/api/v1/i7/runs/feature/99999999")
     assert response.status_code == 404
@@ -994,22 +998,26 @@ def test_get_unknown_run_returns_404():
 # --- L: invalid parameters -----------------------------------------------------------------------
 
 
+@needs_db
 def test_invalid_page_size_is_rejected():
     response = client.get("/api/v1/i7/recommendations?page_size=99999")
     assert response.status_code == 422
 
 
+@needs_db
 def test_invalid_sort_field_is_rejected():
     response = client.get("/api/v1/i7/recommendations?sort=not_a_real_column")
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "INVALID_SORT_FIELD"
 
 
+@needs_db
 def test_invalid_run_type_is_rejected():
     response = client.get("/api/v1/i7/runs/not-a-real-type/1")
     assert response.status_code == 422
 
 
+@needs_db
 def test_malformed_approval_action_is_rejected():
     response = client.post(
         "/api/v1/i7/recommendations/DOES-NOT-EXIST/actions",
@@ -1021,6 +1029,7 @@ def test_malformed_approval_action_is_rejected():
 # --- M: error format --------------------------------------------------------------------------
 
 
+@needs_db
 def test_error_envelope_is_consistent():
     response = client.get("/api/v1/i7/recommendations/DOES-NOT-EXIST")
     body = response.json()
