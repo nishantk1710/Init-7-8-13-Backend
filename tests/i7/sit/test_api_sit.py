@@ -113,6 +113,7 @@ def test_far_page_beyond_the_data_returns_an_empty_page_not_an_error():
 # --- 5.9: error contract -----------------------------------------------------------------------
 
 
+@needs_db
 def test_malformed_request_body_returns_422_with_no_leak():
     response = client.post(
         "/api/v1/i7/recommendations/anything/actions",
@@ -123,11 +124,13 @@ def test_malformed_request_body_returns_422_with_no_leak():
     assert "sqlalchemy" not in response.text.lower()
 
 
+@needs_db
 def test_nonexistent_run_type_is_a_422_not_a_500():
     response = client.get("/api/v1/i7/runs/not-a-real-type/1")
     assert response.status_code == 422
 
 
+@needs_db
 def test_404_error_body_never_contains_database_internals():
     response = client.get("/api/v1/i7/recommendations/DOES-NOT-EXIST-AT-ALL")
     assert response.status_code == 404

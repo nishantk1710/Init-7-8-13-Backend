@@ -140,12 +140,14 @@ def test_list_items_never_carry_report_json(clean_test_quarter):
         assert "report_json" not in item
 
 
+@needs_db
 def test_list_respects_the_limit_query_param():
     response = client.get("/api/v1/i7/reports/quarterly?limit=1")
     assert response.status_code == 200
     assert len(response.json()["items"]) <= 1
 
 
+@needs_db
 def test_list_rejects_an_out_of_range_limit():
     response = client.get("/api/v1/i7/reports/quarterly?limit=9999")
     assert response.status_code == 422
@@ -212,6 +214,7 @@ def test_quarterly_list_route_is_not_swallowed_by_the_quarter_path(clean_test_qu
     assert "metadata" not in response.json()
 
 
+@needs_db
 def test_error_envelope_is_consistent_for_report_errors():
     response = client.get("/api/v1/i7/reports/quarterly/Q1 1900")
     body = response.json()
