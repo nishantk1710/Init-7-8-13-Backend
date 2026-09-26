@@ -44,6 +44,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from enum import Enum
 
+from app.integrations.sap.known_conditions import CSV_UNDELIVERED_TABLES
+
 # Three years, per the 25-Sep instruction. Kept as a constant because the
 # figure is a decision, not arithmetic, and the next person will want to find
 # it rather than infer it.
@@ -77,6 +79,21 @@ class CsvTable:
     """True for transaction data (three years), False for master (everything)."""
 
     note: str = ""
+
+    count_filter: str | None = None
+    """A $filter for the $count check, where the CSV job extracts a subset the
+    OData set does not. The job is not ours and does not say what it filters;
+    this records what was measured, so a correct delivery is not failed
+    against a total it was never going to reach."""
+
+    @property
+    def blocked(self) -> str | None:
+        """Why SAP will not deliver this table right now, or None.
+
+        A measured fact about the extract job, from
+        known_conditions.CSV_UNDELIVERED_TABLES.
+        """
+        return CSV_UNDELIVERED_TABLES.get(self.sap_table)
 
     @property
     def table(self) -> str:
@@ -139,7 +156,15 @@ class CsvTable:
 CSV_TABLES: tuple[CsvTable, ...] = (
     # --- Master data: everything, no meaningful date window ----------------
     CsvTable("MARA", "MaterialSet", windowed=False, note="material master"),
-    CsvTable("MAKT", "MaterialDescriptionSet", windowed=False, note="descriptions"),
+    # English descriptions only. Measured 2026-09-26: the CSV job delivers
+    # 2,040 rows whatever window or cap it is given (four shapes, one
+    # byte-identical file), while OData holds 2,042 -- the two others are the
+    # Afrikaans and German descriptions of one material. $count with
+    # Spras eq 'E' is 2,040, and that filter is measured HONOURED.
+    CsvTable(
+        "MAKT", "MaterialDescriptionSet", windowed=False, note="descriptions, English",
+        count_filter="Spras eq 'E'",
+    ),
     CsvTable("MARC", "MaterialPlantSet", windowed=False, note="MRP type, OAR scope"),
     CsvTable("MARD", "StorageLocationStockSet", windowed=False, note="stock on hand"),
     CsvTable("MBEW", "MaterialValuationSet", windowed=False, note="valuation"),
@@ -166,8 +191,32 @@ CSV_TABLES: tuple[CsvTable, ...] = (
     CsvTable("MSEG", "GoodsMovementItemSet", windowed=True,
              note="rides MKPF; same reason."),
     CsvTable("RESB", "ReservationItemSet", windowed=True),
-    CsvTable("CDHDR", "ChangeDocHeaderSet", windowed=True, note="FR-9 adoption"),
-    CsvTable("CDPOS", "ChangeDocItemSet", windowed=True, note="FR-9 adoption"),
+    # The CSV job extracts change documents for a fixed set of procurement
+    # object classes, not the whole table, and $count counts the whole table.
+    # Measured 2026-09-26 against the landed rows:
+    #
+    #   CDHDR  MATERIAL 7,661  EINKBELEG 7,219  KRED 1,344  BANF 935
+    #          INFOSATZ 637  = 17,796, and each class equals its OData $count
+    #          exactly -- complete for the classes the job is configured for.
+    #   CDPOS  filtered further, by TABNAME within the tables this extract
+    #          covers (MCHB, EKKO, EKPO, MARC, MARA, EBAN, MBEW, MARD, LFA1,
+    #          RESB ...): 71,392 rows, a strict subset of every class but
+    #          INFOSATZ and the two ZMM_GP ones.
+    #
+    # So 7% of $count is the whole of what the job will ever send, not a
+    # short delivery. BOUNDED already treats the count as a ceiling; the
+    # ratio is the reason it is far below it.
+    CsvTable(
+        "CDHDR", "ChangeDocHeaderSet", windowed=True,
+        note="FR-9 adoption; five object classes only, complete for each",
+        # $count over the same five classes is 17,796 -- the delivery exactly.
+        count_filter=(
+            "Objectclas eq 'MATERIAL' or Objectclas eq 'EINKBELEG' or "
+            "Objectclas eq 'KRED' or Objectclas eq 'BANF' or Objectclas eq 'INFOSATZ'"
+        ),
+    ),
+    CsvTable("CDPOS", "ChangeDocItemSet", windowed=True,
+             note="FR-9 adoption; items for the extracted tables only"),
 )
 
 BY_TABLE: dict[str, CsvTable] = {t.sap_table: t for t in CSV_TABLES}

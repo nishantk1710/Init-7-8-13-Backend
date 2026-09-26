@@ -120,3 +120,15 @@ class TestSeedWatermark:
         mark = csv_load._seed_watermark("PurchaseOrderSet", "Aedat", "20260925", 1)
 
         assert odata_literal(mark, "Edm.DateTime") == "datetime'2026-09-24T00:00:00'"
+
+
+class TestHighestDate:
+    def test_dd_mm_yyyy_is_ranked_by_year_not_by_day(self) -> None:
+        """A MIN/MAX over the raw column once answered 01.01.2019 to 31.12.2018."""
+        assert csv_load._highest(None, iter(["31.12.2018", "01.01.2019", "15.06.2018"])) == "20190101"
+
+    def test_dats_still_works(self) -> None:
+        assert csv_load._highest(None, iter(["20130927", "20260925", "20180101"])) == "20260925"
+
+    def test_sap_no_date_is_ignored_in_both_shapes(self) -> None:
+        assert csv_load._highest(None, iter(["00000000", "00.00.0000", ""])) is None

@@ -352,13 +352,29 @@ def _watermark_index(spec: CsvTable, columns: list[str]) -> int | None:
 
 
 def _highest(current: str | None, values: Iterator[str]) -> str | None:
-    """Newest DATS string seen. Lexical order is chronological for yyyymmdd."""
+    """Newest date seen, as a DATS string; lexical order is then chronological.
+
+    The CSV job writes dates as ``DD.MM.YYYY`` (``01.01.2019``), not as SAP's
+    ``YYYYMMDD`` -- measured on the landed CDHDR on 2026-09-26. Both shapes
+    are accepted and normalised to DATS, because comparing ``DD.MM.YYYY``
+    strings lexically ranks by day of month, which is how a MIN/MAX over that
+    column once answered ``01.01.2019`` to ``31.12.2018``.
+    """
     for value in values:
-        candidate = (value or "").strip()
-        if len(candidate) == 8 and candidate.isdigit():
-            if current is None or candidate > current:
-                current = candidate
+        candidate = _as_dats((value or "").strip())
+        if candidate and (current is None or candidate > current):
+            current = candidate
     return current
+
+
+def _as_dats(value: str) -> str | None:
+    if len(value) == 8 and value.isdigit():
+        return None if value == "00000000" else value
+    if len(value) == 10 and value[2] == "." and value[5] == ".":
+        day, month, year = value[:2], value[3:5], value[6:]
+        if (day + month + year).isdigit() and year != "0000":
+            return f"{year}{month}{day}"
+    return None
 
 
 def _batches(rows: Iterator[list[str]], width: int) -> Iterator[list[tuple]]:

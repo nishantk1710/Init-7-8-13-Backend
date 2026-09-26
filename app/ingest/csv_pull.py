@@ -219,7 +219,7 @@ def _expected_rows(spec: CsvTable, client: SapClient | None) -> int | None:
     if client is None:
         return None
     try:
-        return client.count(spec.entity_set)
+        return client.count(spec.entity_set, filter=spec.count_filter)
     except SapError as exc:
         logger.warning(
             "%s: no $count for %s (%s); completeness will be unverified",
@@ -241,6 +241,11 @@ def fire(
 ) -> PullResult:
     """Record the request, then ask SAP for it. Never raises."""
     spec = csv_table(sap_table)
+    if spec.blocked:
+        # Explicitly asked for, so it fires -- that is how the condition gets
+        # re-tested -- but the operator is told what to expect.
+        logger.warning("%s: %s; firing anyway because it was asked for by name",
+                       spec.sap_table, spec.blocked)
     from_date, to_date = spec.window(
         today, years=years, from_date=from_date, to_date=to_date
     )
@@ -567,7 +572,13 @@ def pull_all(
     that fails does not stop the run: the others are independent, and a partial
     refresh beats no refresh.
     """
-    names = tables or [t.sap_table for t in CSV_TABLES]
+    if tables is None:
+        names = [t.sap_table for t in CSV_TABLES if not t.blocked]
+        for t in CSV_TABLES:
+            if t.blocked:
+                logger.warning("%s: left out -- %s", t.sap_table, t.blocked)
+    else:
+        names = list(tables)
 
     if wait_for_open and not wait_for_clear(names):
         detail = (

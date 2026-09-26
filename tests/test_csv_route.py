@@ -762,3 +762,72 @@ class TestBatchWaiting:
         results = csv_pull.wait_for_all(ids, sleeper=lambda s: None)
 
         assert [r.request_id for r in results] == ids
+
+
+# --- Counting the way the CSV job extracts ----------------------------------
+
+
+class TestCountFilter:
+    def test_makt_is_counted_in_english_only(self) -> None:
+        """The CSV job delivers the 2,040 English descriptions whatever it is
+        asked; OData counts 2,042 across three languages. Reconciling EXACT
+        against the all-language total failed a correct file every time."""
+        assert csv_table("MAKT").count_filter == "Spras eq 'E'"
+
+    def test_the_count_filter_reaches_the_client(self) -> None:
+        asked: list[tuple] = []
+
+        class Client:
+            def count(self, name, *, filter=None, **_):
+                asked.append((name, filter))
+                return 2040
+
+        assert csv_pull._expected_rows(csv_table("MAKT"), Client()) == 2040
+        assert asked == [("MaterialDescriptionSet", "Spras eq 'E'")]
+
+    def test_tables_without_a_subset_are_counted_whole(self) -> None:
+        asked: list[tuple] = []
+
+        class Client:
+            def count(self, name, *, filter=None, **_):
+                asked.append((name, filter))
+                return 2040
+
+        csv_pull._expected_rows(csv_table("MARA"), Client())
+        assert asked == [("MaterialSet", None)]
+
+
+# --- Tables SAP will not deliver --------------------------------------------
+
+
+class TestUndeliveredTables:
+    def test_ekko_and_eket_are_recorded_as_undelivered(self) -> None:
+        """Sixty requests across every shape the key allows, none delivered,
+        while MAKT delivered four of four on the same route."""
+        assert csv_table("EKKO").blocked
+        assert csv_table("EKET").blocked
+        assert csv_table("EKPO").blocked is None
+
+    def test_a_sweep_leaves_them_out_with_the_reason(self, db, monkeypatch) -> None:
+        fired: list[str] = []
+        monkeypatch.setattr(
+            csv_pull, "fire",
+            lambda name, **kw: fired.append(name) or csv_pull.PullResult(name, "", STATUS_FAILED),
+        )
+        monkeypatch.setattr(csv_pull, "wait_for_all", lambda ids, **kw: [])
+
+        csv_pull.pull_all(gap=0, sleeper=lambda s: None, wait_for_open=False)
+
+        assert "EKKO" not in fired and "EKET" not in fired
+        assert len(fired) == len(CSV_TABLES) - 2
+
+    def test_asked_for_by_name_it_still_fires(self, db) -> None:
+        """That is how the condition gets re-tested once SAP fixes the job."""
+        result = csv_pull.fire("EKKO", transport=_Acks(), client=None, **WINDOW)
+        assert result.status == csv_pull.STATUS_OPEN
+
+    def test_cdhdr_is_counted_over_its_five_classes(self) -> None:
+        """$count over these classes is 17,796, the delivery exactly; the whole
+        table is 241,959 and the job never sends the rest."""
+        flt = csv_table("CDHDR").count_filter
+        assert flt and flt.count("Objectclas eq") == 5
