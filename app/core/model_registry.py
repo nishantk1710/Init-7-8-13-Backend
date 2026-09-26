@@ -67,6 +67,17 @@ ROUTES: dict[str, ModelRoute] = {
         tier="capable",
         why="Interactive, user-facing, and answers shape a purchasing decision.",
     ),
+    "i13_reservation_assistant": ModelRoute(
+        task="i13_reservation_assistant",
+        tier="capable",
+        why=(
+            "The I13 half of the same interactive answer, and routed like the "
+            "I08 half for the same reason. Separate from "
+            "i13_quantity_suggestion, which explains one arithmetic result and "
+            "takes that result's inputs as its variables -- this phrases a whole "
+            "cover assessment and takes a headline and its facts."
+        ),
+    ),
 }
 
 

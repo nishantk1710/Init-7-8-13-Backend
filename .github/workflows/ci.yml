@@ -102,18 +102,19 @@ jobs:
       - name: Run tests
         # -rs lists the skipped tests with their reason, so "2 skipped" is
         # visible in the log as a deliberate choice rather than a silent hole.
-        #
-        # "not drift" is explicit, not inherited from pytest.ini's addopts: a
-        # bare -m REPLACES that default rather than adding to it, so leaving
-        # this as just "-rs" would silently re-admit the live-SAP-sensitive
-        # drift suite into the blocking gate.
-        run: pytest -q -rs -m "not live and not drift"
+        # "not live and not drift" matches deploy.yml: live needs real CPI
+        # network/credentials this runner doesn't have, and drift compares our
+        # recorded knowledge of SAP against itself -- it fails when SAP changes
+        # underneath us, which is information about an external system, not a
+        # reason to redden every unrelated PR. "not needs_seed_data" excludes
+        # tests that assert against the real seeded extract (raw_* tables,
+        # built features, generated recommendations) -- see pytest.ini, marker
+        # 'needs_seed_data'. A command-line -m replaces pytest.ini's addopts
+        # rather than adding to it, so this must repeat all three.
+        run: pytest -q -rs -m "not live and not drift and not needs_seed_data"
 
-      # Drift compares our recorded knowledge of SAP (known_conditions.py)
-      # against a fresh discovery snapshot. It fails when SAP's measured
-      # behaviour changes -- see CLAUDE.md: that is information for whoever
-      # owns the SAP contract, not a reason to block unrelated PRs, and never
-      # something to quietly re-baseline to make green. Mirrors deploy.yml.
+      # Drift is reported, never blocking -- see the marker's description in
+      # pytest.ini and the matching step in deploy.yml.
       - name: SAP contract drift (informational)
         continue-on-error: true
         run: |

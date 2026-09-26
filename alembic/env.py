@@ -39,6 +39,25 @@ def _database_url() -> str:
     return url
 
 
+def _include_object(object_, name, type_, reflected, compare_to) -> bool:
+    """Keep autogenerate away from tables no model owns.
+
+    The ``raw_*`` tables are built by ``app/seed/loader.py`` from the extract
+    workbooks, not declared as ORM models, so they are absent from
+    ``Base.metadata``. Autogenerate reads that absence as "dropped" and emits a
+    ``drop_table`` for all 27 of them -- 3.4M rows, and a half-hour reload.
+
+    Reflecting them into metadata instead would be worse: the loader
+    drop-and-creates each table per run, so their shape is the extract's to
+    define, not a migration's.
+    """
+    if type_ == "table" and reflected and name.startswith("raw_"):
+        return False
+    if type_ == "index" and reflected and getattr(object_.table, "name", "").startswith("raw_"):
+        return False
+    return True
+
+
 def run_migrations_offline() -> None:
     """Emit SQL to stdout without connecting -- `alembic upgrade head --sql`."""
     context.configure(
@@ -47,6 +66,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_object=_include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -66,6 +86,7 @@ def run_migrations_online() -> None:
             # Without this a column type change is silently missed by
             # autogenerate, and the migration lies about what it does.
             compare_type=True,
+            include_object=_include_object,
         )
         with context.begin_transaction():
             context.run_migrations()

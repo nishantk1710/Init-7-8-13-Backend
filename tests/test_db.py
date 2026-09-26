@@ -140,7 +140,7 @@ def test_naming_convention_is_applied() -> None:
     assert Base.metadata.tables["ingestion_run"].primary_key.name == "pk_ingestion_run"
 
 
-# --- Real Postgres required -----------------------------------------------
+# --- Real Azure SQL required -----------------------------------------------
 
 
 @needs_db

@@ -405,7 +405,7 @@ def test_end_to_end_on_a_real_extract() -> None:
 
     with get_engine().connect() as connection:
         material = connection.execute(
-            text("SELECT material FROM raw_eina WHERE material IS NOT NULL LIMIT 1")
+            text("SELECT TOP 1 material FROM raw_eina WHERE material IS NOT NULL")
         ).scalar_one()
 
     # The point of the text layer: SAP keys keep their exact form.

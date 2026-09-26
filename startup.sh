@@ -110,9 +110,16 @@ fi
 #
 # WEB_CONCURRENCY is gunicorn's own variable and App Service sets PORT, so both
 # are tunable as app settings without touching this file.
+#
+# ONE worker by default. The I13 screens are served from an in-memory snapshot
+# held per process (app/initiatives/i13/snapshot.py): a second worker builds and
+# holds its own copy (~1.3 GB, ~40 s), and a plan captured through the assistant
+# refreshes the WATCH row only in the worker that handled it, so the other would
+# serve that material stale until its next rebuild. Scale out by persisting the
+# snapshot first (plan doc section 4.7, "Phase B"), not by raising this.
 exec python -m gunicorn app.main:app \
     --worker-class uvicorn.workers.UvicornWorker \
-    --workers "${WEB_CONCURRENCY:-2}" \
+    --workers "${WEB_CONCURRENCY:-1}" \
     --bind "0.0.0.0:${PORT:-8000}" \
     --timeout 120 \
     --access-logfile - \

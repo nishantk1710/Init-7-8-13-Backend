@@ -83,13 +83,20 @@ BASE_UOM = "EA"
 PURCHASING_ORG = "Z100"
 PURCHASING_GROUPS = ("Z01", "Z02", "Z03")
 
-# Four plants are confirmed. Gamsberg and BMM are the known names; the other
-# two names are still to be confirmed by VZI, so they carry their codes.
+# Two plants, and they are the REAL codes.
+#
+# This list used to hold four invented codes (1000 Gamsberg, 2000 BMM, 3000,
+# 4000). That is why `consumption_plans.csv` carries plant 4000 and joins to
+# nothing -- see the B2 blocker in
+# docs/I13_Implementation_Status_and_Blockers_21_Sep_2026.md. Generated data
+# that uses codes the real extract has never heard of cannot be reconciled
+# against it, and the mismatch surfaces as a silent zero rather than an error.
+#
+# The scope ruling of 21-Sep-2026 fixes both problems at once: two plants, at
+# the codes SAP actually uses. Kept in step with app/shared/plant_scope.py.
 PLANTS = [
-    {"werks": "1000", "name": "Gamsberg", "lgort": "SP01", "cc": "1000-MECH", "order": "41"},
-    {"werks": "2000", "name": "BMM", "lgort": "SP02", "cc": "2000-MECH", "order": "42"},
-    {"werks": "3000", "name": "PLANT-3000", "lgort": "SP03", "cc": "3000-MECH", "order": "43"},
-    {"werks": "4000", "name": "PLANT-4000", "lgort": "SP04", "cc": "4000-MECH", "order": "44"},
+    {"werks": "1300", "name": "Black Mountain Mining", "lgort": "SP01", "cc": "1300-MECH", "order": "41"},
+    {"werks": "1500", "name": "Gamsberg", "lgort": "SP02", "cc": "1500-MECH", "order": "42"},
 ]
 
 # Movement types used (MSEG.BWART).
