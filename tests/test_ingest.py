@@ -487,9 +487,14 @@ def test_a_direct_delta_filters_on_its_date(storage, no_watermark_io) -> None:
 
 
 def test_a_first_delta_with_no_watermark_pulls_in_full(storage, no_watermark_io) -> None:
-    """There is nothing to be incremental from yet, and it says so."""
+    """There is nothing to be incremental from yet, and it says so.
+
+    Marked as a FULL pull, not a delta that happened to read everything: the
+    file then replaces the table instead of merging into one that may not
+    exist, and the short-read check against $count applies to it.
+    """
     po = spec_for("PurchaseOrderSet")
-    client = StubClient(StubExtract([{"Ebeln": "4500001"}]))
+    client = StubClient(StubExtract([{"Ebeln": "4500001", "Aedat": "2026-09-10"}]))
 
     result = fetch_mod.fetch_set(
         po, root="odata", client=client, storage=storage,
@@ -498,6 +503,133 @@ def test_a_first_delta_with_no_watermark_pulls_in_full(storage, no_watermark_io)
 
     assert client.filters == [None]
     assert result.ok
+    assert result.mode == "full"
+    assert fetch_mod.read_manifest(storage, result.prefix)["load_strategy"] == "replace"
+    assert no_watermark_io == [("PurchaseOrderSet", "Aedat", "2026-09-10", 1)], (
+        "it read every row, so it knows exactly where the next increment starts"
+    )
+
+
+def test_a_derived_child_whose_parent_has_no_mark_pulls_in_full(
+    storage, no_watermark_io
+) -> None:
+    """No parent window, no increment. The old path read the parent whole and
+    then asked for its children fifty keys at a time -- the whole child set
+    in sixty requests, reported as a delta."""
+    items = spec_for("PurchaseOrderItemSet")
+    client = StubClient(StubExtract([{"Ebeln": "1", "Ebelp": "00010"}]))
+
+    result = fetch_mod.fetch_set(
+        items, root="odata", client=client, storage=storage,
+        run_date=RUN_DATE, mode="delta",
+    )
+
+    assert client.filters == [None]
+    assert result.mode == "full"
+
+
+def test_collecting_parent_keys_without_a_window_is_refused() -> None:
+    items = spec_for("PurchaseOrderItemSet")
+    with pytest.raises(ValueError, match="no watermark"):
+        fetch_mod.collect_parent_keys(StubClient(StubExtract([])), items.delta, None)
+
+
+def test_a_requested_full_pull_seeds_the_mark_too(storage, no_watermark_io) -> None:
+    """--full on a set with a direct delta reads every row; the highest date
+    seen is exactly where the next increment should start."""
+    po = spec_for("PurchaseOrderSet")
+    client = StubClient(StubExtract([{"Ebeln": "1", "Aedat": "2026-09-10"}]))
+
+    fetch_mod.fetch_set(
+        po, root="odata", client=client, storage=storage,
+        run_date=RUN_DATE, mode="full",
+    )
+
+    assert no_watermark_io == [("PurchaseOrderSet", "Aedat", "2026-09-10", 1)]
+
+
+def test_the_candidate_mark_is_recorded_even_when_not_advanced(
+    storage, no_watermark_io
+) -> None:
+    """A sweep advances marks itself, after the load. The fetch still says
+    where the next increment would start, in the result and the manifest."""
+    po = spec_for("PurchaseOrderSet")
+    client = StubClient(StubExtract([{"Ebeln": "1", "Aedat": "2026-09-10"}]))
+
+    result = fetch_mod.fetch_set(
+        po, root="odata", client=client, storage=storage,
+        run_date=RUN_DATE, mode="delta", since="2026-09-01T00:00:00",
+        advance_watermark=False,
+    )
+
+    assert result.watermark == "2026-09-10"
+    assert fetch_mod.read_manifest(storage, result.prefix)["watermark"] == "2026-09-10"
+    assert no_watermark_io == []
+
+
+def test_windows_are_resolved_once_for_a_whole_family(monkeypatch) -> None:
+    """The child's window is its parent's mark, and the parent's mark is read
+    before anything can advance it."""
+    reads: list[tuple[str, str]] = []
+
+    def stored(entity_set, field):
+        reads.append((entity_set, field))
+        return "2026-09-01 22:00:00+00:00"
+
+    monkeypatch.setattr(fetch_mod, "get_watermark", stored)
+    chosen = (spec_for("PurchaseOrderItemSet"), spec_for("PurchaseOrderSet"),
+              spec_for("POHistorySet"), spec_for("MaterialPlantSet"))
+
+    windows = fetch_mod.resolve_windows(chosen)
+
+    assert windows == {"PurchaseOrderSet": "2026-09-01 22:00:00+00:00"}
+    assert reads == [("PurchaseOrderSet", "Aedat")], "one read, however many children"
+
+
+def test_fetch_order_puts_parents_first() -> None:
+    chosen = (spec_for("POHistorySet"), spec_for("PurchaseOrderSet"),
+              spec_for("ChangeDocHeaderSet"), spec_for("PurchaseOrderItemSet"))
+    assert [s.name for s in fetch_mod.fetch_order(chosen)][0] == "PurchaseOrderSet"
+
+
+def test_only_deltas_that_can_run_are_runnable(monkeypatch) -> None:
+    """GoodsMovementItemSet is declared through MKPF, and MKPF has no date SAP
+    filters on. Declared, but not runnable -- and a sweep that did not tell
+    the two apart pulled it in full every cycle."""
+    from app.ingest import manifest as manifest_mod
+
+    monkeypatch.setattr(manifest_mod, "READ_BROKEN_SETS", {})
+    assert spec_for("PurchaseOrderSet").runnable_delta is not None
+    assert spec_for("PurchaseOrderItemSet").runnable_delta is not None
+    assert spec_for("POHistorySet").runnable_delta is not None
+    assert spec_for("GoodsMovementItemSet").delta is not None
+    assert spec_for("GoodsMovementItemSet").runnable_delta is None
+    assert spec_for("MaterialPlantSet").runnable_delta is None
+
+
+def test_a_set_sap_cannot_serve_has_no_runnable_delta(monkeypatch) -> None:
+    """Every row read HTTP 500, $count fine: measured on three sets on
+    2026-09-26. A sweep leaves such a set out with the reason, rather than
+    spending nine requests per cycle proving it again."""
+    from app.ingest import manifest as manifest_mod
+
+    monkeypatch.setattr(
+        manifest_mod, "READ_BROKEN_SETS",
+        {"PurchaseOrderItemSet": "every row read is HTTP 500"},
+    )
+    items = spec_for("PurchaseOrderItemSet")
+    assert items.delta is not None
+    assert items.runnable_delta is None
+    assert items.why_not_runnable == "blocked: every row read is HTTP 500"
+    assert spec_for("PurchaseOrderSet").runnable_delta is not None
+
+
+def test_the_listing_explains_every_set_without_an_increment() -> None:
+    for spec in specs():
+        if spec.runnable_delta is None:
+            assert spec.why_not_runnable, spec.name
+        else:
+            assert spec.why_not_runnable is None, spec.name
 
 
 def test_a_derived_delta_batches_the_parent_keys(storage, no_watermark_io) -> None:

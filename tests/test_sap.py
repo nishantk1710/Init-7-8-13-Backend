@@ -496,15 +496,19 @@ class TestClient:
         client = SapClient(settings(), transport_returning(FakeResponse(status_code=500)))
         assert client.count("GoodsMovementItemSet") is None
 
-    def test_a_capped_count_is_never_asked_for(self) -> None:
-        """ReservationItemSet answers 1000 where paging returns 7088.
+    def test_a_capped_count_is_never_asked_for(self, monkeypatch) -> None:
+        """A set listed as capped is never asked for its $count.
 
         A wrong-but-successful total is worse than a failed one. Paging stops
         once it has read as many rows as the total claims, so believing 1000
         hands the caller a seventh of the set and calls it complete -- every
         reservation-dependent figure computed on 14% of the data, silently.
-        Measured 2026-09-21; see known_conditions.COUNT_CAPPED_SETS.
+        ReservationItemSet was that set until the service was replaced on
+        2026-09-25; the list is empty now, and the mechanism stays tested.
         """
+        from app.integrations.sap import client as client_mod
+
+        monkeypatch.setattr(client_mod, "COUNT_CAPPED_SETS", frozenset({"ReservationItemSet"}))
         calls: list[dict] = []
         client = SapClient(
             settings(),
@@ -514,8 +518,11 @@ class TestClient:
         assert client.count("ReservationItemSet") is None
         assert calls == [], "SAP must not even be asked for this count"
 
-    def test_a_capped_count_does_not_stop_paging_early(self) -> None:
+    def test_a_capped_count_does_not_stop_paging_early(self, monkeypatch) -> None:
         """The whole point: with no count, paging runs to a short page."""
+        from app.integrations.sap import client as client_mod
+
+        monkeypatch.setattr(client_mod, "COUNT_CAPPED_SETS", frozenset({"ReservationItemSet"}))
         page = feed([{"Rsnum": str(i), "Rspos": "1"} for i in range(2)])
         client = SapClient(
             settings(),

@@ -23,6 +23,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from sqlalchemy import text
+
 from app.core.db import get_engine, get_sessionmaker
 from app.core.logging import get_logger
 from app.core.storage import Storage, get_storage
@@ -45,6 +47,19 @@ STAGING_SUFFIX = "__stg"
 def _table_exists(cursor, table: str) -> bool:
     cursor.execute("SELECT OBJECT_ID(?, 'U')", f"dbo.{table}")
     return cursor.fetchone()[0] is not None
+
+
+def table_exists(table: str) -> bool:
+    """Whether ``dbo.<table>`` exists, on a connection of its own.
+
+    Asked by the sweep before a delta is fetched: an increment with no table
+    to merge into is a full pull, not an error found at load time.
+    """
+    with get_engine().connect() as connection:
+        found = connection.execute(
+            text("SELECT OBJECT_ID(:t, 'U')"), {"t": f"dbo.{table}"}
+        ).scalar()
+    return found is not None
 
 
 def _existing_columns(cursor, table: str) -> list[str]:
@@ -285,7 +300,17 @@ def load_set(
                         f"--set {spec.name}"
                     )
 
-                if merging:
+                if merging and not expected:
+                    # Nothing changed in the window. Staging an empty batch
+                    # would still compare shapes, and a table carrying a
+                    # column SAP has since stopped sending would fail a
+                    # merge of nothing at all.
+                    rows = 0
+                    logger.info(
+                        "%s: the delta carried no rows; %s is unchanged",
+                        spec.name, spec.raw_table,
+                    )
+                elif merging:
                     rows = _merge(
                         cursor,
                         writer,

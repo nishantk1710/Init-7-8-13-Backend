@@ -24,9 +24,13 @@ decides reconciliation; this module only declines to argue with it.
 THE WATERMARK
 
 A CSV full pull writes no watermark by itself, so the first OData delta after
-one would find nothing to start from and silently fall back to a full pull --
-undoing the point of the CSV path. The seed is taken from the file's own
-newest date, after the rows are in, so a failed load never advances it.
+one would find nothing to start from and fall back to a full pull. The seed
+is taken from the file's own newest date, after the rows are in, so a failed
+load never advances it -- and only when the set has no mark at all. A mark the
+OData delta measured itself is a position in ``odata_<table>``; this load
+filled ``raw_<table>``, a different table, and overwriting a measured mark
+with the CSV's date would skip, for ``odata_<table>``, every change between
+the two.
 """
 
 from __future__ import annotations
@@ -37,8 +41,7 @@ import io
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -46,8 +49,8 @@ from app.core.db import get_engine, get_sessionmaker
 from app.core.logging import get_logger
 from app.core.storage import Storage, get_storage
 from app.ingest.csv_tables import CsvTable, csv_table
-from app.ingest.watermarks import set_watermark
-from app.models.csv_extract import STATUS_COMPLETE, CsvExtractRequest
+from app.ingest.watermarks import get_watermark, set_watermark
+from app.models.csv_extract import STATUS_COMPLETE, STATUS_OPEN, CsvExtractRequest
 from app.models.ingestion import IngestionRun
 from app.seed.sqlserver import RawTableWriter
 
@@ -107,6 +110,26 @@ def latest_complete(sap_table: str) -> CsvExtractRequest | None:
         ).first()
 
 
+def latest_landed(sap_table: str) -> CsvExtractRequest | None:
+    """The newest not-yet-loaded request that received anything, whatever
+    its verdict. For ``--allow-unstable`` only: a file two rows short of its
+    $count is still a file, and loading it on purpose is a decision an
+    operator is allowed to make, once, with the shortfall on record.
+    """
+    sessionmaker = get_sessionmaker()
+    with sessionmaker() as session:
+        return session.scalars(
+            select(CsvExtractRequest)
+            .where(
+                CsvExtractRequest.sap_table == sap_table.upper(),
+                CsvExtractRequest.status != STATUS_OPEN,
+                CsvExtractRequest.received_rows > 0,
+                CsvExtractRequest.loaded_at.is_(None),
+            )
+            .order_by(CsvExtractRequest.fired_at.desc())
+        ).first()
+
+
 def _clean_lines(handle) -> Iterator[str]:
     """Decoded lines with NUL bytes removed, one at a time.
 
@@ -118,27 +141,30 @@ def _clean_lines(handle) -> Iterator[str]:
         yield line.replace("\x00", "") if "\x00" in line else line
 
 
-def _read_csv(storage: Storage, key: str) -> tuple[list[str], Iterator[list[str]], Any]:
-    """Header, row iterator, and the handle the caller must close.
+@contextlib.contextmanager
+def _open_csv(storage: Storage, key: str) -> Iterator[tuple[list[str], Iterator[list[str]]]]:
+    """Header and a lazy row iterator, valid inside the ``with`` block only.
 
-    Streamed, not materialised. ``open_read`` spools the object to a temporary
-    file, and a TextIOWrapper over that feeds csv.reader a line at a time --
-    so a gigabyte extract costs a buffer, not a gigabyte. An earlier version
-    called ``.read()`` here and held roughly three copies of the file at once.
+    Streamed, not materialised: ``open_read`` spools the object to a temporary
+    file and a TextIOWrapper over it feeds csv.reader one line at a time, so
+    a gigabyte extract costs a buffer, not a gigabyte.
 
-    The handle is returned rather than closed because the reader is lazy: close
-    it here and the first row raises.
+    A context manager, and it has to be. The adapter's ``open_read`` is a
+    generator-based context manager whose ``finally`` closes the spool. An
+    earlier version called ``.__enter__()`` on it and returned the handle;
+    with nothing left referencing the manager, CPython finalised the
+    generator on the spot, the ``finally`` ran, and the very first row read
+    "I/O operation on closed file" -- on every one of 18 tables, on the real
+    adapter only, because the test fake did not close on finalisation. The
+    manager lives for exactly as long as this block does, so the rows do too.
     """
-    handle = storage.open_read(key).__enter__()
-    text_handle = io.TextIOWrapper(
-        handle, encoding="utf-8-sig", errors="replace", newline=""
-    )
-    reader = csv.reader(_clean_lines(text_handle))
-    try:
-        header = next(reader)
-    except StopIteration:
-        return [], iter(()), text_handle
-    return [c.strip() for c in header], reader, text_handle
+    with storage.open_read(key) as handle:
+        text_handle = io.TextIOWrapper(
+            handle, encoding="utf-8-sig", errors="replace", newline=""
+        )
+        reader = csv.reader(_clean_lines(text_handle))
+        header = next(reader, None)
+        yield ([c.strip() for c in header] if header else []), reader
 
 
 def _safe_columns(header: list[str]) -> list[str]:
@@ -181,7 +207,11 @@ def load_table(
             seconds=time.monotonic() - started, error=detail,
         )
 
-    record = request or latest_complete(spec.sap_table)
+    record = request or (
+        latest_landed(spec.sap_table)
+        if allow_unreconciled
+        else latest_complete(spec.sap_table)
+    )
     if record is None:
         return CsvLoadResult(
             spec.sap_table, spec.raw_table, STATUS_SKIPPED,
@@ -198,63 +228,69 @@ def load_table(
             f"({record.error or 'no detail'}). Refusing to load it: a short file "
             "reads as a whole one."
         )
+    if record.status != STATUS_COMPLETE:
+        logger.warning(
+            "%s: loading request %s although it is %s (%s) -- --allow-unstable",
+            spec.sap_table, record.request_id, record.status,
+            record.error or "no detail",
+        )
 
     if not record.data_key:
         return failure(f"request {record.request_id} completed with no file key")
 
-    try:
-        header, rows, handle = _read_csv(storage, record.data_key)
-    except Exception as exc:
-        return failure(f"could not read {record.data_key}: {exc}")
-
-    if not header:
-        with contextlib.suppress(Exception):
-            handle.close()
-        return failure(f"{record.data_key} is empty")
-
-    columns = _safe_columns(header)
     writer = RawTableWriter(indexed_columns=())
     loaded = 0
+    columns: list[str] = []
     watermark_value: str | None = None
-    watermark_index = _watermark_index(spec, columns)
+    watermark_index: int | None = None
+    phase = "reading"
 
     try:
-        engine = get_engine()
-        with engine.begin() as connection:
-            # driver_connection, and a cursor from it: SQLAlchemy's wrapper
-            # does more on exit than close, and engine.begin() owns the
-            # transaction. Same pattern as ingest/load.py.
-            cursor = connection.connection.driver_connection.cursor()
+        with _open_csv(storage, record.data_key) as (header, rows):
+            if not header:
+                return failure(f"{record.data_key} is empty")
 
-            # Replace, not merge. A full pull IS the table; merging it into the
-            # previous one would keep rows SAP has since deleted.
-            writer.create_table(cursor, spec.raw_table, columns)
-            for batch in _batches(rows, len(columns)):
-                if watermark_index is not None:
-                    watermark_value = _highest(
-                        watermark_value, (r[watermark_index] for r in batch)
-                    )
-                writer.bulk_load(cursor, spec.raw_table, columns, batch)
-                loaded += len(batch)
+            columns = _safe_columns(header)
+            watermark_index = _watermark_index(spec, columns)
+            phase = "loading"
+
+            engine = get_engine()
+            with engine.begin() as connection:
+                # driver_connection, and a cursor from it: SQLAlchemy's wrapper
+                # does more on exit than close, and engine.begin() owns the
+                # transaction. Same pattern as ingest/load.py.
+                cursor = connection.connection.driver_connection.cursor()
+
+                # Replace, not merge. A full pull IS the table; merging it into
+                # the previous one would keep rows SAP has since deleted.
+                writer.create_table(cursor, spec.raw_table, columns)
+                for batch in _batches(rows, len(columns)):
+                    if watermark_index is not None:
+                        watermark_value = _highest(
+                            watermark_value, (r[watermark_index] for r in batch)
+                        )
+                    writer.bulk_load(cursor, spec.raw_table, columns, batch)
+                    loaded += len(batch)
     except Exception as exc:
+        if phase == "reading":
+            return failure(f"could not read {record.data_key}: {exc}")
         _record(spec, record, STATUS_FAILED, 0, started_at, str(exc))
         return failure(f"the load failed after {loaded} row(s): {exc}")
-    finally:
-        with contextlib.suppress(Exception):
-            handle.close()
 
     elapsed = time.monotonic() - started
 
     # Only past a successful load. A watermark advanced by a failed one leaves
     # a gap nothing will ever go back for.
+    seeded: str | None = None
     if watermark_value and watermark_index is not None:
         _, odata_field = WATERMARK_FIELD[spec.sap_table]
         try:
-            set_watermark(spec.entity_set, odata_field, watermark_value, loaded)
-            logger.info(
-                "%s: watermark seeded at %s.%s = %s",
-                spec.sap_table, spec.entity_set, odata_field, watermark_value,
-            )
+            seeded = _seed_watermark(spec.entity_set, odata_field, watermark_value, loaded)
+            if seeded:
+                logger.info(
+                    "%s: watermark seeded at %s.%s = %s (from DATS %s)",
+                    spec.sap_table, spec.entity_set, odata_field, seeded, watermark_value,
+                )
         except Exception as exc:
             # Loud, but not fatal: the rows are in. The next delta will do a
             # full pull and say so, which is recoverable; failing the load
@@ -273,8 +309,37 @@ def load_table(
     )
     return CsvLoadResult(
         spec.sap_table, spec.raw_table, STATUS_SUCCEEDED,
-        rows=loaded, columns=len(columns), seconds=elapsed, watermark=watermark_value,
+        rows=loaded, columns=len(columns), seconds=elapsed, watermark=seeded,
     )
+
+
+def _seed_watermark(entity_set: str, field: str, dats: str, rows: int) -> str | None:
+    """Give the OData delta a starting point, if it has none. Returns the mark.
+
+    One day back, in the OData delta's own shape. SAP serialises a DATS as
+    midnight in its own time zone, which the envelope decodes to 22:00 UTC
+    the evening before; a literal at midnight of the same date could sit just
+    past every row of that day, depending on which zone SAP reads the literal
+    in. ``ge`` from the previous day re-reads at most one day of rows, and
+    the merge absorbs the overlap.
+
+    Only if the set has no usable mark. See the module docstring: a mark the
+    delta measured itself belongs to a different table than this load filled.
+    """
+    if get_watermark(entity_set, field) is not None:
+        logger.info(
+            "%s: already has a watermark on %s; the CSV load leaves it alone",
+            entity_set, field,
+        )
+        return None
+    try:
+        newest = datetime.strptime(dats, "%Y%m%d")
+    except ValueError:
+        # "00000000" is SAP for "no date"; a column of those seeds nothing.
+        return None
+    mark = f"{newest - timedelta(days=1):%Y-%m-%d %H:%M:%S}"
+    set_watermark(entity_set, field, mark, rows)
+    return mark
 
 
 def _watermark_index(spec: CsvTable, columns: list[str]) -> int | None:
@@ -354,7 +419,9 @@ def _record(
         logger.exception("could not record the ingestion run for %s", spec.sap_table)
 
 
-def load_all(tables: list[str] | None = None) -> list[CsvLoadResult]:
+def load_all(
+    tables: list[str] | None = None, *, allow_unreconciled: bool = False
+) -> list[CsvLoadResult]:
     """Every table with a reconciled extract waiting. Independent, so one
     failure does not stop the rest."""
     from app.ingest.csv_tables import CSV_TABLES
@@ -362,7 +429,7 @@ def load_all(tables: list[str] | None = None) -> list[CsvLoadResult]:
     names = tables or [t.sap_table for t in CSV_TABLES]
     results = []
     for name in names:
-        result = load_table(name)
+        result = load_table(name, allow_unreconciled=allow_unreconciled)
         if result.status != STATUS_SKIPPED:
             results.append(result)
     return results
