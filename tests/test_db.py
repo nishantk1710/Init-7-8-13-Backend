@@ -105,7 +105,7 @@ class TestPostgresOrAzureSqlIsAccepted:
     ) -> None:
         monkeypatch.delenv("ALLOW_NON_AZURE_SQL", raising=False)
         with pytest.raises(DatabaseNotConfiguredError, match="mysql"):
-            require_azure_sql("postgresql://u:p@h/db")
+            require_supported_backend("mysql://u:p@h/db")
 
     def test_allow_non_azure_sql_env_var_lifts_the_gate(
         self, monkeypatch: pytest.MonkeyPatch

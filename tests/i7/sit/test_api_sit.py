@@ -199,19 +199,22 @@ def test_an_oar_recommendation_traces_through_similarity_to_the_estimate_block()
 
 
 def test_no_module_under_app_api_imports_a_sap_write_client():
-    """Walks every module under app/api/i7 and forbids importing
+    """Walks every module under app/api and forbids importing
     app.integrations.sap directly (the read adapter) from API code -- API
     routes should never reach SAP even read-only; that boundary belongs to
     the domain/service layer.
 
-    Scoped to I07: I13's API layer reads Postgres repository classes from
-    app.integrations.sap.postgres_* by design -- those are Postgres
-    repositories, not SAP clients -- and that indirection will be introduced
-    when I13 grows a service layer. I08 reads normalise views, not the SAP
-    integration.
+    One narrow exception: app.integrations.sap.postgres_* -- I13's API layer
+    reads these Postgres repository classes directly by design (they are
+    Postgres repositories, not SAP clients), and that indirection will be
+    introduced when I13 grows a service layer. Nothing else under
+    app.integrations.sap is exempted, so a module still cannot reach the
+    live SAP client (app.integrations.sap.client) or any other submodule
+    from API code.
     """
-    package_dir = Path(__file__).resolve().parents[3] / "app" / "api" / "i7"
+    package_dir = Path(__file__).resolve().parents[3] / "app" / "api"
     forbidden_modules = {"requests", "httpx", "urllib3"}
+    allowed_sap_prefix = "app.integrations.sap.postgres_"
 
     for path in package_dir.rglob("*.py"):
         if "__pycache__" in path.parts:
@@ -228,8 +231,19 @@ def test_no_module_under_app_api_imports_a_sap_write_client():
             if isinstance(node, ast.ImportFrom)
         }
         assert not (imported & forbidden_modules), f"{path} imports {imported & forbidden_modules}"
-        source = path.read_text(encoding="utf-8")
-        assert "app.integrations.sap" not in source, f"{path} imports the SAP integration directly"
+
+        sap_imports = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.startswith("app.integrations.sap")
+        }
+        disallowed = {m for m in sap_imports if not m.startswith(allowed_sap_prefix)}
+        assert not disallowed, (
+            f"{path} imports the SAP integration directly: {disallowed}. "
+            f"Only {allowed_sap_prefix}* (Postgres repositories) is allowed from API code."
+        )
 
 
 @needs_db
