@@ -109,6 +109,7 @@ def sql_predicate(column: str) -> str:
 
     ``column`` is a caller-supplied identifier (``plant``, ``m.plant``), never
     user input. Trimmed before comparison because the raw extract layer is all
-    text and a padded cell would otherwise fall out of scope silently.
+    text and a padded cell would otherwise fall out of scope silently. TRIM, not
+    Postgres's btrim, so the same fragment runs on SQL Server.
     """
-    return f"btrim({column}) IN ({sql_literals()})"
+    return f"TRIM({column}) IN ({sql_literals()})"

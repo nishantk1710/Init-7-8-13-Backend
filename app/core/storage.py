@@ -29,7 +29,6 @@ on Windows and then silently creates wrongly-named blobs on Azure.
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
@@ -219,26 +218,12 @@ def build_storage(url: str) -> Storage:
     process-wide settings.
     """
     if _looks_like_a_local_path(url):
-        # ``ALLOW_NON_AZURE_SQL=1`` lifts this gate too -- see app.core.db for
-        # the flag's origin. It exists there because Azure SQL sits behind a
-        # private endpoint only the VNet can reach; the same is true of the
-        # Azure Data Lake account, so CI and local development need *some*
-        # storage location to prove seeding and app code work. Reusing one
-        # flag rather than adding a second keeps "this run is against
-        # non-Azure infrastructure" a single on/off switch instead of two that
-        # could disagree.
-        if os.environ.get("ALLOW_NON_AZURE_SQL") == "1":
-            from app.integrations.storage.local import LocalFileSystemStorage
-
-            return LocalFileSystemStorage(url)
         raise StorageError(
             f"STORAGE_URL {url!r} is a local path. This system now runs against "
             "Azure Data Lake only -- the local folder was a stand-in until VZI's "
             "storage account existed, and it does. Set STORAGE_URL to "
             "abfss://<container>@stvziaicomnonprod.dfs.core.windows.net/<path>. "
-            "See README, 'Storage'. Set ALLOW_NON_AZURE_SQL=1 to use a local "
-            "folder anyway (CI/local dev only -- never in a deployed "
-            "environment)."
+            "See README, 'Storage'."
         )
 
     scheme = urlparse(url).scheme.lower()

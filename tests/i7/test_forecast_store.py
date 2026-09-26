@@ -239,7 +239,7 @@ def test_exactly_one_champion_per_material_plant(session):
             Forecast.sap_plant_code,
             func.count(),
         )
-        .where(Forecast.is_champion.is_(True))
+        .where(Forecast.is_champion)
         .group_by(
             Forecast.forecast_run_id, Forecast.sap_material_number, Forecast.sap_plant_code
         )
@@ -316,10 +316,11 @@ def test_backtest_paths_exist_only_for_champion_rows(session):
                    and f.sap_material_number = p.sap_material_number
                    and f.sap_plant_code = p.sap_plant_code
                    and f.model_name = p.model_name
-                   and f.is_champion = true
+                   and f.is_champion = :champion
             )
             """
-        )
+        ),
+        {"champion": True},
     ).scalar()
     assert mismatched == 0
 

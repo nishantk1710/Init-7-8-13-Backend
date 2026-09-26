@@ -243,7 +243,7 @@ _STOCK_SQL = """
            SUM(returns_stock) AS returns_stock,
            COUNT(*) AS storage_location_count
       FROM i7_staged_stock
-     GROUP BY 1, 2
+     GROUP BY sap_material_number, sap_plant_code
 """
 
 
@@ -280,11 +280,11 @@ def _load_purchase_order_counts(session: Session) -> dict[tuple[str, str], int]:
         SELECT sap_material_number, sap_plant_code, COUNT(*) AS n
           FROM i7_staged_purchase_order
          WHERE lead_time_days IS NOT NULL
-           AND is_cancelled = false
-         GROUP BY 1, 2
+           AND is_cancelled = :cancelled
+         GROUP BY sap_material_number, sap_plant_code
         """
     )
-    return {(row[0], row[1]): row[2] for row in session.execute(statement)}
+    return {(row[0], row[1]): row[2] for row in session.execute(statement, {"cancelled": False})}
 
 
 _ATTRIBUTE_SQL = """

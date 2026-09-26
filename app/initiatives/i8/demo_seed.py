@@ -214,7 +214,7 @@ def clear(db: Session) -> int:
     from sqlalchemy import text
 
     dialect = db.get_bind().dialect.name
-    if dialect == "postgresql":
+    if dialect in ("postgresql", "mssql"):
         db.execute(
             text(
                 "ALTER TABLE i8_attestation DISABLE TRIGGER "
@@ -227,7 +227,7 @@ def clear(db: Session) -> int:
             {"attestor": DEMO_ATTESTOR},
         ).rowcount
     finally:
-        if dialect == "postgresql":
+        if dialect in ("postgresql", "mssql"):
             db.execute(
                 text(
                     "ALTER TABLE i8_attestation ENABLE TRIGGER "

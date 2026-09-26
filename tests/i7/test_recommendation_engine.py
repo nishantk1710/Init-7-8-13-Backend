@@ -116,7 +116,7 @@ def test_no_recommendation_has_a_value_without_service_level_configured(session)
         select(func.count())
         .select_from(Recommendation)
         .where(
-            Recommendation.is_oar.is_(False),
+            ~Recommendation.is_oar,
             Recommendation.recommended_safety_stock.isnot(None),
             Recommendation.safety_stock_method != "current_sap_value",
             # Excludes dev-mock runs (policy_id like "i07-default-dev-mock%"):
@@ -163,7 +163,7 @@ def test_ready_for_review_only_when_the_path_actually_computed(session):
         select(func.count())
         .select_from(Recommendation)
         .where(
-            Recommendation.is_oar.is_(False),
+            ~Recommendation.is_oar,
             Recommendation.status == LifecycleStatus.READY_FOR_REVIEW.value,
             Recommendation.recommended_safety_stock.is_(None),
         )
@@ -174,7 +174,7 @@ def test_ready_for_review_only_when_the_path_actually_computed(session):
         select(func.count())
         .select_from(Recommendation)
         .where(
-            Recommendation.is_oar.is_(True),
+            Recommendation.is_oar,
             Recommendation.status == LifecycleStatus.READY_FOR_REVIEW.value,
             Recommendation.oar_neighbour_count.is_(None),
         )
@@ -193,7 +193,7 @@ def test_conversion_eligibility_is_unknown_given_the_unresolved_policies(session
         select(func.count())
         .select_from(Recommendation)
         .where(
-            Recommendation.is_oar.is_(True),
+            Recommendation.is_oar,
             Recommendation.conversion_eligibility != "UNKNOWN",
         )
     ).scalar()
@@ -456,7 +456,7 @@ def test_demand_class_does_not_affect_conversion_eligibility_or_trigger(session)
     rows = session.execute(
         select(Recommendation.demand_class, Recommendation.conversion_trigger)
         .where(
-            Recommendation.is_oar.is_(True),
+            Recommendation.is_oar,
             Recommendation.conversion_trigger.isnot(None),
         )
         .limit(50)
@@ -485,7 +485,7 @@ def test_cold_start_recommendations_expose_unclassified_not_a_fabricated_label(s
     if not _generated(session):
         pytest.skip("no recommendations generated")
     latest_oar_run_id = session.execute(
-        select(func.max(Recommendation.oar_run_id)).where(Recommendation.is_oar.is_(True))
+        select(func.max(Recommendation.oar_run_id)).where(Recommendation.is_oar)
     ).scalar()
     if latest_oar_run_id is None:
         pytest.skip("no OAR recommendations generated")
@@ -510,7 +510,7 @@ def test_cold_start_recommendations_expose_unclassified_not_a_fabricated_label(s
         .where(
             Recommendation.oar_run_id == latest_oar_run_id,
             Recommendation.history_status != "SUFFICIENT",
-            Recommendation.is_oar.is_(True),
+            Recommendation.is_oar,
             Recommendation.demand_class.is_(None),
         )
     ).scalar()

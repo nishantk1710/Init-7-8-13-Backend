@@ -18,7 +18,7 @@ learns a column name or a table name either.
 
 from typing import NamedTuple
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 _CHANGE_DOCUMENT_SQL = """
@@ -34,9 +34,9 @@ _CHANGE_DOCUMENT_SQL = """
      WHERE h.change_doc_object = 'MATERIAL'
        AND h.object_value = :padded_material
        AND p.table_name = 'MARC'
-       AND p.field_name = ANY(:tracked_fields)
-       AND (CAST(:window_start AS text) IS NULL OR h.date >= CAST(:window_start AS text))
-       AND (CAST(:window_end AS text) IS NULL OR h.date <= CAST(:window_end AS text))
+       AND p.field_name IN :tracked_fields
+       AND (CAST(:window_start AS VARCHAR(10)) IS NULL OR h.date >= CAST(:window_start AS VARCHAR(10)))
+       AND (CAST(:window_end AS VARCHAR(10)) IS NULL OR h.date <= CAST(:window_end AS VARCHAR(10)))
      ORDER BY h.date, h.time
 """
 # h.date is `text`, not a real date column (see CLAUDE.md's "every raw column
@@ -92,7 +92,7 @@ def material_marc_changes(
     both, matching the pre-window behaviour exactly.
     """
     rows = session.execute(
-        text(_CHANGE_DOCUMENT_SQL),
+        text(_CHANGE_DOCUMENT_SQL).bindparams(bindparam("tracked_fields", expanding=True)),
         {
             "padded_material": padded_material,
             "tracked_fields": list(tracked_fields),

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.criticality import (
@@ -61,7 +61,6 @@ _BY_MATERIAL_PLANT = text(
      WHERE z.mat_code = :material
        AND z.plant = :plant
        AND NULLIF(z.criticality, '') IS NOT NULL
-     LIMIT 1
     """
 )
 
@@ -77,7 +76,8 @@ _BY_MATERIAL = text(
     """
 )
 
-_PROBE = text(f"SELECT 1 FROM ({_UNION}) z LIMIT 1")
+# Proves the tables exist without reading a row -- portable, unlike LIMIT.
+_PROBE = text(f"SELECT 1 FROM ({_UNION}) z WHERE 1 = 0")
 
 # Every row for a batch of materials, in one round trip. The plant is NOT
 # filtered here: one pass over the requested materials answers both the
@@ -87,10 +87,14 @@ _MANY = text(
     f"""
     SELECT z.mat_code, z.plant, z.criticality
       FROM ({_UNION}) z
-     WHERE z.mat_code = ANY(:materials)
+     WHERE z.mat_code IN :materials
        AND NULLIF(z.criticality, '') IS NOT NULL
     """
-)
+).bindparams(bindparam("materials", expanding=True))
+
+#: Materials per _MANY round trip. Each is one bind parameter, and SQL Server
+#: refuses a statement with more than 2,100.
+_MANY_CHUNK = 1000
 
 
 class Zmm065CriticalitySource(CriticalitySource):
@@ -181,12 +185,18 @@ class Zmm065CriticalitySource(CriticalitySource):
         by_material: dict[str, set[str]] = {}
         if materials:
             with self._session() as session:
-                rows = session.execute(_MANY, {"materials": materials}).fetchall()
+                rows = [
+                    row
+                    for start in range(0, len(materials), _MANY_CHUNK)
+                    for row in session.execute(
+                        _MANY, {"materials": materials[start : start + _MANY_CHUNK]}
+                    ).fetchall()
+                ]
             for mat_code, plant, criticality in rows:
                 material = (mat_code or "").strip()
                 plant_code = (plant or "").strip() or None
                 if plant_code is not None:
-                    # LIMIT 1 in the single-key query means first row wins; the
+                    # .first() in the single-key query means first row wins; the
                     # same rule here, via setdefault.
                     by_material_plant.setdefault((material, plant_code), criticality)
                 by_material.setdefault(material, set()).add(criticality)

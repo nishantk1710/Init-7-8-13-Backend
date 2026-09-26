@@ -110,7 +110,7 @@ def simulate(db: Session, session_id: str, *, actor: str) -> UatReservationSgtxt
     session = _session(db, session_id)
     existing = db.execute(
         select(UatReservationSgtxt).where(
-            UatReservationSgtxt.session_id == session.session_id, UatReservationSgtxt.simulated.is_(True)
+            UatReservationSgtxt.session_id == session.session_id, UatReservationSgtxt.simulated
         )
     ).scalar_one_or_none()
     if existing is not None:
@@ -121,7 +121,7 @@ def simulate(db: Session, session_id: str, *, actor: str) -> UatReservationSgtxt
 
     plan = _latest_plan(db, session.session_id)
     highest = db.execute(
-        select(func.max(UatReservationSgtxt.reservation_number)).where(UatReservationSgtxt.simulated.is_(True))
+        select(func.max(UatReservationSgtxt.reservation_number)).where(UatReservationSgtxt.simulated)
     ).scalar()
     number = max(SIMULATED_RANGE_START, int(highest) + 1 if highest else SIMULATED_RANGE_START)
     row = UatReservationSgtxt(
@@ -176,10 +176,10 @@ def stamp(db: Session, session_id: str, *, reservation_number: str, reservation_
     # The reservation's own item text, kept for display beside the stamp.
     raw_text = db.execute(
         text(
-            "SELECT text FROM raw_resb WHERE reservation = :number AND item_no_stock_transfer_reserv = :item LIMIT 1"
+            "SELECT text FROM raw_resb WHERE reservation = :number AND item_no_stock_transfer_reserv = :item"
         ),
         {"number": reservation_number, "item": reservation_item},
-    ).scalar()
+    ).scalars().first()
     row = UatReservationSgtxt(
         reservation_number=reservation_number,
         reservation_item=reservation_item,

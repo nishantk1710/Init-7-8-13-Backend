@@ -146,7 +146,7 @@ def test_a_blocked_normal_recommendation_traces_to_its_blocking_reason():
     with get_sessionmaker()() as session:
         row = session.execute(
             select(Recommendation).where(
-                Recommendation.is_oar.is_(False), Recommendation.status == "NOT_EVALUABLE"
+                ~Recommendation.is_oar, Recommendation.status == "NOT_EVALUABLE"
             ).limit(1)
         ).scalar_one_or_none()
     if row is None:

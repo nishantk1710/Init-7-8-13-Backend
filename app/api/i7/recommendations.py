@@ -307,8 +307,12 @@ def get_recommendation_summary(
         (Recommendation.criticality == "INSURANCE", "medium"),
         else_="low",
     )
+    # Grouped over a subquery column, not the CASE itself: SQL Server binds the
+    # CASE's literals as fresh parameters in GROUP BY and then refuses to treat
+    # the two copies as the same expression.
+    risk_rows = base.with_only_columns(risk_case.label("risk")).subquery()
     by_risk = session.execute(
-        base.with_only_columns(risk_case.label("risk"), func.count()).group_by(risk_case)
+        select(risk_rows.c.risk, func.count()).group_by(risk_rows.c.risk)
     ).all()
 
     # Ordered by plant code so a filter dropdown built from this is stable
@@ -321,12 +325,12 @@ def get_recommendation_summary(
 
     oar_count = session.execute(
         select(func.count()).select_from(
-            base.where(Recommendation.is_oar.is_(True)).subquery()
+            base.where(Recommendation.is_oar).subquery()
         )
     ).scalar_one()
     normal_count = session.execute(
         select(func.count()).select_from(
-            base.where(Recommendation.is_oar.is_(False)).subquery()
+            base.where(~Recommendation.is_oar).subquery()
         )
     ).scalar_one()
 

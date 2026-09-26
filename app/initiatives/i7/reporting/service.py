@@ -347,11 +347,11 @@ def _forecasting_section(session: Session, forecast_base) -> ForecastingSection:
     fill_rate = _accuracy_metric(session, forecast_base, Forecast.fill_rate, total)
     holding_cost = _accuracy_metric(session, forecast_base, Forecast.holding_cost, total)
 
-    champion_count = _count(session, forecast_base.where(Forecast.is_champion.is_(True)))
-    baseline_count = _count(session, forecast_base.where(Forecast.is_baseline.is_(True)))
+    champion_count = _count(session, forecast_base.where(Forecast.is_champion))
+    baseline_count = _count(session, forecast_base.where(Forecast.is_baseline))
     challenger_count = _count(
         session,
-        forecast_base.where(Forecast.is_champion.is_(False), Forecast.is_baseline.is_(False)),
+        forecast_base.where(~Forecast.is_champion, ~Forecast.is_baseline),
     )
 
     return ForecastingSection(
@@ -544,8 +544,8 @@ def _management_summary_section() -> ManagementSummary:
 
 
 def _oar_section(session: Session, recommendation_base) -> OarSection:
-    is_oar_true = _count(session, recommendation_base.where(Recommendation.is_oar.is_(True)))
-    is_oar_false = _count(session, recommendation_base.where(Recommendation.is_oar.is_(False)))
+    is_oar_true = _count(session, recommendation_base.where(Recommendation.is_oar))
+    is_oar_false = _count(session, recommendation_base.where(~Recommendation.is_oar))
     is_oar_null = _count(session, recommendation_base.where(Recommendation.is_oar.is_(None)))
 
     by_eligibility_rows = session.execute(

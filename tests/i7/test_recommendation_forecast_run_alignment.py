@@ -41,7 +41,7 @@ def test_forecast_run_for_inventory_run_reads_the_pinned_value(session):
     """The helper reads i7_inventory_run.forecast_run_id verbatim -- not the
     latest forecast run, not the latest feature run's forecast run."""
     inventory_run_id = session.execute(
-        text("select id from i7_inventory_run where forecast_run_id is not null order by id desc limit 1")
+        text("select max(id) from i7_inventory_run where forecast_run_id is not null")
     ).scalar()
     if inventory_run_id is None:
         pytest.skip("no inventory run with a forecast_run_id on this database")
@@ -71,7 +71,7 @@ def test_forecast_run_for_inventory_run_can_disagree_with_latest_feature_run(ses
     unscoped_for_latest_feature = repository.latest_forecast_run(session, latest_feature_run_id)
 
     inventory_run_id = session.execute(
-        text("select id from i7_inventory_run where forecast_run_id is not null order by id desc limit 1")
+        text("select max(id) from i7_inventory_run where forecast_run_id is not null")
     ).scalar()
     if inventory_run_id is None:
         pytest.skip("no inventory run with a forecast_run_id on this database")

@@ -340,7 +340,7 @@ def test_cancellation_is_staged_not_filtered(session):
         pytest.skip("staging not populated")
     cancelled = session.execute(
         select(func.count()).select_from(StagedPurchaseOrder).where(
-            StagedPurchaseOrder.is_cancelled.is_(True)
+            StagedPurchaseOrder.is_cancelled
         )
     ).scalar()
     assert cancelled > 0

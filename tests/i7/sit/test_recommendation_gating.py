@@ -151,7 +151,7 @@ def test_invariant_service_level_unset_implies_no_recommended_safety_stock(sessi
         select(func.count())
         .select_from(Recommendation)
         .where(
-            Recommendation.is_oar.is_(False),
+            ~Recommendation.is_oar,
             Recommendation.recommended_safety_stock.isnot(None),
         )
     ).scalar()

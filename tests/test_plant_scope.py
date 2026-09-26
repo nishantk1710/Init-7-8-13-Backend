@@ -99,10 +99,10 @@ class TestGeneratedSql:
         assert sql_literals() == "'1300', '1500'"
 
     def test_predicate_trims_before_comparing(self) -> None:
-        assert sql_predicate("m.plant") == "btrim(m.plant) IN ('1300', '1500')"
+        assert sql_predicate("m.plant") == "TRIM(m.plant) IN ('1300', '1500')"
 
     def test_the_predicate_names_the_column_it_was_given(self) -> None:
-        assert sql_predicate("k.plant").startswith("btrim(k.plant)")
+        assert sql_predicate("k.plant").startswith("TRIM(k.plant)")
 
     @pytest.mark.parametrize("code", OUT_OF_SCOPE)
     def test_no_out_of_scope_code_appears_in_the_generated_sql(self, code: str) -> None:

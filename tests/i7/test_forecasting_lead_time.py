@@ -110,10 +110,10 @@ def test_changing_po_history_does_not_change_forecasting_lead_time(session):
             """
             select avg(lead_time_days) from i7_staged_purchase_order
              where sap_material_number = :m and sap_plant_code = :p
-               and lead_time_days is not null and is_cancelled = false
+               and lead_time_days is not null and is_cancelled = :cancelled
             """
         ),
-        {"m": row.sap_material_number, "p": row.sap_plant_code},
+        {"m": row.sap_material_number, "p": row.sap_plant_code, "cancelled": False},
     ).scalar()
 
     # Scoped to the latest forecast run: repeated test/dev runs leave several

@@ -45,6 +45,16 @@ from app.initiatives.i8.exceptions import (
 from app.main import app
 from tests.i8_support import needs_db, needs_views
 
+
+def _set_immutability_trigger(db, action: str) -> None:
+    """Toggle the append-only trigger around a test wipe.
+
+    It exists on Postgres (b2f4c81d5a37) and SQL Server (e3b7c2d9f104), and
+    both accept this statement; any other engine has no trigger to toggle.
+    """
+    if db.get_bind().dialect.name in ("postgresql", "mssql"):
+        db.execute(text(f"ALTER TABLE i8_attestation {action} TRIGGER i8_attestation_no_update_or_delete"))
+
 client = TestClient(app)
 
 ATTESTATIONS = "/api/i8/attestations"
@@ -463,19 +473,9 @@ class TestTheWritePath:
 
         def wipe():
             with get_sessionmaker()() as db:
-                db.execute(
-                    text(
-                        "ALTER TABLE i8_attestation DISABLE TRIGGER "
-                        "i8_attestation_no_update_or_delete"
-                    )
-                )
+                _set_immutability_trigger(db, "DISABLE")
                 db.execute(text("DELETE FROM i8_attestation"))
-                db.execute(
-                    text(
-                        "ALTER TABLE i8_attestation ENABLE TRIGGER "
-                        "i8_attestation_no_update_or_delete"
-                    )
-                )
+                _set_immutability_trigger(db, "ENABLE")
                 db.commit()
 
         wipe()
@@ -604,19 +604,9 @@ class TestTheApi:
 
         def wipe():
             with get_sessionmaker()() as db:
-                db.execute(
-                    text(
-                        "ALTER TABLE i8_attestation DISABLE TRIGGER "
-                        "i8_attestation_no_update_or_delete"
-                    )
-                )
+                _set_immutability_trigger(db, "DISABLE")
                 db.execute(text("DELETE FROM i8_attestation"))
-                db.execute(
-                    text(
-                        "ALTER TABLE i8_attestation ENABLE TRIGGER "
-                        "i8_attestation_no_update_or_delete"
-                    )
-                )
+                _set_immutability_trigger(db, "ENABLE")
                 db.commit()
             reset_attestation_view()
 
@@ -722,19 +712,9 @@ class TestTheViewNoticesWritesFromElsewhere:
 
         def wipe():
             with get_sessionmaker()() as db:
-                db.execute(
-                    text(
-                        "ALTER TABLE i8_attestation DISABLE TRIGGER "
-                        "i8_attestation_no_update_or_delete"
-                    )
-                )
+                _set_immutability_trigger(db, "DISABLE")
                 db.execute(text("DELETE FROM i8_attestation"))
-                db.execute(
-                    text(
-                        "ALTER TABLE i8_attestation ENABLE TRIGGER "
-                        "i8_attestation_no_update_or_delete"
-                    )
-                )
+                _set_immutability_trigger(db, "ENABLE")
                 db.commit()
             reset_attestation_view()
 
@@ -805,19 +785,9 @@ class TestAgainstTheSeededRegister:
 
         def wipe():
             with get_sessionmaker()() as db:
-                db.execute(
-                    text(
-                        "ALTER TABLE i8_attestation DISABLE TRIGGER "
-                        "i8_attestation_no_update_or_delete"
-                    )
-                )
+                _set_immutability_trigger(db, "DISABLE")
                 db.execute(text("DELETE FROM i8_attestation"))
-                db.execute(
-                    text(
-                        "ALTER TABLE i8_attestation ENABLE TRIGGER "
-                        "i8_attestation_no_update_or_delete"
-                    )
-                )
+                _set_immutability_trigger(db, "ENABLE")
                 db.commit()
             reset_attestation_view()
 
@@ -943,19 +913,9 @@ class TestTheRegisterCarriesTheRealDeclarationStatus:
 
         def wipe():
             with get_sessionmaker()() as db:
-                db.execute(
-                    text(
-                        "ALTER TABLE i8_attestation DISABLE TRIGGER "
-                        "i8_attestation_no_update_or_delete"
-                    )
-                )
+                _set_immutability_trigger(db, "DISABLE")
                 db.execute(text("DELETE FROM i8_attestation"))
-                db.execute(
-                    text(
-                        "ALTER TABLE i8_attestation ENABLE TRIGGER "
-                        "i8_attestation_no_update_or_delete"
-                    )
-                )
+                _set_immutability_trigger(db, "ENABLE")
                 db.commit()
             reset_attestation_view()
 
@@ -1038,19 +998,9 @@ class TestTheLifecycleTimelineAttestedStage:
 
         def wipe():
             with get_sessionmaker()() as db:
-                db.execute(
-                    text(
-                        "ALTER TABLE i8_attestation DISABLE TRIGGER "
-                        "i8_attestation_no_update_or_delete"
-                    )
-                )
+                _set_immutability_trigger(db, "DISABLE")
                 db.execute(text("DELETE FROM i8_attestation"))
-                db.execute(
-                    text(
-                        "ALTER TABLE i8_attestation ENABLE TRIGGER "
-                        "i8_attestation_no_update_or_delete"
-                    )
-                )
+                _set_immutability_trigger(db, "ENABLE")
                 db.commit()
             reset_attestation_view()
 
@@ -1205,19 +1155,9 @@ class TestThePostExplainsItself:
 
         def wipe():
             with get_sessionmaker()() as db:
-                db.execute(
-                    text(
-                        "ALTER TABLE i8_attestation DISABLE TRIGGER "
-                        "i8_attestation_no_update_or_delete"
-                    )
-                )
+                _set_immutability_trigger(db, "DISABLE")
                 db.execute(text("DELETE FROM i8_attestation"))
-                db.execute(
-                    text(
-                        "ALTER TABLE i8_attestation ENABLE TRIGGER "
-                        "i8_attestation_no_update_or_delete"
-                    )
-                )
+                _set_immutability_trigger(db, "ENABLE")
                 db.commit()
             reset_attestation_view()
 

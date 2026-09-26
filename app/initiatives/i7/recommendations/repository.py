@@ -31,7 +31,7 @@ _NORMAL_SQL = """
         ON c.sap_material_number = f.sap_material_number
        AND c.sap_plant_code = f.sap_plant_code
        AND c.forecast_run_id = :forecast_run_id
-       AND c.is_champion = true
+       AND c.is_champion = :champion
        AND c.forecast_status = 'SUCCESS'
      WHERE f.history_status = 'SUFFICIENT'
 """
@@ -147,7 +147,7 @@ def load_normal_inputs(session: Session, inventory_run_id: int, forecast_run_id:
     return list(
         session.execute(
             text(_NORMAL_SQL),
-            {"inventory_run_id": inventory_run_id, "forecast_run_id": forecast_run_id},
+            {"inventory_run_id": inventory_run_id, "forecast_run_id": forecast_run_id, "champion": True},
         )
     )
 

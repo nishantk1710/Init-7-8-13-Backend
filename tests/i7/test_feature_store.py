@@ -341,11 +341,11 @@ def test_has_unit_price_is_consistent_with_unit_price(session):
         .where(
             (
                 (MaterialFeature.unit_price.is_(None))
-                & (MaterialFeature.has_unit_price.is_(True))
+                & (MaterialFeature.has_unit_price)
             )
             | (
                 (MaterialFeature.unit_price.isnot(None))
-                & (MaterialFeature.has_unit_price.is_(False))
+                & (~MaterialFeature.has_unit_price)
             )
         )
     ).scalar()
@@ -504,11 +504,11 @@ def test_missing_criticality_stays_null(session):
         .where(
             (
                 (MaterialFeature.criticality.is_(None))
-                & (MaterialFeature.has_criticality.is_(True))
+                & (MaterialFeature.has_criticality)
             )
             | (
                 (MaterialFeature.criticality.isnot(None))
-                & (MaterialFeature.has_criticality.is_(False))
+                & (~MaterialFeature.has_criticality)
             )
         )
     ).scalar()
@@ -527,7 +527,7 @@ def test_stock_position_is_present_when_mard_staged_it(session):
     with_stock = session.execute(
         select(func.count())
         .select_from(MaterialFeature)
-        .where(MaterialFeature.has_stock_data.is_(True))
+        .where(MaterialFeature.has_stock_data)
     ).scalar()
     assert with_stock > 0
     assert with_stock <= total
@@ -555,7 +555,7 @@ def test_has_stock_data_is_consistent_with_current_stock(session):
         select(func.count())
         .select_from(MaterialFeature)
         .where(
-            MaterialFeature.has_stock_data.is_(False),
+            ~MaterialFeature.has_stock_data,
             MaterialFeature.current_stock.isnot(None),
         )
     ).scalar()
@@ -568,7 +568,7 @@ def test_storage_location_count_matches_staged_rows(session):
     if not _built(session):
         pytest.skip("features not built")
     row = session.execute(
-        select(MaterialFeature).where(MaterialFeature.has_stock_data.is_(True)).limit(1)
+        select(MaterialFeature).where(MaterialFeature.has_stock_data).limit(1)
     ).scalar_one_or_none()
     if row is None:
         pytest.skip("no material-plant has staged stock")
@@ -623,7 +623,7 @@ def test_gamsberg_stock_is_populated(session):
         select(MaterialFeature)
         .where(
             MaterialFeature.sap_plant_code == "1500",
-            MaterialFeature.has_stock_data.is_(True),
+            MaterialFeature.has_stock_data,
         )
         .limit(1)
     ).scalar_one_or_none()

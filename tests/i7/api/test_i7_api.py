@@ -923,7 +923,7 @@ def test_adoption_returns_unknown_when_no_sap_evidence_exists():
 def test_adoption_marks_parameter_checks_as_not_conversion_adoption():
     with get_sessionmaker()() as session:
         row = session.execute(
-            select(Recommendation).where(Recommendation.is_oar.is_(False)).limit(1)
+            select(Recommendation).where(~Recommendation.is_oar).limit(1)
         ).scalar_one_or_none()
     if row is None:
         pytest.skip("no normal-path recommendation generated")
@@ -943,7 +943,7 @@ def test_adoption_never_claims_conversion_adoption_without_a_real_transition():
     with get_sessionmaker()() as session:
         row = session.execute(
             select(Recommendation).where(
-                Recommendation.is_oar.is_(True),
+                Recommendation.is_oar,
                 Recommendation.conversion_eligibility == "ELIGIBLE",
             ).limit(1)
         ).scalar_one_or_none()

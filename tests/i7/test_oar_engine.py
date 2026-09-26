@@ -120,7 +120,7 @@ def test_no_neighbour_is_inactive(session):
     if not _ran(session):
         pytest.skip("no OAR run")
     inactive = session.execute(
-        select(func.count()).select_from(OarNeighbour).where(OarNeighbour.is_active.is_(False))
+        select(func.count()).select_from(OarNeighbour).where(~OarNeighbour.is_active)
     ).scalar()
     assert inactive == 0
 
@@ -146,7 +146,7 @@ def test_no_inventory_value_is_invented(session):
         pytest.skip("no OAR run")
     lending = session.execute(
         select(func.count()).select_from(OarNeighbour).where(
-            OarNeighbour.inventory_eligible.is_(True)
+            OarNeighbour.inventory_eligible
         )
     ).scalar()
     assert lending == 0

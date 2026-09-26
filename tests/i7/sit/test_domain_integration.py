@@ -135,9 +135,9 @@ def test_oar_recommendations_reference_an_oar_run_that_matches_the_feature_run(s
     rows = session.execute(
         text(
             """select distinct oar_run_id from i7_recommendation
-                where feature_run_id = :fr and is_oar = true and oar_run_id is not null"""
+                where feature_run_id = :fr and is_oar = :oar and oar_run_id is not null"""
         ),
-        {"fr": latest},
+        {"fr": latest, "oar": True},
     ).scalars().all()
     if not rows:
         pytest.skip("no OAR recommendation with an oar_run_id on the latest feature run")
@@ -182,11 +182,10 @@ def test_no_material_identity_collisions_across_plants(session):
         text(
             """select sap_material_number from i7_recommendation
                 where feature_run_id = :fr
-                group by 1 having count(distinct sap_plant_code) > 1
-                limit 5"""
+                group by sap_material_number having count(distinct sap_plant_code) > 1"""
         ),
         {"fr": latest},
-    ).scalars().all()
+    ).scalars().all()[:5]
     if not multi_plant_materials:
         pytest.skip("no material appears at more than one plant in this extract")
 
@@ -216,11 +215,10 @@ def test_no_cross_plant_leakage_in_current_values(session):
                  join i7_staged_material_plant p
                    on p.sap_material_number = r.sap_material_number
                   and p.sap_plant_code = r.sap_plant_code
-                where r.feature_run_id = :fr
-                limit 200"""
+                where r.feature_run_id = :fr"""
         ),
         {"fr": latest},
-    ).all()
+    ).all()[:200]
     assert rows, "expected at least some recommendations with a staged material-plant match"
     for material, plant, rec_rop, staged_rop in rows:
         # Both NULL, or both equal -- never a mismatch, which would indicate the

@@ -101,7 +101,7 @@ _INPUT_SQL = """
              ON c.sap_material_number = f.sap_material_number
             AND c.sap_plant_code = f.sap_plant_code
             AND c.forecast_run_id = :forecast_run_id
-            AND c.is_champion = true
+            AND c.is_champion = :champion
             AND c.forecast_status = 'SUCCESS'
       LEFT JOIN i7_staged_material_plant p
              ON p.sap_material_number = f.sap_material_number
@@ -606,7 +606,7 @@ def run_inventory_calculations(
             logger.info("inventory run %d: calculating", run_id)
             rows: list[dict[str, Any]] = []
             for row in session.execute(
-                text(_INPUT_SQL), {"forecast_run_id": forecast_run_id}
+                text(_INPUT_SQL), {"forecast_run_id": forecast_run_id, "champion": True}
             ).yield_per(5000):
                 key = (row.sap_material_number, row.sap_plant_code)
                 calculation = calculate_one(
