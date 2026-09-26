@@ -19,7 +19,10 @@ from dataclasses import dataclass
 
 from app.integrations.sap.contract import EntitySet, contract
 from app.integrations.sap.filters import HONOURED, verdict_for
-from app.integrations.sap.known_conditions import NON_UNIQUE_DECLARED_KEYS
+from app.integrations.sap.known_conditions import (
+    NON_UNIQUE_DECLARED_KEYS,
+    READ_BROKEN_SETS,
+)
 
 # Raw tables from the live service. The prefix keeps them apart from the seed's
 # ``raw_`` tables, which hold the same SAP data under different column names.
@@ -149,8 +152,47 @@ DELTAS: dict[str, Delta] = {
     "POScheduleLineSet": Delta(via="PurchaseOrderSet", via_key="Ebeln"),
     # EKBE: Budat is REJECTED here, so it rides on the PO numbers instead.
     "POHistorySet": Delta(via="PurchaseOrderSet", via_key="Ebeln"),
-    # MKPF by posting date, then MSEG by the document numbers.
-    "MaterialDocumentHeaderSet": Delta(field="Budat"),
+    # MKPF deliberately has NO delta on Budat, and it is not an oversight.
+    #
+    # Four probes of the 2026-09-25 sweep, all against ZMM_KPI02_ADD_SRV,
+    # set total 40,651 throughout (operator_support.csv rows 9-11 and
+    # filter_support.csv; the requests themselves are calls.csv lines 223-225
+    # and 400, each answering HTTP 200 with a 5-byte $count body -- "40651"):
+    #
+    #   Budat ge datetime'2026-01-01T00:00:00'              -> 40,651
+    #   Budat ge datetime'2013-01-01...' and lt '2014-01-01' -> 40,651
+    #   Budat eq datetime'2013-09-27T00:00:00'              -> 40,651
+    #       (the control: a real posting date sampled from this set, so it
+    #        should have matched a subset and did not)
+    #   Budat eq datetime'1900-01-01T00:00:00'              -> 40,651
+    #       (the impossible value filter_support probes with; this is the
+    #        row that reads IGNORED there)
+    #
+    # The control row is what settles it. A filter that only failed when it
+    # matched nothing would already be unusable for a delta -- `Budat ge
+    # <watermark>` matches nothing on any day when nothing was posted, and
+    # the pipeline would then load all 40,651 rows as if they were new. Budat
+    # is worse than that: it is dropped even when it WOULD have matched, so no
+    # watermark value makes it safe. MKPF pulls in full, like ChangeDocItemSet.
+    #
+    # Do not resurrect this from the older backend/discovery/ snapshot, where
+    # `ge 2026-01-01` returns 2 and `eq 2013-09-27` returns 919. That snapshot
+    # is a different service (ZVZI_KPI02_SHARED_SRV) and is not what
+    # contract.discovery_dir() reads. On the service we actually call, Budat
+    # is IGNORED.
+    #
+    # It could never have run anyway: _read_direct sends a set's own window
+    # with allow_unsupported_filter=False, and check_filter refuses an IGNORED
+    # property, so this entry raised UnsupportedFilterError rather than
+    # pulling anything.
+    #
+    # MSEG keeps its declaration. The shape is still the only right one -- its
+    # own filters are HTTP 500, so its parent's keys are the only route to a
+    # date-bounded read -- and this is what to revive if MKPF ever gains a
+    # filterable date. Until then there is no parent window, and fetch_set
+    # pulls MSEG in full and says so, rather than reading MKPF whole and
+    # asking for its children 50 keys at a time: 814 requests for the set one
+    # full pull already returns.
     "GoodsMovementItemSet": Delta(via="MaterialDocumentHeaderSet", via_key="Mblnr"),
     # CDHDR by change date. Only works alongside the Objectclas predicate this
     # set demands -- `Udate ge ...` on its own is HTTP 400, while
@@ -238,6 +280,51 @@ class IngestSpec:
     def required_filter(self) -> str | None:
         """A predicate SAP will not serve this set without."""
         return REQUIRED_FILTER.get(self.entity_set.name)
+
+    @property
+    def blocked(self) -> str | None:
+        """Why this set cannot be read at all right now, or None.
+
+        A measured fact about SAP, from known_conditions.READ_BROKEN_SETS: a
+        set whose every row read is a server error has no delta to run and no
+        full pull to fall back to, and a sweep says so instead of trying.
+        """
+        return READ_BROKEN_SETS.get(self.entity_set.name)
+
+    @property
+    def runnable_delta(self) -> Delta | None:
+        """The delta this set can run today, or None.
+
+        Declared and runnable are different things. A derived delta reads its
+        parent by date, so it needs the parent to have a date SAP filters on.
+        GoodsMovementItemSet is declared through MaterialDocumentHeaderSet --
+        the only correct shape -- but MKPF's Budat is IGNORED, so there is no
+        window and the delta cannot run. A sweep that took ``delta`` at face
+        value pulled MSEG in full every cycle while calling it an increment.
+
+        And a set SAP cannot serve rows from (``blocked``) has nothing to run
+        either, whatever it declares.
+        """
+        delta = self.delta
+        if delta is None or self.blocked:
+            return None
+        if delta.field is not None:
+            return delta
+        parent = spec_for(delta.via or "").delta
+        if parent is not None and parent.field is not None:
+            return delta
+        return None
+
+    @property
+    def why_not_runnable(self) -> str | None:
+        """One phrase for a listing: why no increment runs for this set."""
+        if self.runnable_delta is not None:
+            return None
+        if self.blocked:
+            return f"blocked: {self.blocked}"
+        if self.delta is None:
+            return "full pull only"
+        return f"via {self.delta.via} (no window: full)"
 
 
 def check_delta_filters() -> list[str]:

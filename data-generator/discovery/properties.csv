@@ -130,10 +130,10 @@ ZMM_KPI02_ADD_SRV,StorageLocationStockSet,Labst,Edm.String,false,,20,,,false,fal
 ZMM_KPI02_ADD_SRV,StorageLocationStockSet,Insme,Edm.String,false,,20,,,false,false,In Qual. Insp.
 ZMM_KPI02_ADD_SRV,StorageLocationStockSet,Speme,Edm.String,false,,20,,,false,false,Blocked
 ZMM_KPI02_ADD_SRV,StorageLocationStockSet,Lgpbe,Edm.String,false,,10,,,false,false,Storage Bin
-ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,Mblnr,Edm.String,false,K,10,,,false,false,Material Doc.
-ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,Mjahr,Edm.String,false,K,4,,,false,false,Mat. Doc. Year
-ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,Budat,Edm.DateTime,true,,,7,,false,false,Posting Date
-ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,Cpudt,Edm.DateTime,true,,,7,,false,false,Entered on
+ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,Mblnr,Edm.String,false,K,10,,,,false,Material Doc.
+ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,Mjahr,Edm.String,false,K,4,,,,false,Mat. Doc. Year
+ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,Budat,Edm.DateTime,true,,,7,,,false,Posting Date
+ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,Cpudt,Edm.DateTime,true,,,7,,,false,Entered on
 ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,Xblnr,Edm.String,false,,16,,,false,false,Reference
 ZMM_KPI02_ADD_SRV,POScheduleLineSet,Ebeln,Edm.String,false,K,10,,,false,false,Purchasing Doc.
 ZMM_KPI02_ADD_SRV,POScheduleLineSet,Ebelp,Edm.String,false,K,5,,,false,false,Item

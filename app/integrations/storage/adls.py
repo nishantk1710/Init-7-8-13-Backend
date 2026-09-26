@@ -34,6 +34,7 @@ currently scarce. Revisit if the seed ever runs across a slow link.
 from __future__ import annotations
 
 import tempfile
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -61,6 +62,12 @@ SPOOL_MAX_BYTES = 32 * 1024 * 1024
 
 # Transfer chunk. Matches the SDK's own default block size.
 CHUNK_BYTES = 4 * 1024 * 1024
+
+# Append retries. Two gunicorn workers can hold chunks of the same table at
+# once and both compute the same append offset; ADLS rejects the stale one, so
+# the fix is to re-read the size and try again rather than to serialise.
+APPEND_ATTEMPTS = 4
+APPEND_BACKOFF_SECONDS = 0.25
 
 
 def parse_abfss(url: str) -> tuple[str, str, str]:
@@ -206,6 +213,59 @@ class AzureDataLakeStorage(Storage):
             )
         finally:
             buffer.close()
+
+    def append(self, key: str, data: bytes) -> int:
+        """Append at the current end of file, using ADLS Gen2's own append API.
+
+        ``append_data`` stages bytes at an offset and ``flush_data`` commits the
+        new length; neither transfers what is already stored. The offset has to
+        be the current size, so it is read from the file properties rather than
+        tracked locally -- two workers appending to one file would otherwise
+        both believe they were at the end and one would overwrite the other.
+        """
+        path = self._path_of(key)
+        client = self._client().get_file_client(path)
+
+        if not data:
+            return int(client.get_file_properties().get("size") or 0) if client.exists() else 0
+
+        # Retried on conflict, because the offset can go stale between reading
+        # it and using it. startup.sh runs two gunicorn workers and SAP pushes
+        # one chunk per request, so two chunks of the same table can be in
+        # flight on different workers at once: both read the same size, both
+        # append there, and one silently overwrites the other.
+        #
+        # Re-reading the size is the whole retry -- ADLS rejects the stale
+        # offset rather than accepting it, which is what makes this safe to
+        # simply try again.
+        last_error: Exception | None = None
+        for attempt in range(APPEND_ATTEMPTS):
+            try:
+                if client.exists():
+                    size = int(client.get_file_properties().get("size") or 0)
+                else:
+                    client.create_file()
+                    size = 0
+
+                client.append_data(data, offset=size, length=len(data))
+                client.flush_data(size + len(data))
+                return size + len(data)
+            except Exception as exc:
+                last_error = exc
+                if attempt == APPEND_ATTEMPTS - 1:
+                    break
+                sleep_for = APPEND_BACKOFF_SECONDS * (2**attempt)
+                logger.warning(
+                    "append to %s failed at attempt %d/%d (%s); retrying in %.1fs "
+                    "with a fresh offset",
+                    key, attempt + 1, APPEND_ATTEMPTS, exc, sleep_for,
+                )
+                time.sleep(sleep_for)
+
+        raise StorageError(
+            f"could not append {len(data)} byte(s) to {key} after "
+            f"{APPEND_ATTEMPTS} attempts: {last_error}"
+        ) from last_error
 
     def exists(self, key: str) -> bool:
         return self._client().get_file_client(self._path_of(key)).exists()

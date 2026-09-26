@@ -268,6 +268,16 @@ def _read_derived(
     return rows, worst, requests
 
 
+def has_window(parent: IngestSpec) -> bool:
+    """Whether this set can be read by a date, i.e. can drive a derived delta.
+
+    Public because the CLI asks the same question twice: once to skip
+    collecting keys it cannot collect, and once so ``--list`` does not print a
+    derived delta that cannot run.
+    """
+    return parent.delta is not None and parent.delta.field is not None
+
+
 def collect_parent_keys(
     client: SapClient, delta: Delta, since: str | None
 ) -> list[str]:
@@ -280,9 +290,23 @@ def collect_parent_keys(
     parent = spec_for(delta.via or "")
     parent_delta = parent.delta
     if parent_delta is None or parent_delta.field is None:
+        # Callers that route through fetch_set never reach this -- it degrades
+        # such a child to a full pull instead. Kept as a guard for a direct
+        # call, because the alternative is silently reading the parent whole
+        # and calling the result an increment.
         raise ValueError(
             f"{parent.name} is the parent of a derived delta but has no direct "
             "delta of its own, so there is no window to read it by."
+        )
+    if since is None:
+        # The same mistake from the other side. The CLI once passed its
+        # --since here unresolved, read every purchase order ever made, and
+        # then asked for their items fifty keys at a time -- the whole child
+        # set in sixty requests, reported as a delta.
+        raise ValueError(
+            f"{parent.name} has no watermark, so there is no window to read it "
+            "by. A child with no window is a full pull, not a read of its "
+            "whole parent."
         )
 
     rows, _, _ = _read_direct(client, parent, parent_delta, since)
@@ -292,6 +316,40 @@ def collect_parent_keys(
         if value not in (None, ""):
             seen.setdefault(str(value), None)
     return list(seen)
+
+
+def fetch_order(chosen) -> list[IngestSpec]:
+    """Parents before the children that are read through them.
+
+    So a parent's keys can be collected once and handed to each child, rather
+    than read again for every one of them.
+    """
+    parents = {s.delta.via for s in chosen if s.delta and s.delta.via}
+    return sorted(chosen, key=lambda s: (s.name not in parents, s.name))
+
+
+def resolve_windows(chosen, *, since: str | None = None) -> dict[str, str | None]:
+    """The lower bound of every direct delta this sweep will read, taken once.
+
+    Keyed by the set that OWNS the window: a direct-delta set itself, or the
+    parent a derived child is read through -- which is included even when the
+    parent is not in ``chosen``, because the child still needs its window.
+
+    Taken up front, before any fetch, on purpose. A parent fetched first
+    advances its own mark; children resolving the mark afterwards would start
+    from the new one and miss everything changed between the two.
+    """
+    windows: dict[str, str | None] = {}
+    for spec in chosen:
+        delta = spec.delta
+        if delta is None:
+            continue
+        owner = spec if delta.field is not None else spec_for(delta.via or "")
+        if owner.delta is None or owner.delta.field is None:
+            continue
+        if owner.name not in windows:
+            windows[owner.name] = since or get_watermark(owner.name, owner.delta.field)
+    return windows
 
 
 def _verdict(extract: Any) -> dict:
@@ -364,18 +422,64 @@ def fetch_set(
         )
         mode = MODE_FULL
 
+    # The field this set's mark is measured on, whatever mode the read ends up
+    # in. A full pull of a set that has a direct delta -- asked for, or forced
+    # because there is no mark yet -- reads every row, and the highest value
+    # seen is exactly where the next increment should start.
+    mark_field = spec.delta.field if spec.delta is not None else None
+
     result = FetchResult(entity_set=spec.name, prefix=prefix, mode=mode)
 
     try:
+        if delta is not None and delta.field is not None:
+            result.since = since or get_watermark(spec.name, delta.field)
+            if result.since is None:
+                # The first increment has nothing to be incremental from. A
+                # FULL pull, and marked as one: the file replaces the table
+                # rather than merging into one that may not exist, and the
+                # short-read check against $count applies.
+                logger.info(
+                    "%s: no watermark yet, so this delta run is a full pull. "
+                    "The next one will be incremental.",
+                    spec.name,
+                )
+                delta = None
+                result.mode = mode = MODE_FULL
+        elif delta is not None:
+            parent = spec_for(delta.via or "")
+            if parent_keys is None and not has_window(parent):
+                # A derived delta's window is its parent's date window, and
+                # this parent has none SAP will honour -- MKPF's Budat is
+                # IGNORED, so MSEG sits here. Reading the parent in full and
+                # then asking for its children 50 keys at a time would be the
+                # whole child set in hundreds of requests, slower than the
+                # full pull it pretends to improve on.
+                logger.info(
+                    "%s: parent %s has no delta of its own, so there is no "
+                    "window to read it by. This runs as a full pull.",
+                    spec.name,
+                    delta.via,
+                )
+                delta = None
+                result.mode = mode = MODE_FULL
+            else:
+                parent_field = (parent.delta.field if parent.delta else None) or ""
+                result.since = since or get_watermark(parent.name, parent_field)
+                if parent_keys is None and result.since is None:
+                    logger.info(
+                        "%s: parent %s has no watermark yet, so there is no "
+                        "window to read it by. This runs as a full pull.",
+                        spec.name,
+                        delta.via,
+                    )
+                    delta = None
+                    result.mode = mode = MODE_FULL
+
         if delta is None:
             rows, verdict, requests = _read_whole(client, spec)
         elif delta.field is not None:
-            result.since = since or get_watermark(spec.name, delta.field)
             rows, verdict, requests = _read_direct(client, spec, delta, result.since)
         else:
-            parent = spec_for(delta.via or "")
-            parent_field = (parent.delta.field if parent.delta else None) or ""
-            result.since = since or get_watermark(parent.name, parent_field)
             rows, verdict, requests = _read_derived(
                 client, spec, delta, result.since, parent_keys
             )
@@ -402,6 +506,35 @@ def fetch_set(
     # pull of that set as corrupt.
     result.duplicate_keys = count_duplicate_keys(rows, spec.identity_keys)
     result.stable = result.duplicate_keys == 0
+
+    # A pull that returns FEWER rows than SAP's own count is a pull that lost
+    # rows, and until now nothing said so: `stable` only ever asked about
+    # duplicates, so a short file scored ok=True and loaded cleanly.
+    #
+    # POHistorySet is the live example -- it returns 0 rows against a $count of
+    # 3,881 on every sweep. That would have landed an empty file, passed the
+    # duplicate check perfectly, and told I13 that EKBE has no goods receipts.
+    #
+    # Only for a full pull. A delta returns a window by design, and its count
+    # is the whole set.
+    if (
+        not result.is_delta
+        and result.counted is not None
+        and result.rows < result.counted
+    ):
+        result.stable = False
+        result.error = (
+            f"read {result.rows} row(s) against a $count of {result.counted}. "
+            "Rows were lost in paging; the file would look complete and not be."
+        )
+
+    # Where the next increment would start, for a set with a date of its own.
+    # A derived child was filtered by its parent's keys, so it measured no
+    # position and gets none. Computed before the manifest is written so the
+    # file carries it; written to the watermark table further down, and only
+    # past a successful landing.
+    if result.ok and mark_field is not None and rows:
+        result.watermark = highest(rows, mark_field)
 
     try:
         result.bytes_written = _write_jsonl(storage, result.data_key, rows)
@@ -432,21 +565,19 @@ def fetch_set(
             spec.name, ", ".join(result.order_by),
         )
 
-    # Only now, and only for a direct delta. The mark belongs to the field this
-    # set was filtered by, and a derived child was filtered by its parent's
-    # keys -- advancing anything on the child would record a position it never
-    # measured.
-    if (
-        advance_watermark
-        and result.ok
-        and delta is not None
-        and delta.field is not None
-        and rows
-    ):
-        mark = highest(rows, delta.field)
-        if mark:
-            result.watermark = mark
-            set_watermark(spec.name, delta.field, mark, result.rows)
+    # The candidate was recorded before the manifest was written (above), so
+    # the file says where the next increment would start. Written to the
+    # watermark table only now, past a successful landing, and only if this
+    # call is trusted to. A sweep says no: it advances the mark itself, after
+    # the rows are loaded and only once every child read through this set
+    # has succeeded too.
+    if advance_watermark and result.ok and result.watermark and mark_field:
+        set_watermark(spec.name, mark_field, result.watermark, result.rows)
+    elif result.watermark and mark_field:
+        logger.info(
+            "%s: watermark candidate %s=%s (not advanced here)",
+            spec.name, mark_field, result.watermark,
+        )
 
     logger.info(
         "%s: %d rows, %d bytes -> %s (%.1fs, %s)",

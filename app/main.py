@@ -4,6 +4,7 @@ Run locally:
     uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 """
 
+import contextlib
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -52,11 +53,18 @@ def _watch_i13_fingerprint(stop: threading.Event, interval: int) -> None:
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-    """Start the I13 snapshot build without holding up start-up.
+    """Start the I13 snapshot build and the delta scheduler; stop both on shutdown.
 
     The server takes requests immediately; I13 snapshot routes answer 503
     ``building`` until the first build lands (~40 s on the seeded data).
+
+    The scheduler is imported here rather than at module scope so that
+    importing app.main -- which the test suite and every CLI entry point do --
+    never reaches the database. The scheduler decides for itself whether it is
+    switched on.
     """
+    from app.ingest import scheduler
+
     settings = get_settings()
     stop = threading.Event()
     if settings.i13_snapshot_enabled and settings.i13_snapshot_warm_on_startup:
@@ -67,8 +75,23 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             name="i13-snapshot-watch",
             daemon=True,
         ).start()
-    yield
-    stop.set()
+
+    task = None
+    try:
+        task = scheduler.start(application)
+    except Exception:
+        # A scheduler that cannot start must not take the API down with it.
+        logger.exception("the delta scheduler failed to start; the API is unaffected")
+
+    try:
+        yield
+    finally:
+        stop.set()
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(Exception):
+                await task
+            logger.info("delta scheduler stopped")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

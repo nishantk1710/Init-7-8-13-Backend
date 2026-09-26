@@ -37,9 +37,18 @@ class _Path:
 
 
 class FakeFileClient:
-    def __init__(self, store: dict[str, bytes], path: str) -> None:
+    def __init__(
+        self,
+        store: dict[str, bytes],
+        path: str,
+        staged: dict[str, bytes] | None = None,
+    ) -> None:
         self._store = store
         self._path = path
+        # ADLS stages appended bytes and commits them on flush. Modelled here
+        # rather than writing straight through, so a test can catch an adapter
+        # that appends and forgets to flush.
+        self._staged = staged if staged is not None else {}
 
     def exists(self) -> bool:
         return self._path in self._store
@@ -67,6 +76,23 @@ class FakeFileClient:
             "last_modified": datetime.now(timezone.utc),
         }
 
+    def create_file(self) -> None:
+        self._store[self._path] = b""
+
+    def append_data(self, data, offset: int = 0, length: int | None = None) -> None:
+        current = self._staged.get(self._path, self._store.get(self._path, b""))
+        if offset != len(current):
+            raise ValueError(f"append offset {offset} != current size {len(current)}")
+        self._staged[self._path] = current + bytes(data)
+
+    def flush_data(self, size: int) -> None:
+        staged = self._staged.pop(self._path, None)
+        if staged is None:
+            return
+        if size != len(staged):
+            raise ValueError(f"flush size {size} != staged size {len(staged)}")
+        self._store[self._path] = staged
+
     def delete_file(self) -> None:
         self._require()
         del self._store[self._path]
@@ -88,12 +114,15 @@ class FakeFileSystemClient:
     def __init__(self, store: dict[str, bytes], exists: bool = True) -> None:
         self._store = store
         self._exists = exists
+        # Shared across every file client this filesystem hands out, so a
+        # staged append survives the adapter fetching a fresh client.
+        self._staged: dict[str, bytes] = {}
 
     def exists(self) -> bool:
         return self._exists
 
     def get_file_client(self, path: str) -> FakeFileClient:
-        return FakeFileClient(self._store, path)
+        return FakeFileClient(self._store, path, self._staged)
 
     def get_paths(self, path: str | None = None, recursive: bool = True) -> Iterator[_Path]:
         root = (path or "").strip("/")

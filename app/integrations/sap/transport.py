@@ -90,7 +90,7 @@ class CpiTransport:
         """Perform one CPI call and return the raw response body.
 
         ``api_path`` is the OData path, e.g.
-        ``sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet``.
+        ``sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet``.
         ``api_query`` is the OData query without a leading ``?``.
 
         Returns text, not a parsed object: the caller knows whether it asked for

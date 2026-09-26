@@ -112,6 +112,53 @@ class TestStorageConformance:
         with storage.open_read("keep.bin") as handle:
             assert handle.read() == b"original"
 
+    # --- append -----------------------------------------------------------
+    #
+    # SAP delivers a table as chunks of 50,000 records, each its own request,
+    # assembled into one file. That is what append is for, so it is held to the
+    # same bar as the rest of the port.
+
+    def test_append_creates_the_object_when_absent(self, storage: Storage) -> None:
+        size = storage.append("chunked.csv", b"HEADER\n")
+
+        assert size == 7
+        with storage.open_read("chunked.csv") as handle:
+            assert handle.read() == b"HEADER\n"
+
+    def test_append_concatenates_in_order(self, storage: Storage) -> None:
+        storage.append("chunked.csv", b"a\n")
+        storage.append("chunked.csv", b"b\n")
+        storage.append("chunked.csv", b"c\n")
+
+        with storage.open_read("chunked.csv") as handle:
+            assert handle.read() == b"a\nb\nc\n"
+
+    def test_append_extends_an_object_written_normally(self, storage: Storage) -> None:
+        """The real sequence: chunk one is a write, every later chunk appends."""
+        with storage.open_write("chunked.csv") as handle:
+            handle.write(b"HEADER\nrow1\n")
+        storage.append("chunked.csv", b"row2\n")
+
+        with storage.open_read("chunked.csv") as handle:
+            assert handle.read() == b"HEADER\nrow1\nrow2\n"
+
+    def test_append_returns_the_new_total_size(self, storage: Storage) -> None:
+        storage.append("chunked.csv", b"12345")
+
+        assert storage.append("chunked.csv", b"678") == 8
+        assert storage.stat("chunked.csv").size == 8
+
+    def test_appending_nothing_changes_nothing(self, storage: Storage) -> None:
+        storage.append("chunked.csv", b"kept")
+
+        assert storage.append("chunked.csv", b"") == 4
+        with storage.open_read("chunked.csv") as handle:
+            assert handle.read() == b"kept"
+
+    def test_append_refuses_a_traversal_key(self, storage: Storage) -> None:
+        with pytest.raises(StorageError):
+            storage.append("../escaped.csv", b"x")
+
     def test_read_missing_key_raises_object_not_found(self, storage: Storage) -> None:
         with pytest.raises(ObjectNotFoundError):
             with storage.open_read("nope.txt"):

@@ -276,7 +276,10 @@ REQUIRED_KEYS = [
 DEFECTS = {
     "B1": "/$count returns HTTP 500 on PurchaseRequisitionSet and GoodsMovementItemSet",
     "F1": "85 of 230 properties silently ignore $filter (impossible-value test returns the set total)",
-    "F3": "only eq and substringof are honoured; ne, gt/ge/lt/le and startswith are not",
+    "F3": "only eq and substringof are honoured; ne and gt/ge/lt/le on strings are not. "
+           "startswith IS honoured -- the earlier probes failed because they passed an "
+           "unpadded prefix. MATNR is ALPHA-converted, so '80' matches nothing while "
+           "'0000000080' returns a count. SAP confirmed the same in SE11/SE16N.",
     "F4": "$skip without $orderby produces duplicate and missing rows across pages",
     "R1": "ReservationItemSet: ignored $filter property flagged to NTT as the priority fix",
     "R2": "ReservationItemSet returns exactly 1,000 rows against 105,848 in the extract (suspected page cap)",
@@ -322,12 +325,18 @@ PROBES = [
     # I08 repair-PO convention and 80-series detection
     ("I08", "I08: PO items with item category 3",                 "W5.2", SHARED, "PurchaseOrderItemSet/$count", "$filter=Pstyp eq '3'"),
     ("I08", "I08: PO headers with document type ZREP",            "W5.2", SHARED, "PurchaseOrderSet/$count",     "$filter=Bsart eq 'ZREP'"),
-    ("I08", "I08: 80-series material PO lines (startswith)",      "W5.1", SHARED, "PurchaseOrderItemSet/$count", "$filter=startswith(Matnr,'80')"),
-    ("I08", "I08: 80-series materials in master (startswith)",    "W5.1", SHARED, "MaterialSet/$count",          "$filter=startswith(Matnr,'80')"),
+    # MATNR goes through conversion exit ALPHA: a purely numeric material is stored
+    # right-aligned in 18 characters. VZI materials carry 10 significant digits
+    # (2000000270 -> 000000002000000270), so an 80-series prefix is eight zeros then
+    # '80'. startswith works; it was the prefix that was wrong. SAP reproduced the
+    # same behaviour in SE11/SE16N, where 80* finds nothing and 0000000080* does.
+    ("I08", "I08: 80-series material PO lines (startswith, ALPHA-padded)", "W5.1", SHARED, "PurchaseOrderItemSet/$count", "$filter=startswith(Matnr,'0000000080')"),
+    ("I08", "I08: 80-series materials in master (startswith, ALPHA-padded)", "W5.1", SHARED, "MaterialSet/$count",          "$filter=startswith(Matnr,'0000000080')"),
+    ("I08", "I08 control: unpadded prefix, expected to match nothing", "W5.1", SHARED, "MaterialSet/$count",     "$filter=startswith(Matnr,'80')"),
     ("I08", "I08: text-only PO lines (no material)",              "W5.5", SHARED, "PurchaseOrderItemSet/$count", "$filter=Matnr eq ''"),
-    ("I08", "I08 control: startswith on a known prefix (2227)",   "W5.1", SHARED, "MaterialSet/$count", "$filter=startswith(Matnr,'2227')"),
+    ("I08", "I08 control: startswith executes at all (every numeric MATNR; expect the set total)", "W5.1", SHARED, "MaterialSet/$count", "$filter=startswith(Matnr,'0000000')"),
     ("I08", "I08: 80-series by range on 8-digit numbers",         "W5.1", SHARED, "MaterialSet/$count", "$filter=Matnr ge '80000000' and Matnr le '80999999'"),
-    ("I08", "I08: 80-series by range on 18-digit padded numbers", "W5.1", SHARED, "MaterialSet/$count", "$filter=Matnr ge '000000000080000000' and Matnr le '000000000080999999'"),
+    ("I08", "I08: 80-series by range on 18-digit padded numbers", "W5.1", SHARED, "MaterialSet/$count", "$filter=Matnr ge '000000008000000000' and Matnr le '000000008099999999'"),
     ("I08", "I08: 541 removals to repair",                        "W5.3", SHARED, "GoodsMovementItemSet/$count", "$filter=Bwart eq '541'"),
     # I13 consumption movement types
     ("I13", "I13: 201 consumption movements",                     "W3.5", SHARED, "GoodsMovementItemSet/$count", "$filter=Bwart eq '201'"),
@@ -833,12 +842,20 @@ def run_filter_support(s, token, out, actual_props, totals, only_sets=None):
     return token, rows
 
 
+# {MATNR} is filled at run time with a material taken from the MaterialPlantSet
+# pull -- the median of the sorted keys, so "ne" excludes exactly one row and
+# "gt" excludes about half. A hardcoded literal cannot do that here: MATNR is
+# ALPHA-converted, so an unpadded constant matches nothing. That made the
+# expected count equal the set total, which is also what an ignored filter
+# returns -- the probe could not tell the two apart.
+MATNR_SLOT = "{MATNR}"
+
 OPERATOR_PROBES = [
-    ("MaterialPlantSet", "Matnr ne '22271519'",                             "ne"),
-    ("MaterialPlantSet", "Matnr ge '8000000000' and Matnr le '8099999999'", "ge/le range on string"),
-    ("MaterialPlantSet", "Matnr gt '5'",                                    "gt on string"),
+    ("MaterialPlantSet", "Matnr ne '{MATNR}'",                              "ne"),
+    ("MaterialPlantSet", "Matnr ge '000000008000000000' and Matnr le '000000008099999999'", "ge/le range on string"),
+    ("MaterialPlantSet", "Matnr gt '{MATNR}'",                              "gt on string"),
     ("MaterialPlantSet", "Dismm eq 'ND' or Dismm eq 'PD'",                  "or on honoured property"),
-    ("MaterialPlantSet", "startswith(Matnr,'8')",                           "startswith"),
+    ("MaterialPlantSet", "startswith(Matnr,'0000000080')",                   "startswith"),
     ("MaterialPlantSet", "substringof('800',Matnr)",                        "substringof"),
     ("MaterialPlantSet", "Werks eq '1300' and Dismm eq 'PD'",               "and across two honoured properties"),
     ("MaterialDocumentHeaderSet", "Budat ge datetime'2026-01-01T00:00:00'", "date ge (delta load by posting date)"),
@@ -857,8 +874,19 @@ SET_TO_SVC = {name: svc for svc, names in SERVICES.items() for name in names}
 def run_operator_support(s, token, out, totals, mp_rows):
     rows = []
     print("\nOperator support:")
+    keys = sorted({r.get("Matnr", "") for r in mp_rows if r.get("Matnr")})
+    probe_matnr = keys[len(keys) // 2] if keys else None
+    if probe_matnr:
+        print(f"   MATNR probe value drawn from the pull: {probe_matnr}")
     for set_name, expr, label in OPERATOR_PROBES:
         svc = SET_TO_SVC[set_name]
+        if MATNR_SLOT in expr:
+            if not probe_matnr:
+                rows.append([svc, set_name, label, expr,
+                             totals.get((svc, set_name)), "", "", "NOT_TESTED_NO_MATNR_SAMPLE"])
+                print(f"   {set_name:28s} {label:44s} -> NOT_TESTED (no rows to draw a key from)")
+                continue
+            expr = expr.replace(MATNR_SLOT, probe_matnr)
         api_path = f"sap/opu/odata/sap/{svc}/{set_name}"
         n, status, token = count_of(s, token, api_path, expr)
         total = totals.get((svc, set_name))
@@ -866,11 +894,11 @@ def run_operator_support(s, token, out, totals, mp_rows):
         if set_name == "MaterialPlantSet" and mp_rows:
             m = [r.get("Matnr", "") for r in mp_rows]
             exp_map = {
-                "ne": sum(x != "22271519" for x in m),
-                "ge/le range on string": sum("8000000000" <= x <= "8099999999" for x in m),
-                "gt on string": sum(x > "5" for x in m),
+                "ne": sum(x != probe_matnr for x in m),
+                "ge/le range on string": sum("000000008000000000" <= x <= "000000008099999999" for x in m),
+                "gt on string": sum(x > probe_matnr for x in m),
                 "or on honoured property": sum(r.get("Dismm") in ("ND", "PD") for r in mp_rows),
-                "startswith": sum(x.startswith("8") for x in m),
+                "startswith": sum(x.startswith("0000000080") for x in m),
                 "substringof": sum("800" in x for x in m),
                 "and across two honoured properties": sum(r.get("Werks") == "1300" and r.get("Dismm") == "PD" for r in mp_rows),
             }
@@ -878,7 +906,19 @@ def run_operator_support(s, token, out, totals, mp_rows):
         if status != 200:
             verdict = f"REJECTED_HTTP_{status}"
         elif expected != "":
-            verdict = "WORKS" if n == expected else ("IGNORED" if n == total else ("UNSUPPORTED_EMPTY" if n == 0 else "WRONG_RESULT"))
+            # Test the ambiguous case first. When the expected count equals the
+            # set total, "n == expected" is also exactly what an ignored filter
+            # returns, so checking WORKS first would report that as a pass.
+            if n == total and expected == total:
+                verdict = "AMBIGUOUS_EXPECTED_EQUALS_TOTAL"
+            elif n == expected:
+                verdict = "WORKS"
+            elif n == total:
+                verdict = "IGNORED"
+            elif n == 0:
+                verdict = "UNSUPPORTED_EMPTY"
+            else:
+                verdict = "WRONG_RESULT"
         elif n == 0:
             verdict = "UNSUPPORTED_EMPTY_OR_NO_DATA"
         elif n == total:
@@ -1168,7 +1208,40 @@ def run_mrp_profile(s, token, out, rows=None):
                   "the delivered 19-column extract. A zero here would mean exposed-but-unpopulated, which is a different problem."]
     (out / "mrp_type_profile.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n" + "\n".join(lines))
+
+    write_value_domains(out, ADD_SRV, "MaterialPlantSet", "Dismm", rows)
     return token, rows
+
+
+def write_value_domains(out, service, set_name, field, rows):
+    """Record ``field``'s value distribution, from rows already pulled.
+
+    Restores the value_domains.csv this discovery folder shipped until 18-Sep,
+    when a refactor left no code path writing it -- test_sap_contract.py's
+    TestValueDomains and its self-consistency check have named the missing
+    file ever since (see the 18-Sep handover note in git log).
+
+    Deliberately reuses whatever full pull the caller already made rather than
+    re-fetching: MaterialPlantSet's Dismm distribution is exactly what
+    run_mrp_profile just computed for mrp_type_profile.txt, and a second live
+    pull to populate a second report would be the same 2,183-row cost paid
+    twice for one answer. "(blank)" matches the value known_conditions.py's
+    DISMM_VALUE_DOMAIN maps to "" -- see test_sap.py's translation of it.
+
+    Only one field is profiled here today (Dismm). This module previously also
+    profiled Mstae from a standing VALUE_DOMAIN_PROBES list; that list is not
+    restored, so a caller adding a second field back must decide then whether
+    this write should accumulate across a run or, as here, start the file
+    fresh each sweep -- "w" mode, matching every other report in this script.
+    """
+    tally = Counter(r.get(field) or "(blank)" for r in rows)
+    total = sum(tally.values())
+    with open(out / "value_domains.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["service", "entity_set", "field", "value", "count", "pct_of_scanned_total"])
+        for value, count in tally.most_common():
+            pct = f"{count / total * 100:.1f}%" if total else ""
+            w.writerow([service, set_name, field, value, count, pct])
 
 
 def run_material_profile(s, token, out):

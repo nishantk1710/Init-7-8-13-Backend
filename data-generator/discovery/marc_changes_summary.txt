@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-MATERIAL/MARC change items, 2026-09-23T10:02:09Z: 7244 rows in 8 page(s)
-=======
-MATERIAL/MARC change items, 2026-09-17T14:03:30Z: 7233 rows in 15 page(s)
->>>>>>> a0a13131f56078024765d576a8d82fd915f945d9
+MATERIAL/MARC change items, 2026-09-25T18:07:36Z: 7247 rows in 8 page(s)
 
 Fname x Chngind:
   KEY          I  2183
@@ -20,14 +16,10 @@ Fname x Chngind:
   DISLS        U  57
   SFCPF        U  53
   FEVOR        U  52
+  MINBE        U  50
   MTVFP        U  50
   FHORI        U  49
-  MINBE        U  47
   SSQSS        U  43
-<<<<<<< HEAD
-=======
-  MINBE        U  42
->>>>>>> a0a13131f56078024765d576a8d82fd915f945d9
   ABCIN        U  41
   XCHPF        U  41
   LGFSB        U  39
@@ -83,11 +75,7 @@ Fname x Chngind:
   SOBSK        U  1
   ZZCRITIC     U  1
 
-<<<<<<< HEAD
-Planning-field changes (DISMM/EISBE/MINBE/MABST): 163
-=======
-Planning-field changes (DISMM/EISBE/MINBE/MABST): 158
->>>>>>> a0a13131f56078024765d576a8d82fd915f945d9
+Planning-field changes (DISMM/EISBE/MINBE/MABST): 166
 DISMM transitions old -> new:
   <blank> -> ND   19
   <blank> -> PD   14

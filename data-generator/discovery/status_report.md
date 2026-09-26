@@ -1,8 +1,8 @@
-# VZI CPI OData status, 2026-09-23T10:05:50Z
+# VZI CPI OData status, 2026-09-25T18:11:15Z
 
-Run mode: --env-file ../.env --out ./discovery
+Run mode: full sweep
 
-Calls: 506  |  failures: 133  |  total elapsed: 261s
+Calls: 507  |  failures: 133  |  total elapsed: 261s
 
 ## Services
 - ZMM_KPI02_ADD_SRV: reachable, 14 entity sets in $metadata.
@@ -12,8 +12,8 @@ Calls: 506  |  failures: 133  |  total elapsed: 261s
 - B1: /$count succeeded on every reachable set - the defect appears FIXED.
 - R2 (ReservationItemSet volume): $count and paging agree at 7088 rows.
 - F4: MaterialPlantSet pulled without $orderby carries 0 duplicate key(s) - the defect appears FIXED.
-- F3: operators honoured on MaterialPlantSet: or on honoured property, startswith, substringof, and across two honoured properties.
-- F1: 0 of 146 tested properties silently ignore $filter. Previously 85 of 230.
+- F3: operators honoured on MaterialPlantSet: ne, ge/le range on string, gt on string, or on honoured property, startswith, substringof, and across two honoured properties.
+- F1: 2 of 146 tested properties silently ignore $filter. Previously 85 of 230.
 - R1 (ReservationItemSet priority fix): 0 ignored propert(ies) - appears FIXED.
 
 ## Field exposure
@@ -38,17 +38,17 @@ Calls: 506  |  failures: 133  |  total elapsed: 261s
 - EKBE Vgabe distinct values over OData: none. Reconcile against the dictionary (1, 2) and I13 s7.1 (E).
 
 ## Slowest calls (W8.1 performance baseline)
-- 4.0s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet  $top=5&$skip=5&$format=json
-- 4.0s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet  $inlinecount=allpages&$top=1&$format=json
-- 3.9s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet  $top=5&$format=json
-- 3.6s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count  
-- 3.0s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet  $top=1000&$skip=0&$format=json
+- 4.2s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count  
+- 4.0s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet  $top=5&$format=json
+- 3.9s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet  $top=5&$skip=5&$format=json
+- 3.8s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet  $inlinecount=allpages&$top=1&$format=json
+- 3.1s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet  $top=1000&$skip=52000&$format=json
 
 ## Confirmed defect register
 
 - **B1**: /$count returns HTTP 500 on PurchaseRequisitionSet and GoodsMovementItemSet
 - **F1**: 85 of 230 properties silently ignore $filter (impossible-value test returns the set total)
-- **F3**: only eq and substringof are honoured; ne, gt/ge/lt/le and startswith are not
+- **F3**: only eq and substringof are honoured; ne and gt/ge/lt/le on strings are not. startswith IS honoured -- the earlier probes failed because they passed an unpadded prefix. MATNR is ALPHA-converted, so '80' matches nothing while '0000000080' returns a count. SAP confirmed the same in SE11/SE16N.
 - **F4**: $skip without $orderby produces duplicate and missing rows across pages
 - **R1**: ReservationItemSet: ignored $filter property flagged to NTT as the priority fix
 - **R2**: ReservationItemSet returns exactly 1,000 rows against 105,848 in the extract (suspected page cap)

@@ -22,7 +22,41 @@ set -euo pipefail
 # checkout, or a deployment slot on a different path. A hard-coded cd that is
 # wrong fails as "No such file or directory" -- another opaque exit that says
 # nothing about what actually went wrong.
-cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Find the directory that actually holds the application, rather than assuming
+# it is the one this script sits in.
+#
+# That assumption held while the deployment shipped files straight into
+# /home/site/wwwroot. It broke when Oryx switched to compressed output: the
+# package is now a wwwroot/output.tar.zst extracted to /tmp/<hash>, and the
+# loose files still sitting in wwwroot are leftovers from the last uncompressed
+# deploy. cd'ing to wwwroot therefore landed in a directory with alembic/,
+# tests/ and docs/ but no app/ at all -- "cannot import app.main", on a
+# deployment that was in fact complete.
+#
+# Candidates in order of trust: the directory Oryx already put us in, the path
+# it exports, then this script's own. First one holding app/main.py wins.
+_resolve_app_root() {
+    local candidate
+    for candidate in "$PWD" "${APP_PATH:-}" "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; do
+        if [ -n "$candidate" ] && [ -f "$candidate/app/main.py" ]; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+if APP_ROOT="$(_resolve_app_root)"; then
+    cd "$APP_ROOT"
+else
+    echo "startup: FATAL - no app/main.py in any candidate directory." >&2
+    echo "         cwd=$PWD" >&2
+    echo "         APP_PATH=${APP_PATH:-<unset>}" >&2
+    echo "         script dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" >&2
+    echo "         If the deploy shipped wwwroot/output.tar.zst, the app lives" >&2
+    echo "         in the extracted /tmp path, not beside this script." >&2
+    exit 127
+fi
 
 # --- Preflight ------------------------------------------------------------
 #

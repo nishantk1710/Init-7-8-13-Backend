@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-MaterialSet full pull, 2026-09-23T10:02:14Z: 2040 rows in 3 page(s)
-=======
-MaterialSet full pull, 2026-09-17T14:03:47Z: 2040 rows in 5 page(s)
->>>>>>> a0a13131f56078024765d576a8d82fd915f945d9
+MaterialSet full pull, 2026-09-25T18:07:45Z: 2040 rows in 3 page(s)
 
 Matnr length distribution:
   len  3: 2

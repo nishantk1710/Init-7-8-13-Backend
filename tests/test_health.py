@@ -45,14 +45,19 @@ def test_pr_event_is_accepted() -> None:
     response = client.post("/api/events/pr", json={"prNumber": "10012345", "plant": "1300"})
 
     assert response.status_code == 202
-    assert response.json() == {"status": "received"}
+    body = response.json()
+    assert body["status"] == "received"
+    # `stored` is the key the event was appended to. None here because no
+    # STORAGE_URL is configured under test -- which must never turn an
+    # accepted event into a refused one.
+    assert body["stored"] is None
 
 
 def test_pr_event_accepts_the_payload_sap_confirmed() -> None:
     response = client.post("/api/events/pr", json=SAP_PR_EVENT)
 
     assert response.status_code == 202
-    assert response.json() == {"status": "received"}
+    assert response.json()["status"] == "received"
 
 
 def test_pr_event_logs_the_payload_in_saps_own_field_names(caplog) -> None:

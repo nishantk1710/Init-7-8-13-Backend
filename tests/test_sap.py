@@ -362,11 +362,16 @@ class TestDecoding:
 
 class TestContract:
     def test_all_21_sets_across_two_services(self) -> None:
+        """SAP renamed both services 22-Sep-2026 (ZVZI_KPI02_SHARED_SRV ->
+        ZMM_KPI02_ADD_SRV, ZMM_KPI02_SRV -> ZMM_KPI02_TAB_SRV). Verified twice:
+        entity_sets.csv from the live re-sweep, and a live $metadata probe
+        against both new names on the same day. Set membership is unaffected.
+        """
         sets = contract()
         assert len(sets) == 21
         assert {s.service for s in sets.values()} == {
-            "ZVZI_KPI02_SHARED_SRV",
-            "ZMM_KPI02_SRV",
+            "ZMM_KPI02_ADD_SRV",
+            "ZMM_KPI02_TAB_SRV",
         }
 
     def test_every_set_has_a_key_and_properties(self) -> None:
@@ -388,9 +393,10 @@ class TestContract:
         assert entity_set("PurchaseRequisitionSet").keys == ("Banfn", "Bnfpo")
 
     def test_api_path_is_built_from_the_owning_service(self) -> None:
+        """MaterialPlantSet's owning service, post-rename (see test above)."""
         assert (
             entity_set("MaterialPlantSet").api_path
-            == "sap/opu/odata/sap/ZVZI_KPI02_SHARED_SRV/MaterialPlantSet"
+            == "sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet"
         )
 
     def test_unknown_set_lists_the_alternatives(self) -> None:
@@ -467,12 +473,22 @@ class TestClient:
         assert result.is_empty and len(result) == 0
 
     def test_read_refuses_an_ignored_filter_before_calling(self) -> None:
+        """Pstyp on PurchaseOrderItemSet was the original example (B1/F1), but
+        it is HONOURED as of the 22-Sep discovery re-sweep -- see
+        filter_support.csv, verdict HONOURED, impossible-value probe 0/11097.
+        Swapped to Budat on MaterialDocumentHeaderSet, which is still IGNORED
+        (40651/40651, the MKPF date-range defect) and is the guard's most
+        consequential live case today.
+        """
         calls: list[dict] = []
         client = SapClient(
             settings(), transport_returning(FakeResponse(text=feed([])), capture=calls)
         )
         with pytest.raises(UnsupportedFilterError):
-            client.read("PurchaseOrderItemSet", filter="Pstyp eq '3'")
+            client.read(
+                "MaterialDocumentHeaderSet",
+                filter="Budat ge datetime'2013-01-01T00:00:00'",
+            )
         assert calls == [], "the guard must fire before any HTTP call"
 
     def test_count_returns_none_when_sap_500s(self) -> None:
@@ -480,15 +496,19 @@ class TestClient:
         client = SapClient(settings(), transport_returning(FakeResponse(status_code=500)))
         assert client.count("GoodsMovementItemSet") is None
 
-    def test_a_capped_count_is_never_asked_for(self) -> None:
-        """ReservationItemSet answers 1000 where paging returns 7088.
+    def test_a_capped_count_is_never_asked_for(self, monkeypatch) -> None:
+        """A set listed as capped is never asked for its $count.
 
         A wrong-but-successful total is worse than a failed one. Paging stops
         once it has read as many rows as the total claims, so believing 1000
         hands the caller a seventh of the set and calls it complete -- every
         reservation-dependent figure computed on 14% of the data, silently.
-        Measured 2026-09-21; see known_conditions.COUNT_CAPPED_SETS.
+        ReservationItemSet was that set until the service was replaced on
+        2026-09-25; the list is empty now, and the mechanism stays tested.
         """
+        from app.integrations.sap import client as client_mod
+
+        monkeypatch.setattr(client_mod, "COUNT_CAPPED_SETS", frozenset({"ReservationItemSet"}))
         calls: list[dict] = []
         client = SapClient(
             settings(),
@@ -498,8 +518,11 @@ class TestClient:
         assert client.count("ReservationItemSet") is None
         assert calls == [], "SAP must not even be asked for this count"
 
-    def test_a_capped_count_does_not_stop_paging_early(self) -> None:
+    def test_a_capped_count_does_not_stop_paging_early(self, monkeypatch) -> None:
         """The whole point: with no count, paging runs to a short page."""
+        from app.integrations.sap import client as client_mod
+
+        monkeypatch.setattr(client_mod, "COUNT_CAPPED_SETS", frozenset({"ReservationItemSet"}))
         page = feed([{"Rsnum": str(i), "Rspos": "1"} for i in range(2)])
         client = SapClient(
             settings(),

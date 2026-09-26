@@ -24,7 +24,11 @@ from __future__ import annotations
 
 EXPECTED_ENTITY_SET_COUNT = 21
 
-SERVICES = frozenset({"ZVZI_KPI02_SHARED_SRV", "ZMM_KPI02_SRV"})
+# Renamed by SAP 22-Sep-2026: ZVZI_KPI02_SHARED_SRV -> ZMM_KPI02_ADD_SRV,
+# ZMM_KPI02_SRV -> ZMM_KPI02_TAB_SRV. Verified against live $metadata the same
+# day (data-generator/discovery/entity_sets.csv) and again via a direct probe
+# of both new names. Set membership and count (21) are unaffected.
+SERVICES = frozenset({"ZMM_KPI02_ADD_SRV", "ZMM_KPI02_TAB_SRV"})
 
 # Registered and responding, but holding no rows. Real answers, not failures --
 # the client reports them as empty rather than erroring, and the seed loads
@@ -89,10 +93,14 @@ DECLARED_FLAGS = ("filterable", "sortable", "creatable", "updatable")
 
 # Counted across BOTH services. A value longer than its declared maximum means
 # something upstream truncated or corrupted it.
-PROPERTIES_WITH_MAX_LENGTH = 184
-PROPERTIES_WITH_PRECISION = 35
-PROPERTIES_WITH_LABEL = 229  # every one, which is what makes labels usable
-TOTAL_PROPERTIES = 229
+# Re-measured against the 22-Sep post-rename $metadata (data-generator/
+# discovery/properties.csv, committed alongside this change -- 237 rows across
+# the same 21 in-scope sets and two services; GatePass and ZMM_GET_CSV_SRV are
+# not in this file, see cpi_discovery.py DESCOPED_SERVICES).
+PROPERTIES_WITH_MAX_LENGTH = 211
+PROPERTIES_WITH_PRECISION = 17
+PROPERTIES_WITH_LABEL = 237  # every one, which is what makes labels usable
+TOTAL_PROPERTIES = 237
 
 # SAP's business labels are the same words the July extract uses as column
 # headers, which is what makes them worth capturing beyond W2.5's requirement.
@@ -125,18 +133,22 @@ KNOWN_MAX_LENGTHS = {
 # in the development client. Note the July production extract tells a very
 # different story -- 97.8% ND/PD and almost no blanks -- so these proportions
 # describe the dev client only.
+# Re-measured 2026-09-25 (discovery/mrp_type_profile.txt and value_domains.csv,
+# same sweep as the service rename). V1 79->78 and VM 1->7; every other value
+# unchanged. Both are movement within the domain, not a new code -- no ruling
+# needed, unlike a value that was not here before.
 DISMM_VALUE_DOMAIN: dict[str, int] = {
     "": 1023,
     "PD": 827,
     "ND": 184,
-    "V1": 79,
+    "V1": 78,
     "VB": 45,
     "M0": 13,
     "RP": 3,
     "VI": 1,
     "VH": 1,
     "V2": 1,
-    "VM": 1,
+    "VM": 7,
 }
 
 # The MRP types the OAR rule treats as in scope (08-Sep VZI ruling).
@@ -211,12 +223,17 @@ KNOWN_HONOURED_FILTERS = {
 
 # --- Paging ---------------------------------------------------------------
 
-# From discovery/paging_stability.txt. Unordered $skip/$top over this set
-# returned the right ROW COUNT and the wrong ROWS -- 1,618 distinct keys out of
-# 2,178, a different subset each time. Ordering by the key made it exact.
+# From discovery/paging_stability.txt, re-measured 2026-09-25 post-rename.
+#
+# The set has grown to 2,183 rows (was 2,178). The unordered-paging defect this
+# constant existed to record -- 1,618 distinct keys out of 2,178, a different
+# subset each time -- did NOT reproduce in this sweep: two unordered pulls and
+# one ordered pull all returned 2,183 rows, 2,183 distinct keys, zero
+# duplicates, zero missing. That is F4 (see DEFECTS above) reading as fixed,
+# not merely unlucky -- re-confirm before relying on unordered paging elsewhere.
 PAGING_PROOF_SET = "MaterialPlantSet"
-PAGING_PROOF_TOTAL = 2178
-PAGING_PROOF_UNORDERED_DISTINCT = 1618
+PAGING_PROOF_TOTAL = 2183
+PAGING_PROOF_UNORDERED_DISTINCT = 2183
 
 # Sets whose $count answered HTTP 500 at some sweep. The client demotes to
 # short-page paging for these rather than failing.
@@ -224,11 +241,17 @@ COUNT_UNRELIABLE_SETS = frozenset({"PurchaseRequisitionSet", "GoodsMovementItemS
 
 # Sets whose $count answers successfully and WRONGLY. A cap, not an error.
 #
-# Measured 2026-09-21 on ReservationItemSet:
+# Empty since 2026-09-25, and kept because the failure mode is worth a
+# permanent home. Measured 2026-09-21 on ReservationItemSet, on the service
+# as it was then (ZMM_KPI02_SRV):
 #
 #     /$count                : 1000
 #     $inlinecount=allpages  : 7088
 #     page-until-short-page  : 7088 rows, 7088 distinct (Rsnum, Rspos)
+#
+# Re-measured 2026-09-25 on its replacement, ZMM_KPI02_TAB_SRV: /$count
+# answers 7088, equal to $inlinecount and to the 7,088 rows the CSV route
+# delivered the same day. The cap went with the old service.
 #
 # This is more dangerous than the 500s above, which announce themselves. A
 # plausible wrong total is believed: paging stops once it has read as many rows
@@ -237,10 +260,45 @@ COUNT_UNRELIABLE_SETS = frozenset({"PurchaseRequisitionSet", "GoodsMovementItemS
 # figure -- I13 STITCH, I08 session traceability -- would be computed on a
 # seventh of the data and look complete.
 #
-# Listed here rather than fixed in paging: the defect is that this service's
+# Listed here rather than fixed in paging: the defect is that a service's
 # $count cannot be trusted, which is a fact about SAP, and this module is where
 # facts about SAP live. The client turns it into behaviour by declining to ask.
-COUNT_CAPPED_SETS = frozenset({"ReservationItemSet"})
+COUNT_CAPPED_SETS: frozenset[str] = frozenset()
+
+# Sets whose every row read answers HTTP 500, while their $count answers.
+#
+# Measured 2026-09-26 through the client's own query builder, one shape at a
+# time, each with the transport's three attempts:
+#
+#   POHistorySet        $top=1 | +$orderby (full key, Ebeln) | Ebeln eq '...'
+#                       | Ebeln eq +$orderby | two Ebeln (or)        all 500
+#   POScheduleLineSet   the same seven shapes                        all 500
+#   ChangeDocHeaderSet  Objectclas eq 'MATERIAL' alone | + Udate ge  | + any
+#                       $orderby | + $skip                           all 500
+#   PurchaseOrderItemSet, the same seven shapes, the same minute:   all 200
+#
+# $count is fine on all three (3,881 / 3,631 / 241,959), so the sets exist and
+# are authorised; the read itself dumps. An empty-bodied 500 is a backend
+# short dump -- SAP's to fix (ST22), ours to survive.
+#
+# A set listed here has no runnable delta and is left out of a sweep with the
+# reason shown, rather than failing every cycle: each failure is up to nine
+# requests as the client tries every ordering, and a "delta" that fails hourly
+# is noise that hides real ones. The CSV route still covers POHistorySet and
+# ChangeDocHeaderSet; POScheduleLineSet is undelivered on both routes.
+#
+# WHEN REMOVING A SET FROM THIS LIST: drop its odata_ table first, so the
+# next sweep rebuilds the baseline in full. Its parent's watermark has moved
+# on while it was out, and a delta from the parent's current mark would skip
+# everything changed in between with no way back.
+READ_BROKEN_SETS: dict[str, str] = {
+    "POHistorySet": "every row read is HTTP 500 since 2026-09-26; $count answers",
+    "POScheduleLineSet": "every row read is HTTP 500 since 2026-09-26; $count answers",
+    "ChangeDocHeaderSet": (
+        "every row read is HTTP 500 since 2026-09-26, with the Objectclas "
+        "predicate it requires; $count answers"
+    ),
+}
 
 # Entity sets whose DECLARED key does not uniquely address a row.
 #

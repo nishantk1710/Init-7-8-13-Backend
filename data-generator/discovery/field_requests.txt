@@ -1,4 +1,4 @@
-SAP field exposure requests generated from live $metadata, 2026-09-23T10:01:36Z
+SAP field exposure requests generated from live $metadata, 2026-09-25T18:07:01Z
 
 Each item below is a field one of the I07/I08/I13 FRS documents says the build reads, which is
 not in the OData projection today. These are exposure requests, not design questions.

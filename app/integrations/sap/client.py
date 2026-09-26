@@ -150,12 +150,12 @@ class SapClient:
         None is a real answer, not an error: several sets return HTTP 500 for
         ``$count`` while serving rows perfectly well.
 
-        One set is not asked at all. ReservationItemSet answers 1000 when paging
-        returns 7088 -- a cap rather than a total. Paging stops once it has read
-        as many rows as the total claims, so believing that number hands the
-        caller a seventh of the set and calls it complete. Declining to ask
-        demotes the read to page-until-short-page, which is exact.
-        See known_conditions.COUNT_CAPPED_SETS.
+        A set listed in known_conditions.COUNT_CAPPED_SETS is not asked at all:
+        a $count that answers a cap rather than a total (ReservationItemSet
+        answered 1000 against 7088 rows, on the service since replaced) would
+        stop paging early and hand the caller a fraction of the set as if it
+        were complete. Declining to ask demotes the read to
+        page-until-short-page, which is exact.
         """
         target = entity_set(name)
         if name in COUNT_CAPPED_SETS:

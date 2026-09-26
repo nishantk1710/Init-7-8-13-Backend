@@ -93,6 +93,26 @@ class Settings(BaseSettings):
     # first thing here that needs the stronger grant.
     ingest_prefix: str = "odata"
 
+    # --- Delta schedule ---------------------------------------------------
+    #
+    # The timer runs inside this application rather than in a Logic App or a
+    # Function, because adding an Azure resource was ruled out. That makes it
+    # cheap to enable and cheap to get wrong, so it is OFF by default: a fresh
+    # deployment does not start pulling from SAP because somebody shipped it.
+    #
+    # startup.sh runs two gunicorn workers, so two timers would otherwise run
+    # every delta twice. app/ingest/scheduler.py holds a SQL Server
+    # application lock to make exactly one of them win.
+    delta_schedule_enabled: bool = False
+
+    # Minutes between delta cycles. Floored at 5 in the scheduler: below that
+    # a cycle can still be running when the next one is due.
+    delta_interval_minutes: int = 60
+
+    # Seconds to wait after startup before the first cycle, so a deploy does
+    # not begin a pull while migrations may still be applying.
+    delta_initial_delay_seconds: int = 120
+
     # Optional. The Data Lake adapter authenticates with DefaultAzureCredential
     # by default -- the App Service's managed identity when deployed, the
     # developer's `az login` session locally -- so no secret is stored anywhere.
