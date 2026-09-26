@@ -1,0 +1,344 @@
+<!doctype html>
+<title>Merge Conflict Review</title>
+<style>
+:root{
+  --bg:#f5f4f1;
+  --surface:#ffffff;
+  --border:#dedad2;
+  --text:#232220;
+  --text-dim:#6f6b63;
+  --mono:#1c1b1a;
+  --add-bg:#e3f3e6;
+  --add-text:#1f6b34;
+  --add-border:#a9d9b5;
+  --del-bg:#fbe9e7;
+  --del-text:#a3372a;
+  --del-border:#eab8b0;
+  --hunk-bg:#eef1f5;
+  --hunk-text:#4a5568;
+  --accent:#8a5a34;
+  --accent-soft:#f0e3d4;
+  --chip-bg:#eeeae2;
+  --pill-additive:#2f6b46;
+  --pill-additive-bg:#dcefe0;
+  --pill-real:#a3372a;
+  --pill-real-bg:#f6e0dd;
+  --shadow: 0 1px 2px rgba(30,25,20,.06), 0 6px 16px rgba(30,25,20,.05);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#1b1a18;
+    --surface:#242220;
+    --border:#3a3733;
+    --text:#ece7df;
+    --text-dim:#a49d92;
+    --mono:#ece7df;
+    --add-bg:#173323;
+    --add-text:#7fd99a;
+    --add-border:#28553a;
+    --del-bg:#3a1f1c;
+    --del-text:#f0958a;
+    --del-border:#623230;
+    --hunk-bg:#2a2d33;
+    --hunk-text:#a9b4c2;
+    --accent:#d3a06e;
+    --accent-soft:#3a2f22;
+    --chip-bg:#2d2b27;
+    --pill-additive:#8fdba6;
+    --pill-additive-bg:#1e3b28;
+    --pill-real:#f0958a;
+    --pill-real-bg:#3f2422;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#1b1a18;
+  --surface:#242220;
+  --border:#3a3733;
+  --text:#ece7df;
+  --text-dim:#a49d92;
+  --mono:#ece7df;
+  --add-bg:#173323;
+  --add-text:#7fd99a;
+  --add-border:#28553a;
+  --del-bg:#3a1f1c;
+  --del-text:#f0958a;
+  --del-border:#623230;
+  --hunk-bg:#2a2d33;
+  --hunk-text:#a9b4c2;
+  --accent:#d3a06e;
+  --accent-soft:#3a2f22;
+  --chip-bg:#2d2b27;
+  --pill-additive:#8fdba6;
+  --pill-additive-bg:#1e3b28;
+  --pill-real:#f0958a;
+  --pill-real-bg:#3f2422;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.35);
+}
+
+*{box-sizing:border-box;}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:'Source Sans 3', system-ui, -apple-system, sans-serif;
+  padding-inline:20px;
+  padding-block:28px 60px;
+  max-width:1180px;
+  margin:0 auto;
+}
+h1{
+  font-family:'Fraunces', Georgia, serif;
+  font-weight:600;
+  font-size:1.9rem;
+  letter-spacing:-0.01em;
+  margin:0 0 4px;
+  text-wrap:balance;
+}
+.subtitle{
+  color:var(--text-dim);
+  font-size:0.98rem;
+  margin:0 0 22px;
+  max-width:65ch;
+}
+.branch-key{
+  display:flex;
+  gap:18px;
+  align-items:center;
+  flex-wrap:wrap;
+  margin-bottom:22px;
+  font-size:0.85rem;
+  color:var(--text-dim);
+}
+.branch-key span{display:inline-flex;align-items:center;gap:6px;}
+.swatch{width:11px;height:11px;border-radius:2px;display:inline-block;}
+.swatch.del{background:var(--del-bg);border:1px solid var(--del-border);}
+.swatch.add{background:var(--add-bg);border:1px solid var(--add-border);}
+
+.tabs{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-bottom:18px;
+  border-bottom:1px solid var(--border);
+  padding-bottom:14px;
+}
+.tab{
+  font-family:'JetBrains Mono', ui-monospace, monospace;
+  font-size:0.78rem;
+  padding:6px 10px;
+  border-radius:6px;
+  background:var(--chip-bg);
+  color:var(--text-dim);
+  cursor:pointer;
+  border:1px solid transparent;
+  white-space:nowrap;
+  transition:background .12s ease, color .12s ease;
+}
+.tab:hover{color:var(--text);}
+.tab.active{
+  background:var(--accent-soft);
+  color:var(--accent);
+  border-color:var(--accent);
+  font-weight:600;
+}
+.tab .n{
+  opacity:.65;
+  margin-left:5px;
+  font-size:0.72rem;
+}
+
+.panel{display:none;}
+.panel.active{display:block;}
+
+.file-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:baseline;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-bottom:10px;
+}
+.file-name{
+  font-family:'JetBrains Mono', ui-monospace, monospace;
+  font-size:1.02rem;
+  font-weight:600;
+}
+.pill{
+  font-size:0.7rem;
+  font-weight:700;
+  letter-spacing:0.03em;
+  text-transform:uppercase;
+  padding:3px 9px;
+  border-radius:999px;
+}
+.pill.additive{background:var(--pill-additive-bg);color:var(--pill-additive);}
+.pill.real{background:var(--pill-real-bg);color:var(--pill-real);}
+
+.diff-box{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:10px;
+  overflow-x:auto;
+  box-shadow:var(--shadow);
+}
+.diff-box.empty{
+  padding:18px;
+  color:var(--text-dim);
+  font-size:0.9rem;
+  font-style:italic;
+}
+table.diff{
+  border-collapse:collapse;
+  width:100%;
+  font-family:'JetBrains Mono', ui-monospace, monospace;
+  font-size:0.815rem;
+  line-height:1.55;
+}
+table.diff td{
+  padding:0 10px;
+  white-space:pre;
+  vertical-align:top;
+}
+td.gutter{
+  width:1%;
+  color:var(--text-dim);
+  text-align:right;
+  user-select:none;
+  opacity:.55;
+  border-right:1px solid var(--border);
+}
+tr.add td.code{background:var(--add-bg);color:var(--add-text);}
+tr.add td.gutter{background:var(--add-bg);}
+tr.del td.code{background:var(--del-bg);color:var(--del-text);}
+tr.del td.gutter{background:var(--del-bg);}
+tr.hunk td.code{
+  background:var(--hunk-bg);
+  color:var(--hunk-text);
+  font-weight:600;
+  padding-block:4px;
+}
+tr.hunk td.gutter{background:var(--hunk-bg);}
+tr.ctx td.code{color:var(--text-dim);}
+
+.note{
+  margin-top:14px;
+  font-size:0.85rem;
+  color:var(--text-dim);
+  max-width:70ch;
+}
+
+@media (max-width:600px){
+  table.diff{font-size:0.72rem;}
+  td.gutter{display:none;}
+}
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600&family=Source+Sans+3:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
+
+<h1>feat/nk/setup &rarr; main, file by file</h1>
+<p class="subtitle">Every file git flags as conflicting between the two branches. Red is what <code>main</code> has that setup removes or changes; green is what <code>feat/nk/setup</code> adds.</p>
+
+<div class="branch-key">
+  <span><span class="swatch del"></span> main (base)</span>
+  <span><span class="swatch add"></span> feat/nk/setup</span>
+  <span class="pill additive">additive</span>
+  <span style="margin-left:-10px;">setup only adds &mdash; no real disagreement</span>
+  <span class="pill real">rework</span>
+  <span style="margin-left:-10px;">same block edited differently on both sides</span>
+</div>
+
+<div class="tabs" id="tabs"></div>
+<div id="panels"></div>
+
+<script>
+const CLASSIFICATION = {
+  ".env.example": "real",
+  ".gitignore": "additive",
+  "README.md": "real",
+  "app/api/router.py": "additive",
+  "app/core/config.py": "real",
+  "app/integrations/sap/__init__.py": "additive",
+  "app/models/__init__.py": "additive",
+  "app/shared/__init__.py": "additive",
+  "docs/local-development.md": "additive",
+  "pytest.ini": "additive",
+  "requirements.txt": "additive"
+};
+
+const ORDER = [
+  ".env.example", ".gitignore", "README.md", "app/api/router.py",
+  "app/core/config.py", "app/integrations/sap/__init__.py",
+  "app/models/__init__.py", "app/shared/__init__.py",
+  "docs/local-development.md", "pytest.ini", "requirements.txt"
+];
+
+function esc(s){
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function renderFile(name, rows){
+  if(!rows.length){
+    return '<div class="diff-box empty">No differences.</div>';
+  }
+  let mainLine = 0, setupLine = 0;
+  const trs = rows.map(([type, text]) => {
+    let cls, leftNum = "", rightNum = "";
+    if(type === "hunk"){
+      const m = text.match(/-(\d+)(?:,\d+)? \+(\d+)/);
+      if(m){ mainLine = parseInt(m[1],10); setupLine = parseInt(m[2],10); }
+      return `<tr class="hunk"><td class="gutter"></td><td class="gutter"></td><td class="code">${esc(text)}</td></tr>`;
+    }
+    if(type === "add"){
+      cls = "add"; rightNum = setupLine++; leftNum = "";
+    } else if(type === "del"){
+      cls = "del"; leftNum = mainLine++; rightNum = "";
+    } else {
+      cls = "ctx"; leftNum = mainLine++; rightNum = setupLine++;
+    }
+    return `<tr class="${cls}"><td class="gutter">${leftNum}</td><td class="gutter">${rightNum}</td><td class="code">${esc(text)}</td></tr>`;
+  }).join("");
+  return `<div class="diff-box"><table class="diff">${trs}</table></div>`;
+}
+
+fetch('diffdata.json').then(r => r.json()).then(data => {
+  const tabsEl = document.getElementById('tabs');
+  const panelsEl = document.getElementById('panels');
+
+  ORDER.forEach((name, i) => {
+    const rows = data[name] || [];
+    const addCount = rows.filter(r => r[0] === "add").length;
+    const delCount = rows.filter(r => r[0] === "del").length;
+
+    const tab = document.createElement('div');
+    tab.className = 'tab' + (i === 0 ? ' active' : '');
+    tab.dataset.idx = i;
+    tab.innerHTML = `${name.split('/').pop()}<span class="n">+${addCount} -${delCount}</span>`;
+    tab.title = name;
+    tabsEl.appendChild(tab);
+
+    const panel = document.createElement('div');
+    panel.className = 'panel' + (i === 0 ? ' active' : '');
+    panel.dataset.idx = i;
+    const cls = CLASSIFICATION[name] || "real";
+    const pillLabel = cls === "additive" ? "additive" : "rework";
+    panel.innerHTML = `
+      <div class="file-head">
+        <span class="file-name">${esc(name)}</span>
+        <span class="pill ${cls}">${pillLabel}</span>
+      </div>
+      ${renderFile(name, rows)}
+    `;
+    panelsEl.appendChild(panel);
+  });
+
+  tabsEl.addEventListener('click', e => {
+    const tab = e.target.closest('.tab');
+    if(!tab) return;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.querySelector(`.panel[data-idx="${tab.dataset.idx}"]`).classList.add('active');
+  });
+}).catch(err => {
+  panelsEl.innerHTML = '<div class="diff-box empty">Failed to load diff data: ' + esc(String(err)) + '</div>';
+});
+</script>

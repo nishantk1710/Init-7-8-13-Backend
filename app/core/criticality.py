@@ -33,6 +33,7 @@ mapping lives, and a cached accessor with a reset hook for tests.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
@@ -173,6 +174,36 @@ class CriticalitySource(ABC):
         itself* is unusable.
         """
 
+    def get_many(
+        self, keys: Iterable[tuple[str, str | None]]
+    ) -> dict[tuple[str, str | None], CriticalityResult]:
+        """Resolve many material-plants at once. Same answers as :meth:`get`.
+
+        **Deliberately concrete, not abstract.** Every provider inherits a
+        correct implementation the day it is written, and overriding is purely
+        an optimisation -- so adding this method cannot break an existing
+        source, a test double, or a provider someone else is midway through.
+        The conformance suite asserts the override agrees with ``get`` key for
+        key, which is what makes the optimisation safe to trust.
+
+        **Why the port needs it at all.** A consumer that holds thousands of
+        material-plants -- I08's repairable universe is 3,802 rows today -- can
+        only use a one-at-a-time port by calling it thousands of times, and each
+        call opens its own database session. Measured on 15-Sep: 6.8 ms a call,
+        26 seconds for one universe build, against 5.7 s for the whole build
+        before criticality was added. The alternative to this method is every
+        initiative quietly re-reading ZMM065 itself, which is the duplication
+        W3.4 exists to prevent.
+
+        Keys are ``(material, plant)`` and a ``None`` plant means the same thing
+        it means in :meth:`get`: answer only if the material is unambiguous
+        across plants. Duplicate keys are resolved once. The returned dict has
+        an entry for every requested key -- a material this source has never
+        heard of is an ordinary result with ``tier=None``, never a missing key,
+        so callers never have to distinguish "absent" from "not asked".
+        """
+        return {key: self.get(key[0], key[1]) for key in dict.fromkeys(keys)}
+
     @abstractmethod
     def check_connection(self) -> None:
         """Prove the source is reachable and usable. Raises on failure.
@@ -219,6 +250,55 @@ class FallbackCriticalitySource(CriticalitySource):
             is_fallback=True,
             reason=reason if demoted.found else f"{reason}; {demoted.reason}",
         )
+
+    def get_many(
+        self, keys: Iterable[tuple[str, str | None]]
+    ) -> dict[tuple[str, str | None], CriticalityResult]:
+        """Batch the primary, then batch only what it could not answer.
+
+        Two queries rather than two per key, and the fallback is never asked
+        about a key the primary already resolved. If the primary is unusable
+        altogether, every key falls through together with the same reason --
+        which is today's real case, since ZZCRITIC answers nothing at all.
+        """
+        wanted = list(dict.fromkeys(keys))
+        try:
+            primary = self.primary.get_many(wanted)
+        except CriticalityError as exc:
+            reason = f"{self.primary.name} unavailable: {exc}"
+            primary = {}
+            reasons = dict.fromkeys(wanted, reason)
+        else:
+            reasons = {
+                key: (
+                    primary[key].reason or f"{self.primary.name} returned no value"
+                )
+                for key in wanted
+                if not primary[key].found
+            }
+
+        resolved = {key: result for key, result in primary.items() if result.found}
+        missing = [key for key in wanted if key not in resolved]
+        if not missing:
+            return {key: resolved[key] for key in wanted}
+
+        demoted = self.fallback.get_many(missing)
+        for key in missing:
+            fallback_result = demoted[key]
+            reason = reasons.get(key, "")
+            resolved[key] = CriticalityResult(
+                sap_material_number=fallback_result.sap_material_number,
+                sap_plant_code=fallback_result.sap_plant_code,
+                tier=fallback_result.tier,
+                source=fallback_result.source,
+                is_fallback=True,
+                reason=(
+                    reason
+                    if fallback_result.found
+                    else f"{reason}; {fallback_result.reason}"
+                ),
+            )
+        return {key: resolved[key] for key in wanted}
 
     def check_connection(self) -> None:
         """Healthy when *either* source can answer -- that is what fallback means."""

@@ -1,0 +1,480 @@
+"""Pydantic response contracts for the Initiative 13 API.
+
+Routes convert internal domain models (``app.initiatives.i13.models``) to
+these before returning -- raw SAP records never reach the API layer.
+"""
+
+from datetime import date, datetime
+from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict
+
+from app.initiatives.i13.models import (
+    AcquiredVsPlanStatus,
+    AgingBand,
+    AttributionStatus,
+    ConsumptionAttributionSource,
+    ConsumptionAttributionStatus,
+    ExceptionStatus,
+    ExceptionType,
+    GiLinkStatus,
+    GrLinkStatus,
+    LifecycleStatus,
+    PrPoLinkStatus,
+    ReservationPrLinkStatus,
+)
+from app.initiatives.i13.ledger_compat import LedgerUtilisationStatus, LinkageStatus, ProcurementStatus
+from app.shared.material_scope import MaterialScope
+
+
+class DataSourceStatusResponse(BaseModel):
+    """Postgres ingestion status per raw extract table (from ``ingestion_run``)
+    -- replaces the old LIVE/MOCK SapGateway diagnostic, which no longer
+    applies now that every I13 read goes through Postgres."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    table: str
+    row_count: int
+    status: str
+    loaded_at: datetime | None
+
+
+class MovementMetricsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    material: str
+    plant: str
+
+    last_movement_date: date | None
+    days_since_last_movement: int | None
+
+    last_issue_date: date | None
+    days_since_last_issue: int | None
+
+    consumption_count_12m: int
+    consumption_qty_12m: Decimal
+
+    inventory_turns: Decimal | None
+    inventory_turns_reason: str | None
+
+    aging_band: AgingBand
+
+    calculated_at: datetime
+
+
+class PartialLedgerEntryResponse(BaseModel):
+    """W6.1: PR -> PO -> GR -> GI, without the reservation leg (see W6.2)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    ledger_id: str
+    material: str
+    plant: str
+
+    pr_number: str | None
+    pr_item: str | None
+    po_number: str | None
+    po_item: str | None
+
+    pr_quantity: Decimal | None
+    ordered_quantity: Decimal | None
+    received_quantity: Decimal
+    issued_quantity: Decimal | None
+
+    first_gr_date: date | None
+    last_gr_date: date | None
+    first_issue_date: date | None
+    last_issue_date: date | None
+
+    lifecycle_status: LifecycleStatus
+    pr_po_link_status: PrPoLinkStatus
+    gr_link_status: GrLinkStatus
+    gi_link_status: GiLinkStatus
+    gi_link_reason: str | None
+
+
+class ProcurementChainDiagnosticsResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    pr_items_total: int
+    pr_items_with_no_po: int
+    pr_items_with_single_po: int
+    pr_items_with_multiple_po: int
+
+    po_items_total: int
+    po_items_with_no_pr_reference: int
+    po_items_with_unresolved_pr_reference: int
+
+    duplicate_pr_keys: list[tuple[str, str]]
+    duplicate_po_keys: list[tuple[str, str]]
+
+
+class ReservationLedgerEntryResponse(BaseModel):
+    """W6.2: Reservation -> PR -> PO -> GR -> GI."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    ledger_id: str
+    reservation_number: str
+    reservation_item: str
+
+    material: str
+    plant: str
+    reservation_quantity: Decimal
+    requirement_date: date | None
+
+    pr_number: str | None
+    pr_item: str | None
+    po_number: str | None
+    po_item: str | None
+
+    ordered_quantity: Decimal | None
+    received_quantity: Decimal | None
+    issued_quantity: Decimal
+
+    first_gr_date: date | None
+    last_gr_date: date | None
+    first_issue_date: date | None
+    last_issue_date: date | None
+
+    procurement_issued_quantity: Decimal | None
+    direct_store_issued_quantity: Decimal | None
+
+    lifecycle_status: LifecycleStatus
+    reservation_pr_link_status: ReservationPrLinkStatus
+    gr_link_status: GrLinkStatus
+    gi_link_status: GiLinkStatus
+    gi_link_reason: str | None
+
+    material_scope: MaterialScope
+
+    attribution_status: AttributionStatus | None = None
+    attribution_evidence: str | None = None
+
+    #: The assistant session this reservation's item text (SGTXT) names.
+    session_id: str | None = None
+    #: RESB.SGTXT as loaded (or as the UAT overlay says).
+    sgtxt: str | None = None
+    #: A reservation that exists only in the UAT overlay (simulated).
+    uat_simulated: bool = False
+
+
+class UtilisationLedgerEntryResponse(BaseModel):
+    """Compatibility contract for ``GET /api/i13/ledger`` -- see
+    ``app.initiatives.i13.ledger_compat`` for why this still exists and what
+    it's built from now."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    ledger_id: str
+    material: str
+    plant: str
+
+    reservation_number: str | None
+    reservation_item: str | None
+
+    pr_number: str | None
+    pr_item: str | None
+
+    po_number: str | None
+    po_item: str | None
+
+    received_quantity: Decimal
+    issued_quantity: Decimal
+    open_quantity: Decimal
+
+    first_gr_date: date | None
+    latest_gr_date: date | None
+    first_gi_date: date | None
+    latest_gi_date: date | None
+
+    procurement_status: ProcurementStatus
+    utilisation_status: LedgerUtilisationStatus
+    linkage_status: LinkageStatus
+
+    data_source: str
+
+    attribution_status: AttributionStatus | None = None
+    attribution_evidence: str | None = None
+
+
+class ConsumptionAttributionResponse(BaseModel):
+    """W6.4: deterministic ownership/accountability attribution for one W6.2
+    ``ReservationLedgerEntry``."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    ledger_id: str
+
+    material: str
+    plant: str
+
+    reservation_number: str
+    reservation_item: str
+
+    requester_id: str | None
+    order_number: str | None
+    cost_centre: str | None
+
+    status: ConsumptionAttributionStatus
+    source: ConsumptionAttributionSource
+    evidence: str
+
+    cost_centre_attribution_enabled: bool
+
+    attributed_at: datetime
+
+
+class WatchMetricResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    material: str
+    plant: str
+    material_scope: MaterialScope
+
+    stock_on_hand: Decimal | None
+    open_po_quantity: Decimal
+    average_monthly_consumption: Decimal
+    months_of_cover: Decimal | None
+    projected_months_of_cover: Decimal | None
+    months_of_cover_reason: str | None
+
+    last_movement_date: date | None
+    days_since_last_movement: int | None
+    last_issue_date: date | None
+    days_since_last_issue: int | None
+    consumption_count_12m: int
+    consumed_qty_12m: Decimal
+    inventory_turns: Decimal | None
+    inventory_turns_reason: str | None
+    aging_band: AgingBand
+
+    gr_not_issued_flag: bool
+    gr_not_issued_days_since_gr: int | None
+    gr_not_issued_relevant_gr_date: date | None
+    gr_not_issued_threshold_days: int
+    gr_not_issued_received_quantity: Decimal
+    gr_not_issued_issued_quantity: Decimal
+    gr_not_issued_outstanding_quantity: Decimal
+
+    acquired_vs_plan_status: AcquiredVsPlanStatus
+    planned_quantity: Decimal | None
+    received_quantity: Decimal
+    issued_quantity: Decimal
+    acquired_vs_plan_variance_quantity: Decimal | None
+    acquired_vs_plan_variance_percentage: Decimal | None
+
+    calculated_at: datetime
+
+
+class ExceptionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    type: ExceptionType
+    status: ExceptionStatus
+
+    material: str
+    plant: str
+
+    reservation_number: str | None
+    pr_number: str | None
+    po_number: str | None
+
+    owner_id: str | None
+    owner_name: str | None
+
+    created_at: datetime
+    due_at: datetime | None
+    days_overdue: int | None
+
+    reason: str
+    evidence: str
+
+
+class ReclassificationCandidateResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    material: str
+    plant: str
+    as_of_date: date
+    consumption_count_12m: int
+    consumption_threshold: int
+    consumed_more_than_threshold: bool
+    critical_impact_indicator: bool | None
+    hod_justified_request_indicator: bool | None
+    data_available: bool
+    candidate_flag: bool
+    generated_at: datetime
+    candidate_reasons: list[str]
+
+
+class ReconciliationSourceResult(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    source_name: str
+    computed_count: int
+    reference_count: int | None
+    absolute_difference: int | None
+    percentage_difference: Decimal | None
+    within_tolerance: bool | None
+    status: str
+
+
+class ValidationResponse(BaseModel):
+    tolerance_pct: Decimal
+    results: list[ReconciliationSourceResult]
+
+
+class I13SummaryResponse(BaseModel):
+    total_oar_positions: int
+    fast_moving_count: int
+    slow_moving_count: int
+    non_moving_count: int
+    gr_not_issued_30_day_count: int
+    plan_breach_count: int
+    no_plan_count: int
+    reclassification_candidate_count: int
+    valuation_is_mocked: bool
+
+
+class SnapshotStatusResponse(BaseModel):
+    """What the I13 read routes are serving from (app/initiatives/i13/snapshot.py)."""
+
+    status: str
+    enabled: bool
+    version: int | None = None
+    reference_date: date | None = None
+    built_at: datetime | None = None
+    build_seconds: float | None = None
+    fingerprint: str | None = None
+    building_since: datetime | None = None
+    rebuilding: bool = False
+    last_error: str | None = None
+
+
+class GrniEntryResponse(BaseModel):
+    """One reservation-ledger entry received and not issued for at least the
+    GR-not-issued threshold (FRS FR-6) -- the per-entry form of WATCH's flag."""
+
+    ledger_id: str
+    reservation_number: str
+    reservation_item: str
+    material: str
+    plant: str
+    material_scope: str
+    pr_number: str | None
+    po_number: str | None
+    po_item: str | None
+    received_quantity: Decimal
+    issued_quantity: Decimal
+    outstanding_quantity: Decimal
+    first_gr_date: date | None
+    last_gr_date: date
+    days_since_gr: int
+    threshold_days: int
+    requirement_date: date | None
+    lifecycle_status: str
+
+
+class MonthlyConsumptionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    month: str
+    issued_quantity: Decimal
+    issue_count: int
+    received_quantity: Decimal
+
+
+class UsagePatternResponse(BaseModel):
+    """One material-plant's month-by-month goods issues and receipts.
+
+    ``months`` covers every month in the delivered history (``history_months``
+    on the list response's header), with zero months filled in, so a gap in
+    consumption reads as a gap rather than disappearing.
+    """
+
+    material: str
+    plant: str
+    material_scope: str
+    aging_band: str | None
+    stock_on_hand: Decimal | None
+    average_monthly_consumption: Decimal | None
+    months_of_cover: Decimal | None
+    issued_quantity_total: Decimal
+    issue_count_total: int
+    active_months: int
+    last_issue_month: str | None
+    months: list[MonthlyConsumptionResponse]
+
+
+class SessionLinkResponse(BaseModel):
+    """A reservation item whose item text (SGTXT) names an assistant session."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    session_id: str
+    reservation_number: str
+    reservation_item: str
+    material: str
+    plant: str
+    source: str
+    sgtxt: str | None = None
+    first_seen_at: datetime
+
+
+class SessionComplianceResponse(BaseModel):
+    """FR-4: OAR reservations required since go-live, by what their SGTXT says."""
+
+    go_live_date: date
+    reservations: int
+    covered: int
+    session_without_plan: int
+    invalid_session: int
+    missing_session: int
+
+
+class UatStatusResponse(BaseModel):
+    enabled: bool
+    go_live_date: date
+
+
+class UatReservationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    reservation_number: str
+    reservation_item: str
+    material: str
+    plant: str
+    simulated: bool
+    requirement_date: date | None
+    requirement_quantity: Decimal | None
+    sgtxt: str
+    original_sgtxt: str | None
+    session_id: str | None
+    created_by: str
+    created_at: datetime
+
+
+class UatCandidateResponse(BaseModel):
+    """An existing reservation (loaded extract) the session ID could be stamped on."""
+
+    reservation_number: str
+    reservation_item: str
+    requirement_date: date | None
+    reservation_quantity: Decimal
+    sgtxt: str | None
+    session_id: str | None
+    lifecycle_status: str
+
+
+class UatSimulateRequest(BaseModel):
+    session_id: str
+
+
+class UatStampRequest(BaseModel):
+    session_id: str
+    reservation_number: str
+    reservation_item: str

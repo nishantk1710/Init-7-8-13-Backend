@@ -28,13 +28,21 @@ pydantic-settings==2.15.0
 pydantic==2.13.5
 
 # --- Data / persistence ---
-# Azure SQL (sqldb-aicom) is the only backend. pyodbc additionally needs the
-# system-level "ODBC Driver 18 for SQL Server", which is NOT a pip package --
-# it ships with the App Service Python image, and a local machine has to install
-# it separately. That is the one dependency this file cannot pin for you.
+# Azure SQL (sqldb-aicom) is the production backend. pyodbc additionally needs
+# the system-level "ODBC Driver 18 for SQL Server", which is NOT a pip package
+# -- it ships with the App Service Python image, and a local machine has to
+# install it separately. That is the one dependency this file cannot pin for you.
 SQLAlchemy==2.0.52
 pyodbc==5.3.0
+# Local dev and CI run against Postgres 18 instead (see compose.yaml and
+# .github/workflows/ci.yml) -- psycopg is what DATABASE_URL's
+# postgresql+psycopg:// scheme loads at migration/connect time.
+psycopg[binary]==3.3.1
 alembic==1.19.2
+# Driver for the local Postgres stand-in (compose.yaml) -- DATABASE_URL there
+# uses postgresql+psycopg://. Not needed against Azure SQL, but required for
+# every local run; leaving it out makes every DB-touching endpoint 500.
+psycopg[binary]==3.3.1
 
 # --- Azure ---
 # Data Lake storage (stvziaicomnonprod) behind the Storage port, and the managed
@@ -52,6 +60,28 @@ openpyxl==3.1.5
 # library data-generator/cpi_discovery.py has been proven against for weeks --
 # porting working auth and retry logic to a new client is unforced risk.
 requests==2.34.2
+
+# --- Forecasting (Initiative 07, Phase 4) ---
+# SES and Auto-ARIMA. statsmodels rather than pmdarima: pmdarima is effectively
+# unmaintained and does not build cleanly on Python 3.14, and the order search
+# it provides is a loop over statsmodels fits that app/initiatives/i7/
+# forecasting/arima.py does directly.
+statsmodels==0.15.0
+
+# The LightGBM quantile challenger for intermittent/lumpy demand. Trained as one
+# global pooled model, never per material -- individual series here hold at most
+# 13 observations.
+lightgbm==4.7.0
+
+# Pulled in by the two above; pinned so a fresh install matches this one.
+numpy==2.5.3
+scipy==1.18.1
+pandas==3.0.5
+
+# Reads config/dev/i7_service_level_matrix.yaml, the development-only mock
+# Criticality -> Service Level matrix (see
+# app/initiatives/i7/policy/dev_fixtures.py). Not used for anything else.
+PyYAML==6.0.3
 
 # --- Test ---
 pytest==9.1.1
