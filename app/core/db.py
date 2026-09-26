@@ -4,28 +4,12 @@ Every database session in the application is created here. No module builds its
 own engine, and no module names a driver, host or database: the single source is
 ``Settings.database_url`` (see ``app.core.config``).
 
-Two backends are genuinely supported, chosen by ``DATABASE_URL``'s own scheme,
-never by a separate flag:
-
-  * **Postgres** -- the local Docker container (``compose.yaml``), already
-    seeded with the real SAP extract every I13 endpoint reads
-    (``raw_eban``/``raw_ekpo``/``raw_mseg``/``raw_resb``/... -- see
-    ``app/seed/manifest.py``). This is the data source every I13 test and
-    real-data validation in this codebase has actually been run against.
-  * **Azure SQL** -- ``sqldb-aicom`` on ``sql-vzi-aicom-nonprod-san``, the
-    target deployed environment. Its network sits behind a private endpoint,
-    so anything outside the VNet cannot reach it at all; that is
-    infrastructure, not a bug here, and the connect timeout below exists so
-    it presents as a fast failure rather than a hang.
-
-A previous version of this module accepted Azure SQL only, on the premise
-that local Postgres was purely a stand-in to be retired once Azure SQL was
-provisioned. That has not happened yet -- no I13 data is known to exist in
-Azure SQL -- while the real seeded Postgres data is what every endpoint
-needs to actually serve. Restricting to one backend prematurely made the
-whole API unusable with the only data source that currently has data in it,
-so both are accepted again; whichever ``DATABASE_URL`` names is the one used,
-with connection options appropriate to that driver (see ``get_engine``).
+The target is Azure SQL -- ``sqldb-aicom`` on ``sql-vzi-aicom-nonprod-san``.
+Local Postgres was a stand-in while VZI's database was being provisioned and has
+been removed. Note that the server has public network access disabled and is
+reached through a private endpoint, so anything running outside the VNet cannot
+connect at all; that is infrastructure, not a bug here, and the connect timeout
+below exists so it presents as a fast failure rather than a hang.
 
 **Everything is lazy, deliberately.** Creating the engine at import time would
 make ``import app.main`` fail whenever no database is configured -- which would
@@ -34,7 +18,6 @@ to work with zero configuration. Instead the engine is built on first use and
 cached, so a process that never touches the database never connects to one.
 """
 
-import os
 from collections.abc import Iterator
 from functools import lru_cache
 
@@ -44,9 +27,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
 
+# The only backend this system runs against: Azure SQL (sqldb-aicom on
+# sql-vzi-aicom-nonprod-san). Local Postgres was a stand-in until VZI's database
+# existed and has been removed now that it does -- so there is no second dialect
+# to keep working, and no way to accidentally develop against one and deploy
+# against the other.
 MSSQL = "mssql"
-POSTGRESQL = "postgresql"
-SUPPORTED_BACKENDS = frozenset({MSSQL, POSTGRESQL})
 
 
 class DatabaseNotConfiguredError(RuntimeError):
@@ -71,35 +57,22 @@ def backend_of(url: str) -> str:
         return ""
 
 
-def require_supported_backend(url: str) -> None:
-    """Refuse a DATABASE_URL that names neither supported backend, and say why.
+def require_azure_sql(url: str) -> None:
+    """Refuse a DATABASE_URL that is not Azure SQL, and say why.
 
-    Worth failing loudly on rather than letting SQLAlchemy try: a URL for an
-    untested dialect (sqlite, mysql, ...) would otherwise fail deep inside a
-    query with a driver error, and the actual problem -- that this system
-    only knows how to run against Postgres or Azure SQL -- would not be
-    obvious from it.
-
-    ``ALLOW_NON_AZURE_SQL=1`` lifts this gate. It exists because Azure SQL sits
-    behind a private endpoint that only the VNet can reach, so neither a GitHub
-    Actions runner nor most local machines can reach it at all -- CI still needs
-    *some* database to prove migrations and app code work. Default is unset, so
-    the gate is on everywhere unless this is set deliberately (ci.yml, or a
-    developer's own shell); it must never be set in a deployed environment.
+    Worth failing loudly on rather than letting SQLAlchemy try: a leftover
+    Postgres URL in someone's environment would otherwise fail deep inside the
+    seed with a driver error, and the actual problem -- that this system no
+    longer has a local backend -- would not be obvious from it.
     """
-    if os.environ.get("ALLOW_NON_AZURE_SQL") == "1":
-        return
     backend = backend_of(url)
-    if backend and backend not in SUPPORTED_BACKENDS:
+    if backend and backend != MSSQL:
         raise DatabaseNotConfiguredError(
-            f"DATABASE_URL names the {backend!r} backend. This system supports "
-            "Postgres (local development, e.g. postgresql+psycopg://postgres:"
-            "<password>@127.0.0.1:5432/spares_ai) or Azure SQL (the deployed "
-            "target, e.g. mssql+pyodbc://...@sql-vzi-aicom-nonprod-san"
+            f"DATABASE_URL names the {backend!r} backend. This system runs "
+            "against Azure SQL only; local Postgres was a stand-in and has been "
+            "removed. Expected mssql+pyodbc://...@sql-vzi-aicom-nonprod-san"
             ".database.windows.net:1433/sqldb-aicom?driver=ODBC+Driver+18+for+"
-            "SQL+Server&Encrypt=yes). See README, 'Database'. Set "
-            "ALLOW_NON_AZURE_SQL=1 to use a non-Azure database anyway (CI/local "
-            "dev only -- never in a deployed environment)."
+            "SQL+Server&Encrypt=yes. See README, 'Database'."
         )
 
 
@@ -118,7 +91,7 @@ def get_engine() -> Engine:
             "(see README, 'Database'). No default is assumed: a connection "
             "string must never be hard-coded."
         )
-    require_supported_backend(settings.database_url)
+    require_azure_sql(settings.database_url)
 
     # Bound how long a connection attempt waits. Without this pyodbc waits on the
     # OS default, and a database that is unreachable -- which, with public
@@ -126,14 +99,10 @@ def get_engine() -> Engine:
     # outside the VNet sees -- makes the caller HANG with no output rather than
     # failing. Same lesson as the storage root: fail fast and say why.
     #
-    # The option name is driver-specific: pyodbc's login timeout is ``timeout``,
-    # psycopg's is ``connect_timeout``. Only pyodbc's name applied here before --
-    # invisible while Azure SQL was the only backend anyone actually connected
-    # with, but a psycopg connection (ALLOW_NON_AZURE_SQL, see require_azure_sql)
-    # rejects an option it does not recognise rather than ignoring it.
-    timeout_option = "timeout" if backend_of(settings.database_url) == MSSQL else "connect_timeout"
+    # ``timeout`` is pyodbc's login timeout. Passed as a driver connect_arg
+    # rather than in the URL so it applies however DATABASE_URL is written.
     connect_args: dict[str, object] = {
-        timeout_option: settings.database_connect_timeout_seconds
+        "timeout": settings.database_connect_timeout_seconds
     }
 
     return create_engine(
@@ -141,12 +110,10 @@ def get_engine() -> Engine:
         echo=settings.database_echo,
         # Azure SQL closes idle connections aggressively and the App Service can
         # sit idle between requests, so the stale-connection problem this solves
-        # is more likely there than locally -- but pre-ping is cheap enough to
-        # keep on for Postgres too (e.g. after a container restart).
+        # is more likely there than locally, not less.
         pool_pre_ping=True,
         # Recycle below Azure SQL's idle cut so a pooled connection is replaced
         # on our schedule rather than discovered dead on someone's request.
-        # Harmless for Postgres, which has no comparably aggressive idle cut.
         pool_recycle=settings.database_pool_recycle_seconds,
         future=True,
         connect_args=connect_args,

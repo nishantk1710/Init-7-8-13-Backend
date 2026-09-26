@@ -6,19 +6,16 @@ Split deliberately into two groups:
   importing the app, serving liveness, and running the suite all work on a
   machine with nothing configured -- the property the whole lazy-engine design
   exists to protect.
-* Tests that need a real, reachable database (Postgres or Azure SQL -- see
-  ``app.core.db``, which accepts either), skipped unless DATABASE_URL names
-  one. They run against the real database rather than SQLite on purpose:
-  SQLite accepts DDL and types Postgres/SQL Server reject, so passing against
-  it would prove nothing about the database actually used.
+* Tests that need a real Azure SQL, skipped unless DATABASE_URL names one. They
+  run against the real database rather than SQLite on purpose: SQLite accepts
+  DDL and types SQL Server rejects, so passing against it would prove nothing
+  about the database we actually use.
 
-In practice today that means Postgres: the local Docker container is what
-holds the real seeded SAP extract every I13 endpoint reads, and is reachable
-from every developer laptop. Azure SQL (``sql-vzi-aicom-nonprod-san``) has
-public network access disabled and is reached through a private endpoint, so
-DATABASE_URL naming it only actually connects from inside the VNet -- these
-same tests would skip-by-unreachability there, not fail, if pointed at it
-from outside.
+Note what this means in practice today. ``sql-vzi-aicom-nonprod-san`` has public
+network access disabled and is reached through a private endpoint, so these
+tests SKIP anywhere outside the VNet -- including CI and every developer laptop.
+They are written to run from inside the App Service, and the fact that they are
+skipping is not evidence that the database works.
 """
 
 import pytest
@@ -27,11 +24,12 @@ from sqlalchemy import inspect, text
 
 from app.core.config import Settings, get_settings
 from app.core.db import (
+    MSSQL,
     DatabaseNotConfiguredError,
     backend_of,
     get_engine,
     get_sessionmaker,
-    require_supported_backend,
+    require_azure_sql,
     reset_engine_cache,
 )
 from app.main import app
@@ -40,11 +38,15 @@ from app.models import Base, IngestionRun
 client = TestClient(app)
 
 
-def _database_configured() -> bool:
-    return bool(get_settings().database_url)
+def _azure_sql_configured() -> bool:
+    url = get_settings().database_url
+    return bool(url) and backend_of(url) == MSSQL
 
 
-needs_db = pytest.mark.skipif(not _database_configured(), reason="DATABASE_URL not set")
+needs_db = pytest.mark.skipif(
+    not _azure_sql_configured(),
+    reason="DATABASE_URL does not name an Azure SQL database (reachable only inside the VNet)",
+)
 
 
 # --- No database required -------------------------------------------------
@@ -60,60 +62,39 @@ def test_importing_the_app_does_not_connect() -> None:
     assert get_engine.cache_info().currsize == 0
 
 
-class TestPostgresOrAzureSqlIsAccepted:
-    """Postgres (local dev, real seeded data) and Azure SQL (deployed target)
-    are both genuinely supported -- an unrelated dialect must say so, not
-    fail obscurely deep inside a query.
+class TestOnlyAzureSqlIsAccepted:
+    """Local Postgres was removed; a leftover URL must say so, not fail obscurely.
 
-    These run everywhere, which matters: the upgrade hazard they cover -- a
-    developer's URL naming some other dialect entirely -- is one that bites
-    regardless of network reachability.
+    These run everywhere, which matters: they are the only database tests that
+    are not skipped outside the VNet, and the upgrade hazard they cover -- a
+    developer's old DATABASE_URL -- is one that only bites outside the VNet.
     """
 
     @pytest.mark.parametrize(
         "url",
         [
+            "postgresql+psycopg://postgres:pw@127.0.0.1:5432/spares_ai",
+            "postgresql://postgres:pw@localhost/spares_ai",
             "sqlite:///./local.db",
-            "mysql://u:p@h/db",
         ],
     )
-    def test_an_unsupported_backend_is_refused_and_explained(
-        self, url: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # This suite runs in CI with ALLOW_NON_AZURE_SQL=1 (see ci.yml) so the
-        # Postgres service container is usable; the gate itself must still be
-        # provably on for anyone who has not set that escape hatch.
-        monkeypatch.delenv("ALLOW_NON_AZURE_SQL", raising=False)
-        with pytest.raises(DatabaseNotConfiguredError, match="supports Postgres"):
-            require_supported_backend(url)
-
-    def test_a_postgres_url_is_accepted(self) -> None:
-        require_supported_backend("postgresql+psycopg://postgres:pw@127.0.0.1:5432/spares_ai")
+    def test_a_non_azure_url_is_refused_and_explained(self, url: str) -> None:
+        with pytest.raises(DatabaseNotConfiguredError, match="Azure SQL only"):
+            require_azure_sql(url)
 
     def test_an_azure_sql_url_is_accepted(self) -> None:
-        require_supported_backend(
+        require_azure_sql(
             "mssql+pyodbc://u:p@sql-vzi-aicom-nonprod-san.database.windows.net:1433"
             "/sqldb-aicom?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes"
         )
 
     def test_an_empty_url_is_not_this_error(self) -> None:
         """Unconfigured and wrongly-configured are different states, as elsewhere."""
-        require_supported_backend("")
+        require_azure_sql("")
 
-    def test_the_refusal_names_the_backend_it_found(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("ALLOW_NON_AZURE_SQL", raising=False)
-        with pytest.raises(DatabaseNotConfiguredError, match="mysql"):
-            require_supported_backend("mysql://u:p@h/db")
-
-    def test_allow_non_azure_sql_env_var_lifts_the_gate(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The CI/local-dev escape hatch, exercised explicitly rather than only
-        relied on implicitly through this suite's own environment."""
-        monkeypatch.setenv("ALLOW_NON_AZURE_SQL", "1")
-        require_supported_backend("mysql://u:p@h/db")
+    def test_the_refusal_names_the_backend_it_found(self) -> None:
+        with pytest.raises(DatabaseNotConfiguredError, match="postgresql"):
+            require_azure_sql("postgresql://u:p@h/db")
 
 
 def test_unconfigured_database_raises_a_distinct_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -159,7 +140,7 @@ def test_naming_convention_is_applied() -> None:
     assert Base.metadata.tables["ingestion_run"].primary_key.name == "pk_ingestion_run"
 
 
-# --- Real Postgres required -----------------------------------------------
+# --- Real Azure SQL required -----------------------------------------------
 
 
 @needs_db

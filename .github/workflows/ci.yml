@@ -63,11 +63,6 @@ jobs:
       # Deliberately unset. The SAP extracts are not in CI, so the two tests
       # that need them skip and say so.
       STORAGE_URL: ""
-      # app/core/db.py refuses any non-Azure-SQL DATABASE_URL by default, since
-      # Azure SQL is the only backend outside this runner. sql-vzi-aicom-nonprod
-      # sits behind a private endpoint a GitHub-hosted runner cannot reach, so
-      # this lifts the gate here only -- see require_azure_sql's docstring.
-      ALLOW_NON_AZURE_SQL: "1"
 
     steps:
       - uses: actions/checkout@v4
