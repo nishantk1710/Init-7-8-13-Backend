@@ -275,6 +275,11 @@ def _csv(args) -> int:
             span = "default (3 years for transaction tables)"
 
         shape = "fired together, then collected" if len(names) > 1 else "single table"
+        if args.all:
+            blocked = [t for t in CSV_TABLES if t.blocked]
+            names = [n for n in names if n not in {t.sap_table for t in blocked}]
+            for t in blocked:
+                print(f"  {t.sap_table}: left out -- {t.blocked}")
         print(f"CSV pull: {len(names)} table(s), {shape}")
         print(f"  window : {span}")
         print(f"  rows   : {args.max_rows or 'no cap -- full pull'}")

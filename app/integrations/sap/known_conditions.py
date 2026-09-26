@@ -300,6 +300,26 @@ READ_BROKEN_SETS: dict[str, str] = {
     ),
 }
 
+# Tables the CSV extract job (ZMM_GET_CSV_SRV) acknowledges and never delivers.
+#
+# Measured 2026-09-25/26: 39 requests for EKKO and 21 for EKET across every
+# shape the entity key allows -- window wide, one year, recent, ending today,
+# from 1900, blank; dates as YYYYMMDD and YYYY-MM-DD; MaxRows 1, 100, 50000
+# and none; IsDelta='X'; TabName upper, lower and mixed case; the /sap/ path
+# segment in both cases; 13- and 9-character ids. Every one answered
+# "Success: extraction started in background"; not one chunk arrived.
+# MAKT, fired on the same route in the same minutes, delivered four of four.
+# The other 19 tables deliver on the first shape. The failure is inside the
+# job, after the acknowledgement, and nothing in the request reaches it.
+#
+# A table listed here is left out of a sweep with the reason shown, rather
+# than fired and timed out fifteen minutes later. An explicit --table still
+# fires it, so the day SAP fixes the job the fix is one deletion here.
+CSV_UNDELIVERED_TABLES: dict[str, str] = {
+    "EKKO": "SAP acknowledges and never extracts it (60 requests, every shape, 25-26 Sep 2026)",
+    "EKET": "SAP acknowledges and never extracts it (60 requests, every shape, 25-26 Sep 2026)",
+}
+
 # Entity sets whose DECLARED key does not uniquely address a row.
 #
 # CDPOS declares (Objectclas, Objectid, Changenr) but one change document
