@@ -275,6 +275,7 @@ def test_summary_stockout_and_excess_counts_never_negative():
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_sort_desc_reverses_ordering():
     """Part 22 -- 'recent recommendations' needs newest-first, which the
     default ascending-only sort cannot provide without pulling every page
@@ -1082,10 +1083,10 @@ def two_recommendation_runs_same_material_plant():
                 recommendation_id=recommendation_id,
                 sap_material_number=material,
                 sap_plant_code=plant,
-                feature_run_id="run-1",
-                forecast_run_id="run-1",
-                inventory_run_id="run-1",
-                oar_run_id="run-1",
+                feature_run_id=1,
+                forecast_run_id=1,
+                inventory_run_id=1,
+                oar_run_id=1,
                 policy_id="i07-test",
                 policy_version=1,
                 formula_version="i07-recommendation-2",
@@ -1099,10 +1100,10 @@ def two_recommendation_runs_same_material_plant():
                 recommendation_id=recommendation_id,
                 sap_material_number=material,
                 sap_plant_code=plant,
-                feature_run_id="run-2",
-                forecast_run_id="run-2",
-                inventory_run_id="run-2",
-                oar_run_id="run-2",
+                feature_run_id=2,
+                forecast_run_id=2,
+                inventory_run_id=2,
+                oar_run_id=2,
                 policy_id="i07-test",
                 policy_version=1,
                 formula_version="i07-recommendation-2",

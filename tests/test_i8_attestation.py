@@ -595,7 +595,7 @@ class TestTheWritePath:
 # --- The API ---------------------------------------------------------------
 
 
-@needs_db
+@needs_views
 class TestTheApi:
     @pytest.fixture(autouse=True)
     def clean_table(self):
@@ -1146,7 +1146,7 @@ class TestExplainCoverage:
         assert covered == []
 
 
-@needs_db
+@needs_views
 class TestThePostExplainsItself:
     @pytest.fixture(autouse=True)
     def clean_table(self):

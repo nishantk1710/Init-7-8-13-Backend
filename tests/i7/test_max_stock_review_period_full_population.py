@@ -45,6 +45,7 @@ def _distinct_policy() -> "PolicyDocument":  # noqa: F821 -- imported below for 
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_review_period_mock_gives_max_stock_only_to_the_three_known_materials(session, monkeypatch):
     """The exact population-scale claim: enabling I7_DEV_MOCK_MAX_STOCK
     (alongside I7_DEV_MOCK_SERVICE_LEVEL, since Max Stock is computed from

@@ -23,6 +23,7 @@ needs_db = pytest.mark.skipif(not get_settings().database_url, reason="DATABASE_
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_eban_and_ekpo_own_keys_are_unique() -> None:
     """The uniqueness assumption the whole PR/PO grain design rests on --
     checked against real data, not assumed."""
@@ -30,13 +31,13 @@ def test_eban_and_ekpo_own_keys_are_unique() -> None:
         eban = session.execute(
             text(
                 "SELECT count(*) total_rows, "
-                "count(distinct purchase_requisition||'/'||item_of_requisition) distinct_keys FROM raw_eban"
+                "count(distinct CONCAT(purchase_requisition, '/', item_of_requisition)) distinct_keys FROM raw_eban"
             )
         ).one()
         ekpo = session.execute(
             text(
                 "SELECT count(*) total_rows, "
-                "count(distinct purchasing_document||'/'||item) distinct_keys FROM raw_ekpo"
+                "count(distinct CONCAT(purchasing_document, '/', item)) distinct_keys FROM raw_ekpo"
             )
         ).one()
     assert eban.total_rows == eban.distinct_keys, "raw_eban key is not unique -- design assumption violated"
@@ -44,6 +45,7 @@ def test_eban_and_ekpo_own_keys_are_unique() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_a_real_pr_item_is_split_across_multiple_real_pos() -> None:
     """Confirms real multi-sourcing exists (not a hypothetical) -- the
     reason PartialLedgerEntry does not treat PR number+item as a unique key."""
@@ -51,11 +53,10 @@ def test_a_real_pr_item_is_split_across_multiple_real_pos() -> None:
         split = session.execute(
             text(
                 """
-                SELECT purchase_requisition, item_of_requisition, count(distinct purchasing_document) as pos
+                SELECT TOP 1 purchase_requisition, item_of_requisition, count(distinct purchasing_document) as pos
                 FROM raw_ekpo WHERE purchase_requisition <> ''
                 GROUP BY purchase_requisition, item_of_requisition
                 HAVING count(distinct purchasing_document) > 1
-                LIMIT 1
                 """
             )
         ).first()
@@ -69,6 +70,7 @@ def test_a_real_pr_item_is_split_across_multiple_real_pos() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_real_po_with_unresolved_pr_reference_exists_and_is_reported() -> None:
     with get_sessionmaker()() as session:
         unresolved = session.execute(
@@ -77,14 +79,13 @@ def test_real_po_with_unresolved_pr_reference_exists_and_is_reported() -> None:
                 # from any other plant, so an unscoped sample would make this
                 # a test of the plant filter rather than of PR resolution.
                 f"""
-                SELECT k.purchasing_document, k.item, k.purchase_requisition, k.item_of_requisition
+                SELECT TOP 1 k.purchasing_document, k.item, k.purchase_requisition, k.item_of_requisition
                 FROM raw_ekpo k
                 LEFT JOIN raw_eban e ON k.purchase_requisition = e.purchase_requisition
                                      AND k.item_of_requisition = e.item_of_requisition
                 WHERE k.purchase_requisition <> '' AND e.purchase_requisition IS NULL
                   AND k.material <> '' AND k.plant <> ''
                   AND {sql_predicate("k.plant")}
-                LIMIT 1
                 """
             )
         ).first()
@@ -99,6 +100,7 @@ def test_real_po_with_unresolved_pr_reference_exists_and_is_reported() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_real_chain_pr_to_po_to_gr_matches_manual_sql() -> None:
     """§20 example A/B: a real PR -> PO -> GR chain, quantities cross-checked
     against a hand-written SQL aggregate over raw_ekbe."""
@@ -106,14 +108,13 @@ def test_real_chain_pr_to_po_to_gr_matches_manual_sql() -> None:
         candidate = session.execute(
             text(
                 """
-                SELECT k.purchasing_document, k.item, k.purchase_requisition, k.item_of_requisition, k.order_quantity
+                SELECT TOP 1 k.purchasing_document, k.item, k.purchase_requisition, k.item_of_requisition, k.order_quantity
                 FROM raw_ekpo k
                 JOIN raw_eban e ON k.purchase_requisition = e.purchase_requisition
                                 AND k.item_of_requisition = e.item_of_requisition
                 JOIN raw_ekbe b ON b.purchasing_document = k.purchasing_document AND b.item = k.item
                 WHERE b.po_history_category = 'E' AND k.material <> '' AND k.plant <> ''
                 GROUP BY k.purchasing_document, k.item, k.purchase_requisition, k.item_of_requisition, k.order_quantity
-                LIMIT 1
                 """
             )
         ).first()
@@ -144,6 +145,7 @@ def test_real_chain_pr_to_po_to_gr_matches_manual_sql() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_gi_linkage_is_unresolved_for_real_data_today() -> None:
     """Documents the measured, honest state of this dataset: no real
     procurement chain has a deterministic GI link yet (0 of 47,635 issue
@@ -158,6 +160,7 @@ def test_gi_linkage_is_unresolved_for_real_data_today() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_diagnostics_against_real_data_are_internally_consistent() -> None:
     with get_sessionmaker()() as session:
         repository = PostgresProcurementRepository(session)

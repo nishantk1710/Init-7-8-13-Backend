@@ -216,11 +216,13 @@ def test_document_lists_every_unresolved_policy():
     # None on its own, which is what test_conversion_criticality_tiers_unset_
     # because_the_frs_contradicts_itself asserts -- the two tests are not in
     # tension; they check different construction paths.
+    # adoption_monitoring_window is no longer here: AdoptionPolicy's default
+    # monitoring_window_days is now 15 (a confirmed decision -- see
+    # policy/thresholds.py), so it resolves automatically.
     outstanding = PolicyDocument().unresolved_policies()
     assert set(outstanding) == {
         "service_level_matrix",
         "max_stock_strategy",
-        "adoption_monitoring_window",
         "oar_rule_confirmation",
         "oar_rollup_policy",
     }

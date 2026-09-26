@@ -27,6 +27,7 @@ THRESHOLDS = AgingThresholds(fast_max_days=365, slow_max_days=730)
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_movement_history_join_matches_manual_sql_count() -> None:
     """Proves the repository's JOIN + WHERE (material<>'', plant<>'',
     in-scope plant, posting_date<>'') matches a hand-written equivalent, row
@@ -55,6 +56,7 @@ def test_movement_history_join_matches_manual_sql_count() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_movement_history_is_restricted_to_the_in_scope_plants() -> None:
     """No movement row may come back from a plant outside the delivery scope.
 
@@ -71,6 +73,7 @@ def test_movement_history_is_restricted_to_the_in_scope_plants() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_movement_history_rows_are_typed_and_shaped_for_reuse() -> None:
     """Rows must be directly consumable by app.initiatives.i13.movements
     (Matnr/Werks/Bwart/Menge/BudatMkpf) with no further translation."""
@@ -84,6 +87,7 @@ def test_movement_history_rows_are_typed_and_shaped_for_reuse() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_current_stock_matches_manual_sum_of_unrestricted() -> None:
     with get_sessionmaker()() as session:
         totals = fetch_current_stock(session)
@@ -96,6 +100,7 @@ def test_current_stock_matches_manual_sum_of_unrestricted() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_single_material_plant_metrics_match_manual_aggregation() -> None:
     """Cross-checks compute_all_movement_metrics's output for one real
     material+plant against a hand-written SQL aggregate over the same rows --
@@ -107,7 +112,7 @@ def test_single_material_plant_metrics_match_manual_aggregation() -> None:
         candidate = session.execute(
             text(
                 """
-                SELECT m.material, m.plant, count(*) AS issue_events,
+                SELECT TOP 1 m.material, m.plant, count(*) AS issue_events,
                        sum(m.quantity::numeric) AS total_qty, max(h.posting_date) AS last_issue
                 FROM raw_mseg m
                 JOIN raw_mkpf h ON m.material_document = h.material_document
@@ -115,7 +120,6 @@ def test_single_material_plant_metrics_match_manual_aggregation() -> None:
                 WHERE m.movement_type IN ('201', '261') AND m.material <> '' AND m.plant <> ''
                 GROUP BY m.material, m.plant
                 ORDER BY issue_events DESC
-                LIMIT 1
                 """
             )
         ).first()

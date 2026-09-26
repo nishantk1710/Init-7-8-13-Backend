@@ -37,6 +37,7 @@ def session():
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_forecast_run_for_inventory_run_reads_the_pinned_value(session):
     """The helper reads i7_inventory_run.forecast_run_id verbatim -- not the
     latest forecast run, not the latest feature run's forecast run."""
@@ -55,6 +56,7 @@ def test_forecast_run_for_inventory_run_reads_the_pinned_value(session):
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_forecast_run_for_inventory_run_can_disagree_with_latest_feature_run(session):
     """Reproduces the exact Part 28 scenario against the real data: the
     latest feature run has no forecast run of its own
@@ -91,6 +93,7 @@ _TARGET_MATERIALS = ("5000092261", "5000092262", "5000092269")
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_target_materials_have_a_non_null_forecast_rate_after_alignment_fix(session):
     """The exact Part 28 regression: these three material-plants' selected
     inventory run (id=85 at the time of the audit) is pinned to forecast run
@@ -129,6 +132,7 @@ def test_target_materials_have_a_non_null_forecast_rate_after_alignment_fix(sess
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_recommendation_forecast_run_id_matches_its_own_inventory_run(session):
     """Governance-level proof: a recommendation's own forecast_run_id must
     equal the forecast_run_id of the inventory_run it was actually built

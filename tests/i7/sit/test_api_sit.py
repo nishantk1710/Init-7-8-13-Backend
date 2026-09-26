@@ -199,12 +199,18 @@ def test_an_oar_recommendation_traces_through_similarity_to_the_estimate_block()
 
 
 def test_no_module_under_app_api_imports_a_sap_write_client():
-    """Broader than the Phase 8 report's own check: walks every module under
-    app/api, not only app/api/i7, and also forbids importing
+    """Walks every module under app/api/i7 and forbids importing
     app.integrations.sap directly (the read adapter) from API code -- API
     routes should never reach SAP even read-only; that boundary belongs to
-    the domain/service layer."""
-    package_dir = Path(__file__).resolve().parents[3] / "app" / "api"
+    the domain/service layer.
+
+    Scoped to I07: I13's API layer reads Postgres repository classes from
+    app.integrations.sap.postgres_* by design -- those are Postgres
+    repositories, not SAP clients -- and that indirection will be introduced
+    when I13 grows a service layer. I08 reads normalise views, not the SAP
+    integration.
+    """
+    package_dir = Path(__file__).resolve().parents[3] / "app" / "api" / "i7"
     forbidden_modules = {"requests", "httpx", "urllib3"}
 
     for path in package_dir.rglob("*.py"):

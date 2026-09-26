@@ -53,6 +53,7 @@ def _refresh(session, *, plant: str | None = None, cost_centre_enabled: bool = F
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_refresh_is_idempotent_across_two_consecutive_runs() -> None:
     with get_sessionmaker()() as session:
         first = _refresh(session, plant="1300")
@@ -72,6 +73,7 @@ def test_refresh_is_idempotent_across_two_consecutive_runs() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_mart_has_no_duplicate_ledger_id_rows() -> None:
     with get_sessionmaker()() as session:
         _refresh(session, plant="1300")
@@ -86,6 +88,7 @@ def test_mart_has_no_duplicate_ledger_id_rows() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_reservation_line_grain_is_preserved_not_collapsed_by_rsnum() -> None:
     """Same RSNUM, different RSPOS must remain separate rows -- proves W6.4
     didn't collapse reservation-line grain to reservation-header grain."""
@@ -118,6 +121,7 @@ def test_reservation_line_grain_is_preserved_not_collapsed_by_rsnum() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_cost_centre_disabled_by_default_never_populates_cost_centre() -> None:
     with get_sessionmaker()() as session:
         _refresh(session, plant="1300", cost_centre_enabled=False)
@@ -131,6 +135,7 @@ def test_cost_centre_disabled_by_default_never_populates_cost_centre() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_no_attribution_status_is_ever_missing_or_invalid() -> None:
     with get_sessionmaker()() as session:
         _refresh(session, plant="1300")
@@ -145,6 +150,7 @@ def test_no_attribution_status_is_ever_missing_or_invalid() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_get_attribution_for_entry_reads_back_a_refreshed_row() -> None:
     with get_sessionmaker()() as session:
         attributions = _refresh(session, plant="1300")

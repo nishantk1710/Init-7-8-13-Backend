@@ -22,6 +22,7 @@ needs_db = pytest.mark.skipif(not get_settings().database_url, reason="DATABASE_
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_postgres_reservation_rows_are_real_and_typed() -> None:
     with get_sessionmaker()() as session:
         rows = fetch_reservations(session)
@@ -37,6 +38,7 @@ def test_postgres_reservation_rows_are_real_and_typed() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_at_least_one_reservation_links_to_a_real_purchase_requisition() -> None:
     """Proves the Reservation -> PR join with real data, not a fabricated row.
 
@@ -60,6 +62,7 @@ def test_at_least_one_reservation_links_to_a_real_purchase_requisition() -> None
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_some_postgres_reservations_have_no_pr_yet() -> None:
     """W6.2 test case: a reservation without a PR is retained, not dropped."""
     with get_sessionmaker()() as session:

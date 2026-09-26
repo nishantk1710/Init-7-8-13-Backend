@@ -61,12 +61,11 @@ def in_scope_material() -> tuple[str, str]:
         row = db.execute(
             text(
                 """
-                SELECT material, plant
+                SELECT TOP 1 material, plant
                 FROM raw_marc
                 WHERE material LIKE '80%'
                   AND plant IN ('1300', '1500')
                 ORDER BY material
-                LIMIT 1
                 """
             )
         ).fetchone()

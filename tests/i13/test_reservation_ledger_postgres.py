@@ -25,24 +25,26 @@ needs_db = pytest.mark.skipif(not get_settings().database_url, reason="DATABASE_
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_raw_resb_own_key_is_unique() -> None:
     with get_sessionmaker()() as session:
         row = session.execute(
             text(
                 "SELECT count(*) total_rows, "
-                "count(distinct reservation||'/'||item_no_stock_transfer_reserv) distinct_keys FROM raw_resb"
+                "count(distinct CONCAT(reservation, '/', item_no_stock_transfer_reserv)) distinct_keys FROM raw_resb"
             )
         ).one()
     assert row.total_rows == row.distinct_keys
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_a_real_reservation_links_to_a_real_pr_po_gr_chain() -> None:
     with get_sessionmaker()() as session:
         candidate = session.execute(
             text(
                 """
-                SELECT r.reservation, r.item_no_stock_transfer_reserv, r.purchase_requisition, r.item_of_requisition,
+                SELECT TOP 1 r.reservation, r.item_no_stock_transfer_reserv, r.purchase_requisition, r.item_of_requisition,
                        k.purchasing_document, k.item
                 FROM raw_resb r
                 JOIN raw_eban e ON r.purchase_requisition = e.purchase_requisition
@@ -51,7 +53,6 @@ def test_a_real_reservation_links_to_a_real_pr_po_gr_chain() -> None:
                                 AND k.item_of_requisition = r.item_of_requisition
                 JOIN raw_ekbe b ON b.purchasing_document = k.purchasing_document AND b.item = k.item
                 WHERE b.po_history_category = 'E' AND k.material <> '' AND k.plant <> ''
-                LIMIT 1
                 """
             )
         ).first()
@@ -77,6 +78,7 @@ def test_a_real_reservation_links_to_a_real_pr_po_gr_chain() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_gi_resolves_via_reservation_for_real_data() -> None:
     """Proves the headline W6.2 capability: at least one real reservation
     has goods-issue movements resolved via RSNUM/RSPOS -- something W6.1
@@ -88,6 +90,7 @@ def test_gi_resolves_via_reservation_for_real_data() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_real_mrp_consolidation_case_is_reported_unresolved() -> None:
     """Confirms the measured real consolidation case (PR 2000028244/10,
     referenced by 3 distinct reservations) is handled honestly."""
@@ -95,13 +98,12 @@ def test_real_mrp_consolidation_case_is_reported_unresolved() -> None:
         consolidated = session.execute(
             text(
                 """
-                SELECT purchase_requisition, item_of_requisition,
-                       count(distinct reservation||'/'||item_no_stock_transfer_reserv) as reservations
+                SELECT TOP 1 purchase_requisition, item_of_requisition,
+                       count(distinct CONCAT(reservation, '/', item_no_stock_transfer_reserv)) as reservations
                 FROM raw_resb
                 WHERE purchase_requisition IS NOT NULL AND purchase_requisition <> '' AND purchase_requisition <> '0'
                 GROUP BY purchase_requisition, item_of_requisition
-                HAVING count(distinct reservation||'/'||item_no_stock_transfer_reserv) > 1
-                LIMIT 1
+                HAVING count(distinct CONCAT(reservation, '/', item_no_stock_transfer_reserv)) > 1
                 """
             )
         ).first()
@@ -125,10 +127,11 @@ def test_real_mrp_consolidation_case_is_reported_unresolved() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_oar_scope_excludes_real_non_oar_reservations() -> None:
     with get_sessionmaker()() as session:
         non_oar_material = session.execute(
-            text("SELECT material, plant FROM raw_marc WHERE mrp_type = 'VB' LIMIT 1")
+            text("SELECT TOP 1 material, plant FROM raw_marc WHERE mrp_type = 'VB'")
         ).first()
         assert non_oar_material is not None
 
@@ -157,6 +160,7 @@ def test_oar_scope_excludes_real_non_oar_reservations() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_material_scope_index_matches_classify_material_scope() -> None:
     with get_sessionmaker()() as session:
         # In-scope plants only: fetch_material_scope_index returns no row for
@@ -164,8 +168,8 @@ def test_material_scope_index_matches_classify_material_scope() -> None:
         # plant filter instead of the DISMM classification it is for.
         row = session.execute(
             text(
-                "SELECT material, plant, mrp_type FROM raw_marc "
-                f"WHERE mrp_type <> '' AND {sql_predicate('plant')} LIMIT 1"
+                "SELECT TOP 1 material, plant, mrp_type FROM raw_marc "
+                f"WHERE mrp_type <> '' AND {sql_predicate('plant')}"
             )
         ).first()
         assert row is not None, "no in-scope MARC row carries an MRP type"

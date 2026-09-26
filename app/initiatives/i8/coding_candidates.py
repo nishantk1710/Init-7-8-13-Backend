@@ -413,7 +413,7 @@ _TWIN_SQL = r"""
 with texts as (
     select
         matnr,
-        upper(regexp_replace(btrim(txz01), '\s+', ' ', 'g')) as normalised,
+        upper(regexp_replace(TRIM(txz01), '\s+', ' ', 'g')) as normalised,
         min(txz01) as sample
     from v_ekpo
     where matnr is not null and coalesce(txz01, '') <> ''

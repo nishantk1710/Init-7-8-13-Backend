@@ -50,6 +50,7 @@ def _refresh(session, *, material: str | None = None, plant: str | None = None, 
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_refresh_is_idempotent_across_two_consecutive_runs() -> None:
     with get_sessionmaker()() as session:
         first = _refresh(session, plant="1300")
@@ -67,6 +68,7 @@ def test_refresh_is_idempotent_across_two_consecutive_runs() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_refresh_defaults_to_oar_only() -> None:
     with get_sessionmaker()() as session:
         _refresh(session, plant="1300")
@@ -78,6 +80,7 @@ def test_refresh_defaults_to_oar_only() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_mart_has_no_duplicate_material_plant_rows() -> None:
     with get_sessionmaker()() as session:
         _refresh(session, plant="1300")
@@ -91,6 +94,7 @@ def test_mart_has_no_duplicate_material_plant_rows() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_mart_never_has_negative_unissued_quantity() -> None:
     with get_sessionmaker()() as session:
         _refresh(session, plant="1300")
@@ -103,12 +107,13 @@ def test_mart_never_has_negative_unissued_quantity() -> None:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_partial_refresh_does_not_touch_other_plants_rows() -> None:
     """A plant-scoped refresh's ``DELETE`` is itself plant-scoped -- it must
     not clear rows a previous refresh wrote for a different plant."""
     with get_sessionmaker()() as session:
         other_plant = session.execute(
-            text("SELECT DISTINCT plant FROM raw_marc WHERE mrp_type IN ('ND', 'PD') AND plant <> '1300' LIMIT 1")
+            text("SELECT DISTINCT TOP 1 plant FROM raw_marc WHERE mrp_type IN ('ND', 'PD') AND plant <> '1300'")
         ).scalar_one_or_none()
         if other_plant is None:
             pytest.skip("no second real OAR plant available in this dataset")

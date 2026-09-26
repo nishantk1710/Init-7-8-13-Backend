@@ -41,7 +41,7 @@ from app.models.i13_watch_mart import WatchMetricMart
 from tests.i13.conftest import FakeExceptionRepository, FakeNotificationPort
 
 needs_db = pytest.mark.skipif(not get_settings().database_url, reason="DATABASE_URL not set")
-pytestmark = needs_db
+pytestmark = [needs_db, pytest.mark.needs_seed_data]
 
 AS_OF = datetime(2026, 9, 21, 12, 0, tzinfo=timezone.utc)
 

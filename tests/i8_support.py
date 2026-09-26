@@ -22,7 +22,7 @@ status derivations -- are the majority, and they run everywhere.
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import inspect as sa_inspect
 
 from app.core.config import get_settings
 
@@ -37,12 +37,7 @@ def _seeded() -> bool:
     try:
         from app.core.db import get_engine
 
-        with get_engine().connect() as connection:
-            return bool(
-                connection.execute(
-                    text("select to_regclass('public.raw_ekpo') is not null")
-                ).scalar()
-            )
+        return sa_inspect(get_engine()).has_table("raw_ekpo")
     except Exception:
         return False
 

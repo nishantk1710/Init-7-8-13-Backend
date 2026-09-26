@@ -47,7 +47,7 @@ def _zmm065_seeded() -> bool:
 
         with get_sessionmaker()() as session:
             for table in TABLES:
-                session.execute(text(f"SELECT 1 FROM {table} LIMIT 1")).first()
+                session.execute(text(f"SELECT TOP 1 1 FROM {table}")).first()
         return True
     except Exception:
         return False
@@ -353,8 +353,8 @@ class TestZmm065AgainstDeliveredData:
         with get_sessionmaker()() as session:
             row = session.execute(
                 text(
-                    "SELECT mat_code, plant, criticality FROM raw_zmm065_bmm "
-                    "WHERE NULLIF(criticality,'') IS NOT NULL LIMIT 1"
+                    "SELECT TOP 1 mat_code, plant, criticality FROM raw_zmm065_bmm "
+                    "WHERE NULLIF(criticality,'') IS NOT NULL"
                 )
             ).first()
 
@@ -377,9 +377,9 @@ class TestZmm065AgainstDeliveredData:
         with get_sessionmaker()() as session:
             row = session.execute(
                 text(
-                    "SELECT mat_code FROM raw_zmm065_bmm b WHERE NOT EXISTS ("
+                    "SELECT TOP 1 mat_code FROM raw_zmm065_bmm b WHERE NOT EXISTS ("
                     "  SELECT 1 FROM raw_zmm065_gb g WHERE g.mat_code = b.mat_code"
-                    ") LIMIT 1"
+                    ")"
                 )
             ).first()
 
@@ -416,15 +416,15 @@ class TestZmm065AgainstDeliveredData:
         with get_sessionmaker()() as session:
             rows = session.execute(
                 text(
-                    "SELECT mat_code, plant FROM raw_zmm065_bmm "
-                    "WHERE NULLIF(criticality,'') IS NOT NULL LIMIT 40"
+                    "SELECT TOP 40 mat_code, plant FROM raw_zmm065_bmm "
+                    "WHERE NULLIF(criticality,'') IS NOT NULL"
                 )
             ).fetchall()
             both = session.execute(
                 text(
-                    "SELECT b.mat_code FROM raw_zmm065_bmm b "
+                    "SELECT TOP 10 b.mat_code FROM raw_zmm065_bmm b "
                     "WHERE EXISTS (SELECT 1 FROM raw_zmm065_gb g "
-                    "              WHERE g.mat_code = b.mat_code) LIMIT 10"
+                    "              WHERE g.mat_code = b.mat_code)"
                 )
             ).fetchall()
 

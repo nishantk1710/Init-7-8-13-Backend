@@ -53,6 +53,7 @@ def test_generate_returns_200_with_a_full_report_body(clean_test_quarter):
         "metadata", "executive_summary", "scope_and_data_quality", "demand_classification",
         "forecasting", "safety_stock", "reorder_point", "max_stock", "oar", "recommendations",
         "approval", "baseline_comparison", "sap_adoption", "limitations",
+        "material_criticality", "management_summary",
     }
     assert body["metadata"]["quarter"] == quarter
 

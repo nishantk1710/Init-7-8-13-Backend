@@ -107,6 +107,7 @@ def test_rows_for_plant_handles_a_missing_table_key():
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_provider_returns_none_when_no_change_document_evidence_exists():
     """Verified fact about the current extract: raw_cdpos has zero MATERIAL/
     MARC rows at all, so every material-plant resolves to no evidence."""
@@ -116,6 +117,7 @@ def test_provider_returns_none_when_no_change_document_evidence_exists():
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_provider_returns_none_for_a_material_with_real_cdhdr_history():
     """Material 16622080 has a genuine MATERIAL-class CDHDR document in the
     real extract -- confirming the provider queries real data and still
@@ -127,6 +129,7 @@ def test_provider_returns_none_for_a_material_with_real_cdhdr_history():
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_conversion_adoption_through_the_real_provider_is_unknown_not_fabricated():
     """The end-to-end path a real API call takes: no evidence -> UNKNOWN,
     never ADOPTED/NOT_ADOPTED conjured from absent data."""
@@ -140,6 +143,7 @@ def test_conversion_adoption_through_the_real_provider_is_unknown_not_fabricated
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_parameter_adoption_through_the_real_provider_is_unknown_not_fabricated():
     with get_sessionmaker()() as session:
         provider = RawChangeDocumentProvider(session)
@@ -152,6 +156,7 @@ def test_parameter_adoption_through_the_real_provider_is_unknown_not_fabricated(
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_real_cdhdr_has_material_change_documents_but_cdpos_has_none_for_them():
     """Pins the verified data-gap finding itself, so a future CDPOS delivery
     that actually includes MARC changes is a visible, expected test failure

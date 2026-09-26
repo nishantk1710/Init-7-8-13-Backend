@@ -238,6 +238,7 @@ def sample_key(client) -> tuple[str, str]:
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 class TestSnapshotMatchesLive:
     def test_watch_row(self, client, sample_key) -> None:
         material, plant = sample_key

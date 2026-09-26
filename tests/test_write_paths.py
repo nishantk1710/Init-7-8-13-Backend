@@ -136,6 +136,28 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "purchase benefit only where the requester accepted the suggestion, "
         "so this is the row that attribution is measured from."
     ),
+    # --- Events ---------------------------------------------------------------
+    ("/api/events/csv", "post"): (
+        "CSV feed listener: SAP pushes extract chunks here. Reads whatever "
+        "arrives, records it into storage, and reports what it understood. "
+        "Writes to platform storage only, never to SAP."
+    ),
+    # --- Initiative 07: approval workflow (WS7) --------------------------------
+    ("/api/v1/i7/recommendations/{recommendation_id}/actions", "post"): (
+        "Approval action (APPROVE / REJECT / SEND_BACK / HOLD / RELEASE_HOLD / "
+        "ADJUST) -> i7_recommendation + i7_workflow_ledger. Enforces the "
+        "recommendation's approval route and appends one ledger entry per action."
+    ),
+    ("/api/v1/i7/recommendations/{recommendation_id}/submit", "post"): (
+        "Submit a recommendation for approval -> i7_recommendation + "
+        "i7_workflow_ledger. Enters the recommendation into its approval route "
+        "at the first role."
+    ),
+    ("/api/v1/i7/reports/quarterly/generate", "post"): (
+        "Generate (or regenerate) the I07 Quarterly Deep-Dive Report -> "
+        "i7_quarterly_report. Idempotent per quarter: overwrites rather than "
+        "duplicating."
+    ),
 }
 
 

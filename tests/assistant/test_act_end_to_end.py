@@ -67,7 +67,7 @@ def oar_material() -> tuple[str, str]:
         row = db.execute(
             text(
                 """
-                SELECT r.material, r.plant, COUNT(*) AS n
+                SELECT TOP 1 r.material, r.plant, COUNT(*) AS n
                 FROM raw_resb r
                 JOIN raw_marc m ON m.material = r.material AND m.plant = r.plant
                 WHERE m.mrp_type IN ('ND', 'PD')
@@ -75,7 +75,6 @@ def oar_material() -> tuple[str, str]:
                 GROUP BY 1, 2
                 HAVING COUNT(*) BETWEEN 20 AND 200
                 ORDER BY 3 DESC
-                LIMIT 1
                 """
             )
         ).fetchone()

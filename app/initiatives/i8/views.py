@@ -94,7 +94,7 @@ create or replace function in_scope_plant(value text) returns boolean
     language sql
     immutable
 as $$
-    select btrim(coalesce(value, '')) in ({sql_literals()})
+    select TRIM(coalesce(value, '')) in ({sql_literals()})
 $$;
 """
 
