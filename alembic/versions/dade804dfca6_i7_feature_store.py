@@ -29,7 +29,7 @@ def upgrade() -> None:
     sa.Column('policy_version', sa.Integer(), nullable=False),
     sa.Column('consumption_movement_types', sa.String(length=255), nullable=True),
     sa.Column('error', sa.Text(), nullable=True),
-    sa.Column('started_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('started_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.Column('finished_at', sa.DateTime(timezone=True), nullable=True),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_feature_run'))
     )
@@ -72,7 +72,7 @@ def upgrade() -> None:
     sa.Column('has_lead_time', sa.Boolean(), nullable=False),
     sa.Column('purchase_order_count', sa.Integer(), nullable=False),
     sa.Column('feature_run_id', sa.Integer(), nullable=False),
-    sa.Column('computed_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('computed_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_material_feature')),
     sa.UniqueConstraint('sap_material_number', 'sap_plant_code', name='uq_i7_material_feature_key')
     )

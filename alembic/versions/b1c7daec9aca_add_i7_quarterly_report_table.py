@@ -26,7 +26,7 @@ def upgrade() -> None:
     sa.Column('quarter', sa.String(length=16), nullable=False),
     sa.Column('period_start', sa.Date(), nullable=False),
     sa.Column('period_end', sa.Date(), nullable=False),
-    sa.Column('generated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('generated_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.Column('status', sa.String(length=32), nullable=False),
     sa.Column('report_version', sa.String(length=16), nullable=False),
     sa.Column('report_json', sa.Text(), nullable=True),

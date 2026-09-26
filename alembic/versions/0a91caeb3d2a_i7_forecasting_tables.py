@@ -52,7 +52,7 @@ def upgrade() -> None:
     sa.Column('holding_cost', sa.Numeric(precision=18, scale=6), nullable=True),
     sa.Column('holding_cost_status', sa.String(length=32), nullable=True),
     sa.Column('detail', sa.String(length=500), nullable=True),
-    sa.Column('generated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('generated_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_forecast')),
     sa.UniqueConstraint('forecast_run_id', 'sap_material_number', 'sap_plant_code', 'model_name', name='uq_i7_forecast_key')
     )
@@ -71,7 +71,7 @@ def upgrade() -> None:
     sa.Column('forecasts_written', sa.Integer(), nullable=False),
     sa.Column('materials_evaluated', sa.Integer(), nullable=False),
     sa.Column('error', sa.Text(), nullable=True),
-    sa.Column('started_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('started_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.Column('finished_at', sa.DateTime(timezone=True), nullable=True),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_forecast_run'))
     )
@@ -93,7 +93,7 @@ def upgrade() -> None:
     sa.Column('required_origins', sa.Integer(), nullable=False),
     sa.Column('adoption_status', sa.String(length=64), nullable=False),
     sa.Column('decision_reason', sa.String(length=500), nullable=False),
-    sa.Column('generated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('generated_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_segment_decision')),
     sa.UniqueConstraint('forecast_run_id', 'segment_key', name='uq_i7_segment_decision_key')
     )

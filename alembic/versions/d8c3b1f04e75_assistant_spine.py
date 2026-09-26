@@ -132,7 +132,7 @@ def upgrade() -> None:
         sa.Column(
             "issued_at",
             sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
             nullable=False,
         ),
         # Advisory. Never used to invalidate a session retrospectively: the
@@ -180,7 +180,7 @@ def upgrade() -> None:
         sa.Column(
             "answered_at",
             sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
             nullable=False,
         ),
         sa.ForeignKeyConstraint(
@@ -221,7 +221,7 @@ def upgrade() -> None:
         sa.Column(
             "recorded_at",
             sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
             nullable=False,
         ),
         sa.ForeignKeyConstraint(
@@ -274,7 +274,7 @@ def upgrade() -> None:
         sa.Column(
             "captured_at",
             sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
             nullable=False,
         ),
         sa.ForeignKeyConstraint(
@@ -338,7 +338,7 @@ def upgrade() -> None:
         sa.Column(
             "suggested_at",
             sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
             nullable=False,
         ),
         sa.ForeignKeyConstraint(

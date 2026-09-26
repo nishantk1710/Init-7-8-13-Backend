@@ -31,7 +31,7 @@ def upgrade() -> None:
     sa.Column('document_json', sa.Text(), nullable=False),
     sa.Column('signed_by', sa.String(length=128), nullable=True),
     sa.Column('signed_at', sa.DateTime(timezone=True), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_policy_version')),
     sa.UniqueConstraint('policy_id', 'policy_version', name='uq_i7_policy_version_id_version')
     )

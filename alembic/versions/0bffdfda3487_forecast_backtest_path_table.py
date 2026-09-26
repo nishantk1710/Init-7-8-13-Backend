@@ -32,7 +32,7 @@ def upgrade() -> None:
     sa.Column('forecast_period', sa.Date(), nullable=False),
     sa.Column('predicted', sa.Numeric(precision=18, scale=6), nullable=False),
     sa.Column('actual', sa.Numeric(precision=18, scale=6), nullable=False),
-    sa.Column('generated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('generated_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_forecast_backtest_path'))
     )
     op.create_index(op.f('ix_i7_forecast_backtest_path_forecast_run_id'), 'i7_forecast_backtest_path', ['forecast_run_id'], unique=False)

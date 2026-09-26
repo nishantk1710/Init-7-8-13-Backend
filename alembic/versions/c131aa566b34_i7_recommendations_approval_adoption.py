@@ -31,7 +31,7 @@ def upgrade() -> None:
     sa.Column('previous_status', sa.String(length=32), nullable=False),
     sa.Column('new_status', sa.String(length=32), nullable=False),
     sa.Column('comment', sa.String(length=1000), nullable=True),
-    sa.Column('timestamp', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('timestamp', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_approval_ledger'))
     )
     op.create_index('ix_i7_approval_ledger_action', 'i7_approval_ledger', ['action'], unique=False)
@@ -83,8 +83,8 @@ def upgrade() -> None:
     sa.Column('chain_index', sa.Integer(), nullable=False),
     sa.Column('adjustment_count', sa.Integer(), nullable=False),
     sa.Column('current_version', sa.Integer(), nullable=False),
-    sa.Column('generated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('generated_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_recommendation')),
     sa.UniqueConstraint('sap_material_number', 'sap_plant_code', 'feature_run_id', 'forecast_run_id', 'inventory_run_id', 'oar_run_id', 'policy_id', 'policy_version', 'formula_version', name='uq_i7_recommendation_inputs')
     )
@@ -100,7 +100,7 @@ def upgrade() -> None:
     sa.Column('recommended_max_stock', sa.Numeric(precision=18, scale=6), nullable=True),
     sa.Column('reason', sa.String(length=500), nullable=False),
     sa.Column('changed_by', sa.String(length=64), nullable=False),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_recommendation_version')),
     sa.UniqueConstraint('recommendation_id', 'version', name='uq_i7_recommendation_version_key')
     )
@@ -115,7 +115,7 @@ def upgrade() -> None:
     sa.Column('matched_fields', sa.String(length=255), nullable=True),
     sa.Column('mismatched_fields', sa.String(length=255), nullable=True),
     sa.Column('detail', sa.String(length=500), nullable=True),
-    sa.Column('evaluated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('evaluated_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_sap_adoption'))
     )
     op.create_index('ix_i7_sap_adoption_rec', 'i7_sap_adoption', ['recommendation_id'], unique=False)
@@ -132,7 +132,7 @@ def upgrade() -> None:
     sa.Column('sap_reference', sa.String(length=64), nullable=True),
     sa.Column('execution_status', sa.String(length=16), nullable=False),
     sa.Column('evidence_comment', sa.String(length=1000), nullable=True),
-    sa.Column('recorded_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('recorded_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_sap_execution_evidence'))
     )
     op.create_index(op.f('ix_i7_sap_execution_evidence_execution_status'), 'i7_sap_execution_evidence', ['execution_status'], unique=False)

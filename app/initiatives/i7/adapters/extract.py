@@ -10,10 +10,10 @@ would move a lot of data to no purpose. Row-level work streams with
 ``yield_per`` and inserts in batches, so memory stays flat as the extract grows.
 
 **Idempotency is a database property.** Each staging table has a unique natural
-key, and writes go through ``ON CONFLICT DO UPDATE`` -- so a second run converges
-on the same state instead of appending duplicates, and two concurrent runs cannot
-interleave into one. This is the single documented exception to the repository's
-"no dialect-specific SQL" rule; see :func:`_upsert`.
+key, and writes go through an atomic upsert (``MERGE`` on SQL Server, ``ON
+CONFLICT`` on Postgres) -- so a second run converges on the same state instead
+of appending duplicates, and two concurrent runs cannot interleave into one.
+The dialect-specific SQL lives in one place, :mod:`app.core.upsert`.
 """
 
 import logging
@@ -22,10 +22,10 @@ from datetime import datetime, timezone
 from typing import Any, Iterator
 
 from sqlalchemy import text
-from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.orm import Session
 
 from app.core.db import get_sessionmaker
+from app.core.upsert import safe_batch_size, upsert
 from app.initiatives.i7.adapters.field_map import (
     CREDIT_INDICATOR,
     GOODS_RECEIPT_HISTORY_CATEGORY,
@@ -112,40 +112,20 @@ def _stream(session: Session, statement: str, params: dict[str, Any] | None = No
     yield from result
 
 
-POSTGRES_MAX_PARAMETERS = 65535
-"""Hard protocol limit on bind parameters in one statement.
+def _safe_batch_size(model: type, requested: int, session: Session | None = None) -> int:
+    """Largest batch that stays under the engine's bind-parameter ceiling.
 
-A multi-row INSERT binds ``rows x columns`` parameters, so a batch size that is
-safe for a 6-column table overflows a 14-column one. :func:`_safe_batch_size`
-derives the real limit instead of hoping the configured batch fits.
-"""
-
-
-def _safe_batch_size(model: type, requested: int) -> int:
-    """Largest batch that stays under the parameter ceiling."""
-    columns = len(model.__table__.columns)
-    return max(1, min(requested, POSTGRES_MAX_PARAMETERS // columns))
+    A multi-row write binds ``rows x columns`` parameters, so a batch size that
+    is safe for a 6-column table overflows a 14-column one -- and SQL Server's
+    ceiling (2,100) is far below Postgres's (65,535).
+    """
+    dialect = session.get_bind().dialect.name if session is not None else None
+    return safe_batch_size(model, requested, dialect)
 
 
 def _upsert(session: Session, model: type, rows: list[dict[str, Any]], conflict: list[str]) -> None:
-    """Insert a batch, updating on natural-key conflict.
-
-    ``ON CONFLICT`` is Postgres-specific, which the repository otherwise avoids
-    for portability. It is used here deliberately: idempotency has to be
-    enforced by the database, because an application-level existence check
-    races with a concurrent run and silently produces duplicates. On a different
-    engine this is the one function to port -- SQL Server's ``MERGE`` is the
-    equivalent -- and the rest of the adapter is unaffected.
-    """
-    if not rows:
-        return
-    statement = postgres_insert(model).values(rows)
-    updatable = {
-        column.name: statement.excluded[column.name]
-        for column in model.__table__.columns
-        if column.name not in conflict and column.name != "id"
-    }
-    session.execute(statement.on_conflict_do_update(index_elements=conflict, set_=updatable))
+    """Insert a batch, updating on natural-key conflict. See :mod:`app.core.upsert`."""
+    upsert(session, model, rows, conflict)
 
 
 def _batched(iterator: Iterator[dict[str, Any]], size: int) -> Iterator[list[dict[str, Any]]]:
@@ -220,7 +200,7 @@ def _stage_materials(
             }
 
     staged = 0
-    for batch in _batched(rows(), _safe_batch_size(StagedMaterial, policy.batch_size)):
+    for batch in _batched(rows(), _safe_batch_size(StagedMaterial, policy.batch_size, session)):
         _upsert(session, StagedMaterial, batch, ["sap_material_number"])
         staged += len(batch)
     return staged
@@ -270,7 +250,7 @@ def _stage_material_plants(
             }
 
     staged = 0
-    for batch in _batched(rows(), _safe_batch_size(StagedMaterialPlant, policy.batch_size)):
+    for batch in _batched(rows(), _safe_batch_size(StagedMaterialPlant, policy.batch_size, session)):
         _upsert(session, StagedMaterialPlant, batch, ["sap_material_number", "sap_plant_code"])
         staged += len(batch)
     return staged
@@ -327,7 +307,7 @@ def _stage_stock(
             }
 
     staged = 0
-    for batch in _batched(rows(), _safe_batch_size(StagedStock, policy.batch_size)):
+    for batch in _batched(rows(), _safe_batch_size(StagedStock, policy.batch_size, session)):
         _upsert(
             session,
             StagedStock,
@@ -431,7 +411,7 @@ def _stage_consumption(
             }
 
     staged = 0
-    for batch in _batched(rows(), _safe_batch_size(StagedConsumption, policy.batch_size)):
+    for batch in _batched(rows(), _safe_batch_size(StagedConsumption, policy.batch_size, session)):
         _upsert(
             session,
             StagedConsumption,
@@ -556,7 +536,7 @@ def _stage_purchase_orders(
             }
 
     staged = 0
-    for batch in _batched(rows(), _safe_batch_size(StagedPurchaseOrder, policy.batch_size)):
+    for batch in _batched(rows(), _safe_batch_size(StagedPurchaseOrder, policy.batch_size, session)):
         _upsert(session, StagedPurchaseOrder, batch, ["purchasing_document", "item"])
         staged += len(batch)
     return staged

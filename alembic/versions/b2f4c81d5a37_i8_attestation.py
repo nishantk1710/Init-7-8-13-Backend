@@ -79,7 +79,7 @@ def upgrade() -> None:
         sa.Column(
             "attested_at",
             sa.DateTime(timezone=True),
-            server_default=sa.text("now()"),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
             nullable=False,
         ),
         # Always null today. FR-8 session linkage is not I08's scope; the column

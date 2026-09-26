@@ -27,10 +27,10 @@ from decimal import Decimal
 from typing import Any, Iterator
 
 from sqlalchemy import func, select, text
-from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.orm import Session
 
 from app.core.db import get_sessionmaker
+from app.core.upsert import safe_batch_size, upsert
 from app.initiatives.i7.contracts import (
     ConsumptionObservation,
     ConsumptionSeries,
@@ -56,9 +56,6 @@ logger = logging.getLogger(__name__)
 
 STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
-
-POSTGRES_MAX_PARAMETERS = 65535
-
 
 @dataclass
 class FeatureBuildResult:
@@ -327,30 +324,14 @@ _ATTRIBUTE_SQL = """
 """
 
 
-def _safe_batch_size(model: type, requested: int) -> int:
-    return max(1, min(requested, POSTGRES_MAX_PARAMETERS // len(model.__table__.columns)))
-
-
 def _upsert(session: Session, rows: list[dict[str, Any]]) -> None:
     """Insert a batch, updating on the material-plant natural key.
 
-    ``ON CONFLICT`` for the same reason as Phase 2: idempotency must be a
+    An atomic upsert for the same reason as Phase 2: idempotency must be a
     database property, since an application-level existence check races with a
-    concurrent build.
+    concurrent build. See :mod:`app.core.upsert`.
     """
-    if not rows:
-        return
-    statement = postgres_insert(MaterialFeature).values(rows)
-    updatable = {
-        column.name: statement.excluded[column.name]
-        for column in MaterialFeature.__table__.columns
-        if column.name not in ("id", "sap_material_number", "sap_plant_code")
-    }
-    session.execute(
-        statement.on_conflict_do_update(
-            index_elements=["sap_material_number", "sap_plant_code"], set_=updatable
-        )
-    )
+    upsert(session, MaterialFeature, rows, ["sap_material_number", "sap_plant_code"])
 
 
 def build_features(policy: PolicyDocument | None = None) -> FeatureBuildResult:
@@ -391,7 +372,7 @@ def build_features(policy: PolicyDocument | None = None) -> FeatureBuildResult:
             window = observation_window(session)
 
             logger.info("feature run %d: computing features", run_id)
-            batch_size = _safe_batch_size(MaterialFeature, 2000)
+            batch_size = safe_batch_size(MaterialFeature, 2000, session.get_bind().dialect.name)
             batch: list[dict[str, Any]] = []
             built = 0
 

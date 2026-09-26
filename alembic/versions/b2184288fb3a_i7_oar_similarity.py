@@ -65,7 +65,7 @@ def upgrade() -> None:
     sa.Column('minimum_history_months', sa.Integer(), nullable=False),
     sa.Column('targets_evaluated', sa.Integer(), nullable=False),
     sa.Column('error', sa.Text(), nullable=True),
-    sa.Column('started_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('started_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.Column('finished_at', sa.DateTime(timezone=True), nullable=True),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_oar_run')),
     sa.UniqueConstraint('feature_run_id', 'inventory_run_id', 'policy_id', 'policy_version', 'algorithm_version', 'embedding_model_version', name='uq_i7_oar_run_inputs')
@@ -92,7 +92,7 @@ def upgrade() -> None:
     sa.Column('inventory_ineligible_neighbours', sa.Integer(), nullable=False),
     sa.Column('estimate_trace', sa.String(length=1000), nullable=True),
     sa.Column('detail', sa.String(length=500), nullable=True),
-    sa.Column('generated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('generated_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_oar_target')),
     sa.UniqueConstraint('oar_run_id', 'sap_material_number', 'sap_plant_code', name='uq_i7_oar_target_key')
     )

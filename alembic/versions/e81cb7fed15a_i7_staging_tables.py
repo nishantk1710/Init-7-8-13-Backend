@@ -110,7 +110,7 @@ def upgrade() -> None:
     sa.Column('source_key', sa.String(length=255), nullable=True),
     sa.Column('reason', sa.String(length=64), nullable=False),
     sa.Column('detail', sa.String(length=500), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_staging_rejection'))
     )
     op.create_index(op.f('ix_i7_staging_rejection_reason'), 'i7_staging_rejection', ['reason'], unique=False)
@@ -128,7 +128,7 @@ def upgrade() -> None:
     sa.Column('rejected', sa.Integer(), nullable=False),
     sa.Column('consumption_movement_types', sa.String(length=255), nullable=True),
     sa.Column('error', sa.Text(), nullable=True),
-    sa.Column('started_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('started_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
     sa.Column('finished_at', sa.DateTime(timezone=True), nullable=True),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_i7_staging_run'))
     )

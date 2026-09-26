@@ -189,10 +189,11 @@ def test_goods_receipt_constants_are_named_not_inlined():
 
 
 def test_batch_size_stays_under_the_parameter_ceiling():
-    """Postgres caps one statement at 65,535 bind parameters."""
+    """SQL Server caps one request at 2,100 bind parameters (Postgres at 65,535);
+    with no session to ask, the strictest ceiling applies."""
     for model in (StagedMaterial, StagedPurchaseOrder):
         columns = len(model.__table__.columns)
-        assert _safe_batch_size(model, 5000) * columns <= 65535
+        assert _safe_batch_size(model, 5000) * columns <= 2100
 
 
 def test_batch_size_never_drops_below_one():
