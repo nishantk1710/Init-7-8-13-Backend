@@ -1126,6 +1126,7 @@ def two_recommendation_runs_same_material_plant():
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_adoption_list_shows_one_row_per_material_plant(two_recommendation_runs_same_material_plant):
     material, plant = two_recommendation_runs_same_material_plant
     response = client.get(f"/api/v1/i7/recommendations/adoption?material={material}&plant={plant}")
@@ -1135,6 +1136,7 @@ def test_adoption_list_shows_one_row_per_material_plant(two_recommendation_runs_
 
 
 @needs_db
+@pytest.mark.needs_seed_data
 def test_adoption_list_total_reflects_one_row_not_two(two_recommendation_runs_same_material_plant):
     """The count endpoint uses in the pagination footer must match the
     dedup, not just the visible page -- otherwise 'N recommendations total'

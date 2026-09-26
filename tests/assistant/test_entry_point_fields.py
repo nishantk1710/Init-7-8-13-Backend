@@ -31,7 +31,7 @@ from app.core.db import get_sessionmaker
 from app.main import app
 
 needs_db = pytest.mark.skipif(not get_settings().database_url, reason="DATABASE_URL not set")
-pytestmark = needs_db
+pytestmark = [needs_db, pytest.mark.needs_seed_data]
 
 client = TestClient(app)
 
