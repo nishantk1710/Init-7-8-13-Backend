@@ -15,6 +15,9 @@ Two rules:
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
+from app.core.raw_values import WORKBOOK, ValueFormat
+from app.core.raw_values import parse_date as shared_parse_date
+from app.core.raw_values import parse_decimal as shared_parse_decimal
 from app.initiatives.i7.adapters.field_map import (
     DELETION_FLAG_TRUE,
     PURCHASING_DELETION_INDICATORS,
@@ -57,44 +60,35 @@ def clean(value: object | None) -> str | None:
     return stripped or None
 
 
-def parse_date(value: object | None) -> date | None:
-    """ISO ``YYYY-MM-DD`` as the extract writes it. ``None`` if unparseable.
+def parse_date(value: object | None, fmt: ValueFormat = WORKBOOK) -> date | None:
+    """A date as ``fmt`` writes it. ``None`` if absent, zero-date or unparseable.
 
-    SAP's own zero-date ``00000000`` and its ISO spelling ``0000-00-00`` both
-    mean "no date", and ``date.fromisoformat`` rejects them, so they fall out
-    here as ``None`` rather than raising.
+    ``fmt`` is the declared format of the table the value came from -- see
+    :mod:`app.core.raw_values`. The default is the July workbook format
+    (``YYYY-MM-DD``), where SAP's zero-date ``00000000`` and its ISO spelling
+    ``0000-00-00`` both mean "no date"; the live CSV writes ``DD.MM.YYYY`` and
+    ``00.00.0000``.
     """
-    text = clean(value)
-    if text is None:
-        return None
-    try:
-        return date.fromisoformat(text)
-    except ValueError:
-        return None
+    return shared_parse_date(value, fmt)
 
 
-def parse_decimal(value: object | None) -> Decimal | None:
-    """Parse a quantity. ``None`` if absent or not a number.
+def parse_decimal(value: object | None, fmt: ValueFormat = WORKBOOK) -> Decimal | None:
+    """Parse a quantity. ``None`` if absent or not well-formed in ``fmt``.
 
-    Handles the thousands separators Excel sometimes leaves in an export.
-    ``Decimal``, not ``float``: these feed stock and money arithmetic.
+    The separators are the declared format's, never guessed: in the workbooks
+    ``1,000`` is one thousand, in the live CSV it is one. ``Decimal``, not
+    ``float``: these feed stock and money arithmetic.
     """
-    text = clean(value)
-    if text is None:
-        return None
-    try:
-        return Decimal(text.replace(",", ""))
-    except (InvalidOperation, ValueError):
-        return None
+    return shared_parse_decimal(value, fmt)
 
 
-def parse_int(value: object | None) -> int | None:
-    """Parse a whole number, tolerating a decimal point.
+def parse_int(value: object | None, fmt: ValueFormat = WORKBOOK) -> int | None:
+    """Parse a whole number, tolerating a decimal part.
 
-    PLIFZ arrives as ``"14"`` but sometimes ``"14.0"``; ``int()`` rejects the
-    second, so route through Decimal.
+    PLIFZ arrives as ``"14"`` but sometimes ``"14.0"`` (``"14,0"`` in the live
+    CSV); ``int()`` rejects the second, so route through Decimal.
     """
-    parsed = parse_decimal(value)
+    parsed = parse_decimal(value, fmt)
     if parsed is None:
         return None
     try:
