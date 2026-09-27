@@ -19,9 +19,9 @@ extract has replaced it, so every I13 read failed with ``Invalid column name
 
 ``app/seed/manifest.py`` always planned a "normalise" step between the raw layer
 and the initiatives (translation map + MATNR padding, "NOT YET BUILT"). This is
-it, for the tables I08 and I13 read:
+it, for the tables I07, I08 and I13 read:
 
-    raw_<table>  --(either vocabulary)-->  n_<table>  --> I08 views, I13 queries
+    raw_<table>  --(either vocabulary)-->  n_<table>  --> I07 staging, I08 views, I13 queries
 
 ``n_<table>`` exposes the WORKBOOK labels -- the names the existing queries
 already use -- so no query logic changes; only ``FROM raw_x`` becomes
@@ -37,14 +37,22 @@ What each kind of column gets, identically for both sources:
     date  ISO ``YYYY-MM-DD`` text  from ``YYYY-MM-DD``, ``DD.MM.YYYY`` or ``YYYYMMDD``;
                                    SAP's zero date becomes NULL; anything else passes
                                    through unchanged
-    num   SAP's trailing minus     ``12.000-`` -> ``-12.000``; nothing else touched
-          moved to the front
+    num   plain decimal text       from the CSV's German format: ``1.234,5`` -> ``1234.5``,
+                                   ``0,989`` -> ``0.989``; SAP's trailing minus moved
+                                   to the front (``12,000-`` -> ``-12.000``). A workbook
+                                   column is already plain and only has its minus moved.
+                                   Which format applies is declared by the vocabulary
+                                   the column resolved through, never read off a value.
     text  as loaded
 
 Workbook data is already in that shape, so for it every transform is a no-op.
 
-Initiative 07 is NOT on this layer: it reads ``raw_*`` through its own adapter
-(``app/initiatives/i7/adapters``) and is deliberately left unchanged here.
+Initiative 07 reads this layer too, through its staging adapter
+(``app/initiatives/i7/adapters/extract.py``) -- the one I07 module that touches
+SAP data. The columns only I07 reads are marked where they are declared. MARC's
+MRP fields are the exception: the live CSV MARC does not carry them at all, so
+I07 takes them from ``odata_material_plant`` (the OData MaterialPlantSet), which
+this layer does not read.
 
 Rebuilding
 ----------
@@ -110,6 +118,11 @@ TABLES: dict[str, tuple[Col, ...]] = {
         _c("planned_deliv_time", "PLIFZ", kind="num"),
         _c("procurement_type", "BESKZ"),
         _c("reorder_point", "MINBE", kind="num"),
+        # Read by I07's staging. The live CSV MARC carries none of the MRP
+        # fields (DISMM, PLIFZ, MINBE, MABST); I07 takes those from
+        # odata_material_plant when raw_marc lacks them.
+        _c("maximum_stock_level", "MABST", kind="num"),
+        _c("df_at_plant_level", "LVORM"),
     ),
     "mard": (
         _c("material", "MATNR", kind="key"),
@@ -121,6 +134,9 @@ TABLES: dict[str, tuple[Col, ...]] = {
         _c("returns", "RETME", kind="num"),
         _c("reorder_point", "LMINB", kind="num"),
         _c("created_on", "ERSDA", kind="date"),
+        # Read by I07's staging.
+        _c("stock_in_transfer", "UMLME", kind="num"),
+        _c("restricted_use_stock", "EINME", kind="num"),
     ),
     "mseg": (
         _c("material_document", "MBLNR", kind="key"),
@@ -279,6 +295,17 @@ TABLES: dict[str, tuple[Col, ...]] = {
         # Not a MARA field; the July MARA export carried it joined in. Over CSV
         # it comes from MAKT instead, so here it is NULL there.
         _c("material_description"),
+        # Read by I07's staging.
+        _c("x_plant_matl_status", "MSTAE"),
+        _c("manufacturer", "MFRNR", kind="key"),
+        _c("df_at_client_level", "LVORM"),
+    ),
+    # Read by I07's staging (unit price). The live CSV MBEW carries no VERPR,
+    # so over CSV moving_price is NULL -- a visible gap, not a zero.
+    "mbew": (
+        _c("material", "MATNR", kind="key"),
+        _c("valuation_area", "BWKEY"),
+        _c("moving_price", "VERPR", kind="num"),
     ),
     "makt": (
         _c("material", "MATNR", kind="key"),
@@ -395,8 +422,13 @@ class _Dialect:
             f"ELSE {t} END"
         )
 
-    def num(self, c: str) -> str:
+    def num(self, c: str, *, german: bool = False) -> str:
         t = f"TRIM({c})"
+        if german:
+            # SAP CSV: "1.234,5" -> "1234.5". Grouping dots out first, then the
+            # decimal comma becomes a point -- the order is what keeps "0,989"
+            # from turning into 989.
+            t = f"REPLACE(REPLACE({t}, '.', ''), ',', '.')"
         length = "LEN" if self.mssql else "LENGTH"
         moved = self.concat("'-'", f"LEFT({t}, {length}({t}) - 1)")
         return f"CASE WHEN {t} LIKE '%-' THEN {moved} ELSE {t} END"
@@ -429,10 +461,15 @@ def view_sql(table: str, present: list[str] | None, dialect: _Dialect) -> str:
             continue
         column = dialect.quote(r.source)
         kind = kinds[r.label]
+        # The vocabulary a column resolved through IS the declaration of its
+        # number format: the workbook label means the July extract ("1,000" is
+        # one thousand), a SAP field name means the CSV extract, written in SAP's
+        # German settings ("1,000" is one). Never decided by looking at values.
+        from_csv = r.source.lower() != r.label.lower()
         expression = {
             "key": dialect.key,
             "date": dialect.date,
-            "num": dialect.num,
+            "num": lambda c: dialect.num(c, german=from_csv),
             "text": lambda c: c,
         }[kind](column)
         select.append(f"{expression} AS {alias}")
