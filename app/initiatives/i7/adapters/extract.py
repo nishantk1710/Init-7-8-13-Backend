@@ -22,8 +22,15 @@ schedule lines are totalled here rather than in ``GROUP BY``: every value is
 text and has to be parsed, and parsing in Python is what makes a malformed value
 a counted rejection instead of either a SQL error (SQL Server) or a silent
 regex exclusion (the Postgres-only query this replaced). The SQL that remains is
-plain joins and ``IN`` lists, portable to both dialects. Rows stream with
-``yield_per``; the aggregates are one entry per material-plant-month or PO line.
+plain joins and ``IN`` lists, portable to both dialects. The aggregates are one
+entry per material-plant-month or PO line.
+
+**Every read finishes before any write starts.** SQL Server refuses a statement
+on a connection that still has an open result ("Connection is busy with results
+for another command") unless MARS is on, which is not this driver's default. So
+a query is fetched whole (:func:`_read`) and only then upserted -- interleaving a
+streamed read with batched MERGEs worked on Postgres and failed on the first
+batch on Azure SQL. The volumes are thousands to tens of thousands of rows.
 
 **Idempotency is a database property.** Each staging table has a unique natural
 key, and writes go through an atomic upsert (``MERGE`` on SQL Server, ``ON
@@ -125,10 +132,14 @@ class _Rejections:
             self._rows = []
 
 
-def _stream(session: Session, statement: str, params: dict[str, Any] | None = None) -> Iterator[Any]:
-    """Stream a query server-side rather than buffering the whole result."""
-    result = session.execute(text(statement), params or {}).yield_per(2000)
-    yield from result
+def _read(session: Session, statement: str, params: dict[str, Any] | None = None) -> list[Any]:
+    """Run a query and fetch every row, closing its result before returning.
+
+    Fetched whole on purpose, not streamed: the caller upserts on the same
+    connection, and SQL Server will not run a MERGE while a result is still
+    open on it. See the module docstring.
+    """
+    return session.execute(text(statement), params or {}).all()
 
 
 def _safe_batch_size(model: type, requested: int, session: Session | None = None) -> int:
@@ -209,7 +220,7 @@ def _price_by_material(session: Session, rejections: _Rejections) -> dict[str, D
     this is empty -- unit_price stages as NULL, a visible gap.
     """
     prices: dict[str, Decimal] = {}
-    for row in _stream(session, _PRICE_SQL):
+    for row in _read(session, _PRICE_SQL):
         material = clean(row.material)
         if material is None or clean(row.moving_price) is None:
             continue
@@ -228,7 +239,7 @@ def _stage_materials(
     prices = _price_by_material(session, rejections)
 
     def rows() -> Iterator[dict[str, Any]]:
-        for row in _stream(session, _MATERIAL_SQL):
+        for row in _read(session, _MATERIAL_SQL):
             material = clean(row.material)
             if material is None:
                 rejections.add("n_mara", None, RejectionReason.MISSING_MATERIAL)
@@ -361,7 +372,7 @@ def _stage_material_plants(
     source_table = f"n_marc+{ODATA_MATERIAL_PLANT}" if from_odata else "n_marc"
 
     def rows() -> Iterator[dict[str, Any]]:
-        for row in _stream(session, _MATERIAL_PLANT_SQL):
+        for row in _read(session, _MATERIAL_PLANT_SQL):
             material = clean(row.material)
             plant = clean(row.plant)
             if material is None:
@@ -414,7 +425,7 @@ def _stage_stock(
     session: Session, run_id: int, policy: ExtractIngestionPolicy, rejections: _Rejections
 ) -> int:
     def rows() -> Iterator[dict[str, Any]]:
-        for row in _stream(session, _STOCK_SQL):
+        for row in _read(session, _STOCK_SQL):
             material = clean(row.material)
             plant = clean(row.plant)
             storage_location = clean(row.storage_location)
@@ -534,7 +545,7 @@ def _stage_consumption(
 ) -> int:
     movement_rows = session.execute(
         _CONSUMPTION_SQL, {"movement_types": list(policy.consumption.all_movement_types)}
-    ).yield_per(2000)
+    ).all()
     totals = aggregate_consumption(
         movement_rows,
         frozenset(policy.consumption.issue_movement_types),
@@ -640,17 +651,17 @@ def _stage_purchase_orders(
     session: Session, run_id: int, policy: ExtractIngestionPolicy, rejections: _Rejections
 ) -> int:
     receipts = receipts_by_line(
-        _stream(
+        _read(
             session,
             _GOODS_RECEIPT_SQL,
             {"gr_category": GOODS_RECEIPT_HISTORY_CATEGORY, "gr_movement": GOODS_RECEIPT_MOVEMENT_TYPE},
         ),
         rejections,
     )
-    schedule = schedule_dates_by_line(_stream(session, _SCHEDULE_SQL))
+    schedule = schedule_dates_by_line(_read(session, _SCHEDULE_SQL))
 
     def rows() -> Iterator[dict[str, Any]]:
-        for row in _stream(session, _PURCHASE_ORDER_SQL):
+        for row in _read(session, _PURCHASE_ORDER_SQL):
             document = clean(row.purchasing_document)
             item = clean(row.item)
             material = clean(row.material)
