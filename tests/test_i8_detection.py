@@ -25,6 +25,7 @@ from app.initiatives.i8.material_number import (
     same_material,
     series_like_patterns,
 )
+from app.shared.sql_lists import like_any
 from tests.i8_support import needs_views
 
 
@@ -205,14 +206,16 @@ class TestPrefilterIsLooserThanThePredicate:
         from app.core.db import get_engine
 
         cfg = I8Settings(_env_file=None)
-        patterns = series_like_patterns(cfg)
+        # The same predicate universe.py builds, so this proves that query's
+        # prefilter rather than a lookalike.
+        matnr_like, params = like_any("matnr", "pattern", series_like_patterns(cfg))
 
         with get_engine().connect() as connection:
             prefiltered = {
                 row[0]
                 for row in connection.execute(
-                    text(f"select distinct matnr from {view} where matnr like any(:p)"),
-                    {"p": patterns},
+                    text(f"select distinct matnr from {view} where {matnr_like}"),
+                    params,
                 )
             }
             everything = {

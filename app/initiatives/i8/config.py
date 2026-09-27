@@ -296,17 +296,18 @@ class I8Settings(BaseSettings):
         )
 
     @property
-    def repair_language_pattern(self) -> str:
-        """The stems as one POSIX regex, for a database prefilter.
+    def repair_language_like_patterns(self) -> tuple[str, ...]:
+        """The stems as upper-cased ``%stem%`` LIKE patterns, for a database
+        prefilter compared against ``upper(text)``.
 
-        Built from configuration and passed as a BIND PARAMETER, never
-        interpolated into SQL. Each stem is regex-escaped, so a keyword
-        containing a dot or a bracket narrows the search instead of silently
-        becoming a wildcard.
+        LIKE rather than a regex because SQL Server has no ``~*``. Built from
+        configuration and passed as BIND PARAMETERS, never interpolated into
+        SQL. Each stem is LIKE-escaped, so a keyword containing ``%``, ``_`` or
+        ``[`` narrows the search instead of silently becoming a wildcard.
         """
-        import re as _re
+        from app.shared.sql_lists import like_literal
 
-        return "|".join(_re.escape(word) for word in self.repair_language_list)
+        return tuple(f"%{like_literal(word.upper())}%" for word in self.repair_language_list)
 
     @property
     def fault_category_list(self) -> tuple[str, ...]:

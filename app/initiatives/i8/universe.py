@@ -51,6 +51,7 @@ from app.core.logging import get_logger
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.material_number import is_eighty_series, series_like_patterns
 from app.shared import CriticalitySource, get_criticality_source
+from app.shared.sql_lists import like_any
 
 logger = get_logger(__name__)
 
@@ -128,32 +129,32 @@ class UniverseStats:
 # actually decides. See material_number.series_like_patterns.
 _CANDIDATES_SQL = """
 with mat as (
-    select matnr from v_mara   where matnr like any(:patterns)
-    union select matnr from v_mard   where matnr like any(:patterns)
-    union select matnr from v_marc   where matnr like any(:patterns)
-    union select matnr from v_ekpo   where matnr like any(:patterns)
-    union select matnr from v_zmm065 where matnr like any(:patterns)
+    select matnr from v_mara   where {matnr_like}
+    union select matnr from v_mard   where {matnr_like}
+    union select matnr from v_marc   where {matnr_like}
+    union select matnr from v_ekpo   where {matnr_like}
+    union select matnr from v_zmm065 where {matnr_like}
 ),
 plants as (
-    select matnr, werks from v_mard   where matnr like any(:patterns) and werks is not null
-    union select matnr, werks from v_marc   where matnr like any(:patterns) and werks is not null
-    union select matnr, werks from v_ekpo   where matnr like any(:patterns) and werks is not null
-    union select matnr, werks from v_zmm065 where matnr like any(:patterns) and werks is not null
+    select matnr, werks from v_mard   where {matnr_like} and werks is not null
+    union select matnr, werks from v_marc   where {matnr_like} and werks is not null
+    union select matnr, werks from v_ekpo   where {matnr_like} and werks is not null
+    union select matnr, werks from v_zmm065 where {matnr_like} and werks is not null
 ),
 stock as (
     -- SUMMED across storage locations. MARD is one row per bin, and a material
     -- sits in several: taking one row under-reports stock, which is the exact
     -- failure I08 exists to prevent.
     select matnr, werks, sum(labst) as labst, count(*) as locations
-    from v_mard where matnr like any(:patterns) and werks is not null
-    group by 1, 2
+    from v_mard where {matnr_like} and werks is not null
+    group by matnr, werks
 ),
 planning as (
     -- MARC is one row per material+plant, so max() picks that single value.
     select matnr, werks, max(minbe) as minbe, max(dismm) as dismm,
            max(plifz) as plifz
-    from v_marc where matnr like any(:patterns) and werks is not null
-    group by 1, 2
+    from v_marc where {matnr_like} and werks is not null
+    group by matnr, werks
 ),
 -- Description candidates, one aggregate per source.
 --
@@ -163,24 +164,24 @@ planning as (
 -- and hash-joining the results takes about a second.
 zmm_desc as (
     select matnr, min(maktx) as maktx from v_zmm065
-    where matnr like any(:patterns) and maktx is not null group by 1
+    where {matnr_like} and maktx is not null group by matnr
 ),
 makt_desc as (
     select matnr, min(maktx) as maktx from v_makt
-    where matnr like any(:patterns) and maktx is not null group by 1
+    where {matnr_like} and maktx is not null group by matnr
 ),
 mara_row as (
     select matnr, min(maktx) as maktx, max(mtart) as mtart from v_mara
-    where matnr like any(:patterns) group by 1
+    where {matnr_like} group by matnr
 ),
 ekpo_desc as (
     select matnr, min(txz01) as txz01 from v_ekpo
-    where matnr like any(:patterns) and txz01 is not null group by 1
+    where {matnr_like} and txz01 is not null group by matnr
 ),
-marc_mat as (select distinct matnr from v_marc where matnr like any(:patterns)),
-mard_mat as (select distinct matnr from v_mard where matnr like any(:patterns)),
-ekpo_mat as (select distinct matnr from v_ekpo where matnr like any(:patterns)),
-zmm_mat  as (select distinct matnr from v_zmm065 where matnr like any(:patterns))
+marc_mat as (select distinct matnr from v_marc where {matnr_like}),
+mard_mat as (select distinct matnr from v_mard where {matnr_like}),
+ekpo_mat as (select distinct matnr from v_ekpo where {matnr_like}),
+zmm_mat  as (select distinct matnr from v_zmm065 where {matnr_like})
 select
     m.matnr                  as matnr,
     pl.werks                 as werks,
@@ -195,11 +196,11 @@ select
     p.minbe                  as minbe,
     p.dismm                  as dismm,
     p.plifz                  as plifz,
-    (ar.matnr is not null)   as in_mara,
-    (dm.matnr is not null)   as in_mard,
-    (cm.matnr is not null)   as in_marc,
-    (pm.matnr is not null)   as in_ekpo,
-    (zm.matnr is not null)   as in_zmm065
+    case when ar.matnr is not null then 1 else 0 end as in_mara,
+    case when dm.matnr is not null then 1 else 0 end as in_mard,
+    case when cm.matnr is not null then 1 else 0 end as in_marc,
+    case when pm.matnr is not null then 1 else 0 end as in_ekpo,
+    case when zm.matnr is not null then 1 else 0 end as in_zmm065
 from mat m
 left join plants    pl on pl.matnr = m.matnr
 left join stock     s  on s.matnr  = m.matnr and s.werks = pl.werks
@@ -312,7 +313,14 @@ def load_universe(
     patterns = series_like_patterns(cfg)
     index = open_repair_index or {}
 
-    rows = db.execute(text(_CANDIDATES_SQL), {"patterns": patterns}).mappings().all()
+    # One OR of LIKEs, reused by every source below: SQL Server has no
+    # ``like any(array)``. Each pattern is still a bind parameter.
+    matnr_like, pattern_params = like_any("matnr", "pattern", patterns)
+    rows = (
+        db.execute(text(_CANDIDATES_SQL.replace("{matnr_like}", matnr_like)), pattern_params)
+        .mappings()
+        .all()
+    )
 
     # THE gate, applied before anything else looks at these rows. The database
     # prefilter above only narrowed the candidates; this is what decides, and it
