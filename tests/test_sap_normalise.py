@@ -150,6 +150,10 @@ def test_german_conversion_is_only_applied_to_numbers() -> None:
         ("mbew", ["MATNR", "BWKEY", "VERPR"], "moving_price", "VERPR"),
         # The live CSV MBEW has no VERPR: a gap, never a guess.
         ("mbew", ["MANDT", "MATNR", "BWKEY", "BWTAR", "LVORM"], "moving_price", None),
+        # CDHDR/CDPOS as the live CSV names them (27 Sep): I07's adoption check.
+        ("cdhdr", ["MANDANT", "OBJECTCLAS", "OBJECTID", "CHANGENR", "UDATE", "UTIME"], "date", "UDATE"),
+        ("cdhdr", ["change_doc_object", "object_value", "document_number", "date"], "date", "date"),
+        ("cdpos", ["MANDANT", "OBJECTCLAS", "OBJECTID", "CHANGENR", "TABNAME", "FNAME", "VALUE_NEW"], "new_value", "VALUE_NEW"),
     ],
 )
 def test_the_columns_i7_reads_resolve_in_both_vocabularies(table, present, label, expected) -> None:
@@ -249,3 +253,18 @@ def test_the_sql_server_trigger_blocks_update_and_delete_by_the_postgres_name() 
     assert "CREATE TRIGGER assistant_turn_no_update_or_delete" in sql
     assert "INSTEAD OF UPDATE, DELETE" in sql
     assert "it''s evidence" in sql  # a quote in the guidance cannot end the literal
+
+
+def test_a_change_document_object_id_keeps_its_padding() -> None:
+    """For a MATERIAL change document OBJECTID is the MATNR padded to 18; the
+    adoption check matches it padded, so the view must not strip it."""
+    sql = view_sql("cdhdr", ["OBJECTCLAS", "OBJECTID", "CHANGENR", "UDATE"], MSSQL)
+
+    assert "[OBJECTID] AS object_value" in sql
+
+
+def test_i7_change_documents_read_the_views_not_the_raw_tables() -> None:
+    from app.initiatives.i7.adapters import change_documents
+
+    assert "FROM n_cdhdr" in change_documents._CHANGE_DOCUMENT_SQL
+    assert "raw_cd" not in change_documents._CHANGE_DOCUMENT_SQL

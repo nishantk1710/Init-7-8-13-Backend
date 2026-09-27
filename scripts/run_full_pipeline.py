@@ -38,7 +38,7 @@ import os
 import sys
 from decimal import Decimal
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, true
 
 from app.core.db import get_sessionmaker
 from app.models.i7_features import MaterialFeature
@@ -370,7 +370,7 @@ def report_backtests(session, limit: int, material: str | None) -> None:
     champions = dict(
         session.execute(
             select(Forecast.model_name, func.count())
-            .where(Forecast.forecast_run_id == run_id, Forecast.is_champion.is_(True))
+            .where(Forecast.forecast_run_id == run_id, Forecast.is_champion == true())
             .group_by(Forecast.model_name)
         ).all()
     )

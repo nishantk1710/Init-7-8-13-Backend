@@ -331,6 +331,30 @@ TABLES: dict[str, tuple[Col, ...]] = {
         _c("currency", "WAERS"),
         _c("document_date", "BEDAT", kind="date"),
     ),
+    # Read by I07's adoption check (app/initiatives/i7/adapters/change_documents.py).
+    # object_value stays text, not key: for a MATERIAL change document it is the
+    # MATNR padded to 18 characters, and the caller matches it padded.
+    "cdhdr": (
+        _c("change_doc_object", "OBJECTCLAS"),
+        _c("object_value", "OBJECTID"),
+        _c("document_number", "CHANGENR"),
+        _c("user_name", "USERNAME"),
+        _c("date", "UDATE", kind="date"),
+        _c("time", "UTIME"),
+        _c("transaction_code", "TCODE"),
+        _c("change_type", "CHANGE_IND"),
+    ),
+    "cdpos": (
+        _c("change_doc_object", "OBJECTCLAS"),
+        _c("object_value", "OBJECTID"),
+        _c("document_number", "CHANGENR"),
+        _c("table_name", "TABNAME"),
+        _c("table_key", "TABKEY"),
+        _c("field_name", "FNAME"),
+        _c("change_indicator", "CHNGIND"),
+        _c("new_value", "VALUE_NEW"),
+        _c("old_value", "VALUE_OLD"),
+    ),
     "eket": (
         _c("purchasing_document", "EBELN", kind="key"),
         _c("item", "EBELP", kind="key"),
