@@ -22,7 +22,7 @@ from collections.abc import Iterator
 from functools import lru_cache
 
 from sqlalchemy import Engine, create_engine, text
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
@@ -76,6 +76,26 @@ def require_azure_sql(url: str) -> None:
         )
 
 
+def with_mars(url: str) -> URL:
+    """``url`` with SQL Server's MARS switched on, unless it already says either way.
+
+    Without Multiple Active Result Sets a SQL Server connection runs one
+    statement at a time: a query still being read blocks any other statement
+    on the same connection with "Connection is busy with results for another
+    command". Postgres has no such rule, and code written there -- stream a
+    read, upsert batches as it goes, as I07's feature build and staging did --
+    fails on the first batch against Azure SQL. MARS makes that pattern legal
+    on the one connection; Azure SQL supports it. An explicit
+    ``MARS_Connection`` in DATABASE_URL, either value, is left alone.
+    """
+    parsed = make_url(url)
+    if parsed.get_backend_name() != MSSQL:
+        return parsed
+    if any(key.lower() == "mars_connection" for key in parsed.query):
+        return parsed
+    return parsed.update_query_dict({"MARS_Connection": "Yes"})
+
+
 @lru_cache
 def get_engine() -> Engine:
     """The process-wide engine, created on first use.
@@ -106,7 +126,7 @@ def get_engine() -> Engine:
     }
 
     return create_engine(
-        settings.database_url,
+        with_mars(settings.database_url),
         echo=settings.database_echo,
         # Azure SQL closes idle connections aggressively and the App Service can
         # sit idle between requests, so the stale-connection problem this solves
