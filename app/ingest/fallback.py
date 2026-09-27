@@ -2,9 +2,12 @@
 
     python -m app.ingest.fallback --list
     python -m app.ingest.fallback --upload "…/EKKO.XLSX" "…/EKET.XLSX" …
+    python -m app.ingest.fallback --upload                # from FALLBACK_SOURCE_DIR
     python -m app.ingest.fallback --load                  # all five tables
     python -m app.ingest.fallback --load ekko eket --try-sap
     python -m app.ingest.fallback --load ekko --force     # overwrite live data
+    python -m app.ingest.fallback --sync                  # folder -> storage -> SQL
+    python -m app.ingest.fallback --sync zmm065_gb zmm065_bmm
 
 WHAT IT IS FOR
 
@@ -50,6 +53,32 @@ Rohit/…``). ``--upload`` puts local copies there through the storage port,
 matched by file name; it needs STORAGE_URL and an Azure credential (``az
 login``) on the machine running it, which the App Service has and a laptop
 may not -- the Portal's upload to the same path is the same thing.
+
+THE SOURCE FOLDER, AND --sync
+
+``--upload`` with no files scans ``FALLBACK_SOURCE_DIR`` (default
+``data/fallback`` under the backend root, gitignored -- it holds real SAP
+extracts) for the five workbooks, by the same case-insensitive name match, and
+reports each as uploaded, missing, or refused. A file there that is not one of
+the five is named and skipped, never uploaded. ``data/fallback/README.md``
+lists the names.
+
+``--sync [TABLE…]`` is that upload followed by ``--load`` for the tables whose
+workbook was found and uploaded -- every upload first, then every load. The
+guard is ``load()``'s own, unchanged: a table holding live CSV data is refused
+without ``--force``, and ``--try-sap`` still asks SAP first for ekko/eket. A
+table whose workbook is absent is skipped and reported, not failed; one whose
+upload failed is not loaded, since storage may hold an older copy that would
+then be loaded as if current.
+
+WHERE IT RUNS
+
+Uploading writes to storage through ``app.core.storage.get_storage()``, the
+same port as everything else -- no credential handling here. On a laptop that
+means STORAGE_URL set and an ``az login`` session; on the App Service, its
+managed identity. Either needs 'Storage Blob Data Contributor'. The load half
+needs DATABASE_URL, which on Azure SQL means running inside the VNet (the App
+Service SSH console), so ``--sync`` end to end is an App Service command.
 """
 
 from __future__ import annotations
@@ -159,6 +188,17 @@ def refusal(spec: ExtractSpec, *, force: bool) -> str | None:
 # --- Upload -----------------------------------------------------------------
 
 
+def _copy(local: Path, key: str, storage: Storage) -> int:
+    """Stream one local file to one storage key. Returns bytes written."""
+    size = 0
+    with local.open("rb") as source, storage.open_write(key) as sink:
+        while chunk := source.read(4 * 1024 * 1024):
+            sink.write(chunk)
+            size += len(chunk)
+    logger.info("uploaded %s -> %s (%d bytes)", local.name, key, size)
+    return size
+
+
 def upload(paths: list[str], storage: Storage | None = None) -> list[tuple[str, str, int]]:
     """Copy local workbooks to the storage keys the manifest expects.
 
@@ -183,14 +223,194 @@ def upload(paths: list[str], storage: Storage | None = None) -> list[tuple[str, 
                 + ", ".join(sorted(Path(k).name for k in by_name.values()))
             )
         storage = storage or get_storage()
-        size = 0
-        with local.open("rb") as source, storage.open_write(key) as sink:
-            while chunk := source.read(4 * 1024 * 1024):
-                sink.write(chunk)
-                size += len(chunk)
-        logger.info("uploaded %s -> %s (%d bytes)", local.name, key, size)
+        size = _copy(local, key, storage)
         landed.append((str(local), key, size))
     return landed
+
+
+# --- The source folder ------------------------------------------------------
+
+FOUND = "found"
+UPLOADED = "uploaded"
+MISSING = "missing"
+REFUSED = "refused"
+ERROR = "error"
+
+# Files that live in the source folder on purpose and are not workbooks: the
+# committed list of expected names. Skipped silently, not reported as refused,
+# or every scan would name it.
+FOLDER_FURNITURE = frozenset({"readme.md"})
+
+
+@dataclass
+class FolderFile:
+    """One expected workbook, or one unexpected file, and what became of it."""
+
+    name: str
+    """The expected workbook name (from the manifest), or the unexpected file's."""
+    status: str
+    table: str | None = None
+    key: str | None = None
+    local: Path | None = None
+    bytes: int = 0
+    detail: str | None = None
+
+
+def _expected(tables: list[str] | None) -> dict[str, tuple[str, str]]:
+    """``file name (lower) -> (table, storage key)`` for the requested tables."""
+    return {
+        Path(key).name.lower(): (spec.table, key)
+        for spec in specs(tables)
+        for key in spec.files
+    }
+
+
+def scan(folder: Path, tables: list[str] | None = None) -> list[FolderFile]:
+    """Classify the folder against the workbooks the requested tables expect.
+
+    One entry per expected workbook -- ``found`` (with ``local`` set) or
+    ``missing`` -- and one ``refused`` entry per file that is not one of them. Matching is by file
+    name, case-insensitive, exactly as :func:`upload`. Reads no file contents.
+
+    A fallback workbook that belongs to a table *not* requested is left alone,
+    neither uploaded nor refused: it is the right file, just not asked for.
+    """
+    expected = _expected(tables)
+    every = _expected(None)
+    by_key: dict[str, list[Path]] = {}
+    refused: list[FolderFile] = []
+
+    candidates = sorted(p for p in folder.iterdir() if p.is_file()) if folder.is_dir() else []
+    for path in candidates:
+        lowered = path.name.lower()
+        if lowered in FOLDER_FURNITURE or path.name.startswith("."):
+            continue
+        if lowered in expected:
+            by_key.setdefault(expected[lowered][1], []).append(path)
+        elif lowered not in every:
+            refused.append(
+                FolderFile(
+                    path.name, REFUSED, local=path,
+                    detail="not one of the fallback workbooks; skipped, never uploaded",
+                )
+            )
+
+    found: list[FolderFile] = []
+    for table, key in expected.values():
+        name = Path(key).name
+        matches = by_key.get(key, [])
+        if len(matches) > 1:
+            # Only possible on a case-sensitive filesystem. Which copy is
+            # current is not something to guess.
+            found.append(
+                FolderFile(
+                    name, REFUSED, table=table, key=key,
+                    detail="more than one file matches: "
+                    + ", ".join(p.name for p in matches),
+                )
+            )
+        elif matches:
+            found.append(FolderFile(name, FOUND, table=table, key=key, local=matches[0]))
+        else:
+            found.append(
+                FolderFile(name, MISSING, table=table, key=key, detail="not in the source folder")
+            )
+    return found + refused
+
+
+def upload_folder(
+    folder: Path | None = None,
+    storage: Storage | None = None,
+    tables: list[str] | None = None,
+) -> list[FolderFile]:
+    """Upload every expected workbook found in ``folder`` to its manifest key.
+
+    ``folder`` defaults to ``FALLBACK_SOURCE_DIR``. Never raises per file: a
+    workbook that is absent is reported ``missing``, a file that is not one of
+    the five is reported ``refused``, and a failed upload ``error`` -- the rest
+    still upload. Storage is only opened if there is something to upload.
+    """
+    folder = folder or get_settings().fallback_source_path
+    entries = scan(folder, tables)
+    for entry in entries:
+        if entry.status != FOUND or entry.local is None or entry.key is None:
+            continue
+        try:
+            storage = storage or get_storage()
+            entry.bytes = _copy(entry.local, entry.key, storage)
+            entry.status = UPLOADED
+        except Exception as exc:  # one file's failure must not stop the others
+            entry.status = ERROR
+            entry.detail = f"{type(exc).__name__}: {exc}"
+            logger.error("upload of %s failed: %s", entry.name, entry.detail)
+    return entries
+
+
+# --- Sync: folder -> storage -> Azure SQL -----------------------------------
+
+
+@dataclass
+class SyncRow:
+    """One table's line in the --sync summary."""
+
+    table: str
+    workbook_found: bool
+    uploaded: str
+    """``yes``, ``skipped`` (no workbook in the folder) or ``error``."""
+    load_status: str | None = None
+    rows: int = 0
+    reason: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        if self.uploaded == ERROR:
+            return False
+        if self.load_status is None:
+            # Nothing was loaded because nothing was found: reported, not failed.
+            return not self.workbook_found
+        return self.load_status in (seed_loader.STATUS_SUCCEEDED, seed_loader.STATUS_SKIPPED)
+
+
+def sync(
+    tables: list[str] | None = None,
+    *,
+    force: bool = False,
+    try_sap: bool = False,
+    folder: Path | None = None,
+    storage: Storage | None = None,
+) -> tuple[list[SyncRow], list[FolderFile]]:
+    """Upload what the source folder holds, then load those tables.
+
+    Every upload finishes before the first load starts, and only tables whose
+    workbook was found *and* uploaded are loaded: loading after a failed upload
+    would read whatever older copy storage holds and report it as current.
+    :func:`load` does the loading, so the live-data guard, ``--force`` and
+    ``--try-sap`` behave exactly as they do for ``--load``.
+
+    Returns the per-table summary and the refused files, if any.
+    """
+    requested = [spec.table for spec in specs(tables)]
+    entries = upload_folder(folder, storage, requested)
+    per_table = {e.table: e for e in entries if e.table is not None}
+    refused_files = [e for e in entries if e.table is None]
+
+    to_load = [t for t in requested if per_table[t].status == UPLOADED]
+    outcomes = {o.table: o for o in load(to_load, force=force, try_sap=try_sap)} if to_load else {}
+
+    summary: list[SyncRow] = []
+    for table in requested:
+        entry = per_table[table]
+        found = entry.local is not None or entry.status == REFUSED
+        if entry.status == UPLOADED:
+            outcome = outcomes[table]
+            summary.append(
+                SyncRow(table, True, "yes", outcome.status, outcome.rows, outcome.detail)
+            )
+        elif entry.status in (ERROR, REFUSED):
+            summary.append(SyncRow(table, found, ERROR, None, 0, entry.detail))
+        else:
+            summary.append(SyncRow(table, False, "skipped", None, 0, entry.detail))
+    return summary, refused_files
 
 
 # --- Load -------------------------------------------------------------------
@@ -264,15 +484,24 @@ def _parser() -> argparse.ArgumentParser:
             "(ekko, eket, zmm065_gb, zmm065_bmm, gr_30day) from the July workbooks. "
             "Refuses to overwrite a table the CSV route has delivered."
         ),
+        epilog=(
+            "--upload and --sync write to storage through STORAGE_URL. On a laptop that\n"
+            "means STORAGE_URL set and an `az login` session; on the App Service, its\n"
+            "managed identity. Either needs 'Storage Blob Data Contributor'."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     what = parser.add_mutually_exclusive_group(required=True)
     what.add_argument("--list", action="store_true",
                       help="show the five tables, their workbook keys, whether each is in storage, and whether live data would block it")
-    what.add_argument("--upload", nargs="+", metavar="FILE",
-                      help="copy local workbook(s) to their manifest keys in storage, matched by file name")
+    what.add_argument("--upload", nargs="*", metavar="FILE",
+                      help="copy local workbook(s) to their manifest keys in storage, matched by file name; "
+                           "with no FILE, upload whichever of the five are in FALLBACK_SOURCE_DIR")
     what.add_argument("--load", nargs="*", metavar="TABLE",
                       help="load from the workbooks: all five, or the ones named")
+    what.add_argument("--sync", nargs="*", metavar="TABLE",
+                      help="upload from FALLBACK_SOURCE_DIR, then --load the tables whose workbook was "
+                           "found and uploaded: all five, or the ones named")
     parser.add_argument("--try-sap", action="store_true",
                         help="for ekko/eket, fire the CSV extract first and use the workbook only if SAP delivers nothing")
     parser.add_argument("--force", action="store_true",
@@ -304,6 +533,47 @@ def _list() -> int:
     return 0
 
 
+def _print_folder(entries: list[FolderFile], folder: Path) -> None:
+    print(f"Source folder: {folder}")
+    print(f"{'FILE':<36}{'STATUS':<10}{'BYTES':>12}  STORAGE KEY / DETAIL")
+    for e in entries:
+        size = f"{e.bytes:,}" if e.status == UPLOADED else "-"
+        print(f"{e.name:<36}{e.status:<10}{size:>12}  {e.key or ''}")
+        if e.detail:
+            print(f"{'':<36}    {e.detail}")
+
+
+def _upload_folder() -> int:
+    folder = get_settings().fallback_source_path
+    entries = upload_folder(folder)
+    _print_folder(entries, folder)
+    # An unexpected file is reported and skipped, not a failure. A workbook
+    # that could not be uploaded (or matched twice) is.
+    return 1 if any(e.status == ERROR or (e.status == REFUSED and e.table) for e in entries) else 0
+
+
+def _sync(tables: list[str] | None, *, force: bool, try_sap: bool) -> int:
+    folder = get_settings().fallback_source_path
+    try:
+        summary, refused_files = sync(tables, force=force, try_sap=try_sap, folder=folder)
+    except ValueError as exc:
+        print(exc)
+        return 2
+
+    print(f"Source folder: {folder}")
+    for f in refused_files:
+        print(f"  refused: {f.name} -- {f.detail}")
+    print(f"\n{'TABLE':<12}{'WORKBOOK':<10}{'UPLOADED':<10}{'LOAD':<11}{'ROWS':>10}")
+    for row in summary:
+        print(
+            f"{row.table:<12}{'yes' if row.workbook_found else 'no':<10}{row.uploaded:<10}"
+            f"{row.load_status or '-':<11}{row.rows:>10,}"
+        )
+        if row.reason:
+            print(f"    {row.reason}")
+    return 0 if all(row.ok for row in summary) else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     configure_logging(get_settings())
@@ -319,6 +589,12 @@ def main(argv: list[str] | None = None) -> int:
             print(exc)
             return 2
         return 0
+
+    if args.upload is not None:  # --upload with no files: scan the source folder
+        return _upload_folder()
+
+    if args.sync is not None:
+        return _sync(args.sync or None, force=args.force, try_sap=args.try_sap)
 
     try:
         outcomes = load(args.load or None, force=args.force, try_sap=args.try_sap)

@@ -11,9 +11,14 @@ or identity credentials present.
 
 from decimal import Decimal
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# The backend repository root (the folder holding app/). Anchors relative
+# filesystem settings so they do not depend on the working directory.
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
@@ -123,6 +128,16 @@ class Settings(BaseSettings):
     # regardless of this; it only governs start-up. Off for a process that
     # must not run DDL when it starts.
     normalise_views_on_startup: bool = True
+
+    # --- Workbook fallback --------------------------------------------------
+    #
+    # The local folder `python -m app.ingest.fallback --upload` (no arguments)
+    # and `--sync` scan for the five fallback workbooks (EKKO, EKET, ZMM065 x2,
+    # 30 Day GR Report). A relative path is resolved against the backend root,
+    # not the working directory, so the command finds the same folder from
+    # wherever it is run. The folder holds real SAP extracts and is gitignored;
+    # see data/fallback/README.md for the file names it expects.
+    fallback_source_dir: str = "data/fallback"
 
     # Optional. The Data Lake adapter authenticates with DefaultAzureCredential
     # by default -- the App Service's managed identity when deployed, the
@@ -533,6 +548,13 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @property
+    def fallback_source_path(self) -> Path:
+        """``FALLBACK_SOURCE_DIR`` as an absolute path, relative ones anchored at
+        the backend root."""
+        path = Path(self.fallback_source_dir).expanduser()
+        return path if path.is_absolute() else BACKEND_ROOT / path
 
     @property
     def cors_origins(self) -> list[str]:

@@ -61,6 +61,17 @@ pipeline-report.txt
 *-report.txt
 pipeline*.log
 
+# --- Fallback workbooks ---
+# FALLBACK_SOURCE_DIR (app.ingest.fallback --upload / --sync) holds real SAP
+# extracts -- EKKO, EKET, the ZMM065 aging reports, the 30 Day GR report -- with
+# real material numbers, suppliers and prices. This repository holds code and
+# config only; data reaches Azure through storage, never through git. The
+# folder's contents are ignored rather than the folder itself so that its
+# README (the list of expected file names) can still be committed: git cannot
+# re-include a file whose parent directory is excluded.
+data/fallback/*
+!data/fallback/README.md
+
 # --- Editor / OS noise ---
 .DS_Store
 *.pem
