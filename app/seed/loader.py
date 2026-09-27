@@ -35,6 +35,7 @@ from app.models.ingestion import IngestionRun
 from app.seed.manifest import EXTRACTS, ExtractSpec
 from app.seed.reader import read_headers, read_rows
 from app.seed.sqlserver import RawTableWriter
+from app.shared import sap_normalise
 
 logger = get_logger(__name__)
 
@@ -262,6 +263,9 @@ def load_table(spec: ExtractSpec, *, force: bool = False) -> TableResult:
             elapsed,
             rate,
         )
+        # The table was just recreated, in workbook labels; rebuild the
+        # n_<table> view over it. Never raises.
+        sap_normalise.refresh_after_load(spec.table)
         return TableResult(spec.table, STATUS_SUCCEEDED, rows=total, seconds=elapsed)
 
     except Exception as exc:
