@@ -55,8 +55,8 @@ _PLANT_SCOPE_M = sql_predicate("m.plant")
 _MOVEMENT_HISTORY_QUERY = """
     SELECT m.material, m.plant, m.movement_type, m.quantity, h.posting_date,
            m.purchase_order, m.item
-    FROM raw_mseg m
-    JOIN raw_mkpf h
+    FROM n_mseg m
+    JOIN n_mkpf h
       ON m.material_document = h.material_document
      AND m.material_doc_year = h.material_doc_year
     WHERE m.material <> '' AND m.plant <> '' AND {plant_scope} AND h.posting_date <> ''
@@ -72,7 +72,7 @@ _MOVEMENT_HISTORY_QUERY = """
 # denominator means the same thing regardless of which gateway computed it.
 _CURRENT_STOCK_QUERY = """
     SELECT material, plant, unrestricted
-    FROM raw_mard
+    FROM n_mard
     WHERE material <> '' AND plant <> '' AND {plant_scope} AND unrestricted <> ''
       {material_filter}
       {plant_filter}

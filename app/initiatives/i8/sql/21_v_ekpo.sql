@@ -49,5 +49,5 @@ select
     -- goes here, at the bottom, or the views stop being replaceable in place
     -- and every deploy needs a drop first.
     nullif(requisitioner, '')          as afnam
-from raw_ekpo
+from n_ekpo
 where in_scope_plant(plant);

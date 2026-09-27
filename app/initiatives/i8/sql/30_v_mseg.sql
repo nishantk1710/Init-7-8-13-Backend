@@ -35,5 +35,5 @@ select
     sap_key(purchase_order)              as ebeln,
     nullif(nullif(item, ''), '0')        as ebelp,
     sap_key(supplier)                    as lifnr
-from raw_mseg
+from n_mseg
 where in_scope_plant(plant);

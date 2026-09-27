@@ -27,7 +27,7 @@ _PLANT_SCOPE = sql_predicate("plant")
 
 _MRP_TYPE_QUERY = """
     SELECT material, plant, mrp_type
-    FROM raw_marc
+    FROM n_marc
     WHERE material <> '' AND plant <> '' AND {plant_scope}
       {material_filter}
       {plant_filter}

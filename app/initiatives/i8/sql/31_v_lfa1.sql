@@ -15,4 +15,4 @@ select
     nullif(name_1, '')     as name1,
     nullif(country, '')    as land1,
     nullif(city, '')       as ort01
-from raw_lfa1;
+from n_lfa1;

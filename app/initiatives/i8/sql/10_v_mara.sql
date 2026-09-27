@@ -14,4 +14,4 @@ select
     nullif(base_unit_of_measure, '') as meins,
     nullif(material_description, '') as maktx,
     nullif(ext_material_group, '')   as extwg
-from raw_mara;
+from n_mara;

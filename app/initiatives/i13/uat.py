@@ -176,7 +176,7 @@ def stamp(db: Session, session_id: str, *, reservation_number: str, reservation_
     # The reservation's own item text, kept for display beside the stamp.
     raw_text = db.execute(
         text(
-            "SELECT text FROM raw_resb WHERE reservation = :number AND item_no_stock_transfer_reserv = :item"
+            "SELECT text FROM n_resb WHERE reservation = :number AND item_no_stock_transfer_reserv = :item"
         ),
         {"number": reservation_number, "item": reservation_item},
     ).scalars().first()

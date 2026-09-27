@@ -19,4 +19,4 @@ select
     sap_num(qty_delivered)            as wemng,
     nullif(purchase_requisition, '')  as banfn,
     nullif(item_of_requisition, '')   as bnfpo
-from raw_eket;
+from n_eket;
