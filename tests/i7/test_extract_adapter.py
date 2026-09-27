@@ -185,6 +185,13 @@ def test_goods_receipt_constants_are_named_not_inlined():
     assert "history_category" in {field.canonical_name for field in EKBE_FIELDS}
 
 
+def test_goods_receipt_category_is_bewtp_not_vgabe():
+    """"E" is a BEWTP value. VGABE holds "1" for the same receipts, so mapping
+    the category to VGABE would find no goods receipts in the live table."""
+    by_label = {field.raw_column: field.sap_field for field in EKBE_FIELDS}
+    assert by_label["po_history_category"] == "BEWTP"
+
+
 # --- Batching ----------------------------------------------------------
 
 

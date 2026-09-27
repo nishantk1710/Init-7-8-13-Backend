@@ -128,7 +128,12 @@ EKBE_FIELDS = (
     FieldMapping("posting_date", "BUDAT", "goods_receipt_date"),
     FieldMapping("quantity", "MENGE", "quantity_received"),
     FieldMapping("movement_type", "BWART", "movement_type"),
-    FieldMapping("po_history_category", "VGABE", "history_category"),
+    # BEWTP, not VGABE. The two travel together and are easy to swap: BEWTP is
+    # SAP's "PO history category" (E, Q, U, D, L) and VGABE its "transaction
+    # type" (1, 2, 6, 8, 9). The July label and its "E" values are BEWTP's; the
+    # live CSV carries both, and every BEWTP='E' row there is VGABE='1'.
+    # Filtering VGABE='E' against the live table would match nothing.
+    FieldMapping("po_history_category", "BEWTP", "history_category"),
 )
 
 # --- EKET: schedule lines ---------------------------------------------
@@ -142,8 +147,9 @@ EKET_FIELDS = (
 # --- Values the extract uses, named once -------------------------------
 
 GOODS_RECEIPT_HISTORY_CATEGORY = "E"
-"""EKBE.VGABE value for a goods receipt. ``E`` is 57,821 of the GR rows; the
-other categories (Q invoice, D down-payment, U delivery, L) are not receipts."""
+"""EKBE.BEWTP value for a goods receipt. ``E`` is 57,821 of the GR rows; the
+other categories (Q invoice, D down-payment, U delivery, L) are not receipts.
+The matching EKBE.VGABE is ``1`` -- see the EKBE_FIELDS note."""
 
 GOODS_RECEIPT_MOVEMENT_TYPE = "101"
 GOODS_RECEIPT_REVERSAL_MOVEMENT_TYPE = "102"
