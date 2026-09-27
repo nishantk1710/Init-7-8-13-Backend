@@ -34,14 +34,10 @@ pydantic==2.13.5
 # install it separately. That is the one dependency this file cannot pin for you.
 SQLAlchemy==2.0.52
 pyodbc==5.3.0
-# Local dev and CI run against Postgres 18 instead (see compose.yaml and
-# .github/workflows/ci.yml) -- psycopg is what DATABASE_URL's
-# postgresql+psycopg:// scheme loads at migration/connect time.
-psycopg[binary]==3.3.1
 alembic==1.19.2
-# Driver for the local Postgres stand-in (compose.yaml) -- DATABASE_URL there
-# uses postgresql+psycopg://. Not needed against Azure SQL, but required for
-# every local run; leaving it out makes every DB-touching endpoint 500.
+# Driver for the retired local Postgres stand-in (compose.yaml). Nothing
+# imports it: app/core/db.py accepts Azure SQL only since 094e395. Remove it
+# together with compose.yaml.
 psycopg[binary]==3.3.1
 
 # --- Azure ---

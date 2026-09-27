@@ -6,10 +6,11 @@ provision, secure and pay for; the instruction was to add none. So the loop
 lives in the application's own lifespan and the cost of that choice is handled
 here rather than ignored.
 
-THE COST: startup.sh runs TWO gunicorn workers
+THE COST: more than one gunicorn worker
 
-Both import this module, so both would start a timer and every delta would run
-twice -- two concurrent pulls of the same set, two loads racing into the same
+startup.sh runs one by default, but WEB_CONCURRENCY or a scale-out adds more.
+Each imports this module, so each would start a timer and every delta would run
+more than once -- concurrent pulls of the same set, two loads racing into the same
 table. The lock below is what stops that. It is taken in SQL Server, not in the
 process, because the workers share nothing else: separate interpreters today,
 and separate instances the moment this App Service scales out.
