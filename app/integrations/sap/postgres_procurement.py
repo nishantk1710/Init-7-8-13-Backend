@@ -92,7 +92,7 @@ _PLANT_SCOPE_M = sql_predicate("m.plant")
 _PR_QUERY = """
     SELECT purchase_requisition, item_of_requisition, material, plant,
            quantity_requested, requisition_date, purchase_order, purchase_order_item
-    FROM raw_eban
+    FROM n_eban
     WHERE purchase_requisition <> '' AND material <> '' AND plant <> '' AND {plant_scope}
       {pr_filter}
       {material_filter}
@@ -156,7 +156,7 @@ def fetch_purchase_requisitions(
 _PO_ITEM_QUERY = """
     SELECT purchasing_document, item, purchase_requisition, item_of_requisition,
            material, plant, order_quantity
-    FROM raw_ekpo
+    FROM n_ekpo
     WHERE purchasing_document <> '' AND material <> '' AND plant <> '' AND {plant_scope}
       {po_filter}
       {pr_filter}
@@ -228,7 +228,7 @@ def fetch_purchase_order_items(
 
 _GR_HISTORY_QUERY = """
     SELECT purchasing_document, item, movement_type, quantity, posting_date
-    FROM raw_ekbe
+    FROM n_ekbe
     WHERE po_history_category = 'E' AND purchasing_document <> '' AND posting_date <> ''
       {po_filter}
 """
@@ -269,8 +269,8 @@ def fetch_goods_receipt_history(db: Session, *, po_number: str | None = None) ->
 _GI_LINK_ATTEMPT_QUERY = """
     SELECT m.material, m.plant, m.movement_type, m.quantity, h.posting_date,
            m.purchase_order, m.item
-    FROM raw_mseg m
-    JOIN raw_mkpf h
+    FROM n_mseg m
+    JOIN n_mkpf h
       ON m.material_document = h.material_document
      AND m.material_doc_year = h.material_doc_year
     WHERE m.movement_type IN ('201', '261')

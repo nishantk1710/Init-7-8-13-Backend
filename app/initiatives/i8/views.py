@@ -39,10 +39,26 @@ fail while they exist**. Drop them first and put them back after::
     python -m app.initiatives.i8.views create
 
 ``create`` is idempotent (``CREATE OR REPLACE``), so running it again is free.
+
+Two databases, one set of views
+-------------------------------
+The views read the NORMALISE views (``n_<table>``, ``app.shared.sap_normalise``)
+rather than ``raw_<table>``, so they work whichever loader filled the raw layer
+-- the July workbooks (business labels) or the SAP CSV extract (SAP field
+names, zero-padded keys). Build the normalise views first;
+``sap_normalise.rebuild_read_layers()`` does both in order.
+
+The ``.sql`` files are written once and rendered per dialect here: on SQL
+Server (Azure) ``create or replace view`` becomes ``CREATE OR ALTER VIEW``, the
+cast helpers gain their ``dbo.`` prefix, and ``in_scope_plant(x)`` -- a boolean
+function Postgres can call in a WHERE -- becomes ``dbo.in_scope_plant(x) = 1``.
+The cast helpers themselves differ too much to share, so they have one file per
+dialect: ``00_functions.postgres.sql`` and ``00_functions.mssql.sql``.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from sqlalchemy import Engine, text
@@ -98,6 +114,18 @@ as $$
 $$;
 """
 
+# SQL Server has no boolean return type; bit, compared with = 1 at each call.
+_IN_SCOPE_PLANT_MSSQL = f"""
+create or alter function dbo.in_scope_plant(@value nvarchar(4000)) returns bit
+as
+begin
+    return case when trim(coalesce(@value, '')) in ({sql_literals()}) then 1 else 0 end
+end
+"""
+
+_BATCH_MARKER = "-- @@batch"
+_HELPERS = ("sap_key", "sap_date", "sap_num")
+
 # Expression indexes on the NORMALISED material key.
 #
 # The views compute sap_key(material) on the fly, so the seed loader's plain
@@ -110,38 +138,73 @@ $$;
 #
 # They live on the raw tables, so they disappear when the seed recreates one and
 # come back with `views create`. Built in well under a second each.
+#
+# The expression is what the views compute AFTER Postgres inlines the normalise
+# view under them (sap_key over n_<table>.material, which is itself
+# ltrim(trim(material), '0')) -- an index on anything else is never chosen.
+# Postgres only: on SQL Server the extract is small enough to scan, and its
+# expression indexes (computed columns) would have to live on tables the CSV
+# loader recreates.
 INDEXES: tuple[tuple[str, str, str], ...] = (
-    ("ix_raw_mara_i8key", "raw_mara", "sap_key(material)"),
-    ("ix_raw_makt_i8key", "raw_makt", "sap_key(material)"),
-    ("ix_raw_marc_i8key", "raw_marc", "sap_key(material)"),
-    ("ix_raw_mard_i8key", "raw_mard", "sap_key(material)"),
-    ("ix_raw_ekpo_i8key", "raw_ekpo", "sap_key(material)"),
-    ("ix_raw_mseg_i8key", "raw_mseg", "sap_key(material)"),
+    ("ix_raw_mara_i8key", "raw_mara", "sap_key(ltrim(trim(material), '0'))"),
+    ("ix_raw_makt_i8key", "raw_makt", "sap_key(ltrim(trim(material), '0'))"),
+    ("ix_raw_marc_i8key", "raw_marc", "sap_key(ltrim(trim(material), '0'))"),
+    ("ix_raw_mard_i8key", "raw_mard", "sap_key(ltrim(trim(material), '0'))"),
+    ("ix_raw_ekpo_i8key", "raw_ekpo", "sap_key(ltrim(trim(material), '0'))"),
+    ("ix_raw_mseg_i8key", "raw_mseg", "sap_key(ltrim(trim(material), '0'))"),
     ("ix_raw_zmm065_bmm_i8key", "raw_zmm065_bmm", "sap_key(mat_code)"),
     ("ix_raw_zmm065_gb_i8key", "raw_zmm065_gb", "sap_key(mat_code)"),
 )
 
 
-def _scripts() -> list[Path]:
-    """Every .sql file, in filename order -- functions (00_) before views."""
-    return sorted(SQL_DIR.glob("*.sql"))
+def _is_mssql(engine: Engine) -> bool:
+    return engine.dialect.name == "mssql"
+
+
+def _scripts(mssql: bool = False) -> list[Path]:
+    """The helper file for this dialect, then every view script, in order."""
+    helpers = SQL_DIR / ("00_functions.mssql.sql" if mssql else "00_functions.postgres.sql")
+    views = sorted(p for p in SQL_DIR.glob("*.sql") if not p.name.startswith("00_"))
+    return [helpers, *views]
+
+
+def render(sql: str, mssql: bool) -> list[str]:
+    """One script as the statements to execute on this dialect.
+
+    Postgres runs a script as written. SQL Server needs each CREATE FUNCTION in
+    its own batch, and the view scripts translated -- see the module docstring.
+    """
+    if not mssql:
+        return [sql]
+    sql = re.sub(r"(?i)\bcreate\s+or\s+replace\s+view\b", "CREATE OR ALTER VIEW", sql)
+    sql = re.sub(r"(?i)(?<![.\w])in_scope_plant\((\w+)\)", r"dbo.in_scope_plant(\1) = 1", sql)
+    sql = re.sub(rf"(?i)(?<![.\w])({'|'.join(_HELPERS)})\(", r"dbo.\1(", sql)
+    # A trailing semicolon is harmless to Postgres but a view definition on
+    # SQL Server must be the whole batch.
+    return [part.strip().rstrip(";") for part in sql.split(_BATCH_MARKER) if part.strip()]
 
 
 def ensure_views(engine: Engine | None = None) -> list[str]:
     """Create or replace every function and view. Returns the view names.
 
     Idempotent, and safe to run against a database that already has them.
+    Expects the normalise views (``n_<table>``) to exist already.
     """
     engine = engine or get_engine()
-    scripts = _scripts()
-    if not scripts:
-        raise FileNotFoundError(f"No .sql files found in {SQL_DIR}")
+    mssql = _is_mssql(engine)
+    scripts = _scripts(mssql)
+    if not scripts[0].exists():
+        raise FileNotFoundError(f"No helper script {scripts[0]}")
 
     with engine.begin() as connection:
         # Before the views: every one of them that carries a plant calls it.
-        connection.execute(text(_IN_SCOPE_PLANT_SQL))
+        connection.execute(text(_IN_SCOPE_PLANT_MSSQL if mssql else _IN_SCOPE_PLANT_SQL))
         for script in scripts:
-            connection.execute(text(script.read_text(encoding="utf-8")))
+            for statement in render(script.read_text(encoding="utf-8"), mssql):
+                connection.execute(text(statement))
+        if mssql:
+            logger.info("I08: %d views ready on SQL Server (%s)", len(VIEWS), ", ".join(VIEWS))
+            return list(VIEWS)
         for name, table, expression in INDEXES:
             connection.execute(
                 text(
@@ -169,16 +232,20 @@ def drop_views(engine: Engine | None = None, *, drop_functions: bool = True) -> 
     Run this before re-seeding a raw table -- see the module docstring.
     """
     engine = engine or get_engine()
+    mssql = _is_mssql(engine)
     with engine.begin() as connection:
         for name in reversed(VIEWS):
             connection.execute(text(f"DROP VIEW IF EXISTS {name}"))
-        # Indexes before functions: an index built on sap_key() depends on it,
-        # and Postgres refuses to drop a function something still uses.
-        for name, _table, _expression in INDEXES:
-            connection.execute(text(f"DROP INDEX IF EXISTS {name}"))
+        if not mssql:
+            # Indexes before functions: an index built on sap_key() depends on
+            # it, and Postgres refuses to drop a function something still uses.
+            for name, _table, _expression in INDEXES:
+                connection.execute(text(f"DROP INDEX IF EXISTS {name}"))
         if drop_functions:
             for name in FUNCTIONS:
-                connection.execute(text(f"DROP FUNCTION IF EXISTS {name}(text)"))
+                connection.execute(
+                    text(f"DROP FUNCTION IF EXISTS dbo.{name}" if mssql else f"DROP FUNCTION IF EXISTS {name}(text)")
+                )
     logger.info("I08: views, indexes and cast helpers dropped")
 
 
@@ -187,12 +254,10 @@ def missing_views(engine: Engine | None = None) -> list[str]:
     engine = engine or get_engine()
     with engine.connect() as connection:
         present = {
-            row[0]
+            str(row[0]).lower()
             for row in connection.execute(
-                text(
-                    "select table_name from information_schema.views "
-                    "where table_schema = 'public'"
-                )
+                # Any schema: 'public' on Postgres, 'dbo' on SQL Server.
+                text("select table_name from information_schema.views")
             )
         }
     return [name for name in VIEWS if name not in present]
@@ -216,7 +281,12 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
 
     if arguments.command == "create":
-        names = ensure_views()
+        from app.shared import sap_normalise
+
+        # The views read n_<table>; rebuild those first, in the same order
+        # start-up uses, and let a failure surface here rather than be logged.
+        sap_normalise.rebuild_read_layers(raise_errors=True)
+        names = list(VIEWS)
         print(f"{len(names)} views ready: {', '.join(names)}")
         return 0
 

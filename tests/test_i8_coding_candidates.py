@@ -82,26 +82,30 @@ class TestKeywordMatching:
         cfg = get_i8_settings()
         assert "repair" in cfg.repair_language_list
 
-        # The QUERIES must carry no vocabulary -- the pattern reaches SQL as a
-        # bind parameter built from config. Checked against the SQL constants
+        # The QUERIES must carry no vocabulary -- the keywords reach SQL as bind
+        # parameters built from config. Checked against the SQL constants
         # themselves rather than the whole file, which is full of these words in
         # prose and would make this test fail on a comment.
-        from app.initiatives.i8.coding_candidates import _CANDIDATE_SQL, _TWIN_SQL
+        from app.initiatives.i8.coding_candidates import _CANDIDATE_SQL, _TWIN_TEXTS_SQL
+        from app.shared.sql_lists import like_any
 
-        assert ":pattern" in _CANDIDATE_SQL
-        for sql in (_CANDIDATE_SQL, _TWIN_SQL):
+        assert "{keyword_match}" in _CANDIDATE_SQL
+        match, params = like_any("upper(p.txz01)", "keyword", cfg.repair_language_like_patterns)
+        rendered = _CANDIDATE_SQL.replace("{keyword_match}", match)
+        assert set(params.values()) == set(cfg.repair_language_like_patterns)
+        for sql in (rendered, _TWIN_TEXTS_SQL):
             for keyword in cfg.repair_language_list:
                 assert keyword not in sql.lower(), (
                     f"{keyword!r} is written into a query -- it belongs in config"
                 )
 
-    def test_the_pattern_escapes_each_keyword(self) -> None:
-        """A keyword containing a regex character must narrow the search, not
-        silently become a wildcard."""
+    def test_the_patterns_escape_each_keyword(self) -> None:
+        """A keyword containing a LIKE wildcard must narrow the search, not
+        silently become a wildcard -- ``[`` included, a class on SQL Server."""
         from app.initiatives.i8.config import I8Settings
 
-        cfg = I8Settings(repair_language="a.b,c+d", _env_file=None)
-        assert cfg.repair_language_pattern == r"a\.b|c\+d"
+        cfg = I8Settings(repair_language="50%,a_b,[x]", _env_file=None)
+        assert cfg.repair_language_like_patterns == ("%50\\%%", "%A\\_B%", "%\\[X]%")
 
 
 class TestPartition:

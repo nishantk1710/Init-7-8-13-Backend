@@ -4,6 +4,7 @@ Run locally:
     uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 """
 
+import asyncio
 import contextlib
 import threading
 from collections.abc import AsyncIterator
@@ -53,7 +54,8 @@ def _watch_i13_fingerprint(stop: threading.Event, interval: int) -> None:
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-    """Start the I13 snapshot build and the delta scheduler; stop both on shutdown.
+    """Build the normalise views, then start the I13 snapshot build and the
+    delta scheduler; stop both on shutdown.
 
     The server takes requests immediately; I13 snapshot routes answer 503
     ``building`` until the first build lands (~40 s on the seeded data).
@@ -66,6 +68,17 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     from app.ingest import scheduler
 
     settings = get_settings()
+
+    # Before the snapshot, which is built from them: every I08/I13 read goes
+    # through the n_<table> views, and a fresh database has none. Awaited, not
+    # backgrounded, so the first request cannot race a build against views that
+    # do not exist yet. Never raises; bounded by the connect timeout when the
+    # database is unreachable.
+    if settings.database_url and settings.normalise_views_on_startup:
+        from app.shared import sap_normalise
+
+        await asyncio.to_thread(sap_normalise.rebuild_read_layers)
+
     stop = threading.Event()
     if settings.i13_snapshot_enabled and settings.i13_snapshot_warm_on_startup:
         i13_snapshot.start_background_build("start-up")

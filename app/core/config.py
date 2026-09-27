@@ -100,9 +100,10 @@ class Settings(BaseSettings):
     # cheap to enable and cheap to get wrong, so it is OFF by default: a fresh
     # deployment does not start pulling from SAP because somebody shipped it.
     #
-    # startup.sh runs two gunicorn workers, so two timers would otherwise run
-    # every delta twice. app/ingest/scheduler.py holds a SQL Server
-    # application lock to make exactly one of them win.
+    # startup.sh runs one gunicorn worker by default, but WEB_CONCURRENCY or a
+    # scale-out adds more, and each would run every delta.
+    # app/ingest/scheduler.py holds a SQL Server application lock to make
+    # exactly one of them win.
     delta_schedule_enabled: bool = False
 
     # Minutes between delta cycles. Floored at 5 in the scheduler: below that
@@ -112,6 +113,16 @@ class Settings(BaseSettings):
     # Seconds to wait after startup before the first cycle, so a deploy does
     # not begin a pull while migrations may still be applying.
     delta_initial_delay_seconds: int = 120
+
+    # --- Normalise views ----------------------------------------------------
+    #
+    # Build the n_<table> views (app/shared/sap_normalise.py) and I08's views on
+    # top of them at start-up, before the I13 snapshot is built from them. A
+    # fresh Azure SQL database has none, and every I08/I13 read goes through
+    # them. The CSV and workbook loaders rebuild them after each load
+    # regardless of this; it only governs start-up. Off for a process that
+    # must not run DDL when it starts.
+    normalise_views_on_startup: bool = True
 
     # Optional. The Data Lake adapter authenticates with DefaultAzureCredential
     # by default -- the App Service's managed identity when deployed, the
@@ -317,8 +328,9 @@ class Settings(BaseSettings):
     # --- Initiative 13: End-to-End Spares Utilisation Tracking. ---
     # Root directory for platform-owned (non-SAP) reference data -- currently
     # just consumption_plans.csv (see app/initiatives/i13/plans.py). All
-    # SAP-derived I13 data reads from Postgres (see app/integrations/sap/
-    # postgres_*.py); there is no CSV path for it any more.
+    # SAP-derived I13 data reads from the database, through the n_<table>
+    # normalise views (see app/integrations/sap/postgres_*.py and
+    # app/shared/sap_normalise.py); there is no CSV path for it any more.
     i13_data_dir: str = "data-generator/generated"
 
     # The I13 in-memory snapshot (app/initiatives/i13/snapshot.py): every I13

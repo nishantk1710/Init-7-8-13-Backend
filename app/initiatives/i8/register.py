@@ -63,6 +63,7 @@ from app.initiatives.i8.aging import (
 )
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.material_number import is_eighty_series
+from app.shared.sql_lists import fetch_in_chunks
 
 logger = get_logger(__name__)
 
@@ -215,9 +216,11 @@ from v_ekpo p
 where p.ebeln is not null
   and p.ebelp is not null
   -- Cast is required, not decorative: Postgres cannot infer a type for a bare
-  -- NULL parameter and refuses the statement with AmbiguousParameter.
-  and (cast(:plant as text) is null or p.werks = cast(:plant as text))
-  and (cast(:material as text) is null or p.matnr = cast(:material as text))
+  -- NULL parameter and refuses the statement with AmbiguousParameter. varchar,
+  -- not text: on SQL Server text is the legacy blob type and cannot be
+  -- compared with =.
+  and (cast(:plant as varchar(4000)) is null or p.werks = cast(:plant as varchar(4000)))
+  and (cast(:material as varchar(4000)) is null or p.matnr = cast(:material as varchar(4000)))
 """
 
 
@@ -266,8 +269,8 @@ _SCHEDULE_SQL = """
 -- earliest promise rather than an arbitrary row.
 select ebeln, ebelp, min(eindt) as due_date, count(*) as schedule_lines
 from v_eket
-where ebeln = any(:documents)
-group by 1, 2
+where ebeln in :documents
+group by ebeln, ebelp
 """
 
 _RECEIPTS_SQL = """
@@ -284,14 +287,14 @@ select
     ebeln,
     ebelp,
     sum(case when shkzg = :credit then -menge else menge end) as net_qty,
-    min(budat) filter (where bwart = :receipt)  as first_receipt,
-    max(budat) filter (where bwart = :receipt)  as last_receipt,
-    count(*)   filter (where bwart = :reversal) as reversals
+    min(case when bwart = :receipt then budat end)      as first_receipt,
+    max(case when bwart = :receipt then budat end)      as last_receipt,
+    sum(case when bwart = :reversal then 1 else 0 end)  as reversals
 from v_ekbe
-where ebeln = any(:documents)
+where ebeln in :documents
   and bewtp = :category
   and bwart in (:receipt, :reversal)
-group by 1, 2
+group by ebeln, ebelp
 """
 
 _DISPATCH_SQL = """
@@ -310,11 +313,11 @@ select
     sum(menge) as qty,
     count(*)   as postings
 from v_mseg
-where ebeln = any(:documents)
+where ebeln in :documents
   and ebelp is not null
   and bwart = :dispatch
   and sobkz = :vendor_stock
-group by 1, 2
+group by ebeln, ebelp
 """
 
 _HEADER_SQL = """
@@ -329,7 +332,7 @@ _HEADER_SQL = """
 -- anchoring on different columns would report different ages for one PO line.
 select ebeln, bsart, lifnr, aedat
 from v_ekko
-where ebeln = any(:documents)
+where ebeln in :documents
 """
 
 _VENDOR_SQL = "select lifnr, name1 from v_lfa1 where lifnr is not null"
@@ -355,9 +358,9 @@ _LEAD_TIME_SQL = """
 -- than absorbing it.
 select matnr, werks, max(plifz) as plifz
 from v_marc
-where matnr = any(:materials)
+where matnr in :materials
   and werks is not null
-group by 1, 2
+group by matnr, werks
 """
 
 
@@ -379,52 +382,45 @@ def _evidence(
     documents = list(documents)
     materials = list(materials)
 
+    # Every query below groups by the column it filters on, so each chunk's
+    # rows are complete on their own and concatenating them is exact.
     schedules = {
         (r["ebeln"], r["ebelp"]): r
-        for r in db.execute(text(_SCHEDULE_SQL), {"documents": documents})
-        .mappings()
-        .all()
+        for r in fetch_in_chunks(db, _SCHEDULE_SQL, "documents", documents)
     }
     receipts = {
         (r["ebeln"], r["ebelp"]): r
-        for r in db.execute(
-            text(_RECEIPTS_SQL),
+        for r in fetch_in_chunks(
+            db,
+            _RECEIPTS_SQL,
+            "documents",
+            documents,
             {
-                "documents": documents,
                 "category": cfg.gr_history_category,
                 "receipt": cfg.gr_movement_type,
                 "reversal": cfg.gr_reversal_movement_type,
                 "credit": "H",
             },
         )
-        .mappings()
-        .all()
     }
     dispatches = {
         (r["ebeln"], r["ebelp"]): r
-        for r in db.execute(
-            text(_DISPATCH_SQL),
+        for r in fetch_in_chunks(
+            db,
+            _DISPATCH_SQL,
+            "documents",
+            documents,
             {
-                "documents": documents,
                 "dispatch": cfg.dispatch_movement_type,
                 "vendor_stock": cfg.vendor_special_stock,
             },
         )
-        .mappings()
-        .all()
     }
-    headers = {
-        r["ebeln"]: r
-        for r in db.execute(text(_HEADER_SQL), {"documents": documents})
-        .mappings()
-        .all()
-    }
+    headers = {r["ebeln"]: r for r in fetch_in_chunks(db, _HEADER_SQL, "documents", documents)}
     vendors = {r["lifnr"]: r["name1"] for r in db.execute(text(_VENDOR_SQL)).mappings()}
     lead_times = {
         (r["matnr"], r["werks"]): r["plifz"]
-        for r in db.execute(text(_LEAD_TIME_SQL), {"materials": materials})
-        .mappings()
-        .all()
+        for r in fetch_in_chunks(db, _LEAD_TIME_SQL, "materials", materials)
     }
     return schedules, receipts, dispatches, headers, vendors, lead_times
 
