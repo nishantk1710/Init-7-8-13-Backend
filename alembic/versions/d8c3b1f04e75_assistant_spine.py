@@ -30,11 +30,9 @@ records, rewriting one does not correct history but destroys it, and "the
 service layer never issues an UPDATE" is a convention that is one careless
 session away from being untrue.
 
-The trigger is Postgres-only, deliberately, exactly as the attestation's is. The
-*tables* are portable; the guarantee is enforced in the service layer and proven
-by tests, so it holds on Azure SQL too. The trigger is defence in depth where
-the engine supports it, and is skipped rather than failing the migration where
-it does not.
+The trigger here is Postgres-only, exactly as the attestation's was. The SQL
+Server (Azure SQL) twin -- same names, same messages -- is added by
+``5c9e2a7d4f18``, as ``e3b7c2d9f104`` did for the attestation.
 
 Why there is no ``status`` column on a session
 -----------------------------------------------

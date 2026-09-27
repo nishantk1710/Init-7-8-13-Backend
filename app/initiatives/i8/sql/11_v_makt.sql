@@ -5,4 +5,4 @@ select
     material                         as matnr_raw,
     nullif(language_key, '')         as spras,
     nullif(material_description, '') as maktx
-from raw_makt;
+from n_makt;

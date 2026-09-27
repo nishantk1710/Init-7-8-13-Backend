@@ -53,6 +53,7 @@ from app.ingest.watermarks import get_watermark, set_watermark
 from app.models.csv_extract import STATUS_COMPLETE, STATUS_OPEN, CsvExtractRequest
 from app.models.ingestion import IngestionRun
 from app.seed.sqlserver import RawTableWriter
+from app.shared import sap_normalise
 
 logger = get_logger(__name__)
 
@@ -307,6 +308,9 @@ def load_table(
         "%s: %d row(s), %d column(s) into %s in %.1fs",
         spec.sap_table, loaded, len(columns), spec.raw_table, elapsed,
     )
+    # The table was just recreated, in SAP field names; the n_<table> view
+    # over it has to be rebuilt to read them. Never raises.
+    sap_normalise.refresh_after_load(spec.table)
     return CsvLoadResult(
         spec.sap_table, spec.raw_table, STATUS_SUCCEEDED,
         rows=loaded, columns=len(columns), seconds=elapsed, watermark=seeded,

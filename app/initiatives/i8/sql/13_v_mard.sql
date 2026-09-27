@@ -21,5 +21,5 @@ select
     sap_num(unrestricted)           as labst,
     sap_num(in_quality_insp)        as insme,
     sap_num(blocked)                as speme
-from raw_mard
+from n_mard
 where in_scope_plant(plant);

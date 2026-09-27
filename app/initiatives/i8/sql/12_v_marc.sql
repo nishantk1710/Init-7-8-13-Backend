@@ -19,5 +19,5 @@ select
     sap_num(reorder_point)        as minbe,
     sap_num(planned_deliv_time)   as plifz,
     nullif(procurement_type, '')  as beskz
-from raw_marc
+from n_marc
 where in_scope_plant(plant);

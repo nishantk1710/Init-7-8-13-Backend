@@ -109,7 +109,7 @@ _RESERVATION_FETCH_QUERY = """
         base_unit_of_measure, quantity_withdrawn, value_withdrawn,
         purchase_requisition, item_of_requisition, "order", movement_type,
         receiving_plant, receiving_stor_loc, goods_recipient, text
-    FROM raw_resb
+    FROM n_resb
     WHERE material <> '' AND plant <> '' AND {plant_scope}
       {reservation_filter}
       {pr_filter}
@@ -246,8 +246,8 @@ def _with_uat_overlay(
 _GI_BY_RESERVATION_QUERY = """
     SELECT m.reservation, m.item_no_stock_transfer_reserv, m.movement_type,
            m.quantity, h.posting_date
-    FROM raw_mseg m
-    JOIN raw_mkpf h
+    FROM n_mseg m
+    JOIN n_mkpf h
       ON m.material_document = h.material_document
      AND m.material_doc_year = h.material_doc_year
     WHERE m.movement_type IN ('201', '261')

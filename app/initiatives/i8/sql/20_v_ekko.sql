@@ -17,4 +17,4 @@ select
     nullif(purchasing_group, '')     as ekgrp,
     nullif(company_code, '')         as bukrs,
     nullif(currency, '')             as waers
-from raw_ekko;
+from n_ekko;

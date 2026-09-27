@@ -22,5 +22,5 @@ select
     nullif(plant, '')                 as werks,
     nullif(material_document, '')     as belnr,
     nullif(material_doc_year, '')     as gjahr
-from raw_ekbe
+from n_ekbe
 where in_scope_plant(plant);

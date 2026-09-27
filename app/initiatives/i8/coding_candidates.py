@@ -117,6 +117,7 @@ from app.core.logging import get_logger
 from app.core.prompts import PromptError, complete_with_prompt
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.material_number import is_eighty_series
+from app.shared.sql_lists import fetch_in_chunks, like_any
 
 logger = get_logger(__name__)
 
@@ -299,8 +300,11 @@ class ScreenStats:
 
 # Every PO line whose free text mentions repair.
 #
-# The keyword regex is a BIND PARAMETER built from configuration, never
+# The keywords are BIND PARAMETERS built from configuration, never
 # interpolated -- so there is still no repair vocabulary written into a query.
+# One upper-cased LIKE per keyword, ORed into {keyword_match}: SQL Server has no
+# case-insensitive regex match (Postgres's ``~*``), and upper() on both sides
+# keeps the match case-insensitive whatever the column's collation.
 #
 # Note what is NOT here: any exclusion of 80-series materials. The prefilter
 # contract (material_number.series_like_patterns) says the database may only
@@ -313,7 +317,7 @@ select
     p.ebeln, p.ebelp, p.matnr, p.werks, p.txz01, p.erdat, p.pstyp
 from v_ekpo p
 where coalesce(p.txz01, '') <> ''
-  and p.txz01 ~* :pattern
+  and {keyword_match}
 order by p.ebeln, p.ebelp
 """
 
@@ -335,7 +339,12 @@ def fetch_repair_language_lines(
     80-series test and the model both run over what this returns.
     """
     cfg = cfg or get_i8_settings()
-    rows = db.execute(text(_CANDIDATE_SQL), {"pattern": cfg.repair_language_pattern}).mappings().all()
+    keyword_match, params = like_any("upper(p.txz01)", "keyword", cfg.repair_language_like_patterns)
+    rows = (
+        db.execute(text(_CANDIDATE_SQL.replace("{keyword_match}", keyword_match)), params)
+        .mappings()
+        .all()
+    )
 
     return [
         CandidateLine(
@@ -408,24 +417,22 @@ def partition(lines, cfg: I8Settings | None = None) -> Screenable:
 # Lincoln LN-25" are the same description. It is NOT fuzzy beyond that: a
 # near-match would turn hard evidence back into a judgement, which is the one
 # thing this check exists to avoid.
-# Raw string: the regex needs a literal backslash-s to reach Postgres.
-_TWIN_SQL = r"""
-with texts as (
-    select
-        matnr,
-        upper(regexp_replace(TRIM(txz01), '\s+', ' ', 'g')) as normalised,
-        min(txz01) as sample
-    from v_ekpo
-    where matnr is not null and coalesce(txz01, '') <> ''
-    group by 1, 2
-)
-select distinct coded.matnr as coded_material, coded.sample as shared_text,
-       suspect.matnr as suspect_material
-from texts coded
-join texts suspect on suspect.normalised = coded.normalised
-where coded.matnr = any(:coded)
-  and suspect.matnr = any(:suspects)
+#
+# The normalising and the join happen in Python, over the texts of just the
+# materials involved: collapsing whitespace needs a regex, which SQL Server
+# does not reliably have. The rows are few -- one per PO line of a coded or
+# suspect material.
+_TWIN_TEXTS_SQL = """
+select matnr, txz01
+from v_ekpo
+where matnr in :materials
+  and coalesce(txz01, '') <> ''
 """
+
+
+def normalise_text(value: str) -> str:
+    """Upper-cased, trimmed, every whitespace run collapsed to one space."""
+    return " ".join(value.split()).upper()
 
 
 def find_twins(
@@ -434,8 +441,9 @@ def find_twins(
     """Suspect material -> the 80-series materials sharing its exact text.
 
     The corroboration described in the module docstring, and the only part of
-    this screen that produces evidence rather than an opinion. One query for
-    every candidate at once.
+    this screen that produces evidence rather than an opinion. One pass for
+    every candidate at once (chunked only to stay under SQL Server's
+    parameter limit).
 
     The 80-series side is decided by :func:`is_eighty_series` in Python, not in
     SQL -- same prefilter contract as everywhere else in I08.
@@ -458,17 +466,25 @@ def find_twins(
     if not coded:
         return {}
 
-    rows = (
-        db.execute(text(_TWIN_SQL), {"coded": coded, "suspects": suspects})
-        .mappings()
-        .all()
-    )
+    coded_set, suspect_set = set(coded), set(suspects)
+
+    # normalised text -> {material: its alphabetically first raw text}. The
+    # first raw text is the sample shown as the shared text, as min() gave.
+    by_text: dict[str, dict[str, str]] = {}
+    for row in fetch_in_chunks(db, _TWIN_TEXTS_SQL, "materials", sorted(coded_set | suspect_set)):
+        materials_with_text = by_text.setdefault(normalise_text(row["txz01"]), {})
+        current = materials_with_text.get(row["matnr"])
+        if current is None or row["txz01"] < current:
+            materials_with_text[row["matnr"]] = row["txz01"]
 
     found: dict[str, list[tuple[str, str]]] = {}
-    for row in rows:
-        found.setdefault(row["suspect_material"], []).append(
-            (row["coded_material"], row["shared_text"])
-        )
+    for materials_with_text in by_text.values():
+        coded_here = sorted(m for m in materials_with_text if m in coded_set)
+        for suspect in sorted(m for m in materials_with_text if m in suspect_set):
+            for coded_material in coded_here:
+                pair = (coded_material, materials_with_text[coded_material])
+                if pair not in found.get(suspect, []):
+                    found.setdefault(suspect, []).append(pair)
 
     if found:
         logger.info(
