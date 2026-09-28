@@ -1,13 +1,36 @@
-"""July/August extract -> canonical staging.
+"""SAP raw layer -> canonical staging, through the normalise views.
 
-The only module in I07 that reads ``raw_*`` tables. Everything downstream reads
-the staging tables or the canonical contracts built from them, so Phase 12
-replaces this file rather than editing the pipeline.
+The only module in I07 that reads SAP data. Everything downstream reads the
+staging tables or the canonical contracts built from them.
 
-**Aggregation happens in SQL, not Python.** Monthly consumption is a
-``GROUP BY`` over 233k movement rows; pulling them into Python to total them
-would move a lot of data to no purpose. Row-level work streams with
-``yield_per`` and inserts in batches, so memory stays flat as the extract grows.
+**It reads ``n_<table>``, never ``raw_<table>``.** The raw layer is filled by two
+loaders that disagree on everything but the data -- the July workbooks (business
+labels, unpadded keys, ISO dates) and the live SAP CSV extract (SAP field names,
+zero-padded keys, ``DD.MM.YYYY`` dates, German decimal commas). The shared
+normalise views (:mod:`app.shared.sap_normalise`) present both in the workbook
+vocabulary, with keys unpadded, dates ISO and numbers plain, so the queries here
+are written once and work whichever loader filled a table -- including a mix,
+such as live EKPO beside fallback-workbook EKKO.
+
+**MARC's MRP fields are the exception.** The live CSV MARC carries no DISMM,
+PLIFZ, MINBE or MABST at all. When ``raw_marc`` lacks a field, it is taken from
+``odata_material_plant`` (the OData MaterialPlantSet) instead -- decided per
+field from the table's columns, never row by row.
+
+**Aggregation happens in Python.** Monthly consumption, goods receipts and
+schedule lines are totalled here rather than in ``GROUP BY``: every value is
+text and has to be parsed, and parsing in Python is what makes a malformed value
+a counted rejection instead of either a SQL error (SQL Server) or a silent
+regex exclusion (the Postgres-only query this replaced). The SQL that remains is
+plain joins and ``IN`` lists, portable to both dialects. The aggregates are one
+entry per material-plant-month or PO line.
+
+**Every read finishes before any write starts.** SQL Server refuses a statement
+on a connection that still has an open result ("Connection is busy with results
+for another command") unless MARS is on, which is not this driver's default. So
+a query is fetched whole (:func:`_read`) and only then upserted -- interleaving a
+streamed read with batched MERGEs worked on Postgres and failed on the first
+batch on Azure SQL. The volumes are thousands to tens of thousands of rows.
 
 **Idempotency is a database property.** Each staging table has a unique natural
 key, and writes go through an atomic upsert (``MERGE`` on SQL Server, ``ON
@@ -18,10 +41,11 @@ The dialect-specific SQL lives in one place, :mod:`app.core.upsert`.
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Iterator
+from datetime import date, datetime, timezone
+from decimal import Decimal
+from typing import Any, Iterable, Iterator
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, inspect, text
 from sqlalchemy.orm import Session
 
 from app.core.db import get_sessionmaker
@@ -35,6 +59,7 @@ from app.initiatives.i7.adapters.ingestion_policy import ExtractIngestionPolicy
 from app.initiatives.i7.adapters.validation import (
     RejectionReason,
     clean,
+    first_of_month,
     parse_date,
     parse_decimal,
     parse_flag,
@@ -50,10 +75,11 @@ from app.models.i7_staging import (
     StagingRejection,
     StagingRun,
 )
+from app.shared import sap_normalise
 
 logger = logging.getLogger(__name__)
 
-SOURCE_JULY_EXTRACT = "july_extract"
+SOURCE_NORMALISE_VIEWS = "normalise_views"
 STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
 
@@ -106,10 +132,14 @@ class _Rejections:
             self._rows = []
 
 
-def _stream(session: Session, statement: str, params: dict[str, Any] | None = None) -> Iterator[Any]:
-    """Stream a query server-side rather than buffering the whole result."""
-    result = session.execute(text(statement), params or {}).yield_per(2000)
-    yield from result
+def _read(session: Session, statement: str, params: dict[str, Any] | None = None) -> list[Any]:
+    """Run a query and fetch every row, closing its result before returning.
+
+    Fetched whole on purpose, not streamed: the caller upserts on the same
+    connection, and SQL Server will not run a MERGE while a result is still
+    open on it. See the module docstring.
+    """
+    return session.execute(text(statement), params or {}).all()
 
 
 def _safe_batch_size(model: type, requested: int, session: Session | None = None) -> int:
@@ -141,6 +171,13 @@ def _batched(iterator: Iterator[dict[str, Any]], size: int) -> Iterator[list[dic
 
 # --- Materials ---------------------------------------------------------
 
+# MAKT can carry several languages per material (the live extract has English,
+# Afrikaans and German); joining it straight would multiply MARA rows and put
+# the same key into one upsert batch twice. English first, else any.
+#
+# ZMM065 is joined from its raw tables: it is a report only the workbook loader
+# fills, always in the workbook vocabulary, with material numbers unpadded --
+# the same form the normalise views give n_mara.material.
 _MATERIAL_SQL = """
     SELECT a.material,
            a.material_group,
@@ -149,11 +186,16 @@ _MATERIAL_SQL = """
            a.ext_material_group,
            a.manufacturer,
            a.df_at_client_level,
-           t.material_description,
-           z.criticality,
-           b.moving_price
-      FROM raw_mara a
-      LEFT JOIN raw_makt t ON t.material = a.material
+           COALESCE(t.material_description, a.material_description) AS material_description,
+           z.criticality
+      FROM n_mara a
+      LEFT JOIN (
+            SELECT material,
+                   COALESCE(MAX(CASE WHEN language_key IN ('E', 'EN') THEN material_description END),
+                            MAX(material_description)) AS material_description
+              FROM n_makt
+             GROUP BY material
+      ) t ON t.material = a.material
       LEFT JOIN (
             SELECT mat_code, MAX(criticality) AS criticality
               FROM (SELECT mat_code, criticality FROM raw_zmm065_bmm
@@ -162,24 +204,45 @@ _MATERIAL_SQL = """
              WHERE NULLIF(criticality, '') IS NOT NULL
              GROUP BY mat_code
       ) z ON z.mat_code = a.material
-      LEFT JOIN (
-            SELECT material, MAX(moving_price) AS moving_price
-              FROM raw_mbew GROUP BY material
-      ) b ON b.material = a.material
 """
 # MBEW carries no currency column in this extract, so unit_price is staged
 # without one. Left NULL rather than assumed: the operating currency is ZAR by
 # context, but writing that in would be inventing source data.
 
+_PRICE_SQL = "SELECT material, moving_price FROM n_mbew"
+
+
+def _price_by_material(session: Session, rejections: _Rejections) -> dict[str, Decimal]:
+    """Highest moving price per material across valuation areas.
+
+    Parsed before comparing: a MAX over the text column would rank "9.5" above
+    "10.0". The live CSV MBEW carries no VERPR, so there every price is NULL and
+    this is empty -- unit_price stages as NULL, a visible gap.
+    """
+    prices: dict[str, Decimal] = {}
+    for row in _read(session, _PRICE_SQL):
+        material = clean(row.material)
+        if material is None or clean(row.moving_price) is None:
+            continue
+        price = parse_decimal(row.moving_price)
+        if price is None:
+            rejections.add("n_mbew", material, RejectionReason.INVALID_QUANTITY, "moving price")
+            continue
+        if material not in prices or price > prices[material]:
+            prices[material] = price
+    return prices
+
 
 def _stage_materials(
     session: Session, run_id: int, policy: ExtractIngestionPolicy, rejections: _Rejections
 ) -> int:
+    prices = _price_by_material(session, rejections)
+
     def rows() -> Iterator[dict[str, Any]]:
-        for row in _stream(session, _MATERIAL_SQL):
+        for row in _read(session, _MATERIAL_SQL):
             material = clean(row.material)
             if material is None:
-                rejections.add("raw_mara", None, RejectionReason.MISSING_MATERIAL)
+                rejections.add("n_mara", None, RejectionReason.MISSING_MATERIAL)
                 continue
             yield {
                 "sap_material_number": material,
@@ -193,9 +256,9 @@ def _stage_materials(
                 "manufacturer": clean(row.manufacturer),
                 "deletion_flag": parse_flag(row.df_at_client_level),
                 "criticality": clean(row.criticality),
-                "unit_price": parse_decimal(row.moving_price),
+                "unit_price": prices.get(material),
                 "currency": None,
-                "source_table": "raw_mara",
+                "source_table": "n_mara",
                 "staging_run_id": run_id,
             }
 
@@ -213,23 +276,113 @@ def _stage_materials(
 _MATERIAL_PLANT_SQL = """
     SELECT material, plant, mrp_type, planned_deliv_time,
            reorder_point, maximum_stock_level, df_at_plant_level
-      FROM raw_marc
+      FROM n_marc
 """
+
+# The MARC labels the live CSV cannot fill, and the OData MaterialPlantSet
+# property that carries each. Used only for a label raw_marc does not have.
+MRP_FIELDS_FROM_ODATA: dict[str, str] = {
+    "mrp_type": "Dismm",
+    "planned_deliv_time": "Plifz",
+    "reorder_point": "Minbe",
+    "maximum_stock_level": "Mabst",
+    "df_at_plant_level": "Lvorm",
+}
+ODATA_MATERIAL_PLANT = "odata_material_plant"
+
+
+def odata_key(value: object | None) -> str | None:
+    """An OData key as the normalise views spell it: trimmed, leading zeros off.
+
+    MaterialPlantSet pads MATNR to 18 characters; n_marc does not.
+    """
+    text_value = clean(value)
+    return None if text_value is None else (text_value.lstrip("0") or None)
+
+
+def _columns(session: Session, table: str) -> list[str] | None:
+    inspector = inspect(session.get_bind())
+    real = {name.lower(): name for name in inspector.get_table_names()}.get(table.lower())
+    return [c["name"] for c in inspector.get_columns(real)] if real else None
+
+
+def _marc_gaps(session: Session) -> list[str]:
+    """The MRP labels raw_marc cannot supply, decided from its columns once.
+
+    The same resolution the normalise view used: a label with no source
+    column in either vocabulary is a gap for the whole table, not for a row.
+    """
+    present = _columns(session, "raw_marc")
+    if present is None:
+        return list(MRP_FIELDS_FROM_ODATA)
+    missing = {r.label for r in sap_normalise.resolve("marc", present) if r.source is None}
+    return [label for label in MRP_FIELDS_FROM_ODATA if label in missing]
+
+
+def _odata_mrp_fields(session: Session, labels: list[str]) -> dict[tuple[str, str], dict[str, Any]]:
+    """``(material, plant) -> {label: value}`` from odata_material_plant.
+
+    Empty when there is nothing to fill or the table is not there; the gap then
+    stays NULL and is logged, never defaulted.
+    """
+    if not labels:
+        return {}
+    present = _columns(session, ODATA_MATERIAL_PLANT)
+    if present is None:
+        logger.warning(
+            "raw_marc has no %s and %s does not exist: those stage as NULL. "
+            "Run: python -m app.ingest --fetch --load --set MaterialPlantSet",
+            ", ".join(labels), ODATA_MATERIAL_PLANT,
+        )
+        return {}
+    by_lower = {name.lower(): name for name in present}
+    wanted = {label: by_lower.get(MRP_FIELDS_FROM_ODATA[label].lower()) for label in labels}
+    matnr, werks = by_lower.get("matnr"), by_lower.get("werks")
+    if matnr is None or werks is None:
+        logger.warning("%s has no Matnr/Werks columns; MRP fields not filled", ODATA_MATERIAL_PLANT)
+        return {}
+
+    quote = session.get_bind().dialect.identifier_preparer.quote
+    selected = [c for c in wanted.values() if c is not None]
+    statement = (
+        f"SELECT {quote(matnr)} AS m, {quote(werks)} AS w"
+        + "".join(f", {quote(c)}" for c in selected)
+        + f" FROM {ODATA_MATERIAL_PLANT}"
+    )
+    fields: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in session.execute(text(statement)).mappings():
+        material, plant = odata_key(row["m"]), clean(row["w"])
+        if material is None or plant is None:
+            continue
+        fields[(material, plant)] = {
+            label: (row[column] if column is not None else None) for label, column in wanted.items()
+        }
+    logger.info(
+        "material-plants: %s from %s (%d rows); raw_marc does not carry them",
+        ", ".join(labels), ODATA_MATERIAL_PLANT, len(fields),
+    )
+    return fields
 
 
 def _stage_material_plants(
     session: Session, run_id: int, policy: ExtractIngestionPolicy, rejections: _Rejections
 ) -> int:
+    gaps = _marc_gaps(session)
+    from_odata = _odata_mrp_fields(session, gaps)
+    source_table = f"n_marc+{ODATA_MATERIAL_PLANT}" if from_odata else "n_marc"
+
     def rows() -> Iterator[dict[str, Any]]:
-        for row in _stream(session, _MATERIAL_PLANT_SQL):
+        for row in _read(session, _MATERIAL_PLANT_SQL):
             material = clean(row.material)
             plant = clean(row.plant)
             if material is None:
-                rejections.add("raw_marc", None, RejectionReason.MISSING_MATERIAL)
+                rejections.add("n_marc", None, RejectionReason.MISSING_MATERIAL)
                 continue
             if plant is None:
-                rejections.add("raw_marc", material, RejectionReason.MISSING_PLANT)
+                rejections.add("n_marc", material, RejectionReason.MISSING_PLANT)
                 continue
+            values = dict(row._mapping)
+            values.update(from_odata.get((material, plant), {}))
             yield {
                 "sap_material_number": material,
                 "sap_plant_code": plant,
@@ -237,15 +390,15 @@ def _stage_material_plants(
                 # Staged as found. Blank stays blank: "not maintained" is a
                 # real state, and the OAR policy -- not the adapter -- decides
                 # what it means.
-                "mrp_type": clean(row.mrp_type),
-                "planned_delivery_time_days": parse_int(row.planned_deliv_time),
+                "mrp_type": clean(values["mrp_type"]),
+                "planned_delivery_time_days": parse_int(values["planned_deliv_time"]),
                 # EISBE is not in the extract. NULL, not 0: zero safety stock is
                 # a real and different claim from "not supplied".
                 "current_safety_stock": None,
-                "current_reorder_point": parse_decimal(row.reorder_point),
-                "current_maximum_stock": parse_decimal(row.maximum_stock_level),
-                "deletion_flag": parse_flag(row.df_at_plant_level),
-                "source_table": "raw_marc",
+                "current_reorder_point": parse_decimal(values["reorder_point"]),
+                "current_maximum_stock": parse_decimal(values["maximum_stock_level"]),
+                "deletion_flag": parse_flag(values["df_at_plant_level"]),
+                "source_table": source_table,
                 "staging_run_id": run_id,
             }
 
@@ -258,15 +411,13 @@ def _stage_material_plants(
 
 # --- Stock (MARD) -------------------------------------------------------
 
-# The extract carries the current-period stock columns twice under
-# near-identical labels; this reads the first occurrence of each, matching
-# raw_mard's column order. See MARD_FIELDS in field_map for the full mapping
-# and why only these six columns are staged.
+# See MARD_FIELDS in field_map for the full mapping and why only these six
+# stock columns are staged.
 _STOCK_SQL = """
     SELECT material, plant, storage_location,
            unrestricted, stock_in_transfer, in_quality_insp,
            restricted_use_stock, blocked, returns
-      FROM raw_mard
+      FROM n_mard
 """
 
 
@@ -274,22 +425,22 @@ def _stage_stock(
     session: Session, run_id: int, policy: ExtractIngestionPolicy, rejections: _Rejections
 ) -> int:
     def rows() -> Iterator[dict[str, Any]]:
-        for row in _stream(session, _STOCK_SQL):
+        for row in _read(session, _STOCK_SQL):
             material = clean(row.material)
             plant = clean(row.plant)
             storage_location = clean(row.storage_location)
 
             if material is None:
-                rejections.add("raw_mard", None, RejectionReason.MISSING_MATERIAL)
+                rejections.add("n_mard", None, RejectionReason.MISSING_MATERIAL)
                 continue
             if plant is None:
-                rejections.add("raw_mard", material, RejectionReason.MISSING_PLANT)
+                rejections.add("n_mard", material, RejectionReason.MISSING_PLANT)
                 continue
             if storage_location is None:
                 # Not a documented rejection reason of its own: MARD's key
                 # requires a storage location, so a missing one is the same
                 # kind of gap as a missing plant.
-                rejections.add("raw_mard", material, RejectionReason.MISSING_PLANT)
+                rejections.add("n_mard", material, RejectionReason.MISSING_PLANT)
                 continue
 
             yield {
@@ -302,7 +453,7 @@ def _stage_stock(
                 "restricted_use_stock": parse_decimal(row.restricted_use_stock),
                 "blocked_stock": parse_decimal(row.blocked),
                 "returns_stock": parse_decimal(row.returns),
-                "source_table": "raw_mard",
+                "source_table": "n_mard",
                 "staging_run_id": run_id,
             }
 
@@ -320,93 +471,96 @@ def _stage_stock(
 
 # --- Consumption -------------------------------------------------------
 
-# Aggregated in SQL. Issues count positive and reversals negative via SHKZG, so
-# a cancelled issue nets out instead of inflating demand.
-#
-# date_trunc yields a timestamp; the ::date cast makes it the first of the month.
-_CONSUMPTION_SQL = """
-    SELECT material AS sap_material_number,
-           plant AS sap_plant_code,
-           date_trunc('month', posting_date::date)::date AS period,
-           SUM(CASE WHEN debit_credit_ind = :credit THEN quantity::numeric
-                    ELSE -quantity::numeric END) AS quantity,
-           MAX(base_unit_of_measure) AS unit_of_measure,
-           COUNT(*) AS movement_count,
-           COUNT(*) FILTER (WHERE movement_type = ANY(:issue_types)) AS issue_count,
-           COUNT(*) FILTER (WHERE movement_type = ANY(:reversal_types)) AS reversal_count
-      FROM raw_mseg
-     WHERE movement_type = ANY(:movement_types)
-       AND NULLIF(material, '') IS NOT NULL
-       AND NULLIF(plant, '') IS NOT NULL
-       AND posting_date ~ '^\\d{4}-\\d{2}-\\d{2}$'
-       AND quantity ~ '^-?[0-9]+(\\.[0-9]+)?$'
-     GROUP BY 1, 2, 3
-"""
-# issue_count/reversal_count split by movement TYPE (201/261 vs 202/262), not
-# by debit_credit_ind -- the SOP 3.1.1 trigger needs a transaction-level event
-# count, and movement type is what the ingestion policy's issue/reversal sets
-# are defined over.
+# The movement rows the policy counts, one per material document line. Totalled
+# per material-plant-month by aggregate_consumption() below.
+_CONSUMPTION_SQL = text(
+    """
+    SELECT material, plant, posting_date, quantity, debit_credit_ind,
+           movement_type, base_unit_of_measure
+      FROM n_mseg
+     WHERE movement_type IN :movement_types
+    """
+).bindparams(bindparam("movement_types", expanding=True))
 
-# Rows the aggregate above excludes, counted so nothing vanishes unexplained.
-_CONSUMPTION_REJECT_SQL = """
-    SELECT CASE
-             WHEN NULLIF(material, '') IS NULL THEN :missing_material
-             WHEN NULLIF(plant, '') IS NULL THEN :missing_plant
-             WHEN posting_date !~ '^\\d{4}-\\d{2}-\\d{2}$' THEN :invalid_date
-             ELSE :invalid_quantity
-           END AS reason,
-           COUNT(*) AS n
-      FROM raw_mseg
-     WHERE movement_type = ANY(:movement_types)
-       AND (NULLIF(material, '') IS NULL
-            OR NULLIF(plant, '') IS NULL
-            OR posting_date !~ '^\\d{4}-\\d{2}-\\d{2}$'
-            OR quantity !~ '^-?[0-9]+(\\.[0-9]+)?$')
-     GROUP BY 1
-"""
+
+def aggregate_consumption(
+    rows: Iterable[Any],
+    issue_types: frozenset[str],
+    reversal_types: frozenset[str],
+    rejections: _Rejections,
+) -> dict[tuple[str, str, date], dict[str, Any]]:
+    """Net monthly consumption per material-plant, from movement rows.
+
+    Issues count positive and reversals negative via SHKZG (credit ``H`` adds,
+    anything else subtracts), so a cancelled issue nets out instead of
+    inflating demand. issue_count/reversal_count split by movement TYPE, not by
+    SHKZG -- the SOP 3.1.1 trigger needs a transaction-level event count, and
+    movement type is what the ingestion policy's issue/reversal sets are
+    defined over.
+
+    A row with no material, no plant, an unparseable date or an unparseable
+    quantity is rejected and counted, never silently dropped.
+    """
+    totals: dict[tuple[str, str, date], dict[str, Any]] = {}
+    for row in rows:
+        material, plant = clean(row.material), clean(row.plant)
+        if material is None:
+            rejections.add("n_mseg", None, RejectionReason.MISSING_MATERIAL)
+            continue
+        if plant is None:
+            rejections.add("n_mseg", material, RejectionReason.MISSING_PLANT)
+            continue
+        posted = parse_date(row.posting_date)
+        if posted is None:
+            rejections.add("n_mseg", f"{material}/{plant}", RejectionReason.INVALID_DATE,
+                           str(row.posting_date or "")[:40])
+            continue
+        quantity = parse_decimal(row.quantity)
+        if quantity is None:
+            rejections.add("n_mseg", f"{material}/{plant}", RejectionReason.INVALID_QUANTITY,
+                           str(row.quantity or "")[:40])
+            continue
+
+        key = (material, plant, first_of_month(posted))
+        entry = totals.setdefault(
+            key,
+            {"quantity": Decimal(0), "unit_of_measure": None, "movement_count": 0,
+             "issue_count": 0, "reversal_count": 0},
+        )
+        entry["quantity"] += quantity if clean(row.debit_credit_ind) == CREDIT_INDICATOR else -quantity
+        entry["movement_count"] += 1
+        movement = clean(row.movement_type)
+        if movement in issue_types:
+            entry["issue_count"] += 1
+        if movement in reversal_types:
+            entry["reversal_count"] += 1
+        unit = clean(row.base_unit_of_measure)
+        if unit is not None and (entry["unit_of_measure"] is None or unit > entry["unit_of_measure"]):
+            entry["unit_of_measure"] = unit
+    return totals
 
 
 def _stage_consumption(
     session: Session, run_id: int, policy: ExtractIngestionPolicy, rejections: _Rejections
 ) -> int:
-    movement_types = list(policy.consumption.all_movement_types)
-
-    for row in session.execute(
-        text(_CONSUMPTION_REJECT_SQL),
-        {
-            "movement_types": movement_types,
-            "missing_material": RejectionReason.MISSING_MATERIAL,
-            "missing_plant": RejectionReason.MISSING_PLANT,
-            "invalid_date": RejectionReason.INVALID_DATE,
-            "invalid_quantity": RejectionReason.INVALID_QUANTITY,
-        },
-    ):
-        rejections.counts[row.reason] = rejections.counts.get(row.reason, 0) + row.n
-        rejections.add(
-            "raw_mseg", None, row.reason, f"{row.n} movement rows excluded by this rule"
-        )
+    movement_rows = session.execute(
+        _CONSUMPTION_SQL, {"movement_types": list(policy.consumption.all_movement_types)}
+    ).all()
+    totals = aggregate_consumption(
+        movement_rows,
+        frozenset(policy.consumption.issue_movement_types),
+        frozenset(policy.consumption.reversal_movement_types),
+        rejections,
+    )
 
     def rows() -> Iterator[dict[str, Any]]:
-        for row in _stream(
-            session,
-            _CONSUMPTION_SQL,
-            {
-                "movement_types": movement_types,
-                "credit": CREDIT_INDICATOR,
-                "issue_types": list(policy.consumption.issue_movement_types),
-                "reversal_types": list(policy.consumption.reversal_movement_types),
-            },
-        ):
+        for (material, plant, period), entry in totals.items():
             yield {
-                "sap_material_number": row.sap_material_number,
-                "sap_plant_code": row.sap_plant_code,
-                "period": row.period,
-                "quantity": row.quantity,
-                "unit_of_measure": row.unit_of_measure,
-                "movement_count": row.movement_count,
-                "issue_count": row.issue_count,
-                "reversal_count": row.reversal_count,
-                "source_table": "raw_mseg",
+                "sap_material_number": material,
+                "sap_plant_code": plant,
+                "period": period,
+                **entry,
+                "source_table": "n_mseg",
                 "staging_run_id": run_id,
             }
 
@@ -424,9 +578,10 @@ def _stage_consumption(
 
 # --- Purchase orders ---------------------------------------------------
 
-# One row per PO line, with the earliest goods receipt and earliest schedule
-# date folded in. Both are aggregated in subqueries so the join stays 1:1 --
-# a PO line can have several receipts and several schedule lines.
+# One row per PO line with its header. The earliest goods receipt and the
+# earliest schedule date are folded in from receipts_by_line() and
+# schedule_dates_by_line(): a PO line can have several of each, and folding
+# them in Python keeps the join 1:1 without text-typed MIN/SUM in SQL.
 _PURCHASE_ORDER_SQL = """
     SELECT p.purchasing_document,
            p.item,
@@ -437,63 +592,94 @@ _PURCHASE_ORDER_SQL = """
            p.deletion_indicator AS item_deletion,
            k.created_on,
            k.supplier,
-           k.deletion_indicator AS header_deletion,
-           g.goods_receipt_date,
-           g.quantity_received,
-           s.planned_delivery_date
-      FROM raw_ekpo p
-      LEFT JOIN raw_ekko k ON k.purchasing_document = p.purchasing_document
-      LEFT JOIN (
-            SELECT purchasing_document, item,
-                   MIN(posting_date) AS goods_receipt_date,
-                   SUM(quantity::numeric) AS quantity_received
-              FROM raw_ekbe
-             WHERE po_history_category = :gr_category
-               AND movement_type = :gr_movement
-               AND posting_date ~ '^\\d{4}-\\d{2}-\\d{2}$'
-               AND quantity ~ '^-?[0-9]+(\\.[0-9]+)?$'
-             GROUP BY purchasing_document, item
-      ) g ON g.purchasing_document = p.purchasing_document AND g.item = p.item
-      LEFT JOIN (
-            SELECT purchasing_document, item, MIN(delivery_date) AS planned_delivery_date
-              FROM raw_eket
-             WHERE delivery_date ~ '^\\d{4}-\\d{2}-\\d{2}$'
-             GROUP BY purchasing_document, item
-      ) s ON s.purchasing_document = p.purchasing_document AND s.item = p.item
+           k.deletion_indicator AS header_deletion
+      FROM n_ekpo p
+      LEFT JOIN n_ekko k ON k.purchasing_document = p.purchasing_document
      WHERE NULLIF(p.material, '') IS NOT NULL
 """
+
+_GOODS_RECEIPT_SQL = """
+    SELECT purchasing_document, item, posting_date, quantity
+      FROM n_ekbe
+     WHERE po_history_category = :gr_category
+       AND movement_type = :gr_movement
+"""
+
+_SCHEDULE_SQL = "SELECT purchasing_document, item, delivery_date FROM n_eket"
+
+
+def receipts_by_line(
+    rows: Iterable[Any], rejections: _Rejections
+) -> dict[tuple[str, str], tuple[date, Decimal]]:
+    """``(document, item) -> (earliest GR date, total received)``.
+
+    A receipt with an unparseable date or quantity is rejected and left out of
+    both figures, as the SQL this replaced excluded it -- but counted now.
+    """
+    receipts: dict[tuple[str, str], tuple[date, Decimal]] = {}
+    for row in rows:
+        document, item = clean(row.purchasing_document), clean(row.item)
+        if document is None or item is None:
+            continue
+        posted, quantity = parse_date(row.posting_date), parse_decimal(row.quantity)
+        if posted is None:
+            rejections.add("n_ekbe", f"{document}/{item}", RejectionReason.INVALID_DATE)
+            continue
+        if quantity is None:
+            rejections.add("n_ekbe", f"{document}/{item}", RejectionReason.INVALID_QUANTITY)
+            continue
+        earliest, total = receipts.get((document, item), (posted, Decimal(0)))
+        receipts[(document, item)] = (min(earliest, posted), total + quantity)
+    return receipts
+
+
+def schedule_dates_by_line(rows: Iterable[Any]) -> dict[tuple[str, str], date]:
+    """``(document, item) -> earliest schedule-line delivery date``."""
+    dates: dict[tuple[str, str], date] = {}
+    for row in rows:
+        document, item = clean(row.purchasing_document), clean(row.item)
+        delivery = parse_date(row.delivery_date)
+        if document is None or item is None or delivery is None:
+            continue
+        key = (document, item)
+        if key not in dates or delivery < dates[key]:
+            dates[key] = delivery
+    return dates
 
 
 def _stage_purchase_orders(
     session: Session, run_id: int, policy: ExtractIngestionPolicy, rejections: _Rejections
 ) -> int:
-    def rows() -> Iterator[dict[str, Any]]:
-        for row in _stream(
+    receipts = receipts_by_line(
+        _read(
             session,
-            _PURCHASE_ORDER_SQL,
-            {
-                "gr_category": GOODS_RECEIPT_HISTORY_CATEGORY,
-                "gr_movement": GOODS_RECEIPT_MOVEMENT_TYPE,
-            },
-        ):
+            _GOODS_RECEIPT_SQL,
+            {"gr_category": GOODS_RECEIPT_HISTORY_CATEGORY, "gr_movement": GOODS_RECEIPT_MOVEMENT_TYPE},
+        ),
+        rejections,
+    )
+    schedule = schedule_dates_by_line(_read(session, _SCHEDULE_SQL))
+
+    def rows() -> Iterator[dict[str, Any]]:
+        for row in _read(session, _PURCHASE_ORDER_SQL):
             document = clean(row.purchasing_document)
             item = clean(row.item)
             material = clean(row.material)
             plant = clean(row.plant)
 
             if document is None or item is None:
-                rejections.add("raw_ekpo", material, RejectionReason.MISSING_PURCHASING_DOCUMENT)
+                rejections.add("n_ekpo", material, RejectionReason.MISSING_PURCHASING_DOCUMENT)
                 continue
             key = f"{document}/{item}"
             if material is None:
-                rejections.add("raw_ekpo", key, RejectionReason.MISSING_MATERIAL)
+                rejections.add("n_ekpo", key, RejectionReason.MISSING_MATERIAL)
                 continue
             if plant is None:
-                rejections.add("raw_ekpo", key, RejectionReason.MISSING_PLANT)
+                rejections.add("n_ekpo", key, RejectionReason.MISSING_PLANT)
                 continue
 
             created_on = parse_date(row.created_on)
-            goods_receipt = parse_date(row.goods_receipt_date)
+            goods_receipt, quantity_received = receipts.get((document, item), (None, None))
 
             lead_time = None
             if created_on is not None and goods_receipt is not None:
@@ -502,7 +688,7 @@ def _stage_purchase_orders(
                     # Impossible, so the pair is untrustworthy. The line still
                     # stages -- it is a real PO -- but with no lead time.
                     rejections.add(
-                        "raw_ekpo",
+                        "n_ekpo",
                         key,
                         RejectionReason.RECEIPT_BEFORE_CREATION,
                         f"GR {goods_receipt} precedes PO {created_on}",
@@ -524,14 +710,14 @@ def _stage_purchase_orders(
                 "sap_plant_code": plant,
                 "created_on": created_on,
                 "goods_receipt_date": goods_receipt,
-                "planned_delivery_date": parse_date(row.planned_delivery_date),
+                "planned_delivery_date": schedule.get((document, item)),
                 "planned_delivery_time_days": parse_int(row.planned_deliv_time),
                 "quantity_ordered": parse_decimal(row.order_quantity),
-                "quantity_received": parse_decimal(row.quantity_received),
+                "quantity_received": quantity_received,
                 "supplier": clean(row.supplier),
                 "is_cancelled": bool(cancelled),
                 "lead_time_days": lead_time,
-                "source_table": "raw_ekpo",
+                "source_table": "n_ekpo",
                 "staging_run_id": run_id,
             }
 
@@ -546,7 +732,7 @@ def _stage_purchase_orders(
 
 
 def stage_extract(policy: ExtractIngestionPolicy | None = None) -> StagingResult:
-    """Normalise the seeded July/August extract into canonical staging.
+    """Stage the SAP raw layer, through the normalise views, into canonical staging.
 
     Idempotent: running twice converges on the same state. Raw tables are only
     ever read.
@@ -556,7 +742,7 @@ def stage_extract(policy: ExtractIngestionPolicy | None = None) -> StagingResult
 
     with session_factory() as session:
         run = StagingRun(
-            source=SOURCE_JULY_EXTRACT,
+            source=SOURCE_NORMALISE_VIEWS,
             status="running",
             consumption_movement_types=",".join(policy.consumption.all_movement_types),
         )

@@ -1,13 +1,15 @@
 """SAP change-document evidence (CDHDR/CDPOS), read-only.
 
-The only module that queries ``raw_cdhdr``/``raw_cdpos`` directly -- per the
+The only module that queries CDHDR/CDPOS (through the normalise views
+``n_cdhdr``/``n_cdpos``, which present the July workbook and the live SAP CSV
+in one vocabulary) -- per the
 same rule every other raw-table read in I07 follows (see
 ``adapters/repository.py``): business logic goes through the adapter layer,
 never straight to a raw extract table, so the staging/extract schema can
 change without touching the recommendations package.
 
 There is no staged CDHDR/CDPOS table (Phase 2 was scoped to materials,
-consumption and purchase orders), so this reads the two raw tables directly,
+consumption and purchase orders), so this reads the two tables' normalise views directly,
 same as ``extract.py`` does for every other source table -- the difference
 is that no staging step exists yet to sit between this and its caller.
 
@@ -26,8 +28,8 @@ _CHANGE_DOCUMENT_SQL = """
            h.date, h.time,
            p.table_name, p.table_key, p.field_name, p.change_indicator,
            p.new_value, p.old_value
-      FROM raw_cdhdr h
-      JOIN raw_cdpos p
+      FROM n_cdhdr h
+      JOIN n_cdpos p
         ON p.change_doc_object = h.change_doc_object
        AND p.object_value = h.object_value
        AND p.document_number = h.document_number
@@ -39,9 +41,13 @@ _CHANGE_DOCUMENT_SQL = """
        AND (CAST(:window_end AS VARCHAR(10)) IS NULL OR h.date <= CAST(:window_end AS VARCHAR(10)))
      ORDER BY h.date, h.time
 """
+# Read through the normalise views (app/shared/sap_normalise.py), so the
+# query is the same whether CDHDR/CDPOS came from the July workbooks (these
+# labels) or the live SAP CSV (OBJECTCLAS, OBJECTID, CHANGENR, UDATE, ...).
+#
 # h.date is `text`, not a real date column (see CLAUDE.md's "every raw column
-# is text on purpose") -- but it is always a plain ISO "YYYY-MM-DD" string in
-# this extract, which sorts identically under text and chronological
+# is text on purpose") -- but the view always presents it as a plain ISO
+# "YYYY-MM-DD" string (the CSV's DD.MM.YYYY is converted there), which sorts identically under text and chronological
 # comparison, so a direct >=/<= text comparison against two ISO date strings
 # is correct without a CAST. window_start/window_end are None (never
 # filtered) when the caller has no recommendation date or window to apply.

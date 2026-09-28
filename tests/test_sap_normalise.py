@@ -116,6 +116,59 @@ def test_a_load_of_an_uncovered_table_rebuilds_nothing(monkeypatch: pytest.Monke
     assert calls == [1]
 
 
+# --- Number format: declared by vocabulary -----------------------------------
+
+
+def test_a_csv_number_is_converted_from_german_and_a_workbook_one_is_not() -> None:
+    """The CSV writes "0,989" for 0.989; the workbook writes "1,000" for one
+    thousand. Which applies is decided by the column the label resolved through."""
+    csv_view = view_sql("mseg", ["MATNR", "WERKS", "MENGE"], MSSQL)
+    workbook_view = view_sql("mseg", ["material", "plant", "quantity"], MSSQL)
+
+    assert "REPLACE(REPLACE(TRIM([MENGE]), '.', ''), ',', '.')" in csv_view
+    assert "REPLACE" not in workbook_view
+
+
+def test_german_conversion_is_only_applied_to_numbers() -> None:
+    """A material number or a date from the CSV must never have its dots or
+    commas touched."""
+    sql = view_sql("mseg", ["MATNR", "WERKS", "BUDAT_MKPF", "MENGE"], POSTGRES)
+
+    # Every REPLACE is over MENGE: the num expression names it several times,
+    # the key and date expressions never call REPLACE at all.
+    assert "REPLACE(" in sql
+    assert all(chunk.startswith('TRIM("MENGE")') for chunk in sql.split("REPLACE(REPLACE(")[1:])
+
+
+@pytest.mark.parametrize(
+    ("table", "present", "label", "expected"),
+    [
+        ("mara", ["MATNR", "MSTAE", "MFRNR", "LVORM"], "x_plant_matl_status", "MSTAE"),
+        ("mara", ["material", "x_plant_matl_status"], "x_plant_matl_status", "x_plant_matl_status"),
+        ("marc", ["MATNR", "WERKS", "MABST", "LVORM"], "maximum_stock_level", "MABST"),
+        ("mard", ["MATNR", "WERKS", "LGORT", "UMLME", "EINME"], "restricted_use_stock", "EINME"),
+        ("mbew", ["MATNR", "BWKEY", "VERPR"], "moving_price", "VERPR"),
+        # The live CSV MBEW has no VERPR: a gap, never a guess.
+        ("mbew", ["MANDT", "MATNR", "BWKEY", "BWTAR", "LVORM"], "moving_price", None),
+        # CDHDR/CDPOS as the live CSV names them (27 Sep): I07's adoption check.
+        ("cdhdr", ["MANDANT", "OBJECTCLAS", "OBJECTID", "CHANGENR", "UDATE", "UTIME"], "date", "UDATE"),
+        ("cdhdr", ["change_doc_object", "object_value", "document_number", "date"], "date", "date"),
+        ("cdpos", ["MANDANT", "OBJECTCLAS", "OBJECTID", "CHANGENR", "TABNAME", "FNAME", "VALUE_NEW"], "new_value", "VALUE_NEW"),
+    ],
+)
+def test_the_columns_i7_reads_resolve_in_both_vocabularies(table, present, label, expected) -> None:
+    assert _source(table, present, label) == expected
+
+
+def test_the_live_csv_marc_leaves_the_mrp_fields_as_gaps() -> None:
+    """Measured on Azure, 27 Sep: 27 columns, none of them MRP fields. I07
+    fills these from odata_material_plant; the view must not invent them."""
+    live = ["MANDT", "MATNR", "WERKS", "column_4", "UMLMC", "TRAME", "ZZCRITIC"]
+    gaps = {r.label for r in resolve("marc", live) if r.source is None}
+
+    assert {"mrp_type", "planned_deliv_time", "reorder_point", "maximum_stock_level"} <= gaps
+
+
 # --- The transforms, on the configured engine ---------------------------------
 
 
@@ -142,6 +195,30 @@ def test_the_transform_means_the_same_on_this_engine(kind: str, raw: str, expect
     engine = get_engine()
     dialect = sap_normalise._dialect(engine)
     expression = getattr(dialect, kind)(f"'{raw}'")
+
+    with engine.connect() as connection:
+        value = connection.execute(text(f"SELECT {expression}")).scalar()
+
+    assert value == expected
+
+
+@needs_db
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("0,989", "0.989"),  # raw_mseg.MENGE, live
+        ("1,000", "1.000"),
+        ("1.234,5", "1234.5"),
+        ("12.345.678,9", "12345678.9"),
+        ("5,000-", "-5.000"),
+        ("0", "0"),
+    ],
+)
+def test_the_german_number_transform_on_this_engine(raw: str, expected: str) -> None:
+    from app.core.db import get_engine
+
+    engine = get_engine()
+    expression = sap_normalise._dialect(engine).num(f"'{raw}'", german=True)
 
     with engine.connect() as connection:
         value = connection.execute(text(f"SELECT {expression}")).scalar()
@@ -176,3 +253,18 @@ def test_the_sql_server_trigger_blocks_update_and_delete_by_the_postgres_name() 
     assert "CREATE TRIGGER assistant_turn_no_update_or_delete" in sql
     assert "INSTEAD OF UPDATE, DELETE" in sql
     assert "it''s evidence" in sql  # a quote in the guidance cannot end the literal
+
+
+def test_a_change_document_object_id_keeps_its_padding() -> None:
+    """For a MATERIAL change document OBJECTID is the MATNR padded to 18; the
+    adoption check matches it padded, so the view must not strip it."""
+    sql = view_sql("cdhdr", ["OBJECTCLAS", "OBJECTID", "CHANGENR", "UDATE"], MSSQL)
+
+    assert "[OBJECTID] AS object_value" in sql
+
+
+def test_i7_change_documents_read_the_views_not_the_raw_tables() -> None:
+    from app.initiatives.i7.adapters import change_documents
+
+    assert "FROM n_cdhdr" in change_documents._CHANGE_DOCUMENT_SQL
+    assert "raw_cd" not in change_documents._CHANGE_DOCUMENT_SQL
