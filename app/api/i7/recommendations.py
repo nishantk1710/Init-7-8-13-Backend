@@ -18,7 +18,7 @@ from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations import routing
 from app.models.i7_forecast import ForecastBacktestPath
 from app.models.i7_recommendation import Recommendation
-from app.models.i7_staging import StagedConsumption, StagedStock
+from app.models.i7_staging import StagedConsumption, StagedMaterial, StagedStock
 from app.schemas.i7.errors import bad_request
 from app.schemas.i7.recommendations import (
     CircuitCount,
@@ -119,6 +119,39 @@ def _latest_only(statement: Select) -> Select:
     return statement.where(Recommendation.id.in_(latest_ids))
 
 
+def _currencies(session: Session, materials: set[str]) -> dict[str, str]:
+    """``material -> currency`` from staging, for the materials on one page.
+
+    The currency travels with the price SAP gave (MBEW WAERS, staged with the
+    unit price), so it is read from the same place rather than stored a second
+    time on every recommendation row.
+    """
+    if not materials:
+        return {}
+    rows = session.execute(
+        select(StagedMaterial.sap_material_number, StagedMaterial.currency).where(
+            StagedMaterial.sap_material_number.in_(materials),
+            StagedMaterial.currency.is_not(None),
+        )
+    ).all()
+    return {material: currency for material, currency in rows}
+
+
+def _portfolio_currency(session: Session) -> str | None:
+    """The one currency every priced material is in, or ``None``.
+
+    A portfolio total in mixed currencies has no single true symbol, so it
+    reports none rather than the first one found.
+    """
+    found = session.execute(
+        select(StagedMaterial.currency)
+        .where(StagedMaterial.currency.is_not(None), StagedMaterial.unit_price.is_not(None))
+        .distinct()
+        .limit(2)
+    ).scalars().all()
+    return found[0] if len(found) == 1 else None
+
+
 @router.get(
     "/recommendations",
     response_model=RecommendationListResponse,
@@ -199,10 +232,14 @@ def list_recommendations(
     # so this stays zero extra query cost per the module's own docstring.
     policy = PolicyDocument()
 
+    currencies = _currencies(session, {row.sap_material_number for row in rows})
+
     return RecommendationListResponse(
         items=[
             RecommendationSummary.from_model(
-                row, tuple(role.value for role in routing.route_for(row.is_oar, row.criticality, policy))
+                row,
+                tuple(role.value for role in routing.route_for(row.is_oar, row.criticality, policy)),
+                currency=currencies.get(row.sap_material_number),
             )
             for row in rows
         ],
@@ -413,6 +450,7 @@ def get_recommendation_summary(
         awaiting_approval_count=awaiting_approval_count,
         ready_for_review_count=ready_for_review_count,
         not_evaluable_count=not_evaluable_count,
+        currency=_portfolio_currency(session),
         net_safety_stock_value_impact=net_value_row,
         critical_stockout_risk_count=stockout_risk_count,
         excess_inventory_candidates_count=excess_inventory_count,
@@ -441,7 +479,11 @@ def get_recommendation(
     consumption_history = tuple(
         ConsumptionHistoryEntry(period=period, quantity=quantity) for period, quantity in consumption_rows
     )
-    return RecommendationDetail.from_model(row, consumption_history=consumption_history)
+    return RecommendationDetail.from_model(
+        row,
+        consumption_history=consumption_history,
+        currency=_currencies(session, {row.sap_material_number}).get(row.sap_material_number),
+    )
 
 
 @router.get(
