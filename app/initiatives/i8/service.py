@@ -54,9 +54,11 @@ from app.initiatives.i8.register import (
     fetch_candidate_lines,
     load_repair_lines,
     open_repair_index,
+    timed_step,
 )
 from app.initiatives.i8.universe import UniverseRow, UniverseStats, load_universe
 from app.initiatives.i8.vendors import VendorTurnaround, vendor_turnaround
+from app.shared.snapshot_builds import exclusive_build
 
 logger = get_logger(__name__)
 
@@ -116,14 +118,16 @@ def build_snapshot(
 
     with statement_timeout(db, get_settings().i8_snapshot_statement_timeout_seconds):
         # One EKPO pull for both readings of it: repair lines and new purchases.
-        candidates = fetch_candidate_lines(db)
+        with timed_step("PO lines (EKPO)"):
+            candidates = fetch_candidate_lines(db)
         lines, register_stats = load_repair_lines(
             db, cfg, today=reference_date, candidates=candidates
         )
         acquisitions = find_new_acquisitions(candidates, cfg)
-        universe, universe_stats = load_universe(
-            db, cfg, open_repair_index=open_repair_index(lines)
-        )
+        with timed_step("repairable universe"):
+            universe, universe_stats = load_universe(
+                db, cfg, open_repair_index=open_repair_index(lines)
+            )
     vendors = vendor_turnaround(lines)
 
     elapsed = time.monotonic() - started
@@ -188,7 +192,8 @@ def _build_locked(db: Session, cfg: I8Settings | None, reason: str) -> Snapshot:
         _state.building_since = datetime.now(timezone.utc)
     logger.info("I08 snapshot build started (%s)", reason)
     try:
-        snapshot = build_snapshot(db, cfg)
+        with exclusive_build("I08"):
+            snapshot = build_snapshot(db, cfg)
     except Exception as exc:
         logger.exception("I08 snapshot build failed (%s)", reason)
         message = _describe(exc)
@@ -216,10 +221,17 @@ def get_snapshot(
     A build already running is waited for -- at most ``wait_seconds`` when
     given, then :class:`SnapshotBuilding`. A build that failed within the last
     minute raises :class:`SnapshotFailed` instead of being re-run by every caller.
+
+    A bounded caller (a route) never builds in its own thread: it starts the
+    background build, or joins the one running. Built inline, the first request
+    after a failure was held for the whole build -- minutes on Azure SQL, and
+    longer now that the build waits its turn behind an I13 one.
     """
     with _state_lock:
         if _state.snapshot is not None and not refresh:
             return _state.snapshot
+    if wait_seconds is not None and not refresh:
+        return _await_background_build(wait_seconds)
     if not _build_lock.acquire(timeout=-1 if wait_seconds is None else wait_seconds):
         with _state_lock:
             raise SnapshotBuilding(_state.building_since)
@@ -237,11 +249,39 @@ def get_snapshot(
         _build_lock.release()
 
 
+def _await_background_build(wait_seconds: float) -> Snapshot:
+    with _state_lock:
+        last_error = _state.last_error
+        failed_ago = time.monotonic() - _state.failed_at
+    if last_error is not None and failed_ago < _RETRY_AFTER_FAILURE_SECONDS:
+        raise SnapshotFailed(last_error)
+    start_background_build("retry after failure" if last_error is not None else "first request")
+    thread = build_thread()
+    if thread is not None:
+        thread.join(wait_seconds)
+    with _state_lock:
+        if _state.snapshot is not None:
+            return _state.snapshot
+        if thread is not None and not thread.is_alive() and _state.last_error is not None:
+            raise SnapshotFailed(_state.last_error)
+        raise SnapshotBuilding(_state.building_since)
+
+
+def build_thread() -> threading.Thread | None:
+    """The latest background build's thread, running or finished; None if none was started."""
+    with _state_lock:
+        return _state.thread
+
+
 def start_background_build(reason: str) -> bool:
     """Build on a daemon thread with its own session. False if one is already running."""
     with _state_lock:
         if _state.thread is not None and _state.thread.is_alive():
             return False
+        if _state.snapshot is None:
+            # Set here as well as in _build_locked, so a route asking before the
+            # thread has reached the build still gets a startedAt.
+            _state.building_since = datetime.now(timezone.utc)
         thread = threading.Thread(
             target=_build_in_background, args=(reason,), name="i8-snapshot", daemon=True
         )
@@ -273,6 +313,7 @@ def reset_snapshot() -> None:
         _state.snapshot = None
         _state.last_error = None
         _state.failed_at = 0.0
+        _state.building_since = None
     # The attestation view and the coding screen are both derived from the
     # snapshot, so neither can outlive it.
     reset_attestation_view()
