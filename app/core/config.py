@@ -363,6 +363,13 @@ class Settings(BaseSettings):
     # every live route has always used (plan decision D1 left open).
     i13_snapshot_reference_date: str = ""
 
+    # --- Initiative 08: the in-memory snapshot (app/initiatives/i8/service.py). ---
+    i8_snapshot_warm_on_startup: bool = True
+    # Per statement, until its first row (not the fetch after it). 0 = no limit.
+    i8_snapshot_statement_timeout_seconds: int = 120
+    # Then 503 "building". Under the frontend's 20 s GET timeout.
+    i8_snapshot_wait_seconds: int = 10
+
     # Session <-> reservation linking (app/initiatives/i13/session_link.py).
     # The requester types the assistant's session ID into the reservation's item
     # text, RESB.SGTXT, which the extract loads as raw_resb.text. BEDNR was the

@@ -34,6 +34,8 @@ from datetime import date, datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
+from app.core.db import get_sessionmaker, statement_timeout
 from app.core.logging import get_logger
 from app.initiatives.i8.acquisitions import (
     NEW_ACQUISITION_KIND,
@@ -112,15 +114,16 @@ def build_snapshot(
     reference_date = today or cfg.reference_date_value or date.today()
     started = time.monotonic()
 
-    # One EKPO pull for both readings of it: repair lines and new purchases.
-    candidates = fetch_candidate_lines(db)
-    lines, register_stats = load_repair_lines(
-        db, cfg, today=reference_date, candidates=candidates
-    )
-    acquisitions = find_new_acquisitions(candidates, cfg)
-    universe, universe_stats = load_universe(
-        db, cfg, open_repair_index=open_repair_index(lines)
-    )
+    with statement_timeout(db, get_settings().i8_snapshot_statement_timeout_seconds):
+        # One EKPO pull for both readings of it: repair lines and new purchases.
+        candidates = fetch_candidate_lines(db)
+        lines, register_stats = load_repair_lines(
+            db, cfg, today=reference_date, candidates=candidates
+        )
+        acquisitions = find_new_acquisitions(candidates, cfg)
+        universe, universe_stats = load_universe(
+            db, cfg, open_repair_index=open_repair_index(lines)
+        )
     vendors = vendor_turnaround(lines)
 
     elapsed = time.monotonic() - started
@@ -144,22 +147,121 @@ def build_snapshot(
     )
 
 
-# The cache. A lock rather than a bare global because FastAPI runs synchronous
-# endpoints in a thread pool, so two requests really can arrive at once -- and
-# two concurrent builds would spend twelve seconds producing one answer.
-_lock = threading.Lock()
-_snapshot: Snapshot | None = None
+class SnapshotBuilding(Exception):
+    """No snapshot yet: a build is still running."""
+
+    def __init__(self, started_at: datetime | None) -> None:
+        super().__init__("The I08 snapshot is still being built")
+        self.started_at = started_at
+
+
+class SnapshotFailed(Exception):
+    """No snapshot: the last build failed."""
+
+
+@dataclass
+class _State:
+    snapshot: Snapshot | None = None
+    building_since: datetime | None = None
+    last_error: str | None = None
+    failed_at: float = 0.0
+    thread: threading.Thread | None = None
+
+
+_state = _State()
+# Guards `_state`; held only briefly, never across a build.
+_state_lock = threading.Lock()
+# Serialises builds, and is what a caller waits on for the build in progress.
+_build_lock = threading.Lock()
+_RETRY_AFTER_FAILURE_SECONDS = 60.0
+
+
+def _describe(exc: Exception) -> str:
+    # First line only: SQLAlchemy appends the failing SQL, which is not for a response body.
+    first_line = (str(exc).splitlines() or [""])[0]
+    return f"{type(exc).__name__}: {first_line}"
+
+
+def _build_locked(db: Session, cfg: I8Settings | None, reason: str) -> Snapshot:
+    """Build and record the outcome. The caller holds ``_build_lock``."""
+    with _state_lock:
+        _state.building_since = datetime.now(timezone.utc)
+    logger.info("I08 snapshot build started (%s)", reason)
+    try:
+        snapshot = build_snapshot(db, cfg)
+    except Exception as exc:
+        logger.exception("I08 snapshot build failed (%s)", reason)
+        message = _describe(exc)
+        with _state_lock:
+            _state.last_error = message
+            _state.failed_at = time.monotonic()
+            _state.building_since = None
+        raise SnapshotFailed(message) from exc
+    with _state_lock:
+        _state.snapshot = snapshot
+        _state.last_error = None
+        _state.building_since = None
+    return snapshot
 
 
 def get_snapshot(
-    db: Session, cfg: I8Settings | None = None, *, refresh: bool = False
+    db: Session,
+    cfg: I8Settings | None = None,
+    *,
+    refresh: bool = False,
+    wait_seconds: float | None = None,
 ) -> Snapshot:
-    """The cached snapshot, built on first use."""
-    global _snapshot
-    with _lock:
-        if _snapshot is None or refresh:
-            _snapshot = build_snapshot(db, cfg)
-        return _snapshot
+    """The cached snapshot, built on first use.
+
+    A build already running is waited for -- at most ``wait_seconds`` when
+    given, then :class:`SnapshotBuilding`. A build that failed within the last
+    minute raises :class:`SnapshotFailed` instead of being re-run by every caller.
+    """
+    with _state_lock:
+        if _state.snapshot is not None and not refresh:
+            return _state.snapshot
+    if not _build_lock.acquire(timeout=-1 if wait_seconds is None else wait_seconds):
+        with _state_lock:
+            raise SnapshotBuilding(_state.building_since)
+    try:
+        with _state_lock:
+            snapshot, last_error = _state.snapshot, _state.last_error
+            failed_ago = time.monotonic() - _state.failed_at
+        if not refresh:
+            if snapshot is not None:
+                return snapshot
+            if last_error is not None and failed_ago < _RETRY_AFTER_FAILURE_SECONDS:
+                raise SnapshotFailed(last_error)
+        return _build_locked(db, cfg, "refresh" if refresh else "first request")
+    finally:
+        _build_lock.release()
+
+
+def start_background_build(reason: str) -> bool:
+    """Build on a daemon thread with its own session. False if one is already running."""
+    with _state_lock:
+        if _state.thread is not None and _state.thread.is_alive():
+            return False
+        thread = threading.Thread(
+            target=_build_in_background, args=(reason,), name="i8-snapshot", daemon=True
+        )
+        _state.thread = thread
+    thread.start()
+    return True
+
+
+def _build_in_background(reason: str) -> None:
+    with _build_lock:
+        with _state_lock:
+            if _state.snapshot is not None:
+                return
+        db = get_sessionmaker()()
+        try:
+            _build_locked(db, None, reason)
+        except SnapshotFailed:
+            pass  # already logged and recorded for the next request to report
+        finally:
+            db.close()
 
 
 def reset_snapshot() -> None:
@@ -167,9 +269,10 @@ def reset_snapshot() -> None:
 
     For tests, and for any future code that reloads the underlying data.
     """
-    global _snapshot
-    with _lock:
-        _snapshot = None
+    with _state_lock:
+        _state.snapshot = None
+        _state.last_error = None
+        _state.failed_at = 0.0
     # The attestation view and the coding screen are both derived from the
     # snapshot, so neither can outlive it.
     reset_attestation_view()

@@ -18,6 +18,7 @@ to work with zero configuration. Instead the engine is built on first use and
 cached, so a process that never touches the database never connects to one.
 """
 
+import contextlib
 from collections.abc import Iterator
 from functools import lru_cache
 
@@ -164,6 +165,26 @@ def get_db() -> Iterator[Session]:
         yield session
     finally:
         session.close()
+
+
+@contextlib.contextmanager
+def statement_timeout(db: Session, seconds: int) -> Iterator[None]:
+    """Cancel a statement on ``db`` whose first row takes over ``seconds`` (0 = no limit).
+
+    pyodbc's query timeout: it does not bound fetching once rows start arriving.
+    """
+    if seconds <= 0 or db.get_bind().dialect.name != MSSQL:
+        yield
+        return
+    dbapi_connection = db.connection().connection.dbapi_connection
+    previous = dbapi_connection.timeout
+    dbapi_connection.timeout = seconds
+    try:
+        yield
+    finally:
+        # Restored so the pooled connection doesn't carry it; a dead one is discarded anyway.
+        with contextlib.suppress(Exception):
+            dbapi_connection.timeout = previous
 
 
 def check_connection() -> None:
