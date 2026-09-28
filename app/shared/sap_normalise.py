@@ -49,10 +49,20 @@ Workbook data is already in that shape, so for it every transform is a no-op.
 
 Initiative 07 reads this layer too, through its staging adapter
 (``app/initiatives/i7/adapters/extract.py``) -- the one I07 module that touches
-SAP data. The columns only I07 reads are marked where they are declared. MARC's
-MRP fields are the exception: the live CSV MARC does not carry them at all, so
-I07 takes them from ``odata_material_plant`` (the OData MaterialPlantSet), which
-this layer does not read.
+SAP data. The columns only I07 reads are marked where they are declared.
+
+The OData fill (``ODATA_FILL``)
+-------------------------------
+The live CSV MARC carries none of the MRP fields -- no DISMM, PLIFZ, MINBE or
+MABST (measured on Azure, 28 Sep: 27 columns, ten of them unnamed and empty).
+The OData MaterialPlantSet does, and lands in ``odata_material_plant``. So a MARC
+label ``raw_marc`` cannot supply is read from there instead, joined on material
+and plant -- decided per column from the tables' columns when the view is built,
+never row by row. Without it ``n_marc.mrp_type`` is NULL everywhere, and the I13
+OAR scope and the assistant's routing, which both classify on it, see no OAR
+material at all. A column the CSV does deliver always wins, so a corrected
+extract takes over on the next rebuild with no change here. With no
+``raw_marc`` at all the view is read from OData alone.
 
 Rebuilding
 ----------
@@ -60,8 +70,9 @@ Rebuilding
 ``NORMALISE_VIEWS_ON_STARTUP``) and, through ``refresh_after_load()``, after
 every CSV or workbook load of a table this layer covers -- both loaders drop
 and recreate ``raw_<table>``, and a load can change which vocabulary it is in.
-The OData delta loader writes ``odata_<table>``, which nothing here reads.
-By hand::
+The OData loader writes ``odata_<table>``, which this layer reads only for the
+fill above -- an OData load of MaterialPlantSet needs a ``create`` (or the next
+start-up) before ``n_marc`` sees it. By hand::
 
     python -m app.shared.sap_normalise create    # build or rebuild
     python -m app.shared.sap_normalise check     # which label reads which column
@@ -119,7 +130,7 @@ TABLES: dict[str, tuple[Col, ...]] = {
         _c("procurement_type", "BESKZ"),
         _c("reorder_point", "MINBE", kind="num"),
         # Read by I07's staging. The live CSV MARC carries none of the MRP
-        # fields (DISMM, PLIFZ, MINBE, MABST); I07 takes those from
+        # fields (DISMM, PLIFZ, MINBE, MABST); ODATA_FILL takes those from
         # odata_material_plant when raw_marc lacks them.
         _c("maximum_stock_level", "MABST", kind="num"),
         _c("df_at_plant_level", "LVORM"),
@@ -373,6 +384,42 @@ TABLES: dict[str, tuple[Col, ...]] = {
 VIEWS: tuple[str, ...] = tuple(f"n_{table}" for table in TABLES)
 
 
+@dataclass(frozen=True)
+class OdataFill:
+    """Where to read the labels a raw table cannot supply, over OData."""
+
+    table: str
+    """The ``odata_<set>`` table the loader writes."""
+
+    keys: tuple[tuple[str, str], ...]
+    """``(label, OData property)`` pairs the two tables are matched on."""
+
+    fields: tuple[tuple[str, str], ...]
+    """``(label, OData property)``, each used only when the raw table lacks it."""
+
+    flags: frozenset[str] = frozenset()
+    """Labels that are an Edm.Boolean over OData (``1``/``0``) and SAP's ``X``/
+    blank everywhere else. Translated, because every reader tests for ``X``."""
+
+
+# BESKZ is not in MaterialPlantSet, so procurement_type has no fill. EISBE is,
+# but n_marc has no safety-stock label to put it in.
+ODATA_FILL: dict[str, OdataFill] = {
+    "marc": OdataFill(
+        table="odata_material_plant",
+        keys=(("material", "Matnr"), ("plant", "Werks")),
+        fields=(
+            ("mrp_type", "Dismm"),
+            ("planned_deliv_time", "Plifz"),
+            ("reorder_point", "Minbe"),
+            ("maximum_stock_level", "Mabst"),
+            ("df_at_plant_level", "Lvorm"),
+        ),
+        flags=frozenset({"df_at_plant_level"}),
+    ),
+}
+
+
 # --- SQL generation ---------------------------------------------------------
 
 
@@ -383,6 +430,10 @@ class Resolved:
     label: str
     source: str | None
     """The physical column, or None when neither vocabulary has it."""
+
+    via: str | None = None
+    """The table ``source`` is in when it is not ``raw_<table>`` -- the OData
+    fill. None for a column of the raw table itself."""
 
 
 def resolve(table: str, present: list[str]) -> list[Resolved]:
@@ -400,6 +451,50 @@ def resolve(table: str, present: list[str]) -> list[Resolved]:
             source = next((by_lower[s.lower()] for s in col.sap if s.lower() in by_lower), None)
         resolved.append(Resolved(col.label, source))
     return resolved
+
+
+def resolve_fill(table: str, present: list[str] | None, odata_present: list[str] | None) -> list[Resolved]:
+    """The labels the OData fill supplies, each with its OData column.
+
+    Only labels ``raw_<table>`` cannot supply -- ``present`` None meaning the
+    raw table does not exist, so every fill field. Empty when the table has no
+    fill, the OData table is not there, or either side lacks a join key: a fill
+    that cannot be matched row for row is not attempted.
+    """
+    fill = ODATA_FILL.get(table)
+    if fill is None or odata_present is None:
+        return []
+    by_lower = {name.lower(): name for name in odata_present}
+    if any(prop.lower() not in by_lower for _, prop in fill.keys):
+        return []
+    if present is None:
+        wanted = {label for label, _ in fill.fields}
+    else:
+        raw = {r.label: r.source for r in resolve(table, present)}
+        if any(raw[label] is None for label, _ in fill.keys):
+            return []
+        wanted = {label for label, source in raw.items() if source is None}
+    return [
+        Resolved(label, by_lower[prop.lower()], fill.table)
+        for label, prop in fill.fields
+        if label in wanted and prop.lower() in by_lower
+    ]
+
+
+def resolve_all(table: str, present: list[str] | None, odata_present: list[str] | None) -> list[Resolved] | None:
+    """Every label's source, raw table first and then the OData fill.
+
+    None when neither table can feed the view, which is then built empty.
+    """
+    filled = {r.label: r for r in resolve_fill(table, present, odata_present)}
+    if present is None:
+        if not filled:
+            return None
+        fill = ODATA_FILL[table]
+        by_lower = {name.lower(): name for name in odata_present or []}
+        keys = {label: Resolved(label, by_lower[prop.lower()], fill.table) for label, prop in fill.keys}
+        return [keys.get(c.label) or filled.get(c.label) or Resolved(c.label, None) for c in TABLES[table]]
+    return [filled.get(r.label, r) for r in resolve(table, present)]
 
 
 class _Dialect:
@@ -457,60 +552,142 @@ class _Dialect:
         moved = self.concat("'-'", f"LEFT({t}, {length}({t}) - 1)")
         return f"CASE WHEN {t} LIKE '%-' THEN {moved} ELSE {t} END"
 
+    def flag(self, c: str) -> str:
+        """An OData Edm.Boolean as SAP's flag: ``X`` or blank, NULL kept NULL."""
+        return f"CASE WHEN {c} IS NULL THEN NULL WHEN TRIM({c}) IN ('1', 'X', 'x', 'true') THEN 'X' ELSE '' END"
+
+    def join_key(self, c: str, kind: Kind) -> str:
+        """The form both sides of a fill join are compared in."""
+        return self.key(c) if kind == "key" else f"TRIM({c})"
+
 
 def _dialect(engine: Engine) -> _Dialect:
     return _Dialect(engine.dialect.name, engine.dialect.identifier_preparer.quote)
 
 
-def view_sql(table: str, present: list[str] | None, dialect: _Dialect) -> str:
+def _expression(kind: Kind, column: str, dialect: _Dialect, *, german: bool) -> str:
+    return {
+        "key": dialect.key,
+        "date": dialect.date,
+        "num": lambda c: dialect.num(c, german=german),
+        "text": lambda c: c,
+    }[kind](column)
+
+
+# Prefix of the join-key columns the fill subquery exposes. Nothing in TABLES
+# starts with it, so it cannot collide with a label the subquery also carries.
+_KEY = "_key_"
+
+
+def _fill_subquery(fill: OdataFill, filled: list[Resolved], odata_present: list[str], kinds: dict[str, Kind],
+                   dialect: _Dialect) -> str:
+    """One row per join key from the OData table, each filled label as a column.
+
+    Grouped, so a duplicate key in the OData load can never multiply raw rows;
+    MAX picks the single value a unique key has.
+    """
+    q = dialect.quote
+    by_lower = {name.lower(): name for name in odata_present}
+    keys = [dialect.join_key(q(by_lower[prop.lower()]), kinds[label]) for label, prop in fill.keys]
+    select = [f"{expr} AS {q(_KEY + label)}" for expr, (label, _) in zip(keys, fill.keys)]
+    select += [f"MAX({q(r.source)}) AS {q(r.label)}" for r in filled]
+    return f"SELECT {', '.join(select)} FROM {fill.table} GROUP BY {', '.join(keys)}"
+
+
+def view_sql(table: str, present: list[str] | None, dialect: _Dialect, odata_present: list[str] | None = None) -> str:
     """The CREATE VIEW statement for ``n_<table>``.
 
     ``present`` is the raw table's columns, or None when the table does not
     exist -- then the view has every label, as NULL, and no rows, so a query
     over an extract SAP never delivered (EKKO, EKET) returns nothing instead of
-    failing.
+    failing. ``odata_present`` is the OData fill table's columns, or None when
+    it does not exist; it matters only for a table in ``ODATA_FILL``.
     """
     name = f"n_{table}"
     cols = TABLES[table]
-    if present is None:
-        body = ", ".join(f"CAST(NULL AS {dialect.text_type}) AS {dialect.quote(c.label)}" for c in cols)
+    q = dialect.quote
+    kinds = {c.label: c.kind for c in cols}
+    filled = resolve_fill(table, present, odata_present)
+    null = f"CAST(NULL AS {dialect.text_type})"
+
+    if present is None and not filled:
+        body = ", ".join(f"{null} AS {q(c.label)}" for c in cols)
         return f"{dialect.create_view(name)} SELECT {body} WHERE 1 = 0"
 
-    kinds = {c.label: c.kind for c in cols}
+    # OData values are plain decimals ("   10.000"), never German, whatever the
+    # label resolved through.
+    fill_expressions = {
+        r.label: (dialect.flag(f"o.{q(r.label)}") if r.label in ODATA_FILL[table].flags
+                  else _expression(kinds[r.label], f"o.{q(r.label)}", dialect, german=False))
+        for r in filled
+    }
+
+    if present is None:
+        # No raw table: the view is the OData table, keys already in view form.
+        fill = ODATA_FILL[table]
+        key_labels = {label for label, _ in fill.keys}
+        select = [
+            f"o.{q(_KEY + c.label)} AS {q(c.label)}" if c.label in key_labels
+            else f"{fill_expressions[c.label]} AS {q(c.label)}" if c.label in fill_expressions
+            else f"{null} AS {q(c.label)}"
+            for c in cols
+        ]
+        subquery = _fill_subquery(fill, filled, odata_present or [], kinds, dialect)
+        return f"{dialect.create_view(name)} SELECT {', '.join(select)} FROM ({subquery}) o"
+
+    # Qualified only when joined, where an unqualified name could be ambiguous.
+    prefix = "r." if filled else ""
+    resolved = resolve(table, present)
     select: list[str] = []
-    for r in resolve(table, present):
-        alias = dialect.quote(r.label)
-        if r.source is None:
-            select.append(f"CAST(NULL AS {dialect.text_type}) AS {alias}")
+    for r in resolved:
+        alias = q(r.label)
+        if r.label in fill_expressions:
+            select.append(f"{fill_expressions[r.label]} AS {alias}")
             continue
-        column = dialect.quote(r.source)
-        kind = kinds[r.label]
+        if r.source is None:
+            select.append(f"{null} AS {alias}")
+            continue
         # The vocabulary a column resolved through IS the declaration of its
         # number format: the workbook label means the July extract ("1,000" is
         # one thousand), a SAP field name means the CSV extract, written in SAP's
         # German settings ("1,000" is one). Never decided by looking at values.
         from_csv = r.source.lower() != r.label.lower()
-        expression = {
-            "key": dialect.key,
-            "date": dialect.date,
-            "num": lambda c: dialect.num(c, german=from_csv),
-            "text": lambda c: c,
-        }[kind](column)
+        expression = _expression(kinds[r.label], f"{prefix}{q(r.source)}", dialect, german=from_csv)
         select.append(f"{expression} AS {alias}")
-    return f"{dialect.create_view(name)} SELECT {', '.join(select)} FROM raw_{table}"
+
+    if not filled:
+        return f"{dialect.create_view(name)} SELECT {', '.join(select)} FROM raw_{table}"
+
+    fill = ODATA_FILL[table]
+    sources = {r.label: r.source for r in resolved}
+    on = " AND ".join(
+        f"o.{q(_KEY + label)} = {dialect.join_key(f'r.{q(sources[label])}', kinds[label])}" for label, _ in fill.keys
+    )
+    subquery = _fill_subquery(fill, filled, odata_present or [], kinds, dialect)
+    return (
+        f"{dialect.create_view(name)} SELECT {', '.join(select)} "
+        f"FROM raw_{table} r LEFT JOIN ({subquery}) o ON {on}"
+    )
 
 
 # --- DDL --------------------------------------------------------------------
 
 
-def _present(engine: Engine) -> dict[str, list[str] | None]:
+def _present(engine: Engine) -> tuple[dict[str, list[str] | None], dict[str, list[str] | None]]:
+    """Columns of each ``raw_<table>``, and of each OData fill table, by table.
+
+    None for a table that does not exist.
+    """
     inspector = inspect(engine)
     existing = {name.lower(): name for name in inspector.get_table_names()}
-    columns: dict[str, list[str] | None] = {}
-    for table in TABLES:
-        real = existing.get(f"raw_{table}")
-        columns[table] = [c["name"] for c in inspector.get_columns(real)] if real else None
-    return columns
+
+    def columns_of(name: str) -> list[str] | None:
+        real = existing.get(name.lower())
+        return [c["name"] for c in inspector.get_columns(real)] if real else None
+
+    raw = {table: columns_of(f"raw_{table}") for table in TABLES}
+    odata = {table: columns_of(fill.table) for table, fill in ODATA_FILL.items()}
+    return raw, odata
 
 
 def ensure_views(engine: Engine | None = None, tables: list[str] | None = None) -> list[str]:
@@ -523,19 +700,33 @@ def ensure_views(engine: Engine | None = None, tables: list[str] | None = None) 
     """
     engine = engine or get_engine()
     dialect = _dialect(engine)
-    present = _present(engine)
+    present, odata = _present(engine)
     targets = tables or list(TABLES)
     with engine.begin() as connection:
         for table in targets:
             if not dialect.mssql:
                 connection.execute(text(f"DROP VIEW IF EXISTS n_{table}"))
-            connection.execute(text(view_sql(table, present[table], dialect)))
-    missing = [t for t in targets if present[t] is None]
+            connection.execute(text(view_sql(table, present[table], dialect, odata.get(table))))
+
+    resolutions = {t: resolve_all(t, present[t], odata.get(t)) for t in targets}
+    missing = [t for t, resolved in resolutions.items() if resolved is None]
     logger.info(
         "normalise: %d views ready%s",
         len(targets),
         f" (no raw table, built empty: {', '.join(missing)})" if missing else "",
     )
+    for table, resolved in resolutions.items():
+        fills = [r for r in resolved or [] if r.via]
+        if fills:
+            logger.info(
+                "normalise: n_%s reads %s from %s", table,
+                ", ".join(f"{r.label}<-{r.source}" for r in fills), fills[0].via,
+            )
+    # A column no source delivers is NULL in every row. Queries still run, so
+    # this line is the only place the gap is visible without running `check`.
+    gaps = [f"n_{t}.{r.label}" for t, resolved in resolutions.items() for r in resolved or [] if r.source is None]
+    if gaps:
+        logger.warning("normalise: no source delivers these, NULL in every row: %s", ", ".join(gaps))
     return [f"n_{t}" for t in targets]
 
 
@@ -549,10 +740,8 @@ def drop_views(engine: Engine | None = None) -> None:
 def check(engine: Engine | None = None) -> dict[str, list[Resolved] | None]:
     """Which physical column feeds each label, per table. Touches no DDL."""
     engine = engine or get_engine()
-    return {
-        table: (resolve(table, cols) if cols is not None else None)
-        for table, cols in _present(engine).items()
-    }
+    present, odata = _present(engine)
+    return {table: resolve_all(table, cols, odata.get(table)) for table, cols in present.items()}
 
 
 def rebuild_read_layers(engine: Engine | None = None, *, raise_errors: bool = False) -> bool:
@@ -616,11 +805,17 @@ def main(argv: list[str] | None = None) -> int:
             print(f"n_{table:<6} raw_{table} does not exist -- view is built empty")
             continue
         gaps = [r.label for r in resolved if r.source is None]
-        mapped = ", ".join(f"{r.label}<-{r.source}" for r in resolved if r.source and r.source != r.label)
-        vocabulary = "SAP field names" if mapped else "workbook labels"
+        raw_mapped = [r for r in resolved if r.source and not r.via and r.source != r.label]
+        fills = [r for r in resolved if r.via]
+        if not any(r.source and not r.via for r in resolved):
+            vocabulary = f"raw_{table} does not exist, read from {fills[0].via}"
+        else:
+            vocabulary = "SAP field names" if raw_mapped else "workbook labels"
         print(f"n_{table:<6} {vocabulary}; {len(resolved) - len(gaps)}/{len(resolved)} columns")
-        if mapped:
-            print(f"         {mapped}")
+        if raw_mapped:
+            print(f"         {', '.join(f'{r.label}<-{r.source}' for r in raw_mapped)}")
+        if fills:
+            print(f"         FROM {fills[0].via}: {', '.join(f'{r.label}<-{r.source}' for r in fills)}")
         if gaps:
             status = 1
             print(f"         NOT DELIVERED (NULL): {', '.join(gaps)}")
