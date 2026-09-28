@@ -191,9 +191,14 @@ def load_captured_plans(db: Session) -> list[ConsumptionPlan]:
     from app.assistant.models import ConsumptionPlanRecord
     from app.models.i13_session_link import SessionReservationLink
 
+    # Fetched whole before the link query runs. Left as a lazy result, the plan
+    # rows were still being read when the second statement was sent, and SQL
+    # Server refused it -- "Connection is busy with results for another
+    # command" -- as soon as one captured plan existed, taking /summary,
+    # /validation and the snapshot build down with it.
     rows = db.execute(
         select(ConsumptionPlanRecord).order_by(ConsumptionPlanRecord.captured_at)
-    ).scalars()
+    ).scalars().all()
 
     # Reservations that carry each session's ID in their item text (SGTXT).
     # Only for the plan's own material and plant -- the linker already
