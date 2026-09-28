@@ -54,11 +54,13 @@ def _watch_i13_fingerprint(stop: threading.Event, interval: int) -> None:
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-    """Build the normalise views, then start the I13 and I08 snapshot builds
-    and the delta scheduler; stop them on shutdown.
+    """Build the normalise views, then start the I08 and I13 snapshot builds
+    (in that order, one after the other) and the delta scheduler; stop them on
+    shutdown.
 
-    The server takes requests immediately; I13 and I08 snapshot routes answer
-    503 ``building`` until their first build lands (~40 s for I13 on the seeded data).
+    The server takes requests immediately; I08 and I13 snapshot routes answer
+    503 ``building`` until their first build lands. I13's waits for I08's, so
+    it lands after both have run (~40 s for I13 alone on the seeded data).
 
     The scheduler is imported here rather than at module scope so that
     importing app.main -- which the test suite and every CLI entry point do --
@@ -79,20 +81,25 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
         await asyncio.to_thread(sap_normalise.rebuild_read_layers)
 
+    # I08 first, then I13 -- one after the other, never side by side. Built
+    # together they starved the one-vCore Azure SQL until the I08 build timed
+    # out on every attempt (app/shared/snapshot_builds.py has the numbers).
+    i8_warm: threading.Thread | None = None
+    if settings.database_url and settings.i8_snapshot_warm_on_startup:
+        from app.initiatives.i8 import service as i8_service
+
+        i8_service.start_background_build("start-up")
+        i8_warm = i8_service.build_thread()
+
     stop = threading.Event()
     if settings.i13_snapshot_enabled and settings.i13_snapshot_warm_on_startup:
-        i13_snapshot.start_background_build("start-up")
+        i13_snapshot.start_background_build("start-up", after=i8_warm)
         threading.Thread(
             target=_watch_i13_fingerprint,
             args=(stop, max(settings.i13_snapshot_check_interval_seconds, 5)),
             name="i13-snapshot-watch",
             daemon=True,
         ).start()
-
-    if settings.database_url and settings.i8_snapshot_warm_on_startup:
-        from app.initiatives.i8 import service as i8_service
-
-        i8_service.start_background_build("start-up")
 
     task = None
     try:

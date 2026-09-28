@@ -41,7 +41,9 @@ out of v1 rather than linked by a guess.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -49,6 +51,7 @@ from decimal import Decimal
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.db import MSSQL
 from app.core.logging import get_logger
 from app.initiatives.i8.aging import (
     BEYOND_LEAD_TIME,
@@ -320,6 +323,50 @@ where ebeln in :documents
 group by ebeln, ebelp
 """
 
+# On SQL Server the dispatch query reads a staged copy of MSEG, not v_mseg.
+#
+# Straight from the view it ran past the 120 s statement limit on all 12 build
+# attempts on the nonprod Azure SQL on 28-Sep, one of them with nothing else
+# running, so the Repairable Spares pages never loaded. Filtered on ebeln, the
+# query makes SQL Server compute sap_key(purchase_order) for every one of
+# MSEG's ~233k rows before it can discard any, and -- the likely reason it is
+# so slow -- SQL Server does not inline a scalar function whose result the
+# query groups by, so that is ~233k separate function calls. The staged copy
+# holds only the 541 vendor-side rows with a PO item, fetched with the cheap
+# predicates and no GROUP BY (the shape PR #40's staged universe query runs
+# in). The query above then runs over that table unchanged, so its rules stay
+# in one place. Postgres reads v_mseg directly; it has none of this cost.
+_DISPATCH_STAGE_COLUMNS = "ebeln, ebelp, budat, menge, bwart, sobkz"
+_DISPATCH_STAGE_FILTER = "ebelp is not null and bwart = :dispatch and sobkz = :vendor_stock"
+_DISPATCH_STAGE_TABLE = "#i8_mseg_dispatch"
+
+
+def fetch_dispatches(
+    db: Session,
+    documents: Sequence[str],
+    params: Mapping[str, str],
+    *,
+    source: str = "v_mseg",
+) -> list[Mapping]:
+    """The dispatch rows for ``documents``: staged through a temp table on SQL Server."""
+    if db.get_bind().dialect.name != MSSQL:
+        return fetch_in_chunks(db, _DISPATCH_SQL.replace("v_mseg", source), "documents", documents, params)
+
+    table, columns = _DISPATCH_STAGE_TABLE, _DISPATCH_STAGE_COLUMNS
+    db.execute(text(f"drop table if exists {table}"))
+    # Created without bind parameters, as in universe.fetch_universe_candidates:
+    # a parameterised statement runs in sp_executesql, which drops any temp
+    # table it creates when it returns.
+    db.execute(text(f"select {columns} into {table} from {source} where 1 = 0"))
+    db.execute(
+        text(f"insert into {table} select {columns} from {source} where {_DISPATCH_STAGE_FILTER}"),
+        params,
+    )
+    rows = fetch_in_chunks(db, _DISPATCH_SQL.replace("v_mseg", table), "documents", documents, params)
+    db.execute(text(f"drop table {table}"))
+    return rows
+
+
 _HEADER_SQL = """
 -- LEFT JOINed, never an inner join. 455 of 1,225 repair lines have no row here.
 --
@@ -384,45 +431,60 @@ def _evidence(
 
     # Every query below groups by the column it filters on, so each chunk's
     # rows are complete on their own and concatenating them is exact.
-    schedules = {
-        (r["ebeln"], r["ebelp"]): r
-        for r in fetch_in_chunks(db, _SCHEDULE_SQL, "documents", documents)
-    }
-    receipts = {
-        (r["ebeln"], r["ebelp"]): r
-        for r in fetch_in_chunks(
-            db,
-            _RECEIPTS_SQL,
-            "documents",
-            documents,
-            {
-                "category": cfg.gr_history_category,
-                "receipt": cfg.gr_movement_type,
-                "reversal": cfg.gr_reversal_movement_type,
-                "credit": "H",
-            },
-        )
-    }
-    dispatches = {
-        (r["ebeln"], r["ebelp"]): r
-        for r in fetch_in_chunks(
-            db,
-            _DISPATCH_SQL,
-            "documents",
-            documents,
-            {
-                "dispatch": cfg.dispatch_movement_type,
-                "vendor_stock": cfg.vendor_special_stock,
-            },
-        )
-    }
-    headers = {r["ebeln"]: r for r in fetch_in_chunks(db, _HEADER_SQL, "documents", documents)}
-    vendors = {r["lifnr"]: r["name1"] for r in db.execute(text(_VENDOR_SQL)).mappings()}
-    lead_times = {
-        (r["matnr"], r["werks"]): r["plifz"]
-        for r in fetch_in_chunks(db, _LEAD_TIME_SQL, "materials", materials)
-    }
+    #
+    # Each is timed in the log: on Azure SQL one of them outran the statement
+    # limit on every build, and the log is the only place that is visible.
+    with timed_step("schedule lines (EKET)"):
+        schedules = {
+            (r["ebeln"], r["ebelp"]): r
+            for r in fetch_in_chunks(db, _SCHEDULE_SQL, "documents", documents)
+        }
+    with timed_step("goods receipts (EKBE)"):
+        receipts = {
+            (r["ebeln"], r["ebelp"]): r
+            for r in fetch_in_chunks(
+                db,
+                _RECEIPTS_SQL,
+                "documents",
+                documents,
+                {
+                    "category": cfg.gr_history_category,
+                    "receipt": cfg.gr_movement_type,
+                    "reversal": cfg.gr_reversal_movement_type,
+                    "credit": "H",
+                },
+            )
+        }
+    with timed_step("dispatches (MSEG 541)"):
+        dispatches = {
+            (r["ebeln"], r["ebelp"]): r
+            for r in fetch_dispatches(
+                db,
+                documents,
+                {
+                    "dispatch": cfg.dispatch_movement_type,
+                    "vendor_stock": cfg.vendor_special_stock,
+                },
+            )
+        }
+    with timed_step("PO headers (EKKO)"):
+        headers = {r["ebeln"]: r for r in fetch_in_chunks(db, _HEADER_SQL, "documents", documents)}
+    with timed_step("vendor names (LFA1)"):
+        vendors = {r["lifnr"]: r["name1"] for r in db.execute(text(_VENDOR_SQL)).mappings()}
+    with timed_step("lead times (MARC)"):
+        lead_times = {
+            (r["matnr"], r["werks"]): r["plifz"]
+            for r in fetch_in_chunks(db, _LEAD_TIME_SQL, "materials", materials)
+        }
     return schedules, receipts, dispatches, headers, vendors, lead_times
+
+
+@contextmanager
+def timed_step(step: str) -> Iterator[None]:
+    """Log how long one step of the snapshot build took."""
+    started = time.monotonic()
+    yield
+    logger.info("I08 snapshot: %s in %.1fs", step, time.monotonic() - started)
 
 
 def repair_status(

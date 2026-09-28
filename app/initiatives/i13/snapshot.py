@@ -98,6 +98,7 @@ from app.integrations.sap.postgres_procurement import PostgresProcurementReposit
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
 from app.models import IngestionRun
 from app.shared.material_scope import MaterialScope, classify_material_scope
+from app.shared.snapshot_builds import exclusive_build
 
 logger = get_logger(__name__)
 
@@ -488,7 +489,8 @@ def _build_and_swap(reason: str) -> I13Snapshot | None:
         logger.info("I13 snapshot build started (%s)", reason)
         db = get_sessionmaker()()
         try:
-            snapshot = build_i13_snapshot(db, version=version)
+            with exclusive_build("I13"):
+                snapshot = build_i13_snapshot(db, version=version)
         except Exception as exc:  # noqa: BLE001 -- recorded and surfaced, never swallowed silently
             logger.exception("I13 snapshot build failed (%s)", reason)
             with _lock:
@@ -508,15 +510,26 @@ def _build_and_swap(reason: str) -> I13Snapshot | None:
         return snapshot
 
 
-def start_background_build(reason: str) -> bool:
-    """Build (or rebuild) on a daemon thread. Returns False if one is running."""
+def _build_after(after: threading.Thread | None, reason: str) -> None:
+    if after is not None:
+        after.join()
+    _build_and_swap(reason)
+
+
+def start_background_build(reason: str, *, after: threading.Thread | None = None) -> bool:
+    """Build (or rebuild) on a daemon thread. Returns False if one is running.
+
+    With ``after``, the build starts only once that thread has finished -- how
+    start-up puts it behind the I08 build. Routes see ``building`` meanwhile,
+    rather than starting a build of their own.
+    """
     with _lock:
         if _state.thread is not None and _state.thread.is_alive():
             return False
         if _state.snapshot is None:
             _state.status = "building"
             _state.building_since = datetime.now(timezone.utc)
-        thread = threading.Thread(target=_build_and_swap, args=(reason,), name="i13-snapshot", daemon=True)
+        thread = threading.Thread(target=_build_after, args=(after, reason), name="i13-snapshot", daemon=True)
         _state.thread = thread
     thread.start()
     return True
