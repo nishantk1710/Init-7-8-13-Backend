@@ -63,6 +63,7 @@ from app.api.i8.schemas import (
     UniverseResponse,
     VendorResponse,
 )
+from app.core.config import get_settings
 from app.core.db import get_db
 from app.initiatives.i8.aging import bucket_labels
 from app.initiatives.i8.attestation import (
@@ -80,6 +81,8 @@ from app.initiatives.i8.repairable_unit import assess as assess_repairable_unit
 from app.initiatives.i8.service import (
     AttestationView,
     Snapshot,
+    SnapshotBuilding,
+    SnapshotFailed,
     get_attestation_view,
     get_coding_screen,
     get_snapshot,
@@ -92,10 +95,34 @@ router = APIRouter(prefix="/i8", tags=["i8 - refurbishable spares"])
 
 T = TypeVar("T")
 
+#: Seconds a client should wait before retrying while the snapshot builds.
+SNAPSHOT_RETRY_AFTER_SECONDS = 10
+
 
 def snapshot_dependency(db: Session = Depends(get_db)) -> Snapshot:
-    """The assembled I08 read models, built once per process."""
-    return get_snapshot(db)
+    """The assembled I08 read models, built once per process.
+
+    503 with ``Retry-After`` while it is unavailable -- the I13 contract, which
+    the frontend already renders as "still preparing".
+    """
+    try:
+        return get_snapshot(db, wait_seconds=get_settings().i8_snapshot_wait_seconds)
+    except SnapshotBuilding as building:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "status": "building",
+                "message": "I08 data is being prepared. Retry shortly.",
+                "startedAt": building.started_at.isoformat() if building.started_at else None,
+            },
+            headers={"Retry-After": str(SNAPSHOT_RETRY_AFTER_SECONDS)},
+        ) from None
+    except SnapshotFailed as failed:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"status": "failed", "message": f"I08 data could not be prepared: {failed}"},
+            headers={"Retry-After": str(SNAPSHOT_RETRY_AFTER_SECONDS * 6)},
+        ) from None
 
 
 SnapshotDep = Annotated[Snapshot, Depends(snapshot_dependency)]

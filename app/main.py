@@ -54,11 +54,11 @@ def _watch_i13_fingerprint(stop: threading.Event, interval: int) -> None:
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-    """Build the normalise views, then start the I13 snapshot build and the
-    delta scheduler; stop both on shutdown.
+    """Build the normalise views, then start the I13 and I08 snapshot builds
+    and the delta scheduler; stop them on shutdown.
 
-    The server takes requests immediately; I13 snapshot routes answer 503
-    ``building`` until the first build lands (~40 s on the seeded data).
+    The server takes requests immediately; I13 and I08 snapshot routes answer
+    503 ``building`` until their first build lands (~40 s for I13 on the seeded data).
 
     The scheduler is imported here rather than at module scope so that
     importing app.main -- which the test suite and every CLI entry point do --
@@ -88,6 +88,11 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             name="i13-snapshot-watch",
             daemon=True,
         ).start()
+
+    if settings.database_url and settings.i8_snapshot_warm_on_startup:
+        from app.initiatives.i8 import service as i8_service
+
+        i8_service.start_background_build("start-up")
 
     task = None
     try:
