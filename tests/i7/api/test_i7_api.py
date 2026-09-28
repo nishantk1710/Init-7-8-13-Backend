@@ -102,7 +102,6 @@ def test_summary_returns_200_with_expected_shape():
         "awaiting_approval_count",
         "ready_for_review_count",
         "not_evaluable_count",
-        "currency",
         "net_safety_stock_value_impact",
         "critical_stockout_risk_count",
         "excess_inventory_candidates_count",
