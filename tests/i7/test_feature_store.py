@@ -15,6 +15,7 @@ from app.initiatives.i7.features import BaselineModel, ChallengerModel, HistoryS
 from app.initiatives.i7.features.oar_scope import ROLLUP_NOT_CONFIGURED
 from app.initiatives.i7.features.statistics import StatisticStatus
 from app.models.i7_features import FeatureBuildRun, MaterialFeature
+from app.models.i7_staging import StagedMaterialPlant
 
 needs_db = pytest.mark.skipif(not get_settings().database_url, reason="DATABASE_URL not set")
 
@@ -294,6 +295,69 @@ def test_rollup_stays_unconfigured(session):
         )
     ).scalar()
     assert configured == 0
+
+
+# --- Deletion flag (LVORM) excludes a material-plant from scope --------------
+#
+# Test 4 (regression spec): a material-plant MARC explicitly flags for
+# deletion must never enter the feature store -- the earliest point every
+# downstream stage (forecast, inventory, OAR, recommendations) reads from, so
+# this is the correct boundary rather than filtering each consumer separately.
+
+
+@needs_db
+def test_deletion_flag_true_never_reaches_the_feature_store(session):
+    """No feature row exists for a material-plant MARC has flagged deleted.
+
+    This is the boundary the LVORM/deletion_flag fix added
+    (features/builder.py's _ATTRIBUTE_SQL); before it, a material-plant with
+    Lvorm="1" from the live OData source was staged as deletion_flag=False
+    (the encoding bug) and, independently, nothing filtered on it even where
+    it was staged correctly -- both had to be fixed for this to hold.
+    """
+    if not _built(session):
+        pytest.skip("features not built")
+    deleted_in_scope = session.execute(
+        select(func.count())
+        .select_from(MaterialFeature)
+        .join(
+            StagedMaterialPlant,
+            (StagedMaterialPlant.sap_material_number == MaterialFeature.sap_material_number)
+            & (StagedMaterialPlant.sap_plant_code == MaterialFeature.sap_plant_code),
+        )
+        .where(StagedMaterialPlant.deletion_flag.is_(True))
+    ).scalar()
+    assert deleted_in_scope == 0
+
+
+@needs_db
+def test_a_material_plant_with_no_marc_row_still_reaches_the_feature_store(session):
+    """The other half of the same boundary: NULL (no MARC coverage at all --
+    Gamsberg, or LVORM simply never maintained) must not be treated as
+    "known deleted". Excluding it would silently reintroduce the Gamsberg
+    drop the MARC/MARD union (see this file's other tests) was written to
+    fix, just via a different column."""
+    if not _built(session):
+        pytest.skip("features not built")
+    unknown_flag_present = session.execute(
+        select(func.count())
+        .select_from(MaterialFeature)
+        .join(
+            StagedMaterialPlant,
+            (StagedMaterialPlant.sap_material_number == MaterialFeature.sap_material_number)
+            & (StagedMaterialPlant.sap_plant_code == MaterialFeature.sap_plant_code),
+            isouter=True,
+        )
+        .where(
+            (StagedMaterialPlant.sap_material_number.is_(None))
+            | (StagedMaterialPlant.deletion_flag.is_(None))
+        )
+    ).scalar()
+    # Gamsberg alone accounts for thousands of MARC-absent material-plants
+    # (see README's "Plant coverage gap"); a zero here would mean the "include
+    # when unknown" branch of the filter is not actually being exercised by
+    # this data, which is the failure mode this test exists to catch.
+    assert unknown_flag_present > 0
 
 
 # --- Unit price (MBEW) -----------------------------------------------------------

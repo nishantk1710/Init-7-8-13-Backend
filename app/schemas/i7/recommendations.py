@@ -333,9 +333,15 @@ class RecommendationSummary(BaseModel):
     """Added so the list endpoint's own Value-change column can price
     ``impact.safety_stock_delta`` without a second (detail) request per row --
     the same reasoning as ``current``/``recommended``/``impact`` above."""
+    currency: str | None = None
+    """ISO code ``unit_price`` is in, as SAP's valuation data states it (MBEW
+    WAERS). ``None`` when SAP supplies no currency -- a client must not assume
+    one."""
 
     @classmethod
-    def from_model(cls, row: RecommendationModel, route: tuple[str, ...]) -> "RecommendationSummary":
+    def from_model(
+        cls, row: RecommendationModel, route: tuple[str, ...], currency: str | None = None
+    ) -> "RecommendationSummary":
         return cls(
             recommendation_id=row.recommendation_id,
             material=row.sap_material_number,
@@ -350,6 +356,7 @@ class RecommendationSummary(BaseModel):
             chain_index=row.chain_index,
             route=list(route),
             unit_price=row.unit_price,
+            currency=currency,
             current=StockParameters(
                 safety_stock=row.current_safety_stock,
                 rop=row.current_rop,
@@ -470,6 +477,10 @@ class RecommendationSummaryStats(BaseModel):
 
     ready_for_review_count: int
     not_evaluable_count: int
+    currency: str | None = None
+    """ISO code of every money figure below, when all priced materials share
+    one currency (MBEW WAERS). ``None`` when nothing is priced or currencies
+    differ -- then no single symbol is true for a portfolio total."""
     net_safety_stock_value_impact: Decimal | None
     """SUM(unit_price * (current_safety_stock - recommended_safety_stock))
     over rows where both stock values and unit_price are present -- positive
@@ -520,6 +531,8 @@ class RecommendationDetail(BaseModel):
     unit_price: Decimal | None = None
     """Feature-store (Phase 3) field, available on both the normal and OAR
     path regardless of history status."""
+    currency: str | None = None
+    """ISO code ``unit_price`` is in (MBEW WAERS); ``None`` when SAP supplies none."""
 
     current: StockParameters
     recommended: StockParameters
@@ -550,6 +563,7 @@ class RecommendationDetail(BaseModel):
         cls,
         row: RecommendationModel,
         consumption_history: tuple[ConsumptionHistoryEntry, ...] = (),
+        currency: str | None = None,
     ) -> "RecommendationDetail":
         return cls(
             recommendation_id=row.recommendation_id,
@@ -557,6 +571,7 @@ class RecommendationDetail(BaseModel):
             plant=row.sap_plant_code,
             circuit=row.circuit,
             unit_price=row.unit_price,
+            currency=currency,
             current=StockParameters(
                 safety_stock=row.current_safety_stock,
                 rop=row.current_rop,

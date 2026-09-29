@@ -14,6 +14,17 @@ query was fixed to union material-plant keys from MARC
 Gamsberg (plant 1500) has zero MARC rows but is fully covered in MARD, and was
 previously silently dropped from the feature store entirely. See
 features/builder.py's _ATTRIBUTE_SQL for the fix.
+
+**113,465 will move again**, downward, the first time this runs after the
+LVORM/deletion_flag fix (features/builder.py's ``_ATTRIBUTE_SQL``,
+``WHERE p.deletion_flag IS NULL OR p.deletion_flag = :not_deleted``): a
+material-plant MARC explicitly flags for deletion is now excluded from the
+feature store, and therefore from this count, for the first time. That is
+the fix working, not a regression -- update the assert to the new total
+(and the docstring above) once this runs against the real database, the
+same way 45,409 became 113,465. Do not just relax the number back to
+113,465; confirm the delta matches the count of deletion_flag=True rows
+before and after.
 """
 
 import pytest

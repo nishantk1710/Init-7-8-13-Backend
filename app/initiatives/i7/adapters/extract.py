@@ -52,8 +52,10 @@ from app.core.db import get_sessionmaker
 from app.core.upsert import safe_batch_size, upsert
 from app.initiatives.i7.adapters.field_map import (
     CREDIT_INDICATOR,
+    DELETION_FLAG_TRUE,
     GOODS_RECEIPT_HISTORY_CATEGORY,
     GOODS_RECEIPT_MOVEMENT_TYPE,
+    ODATA_DELETION_FLAG_TRUE,
 )
 from app.initiatives.i7.adapters.ingestion_policy import ExtractIngestionPolicy
 from app.initiatives.i7.adapters.validation import (
@@ -205,21 +207,47 @@ _MATERIAL_SQL = """
              GROUP BY mat_code
       ) z ON z.mat_code = a.material
 """
-# MBEW carries no currency column in this extract, so unit_price is staged
-# without one. Left NULL rather than assumed: the operating currency is ZAR by
-# context, but writing that in would be inventing source data.
+# Price and currency come from wherever SAP supplied them, never assumed:
+#
+#   raw_mbew carries a moving price (the July workbook)  -> n_mbew.moving_price,
+#       no currency column there, so currency stays NULL;
+#   raw_mbew does not (the live CSV MBEW has no VERPR)   -> odata_material_valuation
+#       (the OData MaterialValuationSet): Verpr per Peinh units, in Waers.
+#
+# The operating currency is ZAR by context, but writing that in would be
+# inventing source data -- a currency is staged only when SAP stated one.
 
 _PRICE_SQL = "SELECT material, moving_price FROM n_mbew"
+ODATA_MATERIAL_VALUATION = "odata_material_valuation"
 
 
-def _price_by_material(session: Session, rejections: _Rejections) -> dict[str, Decimal]:
-    """Highest moving price per material across valuation areas.
+def _keep_highest(
+    prices: dict[str, tuple[Decimal, str | None]], material: str, price: Decimal, currency: str | None
+) -> None:
+    """Highest price per material across valuation areas, with its own currency."""
+    if material not in prices or price > prices[material][0]:
+        prices[material] = (price, currency)
+
+
+def _price_by_material(
+    session: Session, rejections: _Rejections
+) -> dict[str, tuple[Decimal, str | None]]:
+    """``material -> (unit price, currency)``, the highest across valuation areas.
 
     Parsed before comparing: a MAX over the text column would rank "9.5" above
-    "10.0". The live CSV MBEW carries no VERPR, so there every price is NULL and
-    this is empty -- unit_price stages as NULL, a visible gap.
+    "10.0". Read from MBEW when it carries a moving price, else from the OData
+    valuation set (see the note above); empty when neither has one, so
+    unit_price stages as NULL -- a visible gap.
     """
-    prices: dict[str, Decimal] = {}
+    present = _columns(session, "raw_mbew")
+    mbew_has_price = present is not None and any(
+        r.label == "moving_price" and r.source is not None
+        for r in sap_normalise.resolve("mbew", present)
+    )
+    if not mbew_has_price:
+        return _odata_prices(session, rejections)
+
+    prices: dict[str, tuple[Decimal, str | None]] = {}
     for row in _read(session, _PRICE_SQL):
         material = clean(row.material)
         if material is None or clean(row.moving_price) is None:
@@ -228,8 +256,52 @@ def _price_by_material(session: Session, rejections: _Rejections) -> dict[str, D
         if price is None:
             rejections.add("n_mbew", material, RejectionReason.INVALID_QUANTITY, "moving price")
             continue
-        if material not in prices or price > prices[material]:
-            prices[material] = price
+        _keep_highest(prices, material, price, None)
+    return prices
+
+
+def _odata_prices(session: Session, rejections: _Rejections) -> dict[str, tuple[Decimal, str | None]]:
+    """Unit prices from the OData MaterialValuationSet: ``Verpr / Peinh`` in ``Waers``.
+
+    VERPR is quoted per PEINH units (a price of 250.00 per 10 EA is 25.00 each),
+    so the division is what makes it a unit price; a blank or zero PEINH is
+    rejected rather than assumed to be 1. Empty, and logged, when the set has
+    not been pulled -- ``python -m app.ingest --fetch --load --set
+    MaterialValuationSet``.
+    """
+    present = _columns(session, ODATA_MATERIAL_VALUATION)
+    if present is None:
+        logger.warning(
+            "raw_mbew has no moving price and %s does not exist: unit_price stages as NULL. "
+            "Run: python -m app.ingest --fetch --load --set MaterialValuationSet",
+            ODATA_MATERIAL_VALUATION,
+        )
+        return {}
+    by_lower = {name.lower(): name for name in present}
+    matnr, verpr = by_lower.get("matnr"), by_lower.get("verpr")
+    if matnr is None or verpr is None:
+        logger.warning("%s has no Matnr/Verpr columns; unit_price not filled", ODATA_MATERIAL_VALUATION)
+        return {}
+    peinh, waers = by_lower.get("peinh"), by_lower.get("waers")
+
+    quote = session.get_bind().dialect.identifier_preparer.quote
+    selected = {"m": matnr, "v": verpr, "p": peinh, "w": waers}
+    statement = "SELECT " + ", ".join(
+        f"{quote(column)} AS {alias}" if column else f"NULL AS {alias}" for alias, column in selected.items()
+    ) + f" FROM {ODATA_MATERIAL_VALUATION}"
+
+    prices: dict[str, tuple[Decimal, str | None]] = {}
+    for row in _read(session, statement):
+        material = odata_key(row.m)
+        if material is None or clean(row.v) is None:
+            continue
+        price, per = parse_decimal(row.v), parse_decimal(row.p) if peinh else Decimal(1)
+        if price is None or per is None or per <= 0:
+            rejections.add(ODATA_MATERIAL_VALUATION, material, RejectionReason.INVALID_QUANTITY,
+                           f"Verpr={row.v!r} Peinh={row.p!r}")
+            continue
+        _keep_highest(prices, material, price / per, clean(row.w))
+    logger.info("materials: unit price and currency from %s (%d materials)", ODATA_MATERIAL_VALUATION, len(prices))
     return prices
 
 
@@ -254,10 +326,18 @@ def _stage_materials(
                 "material_status": clean(row.x_plant_matl_status),
                 "external_material_group": clean(row.ext_material_group),
                 "manufacturer": clean(row.manufacturer),
+                # Unlike the MARC-level flag below, this one is not exposed to
+                # the LVORM "1" vs "X" bug: n_mara.df_at_client_level resolves
+                # only against raw_mara (no odata_material_plant-style raw
+                # overlay exists for MARA fields), so it is always the
+                # workbook encoding parse_flag() expects. If an OData MARA
+                # fallback is ever added, it will need the same
+                # odata_flag_to_canonical() conversion this file's MARC path
+                # now applies.
                 "deletion_flag": parse_flag(row.df_at_client_level),
                 "criticality": clean(row.criticality),
-                "unit_price": prices.get(material),
-                "currency": None,
+                "unit_price": prices.get(material, (None, None))[0],
+                "currency": prices.get(material, (None, None))[1],
                 "source_table": "n_mara",
                 "staging_run_id": run_id,
             }
@@ -298,6 +378,26 @@ def odata_key(value: object | None) -> str | None:
     """
     text_value = clean(value)
     return None if text_value is None else (text_value.lstrip("0") or None)
+
+
+def odata_flag_to_canonical(value: object | None) -> str | None:
+    """OData's ``Lvorm`` encoding ("1" for deleted) to the workbook's ("X").
+
+    Decode by declared source encoding, never by guessing from the value:
+    parse_flag() only recognises DELETION_FLAG_TRUE ("X"), which is correct
+    for n_marc (workbook vocabulary) but wrong for a raw OData value passed
+    through unconverted -- "1" != "X" silently reads every deleted
+    material-plant as active. This is the one conversion step between the
+    two; parse_flag() itself stays strict.
+
+    Any value other than the OData true-encoding passes through unchanged
+    (including blank, which both sources spell the same way), so a genuinely
+    unexpected value is still visible downstream rather than laundered here.
+    """
+    text_value = clean(value)
+    if text_value is None:
+        return None
+    return DELETION_FLAG_TRUE if text_value == ODATA_DELETION_FLAG_TRUE else text_value
 
 
 def _columns(session: Session, table: str) -> list[str] | None:
@@ -382,7 +482,18 @@ def _stage_material_plants(
                 rejections.add("n_marc", material, RejectionReason.MISSING_PLANT)
                 continue
             values = dict(row._mapping)
-            values.update(from_odata.get((material, plant), {}))
+            odata_values = from_odata.get((material, plant), {})
+            # OData's df_at_plant_level (Lvorm) spells "deleted" as "1", not
+            # the workbook's "X" -- convert before it reaches parse_flag(),
+            # which only recognises the workbook encoding. Every other
+            # OData-filled field here (DISMM/PLIFZ/MINBE/MABST) is a code or
+            # number, not a boolean, so only this one needs translating.
+            if "df_at_plant_level" in odata_values:
+                odata_values = dict(odata_values)
+                odata_values["df_at_plant_level"] = odata_flag_to_canonical(
+                    odata_values["df_at_plant_level"]
+                )
+            values.update(odata_values)
             yield {
                 "sap_material_number": material,
                 "sap_plant_code": plant,

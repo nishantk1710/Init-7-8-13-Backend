@@ -320,8 +320,24 @@ _ATTRIBUTE_SQL = """
             AND p.sap_plant_code = u.sap_plant_code
       LEFT JOIN i7_staged_material m
              ON m.sap_material_number = u.sap_material_number
+     WHERE p.deletion_flag IS NULL OR p.deletion_flag = :not_deleted
      ORDER BY u.sap_material_number, u.sap_plant_code
 """
+# A material-plant MARC explicitly flags for deletion (LVORM/deletion_flag =
+# True) must never reach the feature store -- this is the earliest point
+# every downstream stage (forecast, inventory, OAR, recommendations) reads
+# from, so excluding it here is excluding it everywhere at once, per Solution
+# Design Stage 5's "be an active material" requirement.
+#
+# NULL passes deliberately -- both "no MARC row for this material-plant"
+# (Gamsberg has zero MARC rows; the universe CTE above exists precisely so
+# that absence does not remove the row) and "MARC row exists but LVORM was
+# never maintained" are "we do not know", not "known deleted". The same
+# distinction the confirmed OAR rule already draws for DISMM (blank counts as
+# in-scope, not as UNKNOWN) -- unknown is not evidence of deletion. Bound as a
+# parameter rather than a literal ``= 0``/``= false`` in the text so the
+# dialect encodes the boolean itself; the champion-model filter that broke on
+# SQL Server for exactly this reason is the cautionary case.
 
 
 def _upsert(session: Session, rows: list[dict[str, Any]]) -> None:
@@ -376,7 +392,9 @@ def build_features(policy: PolicyDocument | None = None) -> FeatureBuildResult:
             batch: list[dict[str, Any]] = []
             built = 0
 
-            for row in session.execute(text(_ATTRIBUTE_SQL)).yield_per(5000):
+            for row in session.execute(
+                text(_ATTRIBUTE_SQL), {"not_deleted": False}
+            ).yield_per(5000):
                 feature = _build_one(
                     row,
                     consumption,
