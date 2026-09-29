@@ -52,8 +52,10 @@ from app.core.db import get_sessionmaker
 from app.core.upsert import safe_batch_size, upsert
 from app.initiatives.i7.adapters.field_map import (
     CREDIT_INDICATOR,
+    DELETION_FLAG_TRUE,
     GOODS_RECEIPT_HISTORY_CATEGORY,
     GOODS_RECEIPT_MOVEMENT_TYPE,
+    ODATA_DELETION_FLAG_TRUE,
 )
 from app.initiatives.i7.adapters.ingestion_policy import ExtractIngestionPolicy
 from app.initiatives.i7.adapters.validation import (
@@ -324,6 +326,14 @@ def _stage_materials(
                 "material_status": clean(row.x_plant_matl_status),
                 "external_material_group": clean(row.ext_material_group),
                 "manufacturer": clean(row.manufacturer),
+                # Unlike the MARC-level flag below, this one is not exposed to
+                # the LVORM "1" vs "X" bug: n_mara.df_at_client_level resolves
+                # only against raw_mara (no odata_material_plant-style raw
+                # overlay exists for MARA fields), so it is always the
+                # workbook encoding parse_flag() expects. If an OData MARA
+                # fallback is ever added, it will need the same
+                # odata_flag_to_canonical() conversion this file's MARC path
+                # now applies.
                 "deletion_flag": parse_flag(row.df_at_client_level),
                 "criticality": clean(row.criticality),
                 "unit_price": prices.get(material, (None, None))[0],
@@ -368,6 +378,26 @@ def odata_key(value: object | None) -> str | None:
     """
     text_value = clean(value)
     return None if text_value is None else (text_value.lstrip("0") or None)
+
+
+def odata_flag_to_canonical(value: object | None) -> str | None:
+    """OData's ``Lvorm`` encoding ("1" for deleted) to the workbook's ("X").
+
+    Decode by declared source encoding, never by guessing from the value:
+    parse_flag() only recognises DELETION_FLAG_TRUE ("X"), which is correct
+    for n_marc (workbook vocabulary) but wrong for a raw OData value passed
+    through unconverted -- "1" != "X" silently reads every deleted
+    material-plant as active. This is the one conversion step between the
+    two; parse_flag() itself stays strict.
+
+    Any value other than the OData true-encoding passes through unchanged
+    (including blank, which both sources spell the same way), so a genuinely
+    unexpected value is still visible downstream rather than laundered here.
+    """
+    text_value = clean(value)
+    if text_value is None:
+        return None
+    return DELETION_FLAG_TRUE if text_value == ODATA_DELETION_FLAG_TRUE else text_value
 
 
 def _columns(session: Session, table: str) -> list[str] | None:
@@ -452,7 +482,18 @@ def _stage_material_plants(
                 rejections.add("n_marc", material, RejectionReason.MISSING_PLANT)
                 continue
             values = dict(row._mapping)
-            values.update(from_odata.get((material, plant), {}))
+            odata_values = from_odata.get((material, plant), {})
+            # OData's df_at_plant_level (Lvorm) spells "deleted" as "1", not
+            # the workbook's "X" -- convert before it reaches parse_flag(),
+            # which only recognises the workbook encoding. Every other
+            # OData-filled field here (DISMM/PLIFZ/MINBE/MABST) is a code or
+            # number, not a boolean, so only this one needs translating.
+            if "df_at_plant_level" in odata_values:
+                odata_values = dict(odata_values)
+                odata_values["df_at_plant_level"] = odata_flag_to_canonical(
+                    odata_values["df_at_plant_level"]
+                )
+            values.update(odata_values)
             yield {
                 "sap_material_number": material,
                 "sap_plant_code": plant,
