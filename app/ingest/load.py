@@ -28,6 +28,7 @@ from sqlalchemy import text
 from app.core.db import get_engine, get_sessionmaker
 from app.core.logging import get_logger
 from app.core.storage import Storage, get_storage
+from app.ingest import raw_merge
 from app.ingest.fetch import DATA_FILE, MANIFEST_FILE, read_manifest
 from app.ingest.manifest import IngestSpec
 from app.models.ingestion import IngestionRun
@@ -144,6 +145,9 @@ class LoadResult:
     rows: int = 0
     seconds: float = 0.0
     error: str | None = None
+    # What happened to the same rows in raw_<table> -- the table the pages
+    # read. See raw_merge. None when the merge was not attempted.
+    raw: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -226,8 +230,19 @@ def load_set(
     prefix: str | None = None,
     storage: Storage | None = None,
     allow_unstable: bool = False,
+    merge_raw: bool = True,
 ) -> LoadResult:
-    """Load one landed fetch into ``odata_<table>``. Never raises."""
+    """Load one landed fetch into ``odata_<table>``, then merge the same rows
+    into ``raw_<table>``. Never raises.
+
+    ``odata_<table>`` is written as it always was. ``raw_<table>`` is the table
+    the initiatives read, and the merge into it (``raw_merge``) is what makes
+    an OData delta reach the pages. A refused merge fails the load -- the rows
+    are in ``odata_<table>`` but not where they are read, and a sweep must not
+    advance a watermark past them. A merge that is merely skipped (no raw
+    table yet) does not: the CSV full pull builds that table and sets the
+    watermark itself.
+    """
     storage = storage or get_storage()
     started = time.monotonic()
     started_at = datetime.now(timezone.utc)
@@ -349,12 +364,25 @@ def load_set(
             expected,
         )
 
+    raw_note: str | None = None
+    if merge_raw:
+        merged = raw_merge.merge_landed(spec, prefix, storage=storage)
+        if merged.status == raw_merge.REFUSED:
+            detail = f"merge into {merged.table} refused -- {merged.detail}"
+            _record(spec, rows, STATUS_FAILED, started_at, prefix, error=detail)
+            return failure(detail)
+        raw_note = (
+            f"{merged.table}: {merged.detail}" if merged.status == raw_merge.SKIPPED
+            else f"{merged.table}: {merged.updated} updated, {merged.inserted} inserted"
+            + (f", added {', '.join(merged.columns_added)}" if merged.columns_added else "")
+        )
+
     elapsed = time.monotonic() - started
     _record(spec, rows, STATUS_SUCCEEDED, started_at, prefix)
     logger.info(
         "%s: %d rows into %s in %.1fs", spec.name, rows, spec.raw_table, elapsed
     )
-    return LoadResult(spec.name, spec.raw_table, STATUS_SUCCEEDED, rows, elapsed)
+    return LoadResult(spec.name, spec.raw_table, STATUS_SUCCEEDED, rows, elapsed, raw=raw_note)
 
 
 def _record(

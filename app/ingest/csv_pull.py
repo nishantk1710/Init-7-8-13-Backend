@@ -242,9 +242,10 @@ def fire(
     """Record the request, then ask SAP for it. Never raises."""
     spec = csv_table(sap_table)
     if spec.blocked:
-        # Explicitly asked for, so it fires -- that is how the condition gets
-        # re-tested -- but the operator is told what to expect.
-        logger.warning("%s: %s; firing anyway because it was asked for by name",
+        # Fired anyway: the request is then on record on SAP's side, which is
+        # how the condition gets re-tested and how it is evidenced. The
+        # operator is told what to expect -- a 15-minute timeout, not rows.
+        logger.warning("%s: %s; fired so the request is on record, expect a timeout",
                        spec.sap_table, spec.blocked)
     from_date, to_date = spec.window(
         today, years=years, from_date=from_date, to_date=to_date
@@ -572,13 +573,10 @@ def pull_all(
     that fails does not stop the run: the others are independent, and a partial
     refresh beats no refresh.
     """
-    if tables is None:
-        names = [t.sap_table for t in CSV_TABLES if not t.blocked]
-        for t in CSV_TABLES:
-            if t.blocked:
-                logger.warning("%s: left out -- %s", t.sap_table, t.blocked)
-    else:
-        names = list(tables)
+    # Every table, the undelivered ones included: a sweep is the evidence that
+    # SAP was asked, and the day the job is fixed it just starts delivering.
+    # Those two cost the sweep their 15-minute timeout, nothing else.
+    names = list(tables) if tables is not None else [t.sap_table for t in CSV_TABLES]
 
     if wait_for_open and not wait_for_clear(names):
         detail = (

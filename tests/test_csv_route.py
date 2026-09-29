@@ -808,7 +808,9 @@ class TestUndeliveredTables:
         assert csv_table("EKET").blocked
         assert csv_table("EKPO").blocked is None
 
-    def test_a_sweep_leaves_them_out_with_the_reason(self, db, monkeypatch) -> None:
+    def test_a_sweep_fires_them_anyway_so_the_request_is_on_record(self, db, monkeypatch) -> None:
+        """Every table gets its query. The two SAP does not deliver cost the
+        sweep a timeout, and the day the job is fixed they simply land."""
         fired: list[str] = []
         monkeypatch.setattr(
             csv_pull, "fire",
@@ -818,8 +820,8 @@ class TestUndeliveredTables:
 
         csv_pull.pull_all(gap=0, sleeper=lambda s: None, wait_for_open=False)
 
-        assert "EKKO" not in fired and "EKET" not in fired
-        assert len(fired) == len(CSV_TABLES) - 2
+        assert "EKKO" in fired and "EKET" in fired
+        assert len(fired) == len(CSV_TABLES)
 
     def test_asked_for_by_name_it_still_fires(self, db) -> None:
         """That is how the condition gets re-tested once SAP fixes the job."""

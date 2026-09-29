@@ -1,0 +1,7 @@
+{
+    "statusCode": "500",
+    "statusText": "Internal Server Error",
+    "errorMessage": "HTTP operation failed invoking http://vhvedzrqci:443/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/$metadata?sap-client=900& with statusCode: 500",
+    "errorResponse": "<?xml version=\"1.0\" encoding=\"utf-8\"?><error xmlns=\"http://schemas.microsoft.com/ado/2007/08/dataservices/metadata\"><code>/IWFND/CM_COS/003</code><message xml:lang=\"en\">SAP Gateway has been deactivated</message><innererror><application><component_id/><service_namespace>/SAP/</service_namespace><service_id>ZMM_KPI02_TAB_SRV</service_id><service_version>0001</service_version></application><transactionid>AC2F36DBEE8C4F3F95EC79E8BE164DC3</transactionid><timestamp>20260928084238.4913270</timestamp><Error_Resolution><SAP_Transaction>Run transaction /IWFND/ERROR_LOG on SAP Gateway hub system and search for entries with the timestamp above for more details</SAP_Transaction><SAP_Note>See SAP Note 1797736 for error analysis (https://service.sap.com/sap/support/notes/1797736)</SAP_Note></Error_Resolution><errordetails/></innererror></error>",
+    "exceptionType": "org.apache.camel.component.ahc.AhcOperationFailedException"
+}

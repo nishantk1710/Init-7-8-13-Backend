@@ -119,6 +119,23 @@ class Settings(BaseSettings):
     # not begin a pull while migrations may still be applying.
     delta_initial_delay_seconds: int = 120
 
+    # --- Full refresh schedule -----------------------------------------------
+    #
+    # Once a day: every table over the CSV route, loaded, then the OData sets
+    # below merged into the same raw tables. This is the baseline the deltas
+    # merge into and the backstop that bounds their drift to a day -- see
+    # app/ingest/scheduler.py. Off by default for the same reason the delta
+    # timer is. A sweep takes ~15 minutes (the two tables SAP never delivers
+    # wait out their timeout) and pushes ~120 MB through /api/events/csv.
+    full_refresh_enabled: bool = False
+
+    # Hour of day, UTC, to start it. 01:00 UTC is 03:00 in South Africa.
+    full_refresh_hour_utc: int = 1
+
+    # OData sets fetched whole after the sweep and merged into raw_<table>,
+    # for fields the CSV extract does not carry. Comma-separated.
+    full_refresh_odata_sets: str = "MaterialPlantSet"
+
     # --- Normalise views ----------------------------------------------------
     #
     # Build the n_<table> views (app/shared/sap_normalise.py) and I08's views on
@@ -555,6 +572,10 @@ class Settings(BaseSettings):
         the backend root."""
         path = Path(self.fallback_source_dir).expanduser()
         return path if path.is_absolute() else BACKEND_ROOT / path
+
+    @property
+    def full_refresh_odata_set_list(self) -> list[str]:
+        return [name.strip() for name in self.full_refresh_odata_sets.split(",") if name.strip()]
 
     @property
     def cors_origins(self) -> list[str]:

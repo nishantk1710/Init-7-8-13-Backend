@@ -89,10 +89,14 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
-from sqlalchemy import select
+from datetime import datetime, timedelta
+
+from sqlalchemy import select, text
 
 from app.core.config import get_settings
-from app.core.db import get_sessionmaker
+from app.core.db import get_engine, get_sessionmaker
+from app.ingest.watermarks import set_watermark
+from app.seed.sqlserver import quote
 from app.core.logging import configure_logging, get_logger
 from app.core.storage import Storage, StorageNotConfiguredError, get_storage
 from app.models.csv_extract import STATUS_COMPLETE, CsvExtractRequest
@@ -116,6 +120,15 @@ TRY_SAP_FORWARD_DAYS = 365
 SOURCE_SAP = "sap"
 SOURCE_WORKBOOK = "workbook"
 STATUS_REFUSED = "refused"
+
+# A workbook load is a baseline like a CSV load: the OData delta merges into
+# the table it filled, so its newest date is where the delta starts. Read
+# through the normalise view, which has already turned the workbook's dates
+# into ISO whatever the sheet held.
+#   seed table -> (entity set, delta field, view, view column)
+WATERMARK_FROM_VIEW: dict[str, tuple[str, str, str, str]] = {
+    "ekko": ("PurchaseOrderSet", "Aedat", "n_ekko", "created_on"),
+}
 
 
 @dataclass
@@ -413,6 +426,50 @@ def sync(
     return summary, refused_files
 
 
+# --- Watermark --------------------------------------------------------------
+
+
+def _newest_in_view(view: str, column: str) -> str | None:
+    with get_engine().connect() as connection:
+        value = connection.execute(text(f"SELECT MAX({quote(column)}) FROM {quote(view)}")).scalar()
+    return str(value).strip() if value else None
+
+
+def watermark_from(newest_iso: str | None) -> str | None:
+    """The delta's starting mark for a table whose newest date is ``newest_iso``.
+
+    One day back, in the shape the OData delta writes, for the same reason the
+    CSV loader does it: SAP's dates are local midnights, and ``ge`` from the
+    previous day re-reads at most one day the merge absorbs.
+    """
+    if not newest_iso:
+        return None
+    try:
+        newest = datetime.strptime(newest_iso[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+    return f"{newest - timedelta(days=1):%Y-%m-%d %H:%M:%S}"
+
+
+def seed_watermark(table: str) -> str | None:
+    """After a workbook load of ``table``: set its set's delta mark. Never raises."""
+    entry = WATERMARK_FROM_VIEW.get(table)
+    if entry is None:
+        return None
+    entity_set, field, view, column = entry
+    try:
+        mark = watermark_from(_newest_in_view(view, column))
+        if mark is None:
+            logger.warning("%s: no usable date in %s.%s; delta mark not seeded", table, view, column)
+            return None
+        set_watermark(entity_set, field, mark, 0)
+        logger.info("%s: delta mark seeded at %s.%s = %s", table, entity_set, field, mark)
+        return mark
+    except Exception:
+        logger.exception("%s: could not seed the delta mark", table)
+        return None
+
+
 # --- Load -------------------------------------------------------------------
 
 
@@ -467,6 +524,8 @@ def load(
         # has since replaced would be skipped as up to date while holding
         # nothing of the sort. This command exists to be run on purpose.
         result = seed_loader.load_table(spec, force=True)
+        if result.status == seed_loader.STATUS_SUCCEEDED:
+            seed_watermark(spec.table)
         outcomes.append(
             Outcome(spec.table, SOURCE_WORKBOOK, result.status, rows=result.rows, detail=result.error)
         )
