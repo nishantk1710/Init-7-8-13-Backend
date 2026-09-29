@@ -64,9 +64,9 @@ def _install(monkeypatch, build: FakeBuild) -> FakeBuild:
     return build
 
 
-def _start_blocked_build(monkeypatch) -> tuple[FakeBuild, threading.Event]:
+def _start_blocked_build(monkeypatch, *, fail: bool = False) -> tuple[FakeBuild, threading.Event]:
     gate = threading.Event()
-    build = _install(monkeypatch, FakeBuild(gate=gate))
+    build = _install(monkeypatch, FakeBuild(fail=fail, gate=gate))
     assert service.start_background_build("test")
     deadline = time.monotonic() + 2
     while build.calls == 0 and time.monotonic() < deadline:
@@ -231,11 +231,19 @@ class TestTheRoutes:
         assert response.json()["detail"]["status"] == "building"
 
     def test_answer_503_failed_without_leaking_sql(self, api, monkeypatch) -> None:
-        _install(monkeypatch, FakeBuild(fail=True))
-        # The first request starts the build and answers "building"; once that
-        # build has failed, the next one says so.
-        assert api.get("/api/i8/snapshot").json()["detail"]["status"] == "building"
-        service._state.thread.join(5)
+        # Gated, not a bare FakeBuild(fail=True): an ungated fake has no work to
+        # do before it fails, so it can finish -- and flip _state.last_error --
+        # before the request below ever checks in. The "building" assertion was
+        # racing the background thread and losing on a loaded runner (observed
+        # in CI), while reliably winning on a quiet dev machine. See
+        # test_answer_503_building_with_retry_after for the same gated pattern.
+        _build, gate = _start_blocked_build(monkeypatch, fail=True)
+        try:
+            # The first request starts the build and answers "building"; once
+            # that build has failed, the next one says so.
+            assert api.get("/api/i8/snapshot").json()["detail"]["status"] == "building"
+        finally:
+            _finish(gate)
         response = api.get("/api/i8/snapshot")
         assert response.status_code == 503
         assert response.headers["Retry-After"] == "60"
