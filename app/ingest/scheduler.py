@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.core.config import get_settings
 from app.core.db import get_engine
@@ -65,11 +65,17 @@ LOCK_NAME = "spares_ai_delta_ingest"
 LOCK_TIMEOUT_MS = 0
 
 
+# The full refresh has its own mutex: it and the delta may run at once, and
+# only a second full refresh must be kept out.
+FULL_REFRESH_LOCK_NAME = "spares_ai_full_refresh"
+
+
 class _Lock:
     """SQL Server application lock, held for the life of one run."""
 
-    def __init__(self) -> None:
+    def __init__(self, name: str = LOCK_NAME) -> None:
         self._connection = None
+        self._name = name
 
     def acquire(self) -> bool:
         connection = get_engine().raw_connection()
@@ -78,7 +84,7 @@ class _Lock:
             "DECLARE @r int; "
             "EXEC @r = sp_getapplock @Resource = ?, @LockMode = 'Exclusive', "
             "@LockOwner = 'Session', @LockTimeout = ?; SELECT @r;",
-            LOCK_NAME,
+            self._name,
             LOCK_TIMEOUT_MS,
         )
         # 0 granted, 1 granted after waiting; negatives are refusals.
@@ -97,7 +103,7 @@ class _Lock:
             cursor = self._connection.cursor()
             cursor.execute(
                 "EXEC sp_releaseapplock @Resource = ?, @LockOwner = 'Session';",
-                LOCK_NAME,
+                self._name,
             )
         # Discard the connection rather than return it to the pool. A
         # session-owned lock lives on the connection, so if the release above
@@ -212,27 +218,163 @@ async def _loop(interval_seconds: int, initial_delay: int) -> None:
         await asyncio.sleep(interval_seconds)
 
 
-def start(app) -> asyncio.Task | None:
-    """Start the timer if it is switched on. Returns the task, or None."""
+# --- The full refresh -------------------------------------------------------
+#
+# The ingestion plan's backstop, once a day: every table over the CSV route,
+# reconciled and loaded -- which is also the baseline the deltas merge into
+# and the moment their watermarks are reset -- then the OData sets that carry
+# fields the CSV extract does not (MaterialPlantSet's DISMM/PLIFZ/MINBE/MABST
+# for MARC), merged into the same raw tables.
+#
+# A delta filter SAP silently ignores looks healthy in every log while the
+# table drifts from SAP a little more each hour. The full refresh is what
+# bounds that drift to one day.
+
+
+def run_full_refresh_cycle() -> dict:
+    """CSV sweep of every table, load, then the OData enrichment sets.
+
+    Synchronous and blocking, like ``run_delta_cycle``; the caller runs it in
+    a worker thread. Never raises.
+    """
+    from app.ingest import csv_load, csv_pull
+    from app.ingest.fetch import MODE_FULL, fetch_set
+    from app.ingest.load import STATUS_SUCCEEDED, load_set
+    from app.ingest.manifest import spec_for
+
     settings = get_settings()
-    if not settings.delta_schedule_enabled:
+    summary = {"pulled": 0, "loaded": 0, "rows": 0, "enriched": 0, "failed": 0, "errors": []}
+
+    # 1. Every table over the CSV route. All 21 are fired; the two SAP does
+    #    not deliver time out and are reported, and the other 19 land.
+    for result in csv_pull.pull_all():
+        if result.ok:
+            summary["pulled"] += 1
+        else:
+            summary["failed"] += 1
+            summary["errors"].append(f"{result.sap_table}: {result.status} -- {result.error or ''}")
+
+    # 2. Into Azure SQL. Only reconciled extracts load; each load rebuilds the
+    #    normalise view over its table and resets the delta watermark.
+    for result in csv_load.load_all():
+        if result.ok:
+            summary["loaded"] += 1
+            summary["rows"] += result.rows
+        else:
+            summary["failed"] += 1
+            summary["errors"].append(f"{result.sap_table}: load {result.status} -- {result.error or ''}")
+
+    # 3. OData sets merged into raw_<table> for the fields CSV lacks.
+    for name in settings.full_refresh_odata_set_list:
+        try:
+            spec = spec_for(name)
+            fetched = fetch_set(spec, root=settings.ingest_prefix, mode=MODE_FULL, advance_watermark=False)
+            if not fetched.ok:
+                raise RuntimeError(fetched.error or "fetch unstable")
+            loaded = load_set(spec, root=settings.ingest_prefix, prefix=fetched.prefix)
+            if loaded.status != STATUS_SUCCEEDED:
+                raise RuntimeError(loaded.error or loaded.status)
+            summary["enriched"] += 1
+            logger.info("%s: %s", name, loaded.raw or "loaded")
+        except Exception as exc:
+            summary["failed"] += 1
+            summary["errors"].append(f"{name}: {exc}")
+            logger.error("%s: enrichment failed -- %s", name, exc)
+
+    return summary
+
+
+async def _full_refresh_tick() -> None:
+    lock = _Lock(FULL_REFRESH_LOCK_NAME)
+    try:
+        if not lock.acquire():
+            logger.debug("full refresh skipped: another worker holds the lock")
+            return
+    except Exception as exc:
+        logger.warning("full refresh skipped: could not reach the lock (%s)", exc)
+        return
+
+    started = datetime.now(timezone.utc)
+    logger.info("full refresh starting")
+    try:
+        summary = await asyncio.to_thread(run_full_refresh_cycle)
+        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        logger.info(
+            "full refresh finished in %.0fs: %d pulled, %d loaded, %d rows, "
+            "%d enriched, %d failed",
+            elapsed, summary["pulled"], summary["loaded"], summary["rows"],
+            summary["enriched"], summary["failed"],
+        )
+        for error in summary["errors"][:10]:
+            logger.error("  %s", error)
+    except Exception:
+        logger.exception("full refresh raised")
+    finally:
+        lock.release()
+
+
+def seconds_until(hour_utc: int, now: datetime) -> float:
+    """Seconds from ``now`` to the next occurrence of ``hour_utc``:00 UTC."""
+    target = now.replace(hour=hour_utc % 24, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
+
+
+async def _full_refresh_loop(hour_utc: int) -> None:
+    while True:
+        await asyncio.sleep(seconds_until(hour_utc, datetime.now(timezone.utc)))
+        await _full_refresh_tick()
+        # Past the top of the hour before recomputing, so a fast tick cannot
+        # fire twice in the same minute.
+        await asyncio.sleep(120)
+
+
+async def _supervise(loop_factories) -> None:
+    # Coroutines are created here, inside the task, so a start that is refused
+    # or a task cancelled before it runs never leaves one un-awaited.
+    await asyncio.gather(*(factory() for factory in loop_factories))
+
+
+def start(app) -> asyncio.Task | None:
+    """Start whichever timers are switched on. Returns the task, or None."""
+    settings = get_settings()
+    loops = []
+
+    if settings.delta_schedule_enabled:
+        interval = max(settings.delta_interval_minutes, 5) * 60
+        loops.append(lambda: _loop(interval, settings.delta_initial_delay_seconds))
+        logger.info(
+            "delta scheduler on: every %d minute(s), first run in %ds",
+            settings.delta_interval_minutes, settings.delta_initial_delay_seconds,
+        )
+    else:
         logger.info(
             "delta scheduler is off (DELTA_SCHEDULE_ENABLED is not 'true'); "
             "run deltas with: python -m app.ingest --fetch --load --delta --all"
         )
+
+    if settings.full_refresh_enabled:
+        loops.append(lambda: _full_refresh_loop(settings.full_refresh_hour_utc))
+        logger.info(
+            "full refresh on: daily at %02d:00 UTC (CSV sweep + load, then %s)",
+            settings.full_refresh_hour_utc % 24,
+            ", ".join(settings.full_refresh_odata_set_list) or "no OData enrichment",
+        )
+    else:
+        logger.info(
+            "full refresh is off (FULL_REFRESH_ENABLED is not 'true'); run it with: "
+            "python -m app.ingest --csv-pull --csv-load --all"
+        )
+
+    if not loops:
         return None
 
     if not settings.database_url or not settings.storage_url:
         logger.error(
-            "delta scheduler is on but DATABASE_URL or STORAGE_URL is unset; "
+            "a scheduler is on but DATABASE_URL or STORAGE_URL is unset; "
             "not starting it -- it would fail on every tick"
         )
         return None
 
-    interval = max(settings.delta_interval_minutes, 5) * 60
-    task = asyncio.create_task(_loop(interval, settings.delta_initial_delay_seconds))
-    logger.info(
-        "delta scheduler started: every %d minute(s), first run in %ds",
-        settings.delta_interval_minutes, settings.delta_initial_delay_seconds,
-    )
-    return task
+    return asyncio.create_task(_supervise(loops))

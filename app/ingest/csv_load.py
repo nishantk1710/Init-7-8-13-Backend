@@ -23,14 +23,12 @@ decides reconciliation; this module only declines to argue with it.
 
 THE WATERMARK
 
-A CSV full pull writes no watermark by itself, so the first OData delta after
-one would find nothing to start from and fall back to a full pull. The seed
-is taken from the file's own newest date, after the rows are in, so a failed
-load never advances it -- and only when the set has no mark at all. A mark the
-OData delta measured itself is a position in ``odata_<table>``; this load
-filled ``raw_<table>``, a different table, and overwriting a measured mark
-with the CSV's date would skip, for ``odata_<table>``, every change between
-the two.
+A CSV full pull is the BASELINE: it replaces ``raw_<table>`` whole, and the
+OData delta then merges into that same table (``raw_merge``). So the mark the
+delta starts from is this file's own newest date -- always, not only when no
+mark exists yet. Whatever the delta had measured before described a table
+this load has just replaced. Taken after the rows are in, so a failed load
+never advances it.
 """
 
 from __future__ import annotations
@@ -49,7 +47,7 @@ from app.core.db import get_engine, get_sessionmaker
 from app.core.logging import get_logger
 from app.core.storage import Storage, get_storage
 from app.ingest.csv_tables import CsvTable, csv_table
-from app.ingest.watermarks import get_watermark, set_watermark
+from app.ingest.watermarks import set_watermark
 from app.models.csv_extract import STATUS_COMPLETE, STATUS_OPEN, CsvExtractRequest
 from app.models.ingestion import IngestionRun
 from app.seed.sqlserver import RawTableWriter
@@ -327,15 +325,9 @@ def _seed_watermark(entity_set: str, field: str, dats: str, rows: int) -> str | 
     in. ``ge`` from the previous day re-reads at most one day of rows, and
     the merge absorbs the overlap.
 
-    Only if the set has no usable mark. See the module docstring: a mark the
-    delta measured itself belongs to a different table than this load filled.
+    Always, because this load is the baseline the delta increments from. See
+    the module docstring.
     """
-    if get_watermark(entity_set, field) is not None:
-        logger.info(
-            "%s: already has a watermark on %s; the CSV load leaves it alone",
-            entity_set, field,
-        )
-        return None
     try:
         newest = datetime.strptime(dats, "%Y%m%d")
     except ValueError:

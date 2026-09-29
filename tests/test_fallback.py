@@ -35,6 +35,7 @@ def seed_calls(monkeypatch):
 
     monkeypatch.setattr(fallback.seed_loader, "load_table", load_table)
     monkeypatch.setattr(fallback, "live_data_loaded", lambda sap_table: None)
+    monkeypatch.setattr(fallback, "seed_watermark", lambda table: None)
     return calls
 
 
@@ -527,9 +528,38 @@ class TestCli:
 # --- The live routes are untouched ------------------------------------------
 
 
-def test_the_csv_sweep_still_leaves_ekko_and_eket_out() -> None:
-    """--try-sap here is the only place that asks SAP for them again."""
+def test_ekko_and_eket_stay_recorded_as_undelivered() -> None:
+    """The sweep fires them for the record; the fallback is still what fills them."""
     from app.ingest.csv_tables import csv_table
 
     assert csv_table("EKKO").blocked
     assert csv_table("EKET").blocked
+
+
+class TestWorkbookWatermark:
+    def test_ekko_seeds_the_delta_mark_from_its_newest_date(self, monkeypatch) -> None:
+        written = []
+        monkeypatch.setattr(fallback, "_newest_in_view", lambda view, col: "2026-09-25")
+        monkeypatch.setattr(fallback, "set_watermark", lambda *a: written.append(a))
+
+        assert fallback.seed_watermark("ekko") == "2026-09-24 00:00:00"
+        assert written == [("PurchaseOrderSet", "Aedat", "2026-09-24 00:00:00", 0)]
+
+    def test_reports_seed_nothing(self, monkeypatch) -> None:
+        written = []
+        monkeypatch.setattr(fallback, "set_watermark", lambda *a: written.append(a))
+
+        assert fallback.seed_watermark("zmm065_gb") is None
+        assert written == []
+
+    def test_a_workbook_with_no_usable_date_seeds_nothing(self, monkeypatch) -> None:
+        monkeypatch.setattr(fallback, "_newest_in_view", lambda view, col: None)
+        assert fallback.seed_watermark("ekko") is None
+
+    def test_the_seed_runs_after_a_successful_workbook_load(self, seed_calls, monkeypatch) -> None:
+        seeded: list[str] = []
+        monkeypatch.setattr(fallback, "seed_watermark", lambda t: seeded.append(t))
+
+        fallback.load(["ekko", "gr_30day"])
+
+        assert seeded == ["ekko", "gr_30day"]

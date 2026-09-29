@@ -1,0 +1,20 @@
+2 failed call(s). CPI entry point: https://vzicpinonprod.it-cpi021-rt.cfapps.in30.hana.ondemand.com/http/SAPECCQA/OdataConsumption
+SAP path = what CPI forwards to the ECC gateway; paste it into /IWFND/GW_CLIENT to reproduce.
+
+[1] HTTP 500 after 0.5s at 2026-09-28T08:41:03Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/$metadata
+    headers  : {"Date": "Mon, 28 Sep 2026 08:40:58 GMT", "Content-Type": "application/json", "x-correlationid": "b367d8c6-304b-4b25-7682-d7a83049fdc5", "x-vcap-request-id": "b367d8c6-304b-4b25-7682-d7a83049fdc5"}
+    body     : {
+    "statusCode": "500",
+    "statusText": "Internal Server Error",
+    "errorMessage": "HTTP operation failed invoking http://vhvedzrqci:443/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/$metadata?sap-client=900& with statusCode: 500",
+    "errorResponse": "<?xml version=\"1.0\" encoding=\"utf-8\"?><error xmlns=\"http://schemas.microsoft.com/ado/2007/08/dataservices/metadata\"><code>/IWFND/CM_COS/003</code><message xml:lang=\"en\">SAP Gateway has been deactivated</message><innererror><application><component_id/><service_namespace>/SAP/</service_namespace><service_id>ZMM_KPI02_ADD_SRV</service_id><service_version>0001</service_version></application><transactionid>66CBDF2964764D2C9400E314A29DCF95</transactionid><timestamp>20260928084058.2629530</timestamp><Error_Resolution><SAP_Transaction>Run transaction /IWFND/ERROR_LOG on SAP Gateway hub system and search for entries with the timestamp above for more details</SAP_Transaction><SAP_Note>See SAP Note 1797736 for error analysis (https://service.
+
+[2] HTTP 500 after 0.5s at 2026-09-28T08:41:07Z
+    SAP path : /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/$metadata
+    headers  : {"Date": "Mon, 28 Sep 2026 08:41:03 GMT", "Content-Type": "application/json", "x-correlationid": "2b1a8d50-ed2f-42c3-52fc-96a3d078ed96", "x-vcap-request-id": "2b1a8d50-ed2f-42c3-52fc-96a3d078ed96"}
+    body     : {
+    "statusCode": "500",
+    "statusText": "Internal Server Error",
+    "errorMessage": "HTTP operation failed invoking http://vhvedzrqci:443/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/$metadata?sap-client=900& with statusCode: 500",
+    "errorResponse": "<?xml version=\"1.0\" encoding=\"utf-8\"?><error xmlns=\"http://schemas.microsoft.com/ado/2007/08/dataservices/metadata\"><code>/IWFND/CM_COS/003</code><message xml:lang=\"en\">SAP Gateway has been deactivated</message><innererror><application><component_id/><service_namespace>/SAP/</service_namespace><service_id>ZMM_KPI02_TAB_SRV</service_id><service_version>0001</service_version></application><transactionid>BD27C01AAD02401286B4216C69083A33</transactionid><timestamp>20260928084102.8097160</timestamp><Error_Resolution><SAP_Transaction>Run transaction /IWFND/ERROR_LOG on SAP Gateway hub system and search for entries with the timestamp above for more details</SAP_Transaction><SAP_Note>See SAP Note 1797736 for error analysis (https://service.

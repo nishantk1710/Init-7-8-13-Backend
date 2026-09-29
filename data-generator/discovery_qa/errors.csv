@@ -1,0 +1,11 @@
+utc,sap_path,api_query,http_status,elapsed_s,body
+2026-09-28T08:41:03Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/$metadata,,500,0.5,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzrqci:443/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/$metadata?sap-client=900& with statusCode: 500"",
+    ""errorResponse"": ""<?xml version=\""1.0\"" encoding=\""utf-8\""?><error xmlns=\""http://schemas.microsoft.com/ado/2007/08/dataservices/metadata\""><code>/IWFND/CM_COS/003</code><message xml:lang=\""en\"">SAP Gateway has been deactivated</message><innererror><application><comp"
+2026-09-28T08:41:07Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/$metadata,,500,0.5,"{
+    ""statusCode"": ""500"",
+    ""statusText"": ""Internal Server Error"",
+    ""errorMessage"": ""HTTP operation failed invoking http://vhvedzrqci:443/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/$metadata?sap-client=900& with statusCode: 500"",
+    ""errorResponse"": ""<?xml version=\""1.0\"" encoding=\""utf-8\""?><error xmlns=\""http://schemas.microsoft.com/ado/2007/08/dataservices/metadata\""><code>/IWFND/CM_COS/003</code><message xml:lang=\""en\"">SAP Gateway has been deactivated</message><innererror><application><comp"

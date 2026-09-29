@@ -276,10 +276,9 @@ def _csv(args) -> int:
 
         shape = "fired together, then collected" if len(names) > 1 else "single table"
         if args.all:
-            blocked = [t for t in CSV_TABLES if t.blocked]
-            names = [n for n in names if n not in {t.sap_table for t in blocked}]
-            for t in blocked:
-                print(f"  {t.sap_table}: left out -- {t.blocked}")
+            for t in CSV_TABLES:
+                if t.blocked:
+                    print(f"  {t.sap_table}: fired for the record, expect a timeout -- {t.blocked}")
         print(f"CSV pull: {len(names)} table(s), {shape}")
         print(f"  window : {span}")
         print(f"  rows   : {args.max_rows or 'no cap -- full pull'}")
@@ -578,6 +577,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.load:
                 _report("LOADED", report.load_rows())
                 loaded_by_sweep = True
+                for outcome in report.outcomes:
+                    if outcome.load is not None and outcome.load.raw:
+                        print(f"  {outcome.name}: raw {outcome.load.raw}")
             for name in report.baselined:
                 print(f"  {name}: no odata_ table yet, pulled in full to build it")
             for name, mark in report.advanced.items():
@@ -604,13 +606,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.load and not loaded_by_sweep:
         results = []
+        outcomes = []
         for spec in chosen:
             outcome = load_set(
                 spec, root=root, allow_unstable=args.allow_unstable
             )
+            outcomes.append(outcome)
             failures += 1 if outcome.status == STATUS_FAILED else 0
             results.append((spec.name, outcome.status, outcome.rows, outcome.seconds))
         _report("LOADED", results)
+        for outcome in outcomes:
+            if outcome.raw:
+                print(f"  {outcome.entity_set}: raw {outcome.raw}")
 
     if failures:
         print(f"\n{failures} set(s) did not complete. See the log above.")

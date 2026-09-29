@@ -87,7 +87,6 @@ class TestSeedWatermark:
         UTC the evening before; a literal at midnight of the same date could
         sit past every row of that day. One day back re-reads at most a day."""
         written = []
-        monkeypatch.setattr(csv_load, "get_watermark", lambda *a: None)
         monkeypatch.setattr(csv_load, "set_watermark", lambda *a: written.append(a))
 
         mark = csv_load._seed_watermark("PurchaseOrderSet", "Aedat", "20260925", 3140)
@@ -95,18 +94,17 @@ class TestSeedWatermark:
         assert mark == "2026-09-24 00:00:00"
         assert written == [("PurchaseOrderSet", "Aedat", "2026-09-24 00:00:00", 3140)]
 
-    def test_never_overwrites_a_mark_the_delta_measured_itself(self, monkeypatch) -> None:
-        """That mark is a position in odata_<table>; this load filled raw_<table>."""
+    def test_a_full_load_resets_the_mark_to_its_own_newest_date(self, monkeypatch) -> None:
+        """The full pull replaced the table the delta merges into, so whatever
+        the delta had measured before describes a table that no longer exists."""
         written = []
-        monkeypatch.setattr(csv_load, "get_watermark", lambda *a: "2026-09-14 22:00:00+00:00")
         monkeypatch.setattr(csv_load, "set_watermark", lambda *a: written.append(a))
 
-        assert csv_load._seed_watermark("PurchaseOrderSet", "Aedat", "20260925", 1) is None
-        assert written == []
+        assert csv_load._seed_watermark("PurchaseOrderSet", "Aedat", "20260925", 1) == "2026-09-24 00:00:00"
+        assert written == [("PurchaseOrderSet", "Aedat", "2026-09-24 00:00:00", 1)]
 
     def test_sap_no_date_seeds_nothing(self, monkeypatch) -> None:
         written = []
-        monkeypatch.setattr(csv_load, "get_watermark", lambda *a: None)
         monkeypatch.setattr(csv_load, "set_watermark", lambda *a: written.append(a))
 
         assert csv_load._seed_watermark("PurchaseOrderSet", "Aedat", "00000000", 1) is None
@@ -115,7 +113,6 @@ class TestSeedWatermark:
     def test_the_seed_is_a_literal_the_delta_can_send(self, monkeypatch) -> None:
         from app.ingest.fetch import odata_literal
 
-        monkeypatch.setattr(csv_load, "get_watermark", lambda *a: None)
         monkeypatch.setattr(csv_load, "set_watermark", lambda *a: None)
         mark = csv_load._seed_watermark("PurchaseOrderSet", "Aedat", "20260925", 1)
 
