@@ -317,6 +317,7 @@ class Table:
     count_filter: str | None = None  # what a CSV full extract reconciles against
     profile_all: bool = False  # no fixed list: check every property the service exposes
     descoped: str | None = None  # why the table is checked but not counted for an initiative
+    count_parts: tuple[str, ...] = ()  # filters whose $counts are SUMMED for the CSV reference (a ceiling)
 
     @property
     def reference_filter(self) -> str | None:
@@ -456,7 +457,8 @@ CATALOGUE: tuple[Table, ...] = (
        "OBJECTCLAS OBJECTID CHANGENR TABNAME TABKEY FNAME CHNGIND VALUE_NEW VALUE_OLD",
        "FNAME:I07",
        {"FNAME": "tracked: DISMM EISBE MINBE MABST (I07 adoption)"},
-       required_filter="Objectclas eq 'MATERIAL'"),
+       required_filter="Objectclas eq 'MATERIAL'",
+       count_parts=tuple(f"Objectclas eq '{c}'" for c in CDHDR_CLASSES)),
     _t("S031", "MonthlyMovementStatisticSet", "I07 I13",
        "SSOUR VRSIO SPMON SPTAG SPWOC SPBUP WERKS MATNR LGORT",
        "SPMON WERKS MATNR LGORT BASME MZUBB WZUBB MAGBB WAGBB AMBWG MUVBR WUVBR",
