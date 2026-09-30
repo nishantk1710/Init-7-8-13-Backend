@@ -163,7 +163,21 @@ DEBIT_INDICATOR = "S"
 DELETION_FLAG_TRUE = "X"
 """SAP's boolean: ``X`` for true, blank for false.
 
-Applies to MARA.LVORM and MARC.LVORM, which are true booleans.
+Applies to MARA.LVORM and MARC.LVORM, which are true booleans. This is the
+*workbook* extract's encoding -- see ODATA_DELETION_FLAG_TRUE for the OData
+MaterialPlantSet encoding of the same field, which is different.
+"""
+
+ODATA_DELETION_FLAG_TRUE = "1"
+"""OData ``MaterialPlantSet.Lvorm``'s encoding of "deleted": ``"1"``, not
+``"X"``. Measured directly against the live service (27 Sep): rows staged
+with the workbook's DELETION_FLAG_TRUE constant against this source's raw
+value silently read every deleted material-plant as active, because "1" !=
+"X". Convert to DELETION_FLAG_TRUE's vocabulary (see
+odata_flag_to_canonical() in adapters/extract.py) before parse_flag() ever
+sees a value from this source -- decode by declared source encoding, never
+by guessing from what the value looks like, the same rule app.core.raw_values
+applies to numbers and dates.
 """
 
 PURCHASING_DELETION_INDICATORS = frozenset({"L", "S"})

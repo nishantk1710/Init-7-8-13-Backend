@@ -22,7 +22,8 @@ What it checks, per table:
                    digits, 13 chars), and SAP's "Success: ... started" ack.
   2. Delivery   -- new bytes appear in ADLS; done after --quiet seconds with no
                    growth (SAP never marks a last chunk); timeout if nothing
-                   arrives within --first-chunk-timeout. Only the bytes added
+                   arrives within --first-chunk-timeout (5 min: every table that
+                   delivers has started within 90 s so far). Only the bytes added
                    after the fire are analysed, so earlier runs the same day do
                    not pollute the result.
   3. Header     -- every field the initiatives need is present; blank column
@@ -42,7 +43,8 @@ Usage -- on the Azure SSH box, from backend/:
     python live_checks/csv_live_check.py --inspect               # no fire: analyse latest landed files
     python live_checks/csv_live_check.py --odata-report /home/live_checks/odata_<time>.json
 
-Long run (EKKO/EKET wait out their 15-minute timeout); run it under nohup:
+Takes ~10 minutes (5 for the slowest delivery to go quiet, 5 for EKKO/EKET to
+time out); run it under nohup:
 
     nohup python -u live_checks/csv_live_check.py > /home/live_checks/csv_run.log 2>&1 &
     tail -f /home/live_checks/csv_run.log
@@ -58,6 +60,7 @@ import argparse
 import csv
 import io
 import json
+import re
 import sys
 import time
 from collections import Counter
@@ -180,7 +183,10 @@ def request_id(table: str) -> str:
     """F + first four letters of the table + 8 digits: 13 characters, letters
     then digits -- the only shape SAP has delivered on. Never reused (SAP
     dedupes on it), so a same-second collision steps forward."""
-    stem = "F" + table.upper()[:4]
+    letters = re.sub(r"[^A-Z0-9]", "", table.upper())
+    if letters.startswith("ZMM") and len(letters) > 4:
+        letters = letters[3:]  # ZMM_GP_HDR -> GPHD, ZMM_GP_ITEM -> GPIT, ZMM_GP_IN -> GPIN
+    stem = "F" + letters[:4]
     seconds = int(time.time()) % 10**REQUEST_ID_DIGITS
     while True:
         candidate = f"{stem}{seconds:0{REQUEST_ID_DIGITS}d}"
@@ -519,10 +525,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gap", type=int, default=3, help="seconds between fires (default 3)")
     parser.add_argument("--poll", type=int, default=15, help="seconds between storage checks (default 15)")
     parser.add_argument("--quiet", type=int, default=300, help="no growth for this long = delivered (default 300)")
-    parser.add_argument("--first-chunk-timeout", type=int, default=900, help="nothing by then = timeout (default 900)")
-    parser.add_argument("--max-wait", type=int, default=3600, help="hard stop for the whole wait (default 3600)")
+    parser.add_argument("--first-chunk-timeout", type=int, default=300, help="nothing by then = timeout (default 300)")
+    parser.add_argument("--max-wait", type=int, default=1800, help="hard stop for the whole wait (default 1800)")
     parser.add_argument("--force", action="store_true", help="fire even where the app has an extract open")
     parser.add_argument("--odata-report", help="JSON from odata_live_check.py (default: the newest one in the report folder)")
+    parser.add_argument("--coverage-from", metavar="CSV_JSON",
+                        help="no firing, no reading: print the coverage again from this run's saved report "
+                             "(e.g. after the OData report was produced later)")
     parser.add_argument("--services", nargs="+", default=list(DEFAULT_SERVICES))
     parser.add_argument("--env-file", help="read configuration from this .env instead of ./.env")
     parser.add_argument("--out", help="JSON report path (default: /home/live_checks/csv_<time>.json)")
@@ -533,6 +542,14 @@ def main(argv: list[str] | None = None) -> int:
     if unknown:
         parser.error(f"unknown table(s) {unknown}; known: {' '.join(BY_SAP)}")
     full_window = (args.from_date, args.to_date) == (FULL_FROM, FULL_TO) and not args.max_rows
+
+    if args.coverage_from:
+        saved = json.loads(Path(args.coverage_from).read_text(encoding="utf-8"))
+        odata_path = Path(args.odata_report) if args.odata_report else latest_odata_report()
+        odata = json.loads(odata_path.read_text(encoding="utf-8")) if odata_path and odata_path.is_file() else None
+        print(f"coverage from {args.coverage_from}" + (f" + {odata_path}" if odata else " (no OData report)"))
+        coverage(saved, odata)
+        return 0
 
     config = load_config(args.env_file)
     cpi = Cpi(config)
@@ -623,14 +640,25 @@ def main(argv: list[str] | None = None) -> int:
                          key_fields=prof.key_fields, blank_columns=prof.blank_columns,
                          duplicate_columns=prof.duplicate_columns, fields=prof.fields, plants=prof.plants)
             if meta is not None:
-                ref, error = count(cpi, meta, table.reference_filter)
+                ceiling = bool(table.count_parts)
+                if ceiling:
+                    parts = [count(cpi, meta, f) for f in table.count_parts]
+                    ref = sum(n for n, _ in parts) if all(n is not None for n, _ in parts) else None
+                    error = next((e for _, e in parts if e), None)
+                else:
+                    ref, error = count(cpi, meta, table.reference_filter)
                 entry["odata_count"] = ref
+                diff = None if ref is None else prof.rows - ref
                 if ref is None:
                     entry["reconcile"] = f"no reference ({error})"
-                elif not full_window or args.inspect:
-                    entry["reconcile"] = "OK (within)" if prof.rows <= ref else f"OVER by {prof.rows - ref:,}"
+                elif ceiling or not full_window or args.inspect:
+                    entry["reconcile"] = ("OK (within the ceiling)" if diff <= 0 else f"OVER by {diff:,}")
+                elif diff == 0:
+                    entry["reconcile"] = "EXACT"
+                elif abs(diff) <= max(2, ref // 10_000):
+                    entry["reconcile"] = f"WITHIN {abs(diff)} row(s) (live system changed during the run)"
                 else:
-                    entry["reconcile"] = "EXACT" if prof.rows == ref else f"OFF by {prof.rows - ref:+,}"
+                    entry["reconcile"] = f"OFF by {diff:+,}"
                 if odata_keys:
                     sample, error = read_page(cpi, meta, filter=table.reference_filter, order_by=meta.keys, top=25, skip=0)
                     if sample is None:
@@ -640,6 +668,11 @@ def main(argv: list[str] | None = None) -> int:
                         keys = [tuple(norm_key(r.get(p)) for p in props) for r in sample]
                         found = sum(k in prof.xkeys for k in keys)
                         entry["spot_check"] = f"{found}/{len(keys)} of the first OData keys ({','.join(odata_keys)}) found in the CSV"
+                        if not found and keys and prof.xkeys:
+                            # Almost always a format difference (ISO vs SAP language key,
+                            # MM.YYYY vs YYYYMM), not missing rows: show one of each.
+                            entry["spot_check"] += (f"; formats differ? OData {'|'.join(keys[0])!r} "
+                                                    f"vs CSV {'|'.join(sorted(prof.xkeys)[0])!r}")
                     else:
                         entry["spot_check"] = f"OData sample unavailable ({error})"
             if prof.duplicates or (entry.get("reconcile") or "").startswith(("OFF", "OVER")):

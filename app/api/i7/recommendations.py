@@ -91,28 +91,34 @@ def _apply_filters(
     return statement
 
 
-def _descriptions_for(session: Session, materials: list[str]) -> dict[str, str]:
-    """MAKT descriptions for a page of recommendations, in one query.
+def _display_fields_for(session: Session, materials: set[str]) -> dict[str, tuple[str | None, str | None]]:
+    """``material -> (description, currency)`` from staging, for one page of rows.
 
-    The recommendation row carries no description of its own: it is display-only
-    and feeds no calculation, so it is read from ``i7_staged_material`` (staged
-    from MAKT, English preferred) rather than snapshotted onto every
-    recommendation. See ``RecommendationSummary.description``.
+    Neither value is stored on the recommendation row. The description is
+    display-only and feeds no calculation, so it is read from
+    ``i7_staged_material`` (staged from MAKT, English preferred) rather than
+    snapshotted onto every recommendation -- that would be right for
+    ``unit_price``, where the value in force at generation time is itself the
+    fact being recorded, but a description has no such property. The currency
+    travels with the price SAP gave (MBEW WAERS, staged alongside the unit
+    price), so it is read from the same place rather than stored a second time.
 
-    Batched deliberately -- one ``IN`` over the page's materials, never a lookup
-    per row, so a 200-row page costs one extra query rather than 200. A material
-    with no staged description is simply absent from the mapping, and the caller
-    renders ``None``.
+    Both live on the same ``i7_staged_material`` row, so they are fetched
+    together: one ``IN`` over the page's materials, never a lookup per row and
+    never one query per field. A 200-row page costs one extra query rather than
+    200. A material absent from staging, or carrying no value for a field, maps
+    to ``None`` -- never to a placeholder derived from the material number.
     """
     if not materials:
         return {}
     rows = session.execute(
-        select(StagedMaterial.sap_material_number, StagedMaterial.description).where(
-            StagedMaterial.sap_material_number.in_(set(materials)),
-            StagedMaterial.description.is_not(None),
-        )
+        select(
+            StagedMaterial.sap_material_number,
+            StagedMaterial.description,
+            StagedMaterial.currency,
+        ).where(StagedMaterial.sap_material_number.in_(materials))
     ).all()
-    return {material: description for material, description in rows}
+    return {material: (description, currency) for material, description, currency in rows}
 
 
 def _latest_only(statement: Select) -> Select:
@@ -141,6 +147,21 @@ def _latest_only(statement: Select) -> Select:
     ranked = select(Recommendation.id, row_rank).subquery()
     latest_ids = select(ranked.c.id).where(ranked.c.row_rank == 1)
     return statement.where(Recommendation.id.in_(latest_ids))
+
+
+def _portfolio_currency(session: Session) -> str | None:
+    """The one currency every priced material is in, or ``None``.
+
+    A portfolio total in mixed currencies has no single true symbol, so it
+    reports none rather than the first one found.
+    """
+    found = session.execute(
+        select(StagedMaterial.currency)
+        .where(StagedMaterial.currency.is_not(None), StagedMaterial.unit_price.is_not(None))
+        .distinct()
+        .limit(2)
+    ).scalars().all()
+    return found[0] if len(found) == 1 else None
 
 
 @router.get(
@@ -223,15 +244,16 @@ def list_recommendations(
     # so this stays zero extra query cost per the module's own docstring.
     policy = PolicyDocument()
 
-    # One batched description lookup for the whole page -- see _descriptions_for.
-    descriptions = _descriptions_for(session, [row.sap_material_number for row in rows])
+    # One batched staging lookup for the whole page -- see _display_fields_for.
+    display_fields = _display_fields_for(session, {row.sap_material_number for row in rows})
 
     return RecommendationListResponse(
         items=[
             RecommendationSummary.from_model(
                 row,
                 tuple(role.value for role in routing.route_for(row.is_oar, row.criticality, policy)),
-                description=descriptions.get(row.sap_material_number),
+                description=display_fields.get(row.sap_material_number, (None, None))[0],
+                currency=display_fields.get(row.sap_material_number, (None, None))[1],
             )
             for row in rows
         ],
@@ -442,6 +464,7 @@ def get_recommendation_summary(
         awaiting_approval_count=awaiting_approval_count,
         ready_for_review_count=ready_for_review_count,
         not_evaluable_count=not_evaluable_count,
+        currency=_portfolio_currency(session),
         net_safety_stock_value_impact=net_value_row,
         critical_stockout_risk_count=stockout_risk_count,
         excess_inventory_candidates_count=excess_inventory_count,
@@ -470,10 +493,14 @@ def get_recommendation(
     consumption_history = tuple(
         ConsumptionHistoryEntry(period=period, quantity=quantity) for period, quantity in consumption_rows
     )
+    display_fields = _display_fields_for(session, {row.sap_material_number}).get(
+        row.sap_material_number, (None, None)
+    )
     return RecommendationDetail.from_model(
         row,
         consumption_history=consumption_history,
-        description=_descriptions_for(session, [row.sap_material_number]).get(row.sap_material_number),
+        description=display_fields[0],
+        currency=display_fields[1],
     )
 
 
