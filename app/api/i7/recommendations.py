@@ -18,7 +18,7 @@ from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations import routing
 from app.models.i7_forecast import ForecastBacktestPath
 from app.models.i7_recommendation import Recommendation
-from app.models.i7_staging import StagedConsumption, StagedStock
+from app.models.i7_staging import StagedConsumption, StagedMaterial, StagedStock
 from app.schemas.i7.errors import bad_request
 from app.schemas.i7.recommendations import (
     CircuitCount,
@@ -89,6 +89,30 @@ def _apply_filters(
     if generated_to is not None:
         statement = statement.where(Recommendation.generated_at < generated_to)
     return statement
+
+
+def _descriptions_for(session: Session, materials: list[str]) -> dict[str, str]:
+    """MAKT descriptions for a page of recommendations, in one query.
+
+    The recommendation row carries no description of its own: it is display-only
+    and feeds no calculation, so it is read from ``i7_staged_material`` (staged
+    from MAKT, English preferred) rather than snapshotted onto every
+    recommendation. See ``RecommendationSummary.description``.
+
+    Batched deliberately -- one ``IN`` over the page's materials, never a lookup
+    per row, so a 200-row page costs one extra query rather than 200. A material
+    with no staged description is simply absent from the mapping, and the caller
+    renders ``None``.
+    """
+    if not materials:
+        return {}
+    rows = session.execute(
+        select(StagedMaterial.sap_material_number, StagedMaterial.description).where(
+            StagedMaterial.sap_material_number.in_(set(materials)),
+            StagedMaterial.description.is_not(None),
+        )
+    ).all()
+    return {material: description for material, description in rows}
 
 
 def _latest_only(statement: Select) -> Select:
@@ -199,10 +223,15 @@ def list_recommendations(
     # so this stays zero extra query cost per the module's own docstring.
     policy = PolicyDocument()
 
+    # One batched description lookup for the whole page -- see _descriptions_for.
+    descriptions = _descriptions_for(session, [row.sap_material_number for row in rows])
+
     return RecommendationListResponse(
         items=[
             RecommendationSummary.from_model(
-                row, tuple(role.value for role in routing.route_for(row.is_oar, row.criticality, policy))
+                row,
+                tuple(role.value for role in routing.route_for(row.is_oar, row.criticality, policy)),
+                description=descriptions.get(row.sap_material_number),
             )
             for row in rows
         ],
@@ -441,7 +470,11 @@ def get_recommendation(
     consumption_history = tuple(
         ConsumptionHistoryEntry(period=period, quantity=quantity) for period, quantity in consumption_rows
     )
-    return RecommendationDetail.from_model(row, consumption_history=consumption_history)
+    return RecommendationDetail.from_model(
+        row,
+        consumption_history=consumption_history,
+        description=_descriptions_for(session, [row.sap_material_number]).get(row.sap_material_number),
+    )
 
 
 @router.get(

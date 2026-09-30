@@ -298,6 +298,17 @@ class RecommendationSummary(BaseModel):
 
     recommendation_id: str
     material: str
+    description: str | None = None
+    """MAKT.MAKTX, joined from ``i7_staged_material`` at read time rather than
+    stored on the recommendation row.
+
+    Display-only -- it feeds no calculation -- so there is no reason to snapshot
+    it beside the recommendation the way ``unit_price`` is snapshotted, where the
+    value in force at generation time is itself the fact being recorded. Joining
+    keeps one source of truth and picks up SAP description changes for free.
+
+    ``None`` when MAKT has no row for the material: absent, never a placeholder
+    derived from the material number."""
     plant: str
     status: str
     is_oar: bool | None
@@ -335,10 +346,16 @@ class RecommendationSummary(BaseModel):
     the same reasoning as ``current``/``recommended``/``impact`` above."""
 
     @classmethod
-    def from_model(cls, row: RecommendationModel, route: tuple[str, ...]) -> "RecommendationSummary":
+    def from_model(
+        cls,
+        row: RecommendationModel,
+        route: tuple[str, ...],
+        description: str | None = None,
+    ) -> "RecommendationSummary":
         return cls(
             recommendation_id=row.recommendation_id,
             material=row.sap_material_number,
+            description=description,
             plant=row.sap_plant_code,
             status=row.status,
             is_oar=row.is_oar,
@@ -511,6 +528,9 @@ class RecommendationDetail(BaseModel):
 
     recommendation_id: str
     material: str
+    description: str | None = None
+    """MAKT.MAKTX, joined from ``i7_staged_material`` at read time -- see
+    :attr:`RecommendationSummary.description`."""
     plant: str
     circuit: str | None = None
     """Phase 5's own circuit assignment. ``None`` on the OAR/cold-start path
@@ -550,10 +570,12 @@ class RecommendationDetail(BaseModel):
         cls,
         row: RecommendationModel,
         consumption_history: tuple[ConsumptionHistoryEntry, ...] = (),
+        description: str | None = None,
     ) -> "RecommendationDetail":
         return cls(
             recommendation_id=row.recommendation_id,
             material=row.sap_material_number,
+            description=description,
             plant=row.sap_plant_code,
             circuit=row.circuit,
             unit_price=row.unit_price,
