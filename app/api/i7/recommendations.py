@@ -91,6 +91,36 @@ def _apply_filters(
     return statement
 
 
+def _display_fields_for(session: Session, materials: set[str]) -> dict[str, tuple[str | None, str | None]]:
+    """``material -> (description, currency)`` from staging, for one page of rows.
+
+    Neither value is stored on the recommendation row. The description is
+    display-only and feeds no calculation, so it is read from
+    ``i7_staged_material`` (staged from MAKT, English preferred) rather than
+    snapshotted onto every recommendation -- that would be right for
+    ``unit_price``, where the value in force at generation time is itself the
+    fact being recorded, but a description has no such property. The currency
+    travels with the price SAP gave (MBEW WAERS, staged alongside the unit
+    price), so it is read from the same place rather than stored a second time.
+
+    Both live on the same ``i7_staged_material`` row, so they are fetched
+    together: one ``IN`` over the page's materials, never a lookup per row and
+    never one query per field. A 200-row page costs one extra query rather than
+    200. A material absent from staging, or carrying no value for a field, maps
+    to ``None`` -- never to a placeholder derived from the material number.
+    """
+    if not materials:
+        return {}
+    rows = session.execute(
+        select(
+            StagedMaterial.sap_material_number,
+            StagedMaterial.description,
+            StagedMaterial.currency,
+        ).where(StagedMaterial.sap_material_number.in_(materials))
+    ).all()
+    return {material: (description, currency) for material, description, currency in rows}
+
+
 def _latest_only(statement: Select) -> Select:
     """Restrict to the newest ``Recommendation`` row per material-plant.
 
@@ -117,24 +147,6 @@ def _latest_only(statement: Select) -> Select:
     ranked = select(Recommendation.id, row_rank).subquery()
     latest_ids = select(ranked.c.id).where(ranked.c.row_rank == 1)
     return statement.where(Recommendation.id.in_(latest_ids))
-
-
-def _currencies(session: Session, materials: set[str]) -> dict[str, str]:
-    """``material -> currency`` from staging, for the materials on one page.
-
-    The currency travels with the price SAP gave (MBEW WAERS, staged with the
-    unit price), so it is read from the same place rather than stored a second
-    time on every recommendation row.
-    """
-    if not materials:
-        return {}
-    rows = session.execute(
-        select(StagedMaterial.sap_material_number, StagedMaterial.currency).where(
-            StagedMaterial.sap_material_number.in_(materials),
-            StagedMaterial.currency.is_not(None),
-        )
-    ).all()
-    return {material: currency for material, currency in rows}
 
 
 def _portfolio_currency(session: Session) -> str | None:
@@ -232,14 +244,16 @@ def list_recommendations(
     # so this stays zero extra query cost per the module's own docstring.
     policy = PolicyDocument()
 
-    currencies = _currencies(session, {row.sap_material_number for row in rows})
+    # One batched staging lookup for the whole page -- see _display_fields_for.
+    display_fields = _display_fields_for(session, {row.sap_material_number for row in rows})
 
     return RecommendationListResponse(
         items=[
             RecommendationSummary.from_model(
                 row,
                 tuple(role.value for role in routing.route_for(row.is_oar, row.criticality, policy)),
-                currency=currencies.get(row.sap_material_number),
+                description=display_fields.get(row.sap_material_number, (None, None))[0],
+                currency=display_fields.get(row.sap_material_number, (None, None))[1],
             )
             for row in rows
         ],
@@ -479,10 +493,14 @@ def get_recommendation(
     consumption_history = tuple(
         ConsumptionHistoryEntry(period=period, quantity=quantity) for period, quantity in consumption_rows
     )
+    display_fields = _display_fields_for(session, {row.sap_material_number}).get(
+        row.sap_material_number, (None, None)
+    )
     return RecommendationDetail.from_model(
         row,
         consumption_history=consumption_history,
-        currency=_currencies(session, {row.sap_material_number}).get(row.sap_material_number),
+        description=display_fields[0],
+        currency=display_fields[1],
     )
 
 
