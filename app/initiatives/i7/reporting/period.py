@@ -20,6 +20,26 @@ _QUARTER_END_MONTH_DAY = {
 }
 
 
+def latest_closed_quarter(today: date | None = None) -> str:
+    """The most recently *completed* calendar quarter as of ``today``
+    (defaults to :func:`date.today`), formatted the way :func:`resolve_quarter`
+    accepts it, e.g. ``"Q3 2026"``.
+
+    Lets a caller (API endpoint, CLI, external scheduler) ask for "whatever
+    quarter just closed" without computing the quarter itself -- the one place
+    this arithmetic lives. The current quarter is always in progress, so the
+    latest *closed* one is always the previous one, wrapping the year at Q1::
+
+        2026-10-01 (Q4 2026 in progress) -> "Q3 2026"
+        2027-01-01 (Q1 2027 in progress) -> "Q4 2026"
+    """
+    today = today or date.today()
+    current_q = (today.month - 1) // 3 + 1
+    if current_q == 1:
+        return f"Q4 {today.year - 1}"
+    return f"Q{current_q - 1} {today.year}"
+
+
 def resolve_quarter(quarter: str) -> tuple[date, date]:
     """Parse ``"Q3 2026"`` -> ``(date(2026, 7, 1), date(2026, 9, 30))``.
 

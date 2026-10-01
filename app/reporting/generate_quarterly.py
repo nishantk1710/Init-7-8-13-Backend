@@ -1,6 +1,7 @@
 """Manual/scheduled entry point for the I07 Quarterly Deep-Dive Report.
 
     python -m app.reporting.generate_quarterly --quarter "Q3 2026"
+    python -m app.reporting.generate_quarterly              # latest closed quarter
 
 **No in-process scheduler exists in this codebase** (no celery, no
 apscheduler, no cron trigger, no Azure Functions timer -- confirmed by
@@ -8,7 +9,9 @@ source-tree search). This module does not start one. It is intended to be
 invoked by an external trigger -- an Azure Logic App, a WebJob, or a manual
 ops run -- on a quarterly cadence tied to the Initiative 11 review cycle,
 exactly the way ``python -m app.seed --all`` (see ``app/seed/__main__.py``)
-is invoked externally rather than by anything inside this process.
+is invoked externally rather than by anything inside this process. See
+``docs/quarterly-report-scheduling.md`` for exactly what that external
+trigger requires and whether it has actually been provisioned.
 
 This CLI calls the *same* service and repository functions the API's
 ``POST /v1/i7/reports/quarterly/generate`` endpoint calls --
@@ -17,10 +20,17 @@ This CLI calls the *same* service and repository functions the API's
 parallel implementation. The manual/scheduled path and the API path are two
 callers of one service, which is the whole point of sharing it.
 
+``--quarter`` is optional. Omitted, the latest *closed* calendar quarter is
+resolved via ``app.initiatives.i7.reporting.period.latest_closed_quarter`` --
+the same resolution the API endpoint falls back to -- so a scheduler invoking
+this with no arguments on, say, the 1st of every January/April/July/October
+always generates the quarter that just closed, never a hardcoded one.
+
 Exits 0 on success, non-zero on failure (a bad ``--quarter`` format, a
 database error, or an aggregation failure), so an external scheduler's own
 failure/retry/alerting logic can act on the process exit code without
-parsing output.
+parsing output. Safe to retry/re-run: generation is idempotent per quarter
+(see ``repository.save_report``'s docstring).
 """
 
 from __future__ import annotations
@@ -31,6 +41,7 @@ import sys
 from app.core.db import get_sessionmaker
 from app.core.logging import configure_logging, get_logger
 from app.core.config import get_settings
+from app.initiatives.i7.reporting.period import latest_closed_quarter
 from app.initiatives.i7.reporting.repository import save_report
 from app.initiatives.i7.reporting.service import generate_quarterly_report
 
@@ -47,9 +58,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--quarter",
-        required=True,
+        required=False,
+        default=None,
         metavar="'Q<1-4> <year>'",
-        help="e.g. 'Q3 2026'",
+        help="e.g. 'Q3 2026'. Omit to generate the latest closed calendar "
+        "quarter -- the correct choice for a recurring scheduled call.",
     )
     return parser
 
@@ -57,9 +70,17 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     configure_logging(get_settings())
-    quarter = args.quarter
+    if args.quarter is None:
+        quarter = latest_closed_quarter()
+        quarter_source = "latest_closed"
+    else:
+        quarter = args.quarter
+        quarter_source = "explicit"
 
-    logger.info("i7.reporting.cli.generate_quarterly.start", extra={"quarter": quarter})
+    logger.info(
+        "i7.reporting.cli.generate_quarterly.start",
+        extra={"quarter": quarter, "quarter_source": quarter_source},
+    )
 
     session = get_sessionmaker()()
     try:
@@ -72,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Invalid --quarter value: {exc}", file=sys.stderr)
             logger.info(
                 "i7.reporting.cli.generate_quarterly.invalid_quarter",
-                extra={"quarter": quarter},
+                extra={"quarter": quarter, "quarter_source": quarter_source},
             )
             return 2
 
@@ -89,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Failed to persist report for {quarter}: {exc}", file=sys.stderr)
             logger.info(
                 "i7.reporting.cli.generate_quarterly.persist_failed",
-                extra={"quarter": quarter},
+                extra={"quarter": quarter, "quarter_source": quarter_source},
             )
             return 1
     finally:
@@ -98,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Generated and saved I07 Quarterly Deep-Dive Report for {quarter} (report_id={row.id}).")
     logger.info(
         "i7.reporting.cli.generate_quarterly.done",
-        extra={"quarter": quarter, "report_id": row.id},
+        extra={"quarter": quarter, "quarter_source": quarter_source, "report_id": row.id},
     )
     return 0
 
