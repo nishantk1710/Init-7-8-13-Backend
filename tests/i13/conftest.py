@@ -26,8 +26,20 @@ def write_csv(path: Path, header: list[str], rows: list[dict]) -> None:
 
 
 @pytest.fixture
-def data_dir(tmp_path: Path) -> Path:
-    return tmp_path
+def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A temp dataset root, with I13_REFERENCE_PLANS_ENABLED on.
+
+    The tests that take this fixture write their own consumption_plans.csv to
+    exercise the plan rules, so the reader has to be switched on for them --
+    it is off by default (see ``plans.load_reference_plans``).
+    """
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("I13_REFERENCE_PLANS_ENABLED", "true")
+    get_settings.cache_clear()
+    yield tmp_path
+    monkeypatch.undo()
+    get_settings.cache_clear()
 
 
 @pytest.fixture

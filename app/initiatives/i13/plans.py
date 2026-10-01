@@ -142,8 +142,24 @@ class ConsumptionPlan:
         return start is not None or self.window_end is not None
 
 
+def reference_plans_enabled() -> bool:
+    """``I13_REFERENCE_PLANS_ENABLED`` -- off unless someone turns it on."""
+    from app.core.config import get_settings
+
+    return get_settings().i13_reference_plans_enabled
+
+
 def load_reference_plans(data_dir: Path) -> list[ConsumptionPlan]:
-    """The generated CSV. Fabricated, and labelled as such on every row."""
+    """The generated CSV. Fabricated, and labelled as such on every row.
+
+    Empty unless ``I13_REFERENCE_PLANS_ENABLED`` is set, whether or not the
+    file exists: the file ships with every deploy, so its presence says
+    nothing about whether anyone meant these plans to count. This is the one
+    reader of the file, so every consumer -- the snapshot, WATCH, both
+    exception engines, attribution and its mart -- follows the switch.
+    """
+    if not reference_plans_enabled():
+        return []
     path = data_dir / "platform" / "consumption_plans.csv"
     if not path.exists():
         return []

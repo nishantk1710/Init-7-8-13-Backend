@@ -365,6 +365,16 @@ class Settings(BaseSettings):
     # app/shared/sap_normalise.py); there is no CSV path for it any more.
     i13_data_dir: str = "data-generator/generated"
 
+    # Whether consumption_plans.csv under i13_data_dir is read at all. That file
+    # is generator output -- 742 fabricated plans for plants 1000-4000 that
+    # match no in-scope reservation -- and it ships with every deploy because
+    # the whole repository is the package. Read, every open one counts as a
+    # plan breach forever. Off, the only plans are the ones requesters captured
+    # through the assistant (the consumption_plan table), which is what FRS
+    # sec. 2 / D8 specify. Turn on locally to exercise the breach path with
+    # synthetic data; the file itself stays tracked on purpose.
+    i13_reference_plans_enabled: bool = False
+
     # The I13 in-memory snapshot (app/initiatives/i13/snapshot.py): every I13
     # read route serves one precomputed snapshot instead of recomputing from
     # raw_* per request. False puts every route back on the live compute --

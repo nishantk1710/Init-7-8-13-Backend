@@ -312,7 +312,13 @@ def compute_fingerprint(db: Session, *, settings: Settings | None = None, config
         .order_by(IngestionRun.target_table)
     ).all()
     plans_file = Path(settings.i13_data_dir) / "platform" / "consumption_plans.csv"
-    plans_stamp = plans_file.stat().st_mtime_ns if plans_file.exists() else 0
+    # Only while the file is actually read -- see I13_REFERENCE_PLANS_ENABLED.
+    # Otherwise regenerating it would rebuild a snapshot it cannot affect.
+    plans_stamp = (
+        plans_file.stat().st_mtime_ns
+        if settings.i13_reference_plans_enabled and plans_file.exists()
+        else 0
+    )
     parts = [f"{table}:{run_id}:{finished}" for table, run_id, finished in rows]
     parts += [f"date:{reference_date_for(settings).isoformat()}", f"config:{config!r}", f"plans:{plans_stamp}"]
     if settings.i13_uat_simulation_enabled:
