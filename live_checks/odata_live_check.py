@@ -318,6 +318,8 @@ class Table:
     profile_all: bool = False  # no fixed list: check every property the service exposes
     descoped: str | None = None  # why the table is checked but not counted for an initiative
     count_parts: tuple[str, ...] = ()  # filters whose $counts are SUMMED for the CSV reference (a ceiling)
+    spot_keys: tuple[str, ...] = ()  # CSV fields for the cross-route spot check, when the OData key has a
+    #                                   field whose format differs between the routes (SPRAS E vs EN, SPMON)
 
     @property
     def reference_filter(self) -> str | None:
@@ -365,8 +367,8 @@ CATALOGUE: tuple[Table, ...] = (
         "LAEDA": "change stamp for the weekly delta"}),
     _t("MAKT", "MaterialDescriptionSet", "I07 I08 I13", "MATNR SPRAS",
        "MATNR SPRAS MAKTX", "MATNR:I13 MAKTX:I07,I13",
-       {"SPRAS": "English only (E)", "MAKTX": "FR-10 labels (I13)"},
-       count_filter="Spras eq 'E'"),
+       {"SPRAS": "English only: E over OData, EN in the CSV", "MAKTX": "FR-10 labels (I13)"},
+       count_filter="Spras eq 'E'", spot_keys=("MATNR",)),
     _t("MARC", "MaterialPlantSet", "I07 I08 I13", "MATNR WERKS",
        "MATNR WERKS LVORM DISMM DISPO PLIFZ WEBAZ MINBE EISBE BSTMI BSTMA MABST BESKZ ZZCRITIC",
        "MATNR:I13 WERKS:I13 DISMM:I07,I08,I13 PLIFZ:I07 MINBE:I07,I08 MABST:I07 EISBE:I07 LVORM:I07 DISPO:I07",
@@ -462,7 +464,8 @@ CATALOGUE: tuple[Table, ...] = (
     _t("S031", "MonthlyMovementStatisticSet", "I07 I13",
        "SSOUR VRSIO SPMON SPTAG SPWOC SPBUP WERKS MATNR LGORT",
        "SPMON WERKS MATNR LGORT BASME MZUBB WZUBB MAGBB WAGBB AMBWG MUVBR WUVBR",
-       notes={"MUVBR": "unplanned consumption qty"}),
+       notes={"MUVBR": "unplanned consumption qty", "SPMON": "YYYYMM over OData, MM.YYYY in the CSV"},
+       spot_keys=("WERKS", "MATNR", "LGORT")),
     _t("S032", "StockMovementStatisticSet", "I07 I13", "SSOUR VRSIO WERKS LGORT MATNR",
        "WERKS LGORT MATNR DISPO MTART MATKL DISMM MBWBEST WBWBEST LETZTZUG LETZTABG LETZTVER "
        "LETZTBEW EISBE",

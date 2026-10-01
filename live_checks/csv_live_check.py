@@ -159,13 +159,35 @@ class Lake:
         return name[len(self.base) + 1:] if self.base and name.startswith(self.base + "/") else name
 
 
+# Tables whose 30-Sep-2026 extract shape the app's header matching does not
+# recognise yet. It lands them under a fingerprint of the new header instead
+# of the table name, so the watcher must look there too. The hash is
+# sha256(",".join(upper header))[:8], stable per header; observed live:
+#   MARA        MATNR,MTART,MATKL,MEINS,BISMT,LVORM,MSTAE        (narrow, no MANDT)
+#   EKKO        EBELN,BSART,BEDAT,AEDAT,LIFNR,EKORG,EKGRP,WAERS  (narrow)
+#   EKET        EBELN,EBELP,ETENR,EINDT,MENGE,WEMNG              (narrow)
+#   ZMM_GP_*    full wide Z-table headers
+# Remove an entry once the app recognises that header and lands it normally.
+UNKNOWN_LANDINGS: dict[str, tuple[str, ...]] = {
+    "MARA": ("UNKNOWN_54defdac",),
+    "EKKO": ("UNKNOWN_d7d70fc7",),
+    "EKET": ("UNKNOWN_112cee99",),
+    "ZMM_GP_HDR": ("UNKNOWN_01fe0bba",),
+    "ZMM_GP_ITEM": ("UNKNOWN_1c6e0cf6",),
+    "ZMM_GP_IN": ("UNKNOWN_8e167a4d",),
+}
+
+
 def landing_candidates(table: str) -> list[str]:
     """Where the app puts an unattributed chunk: dated by the server's day.
     Today and tomorrow (UTC) and the local day, so a run across midnight is
-    still seen whole."""
+    still seen whole. A table the app cannot identify by header lands under
+    its fingerprint, so those paths are watched as well."""
     now = datetime.now(timezone.utc)
     days = {now.date(), (now + timedelta(days=1)).date(), date.today()}
-    return [f"{CSV_PREFIX}/{table}/unattributed-{d:%Y-%m-%d}/{table}.csv" for d in sorted(days)]
+    names = (table, *UNKNOWN_LANDINGS.get(table, ()))
+    return [f"{CSV_PREFIX}/{name}/unattributed-{d:%Y-%m-%d}/{name}.csv"
+            for name in names for d in sorted(days)]
 
 
 def header_key(data_key: str) -> str:
@@ -631,7 +653,7 @@ def main(argv: list[str] | None = None) -> int:
             lines = csv.reader(io.StringIO(text, newline=""))
         if text and entry["status"] in ("delivered", "inspected"):
             meta = metas.get(table.entity_set)
-            odata_keys = tuple(
+            odata_keys = table.spot_keys or tuple(
                 f for f in (next((s for s in table.csv_keys if norm(s) == norm(k)), None) for k in (meta.keys if meta else ()))
                 if f
             )
@@ -651,8 +673,13 @@ def main(argv: list[str] | None = None) -> int:
                 diff = None if ref is None else prof.rows - ref
                 if ref is None:
                     entry["reconcile"] = f"no reference ({error})"
-                elif ceiling or not full_window or args.inspect:
-                    entry["reconcile"] = ("OK (within the ceiling)" if diff <= 0 else f"OVER by {diff:,}")
+                elif ceiling:
+                    # The extract sends every object class; OData can only count the
+                    # classes we name, so more rows than that is information, not a fault.
+                    entry["reconcile"] = (f"OK ({len(table.count_parts)} counted classes = {ref:,})" if diff <= 0
+                                          else f"INFO: {diff:,} rows beyond the {len(table.count_parts)} counted classes")
+                elif not full_window or args.inspect:
+                    entry["reconcile"] = ("OK (within)" if diff <= 0 else f"OVER by {diff:,}")
                 elif diff == 0:
                     entry["reconcile"] = "EXACT"
                 elif abs(diff) <= max(2, ref // 10_000):
