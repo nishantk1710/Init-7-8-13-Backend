@@ -148,6 +148,7 @@ class ReservationLedgerEntryResponse(BaseModel):
     gi_link_reason: str | None
 
     material_scope: MaterialScope
+    reservation_deleted: bool = False
 
     attribution_status: AttributionStatus | None = None
     attribution_evidence: str | None = None

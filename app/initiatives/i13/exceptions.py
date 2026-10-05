@@ -84,16 +84,28 @@ def _no_plan_exceptions(
     entries: list[ReservationLedgerEntry],
     matcher: PlanMatcher,
 ) -> list[ExceptionQueueItem]:
+    """One NO_PLAN per OAR reservation item without a plan.
+
+    Per reservation *item*, not per ledger entry: a reservation whose PR split
+    across several PO lines has one ledger entry per PO line, and counting
+    those separately reported one missing plan several times. A deleted
+    reservation item (RESB.XLOEK) is not a live demand and raises nothing.
+    """
     exceptions: list[ExceptionQueueItem] = []
+    seen: set[tuple[str, str]] = set()
     for entry in entries:
-        if entry.material_scope is not MaterialScope.OAR:
+        if entry.material_scope is not MaterialScope.OAR or entry.reservation_deleted:
             continue
+        key = (entry.reservation_number, entry.reservation_item)
+        if key in seen:
+            continue
+        seen.add(key)
         if matcher.plan_for(entry) is not None:
             continue
 
         exceptions.append(
             ExceptionQueueItem(
-                id=f"EXC-NO_PLAN-{entry.ledger_id}",
+                id=f"EXC-NO_PLAN-{entry.reservation_number}-{entry.reservation_item}",
                 type=ExceptionType.NO_PLAN,
                 status=ExceptionStatus.OPEN,
                 material=entry.material,
@@ -140,9 +152,16 @@ def _gr_not_issued_exceptions(
 
 
 def _grni_items(metrics, config: I13Config) -> list[ExceptionQueueItem]:
+    """One GR_NOT_ISSUED_30_DAY per flagged OAR material-plant.
+
+    OAR only. WATCH itself is computed for every material-plant with activity
+    (see ``watch.py``), and counting all of them here made the summary's GRNI
+    KPI include Min-Max and excluded materials that the dashboard's own WATCH
+    and GRNI tables -- OAR-only -- never show.
+    """
     exceptions: list[ExceptionQueueItem] = []
     for metric in metrics:
-        if not metric.gr_not_issued_flag:
+        if not metric.gr_not_issued_flag or metric.material_scope is not MaterialScope.OAR:
             continue
         exceptions.append(
             ExceptionQueueItem(

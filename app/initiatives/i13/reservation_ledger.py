@@ -158,6 +158,7 @@ def _attach_reservation(
                 gi_link_status=gi_link_status,
                 gi_link_reason=None if gi_rows else "No goods-issue movement carries this reservation's RSNUM/RSPOS yet.",
                 material_scope=material_scope,
+                reservation_deleted=bool(reservation.get("Xloek")),
             )
         )
     return entries

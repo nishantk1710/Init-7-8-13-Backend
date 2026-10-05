@@ -281,6 +281,10 @@ class ReservationLedgerEntry:
 
     material_scope: MaterialScope
 
+    # RESB.XLOEK. A deleted reservation item is not a live demand: it stays in
+    # the ledger as history, but no exception engine raises against it.
+    reservation_deleted: bool = False
+
 
 @dataclass(frozen=True)
 class AttributionResult:

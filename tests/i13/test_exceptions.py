@@ -113,3 +113,33 @@ def test_gr_not_issued_30_day_exception(data_dir: Path, i13_config) -> None:
     gr_not_issued = [e for e in exceptions if e.type is ExceptionType.GR_NOT_ISSUED_30_DAY]
     assert len(gr_not_issued) == 1
     assert gr_not_issued[0].material == "MAT1"
+
+
+def test_no_plan_not_raised_for_a_deleted_reservation(data_dir: Path, i13_config) -> None:
+    deleted = {**_reservation(), "Xloek": True}
+    exceptions = _build(reservations=[deleted], prs=[_pr()], plan_rows=[], data_dir=data_dir, i13_config=i13_config)
+    assert not [e for e in exceptions if e.type is ExceptionType.NO_PLAN]
+
+
+def test_no_plan_counted_once_when_the_pr_splits_across_po_lines(data_dir: Path, i13_config) -> None:
+    po_lines = [
+        {"Ebeln": "4500000000", "Ebelp": ebelp, "Banfn": "2000000000", "Bnfpo": "0010",
+         "Matnr": "MAT1", "Werks": "1000", "Menge": Decimal("5")}
+        for ebelp in ("0010", "0020")
+    ]
+    exceptions = _build(
+        reservations=[_reservation()], prs=[_pr()], po_items=po_lines, plan_rows=[],
+        data_dir=data_dir, i13_config=i13_config,
+    )
+    no_plan = [e for e in exceptions if e.type is ExceptionType.NO_PLAN]
+    assert [e.id for e in no_plan] == ["EXC-NO_PLAN-1000000000-0001"]
+
+
+def test_gr_not_issued_not_raised_for_a_non_oar_material(data_dir: Path, i13_config) -> None:
+    po_item = {"Ebeln": "4500000000", "Ebelp": "0010", "Banfn": "2000000000", "Bnfpo": "0010", "Matnr": "MAT1", "Werks": "1000", "Menge": Decimal("10")}
+    gr_row = {"Ebeln": "4500000000", "Ebelp": "0010", "Bwart": "101", "Menge": Decimal("10"), "BudatMkpf": AS_OF - timedelta(days=45)}
+    exceptions = _build(
+        reservations=[_reservation()], prs=[_pr()], po_items=[po_item], gr_rows=[gr_row],
+        scope_index={("MAT1", "1000"): "VB"}, plan_rows=[], data_dir=data_dir, i13_config=i13_config,
+    )
+    assert not [e for e in exceptions if e.type is ExceptionType.GR_NOT_ISSUED_30_DAY]
