@@ -323,9 +323,66 @@ class ReconciliationSourceResult(BaseModel):
     status: str
 
 
+class Zmm065MismatchResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    material: str
+    plant: str
+    report_band: str
+    platform_band: str
+    report_last_issue_date: date | None
+    platform_last_issue_date: date | None
+    reason: str
+
+
+class Zmm065ValidationResponse(BaseModel):
+    """FR-6 aging reconciliation against ZMM065, as of the report's run date."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    report_date: date | None
+    rows_in_report: int
+    compared: int
+    agreed: int
+    agreement_pct: float | None
+    excluded_non_aging: dict[str, int]
+    mismatch_reasons: dict[str, int]
+    #: The first ``DETAIL_LIMIT`` disagreements; the counts above are complete.
+    mismatches: list[Zmm065MismatchResponse]
+
+
+class GrReceiptCheckResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    post_date: date
+    material: str
+    po_number: str
+    po_item: str
+    status: str
+    plant: str | None
+
+
+class Gr30DayValidationResponse(BaseModel):
+    """FR-6 receipt-by-receipt confirmation of the 30-Day GR Report."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    report_date: date | None
+    window_start: date | None
+    rows_in_report: int
+    confirmed: int
+    plants: dict[str, int]
+    platform_receipts_in_window: int
+    unconfirmed: list[GrReceiptCheckResponse]
+
+
 class ValidationResponse(BaseModel):
     tolerance_pct: Decimal
     results: list[ReconciliationSourceResult]
+    #: Null when the report is not loaded; its result rows then read
+    #: REFERENCE_UNAVAILABLE.
+    zmm065: Zmm065ValidationResponse | None = None
+    gr_30_day: Gr30DayValidationResponse | None = None
 
 
 class I13SummaryResponse(BaseModel):
