@@ -56,6 +56,8 @@ from app.api.assistant.schemas import (
     JustificationModel,
     JustificationRequest,
     LinkedReservationModel,
+    MaterialMatchModel,
+    MaterialSearchResponse,
     NarrativeModel,
     PlanModel,
     RoutingModel,
@@ -70,6 +72,7 @@ from app.api.assistant.schemas import (
 )
 from app.api.i13.deps import Actor, get_current_actor
 from app.assistant import intents
+from app.assistant import material_search
 from app.assistant import session as session_service
 from app.assistant import turns as turn_service
 from app.assistant.models import (
@@ -168,6 +171,46 @@ def _routing_model(routed) -> RoutingModel:
         mrp_type=routed.mrp_type,
         also_matched=routed.also_matched.value if routed.also_matched else None,
         reason=routed.reason,
+    )
+
+
+MATERIAL_SEARCH_NOTE = (
+    "Hint only -- the flow is decided when the session opens. Plants 1300 and "
+    "1500 only."
+)
+
+
+@router.get(
+    "/materials",
+    response_model=MaterialSearchResponse,
+    summary="Find a material by number or name, for the assistant's opener",
+)
+def search_materials(
+    db: DbDep,
+    q: Annotated[str, Query(max_length=80)] = "",
+    limit: Annotated[
+        int, Query(ge=1, le=material_search.MAX_LIMIT)
+    ] = material_search.DEFAULT_LIMIT,
+) -> MaterialSearchResponse:
+    """Material+plant pairs the typed text could mean. Writes nothing.
+
+    A query too short to mean anything is an empty list, not a 422: the box
+    calls this as the person types, and the first keystroke is not an error.
+    """
+    matches = material_search.search(db, q, limit=limit)
+    return MaterialSearchResponse(
+        items=[
+            MaterialMatchModel(
+                material_id=m.material_id,
+                description=m.description,
+                plant=m.plant,
+                plant_name=m.plant_name,
+                flow_hint=m.flow_hint.value,
+                mrp_type=m.mrp_type,
+            )
+            for m in matches
+        ],
+        note=MATERIAL_SEARCH_NOTE,
     )
 
 

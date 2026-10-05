@@ -121,6 +121,24 @@ class RoutingModel(AssistantModel):
     reason: str
 
 
+class MaterialMatchModel(AssistantModel):
+    """One material at one plant that a typed fragment could mean."""
+
+    material_id: str
+    description: str | None = None
+    plant: str
+    plant_name: str | None = None
+    flow_hint: Literal["i08", "i13", "none"]
+    mrp_type: str | None = None
+
+
+class MaterialSearchResponse(AssistantModel):
+    """The opener's suggestions. ``flowHint`` is a hint; the router decides."""
+
+    items: list[MaterialMatchModel]
+    note: str
+
+
 class NarrativeModel(AssistantModel):
     """A model-written sentence, and the prompt behind it.
 
