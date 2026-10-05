@@ -24,10 +24,13 @@ def _z(material: str, stock_type: str, last_gi: date | None, plant: str = "1300"
     return Zmm065Row(material=material, plant=plant, stock_type=stock_type, last_gi_date=last_gi, days=days)
 
 
-def _validate(rows, platform_last: dict, history_start=date(2025, 8, 8)):
+def _validate(rows, platform_last: dict, history_start=date(2025, 8, 8), moved: set[str] | None = None):
+    """``moved``: materials with any movement at all; defaults to every row's."""
+    moved = moved if moved is not None else {row.material for row in rows}
     return validate_zmm065(
         rows,
         last_issue_as_of=lambda key, day: platform_last.get(key[0]),
+        has_movements=lambda key: key[0] in moved,
         history_start=history_start,
         thresholds=THRESHOLDS,
         tolerance_pct=5.0,
@@ -78,6 +81,17 @@ def test_same_last_issue_but_a_different_class_is_the_reports_own_rule() -> None
 def test_differing_last_issue_dates_are_reported() -> None:
     result = _validate([_z("A", "Slow Moving", date(2025, 5, 1))], {"A": date(2026, 7, 1)})
     assert result.mismatches[0].reason is Zmm065MismatchReason.LAST_ISSUE_DATE_DIFFERS
+
+
+def test_a_material_with_no_movements_at_all_is_not_in_the_platforms_data() -> None:
+    # Received-only would still count as "in the data"; nothing at all does not.
+    rows = [_z("A", "Fast Moving", date(2026, 7, 30)), _z("B", "Fast Moving", date(2026, 7, 30))]
+    result = _validate(rows, {}, moved={"B"})
+    reasons = {m.material: m.reason for m in result.mismatches}
+    assert reasons == {
+        "A": Zmm065MismatchReason.MATERIAL_NOT_IN_PLATFORM_DATA,
+        "B": Zmm065MismatchReason.LAST_ISSUE_DATE_DIFFERS,
+    }
 
 
 def test_no_rows_means_no_reference() -> None:
