@@ -196,6 +196,17 @@ class I13Snapshot:
     #: overlay when that is on.
     sgtxt_by_reservation: Mapping[Key, str] = field(default_factory=dict)
 
+    #: Issue and issue-reversal movement rows (201/261/202/262) per
+    #: material-plant, so a band can be computed as of any day -- FR-6's
+    #: reconciliation against ZMM065 needs the band on the report's run date.
+    issue_events: Mapping[Key, tuple[Row, ...]] = field(default_factory=dict)
+    #: Earliest posting date in the movement history: what the platform can see
+    #: back to, which explains a band that disagrees with an older report.
+    movement_history_start: date | None = None
+    #: (PO, item) -> posting dates of its goods receipts (EKBE category E, 101),
+    #: for confirming the 30-Day GR Report receipt by receipt.
+    receipt_dates_by_po_line: Mapping[Key, frozenset[date]] = field(default_factory=dict)
+
     notes: tuple[str, ...] = field(default=())
 
     # --- derived indexes, built on first use and then reused ---------------
@@ -286,6 +297,29 @@ def _monthly_consumption(movements: list[Row]) -> dict[Key, tuple[MonthlyConsump
             )
         )
     return {key: tuple(values) for key, values in series.items()}
+
+
+def _issue_events(movements: list[Row]) -> tuple[dict[Key, tuple[Row, ...]], date | None]:
+    """Issue and issue-reversal rows per material-plant, and the history start."""
+    wanted = set(ISSUE_TYPES) | reversal_types_for(ISSUE_TYPES)
+    grouped: dict[Key, list[Row]] = defaultdict(list)
+    start: date | None = None
+    for row in movements:
+        moved_on = row.get("BudatMkpf")
+        if moved_on is not None and (start is None or moved_on < start):
+            start = moved_on
+        if row.get("Bwart") in wanted:
+            grouped[(row["Matnr"], row["Werks"])].append(row)
+    return {key: tuple(rows) for key, rows in grouped.items()}, start
+
+
+def _receipt_dates(gr_rows: list[Row]) -> dict[Key, frozenset[date]]:
+    """(PO, item) -> the posting dates of its 101 goods receipts."""
+    dates: dict[Key, set[date]] = defaultdict(set)
+    for row in gr_rows:
+        if row.get("Bwart") in RECEIPT_TYPES and row.get("BudatMkpf") is not None:
+            dates[(row["Ebeln"], row["Ebelp"])].add(row["BudatMkpf"])
+    return {key: frozenset(values) for key, values in dates.items()}
 
 
 def reference_date_for(settings: Settings | None = None) -> date:
@@ -404,6 +438,8 @@ def build_i13_snapshot(
     )
     monthly = timed("monthly consumption", lambda: _monthly_consumption(movement_repo.get_movement_history()))
     stock_by_key = dict(movement_repo.get_current_stock())
+    issue_events, history_start = _issue_events(movement_repo.get_movement_history())
+    receipt_dates = _receipt_dates(procurement_repo.get_goods_receipt_history())
 
     # Session IDs typed into the reservations' item text (SGTXT): keep the
     # text, and bring session_reservation_link in step with it. The same rows
@@ -455,6 +491,9 @@ def build_i13_snapshot(
         stock_by_key=stock_by_key,
         reference_plans=reference_plans,
         sgtxt_by_reservation=sgtxt_by_reservation,
+        issue_events=issue_events,
+        movement_history_start=history_start,
+        receipt_dates_by_po_line=receipt_dates,
         oar_position_count=len(oar_keys),
         band_counts=band_counts,
     )

@@ -425,6 +425,11 @@ def detect_exceptions(
             no_plan_reason = no_plan_reason_by_reservation.get(
                 (entry.reservation_number, entry.reservation_item), no_plan_reason
             )
+        if entry.reservation_deleted:
+            # RESB.XLOEK: not a live demand. Clearing the reason makes both
+            # NO_PLAN and NO_PLAN_GRNI's condition false, so an exception raised
+            # before the deletion is resolved by this run rather than left open.
+            no_plan_reason = None
         grni_snapshot = grni_snapshots.get((entry.material, entry.plant))
         grni_flag = grni_snapshot.gr_not_issued_flag if grni_snapshot else None
 
