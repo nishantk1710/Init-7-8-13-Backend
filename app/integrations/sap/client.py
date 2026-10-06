@@ -144,6 +144,7 @@ class SapClient:
         *,
         filter: str | None = None,
         allow_unsupported_filter: bool = False,
+        service: str | None = None,
     ) -> int | None:
         """``$count``, or None where SAP cannot produce a trustworthy one.
 
@@ -156,20 +157,29 @@ class SapClient:
         stop paging early and hand the caller a fraction of the set as if it
         were complete. Declining to ask demotes the read to
         page-until-short-page, which is exact.
+
+        ``service`` is for a set the recorded contract does not cover -- the
+        gate-pass sets of ZMM_KPI02_GP_SRV, which the CSV extract delivers but
+        discovery never captured. The path is built from it directly, and the
+        contract's filter checks, which know nothing about such a set, are
+        skipped.
         """
-        target = entity_set(name)
-        if name in COUNT_CAPPED_SETS:
-            logger.info(
-                "%s: not asking for $count -- it is capped on this set and would "
-                "stop paging early. Reading until a short page instead.",
-                name,
-            )
-            return None
-        if not allow_unsupported_filter:
-            check_filter(name, filter)
+        if service is not None:
+            api_path = f"sap/opu/odata/sap/{service}/{name}"
+        else:
+            api_path = entity_set(name).api_path
+            if name in COUNT_CAPPED_SETS:
+                logger.info(
+                    "%s: not asking for $count -- it is capped on this set and would "
+                    "stop paging early. Reading until a short page instead.",
+                    name,
+                )
+                return None
+            if not allow_unsupported_filter:
+                check_filter(name, filter)
         try:
             body = self._transport.get(
-                f"{target.api_path}/$count",
+                f"{api_path}/$count",
                 _query(filter=filter, json_format=False),
                 context=f"{name}/$count",
             )

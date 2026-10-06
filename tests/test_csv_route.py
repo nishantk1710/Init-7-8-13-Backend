@@ -118,8 +118,28 @@ class TestWindows:
 
 
 class TestTableRegister:
-    def test_all_21_sets_are_covered(self) -> None:
-        assert len(CSV_TABLES) == 21
+    def test_all_21_sets_and_the_three_gate_pass_tables_are_covered(self) -> None:
+        assert len(CSV_TABLES) == 24
+        gate_pass = {t.sap_table for t in CSV_TABLES if t.count_service}
+        assert gate_pass == {"ZMM_GP_HDR", "ZMM_GP_ITEM", "ZMM_GP_IN"}
+
+    def test_gate_pass_is_counted_on_its_own_service(self) -> None:
+        """The recorded contract covers only the KPI02 services, so the GP
+        $count has to name ZMM_KPI02_GP_SRV or every delivery loads unverified."""
+
+        class Client:
+            def count(self, name, *, filter=None, service=None):
+                self.asked = (name, service)
+                return 304
+
+        client = Client()
+        assert csv_pull._expected_rows(csv_table("ZMM_GP_HDR"), client) == 304
+        assert client.asked == ("GatePassHeaderSet", "ZMM_KPI02_GP_SRV")
+
+    def test_gate_pass_takes_the_wide_window_and_an_exact_check(self) -> None:
+        for name in ("ZMM_GP_HDR", "ZMM_GP_ITEM", "ZMM_GP_IN"):
+            assert csv_table(name).window(date(2026, 10, 6))[0] == "19000101"
+            assert csv_table(name).reconcile.value == "exact"
 
     def test_every_entity_set_is_named_once(self) -> None:
         sets = [t.entity_set for t in CSV_TABLES]
@@ -398,6 +418,82 @@ class TestTableIdentification:
         assert not table_of(self.OBSERVED["CDHDR"]).startswith("UNKNOWN")
         assert not table_of(self.OBSERVED["CDPOS"]).startswith("UNKNOWN")
 
+    # The narrow layout SAP switched to on 30-Sep: exactly the OData projection,
+    # no client column. These three were copied from the landed files; every
+    # one went to UNKNOWN_<hash> while the signatures demanded MANDT.
+    NARROW_OBSERVED = {
+        "MARA": ["MATNR", "MTART", "MATKL", "MEINS", "BISMT", "LVORM", "MSTAE"],
+        "EKKO": ["EBELN", "BSART", "BEDAT", "AEDAT", "LIFNR", "EKORG", "EKGRP", "WAERS"],
+        "EKET": ["EBELN", "EBELP", "ETENR", "EINDT", "MENGE", "WEMNG"],
+    }
+
+    # Tables SAP says are moving to the narrow layout, written in OData key
+    # order. Not observed yet -- they pin the rule, not a delivery.
+    NARROW_EXPECTED = {
+        "MARC": ["MATNR", "WERKS", "LVORM", "DISMM"],
+        "MARD": ["MATNR", "WERKS", "LGORT", "LABST"],
+        "MCHB": ["MATNR", "WERKS", "LGORT", "CHARG", "CLABS"],
+        "MBEW": ["MATNR", "BWKEY", "BWTAR", "LBKUM"],
+        "MAKT": ["MATNR", "SPRAS", "MAKTX"],
+        "EKPO": ["EBELN", "EBELP", "LOEKZ", "AEDAT"],
+        "EKBE": ["EBELN", "EBELP", "ZEKKN", "VGABE"],
+        "MKPF": ["MBLNR", "MJAHR", "BUDAT"],
+        "MSEG": ["MBLNR", "MJAHR", "ZEILE", "BWART"],
+        "EBAN": ["BANFN", "BNFPO", "BSART"],
+        "RESB": ["RSNUM", "RSPOS", "XLOEK"],
+        "EINA": ["INFNR", "MATNR", "LIFNR"],
+        "EINE": ["INFNR", "EKORG", "ESOKZ", "WERKS"],
+        "LFA1": ["LIFNR", "NAME1"],
+        "CDHDR": ["OBJECTCLAS", "OBJECTID", "CHANGENR", "USERNAME"],
+        "CDPOS": ["OBJECTCLAS", "OBJECTID", "CHANGENR", "TABNAME", "TABKEY"],
+        "S031": ["SPMON", "WERKS", "MATNR", "LGORT"],
+        "S032": ["WERKS", "LGORT", "MATNR", "DISPO"],
+    }
+
+    @pytest.mark.parametrize("table", sorted(NARROW_OBSERVED))
+    def test_the_narrow_header_resolves_to_its_own_table(self, table: str) -> None:
+        from app.api.events.csv_upload import table_of
+
+        assert table_of(self.NARROW_OBSERVED[table]) == table
+
+    @pytest.mark.parametrize("table", sorted(NARROW_EXPECTED))
+    def test_a_table_converted_to_narrow_keeps_its_name(self, table: str) -> None:
+        from app.api.events.csv_upload import table_of
+
+        assert table_of(self.NARROW_EXPECTED[table]) == table
+
+    def test_wide_and_narrow_of_one_table_land_in_one_file(self) -> None:
+        from app.api.events.csv_upload import table_of
+
+        for table, narrow in self.NARROW_OBSERVED.items():
+            wide = ["MANDT", *narrow]
+            assert table_of(wide) == table_of(narrow) == table
+
+    def test_no_two_tables_collide_across_both_layouts(self) -> None:
+        from app.api.events.csv_upload import table_of
+
+        seen: dict[str, str] = {}
+        for headers in (self.OBSERVED, self.NARROW_OBSERVED, self.NARROW_EXPECTED):
+            for table, header in headers.items():
+                resolved = table_of(header)
+                assert resolved == table, f"{header[:4]} resolved to {resolved}, not {table}"
+                seen.setdefault(table, resolved)
+        assert len(set(seen.values())) == len(seen)
+
+    def test_the_gate_pass_header_seen_on_06_oct_resolves(self) -> None:
+        from app.api.events.csv_upload import table_of
+
+        header = ["MANDT", "ZZGP_NO", "ZZYEAR", "ZZGP_TYPE", "ZZSY_CREATED_BY"]
+        assert table_of(header) == "ZMM_GP_HDR"
+
+    def test_gate_pass_items_and_returns_are_told_apart_by_their_key(self) -> None:
+        """Item adds ZZPOSNR, return adds ZCOUNT too -- wherever they sit."""
+        from app.api.events.csv_upload import table_of
+
+        assert table_of(["MANDT", "ZZGP_NO", "ZZYEAR", "ZZPOSNR", "ZZDELETED"]) == "ZMM_GP_ITEM"
+        assert table_of(["MANDT", "ZZGP_NO", "ZZYEAR", "ZZPOSNR", "ZCOUNT", "ZZIN_FLAG"]) == "ZMM_GP_IN"
+        assert table_of(["mandt", "zzgp_no", "zzyear", "zcount", "zzposnr"]) == "ZMM_GP_IN"
+
 
 class TestRequestIdLength:
     """$metadata says MaxLength=20. Live SAP disagrees.
@@ -460,6 +556,26 @@ class TestRequestIdLength:
 
         ids = {new_request_id(t.sap_table, now=1_790_000_000) for t in CSV_TABLES}
         assert len(ids) == len(CSV_TABLES)
+
+    def test_gate_pass_ids_drop_the_zmm_prefix_and_the_underscore(self) -> None:
+        """table[:4] gave FZMM_..., acknowledged and never delivered. The GP
+        stems below are the ones SAP delivered on 30-Sep."""
+        import re
+
+        from app.ingest.csv_pull import REQUEST_ID_MAX, new_request_id
+
+        expected = {"ZMM_GP_HDR": "FGPHD", "ZMM_GP_ITEM": "FGPIT", "ZMM_GP_IN": "FGPIN"}
+        for table, stem in expected.items():
+            rid = new_request_id(table, now=1_790_000_000)
+            assert rid.startswith(stem)
+            assert re.fullmatch(r"[A-Z]+[0-9]+", rid)
+            assert len(rid) == REQUEST_ID_MAX
+
+    def test_the_kpi02_ids_are_unchanged(self) -> None:
+        from app.ingest.csv_pull import new_request_id
+
+        for table, stem in {"MARA": "FMARA", "CDHDR": "FCDHD", "S031": "FS031", "LFA1": "FLFA1"}.items():
+            assert new_request_id(table, now=1_790_000_000).startswith(stem)
 
 
 # --- Firing the sweep as a batch --------------------------------------------

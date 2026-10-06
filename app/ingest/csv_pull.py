@@ -57,6 +57,7 @@ lands, never by what the trigger said.
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -161,8 +162,16 @@ def new_request_id(sap_table: str, *, now: float | None = None) -> str:
     table letters keep the ids apart. Across processes, two fires of ONE
     table in ONE second would collide, and fire() refuses a second open
     request for a table.
+
+    Letters and digits only, and a gate-pass table drops its ZMM prefix:
+    ZMM_GP_HDR -> FGPHD, ZMM_GP_ITEM -> FGPIT, ZMM_GP_IN -> FGPIN. The naive
+    first four characters give FZMM_..., and an id with an underscore is
+    acknowledged and never delivered; the GP stems delivered on 30-Sep.
     """
-    table = sap_table.upper()[:_TABLE_LETTERS]
+    letters = re.sub(r"[^A-Z0-9]", "", sap_table.upper())
+    if letters.startswith("ZMM") and len(letters) > len("ZMM"):
+        letters = letters[len("ZMM"):]
+    table = letters[:_TABLE_LETTERS]
     seconds = int(time.time() if now is None else now) % 10**REQUEST_ID_DIGITS
     with _issued_lock:
         # Never re-issue a (table, second) this process has already used: a
@@ -219,7 +228,9 @@ def _expected_rows(spec: CsvTable, client: SapClient | None) -> int | None:
     if client is None:
         return None
     try:
-        return client.count(spec.entity_set, filter=spec.count_filter)
+        return client.count(
+            spec.entity_set, filter=spec.count_filter, service=spec.count_service
+        )
     except SapError as exc:
         logger.warning(
             "%s: no $count for %s (%s); completeness will be unverified",

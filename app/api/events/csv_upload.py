@@ -69,51 +69,65 @@ CANDIDATE_DELIMITERS = ",;\t|"
 # as a header or a query parameter, that becomes the source and this becomes a
 # fallback. Until then an unrecognised header lands under a stable fingerprint
 # rather than being guessed at or refused.
+#
+# TWO LAYOUTS, ONE SET OF SIGNATURES
+#
+# Until 30-Sep every table arrived WIDE: the full SAP table, the client column
+# first (MANDT; MANDANT for change documents). Since SAP's 30-Sep rebuild some
+# tables arrive NARROW: exactly the OData projection, no client column at all --
+# MARA as MATNR,MTART,..., EKKO as EBELN,BSART,..., EKET as EBELN,EBELP,ETENR,...
+# Signatures written with MANDT matched none of those, so they landed as
+# UNKNOWN_<hash>, untracked, and their requests timed out. More tables are
+# moving to the narrow layout, so the client column is stripped BEFORE
+# matching and every signature below is written without it: one rule for both
+# layouts, and a table converted tomorrow keeps resolving to its own name.
+CLIENT_COLUMNS = ("MANDT", "MANDANT")
+
 TABLE_SIGNATURES: tuple[tuple[tuple[str, ...], str], ...] = (
     # Longest first: matching is a prefix test, so a shorter signature listed
     # earlier would swallow every table that begins the same way. That is not
     # hypothetical -- MBEW once matched MARA and MCHB matched MARD, and their
     # rows were appended into the wrong files without a word of complaint.
-    #
-    # Change documents spell it MANDANT, not MANDT. They are first because
-    # nothing else starts that way.
-    (("MANDANT", "OBJECTCLAS", "OBJECTID", "CHANGENR", "TABNAME"), "CDPOS"),
-    (("MANDANT", "OBJECTCLAS", "OBJECTID", "CHANGENR"), "CDHDR"),
+    (("OBJECTCLAS", "OBJECTID", "CHANGENR", "TABNAME"), "CDPOS"),
+    (("OBJECTCLAS", "OBJECTID", "CHANGENR"), "CDHDR"),
 
-    # LIS statistics: SSOUR/VRSIO in positions two and three, then the period
-    # key (S031) or the plant (S032).
-    (("MANDT", "SSOUR", "VRSIO", "SPMON"), "S031"),
-    (("MANDT", "SSOUR", "VRSIO", "WERKS"), "S032"),
+    # LIS statistics. Wide: SSOUR/VRSIO first, then the period key (S031) or
+    # the plant (S032). Narrow follows the OData key order instead:
+    # Spmon,Werks,Matnr,... (S031) and Werks,Lgort,Matnr (S032).
+    (("SSOUR", "VRSIO", "SPMON"), "S031"),
+    (("SSOUR", "VRSIO", "WERKS"), "S032"),
+    (("SPMON", "WERKS", "MATNR"), "S031"),
+    (("WERKS", "LGORT", "MATNR"), "S032"),
 
-    # Material master family. MARD and MCHB are identical for four columns and
-    # diverge at the fifth, so both need five to be told apart.
-    (("MANDT", "MATNR", "WERKS", "LGORT", "CHARG"), "MCHB"),
-    (("MANDT", "MATNR", "WERKS", "LGORT"), "MARD"),
-    (("MANDT", "MATNR", "WERKS"), "MARC"),
-    (("MANDT", "MATNR", "BWKEY"), "MBEW"),
-    (("MANDT", "MATNR", "SPRAS"), "MAKT"),
-    (("MANDT", "MATNR"), "MARA"),
+    # Material master family. MARD and MCHB are identical for three columns and
+    # diverge at the fourth, so both need four to be told apart.
+    (("MATNR", "WERKS", "LGORT", "CHARG"), "MCHB"),
+    (("MATNR", "WERKS", "LGORT"), "MARD"),
+    (("MATNR", "WERKS"), "MARC"),
+    (("MATNR", "BWKEY"), "MBEW"),
+    (("MATNR", "SPRAS"), "MAKT"),
+    (("MATNR",), "MARA"),
 
-    # Purchasing. EKPO, EKBE and EKET share MANDT,EBELN,EBELP and separate at
-    # the fourth column.
-    (("MANDT", "EBELN", "EBELP", "ZEKKN"), "EKBE"),
-    (("MANDT", "EBELN", "EBELP", "ETENR"), "EKET"),
-    (("MANDT", "EBELN", "EBELP"), "EKPO"),
-    (("MANDT", "EBELN"), "EKKO"),
+    # Purchasing. EKPO, EKBE and EKET share EBELN,EBELP and separate at the
+    # third column; EKKO is EBELN followed by anything else (BSART when narrow).
+    (("EBELN", "EBELP", "ZEKKN"), "EKBE"),
+    (("EBELN", "EBELP", "ETENR"), "EKET"),
+    (("EBELN", "EBELP"), "EKPO"),
+    (("EBELN",), "EKKO"),
 
     # Movements.
-    (("MANDT", "MBLNR", "MJAHR", "ZEILE"), "MSEG"),
-    (("MANDT", "MBLNR", "MJAHR"), "MKPF"),
+    (("MBLNR", "MJAHR", "ZEILE"), "MSEG"),
+    (("MBLNR", "MJAHR"), "MKPF"),
 
     # Requisitions and reservations.
-    (("MANDT", "BANFN", "BNFPO"), "EBAN"),
-    (("MANDT", "RSNUM", "RSPOS"), "RESB"),
+    (("BANFN", "BNFPO"), "EBAN"),
+    (("RSNUM", "RSPOS"), "RESB"),
 
     # Info records: EINE carries the purchasing org where EINA carries MATNR.
-    (("MANDT", "INFNR", "EKORG"), "EINE"),
-    (("MANDT", "INFNR", "MATNR"), "EINA"),
+    (("INFNR", "EKORG"), "EINE"),
+    (("INFNR", "MATNR"), "EINA"),
 
-    (("MANDT", "LIFNR"), "LFA1"),
+    (("LIFNR",), "LFA1"),
 )
 
 
@@ -147,12 +161,43 @@ def looks_like_header(row: list[str]) -> bool:
     return named >= max(1, len(cells) // 2)
 
 
+# Gate-pass Z-tables. All three begin ZZGP_NO, ZZYEAR (after the client column)
+# and differ only in their key: the header has no item number, the items add
+# ZZPOSNR, the returns add ZCOUNT as well (the OData keys of GatePassItemSet /
+# GatePassReturnSet). Told apart by which key columns are PRESENT rather than
+# by position, because only the header's full layout has been seen (06-Oct, 55
+# columns). A wrong guess here is not silent: the chunk counts against the
+# wrong request, and its exact $count check fails.
+_GATE_PASS_PREFIX = ("ZZGP_NO", "ZZYEAR")
+
+
+def _gate_pass_table(columns: tuple[str, ...]) -> str | None:
+    if columns[: len(_GATE_PASS_PREFIX)] != _GATE_PASS_PREFIX:
+        return None
+    present = set(columns)
+    if "ZCOUNT" in present:
+        return "ZMM_GP_IN"
+    if "ZZPOSNR" in present:
+        return "ZMM_GP_ITEM"
+    return "ZMM_GP_HDR"
+
+
 def table_of(header: list[str]) -> str:
-    """The SAP table a header row describes, or a fingerprint if unrecognised."""
+    """The SAP table a header row describes, or a fingerprint if unrecognised.
+
+    Wide (client column first) and narrow (OData projection, no client column)
+    layouts resolve to the same table: the client column is dropped first.
+    """
     columns = tuple(c.strip().upper() for c in header)
+    fields = columns[1:] if columns and columns[0] in CLIENT_COLUMNS else columns
+    gate_pass = _gate_pass_table(fields)
+    if gate_pass is not None:
+        return gate_pass
     for signature, table in TABLE_SIGNATURES:
-        if columns[: len(signature)] == signature:
+        if fields[: len(signature)] == signature:
             return table
+    # Over the header as received, client column included, so a fingerprint
+    # seen before this change still names the same file.
     fingerprint = hashlib.sha256(",".join(columns).encode()).hexdigest()[:8]
     return f"UNKNOWN_{fingerprint}"
 
