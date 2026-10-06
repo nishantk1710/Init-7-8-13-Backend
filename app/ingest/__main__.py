@@ -128,6 +128,26 @@ def _parser() -> argparse.ArgumentParser:
             "delivery that died; it does not recover the rows."
         ),
     )
+    parser.add_argument(
+        "--csv-download",
+        action="store_true",
+        help=(
+            "copy each table's newest landed CSV out of storage to local disk, "
+            "named <TABLE>_<RequestId>.csv, with a manifest. On App Service the "
+            "default is /home/csv_downloads/<stamp>/ -- download it as a zip "
+            "from Kudu: /api/zip/csv_downloads/. Read-only against storage."
+        ),
+    )
+    parser.add_argument(
+        "--request-id",
+        metavar="ID",
+        help="with --csv-download and --table: copy this request's file instead of the newest",
+    )
+    parser.add_argument(
+        "--download-to",
+        metavar="DIR",
+        help="with --csv-download: the folder to copy into (default /home/csv_downloads/<stamp>)",
+    )
 
     scope = parser.add_mutually_exclusive_group()
     scope.add_argument("--all", action="store_true", help="every entity set")
@@ -337,7 +357,45 @@ def _csv(args) -> int:
     if args.csv_verify:
         failures += _csv_verify(names)
 
+    if args.csv_download:
+        failures += _csv_download(names, args)
+
     return 1 if failures else 0
+
+
+def _csv_download(names: list[str], args) -> int:
+    """Copy the newest landed file per table to local disk. Returns failures."""
+    from pathlib import Path
+
+    from app.ingest.csv_download import download
+
+    if args.request_id and len(names) != 1:
+        print("--request-id names one request: use it with --table, not --all.")
+        return 1
+
+    target, results = download(
+        names,
+        Path(args.download_to) if args.download_to else None,
+        request_id=args.request_id,
+    )
+    print(f"\nCSV download -> {target}\n")
+    failures = 0
+    for r in results:
+        if r.ok:
+            rows = (
+                f"{r.received_rows:,} of {r.expected_rows:,} row(s)"
+                if r.received_rows is not None and r.expected_rows
+                else "untracked delivery"
+            )
+            print(f"  [ok ] {r.sap_table:<12} {Path(r.local_path).name:<34} "
+                  f"{r.bytes:>12,} bytes  {r.status or '-':<9} {rows}")
+        else:
+            failures += 1
+            print(f"  [FAIL] {r.sap_table:<12} {r.error}")
+    print(f"\n  manifest: {target / '_download_manifest.csv'}")
+    if str(target).startswith("/home/"):
+        print(f"  download as a zip from Kudu: /api/zip/{target.relative_to('/home').as_posix()}/")
+    return failures
 
 
 def _csv_verify(names: list[str]) -> int:
@@ -508,7 +566,7 @@ def main(argv: list[str] | None = None) -> int:
         return _abandon()
     if args.csv_status:
         return _csv_status()
-    if args.csv_pull or args.csv_load or args.csv_verify:
+    if args.csv_pull or args.csv_load or args.csv_verify or args.csv_download:
         return _csv(args)
 
     if not (args.fetch or args.load):

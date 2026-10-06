@@ -86,6 +86,12 @@ class CsvTable:
     this records what was measured, so a correct delivery is not failed
     against a total it was never going to reach."""
 
+    count_service: str | None = None
+    """The OData service holding ``entity_set``, for a set the recorded
+    discovery contract does not cover. Only the gate-pass sets need it: the
+    contract was generated from the two KPI02 services, so without this their
+    $count would fail the lookup and every delivery would load unverified."""
+
     @property
     def blocked(self) -> str | None:
         """Why SAP will not deliver this table right now, or None.
@@ -150,9 +156,10 @@ class CsvTable:
         return WIDE_WINDOW_START, forward.strftime(DATE_FORMAT)
 
 
-# All 21 sets the contract exposes, by the SAP table each mirrors. The mapping
-# is the one cpi_discovery.py verified against live $metadata; the entity_set
-# column is what contract.py resolves for the $count.
+# All 21 sets the contract exposes, by the SAP table each mirrors, plus the
+# three gate-pass Z-tables. The mapping is the one cpi_discovery.py verified
+# against live $metadata; the entity_set column is what contract.py resolves
+# for the $count (count_service where the contract does not cover the set).
 CSV_TABLES: tuple[CsvTable, ...] = (
     # --- Master data: everything, no meaningful date window ----------------
     CsvTable("MARA", "MaterialSet", windowed=False, note="material master"),
@@ -217,6 +224,17 @@ CSV_TABLES: tuple[CsvTable, ...] = (
     ),
     CsvTable("CDPOS", "ChangeDocItemSet", windowed=True,
              note="FR-9 adoption; items for the extracted tables only"),
+    # --- Gate pass: landed as evidence -------------------------------------
+    # Descoped from I08 on 15-Aug, but pulled so the files sit in ADLS beside
+    # the rest. SAP has delivered all three since 30-Sep, in the wide layout
+    # and with exact counts (304 / 319 / 24 on 06-Oct). The wide window keeps
+    # the check EXACT, which is what those deliveries met.
+    CsvTable("ZMM_GP_HDR", "GatePassHeaderSet", windowed=False,
+             note="gate pass header; evidence only", count_service="ZMM_KPI02_GP_SRV"),
+    CsvTable("ZMM_GP_ITEM", "GatePassItemSet", windowed=False,
+             note="gate pass items; evidence only", count_service="ZMM_KPI02_GP_SRV"),
+    CsvTable("ZMM_GP_IN", "GatePassReturnSet", windowed=False,
+             note="gate pass returns; evidence only", count_service="ZMM_KPI02_GP_SRV"),
 )
 
 BY_TABLE: dict[str, CsvTable] = {t.sap_table: t for t in CSV_TABLES}

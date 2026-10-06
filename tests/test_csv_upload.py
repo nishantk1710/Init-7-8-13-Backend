@@ -254,6 +254,19 @@ class TestChunkLanding:
         assert body["stored"].startswith("csv/EKPO/")
         assert body["stored"].endswith("/EKPO.csv")
 
+    def test_narrow_files_land_under_their_own_table_names(self, landing) -> None:
+        """MARA, EKKO and EKET have arrived without MANDT since 30-Sep. They
+        used to land as UNKNOWN_<hash>, where no request could count them."""
+        cases = {
+            "MARA": "MATNR,MTART,MATKL,MEINS,BISMT,LVORM,MSTAE\n000000000000000011,ERSA,M01,EA,,,\n",
+            "EKKO": "EBELN,BSART,BEDAT,AEDAT,LIFNR,EKORG,EKGRP,WAERS\n4000000000,NB,20130419,20130419,100001,1000,001,ZAR\n",
+            "EKET": "EBELN,EBELP,ETENR,EINDT,MENGE,WEMNG\n4000000000,00010,0001,20130423,1.000,0.000\n",
+        }
+        for table, body in cases.items():
+            stored = post_chunk(body).json()["stored"]
+            assert stored.startswith(f"csv/{table}/"), stored
+            assert stored.endswith(f"/{table}.csv"), stored
+
     def test_two_tables_land_in_separate_files(self, landing) -> None:
         ekpo = post_chunk(f"{EKPO_HEADER}\n800,4500000001,00010,\n").json()["stored"]
         mseg = post_chunk(f"{MSEG_HEADER}\n800,4900000001,2026,0001\n").json()["stored"]
