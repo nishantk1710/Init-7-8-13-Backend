@@ -69,10 +69,11 @@ def get_validation(
     tolerance = config.reconciliation.tolerance_pct
     if snapshot is not None:
         issue_events, history_start = snapshot.issue_events, snapshot.movement_history_start
+        moved_keys = {(m.material, m.plant) for m in snapshot.movement_metrics}
         po_line_plant = _po_line_plant(snapshot.procurement_chain)
         receipt_dates = snapshot.receipt_dates_by_po_line
     else:
-        issue_events, history_start, po_line_plant, receipt_dates = _live_inputs(db)
+        issue_events, history_start, po_line_plant, receipt_dates, moved_keys = _live_inputs(db)
 
     def last_issue_as_of(key: Key, day: date) -> date | None:
         return last_unreversed_date(list(issue_events.get(key, ())), ISSUE_TYPES, as_of=day)
@@ -82,6 +83,7 @@ def get_validation(
         validate_zmm065(
             zmm065_rows,
             last_issue_as_of=last_issue_as_of,
+            has_movements=lambda key: key in moved_keys,
             history_start=history_start,
             thresholds=config.aging,
             tolerance_pct=tolerance,
@@ -126,7 +128,9 @@ def _live_inputs(db: Session):
     wanted = set(ISSUE_TYPES) | reversal_types_for(ISSUE_TYPES)
     issue_events: dict[Key, list] = defaultdict(list)
     history_start: date | None = None
+    moved_keys: set[Key] = set()
     for row in movement_repo.get_movement_history():
+        moved_keys.add((row["Matnr"], row["Werks"]))
         moved_on = row.get("BudatMkpf")
         if moved_on is not None and (history_start is None or moved_on < history_start):
             history_start = moved_on
@@ -137,7 +141,7 @@ def _live_inputs(db: Session):
         if row.get("Bwart") in RECEIPT_TYPES and row.get("BudatMkpf") is not None:
             receipt_dates[(row["Ebeln"], row["Ebelp"])].add(row["BudatMkpf"])
     po_line_plant = _po_line_plant(build_procurement_chain(procurement_repo))
-    return issue_events, history_start, po_line_plant, receipt_dates
+    return issue_events, history_start, po_line_plant, receipt_dates, moved_keys
 
 
 def _unavailable(source_name: str) -> dict:

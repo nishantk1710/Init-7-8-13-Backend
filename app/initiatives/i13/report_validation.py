@@ -67,6 +67,11 @@ DETAIL_LIMIT = 200
 
 
 class Zmm065MismatchReason(str, Enum):
+    #: The platform holds no goods movement of any kind for this material-plant,
+    #: so it has nothing to compare. Usually a data-coverage gap -- the extract
+    #: in the database is not the population the report was run against --
+    #: rather than a disagreement about this material.
+    MATERIAL_NOT_IN_PLATFORM_DATA = "MATERIAL_NOT_IN_PLATFORM_DATA"
     #: The report's last issue predates the movement history the platform
     #: holds, so the platform cannot see it -- the history-depth gap (FRS 7.2).
     LAST_ISSUE_BEFORE_PLATFORM_HISTORY = "LAST_ISSUE_BEFORE_PLATFORM_HISTORY"
@@ -151,6 +156,7 @@ def validate_zmm065(
     rows: list[Zmm065Row],
     *,
     last_issue_as_of: Callable[[Key, date], date | None],
+    has_movements: Callable[[Key], bool],
     history_start: date | None,
     thresholds: AgingThresholds,
     tolerance_pct: float,
@@ -158,8 +164,9 @@ def validate_zmm065(
     """Reconcile the platform's aging band with ZMM065's, as of the report's date.
 
     ``last_issue_as_of(key, day)`` answers the platform's last unreversed issue
-    for a material-plant on that day; ``history_start`` is the earliest posting
-    date in the platform's movement history.
+    for a material-plant on that day; ``has_movements(key)`` whether the
+    platform holds any goods movement for it at all; ``history_start`` is the
+    earliest posting date in the platform's movement history.
     """
     report_date = zmm065_report_date(rows)
     excluded: Counter[str] = Counter()
@@ -186,7 +193,11 @@ def validate_zmm065(
             agreed += 1
             continue
 
-        reason = _mismatch_reason(row.last_gi_date, platform_last, history_start)
+        reason = (
+            Zmm065MismatchReason.MATERIAL_NOT_IN_PLATFORM_DATA
+            if not has_movements((row.material, row.plant))
+            else _mismatch_reason(row.last_gi_date, platform_last, history_start)
+        )
         reasons[reason.value] += 1
         if len(mismatches) < DETAIL_LIMIT:
             mismatches.append(
