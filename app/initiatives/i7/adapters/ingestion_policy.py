@@ -62,6 +62,32 @@ class ExtractIngestionPolicy(BaseModel):
 
     consumption: ConsumptionMovementPolicy = Field(default_factory=ConsumptionMovementPolicy)
 
+    plants: tuple[str, ...] = ()
+    """Which plants I07 stages. Empty means every plant -- the behaviour
+    before this existed, and still what a caller constructing the policy by
+    hand gets.
+
+     I07 covers Gamsberg (1500) and Black
+    Mountain (1300) only. The extract carries thirteen: 1500, 1300, 3000,
+    2000, 1100, 1200, 1600, 1400, PDWB, 3200, 3300, 3400, 3100. Staging the
+    other eleven produced recommendations for plants nobody asked about and
+    diluted every catalogue-wide percentage the reports quote.
+
+    Set from ``I7_PLANTS`` (app.core.config) rather than hardcoded here: which
+    sites are in scope is a business decision that will change again when the
+    programme extends, and a code edit is the wrong shape for it. This stays a
+    filter on *staging*, not on ``raw_*`` or the ``n_<table>`` views -- I08,
+    I13 and the assistant read the same views and are not scoped by it.
+
+    A plant code is matched exactly, after trimming. Codes are not all numeric
+    (``PDWB`` is in the extract), so this is a string comparison and must not
+    become an integer one."""
+
+    @property
+    def plant_scope(self) -> frozenset[str]:
+        """``plants`` as a set, for membership tests. Empty means no filter."""
+        return frozenset(p.strip() for p in self.plants if p.strip())
+
     batch_size: int = Field(default=5000, ge=1)
     """Rows per insert batch. The raw tables hold 3.4M rows; streaming in
     batches keeps memory flat regardless of how large the extract grows."""

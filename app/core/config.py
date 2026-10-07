@@ -448,6 +448,26 @@ class Settings(BaseSettings):
     # the day the first assistant session was issued.
     i13_assistant_go_live_date: str = ""
 
+    # --- I07 plant scope ----------------------------------------------------
+    #
+    # Which plants I07 stages, comma-separated. VZI confirmed on 2026-10-07
+    # that the programme covers Gamsberg (1500) and Black Mountain (1300)
+    # only, while the extract delivers thirteen -- the other eleven produced
+    # recommendations for sites nobody asked about and diluted every
+    # catalogue-wide percentage the reports quote.
+    #
+    # EMPTY MEANS EVERY PLANT, deliberately: an unset or blank value must not
+    # silently narrow the catalogue, because "no plants configured" and "all
+    # plants in scope" would then look identical and the first is a mistake
+    # worth noticing. Narrowing is opt-in and visible in the staging summary.
+    #
+    # This scopes I07's STAGING only -- raw_*, the n_<table> views, I08, I13
+    # and the assistant all still see every plant. It is not an access
+    # control: see auth_plant_groups for that, which is a different concern.
+    #
+    # Codes are strings, not integers: PDWB is a real plant in this extract.
+    i7_plants: str = "1500,1300"
+
     # Current VZI OAR material-scope ruling (MARC.DISMM), comma-separated.
     # See app/shared/material_scope/policy.py -- this is shared platform
     # config, not owned by any single initiative.
@@ -641,6 +661,16 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         """Allowed CORS origins, parsed from ``FRONTEND_ORIGIN``."""
         return [origin.strip() for origin in self.frontend_origin.split(",") if origin.strip()]
+
+    @property
+    def i7_plant_list(self) -> tuple[str, ...]:
+        """``I7_PLANTS`` parsed, order preserved. Empty tuple means every plant.
+
+        Not upper-cased: a plant code is matched against the extract exactly as
+        delivered, and nothing here should decide that ``pdwb`` and ``PDWB`` are
+        the same row when SAP has not said so.
+        """
+        return tuple(code.strip() for code in self.i7_plants.split(",") if code.strip())
 
     @property
     def i13_oar_mrp_type_set(self) -> frozenset[str]:
