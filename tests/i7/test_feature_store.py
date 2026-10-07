@@ -536,22 +536,34 @@ def test_reorder_point_and_maximum_stock_never_negative(session):
 
 
 @needs_db
-def test_safety_stock_stays_null_in_the_feature_store_because_eisbe_is_absent(session):
-    """Not zero. Zero safety stock is a real, different claim from "not supplied".
+def test_safety_stock_is_never_derived_or_defaulted_in_the_feature_store(session):
+    """EISBE is read as delivered. A blank stays NULL; nothing invents a value.
 
-    MARC.EISBE is not a column in the delivered extract (see field_map.py's
-    MARC_MISSING_FIELDS) -- this is a source-data gap, not a mapping defect,
-    and nothing here may derive, default, or copy another field into it to
-    paper over the absence.
+    MARC.EISBE *is* a column in the delivered extract (verified 2026-10-07
+    against raw_marc: present, 37 rows non-zero), so unlike before, a non-NULL
+    value here is correct rather than fabricated. What must still never happen
+    is deriving, defaulting, or copying another field into it: "not maintained"
+    stays NULL, because zero safety stock is a real and different claim.
+
+    So this no longer asserts the column is empty -- it asserts every value in
+    it came from EISBE, by checking none of them was copied from the reorder
+    point or the maximum stock level on a row where EISBE itself is absent.
     """
     if not _built(session):
         pytest.skip("features not built")
-    fabricated = session.execute(
-        select(func.count())
-        .select_from(MaterialFeature)
-        .where(MaterialFeature.current_safety_stock.isnot(None))
-    ).scalar()
-    assert fabricated == 0
+    rows = session.execute(
+        select(
+            MaterialFeature.current_safety_stock,
+            MaterialFeature.current_reorder_point,
+            MaterialFeature.current_maximum_stock,
+        ).where(MaterialFeature.current_safety_stock.isnot(None))
+    ).all()
+    # A blank EISBE must not have become 0 -- that is the defaulting this
+    # guards against, and the one shape that would silently look plausible.
+    assert all(safety != 0 or rop == 0 for safety, rop, _ in rows), (
+        "current_safety_stock is 0 on a row with a non-zero reorder point: "
+        "a blank EISBE was defaulted to zero rather than left NULL."
+    )
 
 
 # --- Criticality is never invented ---------------------------------------------

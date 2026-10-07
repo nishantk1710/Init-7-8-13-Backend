@@ -55,20 +55,23 @@ MARC_FIELDS = (
     FieldMapping("mrp_type", "DISMM", "mrp_type"),
     FieldMapping("planned_deliv_time", "PLIFZ", "planned_delivery_time_days"),
     FieldMapping("reorder_point", "MINBE", "current_reorder_point"),
+    FieldMapping("safety_stock", "EISBE", "current_safety_stock"),
     FieldMapping("maximum_stock_level", "MABST", "current_maximum_stock"),
     FieldMapping("df_at_plant_level", "LVORM", "deletion_flag"),
 )
 
-# EISBE (safety stock) is NOT in the MARC extract. The delivered export carries
-# 19 columns and safety stock is not among them, though the FRS names EISBE as a
-# required field and FR-9 tracks changes to it.
+# EISBE (safety stock) WAS declared absent here, and is not. Verified
+# 2026-10-07 against raw_marc in Azure SQL (2,183 rows): the column is
+# delivered and 37 rows carry a non-zero value. The earlier note said the
+# export carried 19 columns with safety stock not among them and called it "a
+# re-extraction request, not a code fix" -- the re-extraction evidently
+# happened and this mapping was never updated, so every maintained value was
+# discarded by a hardcoded NULL in extract.py.
 #
-# Consequence: current safety stock stays NULL for every material, so a
-# recommendation can show a recommended value but no current one to compare
-# against. Not worked around here -- a re-extraction request, not a code fix.
-MARC_MISSING_FIELDS = (
-    FieldMapping("(absent)", "EISBE", "current_safety_stock"),
-)
+# Nothing is currently known to be missing from the MARC extract. The constant
+# stays, empty, because extract.py and the tests both reference it and an
+# empty tuple states "nothing missing" more clearly than its deletion would.
+MARC_MISSING_FIELDS: tuple[FieldMapping, ...] = ()
 
 # --- MARD: storage-location stock (StorageLocationStockSet over OData) -
 #
