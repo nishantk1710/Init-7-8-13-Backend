@@ -702,6 +702,16 @@ class SnapshotInfo(I8Model):
     reference_date: date
     built_at: datetime
     build_seconds: float
+    source_loaded_at: datetime | None = None
+    """When the raw tables behind this snapshot were last loaded -- the newest
+    successful ``ingestion_run`` across ``i8.service.SOURCE_TABLES``.
+
+    Served because the UI had no way to tell one source from another and said
+    so wrongly: its caption named the July extract in static text, and went on
+    naming it after a CSV full pull had replaced every table underneath. A
+    screen may report how fresh its data is; it may not assert where it came
+    from. None when nothing has ever recorded a load."""
+
     # Not named `register`: that shadows BaseModel.register and pydantic
     # warns about it at import time.
     repair_register: RegisterMeta

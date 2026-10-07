@@ -396,6 +396,12 @@ class Settings(BaseSettings):
     i8_snapshot_statement_timeout_seconds: int = 120
     # Then 503 "building". Under the frontend's 20 s GET timeout.
     i8_snapshot_wait_seconds: int = 10
+    # How often (seconds, at most) the source fingerprint is re-checked for a
+    # reload or a new day. One cheap grouped query over ingestion_run. The
+    # rebuild it triggers is a background one -- the current snapshot keeps
+    # serving -- so this is how long a reload stays invisible, not how long a
+    # request waits.
+    i8_snapshot_check_interval_seconds: int = 60
 
     # Session <-> reservation linking (app/initiatives/i13/session_link.py).
     # The requester types the assistant's session ID into the reservation's item

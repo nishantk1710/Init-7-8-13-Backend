@@ -14,14 +14,26 @@ predicate is deliberately applied in Python rather than in the query (ruling
 5.2) and cannot narrow the pull. Paying that on every request would make the
 register unusable in the UI, and W5.4 is rendering against it.
 
-The cache is safe here for one specific reason: **the source is a static July
-snapshot.** Nothing writes to it -- every I08 endpoint is read-only, and there
-is no write path to SAP or to our database anywhere in W5.1 or W5.2.
+Nothing writes to the source through this application -- every I08 endpoint is
+read-only, and there is no write path to SAP or to our database anywhere in
+W5.1 or W5.2. For a long while that was the whole argument, because the source
+was a static July extract: cache it until the process restarts and it can never
+be stale.
 
-That assumption expires at CPI cutover. When the source becomes live, this
-module is the one place that has to change: a TTL, or an explicit invalidation
-hook on the ingestion run. The rest of I08 asks for a snapshot and does not care
-how old it is, so that change stays here.
+**That assumption has expired, and this is the change it asked for.** The raw
+layer is now reloaded underneath a running process -- a CSV full pull replaces
+``raw_<table>`` whole (``app/ingest/csv_load.py``) -- so "nothing writes to it"
+is true of this application and false of the database. A pull that landed at
+05:00 stayed invisible until somebody restarted the App Service, and the UI
+went on reporting yesterday's figures with no sign that it was doing so.
+
+So the snapshot now records what it was built from (:func:`source_state`) and
+:func:`check_source_fingerprint` rebuilds it when that moves. The reference
+date is part of the fingerprint for the same reason it is part of I13's: with
+``I8_REFERENCE_DATE`` unset the snapshot measures aging as of the day it was
+built, so one that survives midnight reports yesterday's overdue counts under
+today's heading. The rest of I08 still asks for a snapshot and still does not
+care how old it is, so the change stays here.
 """
 
 from __future__ import annotations
@@ -58,9 +70,75 @@ from app.initiatives.i8.register import (
 )
 from app.initiatives.i8.universe import UniverseRow, UniverseStats, load_universe
 from app.initiatives.i8.vendors import VendorTurnaround, vendor_turnaround
+from app.models import IngestionRun
 from app.shared.snapshot_builds import exclusive_build
 
 logger = get_logger(__name__)
+
+
+# The raw tables every I08 view reads -- twelve, for the eleven views listed in
+# ``app/initiatives/i8/views.py``, because v_zmm065 is a union of two.
+#
+# Written out rather than derived from that list: a view name does not say what
+# fills it, and guessing ``v_x -> raw_x`` would silently miss the zmm065 pair
+# and silently invent tables for any future view over something else. A table
+# missing here is a reload I08 will not notice.
+SOURCE_TABLES: tuple[str, ...] = (
+    "raw_mara",
+    "raw_makt",
+    "raw_marc",
+    "raw_mard",
+    "raw_ekko",
+    "raw_ekpo",
+    "raw_eket",
+    "raw_ekbe",
+    "raw_mseg",
+    "raw_lfa1",
+    "raw_zmm065_bmm",
+    "raw_zmm065_gb",
+)
+
+
+@dataclass(frozen=True)
+class SourceState:
+    """What the raw layer looked like at one moment."""
+
+    fingerprint: str
+    """Opaque; only ever compared for equality."""
+
+    loaded_at: datetime | None
+    """The newest successful load across :data:`SOURCE_TABLES`, or None when
+    none has ever run. Served to the UI so a screen can say how fresh its data
+    is instead of naming a source it has no way to see."""
+
+
+def source_state(db: Session, *, reference_date: date) -> SourceState:
+    """What the snapshot would be built from right now.
+
+    Cheap, because it runs on a timer: one grouped query over ``ingestion_run``.
+    The run id is in the fingerprint as well as the timestamp, so a reload that
+    finishes within a clock tick of the one before it still registers.
+    """
+    rows = db.execute(
+        select(
+            IngestionRun.target_table,
+            func.max(IngestionRun.id),
+            func.max(IngestionRun.finished_at),
+        )
+        .where(
+            IngestionRun.status == "succeeded",
+            IngestionRun.target_table.in_(SOURCE_TABLES),
+        )
+        .group_by(IngestionRun.target_table)
+        .order_by(IngestionRun.target_table)
+    ).all()
+    parts = [f"{table}:{run_id}:{finished}" for table, run_id, finished in rows]
+    parts.append(f"date:{reference_date.isoformat()}")
+    loaded = [finished for _, _, finished in rows if finished is not None]
+    return SourceState(
+        fingerprint="|".join(parts),
+        loaded_at=max(loaded) if loaded else None,
+    )
 
 
 @dataclass(frozen=True)
@@ -82,6 +160,13 @@ class Snapshot:
     acquisitions: tuple[NewAcquisition, ...] = ()
     """New 80-series purchase lines, for the UNJUSTIFIED_ACQUISITION check.
     From the same EKPO pull as the register, so it shares its lifetime."""
+
+    source_fingerprint: str = ""
+    """What :data:`SOURCE_TABLES` looked like when this build started. A
+    different one on a later check means the raw layer moved underneath."""
+
+    source_loaded_at: datetime | None = None
+    """When the newest of those tables last loaded successfully."""
 
     def line(self, document: str, item: str) -> RepairLine | None:
         """One repair line by its (EBELN, EBELP) key."""
@@ -116,6 +201,13 @@ def build_snapshot(
     reference_date = today or cfg.reference_date_value or date.today()
     started = time.monotonic()
 
+    # BEFORE the build, not after, and the difference matters. A reload that
+    # lands while the build is running leaves this snapshot holding a mixture
+    # of both; recording the fingerprint taken first means the next check sees
+    # a difference and rebuilds. Recorded afterwards it would claim to be the
+    # new data, and the mixture would never be corrected.
+    source = source_state(db, reference_date=reference_date)
+
     with statement_timeout(db, get_settings().i8_snapshot_statement_timeout_seconds):
         # One EKPO pull for both readings of it: repair lines and new purchases.
         with timed_step("PO lines (EKPO)"):
@@ -148,6 +240,8 @@ def build_snapshot(
         universe_stats=universe_stats,
         vendors=tuple(vendors),
         acquisitions=tuple(acquisitions),
+        source_fingerprint=source.fingerprint,
+        source_loaded_at=source.loaded_at,
     )
 
 
@@ -170,6 +264,9 @@ class _State:
     last_error: str | None = None
     failed_at: float = 0.0
     thread: threading.Thread | None = None
+    last_check: float = 0.0
+    """``time.monotonic()`` of the last fingerprint check -- see
+    :func:`check_source_fingerprint`, which is rate-limited by it."""
 
 
 _state = _State()
@@ -273,8 +370,14 @@ def build_thread() -> threading.Thread | None:
         return _state.thread
 
 
-def start_background_build(reason: str) -> bool:
-    """Build on a daemon thread with its own session. False if one is already running."""
+def start_background_build(reason: str, *, force: bool = False) -> bool:
+    """Build on a daemon thread with its own session. False if one is already running.
+
+    ``force`` rebuilds even when a snapshot is already cached, which is what
+    the fingerprint watcher needs. The cached one keeps answering throughout --
+    :func:`_build_locked` swaps it in only once the new one is assembled -- so
+    a rebuild costs readers nothing but the staleness they already had.
+    """
     with _state_lock:
         if _state.thread is not None and _state.thread.is_alive():
             return False
@@ -283,17 +386,20 @@ def start_background_build(reason: str) -> bool:
             # thread has reached the build still gets a startedAt.
             _state.building_since = datetime.now(timezone.utc)
         thread = threading.Thread(
-            target=_build_in_background, args=(reason,), name="i8-snapshot", daemon=True
+            target=_build_in_background,
+            args=(reason, force),
+            name="i8-snapshot",
+            daemon=True,
         )
         _state.thread = thread
     thread.start()
     return True
 
 
-def _build_in_background(reason: str) -> None:
+def _build_in_background(reason: str, force: bool = False) -> None:
     with _build_lock:
         with _state_lock:
-            if _state.snapshot is not None:
+            if _state.snapshot is not None and not force:
                 return
         db = get_sessionmaker()()
         try:
@@ -314,19 +420,54 @@ def reset_snapshot() -> None:
         _state.last_error = None
         _state.failed_at = 0.0
         _state.building_since = None
+        _state.last_check = 0.0
     # The attestation view and the coding screen are both derived from the
     # snapshot, so neither can outlive it.
     reset_attestation_view()
     reset_coding_screen()
 
 
+def check_source_fingerprint(db: Session, *, min_interval_seconds: float | None = None) -> bool:
+    """Rebuild in the background when the raw layer, or the date, has moved.
+
+    Rate-limited to one check per ``I8_SNAPSHOT_CHECK_INTERVAL_SECONDS``; pass
+    ``min_interval_seconds=0`` from a caller that is itself the timer. Returns
+    True when a rebuild was started.
+
+    Returns False when there is no snapshot yet: a first build is already the
+    responsibility of start-up or the first request, and racing another one
+    against it would only contend for the same lock.
+    """
+    interval = (
+        get_settings().i8_snapshot_check_interval_seconds
+        if min_interval_seconds is None
+        else min_interval_seconds
+    )
+    with _state_lock:
+        snapshot = _state.snapshot
+        if snapshot is None or time.monotonic() - _state.last_check < interval:
+            return False
+        _state.last_check = time.monotonic()
+
+    cfg = get_i8_settings()
+    current = source_state(db, reference_date=cfg.reference_date_value or date.today())
+    if current.fingerprint == snapshot.source_fingerprint:
+        return False
+    logger.info(
+        "I08 source data changed (loaded %s, snapshot built from %s); rebuilding",
+        current.loaded_at,
+        snapshot.source_loaded_at,
+    )
+    return start_background_build("source data changed", force=True)
+
+
 # --- The attestation view (W5.3) ------------------------------------------
 #
 # Cached separately from the snapshot, and that split is the whole design.
 #
-# The snapshot is built from the July extract, which never changes, so it is
-# cached until the process restarts. Attestations are the one thing in I08 that
-# DOES change while the process runs -- somebody submits one -- so a view
+# The snapshot turns over when its source does, which is a reload at most --
+# minutes at the very fastest, usually a day. Attestations change far more
+# often than that -- somebody submits one and must see it at once -- so a view
 # derived from them cannot share that lifetime. Fold it into the snapshot and a
 # planner records an attestation, reloads the queue, and sees their own entry
 # missing. That is the failure that looks like a bug in a demo.
