@@ -228,8 +228,16 @@ class TestTheSourceFingerprint:
     def test_the_check_is_rate_limited(self, monkeypatch) -> None:
         build = self._cache(monkeypatch, "before")
         self._source(monkeypatch, "after")
+
+        # The first check runs however long the machine has been up. That is
+        # what `last_check is None` buys: against a 0.0 default this assertion
+        # fails on any host whose boot was less than `interval` ago, because
+        # time.monotonic() counts from boot on Linux. It passed on a developer
+        # laptop and failed on a fresh CI runner.
+        assert service._state.last_check is None
         assert service.check_source_fingerprint(DB, min_interval_seconds=3600) is True
         service._state.thread.join(5)
+        assert service._state.last_check is not None
 
         monkeypatch.setattr(
             service, "source_state", self._never("the source was queried inside the rate limit")

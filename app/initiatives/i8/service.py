@@ -264,9 +264,16 @@ class _State:
     last_error: str | None = None
     failed_at: float = 0.0
     thread: threading.Thread | None = None
-    last_check: float = 0.0
+    last_check: float | None = None
     """``time.monotonic()`` of the last fingerprint check -- see
-    :func:`check_source_fingerprint`, which is rate-limited by it."""
+    :func:`check_source_fingerprint`, which is rate-limited by it.
+
+    None for "never checked", NOT 0.0. ``time.monotonic()`` counts from boot
+    on Linux, so against a 0.0 default the very first check reads as one that
+    happened ``uptime`` seconds ago -- and is skipped on any machine up for
+    less than the interval. That is every fresh container and every CI runner,
+    and it does not reproduce on a developer machine that has been awake for
+    days, which is exactly how it got here."""
 
 
 _state = _State()
@@ -420,7 +427,7 @@ def reset_snapshot() -> None:
         _state.last_error = None
         _state.failed_at = 0.0
         _state.building_since = None
-        _state.last_check = 0.0
+        _state.last_check = None
     # The attestation view and the coding screen are both derived from the
     # snapshot, so neither can outlive it.
     reset_attestation_view()
@@ -445,7 +452,8 @@ def check_source_fingerprint(db: Session, *, min_interval_seconds: float | None 
     )
     with _state_lock:
         snapshot = _state.snapshot
-        if snapshot is None or time.monotonic() - _state.last_check < interval:
+        checked = _state.last_check
+        if snapshot is None or (checked is not None and time.monotonic() - checked < interval):
             return False
         _state.last_check = time.monotonic()
 
