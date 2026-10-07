@@ -183,7 +183,6 @@ class TestResponseShapeMatchesTheFrontend:
             "PR Raised",
             "PO Issued",
             "At Vendor",
-            "In Transit Return",
             "Received",
             "Closed",
         }

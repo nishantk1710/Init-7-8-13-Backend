@@ -277,10 +277,9 @@ class TestDeclarationQueue:
         assert rows[0].condition == CONDITION_LABELS[Recommendation(recommendation)]
 
     def test_pending_is_never_emitted(self, fake_attestation) -> None:
-        """It means "submitted, awaiting sign-off" and there is no such state.
-
-        Emitting it would invent a stage of a process nobody operates. It stays
-        in the type for the day a review step is actually built.
+        """It would mean "submitted, awaiting sign-off" and there is no such
+        state: the FRS has no approval step. Emitting it would invent a stage of
+        a process nobody operates.
         """
         lines = [
             FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1)),
@@ -291,15 +290,16 @@ class TestDeclarationQueue:
             uncovered={lines[1].key},
         )
         assert {r.status for r in build_queue(lines, cover)} == {"Completed", "Required"}
-        assert "Pending" in STATUS_NOTES  # documented, deliberately unused
+        assert set(STATUS_NOTES) == {"Required", "Completed", "Flagged"}
 
-    def test_source_is_null_rather_than_guessed(self) -> None:
-        """EBAN covers 521 of 1,201 repair requisitions and every one reads 'F'
-        -- created from an order, which is neither Manual nor MRP-generated.
-        Both labels are false for every row, so neither is sent."""
+    def test_the_row_carries_no_source(self) -> None:
+        """Manual / MRP-generated is not in FR-4, and SAP cannot answer it:
+        EBAN covers 521 of 1,201 repair requisitions and every one reads 'F'
+        -- created from an order, which is neither. Removed rather than sent
+        as a permanent null."""
         line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
         rows = build_queue([line], self._coverage(uncovered={line.key}))
-        assert rows[0].source is None
+        assert not hasattr(rows[0], "source")
 
     def test_requester_is_carried_through_as_a_code(self) -> None:
         line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
@@ -885,14 +885,14 @@ class TestAgainstTheSeededRegister:
             "pr",
             "material",
             "requester",
-            "source",
             "hasActiveRepair",
             "relatedRepairId",
             "status",
             "nextAction",
             "createdAt",
         } <= set(row)
-        assert row["status"] in {"Required", "Pending", "Completed", "Flagged"}
+        assert "source" not in row
+        assert row["status"] in {"Required", "Completed", "Flagged"}
 
 
 @needs_views
@@ -976,7 +976,6 @@ class TestTheRegisterCarriesTheRealDeclarationStatus:
             assert detail["line"]["declarationStatus"] == from_register[line_id]
         assert detail["line"]["declarationStatus"] in {
             "Required",
-            "Pending",
             "Completed",
             "Flagged",
         }

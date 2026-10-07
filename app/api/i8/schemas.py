@@ -190,7 +190,7 @@ class RepairChain(I8Model):
     can disagree on the same row and neither overrides the other.
     """
 
-    declaration_status: Literal["Required", "Pending", "Completed", "Flagged"] = (
+    declaration_status: Literal["Required", "Completed", "Flagged"] = (
         "Required"
     )
     """W5.3 owns this. Served as the hook, never computed here."""
@@ -470,20 +470,11 @@ class DeclarationItem(I8Model):
     """EKPO.AFNAM, and a CODE rather than a name -- no person directory was
     delivered. Displayed as a code, the same way an unnamed vendor is."""
 
-    source: Literal["Manual", "MRP-generated"] | None = None
-    """**Null on every row today, and that is the honest answer.**
-
-    A fourth deliberate departure from the frontend type. EBAN carries the
-    creation indicator that would decide this and covers only 521 of the 1,201
-    repair requisitions; every one of those 521 reads ``F`` (created from an
-    order), which is neither "Manual" nor "MRP-generated". Both labels are false
-    for every row we can see, so neither is sent."""
-
     has_active_repair: bool
     related_repair_id: str
-    status: Literal["Required", "Pending", "Completed", "Flagged"]
-    """"Pending" is never emitted: it means "submitted, awaiting sign-off" and
-    no such state exists -- there is no approval workflow in SAP or here."""
+    status: Literal["Required", "Completed", "Flagged"]
+    """No "Pending": that would mean "submitted, awaiting sign-off", and no such
+    state exists -- there is no approval workflow in SAP, here or in the FRS."""
 
     declared_by: str | None = None
     declared_at: datetime | None = None

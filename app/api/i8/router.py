@@ -557,7 +557,7 @@ def get_declarations(
     status_filter: str | None = Query(
         None,
         alias="status",
-        description="Required, Pending, Completed or Flagged",
+        description="Required, Completed or Flagged",
     ),
     outstanding_only: bool = Query(
         False,
