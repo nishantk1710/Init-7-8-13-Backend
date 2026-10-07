@@ -37,7 +37,14 @@ from typing import Any
 from app.initiatives.i13.aging import classify_aging_band, group_by_material_plant, months_before
 from app.initiatives.i13.config import AgingThresholds
 from app.initiatives.i13.models import MovementMetrics
-from app.initiatives.i13.movements import ISSUE_TYPES, filter_by_window, latest_movement_date, net_event_count, net_quantity
+from app.initiatives.i13.movements import (
+    ISSUE_TYPES,
+    filter_by_window,
+    last_unreversed_date,
+    latest_movement_date,
+    net_event_count,
+    net_quantity,
+)
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
 
 Row = dict[str, Any]
@@ -62,8 +69,9 @@ def compute_movement_metrics(
     last_movement_date = latest_movement_date(movements)
     days_since_last_movement = (as_of - last_movement_date).days if last_movement_date else None
 
-    issue_rows = [row for row in movements if row.get("Bwart") in ISSUE_TYPES]
-    last_issue_date = latest_movement_date(issue_rows)
+    # Reversal-aware: an issue cancelled by its 202/262 is not consumption, so
+    # it must not make the material read as recently moving.
+    last_issue_date = last_unreversed_date(movements, ISSUE_TYPES, as_of=as_of)
     days_since_last_issue = (as_of - last_issue_date).days if last_issue_date else None
 
     window_start = months_before(as_of, window_months)

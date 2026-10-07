@@ -90,9 +90,14 @@ class QuarterlyReportListResponse(BaseModel):
 class GenerateReportRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    quarter: str
+    quarter: str | None = None
     """E.g. ``"Q3 2026"`` -- validated against ``resolve_quarter``'s format
-    at the route, not here (keeps the parsing rule in one place)."""
+    at the route, not here (keeps the parsing rule in one place). ``None``
+    (the field omitted entirely, or an empty JSON body) means "the latest
+    closed quarter" -- resolved server-side via
+    ``app.initiatives.i7.reporting.period.latest_closed_quarter`` so a caller
+    (a human, or an external scheduler) never has to compute a quarter
+    itself."""
 
 
 class GenerationStatusResponse(BaseModel):

@@ -442,3 +442,21 @@ def test_every_transition_appends_an_audit_event() -> None:
     assert EventType.JUSTIFICATION_ADDED in event_types
     # Every event carries a from/to status pair usable for a full history view.
     assert all(event.timestamp is not None for event in events)
+
+
+def test_a_deleted_reservation_raises_no_plan_exception() -> None:
+    as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
+    repository, _, result = _detect(as_of_time, ledger_entries=[_ledger_entry(reservation_deleted=True)])
+    assert result.created == 0
+    assert repository.list(exception_type=ExceptionType.NO_PLAN) == []
+
+
+def test_deleting_a_reservation_resolves_its_open_no_plan_exception() -> None:
+    as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
+    repository = FakeExceptionRepository()
+    _detect(as_of_time, ledger_entries=[_ledger_entry()], repository=repository)
+
+    _, _, result = _detect(as_of_time, ledger_entries=[_ledger_entry(reservation_deleted=True)], repository=repository)
+
+    assert result.resolved == 1
+    assert repository.get("ACT-NO_PLAN-1000000000-0001").status is ExceptionStatus.RESOLVED

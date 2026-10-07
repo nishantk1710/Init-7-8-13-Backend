@@ -86,6 +86,40 @@ def latest_movement_date(rows: list[Row]) -> date | None:
     return max(dates) if dates else None
 
 
+def last_unreversed_date(
+    rows: list[Row], base_types: frozenset[str], *, as_of: date | None = None
+) -> date | None:
+    """Latest date of a ``base_types`` event that a reversal has not cancelled.
+
+    ``latest_movement_date`` over issue rows treats a 261 that was immediately
+    reversed by a 262 as a real issue, which makes a material that was never
+    actually consumed read as recently moving. Here each reversal cancels the
+    most recent still-standing event it can reverse (a 262 cancels a 261, a
+    202 a 201), in posting-date order -- SAP posts the reversal after the
+    document it reverses, and the extract carries no reversal-document
+    reference to pair them more precisely.
+
+    ``as_of`` ignores everything posted after it, so the answer is the one that
+    was true on that day (a reversal posted later did not yet exist).
+    """
+    reversal_base = {rev: base for rev, base in REVERSAL_OF.items() if base in base_types}
+    events = sorted(
+        (moved_on, row.get("Bwart"))
+        for row in rows
+        if (row.get("Bwart") in base_types or row.get("Bwart") in reversal_base)
+        and (moved_on := movement_date(row)) is not None
+        and (as_of is None or moved_on <= as_of)
+    )
+    standing: dict[str, list[date]] = {base: [] for base in base_types}
+    for moved_on, bwart in events:
+        if bwart in standing:
+            standing[bwart].append(moved_on)
+        elif standing[reversal_base[bwart]]:
+            standing[reversal_base[bwart]].pop()
+    latest = [dates[-1] for dates in standing.values() if dates]
+    return max(latest) if latest else None
+
+
 def event_dates(rows: list[Row], base_types: frozenset[str]) -> tuple[date | None, date | None]:
     """First/latest date among ``rows`` whose ``Bwart`` is a base type
     (excludes reversal rows, which don't represent a genuine event date).

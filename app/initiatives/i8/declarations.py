@@ -9,13 +9,16 @@ works through.
 
 Vocabulary is the frontend's, not ours
 ---------------------------------------
-``DeclarationStatus``, ``DeclarationCondition`` and ``DeclarationSource`` already
-exist in ``src/features/initiative-8/types/repair.ts``. They are mapped onto
-here rather than reinvented, because W5.4 renders this on the same critical path
-and a new word costs somebody else an afternoon.
+``DeclarationStatus`` and ``DeclarationCondition`` already exist in
+``src/features/initiative-8/types/repair.ts``. They are mapped onto here rather
+than reinvented, because W5.4 renders this on the same critical path and a new
+word costs somebody else an afternoon.
 
-Two of those types do not survive contact with the data, and both are stated
-rather than papered over. See :data:`STATUS_NOTES` and the note on ``source``.
+Two things the frontend mock once carried are gone from both sides (discard
+review, 07-Oct-2026): a ``Pending`` status, because the FRS has no approval
+step, and a ``source`` (Manual / MRP-generated), because FR-4 does not ask for
+it and SAP cannot answer it -- EBAN's creation indicator covers 521 of the 1,201
+repair requisitions and every one reads ``F``, created from an order.
 """
 
 from __future__ import annotations
@@ -31,17 +34,13 @@ from app.initiatives.i8.register import RepairLine
 logger = get_logger(__name__)
 
 
-#: The four statuses the frontend defines, and what each one means here.
+#: The three statuses, and what each one means here.
 #:
-#: "Pending" is deliberately NEVER EMITTED. It means "submitted, awaiting
-#: sign-off", and there is no such state: an attestation is recorded or it is
-#: not, because no approval workflow exists in SAP or in this platform. Emitting
-#: it would invent a stage of a process that nobody operates. It stays in the
-#: type so the UI keeps compiling, and so it is there the day a review step is
-#: actually built.
+#: There is no "Pending" (submitted, awaiting sign-off): an attestation is
+#: recorded or it is not, because no approval workflow exists in SAP, in this
+#: platform or in the FRS.
 STATUS_NOTES: dict[str, str] = {
     "Required": "No attestation covers this repair line.",
-    "Pending": "Not emitted -- there is no submitted-awaiting-approval state.",
     "Completed": "An attestation covers this line and found the part repairable.",
     "Flagged": (
         "An attestation covers this line but did NOT find the part repairable "
@@ -65,21 +64,6 @@ class DeclarationRow:
     requester: str | None
     """EKPO.AFNAM, a code. None only if the line has no requisitioner, which no
     repair line in the July extract does."""
-
-    source: str | None
-    """``Manual`` or ``MRP-generated`` -- and NULL on every row today.
-
-    A fourth deliberate departure from the frontend type, in the same spirit as
-    the three already recorded in the API schemas.
-
-    The honest reason: EBAN carries the creation indicator that would answer
-    this, and it covers only 521 of the 1,201 repair requisitions. Every one of
-    those 521 reads ``F`` -- created from an order -- which is neither "Manual"
-    (somebody typed it) nor "MRP-generated" (planning raised it). So both labels
-    are false for every row we can see, and the ones we cannot see are unknown.
-
-    Sending either would be inventing a provenance for a purchase, which is
-    exactly the class of mistake I08 exists to stop."""
 
     has_active_repair: bool
     related_repair_id: str
@@ -163,7 +147,6 @@ def build_queue(
                 requester=line.requisitioner,
                 # Null on every row. See the field docstring -- both available
                 # labels are false for every repair line we can see.
-                source=None,
                 has_active_repair=line.is_open,
                 related_repair_id=f"{line.purchasing_document}-{line.item}",
                 status=status,

@@ -8,6 +8,7 @@ from app.initiatives.i13.movements import (
     RECEIPT_TYPES,
     filter_by_window,
     is_reversal,
+    last_unreversed_date,
     latest_movement_date,
     net_event_count,
     net_quantity,
@@ -73,3 +74,25 @@ def test_latest_movement_date() -> None:
 
 def test_latest_movement_date_no_movements() -> None:
     assert latest_movement_date([]) is None
+
+
+def test_last_unreversed_date_skips_an_issue_its_reversal_cancelled() -> None:
+    rows = [_row("261", "1", date(2026, 1, 10)), _row("261", "1", date(2026, 3, 1)), _row("262", "1", date(2026, 3, 2))]
+    assert last_unreversed_date(rows, ISSUE_TYPES) == date(2026, 1, 10)
+
+
+def test_last_unreversed_date_is_none_when_every_issue_was_reversed() -> None:
+    rows = [_row("201", "2", date(2026, 2, 1)), _row("202", "2", date(2026, 2, 3))]
+    assert last_unreversed_date(rows, ISSUE_TYPES) is None
+
+
+def test_a_reversal_only_cancels_its_own_movement_type() -> None:
+    rows = [_row("201", "1", date(2026, 2, 1)), _row("262", "1", date(2026, 2, 5))]
+    assert last_unreversed_date(rows, ISSUE_TYPES) == date(2026, 2, 1)
+
+
+def test_last_unreversed_date_as_of_ignores_later_postings() -> None:
+    rows = [_row("261", "1", date(2026, 3, 1)), _row("262", "1", date(2026, 4, 1)), _row("261", "1", date(2026, 5, 1))]
+    # On 15-Mar the March issue was still standing; its reversal came later.
+    assert last_unreversed_date(rows, ISSUE_TYPES, as_of=date(2026, 3, 15)) == date(2026, 3, 1)
+    assert last_unreversed_date(rows, ISSUE_TYPES) == date(2026, 5, 1)

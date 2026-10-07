@@ -118,9 +118,11 @@ TABLES: dict[str, tuple[Col, ...]] = {
         _c("planned_deliv_time", "PLIFZ", kind="num"),
         _c("procurement_type", "BESKZ"),
         _c("reorder_point", "MINBE", kind="num"),
-        # Read by I07's staging. The live CSV MARC carries none of the MRP
-        # fields (DISMM, PLIFZ, MINBE, MABST); I07 takes those from
-        # odata_material_plant when raw_marc lacks them.
+        # Read by I07's staging. Some MARC deliveries omit the MRP fields
+        # (DISMM, PLIFZ, MINBE, EISBE, MABST); I07 takes those from
+        # odata_material_plant when raw_marc lacks them. The CSV delivery
+        # verified 2026-10-07 carries all of them, EISBE included.
+        _c("safety_stock", "EISBE", kind="num"),
         _c("maximum_stock_level", "MABST", kind="num"),
         _c("df_at_plant_level", "LVORM"),
     ),

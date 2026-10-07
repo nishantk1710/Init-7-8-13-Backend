@@ -142,8 +142,24 @@ class ConsumptionPlan:
         return start is not None or self.window_end is not None
 
 
+def reference_plans_enabled() -> bool:
+    """``I13_REFERENCE_PLANS_ENABLED`` -- off unless someone turns it on."""
+    from app.core.config import get_settings
+
+    return get_settings().i13_reference_plans_enabled
+
+
 def load_reference_plans(data_dir: Path) -> list[ConsumptionPlan]:
-    """The generated CSV. Fabricated, and labelled as such on every row."""
+    """The generated CSV. Fabricated, and labelled as such on every row.
+
+    Empty unless ``I13_REFERENCE_PLANS_ENABLED`` is set, whether or not the
+    file exists: the file ships with every deploy, so its presence says
+    nothing about whether anyone meant these plans to count. This is the one
+    reader of the file, so every consumer -- the snapshot, WATCH, both
+    exception engines, attribution and its mart -- follows the switch.
+    """
+    if not reference_plans_enabled():
+        return []
     path = data_dir / "platform" / "consumption_plans.csv"
     if not path.exists():
         return []
@@ -191,9 +207,14 @@ def load_captured_plans(db: Session) -> list[ConsumptionPlan]:
     from app.assistant.models import ConsumptionPlanRecord
     from app.models.i13_session_link import SessionReservationLink
 
+    # Fetched whole before the link query runs. Left as a lazy result, the plan
+    # rows were still being read when the second statement was sent, and SQL
+    # Server refused it -- "Connection is busy with results for another
+    # command" -- as soon as one captured plan existed, taking /summary,
+    # /validation and the snapshot build down with it.
     rows = db.execute(
         select(ConsumptionPlanRecord).order_by(ConsumptionPlanRecord.captured_at)
-    ).scalars()
+    ).scalars().all()
 
     # Reservations that carry each session's ID in their item text (SGTXT).
     # Only for the plan's own material and plant -- the linker already

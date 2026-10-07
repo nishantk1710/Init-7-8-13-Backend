@@ -395,6 +395,16 @@ class Settings(BaseSettings):
     # app/shared/sap_normalise.py); there is no CSV path for it any more.
     i13_data_dir: str = "data-generator/generated"
 
+    # Whether consumption_plans.csv under i13_data_dir is read at all. That file
+    # is generator output -- 742 fabricated plans for plants 1000-4000 that
+    # match no in-scope reservation -- and it ships with every deploy because
+    # the whole repository is the package. Read, every open one counts as a
+    # plan breach forever. Off, the only plans are the ones requesters captured
+    # through the assistant (the consumption_plan table), which is what FRS
+    # sec. 2 / D8 specify. Turn on locally to exercise the breach path with
+    # synthetic data; the file itself stays tracked on purpose.
+    i13_reference_plans_enabled: bool = False
+
     # The I13 in-memory snapshot (app/initiatives/i13/snapshot.py): every I13
     # read route serves one precomputed snapshot instead of recomputing from
     # raw_* per request. False puts every route back on the live compute --
@@ -409,6 +419,19 @@ class Settings(BaseSettings):
     # ISO date to measure every snapshot metric as of. Empty = today, the date
     # every live route has always used (plan decision D1 left open).
     i13_snapshot_reference_date: str = ""
+
+    # --- Initiative 08: the in-memory snapshot (app/initiatives/i8/service.py). ---
+    i8_snapshot_warm_on_startup: bool = True
+    # Per statement, until its first row (not the fetch after it). 0 = no limit.
+    i8_snapshot_statement_timeout_seconds: int = 120
+    # Then 503 "building". Under the frontend's 20 s GET timeout.
+    i8_snapshot_wait_seconds: int = 10
+    # How often (seconds, at most) the source fingerprint is re-checked for a
+    # reload or a new day. One cheap grouped query over ingestion_run. The
+    # rebuild it triggers is a background one -- the current snapshot keeps
+    # serving -- so this is how long a reload stays invisible, not how long a
+    # request waits.
+    i8_snapshot_check_interval_seconds: int = 60
 
     # Session <-> reservation linking (app/initiatives/i13/session_link.py).
     # The requester types the assistant's session ID into the reservation's item

@@ -154,20 +154,30 @@ def test_reclassification_candidates_use_real_criticality_but_never_fabricate_ho
     assert any(c["critical_impact_indicator"] is not None for c in candidates)
 
 
-def test_validation_reports_reference_unavailable_without_reference_counts() -> None:
-    response = client.get("/api/i13/validation")
-    assert response.status_code == 200
-    body = response.json()
-    assert all(result["status"] == "REFERENCE_UNAVAILABLE" for result in body["results"])
+def test_validation_reconciles_each_report_or_says_it_is_unavailable() -> None:
+    body = client.get("/api/i13/validation").json()
+    names = [r["source_name"] for r in body["results"]]
+    assert names == [
+        "ZMM065 · Fast moving",
+        "ZMM065 · Slow moving",
+        "ZMM065 · Non-moving",
+        "30-Day GR Report · receipts confirmed",
+    ]
+    zmm065_rows, gr_row = body["results"][:3], body["results"][3]
+    if body["zmm065"] is None:
+        assert all(r["status"] == "REFERENCE_UNAVAILABLE" for r in zmm065_rows)
+    else:
+        assert body["zmm065"]["compared"] == sum(r["reference_count"] for r in zmm065_rows)
+        assert all(r["status"] in ("RECONCILED", "OUT_OF_TOLERANCE") for r in zmm065_rows)
+    if body["gr_30_day"] is None:
+        assert gr_row["status"] == "REFERENCE_UNAVAILABLE"
+    else:
+        assert gr_row["computed_count"] == body["gr_30_day"]["confirmed"]
 
 
-def test_validation_reconciles_when_reference_provided() -> None:
-    ledger_count = len(client.get("/api/i13/utilisation-ledger/partial", params={"limit": 1000}).json())
-    response = client.get("/api/i13/validation", params={"zmm065_reference_count": ledger_count})
-    body = response.json()
-    zmm065 = next(r for r in body["results"] if r["source_name"] == "ZMM065")
-    # A partial page (limit=1000) will not equal the true unfiltered count,
-    # so this only proves the reconciliation math runs end to end -- exact
-    # RECONCILED/OUT_OF_TOLERANCE depends on how many procurement lines
-    # exist beyond the page, which is a real, changing number.
-    assert zmm065["status"] in ("RECONCILED", "OUT_OF_TOLERANCE")
+def test_validation_ignores_the_deprecated_typed_counts() -> None:
+    plain = client.get("/api/i13/validation").json()
+    typed = client.get(
+        "/api/i13/validation", params={"zmm065_reference_count": 1, "gr_30_day_reference_count": 1}
+    ).json()
+    assert typed["results"] == plain["results"]

@@ -18,6 +18,7 @@ from sqlalchemy import delete, select
 
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
+from app.initiatives.i7.reporting.period import latest_closed_quarter
 from app.main import app
 from app.models.i7_recommendation import Recommendation
 from app.models.i7_reporting import QuarterlyReportRecord
@@ -103,6 +104,44 @@ def test_generate_report_twice_is_idempotent_no_duplicate_row(cleanup_test_quart
     first_id = first.json()  # sanity: still a valid, complete body
     assert "metadata" in first_id
     assert "metadata" in second.json()
+
+
+@needs_db
+def test_generate_report_with_no_quarter_resolves_latest_closed_quarter():
+    expected_quarter = latest_closed_quarter()
+    factory = get_sessionmaker()
+    with factory() as session:
+        session.execute(delete(QuarterlyReportRecord).where(QuarterlyReportRecord.quarter == expected_quarter))
+        session.commit()
+
+    try:
+        response = client.post("/api/v1/i7/reports/quarterly/generate", json={})
+        assert response.status_code == 200
+        assert response.json()["metadata"]["quarter"] == expected_quarter
+    finally:
+        with factory() as session:
+            session.execute(delete(QuarterlyReportRecord).where(QuarterlyReportRecord.quarter == expected_quarter))
+            session.commit()
+
+
+@needs_db
+def test_generate_report_with_omitted_quarter_field_also_resolves_latest_closed():
+    """Mirrors a caller that omits the field entirely (not even `{"quarter": null}`)
+    -- both must resolve identically, since an external scheduler will do this."""
+    expected_quarter = latest_closed_quarter()
+    factory = get_sessionmaker()
+    with factory() as session:
+        session.execute(delete(QuarterlyReportRecord).where(QuarterlyReportRecord.quarter == expected_quarter))
+        session.commit()
+
+    try:
+        response = client.post("/api/v1/i7/reports/quarterly/generate", json={"quarter": None})
+        assert response.status_code == 200
+        assert response.json()["metadata"]["quarter"] == expected_quarter
+    finally:
+        with factory() as session:
+            session.execute(delete(QuarterlyReportRecord).where(QuarterlyReportRecord.quarter == expected_quarter))
+            session.commit()
 
 
 @needs_db

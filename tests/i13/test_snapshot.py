@@ -288,3 +288,35 @@ class TestSnapshotMatchesLive:
         first, last = response.headers["x-i13-history-months"].split("..")
         assert body[0]["months"][0]["month"] == first
         assert body[0]["months"][-1]["month"] == last
+
+
+class TestValidationIndexes:
+    """FR-6 inputs the snapshot keeps: issue events per key, receipt dates per PO line."""
+
+    def test_issue_events_keep_issues_and_their_reversals_and_find_the_history_start(self) -> None:
+        from datetime import date
+
+        from app.initiatives.i13.snapshot import _issue_events
+
+        rows = [
+            {"Matnr": "M", "Werks": "1300", "Bwart": "101", "BudatMkpf": date(2025, 8, 8)},
+            {"Matnr": "M", "Werks": "1300", "Bwart": "261", "BudatMkpf": date(2026, 1, 5)},
+            {"Matnr": "M", "Werks": "1300", "Bwart": "262", "BudatMkpf": date(2026, 1, 6)},
+            {"Matnr": "N", "Werks": "1500", "Bwart": "201", "BudatMkpf": date(2026, 2, 1)},
+        ]
+        events, start = _issue_events(rows)
+        assert start == date(2025, 8, 8)
+        assert [r["Bwart"] for r in events[("M", "1300")]] == ["261", "262"]
+        assert [r["Bwart"] for r in events[("N", "1500")]] == ["201"]
+
+    def test_receipt_dates_are_101_postings_per_po_line(self) -> None:
+        from datetime import date
+
+        from app.initiatives.i13.snapshot import _receipt_dates
+
+        rows = [
+            {"Ebeln": "41", "Ebelp": "10", "Bwart": "101", "BudatMkpf": date(2026, 8, 1)},
+            {"Ebeln": "41", "Ebelp": "10", "Bwart": "102", "BudatMkpf": date(2026, 8, 2)},
+            {"Ebeln": "41", "Ebelp": "10", "Bwart": "101", "BudatMkpf": date(2026, 8, 5)},
+        ]
+        assert _receipt_dates(rows) == {("41", "10"): frozenset({date(2026, 8, 1), date(2026, 8, 5)})}

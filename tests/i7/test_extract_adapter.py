@@ -167,11 +167,16 @@ def test_mstae_and_extwg_both_mapped_from_mara():
     assert mapping["external_material_group"] == "EXTWG"
 
 
-def test_safety_stock_is_recorded_as_absent_from_the_extract():
-    """EISBE is required by the FRS but not delivered in the MARC export."""
-    missing = {field.sap_field for field in MARC_MISSING_FIELDS}
-    assert "EISBE" in missing
-    assert "current_safety_stock" not in {field.canonical_name for field in MARC_FIELDS}
+def test_safety_stock_is_mapped_from_the_extract():
+    """EISBE is delivered in the MARC export and must be read, not discarded.
+
+    It was previously declared missing and staged as a hardcoded NULL. Verified
+    2026-10-07 against raw_marc in Azure SQL: the column is present and 37 rows
+    carry a non-zero value, every one of which that NULL threw away.
+    """
+    mapping = {field.canonical_name: field.sap_field for field in MARC_FIELDS}
+    assert mapping["current_safety_stock"] == "EISBE"
+    assert "EISBE" not in {field.sap_field for field in MARC_MISSING_FIELDS}
 
 
 def test_mseg_maps_the_sign_indicator():

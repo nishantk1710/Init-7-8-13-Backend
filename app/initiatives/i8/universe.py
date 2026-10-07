@@ -41,12 +41,15 @@ one displayed as unknown.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from sqlalchemy import text
+from sqlalchemy import RowMapping, text
 from sqlalchemy.orm import Session
 
+from app.core.db import MSSQL
 from app.core.logging import get_logger
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.material_number import is_eighty_series, series_like_patterns
@@ -215,6 +218,55 @@ left join ekpo_mat  pm on pm.matnr = m.matnr
 left join zmm_mat   zm on zm.matnr = m.matnr
 """
 
+# SQL Server re-expands each CTE at every reference, re-running the per-row
+# sap_key/sap_num helpers each time, so these slices are staged once instead.
+_SOURCE_COLUMNS: dict[str, str] = {
+    "v_mara": "matnr, maktx, mtart",
+    "v_makt": "matnr, maktx",
+    "v_marc": "matnr, werks, minbe, dismm, plifz",
+    "v_mard": "matnr, werks, labst",
+    "v_ekpo": "matnr, werks, txz01",
+    "v_zmm065": "matnr, werks, maktx",
+}
+_VIEWS: dict[str, str] = {view: view for view in _SOURCE_COLUMNS}
+_SOURCE_NAME = re.compile(r"\b(?:" + "|".join(_SOURCE_COLUMNS) + r")\b")
+
+
+def _render_candidates(sources: Mapping[str, str], matnr_like: str) -> str:
+    """The candidates query, reading each view from ``sources[view]``."""
+    return _SOURCE_NAME.sub(lambda m: sources[m.group(0)], _CANDIDATES_SQL).replace(
+        "{matnr_like}", matnr_like
+    )
+
+
+def fetch_universe_candidates(
+    db: Session,
+    matnr_like: str,
+    params: Mapping[str, str],
+    *,
+    sources: Mapping[str, str] = _VIEWS,
+) -> Sequence[RowMapping]:
+    """Run the candidates query, staged through temp tables on SQL Server."""
+    if db.get_bind().dialect.name != MSSQL:
+        return db.execute(text(_render_candidates(sources, matnr_like)), params).mappings().all()
+
+    staged = {view: "#i8_" + view.removeprefix("v_") for view in _SOURCE_COLUMNS}
+    for view, table in staged.items():
+        columns, source = _SOURCE_COLUMNS[view], sources[view]
+        db.execute(text(f"drop table if exists {table}"))
+        # Created without bind parameters: a parameterised statement runs in
+        # sp_executesql, which drops any temp table it creates when it returns.
+        db.execute(text(f"select {columns} into {table} from {source} where 1 = 0"))
+        db.execute(
+            text(f"insert into {table} select {columns} from {source} where {matnr_like}"),
+            params,
+        )
+    rows = db.execute(text(_render_candidates(staged, matnr_like)), params).mappings().all()
+    for table in staged.values():
+        db.execute(text(f"drop table {table}"))
+    return rows
+
+
 # (material, plant) -> (open repair lines, quantity out for repair)
 OpenRepairIndex = dict[tuple[str, str | None], tuple[int, Decimal]]
 
@@ -316,11 +368,7 @@ def load_universe(
     # One OR of LIKEs, reused by every source below: SQL Server has no
     # ``like any(array)``. Each pattern is still a bind parameter.
     matnr_like, pattern_params = like_any("matnr", "pattern", patterns)
-    rows = (
-        db.execute(text(_CANDIDATES_SQL.replace("{matnr_like}", matnr_like)), pattern_params)
-        .mappings()
-        .all()
-    )
+    rows = fetch_universe_candidates(db, matnr_like, pattern_params)
 
     # THE gate, applied before anything else looks at these rows. The database
     # prefilter above only narrowed the candidates; this is what decides, and it

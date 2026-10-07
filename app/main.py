@@ -7,7 +7,7 @@ Run locally:
 import asyncio
 import contextlib
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -36,29 +36,44 @@ EXPOSED_HEADERS = [
 ]
 
 
-def _watch_i13_fingerprint(stop: threading.Event, interval: int) -> None:
-    """Rebuild the I13 snapshot when a reseed (or a new day) changes its
-    fingerprint. One cheap grouped query per interval."""
+def _watch_fingerprint(
+    label: str,
+    check: Callable[..., object],
+    stop: threading.Event,
+    interval: int,
+) -> None:
+    """Rebuild a snapshot when a reload (or a new day) changes its fingerprint.
+
+    One cheap grouped query per interval, per initiative. ``check`` is called
+    with ``min_interval_seconds=0`` because this loop is already the interval;
+    its own rate limit is there for any caller that is not.
+
+    Shared by I08 and I13 rather than written twice: the loop is entirely about
+    not letting a failed check kill the thread, and that is not a property worth
+    maintaining in two copies.
+    """
     from app.core.db import get_sessionmaker
 
     while not stop.wait(interval):
         try:
             db = get_sessionmaker()()
             try:
-                i13_snapshot.check_fingerprint(db, min_interval_seconds=0)
+                check(db, min_interval_seconds=0)
             finally:
                 db.close()
         except Exception:  # noqa: BLE001 -- a failed check must never kill the watcher
-            logger.exception("I13 snapshot fingerprint check failed")
+            logger.exception("%s snapshot fingerprint check failed", label)
 
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-    """Build the normalise views, then start the I13 snapshot build and the
-    delta scheduler; stop both on shutdown.
+    """Build the normalise views, then start the I08 and I13 snapshot builds
+    (in that order, one after the other) and the delta scheduler; stop them on
+    shutdown.
 
-    The server takes requests immediately; I13 snapshot routes answer 503
-    ``building`` until the first build lands (~40 s on the seeded data).
+    The server takes requests immediately; I08 and I13 snapshot routes answer
+    503 ``building`` until their first build lands. I13's waits for I08's, so
+    it lands after both have run (~40 s for I13 alone on the seeded data).
 
     The scheduler is imported here rather than at module scope so that
     importing app.main -- which the test suite and every CLI entry point do --
@@ -79,12 +94,42 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
         await asyncio.to_thread(sap_normalise.rebuild_read_layers)
 
+    # I08 first, then I13 -- one after the other, never side by side. Built
+    # together they starved the one-vCore Azure SQL until the I08 build timed
+    # out on every attempt (app/shared/snapshot_builds.py has the numbers).
     stop = threading.Event()
-    if settings.i13_snapshot_enabled and settings.i13_snapshot_warm_on_startup:
-        i13_snapshot.start_background_build("start-up")
+
+    i8_warm: threading.Thread | None = None
+    if settings.database_url and settings.i8_snapshot_warm_on_startup:
+        from app.initiatives.i8 import service as i8_service
+
+        i8_service.start_background_build("start-up")
+        i8_warm = i8_service.build_thread()
+        # I08 gets the same watcher I13 has. Without it a CSV full pull -- which
+        # replaces raw_<table> whole -- was invisible to the register until
+        # somebody restarted the App Service.
         threading.Thread(
-            target=_watch_i13_fingerprint,
-            args=(stop, max(settings.i13_snapshot_check_interval_seconds, 5)),
+            target=_watch_fingerprint,
+            args=(
+                "I08",
+                i8_service.check_source_fingerprint,
+                stop,
+                max(settings.i8_snapshot_check_interval_seconds, 5),
+            ),
+            name="i8-snapshot-watch",
+            daemon=True,
+        ).start()
+
+    if settings.i13_snapshot_enabled and settings.i13_snapshot_warm_on_startup:
+        i13_snapshot.start_background_build("start-up", after=i8_warm)
+        threading.Thread(
+            target=_watch_fingerprint,
+            args=(
+                "I13",
+                i13_snapshot.check_fingerprint,
+                stop,
+                max(settings.i13_snapshot_check_interval_seconds, 5),
+            ),
             name="i13-snapshot-watch",
             daemon=True,
         ).start()

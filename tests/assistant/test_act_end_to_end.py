@@ -163,21 +163,29 @@ class TestTheCapturedPlanReachesTheReader:
         assert mine[0].source is PlanSource.CAPTURED
 
     def test_captured_plans_are_distinguishable_from_the_fabricated_ones(
-        self, oar_material
+        self, oar_material, monkeypatch
     ) -> None:
         """The single most important thing to be able to say before a demo.
 
         742 of the plans in this system were written by a generator. A reader
         that could not tell them apart would make "the engine works" and "these
-        numbers are real" look like the same claim.
+        numbers are real" look like the same claim. The generator's file is
+        off by default (I13_REFERENCE_PLANS_ENABLED), so it is switched on here
+        to have both kinds side by side.
         """
         from app.initiatives.i13.plans import PlanSource, load_consumption_plans
         from pathlib import Path
 
         _capture_plan_through_the_chat(*oar_material)
 
-        with get_sessionmaker()() as db:
-            every = load_consumption_plans(Path(get_settings().i13_data_dir), db)
+        monkeypatch.setenv("I13_REFERENCE_PLANS_ENABLED", "true")
+        get_settings.cache_clear()
+        try:
+            with get_sessionmaker()() as db:
+                every = load_consumption_plans(Path(get_settings().i13_data_dir), db)
+        finally:
+            monkeypatch.undo()
+            get_settings.cache_clear()
 
         captured = [p for p in every if p.source is PlanSource.CAPTURED]
         fabricated = [p for p in every if p.is_fabricated]

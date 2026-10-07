@@ -371,7 +371,6 @@ def declaration_item(row: DeclarationRow, cfg: I8Settings) -> DeclarationItem:
         ),
         plant=plant_reference(row.plant, cfg),
         requester=row.requester,
-        source=row.source,
         has_active_repair=row.has_active_repair,
         related_repair_id=row.related_repair_id,
         status=row.status,
