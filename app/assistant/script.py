@@ -296,20 +296,9 @@ def _i13(
                     type=FieldType.DATE,
                     required=False,
                 ),
-                # "Where known" -- never inferred, never required.
-                Field(
-                    name="cost_centre",
-                    label="Cost centre",
-                    type=FieldType.TEXT,
-                    required=False,
-                    help_text="Only if you know it.",
-                ),
-                Field(
-                    name="order_number",
-                    label="Work order",
-                    type=FieldType.TEXT,
-                    required=False,
-                ),
+                # Cost centre and work order are no longer asked for. The plan
+                # columns stay (nullable) so earlier captures keep their values;
+                # new plans store None.
             ),
             facts=facts,
         )

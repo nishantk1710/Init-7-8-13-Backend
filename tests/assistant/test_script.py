@@ -145,14 +145,16 @@ class TestI13Shape:
         assert {"window_start", "window_end"} <= names
 
     def test_the_optional_fields_are_optional(self) -> None:
-        """FR-2(b) says cost centre or order 'where known' -- so never required,
-        and never inferred."""
         step = i13_step({script.I13_ASSESSMENT: {"choice": script.PROCEED}})
         by_name = {f.name: f for f in step.fields}
-        assert by_name["cost_centre"].required is False
-        assert by_name["order_number"].required is False
         assert by_name["window_start"].required is False
+        assert by_name["window_end"].required is False
         assert by_name["purpose"].required is True
+
+    def test_the_plan_form_does_not_ask_for_cost_centre_or_work_order(self) -> None:
+        step = i13_step({script.I13_ASSESSMENT: {"choice": script.PROCEED}})
+        names = {f.name for f in step.fields}
+        assert names.isdisjoint({"cost_centre", "order_number"})
 
     def test_the_planned_quantity_defaults_to_what_they_came_in_with(self) -> None:
         step = i13_step({script.I13_ASSESSMENT: {"choice": script.PROCEED}})
@@ -171,8 +173,6 @@ class TestI13Quantity:
                 "planned_quantity": quantity,
                 "window_start": None,
                 "window_end": None,
-                "cost_centre": None,
-                "order_number": None,
             },
         }
 

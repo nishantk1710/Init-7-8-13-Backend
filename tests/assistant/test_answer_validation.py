@@ -59,8 +59,6 @@ def _plan(**overrides):
         "planned_quantity": "2",
         "window_start": "2026-08-01",
         "window_end": "2026-08-31",
-        "cost_centre": None,
-        "order_number": None,
     }
     payload.update(overrides)
     return payload
@@ -92,10 +90,16 @@ class TestFormSteps:
             validate(PLAN_STEP, _plan(purpose=""), SETTINGS)
 
     def test_optional_fields_may_be_omitted(self) -> None:
-        """FR-2(b) says cost centre 'where known'. Blank is a real answer."""
+        """Blank is a real answer for the usage window."""
         cleaned = validate(PLAN_STEP, _plan(window_start=None, window_end=None), SETTINGS)
         assert cleaned["window_start"] is None
-        assert cleaned["cost_centre"] is None
+        assert cleaned["window_end"] is None
+
+    def test_cost_centre_is_no_longer_accepted(self) -> None:
+        """The form stopped asking for it, so a client sending it is refused
+        like any other unknown field."""
+        with pytest.raises(AnswerError):
+            validate(PLAN_STEP, _plan(cost_centre="1300-MNT"), SETTINGS)
 
     def test_an_unknown_field_is_refused_rather_than_ignored(self) -> None:
         """Silently dropping a field the caller believed it was sending is how a
