@@ -14,14 +14,19 @@ predicate is deliberately applied in Python rather than in the query (ruling
 5.2) and cannot narrow the pull. Paying that on every request would make the
 register unusable in the UI, and W5.4 is rendering against it.
 
-The cache is safe here for one specific reason: **the source is a static July
-snapshot.** Nothing writes to it -- every I08 endpoint is read-only, and there
+The cache was safe for one specific reason: **the source was a static July
+snapshot.** Nothing wrote to it -- every I08 endpoint is read-only, and there
 is no write path to SAP or to our database anywhere in W5.1 or W5.2.
 
-That assumption expires at CPI cutover. When the source becomes live, this
-module is the one place that has to change: a TTL, or an explicit invalidation
-hook on the ingestion run. The rest of I08 asks for a snapshot and does not care
-how old it is, so that change stays here.
+That assumption expired at CPI cutover: the OData delta now merges new and
+changed purchase orders, goods receipts and movements into the raw tables
+every cycle. So the cache watches ``ingestion_run`` -- one grouped query over
+the raw tables the register and universe are built from, at most once a
+minute -- and rebuilds when a CSV load or a delta merge has moved any of them.
+Every merge that changes rows leaves a row there (``raw_merge``), so the
+register follows SAP within a delta cycle rather than at the next restart.
+The rest of I08 asks for a snapshot and does not care how old it is, so that
+change stays here.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -149,17 +155,90 @@ def build_snapshot(
 # two concurrent builds would spend twelve seconds producing one answer.
 _lock = threading.Lock()
 _snapshot: Snapshot | None = None
+_snapshot_source: Any = None
+_last_source_check = 0.0
+
+#: The raw tables the register and the universe read, through their v_ views.
+#: A load into any of them -- a CSV full pull, or a delta merge -- moves its
+#: latest ``ingestion_run`` row, and the snapshot is rebuilt.
+SOURCE_TABLES = (
+    "raw_ekko",
+    "raw_ekpo",
+    "raw_eket",
+    "raw_ekbe",
+    "raw_mkpf",
+    "raw_mseg",
+    "raw_mara",
+    "raw_marc",
+    "raw_mard",
+    "raw_makt",
+    "raw_lfa1",
+    "raw_zmm065_gb",
+    "raw_zmm065_bmm",
+)
+
+#: How often a read may ask whether the source moved. The question is one
+#: grouped query; asking it on every request of a page that fires twenty
+#: would still be twenty for no reason.
+SOURCE_CHECK_SECONDS = 60.0
+
+
+def source_tables_fingerprint(db: Session) -> Any:
+    """Latest successful load per source table, or None if it cannot be read.
+
+    On a connection of its own, not the request's session: a failure here
+    (no ``ingestion_run`` table in a test database) must not leave the
+    session the caller is about to use in a failed transaction.
+    """
+    from app.models import IngestionRun
+
+    try:
+        with db.get_bind().connect() as connection:
+            return tuple(
+                tuple(row)
+                for row in connection.execute(
+                    select(IngestionRun.target_table, func.max(IngestionRun.id))
+                    .where(
+                        IngestionRun.status == "succeeded",
+                        IngestionRun.target_table.in_(SOURCE_TABLES),
+                    )
+                    .group_by(IngestionRun.target_table)
+                    .order_by(IngestionRun.target_table)
+                )
+            )
+    except Exception as exc:  # noqa: BLE001 -- no fingerprint means "keep serving"
+        logger.debug("I08: could not read the source fingerprint (%s)", exc)
+        return None
 
 
 def get_snapshot(
     db: Session, cfg: I8Settings | None = None, *, refresh: bool = False
 ) -> Snapshot:
-    """The cached snapshot, built on first use."""
-    global _snapshot
+    """The cached snapshot, built on first use and rebuilt when its source
+    tables have been loaded since."""
+    global _snapshot, _snapshot_source, _last_source_check
+    rebuilt = False
     with _lock:
+        now = time.monotonic()
+        if _snapshot is not None and not refresh and now - _last_source_check >= SOURCE_CHECK_SECONDS:
+            _last_source_check = now
+            current = source_tables_fingerprint(db)
+            if current is not None and current != _snapshot_source:
+                logger.info("I08: source tables were loaded since the snapshot was built; rebuilding")
+                refresh = True
         if _snapshot is None or refresh:
+            _snapshot_source = source_tables_fingerprint(db)
             _snapshot = build_snapshot(db, cfg)
-        return _snapshot
+            _last_source_check = time.monotonic()
+            rebuilt = True
+        snapshot = _snapshot
+    if rebuilt:
+        # Both are derived from the snapshot's lines, so neither can outlive
+        # it: an attestation view over the previous register would show the
+        # previous register's lines.
+        reset_attestation_view()
+        reset_coding_screen()
+    return snapshot
 
 
 def reset_snapshot() -> None:
@@ -167,9 +246,10 @@ def reset_snapshot() -> None:
 
     For tests, and for any future code that reloads the underlying data.
     """
-    global _snapshot
+    global _snapshot, _snapshot_source
     with _lock:
         _snapshot = None
+        _snapshot_source = None
     # The attestation view and the coding screen are both derived from the
     # snapshot, so neither can outlive it.
     reset_attestation_view()

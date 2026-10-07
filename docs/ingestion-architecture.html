@@ -318,9 +318,9 @@
           <tr><td>Page / chunk size</td><td class="csv">50,000 rows</td><td class="odata">1,000 rows</td></tr>
           <tr><td>Row-level filter</td><td class="csv">FromDate / ToDate only</td><td class="odata">arbitrary $filter</td></tr>
           <tr><td>Completeness signal</td><td class="csv">none of its own</td><td class="odata">$count &mdash; reconciles the CSV path too</td></tr>
-          <tr><td>MaterialDocumentHeaderSet (MKPF)</td><td class="csv">use this &mdash; the only route in</td><td class="odata"><span class="mono">Budat</span> is IGNORED even on a matching date; a watermark delta would silently return the whole table</td></tr>
-          <tr><td>GoodsMovementItemSet (MSEG)</td><td class="csv">use this for the full load</td><td class="odata">no delta of its own possible until MKPF has one &mdash; falls back to a full pull</td></tr>
-          <tr><td>POHistorySet (EKBE)</td><td class="csv">confirm this reads real rows &mdash; OData returns 0 against $count&nbsp;=&nbsp;3,881</td><td class="odata">currently broken for this set</td></tr>
+          <tr><td>MaterialDocumentHeaderSet (MKPF)</td><td class="csv">full load</td><td class="odata">delta on <span class="mono">Cpudt</span> (entry date) since 2026-10-07; <span class="mono">Budat</span> is HTTP&nbsp;400</td></tr>
+          <tr><td>GoodsMovementItemSet (MSEG)</td><td class="csv">full load</td><td class="odata">delta on <span class="mono">CpudtMkpf</span>, as <span class="mono">'DD.MM.YYYY'</span> only &mdash; <span class="mono">'YYYYMMDD'</span> silently returns the whole set</td></tr>
+          <tr><td>POHistorySet (EKBE)</td><td class="csv">full load &mdash; <span class="mono">GJAHR</span> blank on a fifth of rows; the merge fills it from OData</td><td class="odata">reads again (3,881 = $count); delta on <span class="mono">Cpudt</span> as <span class="mono">'YYYYMMDD'</span></td></tr>
         </tbody>
       </table>
     </div>

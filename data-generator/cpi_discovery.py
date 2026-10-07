@@ -347,7 +347,11 @@ PROBES = [
     ("ALL", "W2.1 envelope: $select support",                     "W2.1", SHARED, "MaterialPlantSet",     f"$select=Matnr,Werks,Dismm&$top=2&{JSON}"),
 ]
 
-CPI_PATH = "/http/SAPECC/OdataConsumption"
+# The iFlow route. DEV by default; CPI_PATH in the environment (or .env) points
+# the sweep at another system -- /http/SAPECCQA/OdataConsumption for QA -- the
+# same setting the application reads, so the snapshot and the app cannot
+# describe two different systems by accident.
+DEFAULT_CPI_PATH = "/http/SAPECC/OdataConsumption"
 NS = {"edmx": "http://schemas.microsoft.com/ado/2007/06/edmx", "edm": "http://schemas.microsoft.com/ado/2008/09/edm",
       "m": "http://schemas.microsoft.com/ado/2007/08/dataservices/metadata"}
 SAP_NS = "http://www.sap.com/Protocols/SAPData"
@@ -389,6 +393,11 @@ def env(name):
     return v
 
 
+def cpi_path():
+    """The iFlow route: CPI_PATH from the environment, else DEV's."""
+    return (os.environ.get("CPI_PATH") or DEFAULT_CPI_PATH).strip()
+
+
 def get_token(session):
     secret = env("CPI_CLIENT_SECRET")
     if secret.startswith(LEAKED_SECRET_PREFIX):
@@ -405,6 +414,7 @@ CALLS = []         # every call, for the performance baseline
 COUNT_DUMPS = set()  # sets whose /$count has already returned 500 in this run
 NOTES = []         # headline findings, collected into status_report.md
 THROTTLE = 0.0     # seconds to sleep between calls (--sleep)
+SNAPSHOT_LABEL = ""  # --label: DEV, QA, ... recorded in snapshot.json
 
 TRACE_HEADERS = ("x-correlationid", "sap-messageprocessinglogid", "x-vcap-request-id", "x-request-id",
                  "sap-message", "dataserviceversion", "content-type", "date")
@@ -429,7 +439,7 @@ def record_failure(response, api_path, api_query):
 
 
 def cpi_get(session, token, api_path, api_query="", retries=3):
-    url = env("CPI_BASE_URL").rstrip("/") + CPI_PATH
+    url = env("CPI_BASE_URL").rstrip("/") + cpi_path()
     t0 = time.time()
     for attempt in range(retries):
         r = session.get(url, params={"APIPath": api_path, "APIQuery": api_query},
@@ -576,7 +586,29 @@ def run_sweep(s, token, out, skip_counts):
             note("Defects", f"B1: /$count still fails on {len(dumps)} set(s): {', '.join(dumps)}")
         else:
             note("Defects", "B1: /$count succeeded on every reachable set - the defect appears FIXED.")
+    if actual:
+        write_snapshot_info(out, sorted({svc for svc, _ in actual}))
     return token, actual, actual_props, totals
+
+
+def write_snapshot_info(out, services):
+    """snapshot.json: which system this folder describes.
+
+    The application picks its contract by matching the CPI_PATH recorded here
+    against its own (app/integrations/sap/contract.py, discovery_dir), so a
+    sweep of QA into data-generator/discovery_qa is used the moment the
+    application is pointed at QA, and never while it is pointed at DEV.
+    """
+    info = {
+        "cpi_path": cpi_path(),
+        "label": SNAPSHOT_LABEL,
+        "captured_at": utcnow(),
+        "services": services,
+        "note": "Written by cpi_discovery.py. Measure the deltas against the same system next: "
+                "python -m app.ingest.delta_probe",
+    }
+    (out / "snapshot.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
+    print(f"snapshot.json: this folder describes CPI_PATH={info['cpi_path']}")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1407,7 +1439,7 @@ def write_logs(out):
         w.writerow(["utc", "sap_path", "odata_query", "http_status", "elapsed_s", "bytes"])
         w.writerows(CALLS)
     if FAILURES:
-        entry = env("CPI_BASE_URL").rstrip("/") + CPI_PATH
+        entry = env("CPI_BASE_URL").rstrip("/") + cpi_path()
         lines = [f"{len(FAILURES)} failed call(s). CPI entry point: {entry}",
                  "SAP path = what CPI forwards to the ECC gateway; paste it into /IWFND/GW_CLIENT to reproduce.", ""]
         for i, f in enumerate(FAILURES, 1):
@@ -1486,8 +1518,11 @@ def main():
     ap.add_argument("--max-pages", type=int, default=200, help="paging ceiling per full pull (default 200 x 1000 rows)")
     ap.add_argument("--sleep", type=float, default=0.0, help="seconds between calls, if CPI is rate limiting")
     ap.add_argument("--env-file", default=str(DEFAULT_ENV_FILE), help="path to .env (default: alongside this script)")
+    ap.add_argument("--label", default="", help="a name for the system swept (DEV, QA), recorded in snapshot.json")
     args = ap.parse_args()
     THROTTLE = args.sleep
+    global SNAPSHOT_LABEL
+    SNAPSHOT_LABEL = args.label
 
     if load_env_file(args.env_file):
         print(f"loaded env from {Path(args.env_file).resolve()}")

@@ -8,16 +8,19 @@ hand. Here the mapping is mechanical -- ``MaterialPlantSet`` becomes
 snapshot appears here automatically instead of being silently skipped until
 someone notices.
 
-What is written down is only what cannot be derived: the handful of sets that
-return no rows in this client, and the notes explaining why.
+What is written down is only what cannot be derived: which sets can be read
+incrementally and how, what SAP demands before it serves a set, and the notes
+explaining why.
 """
 
 from __future__ import annotations
 
+import csv
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
-from app.integrations.sap.contract import EntitySet, contract
+from app.integrations.sap.contract import EntitySet, contract, discovery_dir
 from app.integrations.sap.filters import HONOURED, verdict_for
 from app.integrations.sap.known_conditions import (
     NON_UNIQUE_DECLARED_KEYS,
@@ -32,25 +35,20 @@ TABLE_PREFIX = "odata_"
 # ingested -- an empty table is a fact worth landing, and the day SAP starts
 # populating one of these we want the pipeline already pointed at it rather
 # than discovering the omission months later.
-KNOWN_EMPTY = frozenset(
-    {
-        "ReservationItemSet",
-        "MaterialValuationSet",
-        "MonthlyMovementStatisticSet",
-    }
-)
+#
+# Empty since 2026-10-07: all three sets that were here now hold rows
+# (counts.csv) -- ReservationItemSet 7,088, MaterialValuationSet 2,116,
+# MonthlyMovementStatisticSet 1,429.
+KNOWN_EMPTY: frozenset[str] = frozenset()
 
 # ``$count`` returns HTTP 400 on these. Not fatal: the client falls back to
 # page-until-short-page, so they read fine, it just cannot state a total up
 # front and therefore cannot cross-check the row count against one.
-NO_COUNT = frozenset(
-    {
-        "MaterialValuationSet",
-        "ChangeDocHeaderSet",
-        "ChangeDocItemSet",
-        "BatchStockSet",
-    }
-)
+#
+# Empty since 2026-10-07: $count answers a number on all 21 sets (counts.csv),
+# including the four that were here (MaterialValuationSet, ChangeDocHeaderSet,
+# ChangeDocItemSet, BatchStockSet).
+NO_COUNT: frozenset[str] = frozenset()
 
 # Sets SAP refuses to serve without a predicate. A bare read returns HTTP 400 --
 # not because the set is empty, but because the service demands one.
@@ -86,54 +84,99 @@ def table_name(entity_set_name: str) -> str:
     return spaced.lower()
 
 
+# How a delta field's date is written in a $filter. Measured per field on
+# 2026-10-07 (delta_support.csv), NOT read off the declared type: a DATS field
+# SAP re-typed to Edm.String takes one of two text shapes, and the wrong one is
+# not an error -- on GoodsMovementItemSet `CpudtMkpf ge '20250101'` answers
+# HTTP 200 with all 68,618 rows, while `ge '01.01.2025'` answers the 6 that
+# match. A datetime literal on a re-typed field is HTTP 400.
+LITERAL_DATETIME = "datetime"  # Aedat ge datetime'2026-09-15T00:00:00'
+LITERAL_DATS = "dats"          # Cpudt ge '20260915'
+LITERAL_DOTTED = "dotted"      # CpudtMkpf ge '15.09.2026'
+LITERALS = frozenset({LITERAL_DATETIME, LITERAL_DATS, LITERAL_DOTTED})
+
+
 @dataclass(frozen=True)
 class Delta:
     """How to ask SAP for only what changed.
 
-    Two shapes, and which one a set gets is decided by measurement rather than
-    preference -- see ``filter_support.csv``.
+    Two parts, and a set has one or both:
 
-    **Direct.** The set carries a date SAP will filter on::
+    **Its own window.** The set carries a date SAP filters on, and that date
+    moves whenever a row is created or changed::
 
-        Delta(field="Aedat")        ->  $filter=Aedat ge datetime'...'
+        Delta(field="Cpudt", literal=LITERAL_DATS)  ->  Cpudt ge '20260915'
 
-    **Derived.** The set carries no date SAP will filter on, so its parent is
-    read by date and the child is then fetched by the keys that came back::
+    **Its parents' keys.** Something that changes this set's rows is recorded
+    on another set instead, so the parents are read by THEIR windows and this
+    set is re-read for every key they hand back::
 
-        Delta(via="PurchaseOrderSet", via_key="Ebeln")
+        Delta(via=("PurchaseOrderItemSet", "POHistorySet"), via_key="Ebeln")
 
-    The derived shape is not a design preference, it is forced. Filtering
-    GoodsMovementItemSet by ``BudatMkpf`` returns HTTP 500, and by ``Ebeln``
-    also returns HTTP 500, so going through MaterialDocumentHeaderSet is the
-    only route to a date-bounded read of it.
+    Both together is the common case in the purchase-order family: EKPO's own
+    Aedat moves on every item change, but a goods receipt that marks the item
+    delivery-complete moves nothing on EKPO -- it writes an EKBE row. So EKPO
+    reads its own window AND every purchase order with new history.
+
+    Which shape a set gets is decided by measurement, and each choice below
+    cites what was measured.
     """
 
     field: str | None = None
-    via: str | None = None
+    literal: str = LITERAL_DATETIME
+    via: tuple[str, ...] = ()
     via_key: str | None = None
 
-    # Evidence, where it does not come from filter_support.csv.
+    # Evidence, where it does not come from delta_support.csv.
     #
-    # The default bar is a HONOURED verdict in that file. Some filters are
-    # proven elsewhere -- CDHDR's Udate is REJECTED alone and works alongside
-    # the Objectclas predicate, which filter_support's one-property-at-a-time
-    # probe cannot express, so the proof lives in operator_support.csv instead.
-    #
-    # A free-text citation rather than a boolean: "someone ticked a box" is not
-    # evidence, and the next person needs to know where to look.
+    # The default bar is a HONOURED verdict in that file for this field and
+    # this literal shape. A free-text citation rather than a boolean: "someone
+    # ticked a box" is not evidence, and the next person needs to know where
+    # to look.
     verified: str | None = None
 
     def __post_init__(self) -> None:
-        direct = self.field is not None
-        derived = self.via is not None and self.via_key is not None
-        if direct == derived:
-            raise ValueError(
-                "A Delta is either direct (field=) or derived (via= and "
-                "via_key=), never both and never neither."
-            )
+        if isinstance(self.via, str):
+            # One parent, written the short way.
+            object.__setattr__(self, "via", (self.via,))
+        if bool(self.via) != (self.via_key is not None):
+            raise ValueError("A Delta's via= and via_key= go together: parents need a key to hand over.")
+        if self.field is None and not self.via:
+            raise ValueError("A Delta needs a field of its own, parents to read through, or both.")
+        if self.literal not in LITERALS:
+            raise ValueError(f"Unknown literal shape {self.literal!r}; one of {sorted(LITERALS)}.")
+
+    @property
+    def direct(self) -> bool:
+        """Whether this set reads a window of its own."""
+        return self.field is not None
+
+    @property
+    def derived(self) -> bool:
+        """Whether this set is re-read for keys its parents hand over."""
+        return bool(self.via)
 
 
-# Deltas, declared only where the filter is measured HONOURED against live SAP.
+# Deltas, declared only where the filter is measured HONOURED against live SAP,
+# with the literal shape that was measured. Re-designed 2026-10-07 from three
+# measurements against DEV, all through the client (scratch evidence in the
+# 2026-10-07 commit message; the filter probes are delta_support.csv):
+#
+#   1. Every EKPO change and every EKET change on record moves EKPO.Aedat.
+#      CDPOS (EINKBELEG) holds 7,605 EKPO updates and 384 EKET updates
+#      (MENGE, EINDT, SLFDT, ...); not one is dated after its item's Aedat.
+#      EKKO.Aedat does NOT move: it is the creation date (98% equal to Bedat),
+#      and 2,786 of 8,724 header changes are dated after it.
+#   2. A goods receipt moves nothing on EKPO. 117 of 624 delivery-complete
+#      items (ELIKZ) took their last EKBE entry after their Aedat -- the
+#      receipt set the flag. Receipts also move EKET.WEMNG.
+#   3. Of 75 header changes to the fields EKKO projects (EKGRP 58, WAERS 17),
+#      72 sit on a purchase order with an item change on or after them.
+#
+# Before this, the whole family hung off EKKO.Aedat. That read new purchase
+# orders and nothing else: every change to an existing one -- quantity, price,
+# deletion flag, delivery date, every goods receipt -- was invisible to the
+# delta and waited for the next full CSV pull.
 #
 # The bar is deliberately higher than the client's own check_filter, which
 # blocks properties measured IGNORED or REJECTED and lets an *unprobed* one
@@ -141,77 +184,44 @@ class Delta:
 # watching. It is the wrong one for a pipeline that runs unattended: an
 # unprobed filter that turns out to be ignored returns HTTP 200 with the whole
 # set, and a "delta" that silently pulls everything is both wrong and slow.
-#
-# So ChangeDocHeaderSet and ChangeDocItemSet have no delta here. CDHDR's Udate
-# and CDPOS's Changenr were never probed, and until they are these two stay on
-# full pulls -- correct, just more expensive.
 DELTAS: dict[str, Delta] = {
-    # EKKO by change date, then its children by the PO numbers that came back.
-    "PurchaseOrderSet": Delta(field="Aedat"),
-    "PurchaseOrderItemSet": Delta(via="PurchaseOrderSet", via_key="Ebeln"),
-    "POScheduleLineSet": Delta(via="PurchaseOrderSet", via_key="Ebeln"),
-    # EKBE: Budat is REJECTED here, so it rides on the PO numbers instead.
-    "POHistorySet": Delta(via="PurchaseOrderSet", via_key="Ebeln"),
-    # MKPF deliberately has NO delta on Budat, and it is not an oversight.
-    #
-    # Four probes of the 2026-09-25 sweep, all against ZMM_KPI02_ADD_SRV,
-    # set total 40,651 throughout (operator_support.csv rows 9-11 and
-    # filter_support.csv; the requests themselves are calls.csv lines 223-225
-    # and 400, each answering HTTP 200 with a 5-byte $count body -- "40651"):
-    #
-    #   Budat ge datetime'2026-01-01T00:00:00'              -> 40,651
-    #   Budat ge datetime'2013-01-01...' and lt '2014-01-01' -> 40,651
-    #   Budat eq datetime'2013-09-27T00:00:00'              -> 40,651
-    #       (the control: a real posting date sampled from this set, so it
-    #        should have matched a subset and did not)
-    #   Budat eq datetime'1900-01-01T00:00:00'              -> 40,651
-    #       (the impossible value filter_support probes with; this is the
-    #        row that reads IGNORED there)
-    #
-    # The control row is what settles it. A filter that only failed when it
-    # matched nothing would already be unusable for a delta -- `Budat ge
-    # <watermark>` matches nothing on any day when nothing was posted, and
-    # the pipeline would then load all 40,651 rows as if they were new. Budat
-    # is worse than that: it is dropped even when it WOULD have matched, so no
-    # watermark value makes it safe. MKPF pulls in full, like ChangeDocItemSet.
-    #
-    # Do not resurrect this from the older backend/discovery/ snapshot, where
-    # `ge 2026-01-01` returns 2 and `eq 2013-09-27` returns 919. That snapshot
-    # is a different service (ZVZI_KPI02_SHARED_SRV) and is not what
-    # contract.discovery_dir() reads. On the service we actually call, Budat
-    # is IGNORED.
-    #
-    # It could never have run anyway: _read_direct sends a set's own window
-    # with allow_unsupported_filter=False, and check_filter refuses an IGNORED
-    # property, so this entry raised UnsupportedFilterError rather than
-    # pulling anything.
-    #
-    # MSEG keeps its declaration. The shape is still the only right one -- its
-    # own filters are HTTP 500, so its parent's keys are the only route to a
-    # date-bounded read -- and this is what to revive if MKPF ever gains a
-    # filterable date. Until then there is no parent window, and fetch_set
-    # pulls MSEG in full and says so, rather than reading MKPF whole and
-    # asking for its children 50 keys at a time: 814 requests for the set one
-    # full pull already returns.
-    "GoodsMovementItemSet": Delta(via="MaterialDocumentHeaderSet", via_key="Mblnr"),
-    # CDHDR by change date. Only works alongside the Objectclas predicate this
-    # set demands -- `Udate ge ...` on its own is HTTP 400, while
-    # `Objectclas eq 'MATERIAL' and Udate ge ...` returned 3760 rows
-    # (discovery 2026-09-21, operator_support.csv). combine() sends both.
-    "ChangeDocHeaderSet": Delta(
-        field="Udate",
-        verified=(
-            "operator_support.csv 2026-09-21: 'eq + date ge' -> 3760 rows "
-            "(bare 'date ge on CDHDR' is REJECTED_HTTP_400)"
-        ),
-    ),
+    # EKPO by its own change date (finding 1), plus every purchase order with
+    # new history (finding 2).
+    "PurchaseOrderItemSet": Delta(field="Aedat", via=("POHistorySet",), via_key="Ebeln"),
+    # EKKO by its creation date -- new purchase orders -- plus every purchase
+    # order whose items changed (finding 3). A header-only change with no item
+    # change (3 of 75 measured) waits for the CSV refresh; reading
+    # EINKBELEG change documents to catch those is the next step if it matters.
+    "PurchaseOrderSet": Delta(field="Aedat", via=("PurchaseOrderItemSet",), via_key="Ebeln"),
+    # EKET has no date of its own that means "changed" (Eindt is the delivery
+    # date). Its changes ride on EKPO.Aedat (finding 1) and its received
+    # quantity on EKBE (finding 2), so it is re-read for both sets of keys.
+    "POScheduleLineSet": Delta(via=("PurchaseOrderItemSet", "POHistorySet"), via_key="Ebeln"),
+    # EKBE by entry date. History rows are written once and never changed --
+    # a reversal is a new row -- so the entry date is a complete increment.
+    # Text-typed since 2026-10 ('20260916'); a datetime literal is HTTP 400.
+    # Budat would be wrong even if it worked: a posting date can be backdated.
+    "POHistorySet": Delta(field="Cpudt", literal=LITERAL_DATS),
+    # MKPF by entry date. Budat was IGNORED through September and is HTTP 400
+    # since 2026-10-05; Cpudt is honoured, and is the right field anyway --
+    # posting dates are backdated, entry dates are not.
+    "MaterialDocumentHeaderSet": Delta(field="Cpudt"),
+    # MSEG by its header's entry date, which the set now carries itself and
+    # filters on -- only in SAP's display shape. Material document lines are
+    # never changed after posting, so this is a complete increment, read
+    # directly rather than fifty MKPF keys at a time.
+    "GoodsMovementItemSet": Delta(field="CpudtMkpf", literal=LITERAL_DOTTED),
+    # CDHDR by change date, alongside the Objectclas predicate the set
+    # demands (combine() sends both). Text-typed since 2026-10; the datetime
+    # literal this used to send is now HTTP 400.
+    "ChangeDocHeaderSet": Delta(field="Udate", literal=LITERAL_DATS),
     # CDPOS deliberately has NO delta, and it is not an oversight.
     #
     # The obvious shape is `via ChangeDocHeaderSet on Changenr`, which builds
-    # `Changenr eq 'a' or Changenr eq 'b' or ...`. That exact shape is measured
-    # REJECTED_HTTP_400 on this set -- "or inside parentheses" in
-    # operator_support.csv. One request per change number would be thousands of
-    # requests for one run.
+    # `Changenr eq 'a' or Changenr eq 'b' or ...` inside parentheses next to
+    # the Objectclas predicate. That exact shape was measured REJECTED_HTTP_400
+    # on this set -- "or inside parentheses" in operator_support.csv. One
+    # request per change number would be thousands of requests for one run.
     #
     # So CDPOS stays a full pull under its Objectclas predicate, and anything
     # wanting only the changed documents filters after the fact. Honest and
@@ -295,25 +305,22 @@ class IngestSpec:
     def runnable_delta(self) -> Delta | None:
         """The delta this set can run today, or None.
 
-        Declared and runnable are different things. A derived delta reads its
-        parent by date, so it needs the parent to have a date SAP filters on.
-        GoodsMovementItemSet is declared through MaterialDocumentHeaderSet --
-        the only correct shape -- but MKPF's Budat is IGNORED, so there is no
-        window and the delta cannot run. A sweep that took ``delta`` at face
-        value pulled MSEG in full every cycle while calling it an increment.
-
-        And a set SAP cannot serve rows from (``blocked``) has nothing to run
-        either, whatever it declares.
+        Declared and runnable are different things. A parent's keys come from
+        the parent's own window, so every parent needs a date SAP filters on;
+        one without is no route to an increment, and a sweep that took the
+        declaration at face value would read that parent whole and call it an
+        increment. And a set SAP cannot serve rows from (``blocked``) has
+        nothing to run either, whatever it declares -- nor does a set reading
+        through a blocked parent, which has no keys to hand over.
         """
         delta = self.delta
         if delta is None or self.blocked:
             return None
-        if delta.field is not None:
-            return delta
-        parent = spec_for(delta.via or "").delta
-        if parent is not None and parent.field is not None:
-            return delta
-        return None
+        for parent_name in delta.via:
+            parent = spec_for(parent_name)
+            if parent.blocked or parent.delta is None or not parent.delta.direct:
+                return None
+        return delta
 
     @property
     def why_not_runnable(self) -> str | None:
@@ -324,34 +331,82 @@ class IngestSpec:
             return f"blocked: {self.blocked}"
         if self.delta is None:
             return "full pull only"
-        return f"via {self.delta.via} (no window: full)"
+        return f"via {', '.join(self.delta.via)} (no window: full)"
+
+
+# --- Evidence ----------------------------------------------------------------
+
+DELTA_SUPPORT_FILE = "delta_support.csv"
+
+# What delta_support.csv records for a derived read: the child filtered by a
+# chain of `via_key eq 'k1' or via_key eq 'k2' ...`, exactly as fetch builds it.
+KEY_CHAIN = "keys"
+
+
+@lru_cache
+def delta_support() -> dict[tuple[str, str, str], str]:
+    """(entity set, property, literal shape) -> verdict, from the delta probe.
+
+    The probe (``python -m app.ingest.delta_probe``) is the four-step test the
+    impossible-value sweep cannot stand in for: total, an impossible day, one
+    real day (a proper subset), and a window whose every row is checked to
+    fall inside it. filter_support.csv cannot say which TEXT shape a re-typed
+    date takes; this file can, because it sends the literal fetch sends.
+    """
+    path = discovery_dir() / DELTA_SUPPORT_FILE
+    if not path.exists():
+        return {}
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        return {
+            (row["entity_set"], row["property"], row["literal"]): row["verdict"]
+            for row in csv.DictReader(handle)
+        }
 
 
 def check_delta_filters() -> list[str]:
     """Every declared delta whose filter is not measured HONOURED.
 
-    Called by the CLI before an incremental run and by a test, so a delta added
-    on an unverified property is caught by the suite rather than by a quiet
-    full-set pull dressed up as an increment.
+    Called by the CLI and the scheduler before an incremental run, and by a
+    test, so a delta added on an unverified property is caught by the suite
+    rather than by a quiet full-set pull dressed up as an increment.
+
+    Two questions per delta. Its own window: is ``field`` honoured in exactly
+    the literal shape declared (delta_support.csv)? Its parents: is
+    ``via_key`` honoured on this set as an `or` chain (delta_support.csv, or
+    a HONOURED impossible-value verdict in filter_support.csv), and does every
+    parent have a window of its own to hand keys over from?
     """
+    measured = delta_support()
     problems: list[str] = []
     for set_name, delta in DELTAS.items():
         if delta.verified:
             # Proven by a different probe, with the citation recorded. Not a
-            # way around the check -- a way to record evidence filter_support
+            # way around the check -- a way to record evidence the probe
             # cannot hold, and the citation is what makes it reviewable.
             continue
-        if delta.field is not None:
-            target, prop = set_name, delta.field
-        else:
-            # The child is filtered by via_key, and the parent by its own field.
-            target, prop = set_name, delta.via_key or ""
-        verdict = verdict_for(target, prop)
-        if verdict != HONOURED:
-            problems.append(
-                f"{target}.{prop}: {verdict or 'never probed'} "
-                f"(a delta needs {HONOURED}, or a Delta(verified=...) citation)"
-            )
+        if delta.direct:
+            verdict = measured.get((set_name, delta.field or "", delta.literal))
+            if verdict != HONOURED:
+                problems.append(
+                    f"{set_name}.{delta.field} as a {delta.literal} literal: "
+                    f"{verdict or 'never probed'} (a delta needs {HONOURED} in "
+                    f"{DELTA_SUPPORT_FILE}, or a Delta(verified=...) citation)"
+                )
+        if delta.derived:
+            key = delta.via_key or ""
+            verdict = measured.get((set_name, key, KEY_CHAIN)) or verdict_for(set_name, key)
+            if verdict != HONOURED:
+                problems.append(
+                    f"{set_name}.{key}: {verdict or 'never probed'} "
+                    f"(a delta needs {HONOURED}, or a Delta(verified=...) citation)"
+                )
+            for parent in delta.via:
+                parent_delta = DELTAS.get(parent)
+                if parent_delta is None or not parent_delta.direct:
+                    problems.append(
+                        f"{set_name} reads through {parent}, which has no window "
+                        "of its own to hand keys over from"
+                    )
     return problems
 
 

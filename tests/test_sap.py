@@ -409,14 +409,20 @@ class TestContract:
 
 class TestFilterGuard:
     @pytest.mark.drift
-    def test_pstyp_is_known_to_be_ignored(self) -> None:
-        """The exact case behind 'apply the Pstyp filter client-side'."""
-        assert verdict_for("PurchaseOrderItemSet", "Pstyp") == IGNORED
+    def test_bwtar_is_known_to_be_ignored(self) -> None:
+        """The last silently ignored property (2026-10-07: 2,116 of 2,116).
+
+        Pstyp, the case behind 'apply the Pstyp filter client-side', was the
+        example here until SAP started honouring it (0 of 11,097, measured
+        2026-10-05 and 2026-10-07).
+        """
+        assert verdict_for("MaterialValuationSet", "Bwtar") == IGNORED
+        assert verdict_for("PurchaseOrderItemSet", "Pstyp") == "HONOURED"
 
     @pytest.mark.drift
     def test_filtering_on_an_ignored_property_is_refused(self) -> None:
         with pytest.raises(UnsupportedFilterError, match="SILENTLY IGNORES"):
-            check_filter("PurchaseOrderItemSet", "Pstyp eq '3'")
+            check_filter("MaterialValuationSet", "Bwtar eq 'X'")
 
     def test_an_honoured_filter_passes(self) -> None:
         check_filter("MaterialPlantSet", "Dismm eq 'ND'")  # must not raise
@@ -438,8 +444,8 @@ class TestFilterGuard:
 
     @pytest.mark.drift
     def test_override_is_available_for_a_re_verified_filter(self) -> None:
-        assert unsupported_properties("PurchaseOrderItemSet", "Pstyp eq '3'") == {
-            "Pstyp": IGNORED
+        assert unsupported_properties("MaterialValuationSet", "Bwtar eq 'X'") == {
+            "Bwtar": IGNORED
         }
 
 
@@ -473,22 +479,17 @@ class TestClient:
         assert result.is_empty and len(result) == 0
 
     def test_read_refuses_an_ignored_filter_before_calling(self) -> None:
-        """Pstyp on PurchaseOrderItemSet was the original example (B1/F1), but
-        it is HONOURED as of the 22-Sep discovery re-sweep -- see
-        filter_support.csv, verdict HONOURED, impossible-value probe 0/11097.
-        Swapped to Budat on MaterialDocumentHeaderSet, which is still IGNORED
-        (40651/40651, the MKPF date-range defect) and is the guard's most
-        consequential live case today.
+        """Pstyp on PurchaseOrderItemSet was the original example (B1/F1), and
+        MKPF's Budat the next; SAP has since honoured the one and turned the
+        other into an HTTP 400. Bwtar on MaterialValuationSet is the last
+        property SAP silently ignores (2,116 of 2,116, 2026-10-07).
         """
         calls: list[dict] = []
         client = SapClient(
             settings(), transport_returning(FakeResponse(text=feed([])), capture=calls)
         )
         with pytest.raises(UnsupportedFilterError):
-            client.read(
-                "MaterialDocumentHeaderSet",
-                filter="Budat ge datetime'2013-01-01T00:00:00'",
-            )
+            client.read("MaterialValuationSet", filter="Bwtar eq 'X'")
         assert calls == [], "the guard must fire before any HTTP call"
 
     def test_count_returns_none_when_sap_500s(self) -> None:

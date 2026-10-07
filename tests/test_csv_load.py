@@ -16,6 +16,7 @@ import io
 import pytest
 
 from app.ingest import csv_load
+from app.ingest.csv_tables import CSV_TABLES
 
 
 class _FinalisingStorage:
@@ -82,17 +83,16 @@ class TestOpenCsv:
 
 
 class TestSeedWatermark:
-    def test_seeds_one_day_back_in_the_odata_shape(self, monkeypatch) -> None:
-        """SAP serialises a DATS as midnight in its own zone, decoded as 22:00
-        UTC the evening before; a literal at midnight of the same date could
-        sit past every row of that day. One day back re-reads at most a day."""
+    def test_seeds_one_day_back_as_a_day(self, monkeypatch) -> None:
+        """A mark is a calendar day; one day back re-reads at most a day,
+        which covers an extract that ran across midnight in SAP's zone."""
         written = []
         monkeypatch.setattr(csv_load, "set_watermark", lambda *a: written.append(a))
 
         mark = csv_load._seed_watermark("PurchaseOrderSet", "Aedat", "20260925", 3140)
 
-        assert mark == "2026-09-24 00:00:00"
-        assert written == [("PurchaseOrderSet", "Aedat", "2026-09-24 00:00:00", 3140)]
+        assert mark == "2026-09-24"
+        assert written == [("PurchaseOrderSet", "Aedat", "2026-09-24", 3140)]
 
     def test_a_full_load_resets_the_mark_to_its_own_newest_date(self, monkeypatch) -> None:
         """The full pull replaced the table the delta merges into, so whatever
@@ -100,8 +100,8 @@ class TestSeedWatermark:
         written = []
         monkeypatch.setattr(csv_load, "set_watermark", lambda *a: written.append(a))
 
-        assert csv_load._seed_watermark("PurchaseOrderSet", "Aedat", "20260925", 1) == "2026-09-24 00:00:00"
-        assert written == [("PurchaseOrderSet", "Aedat", "2026-09-24 00:00:00", 1)]
+        assert csv_load._seed_watermark("PurchaseOrderSet", "Aedat", "20260925", 1) == "2026-09-24"
+        assert written == [("PurchaseOrderSet", "Aedat", "2026-09-24", 1)]
 
     def test_sap_no_date_seeds_nothing(self, monkeypatch) -> None:
         written = []
@@ -110,13 +110,30 @@ class TestSeedWatermark:
         assert csv_load._seed_watermark("PurchaseOrderSet", "Aedat", "00000000", 1) is None
         assert written == []
 
-    def test_the_seed_is_a_literal_the_delta_can_send(self, monkeypatch) -> None:
-        from app.ingest.fetch import odata_literal
+    def test_the_seed_is_a_literal_every_delta_shape_can_send(self, monkeypatch) -> None:
+        from app.ingest.fetch import delta_literal
 
         monkeypatch.setattr(csv_load, "set_watermark", lambda *a: None)
         mark = csv_load._seed_watermark("PurchaseOrderSet", "Aedat", "20260925", 1)
 
-        assert odata_literal(mark, "Edm.DateTime") == "datetime'2026-09-24T00:00:00'"
+        assert delta_literal(mark, "datetime") == "datetime'2026-09-24T00:00:00'"
+        assert delta_literal(mark, "dats") == "'20260924'"
+        assert delta_literal(mark, "dotted") == "'24.09.2026'"
+
+    def test_every_csv_table_with_a_delta_of_its_own_is_seeded_on_its_field(self) -> None:
+        """Derived from manifest.DELTAS, so the seed cannot fall behind the
+        delta again: MKPF was seeded on BUDAT after its delta moved to CPUDT,
+        and EKPO, EKBE and MSEG were not seeded at all."""
+        seeded = {t.sap_table: csv_load.watermark_field(t) for t in CSV_TABLES if csv_load.watermark_field(t)}
+
+        assert seeded == {
+            "EKKO": ("AEDAT", "Aedat"),
+            "EKPO": ("AEDAT", "Aedat"),
+            "EKBE": ("CPUDT", "Cpudt"),
+            "MKPF": ("CPUDT", "Cpudt"),
+            "MSEG": ("CPUDT_MKPF", "CpudtMkpf"),
+            "CDHDR": ("UDATE", "Udate"),
+        }
 
 
 class TestHighestDate:
@@ -126,6 +143,11 @@ class TestHighestDate:
 
     def test_dats_still_works(self) -> None:
         assert csv_load._highest(None, iter(["20130927", "20260925", "20180101"])) == "20260925"
+
+    def test_iso_dates_are_read_too(self) -> None:
+        """The third shape the normalise views accept; the narrow layout is
+        not promised to keep either of the other two."""
+        assert csv_load._highest(None, iter(["2026-09-25", "2013-04-23", "15.06.2018"])) == "20260925"
 
     def test_sap_no_date_is_ignored_in_both_shapes(self) -> None:
         assert csv_load._highest(None, iter(["00000000", "00.00.0000", ""])) is None

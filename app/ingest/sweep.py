@@ -11,29 +11,32 @@ advance its own mark, and its children -- resolving the mark afterwards --
 would start from the new one and miss every purchase order changed between
 the two. Read once, used by the parent and all of its children alike.
 
-PARENTS BEFORE CHILDREN, AND EACH PARENT READ ONCE
+EACH PARENT'S KEYS READ ONCE
 
-PurchaseOrderSet has three children that are read through its keys. The keys
-are collected once per parent window and handed to each child, rather than
-read again for every one of them.
+POHistorySet hands its purchase-order numbers to two sets (EKPO and EKET),
+PurchaseOrderItemSet to two more (EKKO and EKET). The keys are collected once
+per parent window and handed to every set that reads through it, rather than
+read again for each one; a set with several parents gets the union.
 
 NO BASELINE, NO INCREMENT
 
 A delta merges into an existing ``odata_<table>``. If that table does not
-exist there is nothing to merge into, and loading the increment as if it were
-the table would leave one that looks complete and is not. So a set whose
-table is missing is pulled in full this time -- that is what builds the
-baseline -- and incrementally from then on.
+exist, or exists and is EMPTY, there is nothing to merge into, and loading the
+increment as if it were the table would leave one that looks complete and is
+not. So such a set is pulled in full this time -- that is what builds the
+baseline -- and incrementally from then on. Empty counts as missing because
+that is what a wipe leaves: the 2026-10-06 reset deleted every row and kept
+every table.
 
 THE MARK MOVES LAST, AND ONLY FOR A WHOLE FAMILY
 
-``fetch_set`` is asked not to advance anything. The mark for a direct delta
-is advanced here, after its rows are loaded (when this sweep loads), and only
-if every child read through it also fetched and loaded. Advancing the parent
-while a child failed would leave that child with no way back to the window it
-missed: the next run reads from the new mark, and the rows between the two
-are never asked for again. Holding the mark costs one re-read of a window
-the merge absorbs; advancing it costs rows.
+``fetch_set`` is asked not to advance anything. The mark for a set's own
+window is advanced here, after its rows are loaded (when this sweep loads),
+and only if every set read through it also fetched and loaded. Advancing a
+parent while a child failed would leave that child with no way back to the
+keys it missed: the next run reads from the new mark, and the rows between
+the two are never asked for again. Holding the mark costs one re-read of a
+window the merge absorbs; advancing it costs rows.
 """
 
 from __future__ import annotations
@@ -51,7 +54,7 @@ from app.ingest.fetch import (
     fetch_set,
     resolve_windows,
 )
-from app.ingest.load import STATUS_SUCCEEDED, LoadResult, load_set, table_exists
+from app.ingest.load import STATUS_SUCCEEDED, LoadResult, load_set, table_has_rows
 from app.ingest.manifest import IngestSpec
 from app.ingest.watermarks import set_watermark
 from app.integrations.sap.client import SapClient
@@ -170,24 +173,24 @@ def run_delta_sweep(
     # 1. Windows, once. See the module docstring.
     windows = resolve_windows(chosen, since=since)
 
-    # 2. Baselines. A delta needs a table to merge into.
+    # 2. Baselines. A delta needs a populated table to merge into.
     forced_full: dict[str, str] = {}
     for spec in chosen:
         if spec.runnable_delta is None:
             continue
         try:
-            present = table_exists(spec.raw_table)
+            populated = table_has_rows(spec.raw_table)
         except Exception as exc:
             # Cannot tell. Treat as absent: a needless full pull is recoverable,
             # an increment merged into nothing is not.
-            logger.warning("%s: could not check for %s (%s); pulling in full",
+            logger.warning("%s: could not check %s (%s); pulling in full",
                            spec.name, spec.raw_table, exc)
-            present = False
-        if not present:
-            forced_full[spec.name] = f"{spec.raw_table} does not exist yet"
+            populated = False
+        if not populated:
+            forced_full[spec.name] = f"{spec.raw_table} is missing or empty"
             report.baselined.append(spec.name)
             logger.info(
-                "%s: %s does not exist, so there is nothing to merge an "
+                "%s: %s is missing or empty, so there is nothing to merge an "
                 "increment into. Pulling in full to build the baseline.",
                 spec.name, spec.raw_table,
             )
@@ -202,22 +205,40 @@ def run_delta_sweep(
         window: str | None = None
         parent_keys: list[str] | None = None
         delta = spec.runnable_delta if mode == MODE_DELTA else None
-        if delta is not None and delta.field is not None:
+        if delta is not None and delta.direct:
             window = windows.get(spec.name)
-        elif delta is not None:
-            window = windows.get(delta.via or "")
-            if window is not None:
-                cache_key = (delta.via or "", delta.via_key or "")
-                if cache_key not in key_cache:
-                    try:
-                        key_cache[cache_key] = collect_parent_keys(client, delta, window)
-                    except Exception as exc:
-                        outcome.error = f"could not read parent {delta.via}: {exc}"
-                        logger.error("%s: %s", spec.name, outcome.error)
-                        continue
-                parent_keys = key_cache[cache_key]
-            # window None: the parent has no mark yet. fetch_set sees the
-            # same and pulls this child in full; nothing to collect.
+        if delta is not None and delta.derived:
+            parent_windows = {p: windows.get(p) for p in delta.via}
+            if all(w is not None for w in parent_windows.values()):
+                union: dict[str, None] = {}
+                try:
+                    for parent, parent_window in parent_windows.items():
+                        cache_key = (parent, delta.via_key or "")
+                        if cache_key not in key_cache:
+                            key_cache[cache_key] = collect_parent_keys(
+                                client, parent, delta.via_key or "", parent_window
+                            )
+                        for key in key_cache[cache_key]:
+                            union.setdefault(key, None)
+                except Exception as exc:
+                    outcome.error = f"could not read a parent window: {exc}"
+                    logger.error("%s: %s", spec.name, outcome.error)
+                    continue
+                parent_keys = list(union)
+                if not delta.direct:
+                    # Recorded on the result as the window this set was read
+                    # through; with several parents, the earliest of theirs.
+                    window = min(w for w in parent_windows.values() if w is not None)
+            else:
+                # A parent has no mark yet: no window, no keys. Pulled in
+                # full, deliberately -- reading that parent whole to collect
+                # keys would be this whole set fifty keys at a time.
+                mode = outcome.mode = MODE_FULL
+                logger.info(
+                    "%s: %s has no watermark yet, so this runs as a full pull.",
+                    spec.name,
+                    ", ".join(p for p, w in parent_windows.items() if w is None),
+                )
 
         outcome.fetch = fetch_set(
             spec,
@@ -249,7 +270,7 @@ def run_delta_sweep(
 
     for spec in chosen:
         delta = spec.delta
-        if delta is None or delta.field is None:
+        if delta is None or not delta.direct:
             continue
         outcome = outcomes.get(spec.name)
         if outcome is None or outcome.fetch is None:
@@ -265,7 +286,7 @@ def run_delta_sweep(
             o.name for o in report.outcomes
             if o.name != spec.name
             and (child := by_name[o.name].delta) is not None
-            and child.via == spec.name
+            and spec.name in child.via
             and not settled(o)
         ]
         if unsettled:
@@ -281,7 +302,7 @@ def run_delta_sweep(
             # No rows, or none carrying the field: nothing was measured, and
             # the next run re-reads the same window, which is cheap.
             continue
-        set_watermark(spec.name, delta.field, mark, outcome.fetch.rows)
+        set_watermark(spec.name, delta.field or "", mark, outcome.fetch.rows)
         report.advanced[spec.name] = mark
 
     return report

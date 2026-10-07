@@ -20,13 +20,15 @@ from app.ingest import fetch as fetch_mod
 from app.ingest import load as load_mod
 from app.ingest.manifest import (
     KNOWN_EMPTY,
+    LITERAL_DATS,
+    LITERAL_DOTTED,
     Delta,
     check_delta_filters,
     spec_for,
     specs,
     table_name,
 )
-from app.ingest.watermarks import highest
+from app.ingest.watermarks import as_day, highest
 
 
 # --- Test doubles -----------------------------------------------------------
@@ -67,14 +69,21 @@ class MemoryStorage:
 
 
 class StubExtract:
+    """Mirrors paging.ExtractResult: ``counted`` is whether $count answered,
+    ``expected`` what it said. The stub once set ``counted`` to the row count,
+    which is how a check comparing rows against ``counted`` -- a bool in the
+    real thing -- passed here for a month while catching nothing live."""
+
     def __init__(self, rows, *, duplicate_keys=0, order_by=("Matnr", "Werks"),
-                 degraded=False, unknown=()):
+                 degraded=False, unknown=(), expected=None, truncated=False):
         self.rows = rows
         self.duplicate_keys = duplicate_keys
         self.order_by = order_by
         self.order_by_degraded = degraded
         self.unknown_properties = list(unknown)
-        self.counted = len(rows)
+        self.expected = len(rows) if expected is None else expected
+        self.counted = True
+        self.truncated = truncated
 
     @property
     def stable(self) -> bool:
@@ -349,6 +358,30 @@ def test_load_refuses_an_unstable_fetch(spec, storage) -> None:
     assert "unusable" in result.error
 
 
+def test_a_refused_raw_merge_leaves_the_odata_table_untouched(spec, storage, monkeypatch) -> None:
+    """The merge runs first. Loading odata_ before a refused baseline merge
+    left a table the next cycle took for a baseline, and merged a window
+    into the pages' table past the mismatch guard."""
+    from app.ingest import raw_merge
+
+    _land(storage, spec)
+    monkeypatch.setattr(
+        raw_merge, "merge_landed",
+        lambda *a, **k: raw_merge.MergeResult("raw_marc", raw_merge.REFUSED, detail="keys differ"),
+    )
+    monkeypatch.setattr(load_mod, "_record", lambda *a, **k: None)
+
+    def no_database():
+        raise AssertionError("odata_ must not be touched after a refused merge")
+
+    monkeypatch.setattr(load_mod, "get_engine", no_database)
+
+    result = load_mod.load_set(spec, root="odata", storage=storage)
+
+    assert result.status == load_mod.STATUS_FAILED
+    assert "raw_marc refused -- keys differ" in result.error
+
+
 def test_load_says_what_to_do_when_nothing_landed(spec, storage) -> None:
     result = load_mod.load_set(spec, root="odata", storage=storage)
 
@@ -369,11 +402,17 @@ def test_rows_stream_in_column_order_preserving_nulls(spec, storage) -> None:
 # --- Deltas: declaration ----------------------------------------------------
 
 
-def test_a_delta_is_direct_or_derived_never_both() -> None:
-    with pytest.raises(ValueError):
-        Delta(field="Aedat", via="PurchaseOrderSet", via_key="Ebeln")
+def test_a_delta_needs_a_window_or_parents_and_may_have_both() -> None:
+    """Both is the common case: EKPO reads its own Aedat window AND every
+    purchase order whose new history a goods receipt wrote."""
+    both = Delta(field="Aedat", via="POHistorySet", via_key="Ebeln")
+    assert both.direct and both.derived and both.via == ("POHistorySet",)
     with pytest.raises(ValueError):
         Delta()
+    with pytest.raises(ValueError):
+        Delta(via=("POHistorySet",))  # parents with no key to hand over
+    with pytest.raises(ValueError):
+        Delta(field="Aedat", literal="yyyy/mm/dd")
 
 
 def test_every_declared_delta_filter_is_measured_honoured() -> None:
@@ -386,16 +425,16 @@ def test_every_declared_delta_filter_is_measured_honoured() -> None:
     assert check_delta_filters() == []
 
 
-def test_cdhdr_deltas_on_udate_with_a_citation() -> None:
-    """Bare `Udate ge` is HTTP 400; alongside Objectclas it returns 3760 rows.
+def test_cdhdr_deltas_on_udate_as_text() -> None:
+    """Udate is a DATS SAP re-typed to Edm.String: `ge '20261001'` works next
+    to the Objectclas predicate, and the datetime literal this used to send is
+    HTTP 400. The evidence is the delta probe's, for that exact shape."""
+    from app.ingest.manifest import delta_support
 
-    filter_support.csv probes one property at a time, so it cannot express
-    "works only in combination" -- hence the citation rather than a verdict.
-    """
     delta = spec_for("ChangeDocHeaderSet").delta
 
-    assert delta.field == "Udate"
-    assert "operator_support.csv" in delta.verified
+    assert (delta.field, delta.literal) == ("Udate", LITERAL_DATS)
+    assert delta_support()[("ChangeDocHeaderSet", "Udate", LITERAL_DATS)] == "HONOURED"
 
 
 def test_cdpos_has_no_delta_because_sap_rejects_the_only_shape() -> None:
@@ -422,12 +461,36 @@ def test_a_delta_without_a_honoured_filter_or_a_citation_is_refused() -> None:
         manifest_mod.DELTAS.update(original)
 
 
-def test_movement_items_are_derived_because_their_own_filters_500() -> None:
-    """Filtering MSEG by BudatMkpf or Ebeln returns HTTP 500; MKPF is the way in."""
+def test_movement_items_read_their_own_entry_date_in_display_shape() -> None:
+    """MSEG filters on CpudtMkpf since October -- only as DD.MM.YYYY. The
+    YYYYMMDD shape answers HTTP 200 with all 68,618 rows, which is exactly
+    the silent full pull the gate exists to stop."""
     delta = spec_for("GoodsMovementItemSet").delta
 
-    assert delta.field is None
-    assert (delta.via, delta.via_key) == ("MaterialDocumentHeaderSet", "Mblnr")
+    assert (delta.field, delta.literal, delta.via) == ("CpudtMkpf", LITERAL_DOTTED, ())
+
+
+def test_the_purchase_order_family_reads_through_the_sets_that_record_its_changes() -> None:
+    """EKKO.Aedat is the creation date; EKPO.Aedat moves with every item and
+    schedule-line change; a goods receipt moves only EKBE (measured
+    2026-10-07, see manifest.DELTAS)."""
+    assert spec_for("PurchaseOrderSet").delta.via == ("PurchaseOrderItemSet",)
+    assert spec_for("PurchaseOrderItemSet").delta.via == ("POHistorySet",)
+    assert spec_for("POScheduleLineSet").delta.via == ("PurchaseOrderItemSet", "POHistorySet")
+    assert spec_for("POHistorySet").delta.field == "Cpudt"
+    assert spec_for("MaterialDocumentHeaderSet").delta.field == "Cpudt"
+
+
+def test_a_parent_must_have_a_window_of_its_own() -> None:
+    from app.ingest import manifest as manifest_mod
+
+    original = dict(manifest_mod.DELTAS)
+    try:
+        manifest_mod.DELTAS["VendorSet"] = Delta(via=("MaterialSet",), via_key="Lifnr")
+        assert any("no window of its own" in p for p in check_delta_filters())
+    finally:
+        manifest_mod.DELTAS.clear()
+        manifest_mod.DELTAS.update(original)
 
 
 # --- Deltas: literals and serialisation -------------------------------------
@@ -451,6 +514,25 @@ def test_datetime_literals_drop_the_offset() -> None:
 
 def test_string_literals_escape_the_quote() -> None:
     assert fetch_mod.odata_literal("O'Brien", "Edm.String") == "'O''Brien'"
+
+
+@pytest.mark.parametrize(
+    ("literal", "expected"),
+    [
+        ("datetime", "datetime'2026-09-15T00:00:00'"),
+        ("dats", "'20260915'"),
+        ("dotted", "'15.09.2026'"),
+    ],
+)
+def test_a_mark_is_written_in_the_shape_its_field_accepts(literal, expected) -> None:
+    assert fetch_mod.delta_literal("2026-09-15", literal) == expected
+
+
+def test_legacy_marks_are_read_as_the_day_they_stand_for() -> None:
+    """Stored before marks were days: a decoded SAP midnight (22:00 UTC the
+    evening before) and a seed at midnight."""
+    assert fetch_mod.delta_literal("2026-09-14 22:00:00+00:00", "dats") == "'20260915'"
+    assert fetch_mod.delta_literal("2026-10-05 00:00:00", "datetime") == "datetime'2026-10-05T00:00:00'"
 
 
 def test_decoded_datetimes_survive_serialisation() -> None:
@@ -480,10 +562,83 @@ def test_a_direct_delta_filters_on_its_date(storage, no_watermark_io) -> None:
 
     fetch_mod.fetch_set(
         po, root="odata", client=client, storage=storage,
-        run_date=RUN_DATE, mode="delta", since="2026-09-01T00:00:00",
+        run_date=RUN_DATE, mode="delta", since="2026-09-01T00:00:00", parent_keys=[],
     )
 
     assert client.filters == ["Aedat ge datetime'2026-09-01T00:00:00'"]
+
+
+def test_a_text_date_delta_sends_its_measured_shape(storage, no_watermark_io) -> None:
+    """EKBE's Cpudt is text; a datetime literal on it is HTTP 400."""
+    history = spec_for("POHistorySet")
+    client = StubClient(StubExtract([]))
+
+    fetch_mod.fetch_set(
+        history, root="odata", client=client, storage=storage,
+        run_date=RUN_DATE, mode="delta", since="2026-09-15",
+    )
+
+    assert client.filters == ["Cpudt ge '20260915'"]
+
+
+def test_own_window_and_parent_keys_are_read_and_unioned(storage, no_watermark_io) -> None:
+    """EKPO: its own changes, plus every item of a purchase order with new
+    history. An item in both is one row, not a paging loss."""
+    items = spec_for("PurchaseOrderItemSet")
+    changed = {"Ebeln": "4500000001", "Ebelp": "00010", "Aedat": "2026-09-15"}
+    received = {"Ebeln": "4500000002", "Ebelp": "00010", "Aedat": "2024-01-01"}
+
+    def answer(name, kwargs):
+        if kwargs["filter"].startswith("Aedat"):
+            return StubExtract([changed])
+        return StubExtract([dict(changed), received])
+
+    client = StubClient(answer=answer)
+    result = fetch_mod.fetch_set(
+        items, root="odata", client=client, storage=storage, run_date=RUN_DATE,
+        mode="delta", since="2026-09-14", parent_keys=["4500000001", "4500000002"],
+        advance_watermark=False,
+    )
+
+    assert client.filters == [
+        "Aedat ge datetime'2026-09-14T00:00:00'",
+        "Ebeln eq '4500000001' or Ebeln eq '4500000002'",
+    ]
+    assert result.ok and result.rows == 2 and result.duplicate_keys == 0
+    assert result.watermark == "2026-09-15"
+
+
+def test_a_window_that_lost_rows_is_refused(storage, no_watermark_io) -> None:
+    """M1 and M2: a delta read 19 rows of the 20 its own $count promised used
+    to land as ok. The check compared rows against a flag, not the count."""
+    history = spec_for("POHistorySet")
+    client = StubClient(StubExtract([{"Ebeln": "1", "Cpudt": "20260916"}], expected=2))
+
+    result = fetch_mod.fetch_set(
+        history, root="odata", client=client, storage=storage,
+        run_date=RUN_DATE, mode="delta", since="2026-09-15",
+    )
+
+    assert not result.ok
+    assert "$count of 2" in result.error
+    assert fetch_mod.read_manifest(storage, result.prefix)["usable"] is False
+    assert no_watermark_io == []
+
+
+def test_a_full_pull_short_of_its_count_is_refused(spec, storage) -> None:
+    client = StubClient(StubExtract(ROWS, expected=len(ROWS) + 1))
+
+    result = fetch_mod.fetch_set(spec, root="odata", client=client, storage=storage, run_date=RUN_DATE)
+
+    assert not result.ok and "read 2 row(s) against a $count of 3" in result.error
+
+
+def test_a_read_stopped_at_the_safety_limit_is_refused(spec, storage) -> None:
+    client = StubClient(StubExtract(ROWS, truncated=True))
+
+    result = fetch_mod.fetch_set(spec, root="odata", client=client, storage=storage, run_date=RUN_DATE)
+
+    assert not result.ok and "safety row limit" in result.error
 
 
 def test_a_first_delta_with_no_watermark_pulls_in_full(storage, no_watermark_io) -> None:
@@ -529,9 +684,22 @@ def test_a_derived_child_whose_parent_has_no_mark_pulls_in_full(
 
 
 def test_collecting_parent_keys_without_a_window_is_refused() -> None:
-    items = spec_for("PurchaseOrderItemSet")
     with pytest.raises(ValueError, match="no watermark"):
-        fetch_mod.collect_parent_keys(StubClient(StubExtract([])), items.delta, None)
+        fetch_mod.collect_parent_keys(StubClient(StubExtract([])), "PurchaseOrderItemSet", "Ebeln", None)
+
+
+def test_collecting_keys_from_a_parent_with_no_date_is_refused() -> None:
+    with pytest.raises(ValueError, match="no window"):
+        fetch_mod.collect_parent_keys(StubClient(StubExtract([])), "MaterialSet", "Matnr", "2026-09-01")
+
+
+def test_parent_keys_come_from_the_parents_own_window(no_watermark_io) -> None:
+    client = StubClient(StubExtract([{"Ebeln": "2"}, {"Ebeln": "1"}, {"Ebeln": "2"}]))
+
+    keys = fetch_mod.collect_parent_keys(client, "POHistorySet", "Ebeln", "2026-09-15")
+
+    assert keys == ["2", "1"]
+    assert client.filters == ["Cpudt ge '20260915'"]
 
 
 def test_a_requested_full_pull_seeds_the_mark_too(storage, no_watermark_io) -> None:
@@ -577,34 +745,52 @@ def test_windows_are_resolved_once_for_a_whole_family(monkeypatch) -> None:
         return "2026-09-01 22:00:00+00:00"
 
     monkeypatch.setattr(fetch_mod, "get_watermark", stored)
-    chosen = (spec_for("PurchaseOrderItemSet"), spec_for("PurchaseOrderSet"),
-              spec_for("POHistorySet"), spec_for("MaterialPlantSet"))
+    chosen = (spec_for("POScheduleLineSet"), spec_for("PurchaseOrderSet"),
+              spec_for("MaterialPlantSet"))
 
     windows = fetch_mod.resolve_windows(chosen)
 
-    assert windows == {"PurchaseOrderSet": "2026-09-01 22:00:00+00:00"}
-    assert reads == [("PurchaseOrderSet", "Aedat")], "one read, however many children"
+    # EKET reads through EKPO and EKBE, EKKO through EKPO: three owners, each
+    # read once, whichever of them is in `chosen`. A mark stored as a decoded
+    # SAP midnight is the day it stands for.
+    assert windows == {
+        "PurchaseOrderItemSet": "2026-09-02",
+        "POHistorySet": "2026-09-02",
+        "PurchaseOrderSet": "2026-09-02",
+    }
+    assert sorted(reads) == [
+        ("POHistorySet", "Cpudt"), ("PurchaseOrderItemSet", "Aedat"), ("PurchaseOrderSet", "Aedat"),
+    ], "one read per owner, however many sets read through it"
 
 
 def test_fetch_order_puts_parents_first() -> None:
-    chosen = (spec_for("POHistorySet"), spec_for("PurchaseOrderSet"),
-              spec_for("ChangeDocHeaderSet"), spec_for("PurchaseOrderItemSet"))
-    assert [s.name for s in fetch_mod.fetch_order(chosen)][0] == "PurchaseOrderSet"
+    chosen = (spec_for("PurchaseOrderSet"), spec_for("ChangeDocHeaderSet"),
+              spec_for("POScheduleLineSet"), spec_for("PurchaseOrderItemSet"),
+              spec_for("POHistorySet"))
+    order = [s.name for s in fetch_mod.fetch_order(chosen)]
+    assert set(order[:2]) == {"PurchaseOrderItemSet", "POHistorySet"}
 
 
 def test_only_deltas_that_can_run_are_runnable(monkeypatch) -> None:
-    """GoodsMovementItemSet is declared through MKPF, and MKPF has no date SAP
-    filters on. Declared, but not runnable -- and a sweep that did not tell
-    the two apart pulled it in full every cycle."""
+    """Every declared delta runs today: the purchase-order family, MKPF and
+    MSEG by entry date, CDHDR by change date. Sets with no delta do not."""
     from app.ingest import manifest as manifest_mod
 
     monkeypatch.setattr(manifest_mod, "READ_BROKEN_SETS", {})
-    assert spec_for("PurchaseOrderSet").runnable_delta is not None
-    assert spec_for("PurchaseOrderItemSet").runnable_delta is not None
-    assert spec_for("POHistorySet").runnable_delta is not None
-    assert spec_for("GoodsMovementItemSet").delta is not None
-    assert spec_for("GoodsMovementItemSet").runnable_delta is None
+    runnable = {s.name for s in specs() if s.runnable_delta is not None}
+    assert runnable == {
+        "PurchaseOrderSet", "PurchaseOrderItemSet", "POScheduleLineSet", "POHistorySet",
+        "MaterialDocumentHeaderSet", "GoodsMovementItemSet", "ChangeDocHeaderSet",
+    }
     assert spec_for("MaterialPlantSet").runnable_delta is None
+
+
+def test_a_declared_parent_with_no_window_makes_the_child_unrunnable(monkeypatch) -> None:
+    from app.ingest import manifest as manifest_mod
+
+    monkeypatch.setitem(manifest_mod.DELTAS, "VendorSet", Delta(via=("MaterialSet",), via_key="Lifnr"))
+    assert spec_for("VendorSet").runnable_delta is None
+    assert spec_for("VendorSet").why_not_runnable == "via MaterialSet (no window: full)"
 
 
 def test_a_set_sap_cannot_serve_has_no_runnable_delta(monkeypatch) -> None:
@@ -621,7 +807,10 @@ def test_a_set_sap_cannot_serve_has_no_runnable_delta(monkeypatch) -> None:
     assert items.delta is not None
     assert items.runnable_delta is None
     assert items.why_not_runnable == "blocked: every row read is HTTP 500"
-    assert spec_for("PurchaseOrderSet").runnable_delta is not None
+    # Nor can anything read through it: it has no keys to hand over.
+    assert spec_for("PurchaseOrderSet").runnable_delta is None
+    assert spec_for("POScheduleLineSet").runnable_delta is None
+    assert spec_for("POHistorySet").runnable_delta is not None
 
 
 def test_the_listing_explains_every_set_without_an_increment() -> None:
@@ -634,7 +823,7 @@ def test_the_listing_explains_every_set_without_an_increment() -> None:
 
 def test_a_derived_delta_batches_the_parent_keys(storage, no_watermark_io) -> None:
     """The filter is a chain of `or`s in a URL, so it has to be chunked."""
-    items = spec_for("PurchaseOrderItemSet")
+    items = spec_for("POScheduleLineSet")
     keys = [f"45000{n:05d}" for n in range(fetch_mod.KEY_BATCH + 10)]
     client = StubClient(StubExtract([]))
 
@@ -650,7 +839,7 @@ def test_a_derived_delta_batches_the_parent_keys(storage, no_watermark_io) -> No
 def test_a_derived_delta_with_no_changed_parents_asks_sap_nothing(
     storage, no_watermark_io
 ) -> None:
-    items = spec_for("PurchaseOrderItemSet")
+    items = spec_for("POScheduleLineSet")
     client = StubClient(StubExtract([]))
 
     result = fetch_mod.fetch_set(
@@ -667,8 +856,8 @@ def test_duplicates_are_counted_across_chunks_not_within_them(
     storage, no_watermark_io
 ) -> None:
     """No single request would notice the same row arriving from two chunks."""
-    items = spec_for("PurchaseOrderItemSet")
-    same = {"Ebeln": "4500001", "Ebelp": "00010"}
+    items = spec_for("POScheduleLineSet")
+    same = {"Ebeln": "4500001", "Ebelp": "00010", "Etenr": "0001"}
     client = StubClient(StubExtract([same]))
     keys = [f"45000{n:05d}" for n in range(fetch_mod.KEY_BATCH + 1)]
 
@@ -690,7 +879,7 @@ def test_a_delta_file_is_marked_for_merging_not_replacing(
 
     result = fetch_mod.fetch_set(
         po, root="odata", client=client, storage=storage,
-        run_date=RUN_DATE, mode="delta", since="2026-09-01T00:00:00",
+        run_date=RUN_DATE, mode="delta", since="2026-09-01T00:00:00", parent_keys=[],
     )
 
     assert fetch_mod.read_manifest(storage, result.prefix)["load_strategy"] == "merge"
@@ -740,9 +929,9 @@ def test_the_watermark_does_not_advance_on_an_unstable_pull(
 
 
 def test_a_derived_child_never_advances_a_watermark(storage, no_watermark_io) -> None:
-    """It was filtered by its parent's keys, so it measured no position of its own."""
-    items = spec_for("PurchaseOrderItemSet")
-    client = StubClient(StubExtract([{"Ebeln": "1", "Ebelp": "00010"}]))
+    """It was filtered by its parents' keys, so it measured no position of its own."""
+    items = spec_for("POScheduleLineSet")
+    client = StubClient(StubExtract([{"Ebeln": "1", "Ebelp": "00010", "Etenr": "0001"}]))
 
     fetch_mod.fetch_set(
         items, root="odata", client=client, storage=storage,
@@ -811,3 +1000,41 @@ def test_highest_ignores_blanks() -> None:
 
     assert highest(rows, "A") == "2026-09-09"
     assert highest([{"A": None}], "A") is None
+
+
+def test_highest_compares_days_not_text() -> None:
+    """As text, '31.12.2018' beats '01.01.2026' and the mark goes back years."""
+    rows = [{"A": "31.12.2018"}, {"A": "01.01.2026"}, {"A": "00.00.0000"}]
+
+    assert highest(rows, "A") == "2026-01-01"
+
+
+def test_highest_reads_a_decoded_sap_midnight_as_its_own_day() -> None:
+    """SAP's 15-Sep midnight arrives as 22:00 UTC on the 14th."""
+    rows = [{"A": datetime(2026, 9, 14, 22, 0, tzinfo=timezone.utc)}, {"A": "20260913"}]
+
+    assert highest(rows, "A") == "2026-09-15"
+
+
+def test_a_future_value_never_becomes_the_mark() -> None:
+    """A mark in the future would skip every change until that day."""
+    rows = [{"A": "2026-09-15"}, {"A": "2099-01-01"}]
+
+    assert highest(rows, "A", today=date(2026, 10, 7)) == "2026-09-15"
+
+
+@pytest.mark.parametrize(
+    ("value", "day"),
+    [
+        ("20260915", date(2026, 9, 15)),
+        ("15.09.2026", date(2026, 9, 15)),
+        ("2026-09-15", date(2026, 9, 15)),
+        ("2026-09-14T22:00:00+00:00", date(2026, 9, 15)),
+        ("2026-09-15 00:00:00", date(2026, 9, 15)),
+        ("00000000", None),
+        ("", None),
+        ("not a date", None),
+    ],
+)
+def test_as_day(value, day) -> None:
+    assert as_day(value) == day

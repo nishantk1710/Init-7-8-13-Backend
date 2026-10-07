@@ -39,6 +39,8 @@ from app.integrations.sap.errors import ContractError
 # trailing offset: /Date(1379030400000+0000)/
 _SAP_DATE = re.compile(r"^/Date\((?P<millis>-?\d+)(?P<offset>[+-]\d{4})?\)/$")
 
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
 # Edm.Time as an ISO 8601 duration since midnight: PT14H30M00S
 _SAP_TIME = re.compile(r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$")
 
@@ -62,7 +64,14 @@ def _decode_datetime(raw: str) -> datetime | str:
             return datetime.fromisoformat(raw)
         except ValueError:
             return raw
-    moment = datetime.fromtimestamp(int(match.group("millis")) / 1000, tz=timezone.utc)
+    # Epoch plus a timedelta, not fromtimestamp(): the platform call refuses a
+    # negative epoch on Windows (OSError 22) and SAP does send them -- a DATS
+    # before 1970 is a real value in this client. Arithmetic on datetime has
+    # no such limit anywhere.
+    try:
+        moment = _EPOCH + timedelta(milliseconds=int(match.group("millis")))
+    except OverflowError:
+        return raw
     offset = match.group("offset")
     if offset and offset != "+0000":
         sign = 1 if offset[0] == "+" else -1

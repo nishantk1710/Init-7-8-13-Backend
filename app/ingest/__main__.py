@@ -46,6 +46,18 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="show every entity set and what has landed; touches nothing",
     )
+    parser.add_argument(
+        "--sap-system",
+        action="store_true",
+        help="show which SAP system this process calls (CPI_PATH), which "
+        "discovery snapshot it uses, and which system the database holds",
+    )
+    parser.add_argument(
+        "--adopt-sap-system",
+        action="store_true",
+        help="record the database as holding the configured CPI_PATH's data. Only "
+        "after a wipe-and-reload from that system; see app/ingest/sap_system.py",
+    )
 
     # --- The CSV route ----------------------------------------------------
     parser.add_argument(
@@ -192,6 +204,45 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _sap_system() -> int:
+    """Where this process points, and whether the database agrees."""
+    from app.ingest import sap_system
+    from app.integrations.sap.contract import discovery_dir, snapshot_info, snapshots
+
+    settings = get_settings()
+    print(f"CPI_PATH (calls go to)  : {settings.cpi_path}")
+    try:
+        folder = discovery_dir()
+        info = snapshot_info(folder)
+        print(
+            f"discovery snapshot      : {folder.name}"
+            + (f"  ({info.get('label')}, captured {info.get('captured_at')})" if info else "")
+        )
+    except Exception as exc:
+        print(f"discovery snapshot      : NONE -- {exc}")
+    for found, path in snapshots().items():
+        print(f"  available             : {found.name:<16} <- {path}")
+    try:
+        held = sap_system.recorded()
+    except Exception as exc:
+        print(f"database holds          : ? ({type(exc).__name__}: {exc})")
+        return 1
+    print(f"database holds          : {held or '(not recorded yet -- the next load records it)'}")
+    problem = sap_system.verdict(held, settings.cpi_path)
+    if problem:
+        print(f"\nMISMATCH: {problem}")
+        return 1
+    return 0
+
+
+def _adopt_sap_system() -> int:
+    from app.ingest import sap_system
+
+    was, now = sap_system.adopt()
+    print(f"database recorded as holding SAP data from CPI_PATH={now} (was {was or 'unrecorded'})")
+    return 0
+
+
 def _list() -> int:
     settings = get_settings()
     root = settings.ingest_prefix
@@ -210,7 +261,7 @@ def _list() -> int:
         except Exception as exc:  # a listing problem must not stop the listing
             listing_error = f"{type(exc).__name__}: {exc}"
 
-    print(f"{'ENTITY SET':<30} {'TABLE':<28} {'DELTA':<30} LANDED")
+    print(f"{'ENTITY SET':<30} {'TABLE':<28} {'DELTA':<56} LANDED")
     for spec in specs():
         landed = "-" if listing_error is None else "?"
         prefix = found.get(spec.name)
@@ -230,13 +281,14 @@ def _list() -> int:
             # Nothing incremental will run for this set; say why rather than
             # promise an increment the run will not perform.
             how = spec.why_not_runnable or "full pull only"
-        elif delta.field:
-            how = f"{delta.field} ge ..."
         else:
-            how = f"via {delta.via}.{delta.via_key}"
+            parts = [f"{delta.field} ge ({delta.literal})"] if delta.direct else []
+            if delta.derived:
+                parts.append(f"+{delta.via_key} via {', '.join(delta.via)}")
+            how = " ".join(parts)
 
         note = "" if spec.expects_rows else "  (empty in this client)"
-        print(f"{spec.name:<30} {spec.raw_table:<28} {how:<30} {landed}{note}")
+        print(f"{spec.name:<30} {spec.raw_table:<28} {how:<56} {landed}{note}")
 
     if listing_error:
         print(f"\nCould not read the landing area: {listing_error}")
@@ -561,6 +613,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.list:
         return _list()
+    if args.sap_system:
+        return _sap_system()
+    if args.adopt_sap_system:
+        return _adopt_sap_system()
 
     if args.abandon:
         return _abandon()

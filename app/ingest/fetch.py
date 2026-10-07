@@ -10,7 +10,7 @@ empty string and OData returns both; it also needs an agreed escaping
 convention for the free-text fields. JSONL needs no dependency, streams a line
 at a time, and round-trips what SAP sent without an opinion.
 
-The run manifest is not optional bookkeeping. It carries ``$inlinecount``, the
+The run manifest is not optional bookkeeping. It carries ``$count``, the
 ``$orderby`` actually used, whether that ordering had to be degraded, and the
 measured duplicate-key count. Those are the facts that say whether the landed
 file can be trusted, and they belong next to the bytes rather than only in a
@@ -19,10 +19,17 @@ log that rotates.
 FULL AND DELTA
 
 ``mode="full"`` reads the whole set. ``mode="delta"`` reads only what changed,
-by whichever of the two routes ``manifest.DELTAS`` declares for that set --
-directly by a date SAP will filter on, or indirectly through a parent when it
-will not. A delta with no stored watermark falls back to a full pull and says
-so: the first increment has nothing to be incremental from.
+by whichever parts ``manifest.DELTAS`` declares for that set -- its own date
+window, the keys its parents' windows hand over, or both, unioned. A delta
+with no stored watermark, or a parent with none, falls back to a full pull and
+says so: the first increment has nothing to be incremental from.
+
+EVERY READ IS CHECKED AGAINST ITS OWN COUNT
+
+The client asks ``$count`` with the same filter before it pages. Fewer rows
+than that count is a read that lost rows, full or delta alike: a window of 20
+purchase orders that lands 19 is as wrong as a full pull that lands 3,139 of
+3,140, and both used to load without a word.
 """
 
 from __future__ import annotations
@@ -36,8 +43,14 @@ from typing import Any
 
 from app.core.logging import get_logger
 from app.core.storage import Storage, get_storage
-from app.ingest.manifest import Delta, IngestSpec, spec_for
-from app.ingest.watermarks import get_watermark, highest, set_watermark
+from app.ingest.manifest import (
+    LITERAL_DATETIME,
+    LITERAL_DATS,
+    LITERAL_DOTTED,
+    IngestSpec,
+    spec_for,
+)
+from app.ingest.watermarks import as_day, get_watermark, highest, set_watermark
 from app.integrations.sap.client import SapClient
 from app.integrations.sap.paging import count_duplicate_keys
 
@@ -49,7 +62,7 @@ MANIFEST_FILE = "_manifest.json"
 MODE_FULL = "full"
 MODE_DELTA = "delta"
 
-# Keys per request when filtering a child by its parent's keys. The filter is a
+# Keys per request when filtering a child by its parents' keys. The filter is a
 # chain of `X eq '...' or ...` in a URL query parameter, so the ceiling is URL
 # length rather than anything SAP declares. Fifty keys is roughly 1.5 KB of
 # filter, which leaves generous headroom under every proxy in the path.
@@ -67,17 +80,25 @@ class FetchResult:
     bytes_written: int = 0
     seconds: float = 0.0
 
-    # Straight from the client's own verification. ``stable`` false means the
-    # pull lost or repeated rows and the file must not be loaded.
+    # What SAP's $count said the read(s) would return: the sum across every
+    # request, or None where any one could not say. Each read is checked
+    # against its own count; the sum can exceed ``rows`` for a set read by its
+    # own window AND its parents' keys, because the two overlap and the union
+    # keeps one copy. ``stable`` false means the pull lost or repeated rows
+    # and the file must not be loaded.
     counted: int | None = None
     stable: bool = True
     duplicate_keys: int = 0
     order_by: tuple[str, ...] = ()
     order_by_degraded: bool = False
 
-    # Delta bookkeeping. ``since`` is the window's lower bound, ``watermark``
-    # the value the next run will start from.
+    # Delta bookkeeping. ``since`` is the lower bound of this set's own window,
+    # ``parent_windows`` the bound each parent was read from, ``parent_keys``
+    # how many keys they handed over, and ``watermark`` the day the next run
+    # will start from.
     since: str | None = None
+    parent_windows: dict[str, str | None] = field(default_factory=dict)
+    parent_keys: int | None = None
     watermark: str | None = None
     requests: int = 1
 
@@ -128,6 +149,25 @@ def odata_literal(value: Any, edm_type: str) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def delta_literal(mark: Any, literal: str) -> str:
+    """A watermark day, written in the shape this delta field's filter accepts.
+
+    The shapes were measured, not inferred (manifest.LITERAL_*): the same SAP
+    date takes three different literals on three different sets, and the
+    wrong one is either HTTP 400 or -- worse -- HTTP 200 with the whole set.
+    """
+    day = as_day(mark)
+    if day is None:
+        raise ValueError(f"watermark {mark!r} is not a date")
+    if literal == LITERAL_DATETIME:
+        return f"datetime'{day.isoformat()}T00:00:00'"
+    if literal == LITERAL_DATS:
+        return f"'{day:%Y%m%d}'"
+    if literal == LITERAL_DOTTED:
+        return f"'{day:%d.%m.%Y}'"
+    raise ValueError(f"unknown literal shape {literal!r}")
+
+
 def _edm_type(spec: IngestSpec, property_name: str) -> str:
     found = spec.entity_set.find(property_name)
     return found.type if found else "Edm.String"
@@ -163,6 +203,49 @@ def prefix_for(spec: IngestSpec, *, run_date: date, root: str) -> str:
 # --- Reading ----------------------------------------------------------------
 
 
+@dataclass
+class _Read:
+    """One logical read -- a window, a run of key batches, or the whole set --
+    and the evidence that it is complete."""
+
+    rows: list[dict] = field(default_factory=list)
+    expected: int | None = 0
+    duplicate_keys: int = 0
+    truncated: bool = False
+    order_by: tuple[str, ...] = ()
+    order_by_degraded: bool = False
+    unknown_properties: list[str] = field(default_factory=list)
+    requests: int = 0
+
+    def absorb(self, extract: Any) -> None:
+        """Add one request's extract. Pessimistic: degraded anywhere means
+        degraded, and the counts add up -- a chunked read is only as
+        trustworthy as its worst chunk."""
+        self.rows.extend(extract.rows)
+        expected = getattr(extract, "expected", None)
+        self.expected = None if self.expected is None or expected is None else self.expected + expected
+        self.duplicate_keys += extract.duplicate_keys
+        self.truncated = self.truncated or bool(getattr(extract, "truncated", False))
+        self.order_by = tuple(extract.order_by or ()) or self.order_by
+        self.order_by_degraded = self.order_by_degraded or bool(extract.order_by_degraded)
+        self.unknown_properties = sorted(set(self.unknown_properties) | set(extract.unknown_properties or []))
+        self.requests += 1
+
+    def shortfall(self) -> str | None:
+        """Why this read cannot be trusted to hold every row, or None."""
+        if self.truncated:
+            return (
+                f"stopped at the safety row limit after {len(self.rows)} row(s); "
+                "the file would look complete and not be."
+            )
+        if self.expected is not None and len(self.rows) < self.expected:
+            return (
+                f"read {len(self.rows)} row(s) against a $count of {self.expected}. "
+                "Rows were lost in paging; the file would look complete and not be."
+            )
+        return None
+
+
 def combine(*clauses: str | None) -> str | None:
     """Join predicates with ``and``, skipping the empty ones.
 
@@ -178,125 +261,107 @@ def combine(*clauses: str | None) -> str | None:
     return " and ".join(f"({c})" for c in present)
 
 
-def _read_whole(client: SapClient, spec: IngestSpec) -> tuple[list[dict], dict, int]:
+def _read_whole(client: SapClient, spec: IngestSpec) -> _Read:
     """Every row a set will give us, honouring any predicate it demands."""
     required = spec.required_filter
+    read = _Read()
     if required:
         # allow_unsupported_filter because this predicate exists to satisfy
         # SAP, not to narrow the result. Whether the service honours it or
         # ignores it, what comes back is a superset of what we need, and the
         # alternative to sending it is HTTP 400.
         logger.info("%s: required $filter=%s", spec.name, required)
-        extract = client.read_all(
-            spec.name, filter=required, allow_unsupported_filter=True
-        )
+        read.absorb(client.read_all(spec.name, filter=required, allow_unsupported_filter=True))
     else:
-        extract = client.read_all(spec.name, allow_unfiltered_large_set=True)
-    return list(extract.rows), _verdict(extract), 1
+        read.absorb(client.read_all(spec.name, allow_unfiltered_large_set=True))
+    return read
 
 
-def _read_direct(
-    client: SapClient, spec: IngestSpec, delta: Delta, since: str | None
-) -> tuple[list[dict], dict, int]:
-    """A set that carries a date SAP will filter on."""
-    if since is None:
-        logger.info(
-            "%s: no watermark yet, so this delta run is a full pull. "
-            "The next one will be incremental.",
-            spec.name,
-        )
-        return _read_whole(client, spec)
+def window_filter(spec: IngestSpec, since: str) -> str:
+    """``field ge <since>`` in the set's measured literal shape, plus any
+    predicate the set demands."""
+    delta = spec.delta
+    if delta is None or not delta.direct:
+        raise ValueError(f"{spec.name} has no window of its own")
+    return combine(spec.required_filter, f"{delta.field} ge {delta_literal(since, delta.literal)}") or ""
 
-    literal = odata_literal(since, _edm_type(spec, delta.field or ""))
-    expression = combine(spec.required_filter, f"{delta.field} ge {literal}")
+
+def _read_direct(client: SapClient, spec: IngestSpec, since: str) -> _Read:
+    """A set's own window: every row whose delta date is on or after ``since``.
+
+    The client's own guard still runs on the window (it refuses a property
+    measured IGNORED or HTTP 500), as a backstop behind check_delta_filters.
+    A required predicate is let through it: that predicate exists to satisfy
+    SAP, not to narrow the result.
+    """
+    expression = window_filter(spec, since)
     logger.info("%s: delta $filter=%s", spec.name, expression)
-    extract = client.read_all(
-        spec.name, filter=expression, allow_unsupported_filter=bool(spec.required_filter)
-    )
-    return list(extract.rows), _verdict(extract), 1
-
-
-def _read_derived(
-    client: SapClient,
-    spec: IngestSpec,
-    delta: Delta,
-    since: str | None,
-    parent_keys: list[str] | None,
-) -> tuple[list[dict], dict, int]:
-    """A set with no filterable date, read through its parent's keys."""
-    if parent_keys is None:
-        parent_keys = collect_parent_keys(client, delta, since)
-
-    if not parent_keys:
-        logger.info(
-            "%s: parent %s returned no changed keys, so there is nothing to pull.",
-            spec.name,
-            delta.via,
+    read = _Read()
+    read.absorb(
+        client.read_all(
+            spec.name, filter=expression, allow_unsupported_filter=bool(spec.required_filter)
         )
-        return [], _empty_verdict(), 0
+    )
+    return read
 
-    edm = _edm_type(spec, delta.via_key or "")
-    rows: list[dict] = []
-    worst = _empty_verdict()
-    requests = 0
 
-    for start in range(0, len(parent_keys), KEY_BATCH):
-        chunk = parent_keys[start : start + KEY_BATCH]
+def _read_keys(client: SapClient, spec: IngestSpec, keys: list[str]) -> _Read:
+    """Every row of this set belonging to one of ``keys``, fifty at a time."""
+    delta = spec.delta
+    via_key = (delta.via_key if delta else None) or ""
+    edm = _edm_type(spec, via_key)
+    read = _Read()
+    for start in range(0, len(keys), KEY_BATCH):
+        chunk = keys[start : start + KEY_BATCH]
         clause = combine(
             spec.required_filter,
-            " or ".join(
-                f"{delta.via_key} eq {odata_literal(key, edm)}" for key in chunk
-            ),
+            " or ".join(f"{via_key} eq {odata_literal(key, edm)}" for key in chunk),
         )
-        extract = client.read_all(
-            spec.name,
-            filter=clause,
-            allow_unsupported_filter=bool(spec.required_filter),
+        read.absorb(
+            client.read_all(
+                spec.name, filter=clause, allow_unsupported_filter=bool(spec.required_filter)
+            )
         )
-        rows.extend(extract.rows)
-        worst = _merge_verdicts(worst, _verdict(extract))
-        requests += 1
 
+    # Counted across the chunks, not per request. The keys are distinct, so
+    # the same row arriving from two chunks means SAP returned a row for a key
+    # it was not asked for -- no single request would notice.
+    read.duplicate_keys = count_duplicate_keys(read.rows, spec.identity_keys)
     logger.info(
-        "%s: %d rows for %d %s value(s) in %d request(s)",
-        spec.name,
-        len(rows),
-        len(parent_keys),
-        delta.via_key,
-        requests,
+        "%s: %d row(s) for %d %s value(s) in %d request(s)",
+        spec.name, len(read.rows), len(keys), via_key, read.requests,
     )
-    return rows, worst, requests
+    return read
 
 
 def has_window(parent: IngestSpec) -> bool:
-    """Whether this set can be read by a date, i.e. can drive a derived delta.
+    """Whether this set can be read by a date, i.e. can hand keys to a child.
 
     Public because the CLI asks the same question twice: once to skip
     collecting keys it cannot collect, and once so ``--list`` does not print a
     derived delta that cannot run.
     """
-    return parent.delta is not None and parent.delta.field is not None
+    return parent.delta is not None and parent.delta.direct
 
 
 def collect_parent_keys(
-    client: SapClient, delta: Delta, since: str | None
+    client: SapClient, parent_name: str, via_key: str, since: str | None
 ) -> list[str]:
-    """Distinct values of the linking key, from the parent's own delta window.
+    """Distinct values of ``via_key`` in the parent's own delta window.
 
     Exposed rather than private so a sweep can read a parent once and hand the
-    same keys to each of its children. PurchaseOrderSet has three children;
-    reading EKKO four times per run would be pure waste.
+    same keys to every child: POHistorySet hands keys to EKPO and EKET, and
+    reading it once per child would be pure waste.
     """
-    parent = spec_for(delta.via or "")
-    parent_delta = parent.delta
-    if parent_delta is None or parent_delta.field is None:
+    parent = spec_for(parent_name)
+    if not has_window(parent):
         # Callers that route through fetch_set never reach this -- it degrades
         # such a child to a full pull instead. Kept as a guard for a direct
         # call, because the alternative is silently reading the parent whole
         # and calling the result an increment.
         raise ValueError(
-            f"{parent.name} is the parent of a derived delta but has no direct "
-            "delta of its own, so there is no window to read it by."
+            f"{parent.name} is the parent of a derived delta but has no window "
+            "of its own, so there is no window to read it by."
         )
     if since is None:
         # The same mistake from the other side. The CLI once passed its
@@ -309,84 +374,81 @@ def collect_parent_keys(
             "whole parent."
         )
 
-    rows, _, _ = _read_direct(client, parent, parent_delta, since)
+    read = _read_direct(client, parent, since)
+    shortfall = read.shortfall()
+    if shortfall:
+        # A parent window that lost rows hands over too few keys, and the
+        # child would land an increment missing exactly those purchase orders.
+        raise ValueError(f"{parent.name} window: {shortfall}")
     seen: dict[str, None] = {}
-    for row in rows:
-        value = row.get(delta.via_key or "")
+    for row in read.rows:
+        value = row.get(via_key)
         if value not in (None, ""):
             seen.setdefault(str(value), None)
     return list(seen)
 
 
 def fetch_order(chosen) -> list[IngestSpec]:
-    """Parents before the children that are read through them.
+    """Parents before the sets that read through them.
 
-    So a parent's keys can be collected once and handed to each child, rather
-    than read again for every one of them.
+    Not needed for correctness -- keys come from each parent's own window,
+    read separately -- but it puts the windows that decide everything else at
+    the top of the log.
     """
-    parents = {s.delta.via for s in chosen if s.delta and s.delta.via}
+    parents = {p for s in chosen if s.delta for p in s.delta.via}
     return sorted(chosen, key=lambda s: (s.name not in parents, s.name))
 
 
 def resolve_windows(chosen, *, since: str | None = None) -> dict[str, str | None]:
-    """The lower bound of every direct delta this sweep will read, taken once.
+    """The lower bound of every window this sweep will read, taken once.
 
-    Keyed by the set that OWNS the window: a direct-delta set itself, or the
-    parent a derived child is read through -- which is included even when the
-    parent is not in ``chosen``, because the child still needs its window.
+    Keyed by the set that OWNS the window: each chosen set with a date of its
+    own, and every parent a chosen set reads through -- included even when
+    the parent is not in ``chosen``, because the child still needs its keys.
 
     Taken up front, before any fetch, on purpose. A parent fetched first
     advances its own mark; children resolving the mark afterwards would start
     from the new one and miss everything changed between the two.
     """
-    windows: dict[str, str | None] = {}
+    owners: dict[str, IngestSpec] = {}
     for spec in chosen:
         delta = spec.delta
         if delta is None:
             continue
-        owner = spec if delta.field is not None else spec_for(delta.via or "")
-        if owner.delta is None or owner.delta.field is None:
-            continue
-        if owner.name not in windows:
-            windows[owner.name] = since or get_watermark(owner.name, owner.delta.field)
+        if delta.direct:
+            owners.setdefault(spec.name, spec)
+        for parent_name in delta.via:
+            parent = spec_for(parent_name)
+            if has_window(parent):
+                owners.setdefault(parent.name, parent)
+
+    windows: dict[str, str | None] = {}
+    for name, owner in owners.items():
+        mark = since or get_watermark(name, owner.delta.field or "")  # type: ignore[union-attr]
+        day = as_day(mark)
+        windows[name] = day.isoformat() if day else None
     return windows
 
 
-def _verdict(extract: Any) -> dict:
-    return {
-        "counted": getattr(extract, "counted", None),
-        "duplicate_keys": extract.duplicate_keys,
-        "order_by": tuple(extract.order_by or ()),
-        "order_by_degraded": bool(extract.order_by_degraded),
-        "unknown_properties": list(extract.unknown_properties or []),
-    }
+def _union(spec: IngestSpec, *reads: _Read) -> list[dict]:
+    """Rows from several reads, one per identity key.
 
-
-def _empty_verdict() -> dict:
-    return {
-        "counted": 0,
-        "duplicate_keys": 0,
-        "order_by": (),
-        "order_by_degraded": False,
-        "unknown_properties": [],
-    }
-
-
-def _merge_verdicts(left: dict, right: dict) -> dict:
-    """Combine per-request verdicts into one for the whole fetch.
-
-    Pessimistic on purpose: degraded anywhere means degraded, and the counts
-    add up. A chunked read is only as trustworthy as its worst chunk.
+    The parts overlap by design -- an item changed today is in EKPO's own
+    window AND in the purchase order its new goods receipt hands over -- so
+    a row read twice is the same row, not a paging loss. Later reads win;
+    they are seconds apart.
     """
-    return {
-        "counted": None,  # meaningless across chunks; the row count is the truth
-        "duplicate_keys": left["duplicate_keys"] + right["duplicate_keys"],
-        "order_by": right["order_by"] or left["order_by"],
-        "order_by_degraded": left["order_by_degraded"] or right["order_by_degraded"],
-        "unknown_properties": sorted(
-            set(left["unknown_properties"]) | set(right["unknown_properties"])
-        ),
-    }
+    keys = spec.identity_keys
+    merged: dict[tuple, dict] = {}
+    keyless: list[dict] = []
+    for read in reads:
+        for row in read.rows:
+            identity = tuple(row.get(k) for k in keys)
+            if not keys or None in identity:
+                keyless.append(row)
+            else:
+                merged[identity] = row
+    return list(merged.values()) + keyless
 
 
 # --- The fetch ---------------------------------------------------------------
@@ -408,6 +470,12 @@ def fetch_set(
 
     Returned rather than raised because ``--all`` must not stop at set 7 of 21:
     one service defect should cost that set, not the sweep.
+
+    In delta mode, ``since`` is the lower bound of the set's own window (or,
+    for a set with only parents, of every parent's); ``parent_keys`` is the
+    union of the keys the parents' windows handed over, when the caller has
+    already read them -- a sweep does, once per parent. Left None, both are
+    resolved here from the watermark table.
     """
     client = client or SapClient()
     storage = storage or get_storage()
@@ -417,122 +485,123 @@ def fetch_set(
 
     delta = spec.delta if mode == MODE_DELTA else None
     if mode == MODE_DELTA and delta is None:
-        logger.info(
-            "%s: no delta declared, so this runs as a full pull.", spec.name
-        )
+        logger.info("%s: no delta declared, so this runs as a full pull.", spec.name)
         mode = MODE_FULL
 
     # The field this set's mark is measured on, whatever mode the read ends up
-    # in. A full pull of a set that has a direct delta -- asked for, or forced
-    # because there is no mark yet -- reads every row, and the highest value
-    # seen is exactly where the next increment should start.
+    # in. A full pull of a set that has a date of its own -- asked for, or
+    # forced because there is no mark yet -- reads every row, and the latest
+    # day seen is exactly where the next increment should start.
     mark_field = spec.delta.field if spec.delta is not None else None
 
     result = FetchResult(entity_set=spec.name, prefix=prefix, mode=mode)
 
-    try:
-        if delta is not None and delta.field is not None:
-            result.since = since or get_watermark(spec.name, delta.field)
-            if result.since is None:
-                # The first increment has nothing to be incremental from. A
-                # FULL pull, and marked as one: the file replaces the table
-                # rather than merging into one that may not exist, and the
-                # short-read check against $count applies.
-                logger.info(
-                    "%s: no watermark yet, so this delta run is a full pull. "
-                    "The next one will be incremental.",
-                    spec.name,
-                )
-                delta = None
-                result.mode = mode = MODE_FULL
-        elif delta is not None:
-            parent = spec_for(delta.via or "")
-            if parent_keys is None and not has_window(parent):
-                # A derived delta's window is its parent's date window, and
-                # this parent has none SAP will honour -- MKPF's Budat is
-                # IGNORED, so MSEG sits here. Reading the parent in full and
-                # then asking for its children 50 keys at a time would be the
-                # whole child set in hundreds of requests, slower than the
-                # full pull it pretends to improve on.
-                logger.info(
-                    "%s: parent %s has no delta of its own, so there is no "
-                    "window to read it by. This runs as a full pull.",
-                    spec.name,
-                    delta.via,
-                )
-                delta = None
-                result.mode = mode = MODE_FULL
-            else:
-                parent_field = (parent.delta.field if parent.delta else None) or ""
-                result.since = since or get_watermark(parent.name, parent_field)
-                if parent_keys is None and result.since is None:
-                    logger.info(
-                        "%s: parent %s has no watermark yet, so there is no "
-                        "window to read it by. This runs as a full pull.",
-                        spec.name,
-                        delta.via,
-                    )
-                    delta = None
-                    result.mode = mode = MODE_FULL
+    def go_full(reason: str) -> None:
+        # The first increment has nothing to be incremental from. A FULL pull,
+        # and marked as one: the file replaces the table rather than merging
+        # into one that may not exist, and the short-read check applies.
+        nonlocal delta, mode
+        logger.info("%s: %s, so this delta run is a full pull.", spec.name, reason)
+        delta = None
+        result.mode = mode = MODE_FULL
 
+    try:
+        if delta is not None and delta.direct:
+            result.since = since or get_watermark(spec.name, delta.field or "")
+            if result.since is None:
+                go_full("no watermark yet")
+        elif delta is not None:
+            result.since = since
+
+        if delta is not None and delta.derived and parent_keys is None:
+            for parent_name in delta.via:
+                parent = spec_for(parent_name)
+                window = None
+                if has_window(parent):
+                    # A set with only parents takes --since for all of them;
+                    # one with a window of its own keeps --since for that.
+                    window = (since if not delta.direct else None) or get_watermark(
+                        parent.name, parent.delta.field or ""  # type: ignore[union-attr]
+                    )
+                result.parent_windows[parent.name] = window
+            missing = [name for name, window in result.parent_windows.items() if window is None]
+            if missing:
+                # A parent with no mark (or no date at all) has no window, and
+                # reading it whole to collect keys would be the whole child set
+                # fifty keys at a time, slower than the full pull it pretends
+                # to improve on.
+                go_full(f"parent {', '.join(missing)} has no window to read keys by")
+            else:
+                keys: dict[str, None] = {}
+                for parent_name, window in result.parent_windows.items():
+                    for key in collect_parent_keys(client, parent_name, delta.via_key or "", window):
+                        keys.setdefault(key, None)
+                parent_keys = list(keys)
+
+        reads: list[_Read] = []
         if delta is None:
-            rows, verdict, requests = _read_whole(client, spec)
-        elif delta.field is not None:
-            rows, verdict, requests = _read_direct(client, spec, delta, result.since)
+            reads.append(_read_whole(client, spec))
         else:
-            rows, verdict, requests = _read_derived(
-                client, spec, delta, result.since, parent_keys
-            )
+            if delta.direct:
+                reads.append(_read_direct(client, spec, result.since or ""))
+            if delta.derived:
+                result.parent_keys = len(parent_keys or [])
+                if parent_keys:
+                    reads.append(_read_keys(client, spec, parent_keys))
+                else:
+                    logger.info(
+                        "%s: %s handed over no changed %s, so there is nothing "
+                        "to re-read through them.",
+                        spec.name, ", ".join(delta.via), delta.via_key,
+                    )
     except Exception as exc:
         result.error = f"{type(exc).__name__}: {exc}"
         result.seconds = time.monotonic() - started
         logger.error("%s: fetch failed -- %s", spec.name, result.error)
         return result
 
+    rows = _union(spec, *reads) if len(reads) > 1 else (reads[0].rows if reads else [])
     result.rows = len(rows)
-    result.requests = requests
-    result.counted = verdict["counted"]
-    result.order_by = verdict["order_by"]
-    result.order_by_degraded = verdict["order_by_degraded"]
-    result.unknown_properties = verdict["unknown_properties"]
+    result.requests = sum(r.requests for r in reads)
+    expected = [r.expected for r in reads]
+    result.counted = None if any(e is None for e in expected) else sum(e or 0 for e in expected)
+    result.order_by = next((r.order_by for r in reads if r.order_by), ())
+    result.order_by_degraded = any(r.order_by_degraded for r in reads)
+    result.unknown_properties = sorted({p for r in reads for p in r.unknown_properties})
     result.columns = columns_of(spec, rows)
 
-    # Counted across the whole fetch, not per request. A chunked read can
-    # return the same row from two chunks if the parent handed us a duplicate
-    # key, and no single request would notice.
+    # Duplicates are counted within each read, never across the union: the
+    # parts of a delta overlap by design (see _union), while two copies of one
+    # row inside a single read are direct evidence of rows lost in paging.
     #
     # identity_keys, not keys: CDPOS's declared key repeats once per field
     # changed in a document, so counting against it would condemn every correct
     # pull of that set as corrupt.
-    result.duplicate_keys = count_duplicate_keys(rows, spec.identity_keys)
+    result.duplicate_keys = sum(
+        r.duplicate_keys if r.requests > 1 else count_duplicate_keys(r.rows, spec.identity_keys)
+        for r in reads
+    )
     result.stable = result.duplicate_keys == 0
 
-    # A pull that returns FEWER rows than SAP's own count is a pull that lost
-    # rows, and until now nothing said so: `stable` only ever asked about
-    # duplicates, so a short file scored ok=True and loaded cleanly.
+    # A read that returns FEWER rows than SAP's own count for the same filter
+    # lost rows, and until 2026-10-07 nothing caught it: the check compared
+    # against a flag that only said whether $count had answered, so it fired
+    # on an empty file and on nothing else, and deltas were exempt outright.
     #
-    # POHistorySet is the live example -- it returns 0 rows against a $count of
-    # 3,881 on every sweep. That would have landed an empty file, passed the
-    # duplicate check perfectly, and told I13 that EKBE has no goods receipts.
-    #
-    # Only for a full pull. A delta returns a window by design, and its count
-    # is the whole set.
-    if (
-        not result.is_delta
-        and result.counted is not None
-        and result.rows < result.counted
-    ):
-        result.stable = False
-        result.error = (
-            f"read {result.rows} row(s) against a $count of {result.counted}. "
-            "Rows were lost in paging; the file would look complete and not be."
-        )
+    # POHistorySet was the live example -- 0 rows against a $count of 3,881 on
+    # every sweep in late September. That would have landed an empty file,
+    # passed the duplicate check perfectly, and told I13 that EKBE has no
+    # goods receipts.
+    for read in reads:
+        shortfall = read.shortfall()
+        if shortfall:
+            result.stable = False
+            result.error = shortfall
+            break
 
     # Where the next increment would start, for a set with a date of its own.
-    # A derived child was filtered by its parent's keys, so it measured no
-    # position and gets none. Computed before the manifest is written so the
-    # file carries it; written to the watermark table further down, and only
-    # past a successful landing.
+    # Computed before the manifest is written so the file carries it; written
+    # to the watermark table further down, and only past a successful landing.
     if result.ok and mark_field is not None and rows:
         result.watermark = highest(rows, mark_field)
 
@@ -554,9 +623,10 @@ def fetch_set(
         # would leave nothing to diagnose; the manifest marks it unusable and
         # the loader refuses it.
         logger.error(
-            "%s: %d duplicate key(s) across %d rows -- the pull lost rows. "
+            "%s: %d row(s), %d duplicate key(s)%s -- the pull lost rows. "
             "Landed at %s and marked unstable; it must not be loaded.",
-            spec.name, result.duplicate_keys, result.rows, prefix,
+            spec.name, result.rows, result.duplicate_keys,
+            f"; {result.error}" if result.error else "", prefix,
         )
     elif result.order_by_degraded:
         logger.warning(
@@ -643,6 +713,7 @@ def _write_manifest(
     result: FetchResult,
     run_date: date,
 ) -> None:
+    delta = spec.delta
     payload = {
         "entity_set": spec.name,
         "service": spec.service,
@@ -652,6 +723,18 @@ def _write_manifest(
         # rather than every change document in the client, and a reader who
         # does not know that will draw the wrong conclusion from a count.
         "required_filter": spec.required_filter,
+        # What an increment was read by, so a disputed row can be traced to
+        # the window that brought it in.
+        "delta": (
+            {
+                "field": delta.field,
+                "literal": delta.literal,
+                "via": list(delta.via),
+                "via_key": delta.via_key,
+            }
+            if delta is not None and result.is_delta
+            else None
+        ),
         "run_date": run_date.isoformat(),
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "data_file": DATA_FILE,

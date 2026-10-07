@@ -29,6 +29,12 @@ delta starts from is this file's own newest date -- always, not only when no
 mark exists yet. Whatever the delta had measured before described a table
 this load has just replaced. Taken after the rows are in, so a failed load
 never advances it.
+
+Which column is read is not written down here: it is the SAP field behind the
+set's own delta field in ``manifest.DELTAS`` (``CpudtMkpf`` -> ``CPUDT_MKPF``).
+A separate list fell behind once already -- MKPF was still seeded on BUDAT
+after its delta had to move to CPUDT, and EKPO, EKBE and MSEG were never
+seeded at all, so their first increment was always a full pull.
 """
 
 from __future__ import annotations
@@ -36,6 +42,7 @@ from __future__ import annotations
 import contextlib
 import csv
 import io
+import re
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -46,6 +53,7 @@ from sqlalchemy import select
 from app.core.db import get_engine, get_sessionmaker
 from app.core.logging import get_logger
 from app.core.storage import Storage, get_storage
+from app.ingest import sap_system
 from app.ingest.csv_tables import CsvTable, csv_table
 from app.ingest.watermarks import set_watermark
 from app.models.csv_extract import STATUS_COMPLETE, STATUS_OPEN, CsvExtractRequest
@@ -67,15 +75,22 @@ BATCH_ROWS = 5_000
 # the csv module raises rather than truncating.
 csv.field_size_limit(16 * 1024 * 1024)
 
-# Date columns worth seeding a watermark from, per SAP table. The OData delta
-# filters on the first of these it finds, so the seed has to be the same field
-# or the increment starts from the wrong place.
-WATERMARK_FIELD: dict[str, tuple[str, str]] = {
-    # sap_table -> (CSV column, OData property the delta filters on)
-    "EKKO": ("AEDAT", "Aedat"),
-    "MKPF": ("BUDAT", "Budat"),
-    "CDHDR": ("UDATE", "Udate"),
-}
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def watermark_field(spec: CsvTable) -> tuple[str, str] | None:
+    """``(CSV column, OData property)`` the delta's mark is seeded from, or None.
+
+    The property is the set's own delta field; the column is the SAP field
+    behind it, named the way Gateway names it in reverse (``CpudtMkpf`` ->
+    ``CPUDT_MKPF``), which is what the CSV header calls it.
+    """
+    from app.ingest.manifest import DELTAS
+
+    delta = DELTAS.get(spec.entity_set)
+    if delta is None or delta.field is None:
+        return None
+    return _CAMEL_BOUNDARY.sub("_", delta.field).upper(), delta.field
 
 
 @dataclass
@@ -237,6 +252,15 @@ def load_table(
     if not record.data_key:
         return failure(f"request {record.request_id} completed with no file key")
 
+    # One SAP system per database: see app.ingest.sap_system. Before the
+    # replace, so a refused load leaves the table as it was.
+    try:
+        sap_system.ensure()
+    except sap_system.SapSystemMismatch as exc:
+        return failure(f"refused: {exc}")
+    except Exception as exc:
+        return failure(f"could not check which SAP system the database holds: {exc}")
+
     writer = RawTableWriter(indexed_columns=())
     loaded = 0
     columns: list[str] = []
@@ -282,7 +306,7 @@ def load_table(
     # a gap nothing will ever go back for.
     seeded: str | None = None
     if watermark_value and watermark_index is not None:
-        _, odata_field = WATERMARK_FIELD[spec.sap_table]
+        _, odata_field = watermark_field(spec)  # type: ignore[misc]
         try:
             seeded = _seed_watermark(spec.entity_set, odata_field, watermark_value, loaded)
             if seeded:
@@ -316,14 +340,13 @@ def load_table(
 
 
 def _seed_watermark(entity_set: str, field: str, dats: str, rows: int) -> str | None:
-    """Give the OData delta a starting point, if it has none. Returns the mark.
+    """Give the OData delta a starting point. Returns the mark, a day.
 
-    One day back, in the OData delta's own shape. SAP serialises a DATS as
-    midnight in its own time zone, which the envelope decodes to 22:00 UTC
-    the evening before; a literal at midnight of the same date could sit just
-    past every row of that day, depending on which zone SAP reads the literal
-    in. ``ge`` from the previous day re-reads at most one day of rows, and
-    the merge absorbs the overlap.
+    One day back from the newest date in the file. Every delta field is a
+    system date, so nothing SAP records after the extract can carry a date
+    before it; the day of margin covers the extract running across midnight
+    in SAP's zone, and ``ge`` from it re-reads at most one day of rows,
+    which the merge absorbs.
 
     Always, because this load is the baseline the delta increments from. See
     the module docstring.
@@ -333,13 +356,13 @@ def _seed_watermark(entity_set: str, field: str, dats: str, rows: int) -> str | 
     except ValueError:
         # "00000000" is SAP for "no date"; a column of those seeds nothing.
         return None
-    mark = f"{newest - timedelta(days=1):%Y-%m-%d %H:%M:%S}"
+    mark = f"{newest - timedelta(days=1):%Y-%m-%d}"
     set_watermark(entity_set, field, mark, rows)
     return mark
 
 
 def _watermark_index(spec: CsvTable, columns: list[str]) -> int | None:
-    entry = WATERMARK_FIELD.get(spec.sap_table)
+    entry = watermark_field(spec)
     if entry is None:
         return None
     csv_column = entry[0]
@@ -351,10 +374,12 @@ def _highest(current: str | None, values: Iterator[str]) -> str | None:
     """Newest date seen, as a DATS string; lexical order is then chronological.
 
     The CSV job writes dates as ``DD.MM.YYYY`` (``01.01.2019``), not as SAP's
-    ``YYYYMMDD`` -- measured on the landed CDHDR on 2026-09-26. Both shapes
-    are accepted and normalised to DATS, because comparing ``DD.MM.YYYY``
-    strings lexically ranks by day of month, which is how a MIN/MAX over that
-    column once answered ``01.01.2019`` to ``31.12.2018``.
+    ``YYYYMMDD`` -- measured on the landed CDHDR on 2026-09-26 -- and the
+    narrow layout of 2026-09-30 is not promised to keep either. All three
+    shapes the normalise views read (``YYYYMMDD``, ``DD.MM.YYYY``,
+    ``YYYY-MM-DD``) are accepted and normalised to DATS, because comparing
+    ``DD.MM.YYYY`` strings lexically ranks by day of month, which is how a
+    MIN/MAX over that column once answered ``01.01.2019`` to ``31.12.2018``.
     """
     for value in values:
         candidate = _as_dats((value or "").strip())
@@ -369,6 +394,10 @@ def _as_dats(value: str) -> str | None:
     if len(value) == 10 and value[2] == "." and value[5] == ".":
         day, month, year = value[:2], value[3:5], value[6:]
         if (day + month + year).isdigit() and year != "0000":
+            return f"{year}{month}{day}"
+    if len(value) >= 10 and value[4] == "-" and value[7] == "-":
+        year, month, day = value[:4], value[5:7], value[8:10]
+        if (year + month + day).isdigit() and year != "0000":
             return f"{year}{month}{day}"
     return None
 
