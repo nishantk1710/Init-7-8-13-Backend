@@ -56,6 +56,16 @@ def test_summary_counts_are_internally_consistent() -> None:
     )
 
 
+def test_summary_reports_no_reference_plans_while_the_switch_is_off() -> None:
+    """The file ships with every deploy; only I13_REFERENCE_PLANS_ENABLED makes
+    its rows count, and the summary says how many did."""
+    if get_settings().i13_reference_plans_enabled:
+        pytest.skip("I13_REFERENCE_PLANS_ENABLED is on in this environment")
+    response = client.get("/api/i13/summary")
+    assert response.status_code == 200
+    assert response.json()["reference_plan_count"] == 0
+
+
 def test_movement_metrics_list_and_filter() -> None:
     response = client.get("/api/i13/movement-metrics", params={"plant": "1300", "limit": 5})
     assert response.status_code == 200
