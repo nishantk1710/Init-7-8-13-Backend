@@ -1,7 +1,7 @@
 sap_table,field,initiatives,frs_expected_state,entity_set,verdict,why_it_matters
 MSEG,SOBKZ,I08,absent,GoodsMovementItemSet,NOW_EXPOSED,Special stock indicator. A 541 dispatch posts a vendor row (SOBKZ 'O') and a plant row; without it both are summed and every dispatch quantity doubles. Fails silently. I08 FRS s7.
 EKPO,ERDAT,I08,absent,PurchaseOrderItemSet,CONFIRMED_ABSENT,"Line creation date. PurchaseOrderItemSet publishes no date property at all; ERDAT anchors aging, overdue and lead-time comparison, and EKKO has no header row for 37% of repair lines. I08 FRS s7."
-RESB,BEDNR,I08/I13,absent,ReservationItemSet,CONFIRMED_ABSENT,"Requirement tracking number, Edm.String(10). Designated carrier of the assistant session identifier. Live on PurchaseRequisitionSet and PurchaseOrderItemSet, absent from ReservationItemSet. Hard dependency for I08 FR-8 and FR-4."
+RESB,BEDNR,I08/I13,absent,ReservationItemSet,NOW_EXPOSED,"Requirement tracking number, Edm.String(10). Designated carrier of the assistant session identifier. Live on PurchaseRequisitionSet and PurchaseOrderItemSet, absent from ReservationItemSet. Hard dependency for I08 FR-8 and FR-4."
 RESB,WEMPF,I08/I13,present,ReservationItemSet,CONFIRMED_PRESENT,"Goods recipient, 12 chars. Exposed. Used as the I13 requester proxy (73.2% populated). Candidate session field only if BEDNR is refused."
 RESB,SGTXT,I08/I13,absent,ReservationItemSet,NOW_EXPOSED,Item text. Named as a session-field candidate in I08 s10; not in the projection.
 RESB,ABLAD,I08/I13,absent,ReservationItemSet,NOW_EXPOSED,Unloading point. Named as a session-field candidate in I08 s10; not in the projection.

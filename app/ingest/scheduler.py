@@ -21,15 +21,15 @@ crash cannot leave the schedule wedged forever. A lock in a table could.
 
 WHAT IT RUNS
 
-Deltas only, and only the ones that can RUN. Fifteen of the twenty-one sets
-have no declared delta, so running them in delta mode makes each one fall
-back to a full pull -- ChangeDocItemSet is 939,970 rows, and an hourly timer
-would have pulled all of them, every hour, forever. One more has a delta
-declared that cannot run (GoodsMovementItemSet: its parent has no date SAP
-filters on), and it used to be pulled in full every cycle for the same
-reason. All of those are covered by the CSV route instead, which is why they
-are skipped here rather than degraded. ``IngestSpec.runnable_delta`` is the
-test, and the CLI's ``--delta --all`` applies the same one.
+Deltas only, and only the ones that can RUN -- since 2026-10-07 the
+purchase-order family (EKKO, EKPO, EKET, EKBE), MKPF and MSEG by entry date,
+and CDHDR by change date. The other fourteen sets have no declared delta, so
+running them in delta mode would make each one fall back to a full pull --
+ChangeDocItemSet is 940,263 rows, and an hourly timer would have pulled all
+of them, every hour, forever. Those are covered by the CSV route instead,
+which is why they are skipped here rather than degraded.
+``IngestSpec.runnable_delta`` is the test, and the CLI's ``--delta --all``
+applies the same one.
 
 The pass itself is ``app.ingest.sweep``, shared with the CLI: windows read
 once up front, parents before children, a missing table pulled in full to
@@ -135,10 +135,32 @@ def run_delta_cycle() -> dict:
     summary = {"fetched": 0, "loaded": 0, "failed": 0, "rows": 0,
                "skipped": 0, "advanced": {}, "errors": []}
 
+    # Before any request: a timer pointed at QA over a DEV database would
+    # fetch every cycle and have every load refused. Say it once, call nothing.
+    from app.ingest import sap_system
+
+    try:
+        mismatch = sap_system.verdict(sap_system.recorded(), sap_system.configured())
+    except Exception as exc:
+        mismatch = f"could not check which SAP system the database holds: {exc}"
+    if mismatch:
+        summary["errors"] = [f"delta cycle refused: {mismatch}"]
+        summary["failed"] = 1
+        logger.error("delta cycle refused: %s", mismatch)
+        return summary
+
     # The same gate the CLI applies before its first request. An unverified
     # delta filter that SAP ignores returns HTTP 200 with the WHOLE set, so a
     # "delta" would quietly pull everything and merge it as an increment.
-    problems = check_delta_filters()
+    try:
+        problems = check_delta_filters()
+    except Exception as exc:
+        # No discovery snapshot for this CPI_PATH, most likely: the contract
+        # says which one to capture.
+        summary["errors"] = [f"delta cycle refused: {exc}"]
+        summary["failed"] = 1
+        logger.error("delta cycle refused: %s", exc)
+        return summary
     if problems:
         summary["errors"] = [f"delta filters unverified: {p}" for p in problems]
         summary["failed"] = len(problems)

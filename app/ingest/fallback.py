@@ -438,9 +438,9 @@ def _newest_in_view(view: str, column: str) -> str | None:
 def watermark_from(newest_iso: str | None) -> str | None:
     """The delta's starting mark for a table whose newest date is ``newest_iso``.
 
-    One day back, in the shape the OData delta writes, for the same reason the
-    CSV loader does it: SAP's dates are local midnights, and ``ge`` from the
-    previous day re-reads at most one day the merge absorbs.
+    One day back, as a day (``YYYY-MM-DD``, the shape every mark is stored
+    in), for the same reason the CSV loader does it: ``ge`` from the previous
+    day re-reads at most one day the merge absorbs.
     """
     if not newest_iso:
         return None
@@ -448,7 +448,7 @@ def watermark_from(newest_iso: str | None) -> str | None:
         newest = datetime.strptime(newest_iso[:10], "%Y-%m-%d")
     except ValueError:
         return None
-    return f"{newest - timedelta(days=1):%Y-%m-%d %H:%M:%S}"
+    return f"{newest - timedelta(days=1):%Y-%m-%d}"
 
 
 def seed_watermark(table: str) -> str | None:

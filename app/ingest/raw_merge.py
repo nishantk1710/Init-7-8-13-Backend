@@ -55,6 +55,21 @@ WHAT IS REFUSED, AND WHY
   the watermark; a delta before that has no baseline and is skipped, not failed.
 * A key column the table lacks: rows cannot be matched, and inserting them
   unmatched is how duplicates start.
+* A whole set most of whose rows match nothing in the table. A full pull
+  merged into the table built from the same set should find itself there;
+  if it does not, the routes spell a key differently and the insert would
+  double the table. Rolled back whole.
+
+A KEY THE CSV LEFT BLANK is filled from OData when exactly one incoming row
+can be its owner (EKBE's GJAHR, blank on a fifth of the CSV rows), so the row
+is updated in place instead of gaining a twin.
+
+WHAT IT TELLS THE SNAPSHOTS
+
+A merge that changed anything leaves an ``ingestion_run`` row for the raw
+table. The I13 snapshot and the I08 register rebuild when those move, and
+until 2026-10-07 only a CSV load moved them -- a delta reached the pages the
+next day, or at the next restart.
 """
 
 from __future__ import annotations
@@ -62,7 +77,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -91,8 +106,13 @@ REFUSED = "refused"
 class MergeResult:
     table: str
     status: str
+    # Rows whose values actually differ from what the table held. Not the
+    # rows matched: an hourly window re-reads its boundary day, and every
+    # re-read row matches without changing anything.
     updated: int = 0
     inserted: int = 0
+    matched: int = 0
+    keys_repaired: int = 0
     columns_added: list[str] = field(default_factory=list)
     rows_without_key: int = 0
     vocabulary: str | None = None
@@ -101,6 +121,10 @@ class MergeResult:
     @property
     def ok(self) -> bool:
         return self.status in (MERGED, SKIPPED)
+
+    @property
+    def changed_anything(self) -> bool:
+        return bool(self.updated or self.inserted or self.keys_repaired or self.columns_added)
 
 
 # --- Names ------------------------------------------------------------------
@@ -259,8 +283,16 @@ def merge(
     rows: list[dict[str, Any]],
     *,
     engine: Engine | None = None,
+    full: bool = False,
+    source: str | None = None,
 ) -> MergeResult:
-    """Upsert OData rows into ``raw_<table>``. Never raises; the result says."""
+    """Upsert OData rows into ``raw_<table>``. Never raises; the result says.
+
+    ``full`` says the rows are a whole set rather than a window, which arms
+    the guard against a key mismatch (``FULL_MERGE_NEW_ROW_LIMIT``). ``source``
+    names the landed file for the audit row a merge that changed something
+    leaves in ``ingestion_run``.
+    """
     target_spec = raw_table_for(spec)
     if target_spec is None:
         return MergeResult(spec.raw_table, SKIPPED, detail="no CSV-route table holds this set")
@@ -305,10 +337,18 @@ def merge(
         key_columns = [r.column for r in keys]
         added = [r.column for r in resolved if r.added]
         staging = f"{table}{STAGING_SUFFIX}"
+        target = quote(table)
+        stage_name = quote(staging)
 
         with engine.begin() as conn:
             for column in added:
                 conn.execute(text(_add_column_sql(engine, table, column)))
+
+            # 1. Keys the CSV left blank, filled from OData where exactly one
+            #    incoming row can be theirs. Before the exact match below, so
+            #    a repaired row is then updated in place rather than inserted
+            #    a second time beside its blank-keyed twin.
+            repaired = _repair_blank_keys(conn, table, key_columns, by_key)
 
             meta = MetaData()
             stage = Table(staging, meta, *[Column(c, UnicodeText) for c in columns])
@@ -316,32 +356,77 @@ def merge(
             stage.create(conn)
             conn.execute(stage.insert(), list(by_key.values()))
 
-            on = " AND ".join(
-                f"s.{quote(k)} = {quote(table)}.{quote(k)}" for k in key_columns
-            )
-            exists = f"EXISTS (SELECT 1 FROM {quote(staging)} s WHERE {on})"
-            non_key = [c for c in columns if c not in key_columns]
-            if non_key:
-                assignments = ", ".join(
-                    f"{quote(c)} = (SELECT s.{quote(c)} FROM {quote(staging)} s WHERE {on})"
-                    for c in non_key
-                )
-                updated = conn.execute(
-                    text(f"UPDATE {quote(table)} SET {assignments} WHERE {exists}")
-                ).rowcount
-            else:
-                updated = conn.execute(
-                    text(f"SELECT COUNT(*) FROM {quote(table)} WHERE {exists}")
-                ).scalar() or 0
+            match = " AND ".join(f"s.{quote(k)} = t.{quote(k)}" for k in key_columns)
+            unmatched = conn.execute(text(
+                f"SELECT COUNT(*) FROM {stage_name} s "
+                f"WHERE NOT EXISTS (SELECT 1 FROM {target} t WHERE {match})"
+            )).scalar() or 0
 
+            # 2. The guard. A whole set merged into a table built from the
+            #    same set should find nearly every row already there: the new
+            #    ones are only what SAP created since the CSV extract. Most
+            #    rows "new" means the two routes spell a key differently, and
+            #    inserting them would put every one of those rows in the
+            #    table twice. Refused, and rolled back, before anything moves.
+            if full and unmatched > _new_row_limit(len(by_key)):
+                existing = conn.execute(text(f"SELECT COUNT(*) FROM {target}")).scalar() or 0
+                if existing:
+                    raise _GuardRefusal(
+                        f"{unmatched} of {len(by_key)} incoming row(s) match no row of "
+                        f"{table} ({existing} rows) on {', '.join(key_columns)}. A whole "
+                        "set should find nearly all of itself already there, so the two "
+                        "routes most likely write a key differently -- inserting would "
+                        "duplicate those rows. Compare a few keys from both before "
+                        "merging; nothing was changed."
+                    )
+
+            # 3. What actually changes. Compared NULL-safely with EXCEPT, so a
+            #    re-read of an unchanged window counts nothing -- it is the
+            #    count that decides whether the snapshots over this table need
+            #    rebuilding, and a window re-read every hour must not say yes.
+            non_key = [c for c in columns if c not in key_columns]
+            changed = 0
+            if non_key:
+                s_cols = ", ".join(f"s.{quote(c)}" for c in non_key)
+                t_cols = ", ".join(f"t.{quote(c)}" for c in non_key)
+                changed = conn.execute(text(
+                    f"SELECT COUNT(*) FROM {target} t WHERE EXISTS ("
+                    f"SELECT 1 FROM {stage_name} s WHERE {match} "
+                    f"AND EXISTS (SELECT {s_cols} EXCEPT SELECT {t_cols}))"
+                )).scalar() or 0
+
+                # 4. Every matched row takes the incoming values -- all of
+                #    them, not only the rows counted as changed, so a
+                #    difference the comparison's collation cannot see (letter
+                #    case on SQL Server) is still written.
+                if engine.dialect.name == "mssql":
+                    # One join. The portable form below runs one correlated
+                    # lookup per column, which SQL Server plans as one join
+                    # per column -- twenty-five of them for MSEG.
+                    assignments = ", ".join(f"t.{quote(c)} = s.{quote(c)}" for c in non_key)
+                    matched = conn.execute(text(
+                        f"UPDATE t SET {assignments} FROM {target} t "
+                        f"INNER JOIN {stage_name} s ON {match}"
+                    )).rowcount
+                else:
+                    on = " AND ".join(f"s.{quote(k)} = {target}.{quote(k)}" for k in key_columns)
+                    assignments = ", ".join(
+                        f"{quote(c)} = (SELECT s.{quote(c)} FROM {stage_name} s WHERE {on})"
+                        for c in non_key
+                    )
+                    matched = conn.execute(text(
+                        f"UPDATE {target} SET {assignments} "
+                        f"WHERE EXISTS (SELECT 1 FROM {stage_name} s WHERE {on})"
+                    )).rowcount
+            else:
+                matched = len(by_key) - unmatched
+
+            # 5. The rest are new.
             column_list = ", ".join(quote(c) for c in columns)
-            not_exists = " AND ".join(
-                f"t.{quote(k)} = s.{quote(k)}" for k in key_columns
-            )
             inserted = conn.execute(text(
-                f"INSERT INTO {quote(table)} ({column_list}) "
-                f"SELECT {column_list} FROM {quote(staging)} s "
-                f"WHERE NOT EXISTS (SELECT 1 FROM {quote(table)} t WHERE {not_exists})"
+                f"INSERT INTO {target} ({column_list}) "
+                f"SELECT {column_list} FROM {stage_name} s "
+                f"WHERE NOT EXISTS (SELECT 1 FROM {target} t WHERE {match})"
             )).rowcount
             stage.drop(conn)
 
@@ -352,20 +437,179 @@ def merge(
 
             sap_normalise.refresh_after_load(target_spec.table)
 
+        result = MergeResult(
+            table, MERGED, updated=max(changed, 0), inserted=max(inserted, 0),
+            matched=max(matched, 0), keys_repaired=repaired,
+            columns_added=added, rows_without_key=without_key, vocabulary=vocabulary,
+        )
         logger.info(
-            "%s: %d row(s) updated, %d inserted into %s (%s vocabulary%s%s)",
-            spec.name, max(updated, 0), max(inserted, 0), table, vocabulary,
+            "%s: %d row(s) changed (%d matched), %d inserted into %s (%s vocabulary%s%s%s)",
+            spec.name, result.updated, result.matched, result.inserted, table, vocabulary,
+            f"; {repaired} blank key(s) filled from OData" if repaired else "",
             f"; added {', '.join(added)}" if added else "",
             f"; {without_key} row(s) without a key skipped" if without_key else "",
         )
-        return MergeResult(
-            table, MERGED, updated=max(updated, 0), inserted=max(inserted, 0),
-            columns_added=added, rows_without_key=without_key, vocabulary=vocabulary,
-        )
+        if result.changed_anything:
+            _record_merge(engine, table, source or f"odata:{spec.name}")
+        return result
+    except _GuardRefusal as exc:
+        logger.error("%s: merge into %s refused -- %s", spec.name, table, exc)
+        _drop_staging(engine, f"{table}{STAGING_SUFFIX}")
+        return MergeResult(table, REFUSED, detail=str(exc))
     except Exception as exc:
         detail = f"{type(exc).__name__}: {exc}"
         logger.error("%s: merge into %s failed -- %s", spec.name, table, detail)
+        _drop_staging(engine, f"{table}{STAGING_SUFFIX}")
         return MergeResult(table, REFUSED, detail=detail)
+
+
+def _drop_staging(engine: Engine, staging: str) -> None:
+    """Remove a staging table a failed merge may have left. Best effort.
+
+    The rollback removes it on SQL Server, where DDL is transactional; not
+    every driver does, and a stale staging table would be reused as-is by
+    nothing but would sit in the schema looking like data.
+    """
+    try:
+        with engine.begin() as conn:
+            Table(staging, MetaData()).drop(conn, checkfirst=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("could not drop %s after a failed merge (%s)", staging, exc)
+
+
+class _GuardRefusal(Exception):
+    """A merge refused on evidence, rolled back with everything before it."""
+
+
+# A whole-set merge may bring this many rows the table does not have yet --
+# whatever SAP created between the CSV extract and the OData read -- before
+# the guard calls it a key mismatch. Absolute for small sets, relative for
+# large ones: 50 rows, or 2% of the set.
+FULL_MERGE_NEW_ROW_LIMIT = 50
+FULL_MERGE_NEW_ROW_SHARE = 0.02
+
+
+def _new_row_limit(incoming: int) -> int:
+    return max(FULL_MERGE_NEW_ROW_LIMIT, int(incoming * FULL_MERGE_NEW_ROW_SHARE))
+
+
+def _blank(value: Any) -> bool:
+    return value is None or str(value).strip() == ""
+
+
+def _repair_blank_keys(
+    conn, table: str, key_columns: list[str], incoming: dict[tuple, dict]
+) -> int:
+    """Fill key columns the CSV left blank, from the OData row that is theirs.
+
+    Measured 2026-10-06: EKBE's CSV extract leaves GJAHR -- one of its seven
+    key fields -- blank on 20% of rows, while OData fills it. Matched exactly,
+    every such receipt looks new, and the merge inserts it a second time
+    beside its blank-keyed twin. I13 would count those goods receipts twice.
+
+    A blank-keyed row is repaired only when it is unambiguous both ways: one
+    incoming row agrees with it on every key field it does have, and that
+    incoming row agrees with no other blank-keyed row. Anything else is left
+    alone -- an unrepaired row costs a duplicate the next CSV load removes; a
+    wrong repair would graft one receipt's year onto another.
+    """
+    blanks_sql = " OR ".join(f"{quote(k)} IS NULL OR {quote(k)} = ''" for k in key_columns)
+    key_list = ", ".join(quote(k) for k in key_columns)
+    blank_rows = conn.execute(
+        text(f"SELECT {key_list} FROM {quote(table)} WHERE {blanks_sql}")
+    ).fetchall()
+    if not blank_rows:
+        return 0
+
+    present = {tuple(row) for row in conn.execute(text(f"SELECT {key_list} FROM {quote(table)}"))}
+    loose = [key for key in incoming if key not in present]
+    if not loose:
+        return 0
+
+    # Two blank-keyed rows identical on every key field cannot be told apart
+    # by an UPDATE; repairing them would give both the same key.
+    copies: dict[tuple, int] = {}
+    for row in blank_rows:
+        copies[tuple(row)] = copies.get(tuple(row), 0) + 1
+
+    # Index the unmatched incoming keys by each blank pattern's known fields.
+    by_pattern: dict[tuple[int, ...], dict[tuple, list[tuple]]] = {}
+    candidates: dict[tuple, list[tuple]] = {}
+    for row in copies:
+        known = tuple(i for i, value in enumerate(row) if not _blank(value))
+        index = by_pattern.get(known)
+        if index is None:
+            index = {}
+            for key in loose:
+                index.setdefault(tuple(key[i] for i in known), []).append(key)
+            by_pattern[known] = index
+        candidates[row] = index.get(tuple(row[i] for i in known), [])
+
+    claimed: dict[tuple, int] = {}
+    for row, found in candidates.items():
+        for key in found:
+            claimed[key] = claimed.get(key, 0) + copies[row]
+
+    repairs = []
+    for row, found in candidates.items():
+        if copies[row] == 1 and len(found) == 1 and claimed[found[0]] == 1:
+            repairs.append((row, found[0]))
+    if not repairs:
+        return 0
+
+    repaired = 0
+    for row, key in repairs:
+        sets, wheres, params = [], [], {}
+        for i, column in enumerate(key_columns):
+            if _blank(row[i]):
+                sets.append(f"{quote(column)} = :v{i}")
+                wheres.append(f"({quote(column)} IS NULL OR {quote(column)} = '')")
+                params[f"v{i}"] = key[i]
+            else:
+                wheres.append(f"{quote(column)} = :w{i}")
+                params[f"w{i}"] = row[i]
+        repaired += conn.execute(
+            text(f"UPDATE {quote(table)} SET {', '.join(sets)} WHERE {' AND '.join(wheres)}"),
+            params,
+        ).rowcount
+    logger.warning(
+        "%s: %d row(s) had blank key field(s) in the CSV extract and took them "
+        "from OData; %d blank-keyed row(s) left alone as ambiguous or unmatched",
+        table, repaired, len(blank_rows) - len(repairs),
+    )
+    return repaired
+
+
+def _record_merge(engine: Engine, table: str, source: str) -> None:
+    """Leave an ``ingestion_run`` row saying ``table`` changed. Best effort.
+
+    What the I13 snapshot and the I08 register watch to decide whether to
+    rebuild. Without it they watched only the CSV loads, so a delta that
+    landed new goods receipts at 10:00 reached the screens at midnight (I13,
+    whose fingerprint includes the date) or at the next restart (I08).
+
+    The row count is the table's, after the merge -- the I13 data-sources page
+    shows the latest succeeded run per table, and "23 rows" for a 68,618-row
+    table would be a lie told by an audit row.
+    """
+    from app.models.ingestion import IngestionRun
+
+    try:
+        with engine.begin() as conn:
+            rows = conn.execute(text(f"SELECT COUNT(*) FROM {quote(table)}")).scalar() or 0
+            now = datetime.now(timezone.utc)
+            conn.execute(
+                IngestionRun.__table__.insert().values(
+                    source_file=source[:255],
+                    target_table=table,
+                    row_count=rows,
+                    status="succeeded",
+                    started_at=now,
+                    finished_at=now,
+                )
+            )
+    except Exception as exc:  # the rows are in; only the signal is lost
+        logger.warning("%s: merged, but the ingestion_run row could not be written (%s)", table, exc)
 
 
 def merge_landed(
@@ -379,7 +623,8 @@ def merge_landed(
 
     Refuses a fetch its own manifest marks unusable, exactly as the
     ``odata_<table>`` load does: rows were lost or repeated in paging, and
-    a merge would carry that into the table the pages read.
+    a merge would carry that into the table the pages read. A full pull is
+    merged with the key-mismatch guard armed (see ``merge``).
     """
     from app.ingest.fetch import DATA_FILE, read_manifest
 
@@ -400,4 +645,5 @@ def merge_landed(
             line = raw.decode("utf-8").strip()
             if line:
                 rows.append(json.loads(line))
-    return merge(spec, rows, engine=engine)
+    full = manifest.get("load_strategy", "replace") == "replace"
+    return merge(spec, rows, engine=engine, full=full, source=f"odata:{prefix}")

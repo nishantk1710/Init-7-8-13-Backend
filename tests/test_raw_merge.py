@@ -20,6 +20,7 @@ from app.ingest.manifest import spec_for
 
 EKPO = spec_for("PurchaseOrderItemSet")
 EKKO = spec_for("PurchaseOrderSet")
+EKBE = spec_for("POHistorySet")
 MARC = spec_for("MaterialPlantSet")
 
 
@@ -170,8 +171,22 @@ class TestMerge:
         second = raw_merge.merge(EKPO, rows, engine=engine)
 
         assert (first.updated, first.inserted) == (0, 2)
-        assert (second.updated, second.inserted) == (2, 0)
+        # Matched and rewritten, but nothing CHANGED -- the count that decides
+        # whether the snapshots rebuild, so an hourly re-read of the boundary
+        # day does not rebuild them every hour.
+        assert (second.matched, second.updated, second.inserted) == (2, 0, 0)
+        assert not second.changed_anything
         assert count(engine, "raw_ekpo") == 2
+
+    def test_only_rows_whose_values_differ_count_as_changed(self, engine) -> None:
+        csv_shaped_ekpo(engine, [])
+        raw_merge.merge(EKPO, [{"Ebeln": "1", "Ebelp": "00010", "Menge": Decimal("2")},
+                               {"Ebeln": "1", "Ebelp": "00020", "Menge": None}], engine=engine)
+
+        again = raw_merge.merge(EKPO, [{"Ebeln": "1", "Ebelp": "00010", "Menge": Decimal("5")},
+                                       {"Ebeln": "1", "Ebelp": "00020", "Menge": None}], engine=engine)
+
+        assert (again.matched, again.updated) == (2, 1), "a NULL equal to a NULL is no change"
 
     def test_a_row_repeated_within_one_batch_is_inserted_once(self, engine) -> None:
         """A chunked read can return the same row from two chunks."""
@@ -253,6 +268,126 @@ class TestMerge:
         raw_merge.merge(EKPO, [{"Ebeln": "1", "Ebelp": "00010"}], engine=engine)
         from sqlalchemy import inspect
         assert not inspect(engine).has_table("raw_ekpo__odata_stg")
+
+
+# --- Keys the CSV left blank ---------------------------------------------------
+
+
+def csv_shaped_ekbe(engine, rows):
+    """raw_ekbe as the CSV route delivered it on 2026-10-06: GJAHR, one of
+    seven key fields, blank on a fifth of the rows."""
+    with engine.begin() as c:
+        c.execute(text(
+            "CREATE TABLE raw_ekbe (EBELN TEXT, EBELP TEXT, ZEKKN TEXT, VGABE TEXT, GJAHR TEXT, "
+            "BELNR TEXT, BUZEI TEXT, MENGE TEXT, LOGSY TEXT)"))
+        for r in rows:
+            c.execute(text(
+                "INSERT INTO raw_ekbe VALUES (:e, '00010', '00', '1', :g, :b, '0001', :q, 'kept')"), r)
+
+
+def ekbe_row(belnr, gjahr, menge="1.000"):
+    return {"Ebeln": "4000000000", "Ebelp": "00010", "Zekkn": "00", "Vgabe": "1",
+            "Gjahr": gjahr, "Belnr": belnr, "Buzei": "0001", "Menge": menge}
+
+
+class TestBlankKeys:
+    def test_a_blank_key_is_filled_from_its_odata_twin_not_duplicated(self, engine) -> None:
+        csv_shaped_ekbe(engine, [{"e": "4000000000", "g": "", "b": "5000000005", "q": "1.000"},
+                                 {"e": "4000000000", "g": "2013", "b": "5000000006", "q": "2.000"}])
+
+        result = raw_merge.merge(EKBE, [ekbe_row("5000000005", "2013"), ekbe_row("5000000006", "2013", "2.000")],
+                                 engine=engine)
+
+        assert (result.keys_repaired, result.inserted) == (1, 0)
+        assert count(engine, "raw_ekbe") == 2
+        assert fetch(engine, "SELECT GJAHR, LOGSY FROM raw_ekbe WHERE BELNR='5000000005'") == [("2013", "kept")]
+
+    def test_an_ambiguous_blank_key_is_left_alone(self, engine) -> None:
+        """Two incoming rows could own it: grafting either year on would be a guess."""
+        csv_shaped_ekbe(engine, [{"e": "4000000000", "g": "", "b": "5000000005", "q": "1.000"}])
+
+        result = raw_merge.merge(EKBE, [ekbe_row("5000000005", "2013"), ekbe_row("5000000005", "2014")],
+                                 engine=engine)
+
+        assert result.keys_repaired == 0
+        assert fetch(engine, "SELECT GJAHR FROM raw_ekbe WHERE GJAHR = '' OR GJAHR IS NULL") == [("",)]
+
+    def test_two_identical_blank_rows_are_never_given_one_key(self, engine) -> None:
+        csv_shaped_ekbe(engine, [{"e": "4000000000", "g": "", "b": "5000000005", "q": "1.000"},
+                                 {"e": "4000000000", "g": "", "b": "5000000005", "q": "1.000"}])
+
+        result = raw_merge.merge(EKBE, [ekbe_row("5000000005", "2013")], engine=engine)
+
+        assert result.keys_repaired == 0
+
+
+# --- The guard against a key mismatch -------------------------------------------
+
+
+class TestFullMergeGuard:
+    def test_a_whole_set_that_finds_itself_missing_is_refused_and_rolled_back(self, engine) -> None:
+        """The CSV wrote the item as '10', OData as '00010': every row looks new."""
+        csv_shaped_ekpo(engine, [{"e": str(n), "p": "10", "a": "", "m": "", "q": "1", "n": "", "z": "kept"}
+                                 for n in range(100)])
+
+        result = raw_merge.merge(EKPO, [{"Ebeln": str(n), "Ebelp": "00010", "Menge": "1"} for n in range(100)],
+                                 engine=engine, full=True)
+
+        assert result.status == raw_merge.REFUSED
+        assert "match no row" in result.detail
+        assert count(engine, "raw_ekpo") == 100
+        from sqlalchemy import inspect
+        columns = {c["name"] for c in inspect(engine).get_columns("raw_ekpo")}
+        assert "NETWR" in columns and not inspect(engine).has_table("raw_ekpo__odata_stg")
+
+    def test_a_whole_set_with_a_few_new_rows_merges(self, engine) -> None:
+        csv_shaped_ekpo(engine, [{"e": str(n), "p": "00010", "a": "", "m": "", "q": "1", "n": "", "z": "kept"}
+                                 for n in range(100)])
+
+        rows = [{"Ebeln": str(n), "Ebelp": "00010", "Menge": "1"} for n in range(103)]
+        result = raw_merge.merge(EKPO, rows, engine=engine, full=True)
+
+        assert result.status == raw_merge.MERGED and result.inserted == 3
+
+    def test_a_window_is_not_held_to_it(self, engine) -> None:
+        """An increment is mostly new rows by design."""
+        csv_shaped_ekpo(engine, [{"e": "1", "p": "00010", "a": "", "m": "", "q": "1", "n": "", "z": "kept"}])
+
+        rows = [{"Ebeln": str(n), "Ebelp": "00010"} for n in range(2, 200)]
+        result = raw_merge.merge(EKPO, rows, engine=engine)
+
+        assert result.status == raw_merge.MERGED and result.inserted == 198
+
+
+# --- What the snapshots watch ------------------------------------------------------
+
+
+class TestAuditRow:
+    @pytest.fixture
+    def audited(self, engine):
+        from app.models.ingestion import IngestionRun
+
+        IngestionRun.__table__.create(engine)
+        return engine
+
+    def runs(self, engine):
+        return fetch(engine, "SELECT target_table, row_count, source_file FROM ingestion_run")
+
+    def test_a_merge_that_changed_rows_leaves_an_ingestion_run(self, audited) -> None:
+        csv_shaped_ekpo(audited, [{"e": "1", "p": "00010", "a": "", "m": "", "q": "1", "n": "", "z": "kept"}])
+
+        raw_merge.merge(EKPO, [{"Ebeln": "2", "Ebelp": "00010"}], engine=audited, source="odata:p")
+
+        assert self.runs(audited) == [("raw_ekpo", 2, "odata:p")], "the table's rows, not the batch's"
+
+    def test_a_merge_that_changed_nothing_leaves_none(self, audited) -> None:
+        csv_shaped_ekpo(audited, [])
+        rows = [{"Ebeln": "1", "Ebelp": "00010", "Menge": "2"}]
+        raw_merge.merge(EKPO, rows, engine=audited)
+
+        raw_merge.merge(EKPO, rows, engine=audited)
+
+        assert len(self.runs(audited)) == 1
 
 
 # --- From a landed fetch -----------------------------------------------------

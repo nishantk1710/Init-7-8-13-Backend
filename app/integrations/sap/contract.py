@@ -15,19 +15,37 @@ live SAP.
 
 The snapshot lives in this repository, so unlike the frontend there is no
 path-resolution problem: it is simply a directory next to the application.
+
+ONE SNAPSHOT PER SAP SYSTEM
+
+DEV and QA are different systems behind different iFlow paths, and nothing
+promises they expose the same keys, types or filter behaviour -- QA's
+$metadata answered HTTP 500 the last time it was swept. So each snapshot
+records the ``CPI_PATH`` it was captured from (``snapshot.json``, written by
+cpi_discovery.py), and the contract used is the one captured from the path
+this process is configured for. Change ``CPI_PATH`` and the contract follows.
+No snapshot for that path is an error naming the command that makes one --
+never a silent fall back to DEV's, which would page, decode and gate deltas
+against a system that is not the one being called.
 """
 
 from __future__ import annotations
 
 import csv
+import json
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from app.core.config import BACKEND_ROOT, get_settings, normalise_cpi_path
 from app.integrations.sap.errors import ContractError
 
-# backend/app/integrations/sap/contract.py -> backend/data-generator/discovery
-_DISCOVERY = Path(__file__).resolve().parents[3] / "data-generator" / "discovery"
+# backend/data-generator: every discovery*/ folder under it is a snapshot.
+SNAPSHOT_ROOT = BACKEND_ROOT / "data-generator"
+
+# What each snapshot says about itself -- above all, the CPI_PATH it was
+# captured from. Written by cpi_discovery.py.
+SNAPSHOT_FILE = "snapshot.json"
 
 
 @dataclass(frozen=True)
@@ -93,12 +111,59 @@ class EntitySet:
         return f"sap/opu/odata/sap/{self.service}/{self.name}"
 
 
+def snapshot_info(folder: Path) -> dict:
+    """A snapshot folder's ``snapshot.json``, or {} if it has none."""
+    try:
+        return json.loads((folder / SNAPSHOT_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def snapshots() -> dict[Path, str]:
+    """Every snapshot folder that says which CPI_PATH it came from."""
+    found: dict[Path, str] = {}
+    for folder in sorted(SNAPSHOT_ROOT.glob("discovery*")):
+        recorded = snapshot_info(folder).get("cpi_path")
+        if folder.is_dir() and recorded:
+            found[folder] = normalise_cpi_path(recorded)
+    return found
+
+
+@lru_cache
 def discovery_dir() -> Path:
-    return _DISCOVERY
+    """The snapshot for the SAP system this process talks to.
+
+    ``SAP_DISCOVERY_DIR`` when it is set; otherwise the one folder whose
+    ``snapshot.json`` records the configured ``CPI_PATH``.
+    """
+    settings = get_settings()
+    if settings.sap_discovery_dir:
+        forced = Path(settings.sap_discovery_dir)
+        return forced if forced.is_absolute() else BACKEND_ROOT / forced
+
+    wanted = settings.cpi_path
+    matches = [folder for folder, path in snapshots().items() if path == wanted]
+    if len(matches) == 1:
+        return matches[0]
+    known = ", ".join(f"{folder.name} <- {path}" for folder, path in snapshots().items()) or "none"
+    if matches:
+        raise ContractError(
+            f"{len(matches)} discovery snapshots claim CPI_PATH={wanted} "
+            f"({', '.join(m.name for m in matches)}). Keep one, or set SAP_DISCOVERY_DIR."
+        )
+    raise ContractError(
+        f"No discovery snapshot was captured from CPI_PATH={wanted} (captured: {known}). "
+        "This process would otherwise decode, page and gate deltas by another "
+        "system's contract. Capture one from this system, then measure its deltas:\n"
+        f"  CPI_PATH={wanted} python data-generator/cpi_discovery.py --skip-probes "
+        "--skip-profiles --env-file .env --out data-generator/discovery_<system>\n"
+        "  python -m app.ingest.delta_probe\n"
+        "or point SAP_DISCOVERY_DIR at a folder on purpose."
+    )
 
 
 def _read_csv(name: str) -> list[dict[str, str]]:
-    path = _DISCOVERY / name
+    path = discovery_dir() / name
     if not path.exists():
         raise ContractError(
             f"Discovery snapshot missing: {path}. It is produced by "
@@ -206,7 +271,7 @@ def _metadata_detail() -> dict[str, dict[str, dict]]:
             return None
 
     detail: dict[str, dict[str, dict]] = {}
-    for path in sorted(_DISCOVERY.glob("metadata_*.xml")):
+    for path in sorted(discovery_dir().glob("metadata_*.xml")):
         if path.stat().st_size == 0:
             continue
         try:
@@ -264,6 +329,7 @@ def counts() -> dict[str, str]:
 
 def reset_cache() -> None:
     """Forget the parsed snapshot. For tests that write a different one."""
+    discovery_dir.cache_clear()
     contract.cache_clear()
     counts.cache_clear()
     _metadata_detail.cache_clear()

@@ -528,12 +528,13 @@ class TestCli:
 # --- The live routes are untouched ------------------------------------------
 
 
-def test_ekko_and_eket_stay_recorded_as_undelivered() -> None:
-    """The sweep fires them for the record; the fallback is still what fills them."""
+def test_ekko_and_eket_are_no_longer_recorded_as_undelivered() -> None:
+    """They deliver over CSV since 2026-09-30, so the live route fills them
+    and the fallback's guard refuses a workbook over that data."""
     from app.ingest.csv_tables import csv_table
 
-    assert csv_table("EKKO").blocked
-    assert csv_table("EKET").blocked
+    assert csv_table("EKKO").blocked is None
+    assert csv_table("EKET").blocked is None
 
 
 class TestWorkbookWatermark:
@@ -542,8 +543,8 @@ class TestWorkbookWatermark:
         monkeypatch.setattr(fallback, "_newest_in_view", lambda view, col: "2026-09-25")
         monkeypatch.setattr(fallback, "set_watermark", lambda *a: written.append(a))
 
-        assert fallback.seed_watermark("ekko") == "2026-09-24 00:00:00"
-        assert written == [("PurchaseOrderSet", "Aedat", "2026-09-24 00:00:00", 0)]
+        assert fallback.seed_watermark("ekko") == "2026-09-24"
+        assert written == [("PurchaseOrderSet", "Aedat", "2026-09-24", 0)]
 
     def test_reports_seed_nothing(self, monkeypatch) -> None:
         written = []

@@ -917,11 +917,12 @@ class TestCountFilter:
 
 
 class TestUndeliveredTables:
-    def test_ekko_and_eket_are_recorded_as_undelivered(self) -> None:
-        """Sixty requests across every shape the key allows, none delivered,
-        while MAKT delivered four of four on the same route."""
-        assert csv_table("EKKO").blocked
-        assert csv_table("EKET").blocked
+    def test_ekko_and_eket_deliver_since_the_job_was_rebuilt(self) -> None:
+        """Sixty requests across every shape the key allowed, none delivered,
+        25-26 Sep -- until SAP rebuilt the job on 30 Sep. Both now deliver in
+        the narrow layout with exact counts (EKKO 3,140, EKET 3,631)."""
+        assert csv_table("EKKO").blocked is None
+        assert csv_table("EKET").blocked is None
         assert csv_table("EKPO").blocked is None
 
     def test_a_sweep_fires_them_anyway_so_the_request_is_on_record(self, db, monkeypatch) -> None:

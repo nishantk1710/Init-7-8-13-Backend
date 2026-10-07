@@ -539,17 +539,31 @@ how.
 Two shapes, and which one a set gets is decided by measurement rather than
 preference:
 
-| Set | How |
-| --- | --- |
-| PurchaseOrderSet (EKKO) | direct, `Aedat ge ...` |
-| MaterialDocumentHeaderSet (MKPF) | direct, `Budat ge ...` |
-| PurchaseOrderItemSet, POScheduleLineSet, POHistorySet | via PurchaseOrderSet, by `Ebeln` |
-| GoodsMovementItemSet (MSEG) | via MaterialDocumentHeaderSet, by `Mblnr` |
+| Set | Own window | Plus every `Ebeln` handed over by |
+| --- | --- | --- |
+| POHistorySet (EKBE) | `Cpudt ge '20260915'` | -- |
+| PurchaseOrderItemSet (EKPO) | `Aedat ge datetime'2026-09-15T00:00:00'` | POHistorySet |
+| PurchaseOrderSet (EKKO) | `Aedat ge datetime'...'` | PurchaseOrderItemSet |
+| POScheduleLineSet (EKET) | -- | PurchaseOrderItemSet, POHistorySet |
+| MaterialDocumentHeaderSet (MKPF) | `Cpudt ge datetime'...'` | -- |
+| GoodsMovementItemSet (MSEG) | `CpudtMkpf ge '15.09.2026'` | -- |
+| ChangeDocHeaderSet (CDHDR) | `Udate ge '20260915'`, with `Objectclas eq 'MATERIAL'` | -- |
 
-The derived shape is forced, not chosen. Filtering MSEG by `BudatMkpf` returns
-HTTP 500, and by `Ebeln` also returns HTTP 500, so reading MKPF by date and
-then fetching the items by document number is the only route to a date-bounded
-read of it. Same for EKBE, where `Budat` is rejected but `Ebeln` is honoured.
+Re-designed 2026-10-07 from measurements against DEV (the evidence is in
+`manifest.DELTAS`). EKKO's `Aedat` is the creation date, so a family hung off
+it read new purchase orders and nothing else. EKPO's `Aedat` moves with every
+item and schedule-line change on record; a goods receipt moves only EKBE --
+including EKET's received quantity and EKPO's delivery-complete flag -- so
+each set is re-read for the purchase orders the sets that record its changes
+hand over. MKPF and MSEG go by entry date (`Cpudt`): posting dates can be
+backdated, and MKPF's `Budat` is HTTP 400 anyway.
+
+**The literal is measured per field.** EKBE's `Cpudt`, CDHDR's `Udate` and
+MSEG's `CpudtMkpf` are dates SAP re-typed to text, in two different shapes. The
+wrong shape is not an error: `CpudtMkpf ge '20250101'` answers HTTP 200 with
+all 68,618 rows. `python -m app.ingest.delta_probe` measures every declared
+delta in the literal fetch sends (total, an impossible day, one real day, a
+window checked row by row) and writes `discovery/delta_support.csv`.
 
 **A delta is only declared where the filter is measured HONOURED.** That bar is
 higher than the client's own `check_filter`, which blocks properties measured
@@ -557,24 +571,70 @@ IGNORED or REJECTED and lets an *unprobed* one through -- the right call for an
 ad-hoc query where a person is watching, the wrong one for a pipeline that runs
 unattended. An unprobed filter that turns out to be ignored returns HTTP 200
 with the whole set, so a "delta" would silently pull everything. A test asserts
-this, and the CLI refuses a `--delta` run if any declared delta fails it. It is
-why ChangeDocHeaderSet and ChangeDocItemSet stay on full pulls: `Udate` and
-`Changenr` were never probed.
+this, and the CLI and the scheduler refuse a `--delta` run if any declared
+delta is not HONOURED in `delta_support.csv` for its literal shape.
+ChangeDocItemSet stays on full pulls: the `Changenr` chain it would need is
+HTTP 400.
+
+### Switching SAP system (DEV <-> QA)
+
+`CPI_PATH` is the only switch -- in `.env` locally, in the App Service
+settings when deployed, then restart. Every SAP call goes through one
+transport (`CPI_BASE_URL + CPI_PATH`), so OData reads, `$count`, `$metadata`
+and the CSV extract requests all follow it; `cpi_discovery.py` and the live
+checks read the same variable. Nothing in the code names a system.
+
+Two things follow it that are not URLs:
+
+* **The recorded contract** -- keys, types, filter evidence, the delta gate --
+  is the discovery snapshot whose `snapshot.json` records that `CPI_PATH`.
+  With no snapshot for the path, every SAP call refuses and names the command
+  to capture one; it never falls back to DEV's. For QA, once:
+
+  ```bash
+  CPI_PATH=/http/SAPECCQA/OdataConsumption python data-generator/cpi_discovery.py \
+      --skip-probes --skip-profiles --env-file .env --label QA --out data-generator/discovery_qa
+  CPI_PATH=/http/SAPECCQA/OdataConsumption python -m app.ingest.delta_probe
+  ```
+
+  Commit the folder (metadata and counts, no rows). `known_conditions.py` and
+  the unit tests describe DEV and stay pinned to DEV's snapshot.
+* **The data.** The database records the `CPI_PATH` its SAP data came from on
+  the first load, and refuses CSV loads, OData loads and delta cycles from any
+  other. Switch by wiping and reloading from the new system (the first load
+  records it), or declare a reloaded database with `--adopt-sap-system`.
+  `python -m app.ingest --sap-system` shows all three: the path, the snapshot,
+  and what the database holds.
+
+The CSV route has one step outside this code: SAP QA's extract job must be
+set to push to this deployment's `/api/events/csv`.
 
 **The window is inclusive** (`ge`, not `gt`). SAP's dates have day granularity,
 so an exclusive bound would drop anything created later on the same day as the
 previous run's last row. The overlap is absorbed by the load, which merges on
 the entity key.
 
-**The watermark advances only after the rows are landed**, only on a stable
-pull, and only for a direct delta -- a derived child was filtered by its
-parent's keys, so it measured no position of its own.
+**The watermark is a day** (`YYYY-MM-DD`), taken as the latest date in the
+rows, compared as dates -- `DD.MM.YYYY` compared as text ranks by day of month.
+It advances only after the rows are landed, only on a stable pull, only for a
+set with a window of its own, and only once every set read through it has
+landed too.
+
+**Every read is checked against its own `$count`**, delta windows included. A
+read that returns fewer rows is marked unusable and refused by the loader.
+
+**The merge into `raw_<table>` runs first and is guarded.** A whole set whose
+rows mostly match nothing in the table is refused as a key mismatch rather than
+inserted twice; a key the CSV left blank (EKBE's `GJAHR`) is filled from its
+one OData twin. A merge that changed rows leaves an `ingestion_run` row, which
+is what the I13 and I08 snapshots watch to rebuild.
 
 **A delta file merges; a full file replaces.** The manifest says which. Merging
 stages the batch, deletes the matching keys from the target and inserts, all in
 one transaction. A delta whose target table does not exist is refused rather
 than loaded as a replace, which would leave a table holding only the increment
-and looking complete.
+and looking complete. The sweep pulls in full instead when `odata_<table>` is
+missing or empty -- a wipe that deletes rows leaves empty tables.
 
 ## The serving layer
 

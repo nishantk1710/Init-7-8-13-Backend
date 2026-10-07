@@ -28,7 +28,7 @@ from sqlalchemy import text
 from app.core.db import get_engine, get_sessionmaker
 from app.core.logging import get_logger
 from app.core.storage import Storage, get_storage
-from app.ingest import raw_merge
+from app.ingest import raw_merge, sap_system
 from app.ingest.fetch import DATA_FILE, MANIFEST_FILE, read_manifest
 from app.ingest.manifest import IngestSpec
 from app.models.ingestion import IngestionRun
@@ -61,6 +61,23 @@ def table_exists(table: str) -> bool:
             text("SELECT OBJECT_ID(:t, 'U')"), {"t": f"dbo.{table}"}
         ).scalar()
     return found is not None
+
+
+def table_has_rows(table: str) -> bool:
+    """Whether ``dbo.<table>`` exists AND holds at least one row.
+
+    What the sweep asks before an increment. An empty table is no baseline:
+    a wipe that deletes rows and keeps tables leaves exactly that, and an
+    increment merged into it is a table holding one day of purchase orders
+    and looking like all of them.
+    """
+    with get_engine().connect() as connection:
+        found = connection.execute(
+            text("SELECT OBJECT_ID(:t, 'U')"), {"t": f"dbo.{table}"}
+        ).scalar()
+        if found is None:
+            return False
+        return connection.execute(text(f"SELECT TOP 1 1 FROM {quote(table)}")).first() is not None
 
 
 def _existing_columns(cursor, table: str) -> list[str]:
@@ -232,16 +249,25 @@ def load_set(
     allow_unstable: bool = False,
     merge_raw: bool = True,
 ) -> LoadResult:
-    """Load one landed fetch into ``odata_<table>``, then merge the same rows
-    into ``raw_<table>``. Never raises.
+    """Merge one landed fetch into ``raw_<table>``, then load it into
+    ``odata_<table>``. Never raises.
 
-    ``odata_<table>`` is written as it always was. ``raw_<table>`` is the table
-    the initiatives read, and the merge into it (``raw_merge``) is what makes
-    an OData delta reach the pages. A refused merge fails the load -- the rows
-    are in ``odata_<table>`` but not where they are read, and a sweep must not
-    advance a watermark past them. A merge that is merely skipped (no raw
-    table yet) does not: the CSV full pull builds that table and sets the
-    watermark itself.
+    ``raw_<table>`` is the table the initiatives read, and the merge into it
+    (``raw_merge``) is what makes an OData delta reach the pages. A refused
+    merge fails the load, and a sweep must not advance a watermark past it.
+
+    The merge goes FIRST so that a refusal leaves ``odata_<table>`` as it was.
+    The other order once replaced ``odata_<table>`` with a baseline whose raw
+    merge had been refused as a key mismatch; the table then held rows, the
+    next cycle took it for a baseline and merged a plain window -- which the
+    mismatch guard does not police -- straight into the table the pages read.
+    Merging first, a refused baseline stays a missing baseline and is retried,
+    and refused, out loud, every cycle until someone looks.
+
+    A merge that is merely skipped (no raw table yet) does not fail the load:
+    the CSV full pull builds that table and sets the watermark itself.
+    ``allow_unstable`` still loads ``odata_<table>`` for inspection, and still
+    reports the refused merge.
     """
     storage = storage or get_storage()
     started = time.monotonic()
@@ -286,6 +312,32 @@ def load_set(
     expected = manifest.get("rows")
     data_key = f"{prefix}/{manifest.get('data_file', DATA_FILE)}"
     strategy = manifest.get("load_strategy", "replace")
+
+    # One SAP system per database: see app.ingest.sap_system.
+    try:
+        sap_system.ensure()
+    except sap_system.SapSystemMismatch as exc:
+        return failure(f"refused: {exc}")
+    except Exception as exc:
+        return failure(f"could not check which SAP system the database holds: {exc}")
+
+    raw_note: str | None = None
+    refused: str | None = None
+    if merge_raw:
+        merged = raw_merge.merge_landed(spec, prefix, storage=storage)
+        if merged.status == raw_merge.REFUSED:
+            refused = f"merge into {merged.table} refused -- {merged.detail}"
+            _record(spec, 0, STATUS_FAILED, started_at, prefix, error=refused)
+            if not allow_unstable:
+                return failure(refused)
+        else:
+            raw_note = (
+                f"{merged.table}: {merged.detail}" if merged.status == raw_merge.SKIPPED
+                else f"{merged.table}: {merged.updated} changed of {merged.matched} matched, "
+                f"{merged.inserted} inserted"
+                + (f", {merged.keys_repaired} blank key(s) filled" if merged.keys_repaired else "")
+                + (f", added {', '.join(merged.columns_added)}" if merged.columns_added else "")
+            )
 
     try:
         # Keys are the columns anything downstream will join on, and they are
@@ -364,18 +416,11 @@ def load_set(
             expected,
         )
 
-    raw_note: str | None = None
-    if merge_raw:
-        merged = raw_merge.merge_landed(spec, prefix, storage=storage)
-        if merged.status == raw_merge.REFUSED:
-            detail = f"merge into {merged.table} refused -- {merged.detail}"
-            _record(spec, rows, STATUS_FAILED, started_at, prefix, error=detail)
-            return failure(detail)
-        raw_note = (
-            f"{merged.table}: {merged.detail}" if merged.status == raw_merge.SKIPPED
-            else f"{merged.table}: {merged.updated} updated, {merged.inserted} inserted"
-            + (f", added {', '.join(merged.columns_added)}" if merged.columns_added else "")
-        )
+    if refused:
+        # --allow-unstable: odata_<table> holds the pull for inspection, but
+        # the table the pages read does not, and the load says so.
+        _record(spec, rows, STATUS_FAILED, started_at, prefix, error=refused)
+        return failure(refused)
 
     elapsed = time.monotonic() - started
     _record(spec, rows, STATUS_SUCCEEDED, started_at, prefix)

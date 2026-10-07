@@ -167,6 +167,16 @@ def _check_key_vault() -> str:
     return probe(url)
 
 
+def _snapshot_folder() -> str:
+    """Which discovery snapshot the SAP client will use for this CPI_PATH."""
+    from app.integrations.sap.contract import discovery_dir
+
+    try:
+        return discovery_dir().name
+    except Exception as exc:  # noqa: BLE001 -- reported, not raised
+        return f"NONE for this CPI_PATH -- {str(exc).splitlines()[0]}"
+
+
 def _check_ai() -> str:
     from app.core.ai import Message, get_llm
 
@@ -184,6 +194,8 @@ def main() -> int:
     print(f"  database   : {_safe_database_url(settings.database_url)}")
     print(f"  storage    : {settings.storage_url or '(not set)'}")
     print(f"  cpi        : {settings.cpi_base_url or '(not set)'}")
+    print(f"  cpi path   : {settings.cpi_path}  (the SAP system every call goes to)")
+    print(f"  snapshot   : {_snapshot_folder()}")
     print(f"  cpi secret : {_mask(settings.cpi_client_secret)}")
     print(f"  key vault  : {settings.key_vault_url or '(not probed directly)'}")
     print(f"  llm        : {settings.llm_provider} -> {settings.foundry_deployment or '(none)'}")

@@ -20,6 +20,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # filesystem settings so they do not depend on the working directory.
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
+# SAP DEV's iFlow route, the default target. See Settings.cpi_path.
+DEFAULT_CPI_PATH = "/http/SAPECC/OdataConsumption"
+
+
+def normalise_cpi_path(value: object) -> str:
+    """``CPI_PATH`` as one canonical string: one leading slash, none trailing,
+    no surrounding whitespace -- blank meaning the default. Compared, not just
+    sent: it is what picks the discovery snapshot and what the database
+    records as its source system, so ``/http/SAPECCQA/OdataConsumption/`` and
+    `` /http/SAPECCQA/OdataConsumption`` must be the same system."""
+    text = str(value or "").strip().strip("/")
+    return f"/{text}" if text else DEFAULT_CPI_PATH
+
 
 class Settings(BaseSettings):
     """Application settings. Field names map to upper-case env vars."""
@@ -194,10 +207,27 @@ class Settings(BaseSettings):
     cpi_client_id: str = ""
     cpi_client_secret: str = ""
 
-    # The iFlow path appended to cpi_base_url. Configuration, not a constant:
-    # a differently-named iFlow in another VZI landscape must not need a code
-    # change.
-    cpi_path: str = "/http/SAPECC/OdataConsumption"
+    # The iFlow path appended to cpi_base_url -- and the ONE setting that says
+    # which SAP system this process talks to:
+    #
+    #     /http/SAPECC/OdataConsumption     DEV (the default)
+    #     /http/SAPECCQA/OdataConsumption   QA
+    #
+    # Everything that depends on the system follows it, with no code change:
+    # every OData read, $count and CSV extract request (all of them go through
+    # transport.CpiTransport, which appends this path); the recorded SAP
+    # contract -- keys, types, filter evidence, the delta gate -- which is the
+    # discovery snapshot captured FROM this path (see contract.discovery_dir);
+    # and the database guard that refuses to load one system's data on top of
+    # another's (app.ingest.sap_system). cpi_discovery.py and the live checks
+    # read the same variable.
+    cpi_path: str = DEFAULT_CPI_PATH
+
+    # Where the discovery snapshot for this system lives. Leave empty: it is
+    # found by the CPI_PATH each snapshot recorded when it was captured
+    # (data-generator/discovery*/snapshot.json). Set it only to force a folder,
+    # relative to the backend root or absolute.
+    sap_discovery_dir: str = ""
 
     # Rows per page. Conservative -- SAP's real server-side limit is unproven.
     cpi_page_size: int = 1000
@@ -588,6 +618,13 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @field_validator("cpi_path", mode="before")
+    @classmethod
+    def _canonical_cpi_path(cls, value: object) -> str:
+        # A stray space once broke CPI_PATH in .env (2026-10-05); the same
+        # stray space must not make DEV look like a different system.
+        return normalise_cpi_path(value)
 
     @property
     def fallback_source_path(self) -> Path:

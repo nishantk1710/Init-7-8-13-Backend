@@ -33,34 +33,41 @@ SERVICES = frozenset({"ZMM_KPI02_ADD_SRV", "ZMM_KPI02_TAB_SRV"})
 # Registered and responding, but holding no rows. Real answers, not failures --
 # the client reports them as empty rather than erroring, and the seed loads
 # these tables from the July extract instead.
-EMPTY_SETS = frozenset({"MaterialValuationSet", "MonthlyMovementStatisticSet"})
+#
+# Empty since 2026-10-07. Both sets that were here now hold rows (counts.csv,
+# same sweep): MaterialValuationSet 2,116 and MonthlyMovementStatisticSet
+# 1,429, each answering a plain row read. Kept for the next set that is
+# registered before it is filled.
+EMPTY_SETS: frozenset[str] = frozenset()
 
 # Far too large to read unfiltered. ChangeDocItemSet alone is about 929,000 rows.
 HIGH_VOLUME_SETS = frozenset({"ChangeDocItemSet", "ChangeDocHeaderSet"})
 
-# Answers HTTP 400 with an empty body to EVERY request, not just $count -- a
-# plain $top=5 fails too. Observed 2026-09-11 on live CPI.
+# Answers HTTP 400 with an empty body to EVERY request, not just $count.
 #
-# Its snapshot count is 0, so it was already in EMPTY_SETS; this is a stronger
-# statement than "empty". Most likely the projection was deactivated. Until
-# someone confirms that, it is recorded rather than explained.
-#
-# Not a data problem for us: MBEW is loaded from the July extract instead
-# (raw_mbew, 7,034 rows), which is the only source for I07's valuation figures.
-UNREADABLE_SETS = frozenset({"MaterialValuationSet"})
+# Empty since 2026-10-07. MaterialValuationSet was here from 2026-09-11 (a
+# plain $top=5 failed); it now reads, $count answers 2,116, and its key has
+# gained Bwtar (Matnr, Bwkey, Bwtar) -- one row per valuation type, which is
+# why the old two-field key could not address a row.
+UNREADABLE_SETS: frozenset[str] = frozenset()
 
 # $orderby defects, per set. SAP returns HTTP 500 with an EMPTY body -- a
 # backend short dump rather than a rejected query -- for these orderings.
 #
-# Measured 2026-09-11: MaterialPlantSet rejects ANY two-field $orderby
-# (Matnr,Werks and Werks,Matnr alike) while every single-field ordering works,
-# and PurchaseOrderItemSet handles Ebeln,Ebelp perfectly well. So it is
-# set-specific, not a general limit on multi-field ordering.
+# Re-measured 2026-10-07, every key prefix of eight sets: POScheduleLineSet
+# rejects Ebeln,Ebelp,Etenr AND Ebeln,Ebelp, and accepts Ebeln alone. Every
+# other set accepts its full key -- including MaterialPlantSet, which was the
+# set listed here from 2026-09-11 (any two-field $orderby was a 500) and is now
+# fixed. So the defect moved rather than went.
 #
 # The client survives this by falling back to the longest accepted key prefix
 # and reporting the degradation -- see paging.read_first_page_negotiating_order.
-# It is still SAP's bug: an empty-bodied 500 should leave an ST22 short dump.
-ORDER_BY_REJECTED_MULTI_FIELD = frozenset({"MaterialPlantSet"})
+# Ebeln alone is not unique on EKET, so a full read pages over a non-total
+# order; the duplicate-key count on every pull is what proves no row was lost
+# (zero on 2026-10-07, 3,631 rows). A delta reads EKET fifty purchase orders
+# at a time, which is one page, so it never pages at all. Still SAP's bug to
+# fix: an empty-bodied 500 should leave an ST22 short dump.
+ORDER_BY_REJECTED_MULTI_FIELD = frozenset({"POScheduleLineSet"})
 
 # Properties that drifted Edm.Decimal -> Edm.String between two sweeps a day
 # apart. Kept as a standing reminder that decoding must follow the DECLARED
@@ -77,8 +84,17 @@ PURCHASE_REQUISITION_KEY = ("Banfn", "Bnfpo")
 
 # --- Declared metadata detail (W2.5: types, lengths, annotations) ---------
 
-# Every property declares these four as false -- all 229 of them, across both
-# services. Meanwhile 124 are MEASURED as filterable and several sort fine.
+# Every property declared these four as false -- all 229 of them, across both
+# services, in September. Meanwhile 124 were MEASURED as filterable and several
+# sorted fine.
+#
+# 2026-10-07: 41 properties no longer declare sap:filterable at all (10 of them
+# not sap:sortable either), and an absent annotation means true. They are
+# exactly the fields SAP opened up for the delta work -- every
+# GoodsMovementItemSet property but the amounts, MaterialDocumentHeaderSet,
+# the POHistorySet and POScheduleLineSet keys, POHistorySet's dates,
+# ChangeDocHeaderSet.Udate. None declares true, so the assertion below still
+# holds; the change is the first sign the annotations are being maintained.
 #
 # So the flags are an untouched SEGW default carrying no information. They are
 # captured because W2.5 asks for the annotations, and asserted because their
@@ -93,14 +109,18 @@ DECLARED_FLAGS = ("filterable", "sortable", "creatable", "updatable")
 
 # Counted across BOTH services. A value longer than its declared maximum means
 # something upstream truncated or corrupted it.
-# Re-measured against the 22-Sep post-rename $metadata (data-generator/
-# discovery/properties.csv, committed alongside this change -- 237 rows across
-# the same 21 in-scope sets and two services; GatePass and ZMM_GET_CSV_SRV are
-# not in this file, see cpi_discovery.py DESCOPED_SERVICES).
-PROPERTIES_WITH_MAX_LENGTH = 211
-PROPERTIES_WITH_PRECISION = 17
-PROPERTIES_WITH_LABEL = 237  # every one, which is what makes labels usable
-TOTAL_PROPERTIES = 237
+# Re-measured against the 2026-10-07 $metadata (data-generator/discovery/
+# properties.csv, 251 rows across the same 21 in-scope sets and two services;
+# GatePass and ZMM_GET_CSV_SRV are not in this file, see cpi_discovery.py
+# DESCOPED_SERVICES). Up from 237: ReservationItemSet +9 (Bednr, Charg, Ebeln,
+# Ebelp, Lifnr, Matkl, Shkzg, Sobkz, waers), MonthlyMovementStatisticSet +2
+# (Vrsio, Ssour, both key), MaterialValuationSet +1 (Bwtar, key),
+# MaterialPlantSet +1 (Beskz), VendorSet +1 (Land1). Precision fell from 17 to
+# 6 because the date and quantity fields SAP re-typed to Edm.String carry none.
+PROPERTIES_WITH_MAX_LENGTH = 229
+PROPERTIES_WITH_PRECISION = 6
+PROPERTIES_WITH_LABEL = 251  # every one, which is what makes labels usable
+TOTAL_PROPERTIES = 251
 
 # SAP's business labels are the same words the July extract uses as column
 # headers, which is what makes them worth capturing beyond W2.5's requirement.
@@ -162,55 +182,76 @@ MSTAE_VALUE_DOMAIN: dict[str, int] = {"": 2032, "01": 3}
 
 # --- Filter behaviour -----------------------------------------------------
 
-# Verdicts filter_support.csv can record.
+# Verdicts filter_support.csv can record. REJECTED_HTTP_400 is SAP refusing the
+# probe's impossible literal ('ZZ~NOPE') for a field whose ABAP type cannot
+# hold it -- a date or a quantity re-typed to Edm.String -- which says nothing
+# about whether a well-formed literal is honoured. For a delta field that
+# question is answered by delta_support.csv instead (see manifest.py).
 FILTER_VERDICTS = frozenset(
-    {"HONOURED", "IGNORED", "REJECTED_HTTP_500", "NOT_TESTED", "PARTIAL_OR_ODD"}
+    {
+        "HONOURED",
+        "IGNORED",
+        "REJECTED_HTTP_400",
+        "REJECTED_HTTP_500",
+        "NOT_TESTED",
+        "PARTIAL_OR_ODD",
+    }
 )
 
-# The measured distribution across 208 filterable properties. Roughly a third
-# either lie or fail, which is the single most important thing to know about
-# filtering this service.
+# The measured distribution across every probed property, re-measured
+# 2026-10-07. In September roughly a third either lied or failed (62 IGNORED of
+# 208); now ONE property is silently ignored (MaterialValuationSet.Bwtar).
+# That was SAP's F1 defect, and it reads as fixed.
 FILTER_VERDICT_COUNTS: dict[str, int] = {
-    "HONOURED": 124,
-    "IGNORED": 62,
-    "REJECTED_HTTP_500": 11,
-    "NOT_TESTED": 10,
-    "PARTIAL_OR_ODD": 1,
+    "HONOURED": 155,
+    "IGNORED": 1,
+    "REJECTED_HTTP_400": 49,
+    "REJECTED_HTTP_500": 32,
+    "NOT_TESTED": 9,
+    "PARTIAL_OR_ODD": 5,
 }
 
 FILTER_SUPPORT_ROW_COUNT = sum(FILTER_VERDICT_COUNTS.values())
 
 # Named cases worth asserting individually, because code depends on each.
 #
-# Pstyp is the one Anish called out: the I08 repair-PO convention filters on
-# item category, and SAP drops that filter and answers 200 with everything.
+# Pstyp was the one Anish called out: the I08 repair-PO convention filters on
+# item category, and SAP used to drop that filter and answer 200 with
+# everything. Measured HONOURED on 2026-10-05 and again 2026-10-07 (impossible
+# value -> 0 of 11,097), so it has left this list. I08 still applies the
+# predicate client-side, which stays correct now that SAP honours it too.
+#
+# Bwtar is the last silently ignored property: `Bwtar eq 'ZZ~NOPE'` returns
+# all 2,116 MaterialValuationSet rows.
 KNOWN_IGNORED_FILTERS = {
-    ("PurchaseOrderItemSet", "Pstyp"),
+    ("MaterialValuationSet", "Bwtar"),
 }
 
 # Verdict counts PER SET, not just in aggregate -- W2.5 asks for the honoured
 # list per set so a regression confined to one set is caught. An aggregate can
 # stay identical while two sets swap behaviour.
 FILTER_VERDICTS_BY_SET: dict[str, dict[str, int]] = {
-    "BatchStockSet": {'HONOURED': 4, 'IGNORED': 1},
-    "ChangeDocHeaderSet": {'HONOURED': 6, 'NOT_TESTED': 1},
+    "BatchStockSet": {'HONOURED': 5},
+    "ChangeDocHeaderSet": {'HONOURED': 5, 'REJECTED_HTTP_400': 2},
     "ChangeDocItemSet": {'HONOURED': 9},
-    "GoodsMovementItemSet": {'HONOURED': 6, 'IGNORED': 19},
-    "InfoRecordOrgSet": {'HONOURED': 4, 'IGNORED': 5, 'NOT_TESTED': 1},
+    "GoodsMovementItemSet": {'HONOURED': 9, 'REJECTED_HTTP_400': 17},
+    "InfoRecordOrgSet": {'HONOURED': 4, 'NOT_TESTED': 1, 'REJECTED_HTTP_500': 5},
     "InfoRecordSet": {'HONOURED': 3, 'NOT_TESTED': 1},
-    "MaterialDescriptionSet": {'HONOURED': 2, 'IGNORED': 1},
-    "MaterialDocumentHeaderSet": {'HONOURED': 3, 'IGNORED': 2},
-    "MaterialPlantSet": {'HONOURED': 4, 'IGNORED': 7, 'NOT_TESTED': 1},
-    "MaterialSet": {'HONOURED': 4, 'IGNORED': 2, 'NOT_TESTED': 1},
-    "POHistorySet": {'HONOURED': 5, 'IGNORED': 10, 'PARTIAL_OR_ODD': 1},
-    "POScheduleLineSet": {'HONOURED': 4, 'IGNORED': 2},
-    "PurchaseOrderItemSet": {'HONOURED': 6, 'IGNORED': 12, 'NOT_TESTED': 1},
-    "PurchaseOrderSet": {'HONOURED': 7},
-    "PurchaseRequisitionSet": {'HONOURED': 22, 'NOT_TESTED': 1, 'REJECTED_HTTP_500': 6},
-    "ReservationItemSet": {'HONOURED': 15, 'NOT_TESTED': 2, 'REJECTED_HTTP_500': 2},
-    "StockMovementStatisticSet": {'HONOURED': 13, 'IGNORED': 1},
+    "MaterialDescriptionSet": {'HONOURED': 2, 'REJECTED_HTTP_500': 1},
+    "MaterialDocumentHeaderSet": {'HONOURED': 4, 'REJECTED_HTTP_400': 1},
+    "MaterialPlantSet": {'HONOURED': 6, 'NOT_TESTED': 1, 'REJECTED_HTTP_400': 6},
+    "MaterialSet": {'HONOURED': 5, 'NOT_TESTED': 1, 'REJECTED_HTTP_400': 2},
+    "MaterialValuationSet": {'HONOURED': 6, 'IGNORED': 1, 'REJECTED_HTTP_500': 4},
+    "MonthlyMovementStatisticSet": {'HONOURED': 7, 'REJECTED_HTTP_500': 7},
+    "POHistorySet": {'HONOURED': 6, 'PARTIAL_OR_ODD': 1, 'REJECTED_HTTP_400': 9},
+    "POScheduleLineSet": {'HONOURED': 3, 'REJECTED_HTTP_500': 3},
+    "PurchaseOrderItemSet": {'HONOURED': 8, 'NOT_TESTED': 1, 'REJECTED_HTTP_400': 11},
+    "PurchaseOrderSet": {'HONOURED': 8},
+    "PurchaseRequisitionSet": {'HONOURED': 22, 'NOT_TESTED': 1, 'PARTIAL_OR_ODD': 2, 'REJECTED_HTTP_500': 4},
+    "ReservationItemSet": {'HONOURED': 25, 'NOT_TESTED': 2, 'PARTIAL_OR_ODD': 2, 'REJECTED_HTTP_500': 2},
+    "StockMovementStatisticSet": {'HONOURED': 10, 'REJECTED_HTTP_400': 1, 'REJECTED_HTTP_500': 3},
     "StorageLocationStockSet": {'HONOURED': 4, 'REJECTED_HTTP_500': 3},
-    "VendorSet": {'HONOURED': 3, 'NOT_TESTED': 1},
+    "VendorSet": {'HONOURED': 4, 'NOT_TESTED': 1},
 }
 
 
@@ -267,8 +308,14 @@ COUNT_CAPPED_SETS: frozenset[str] = frozenset()
 
 # Sets whose every row read answers HTTP 500, while their $count answers.
 #
-# Measured 2026-09-26 through the client's own query builder, one shape at a
-# time, each with the transport's three attempts:
+# EMPTY since 2026-10-07: all three sets below read again. Re-measured that
+# day through the client: POHistorySet 3,881 rows, POScheduleLineSet 3,631 and
+# ChangeDocHeaderSet (Objectclas eq 'MATERIAL') 7,731, each equal to its
+# $count, zero duplicate keys. The history is kept because the rule at the end
+# of this note still applies to whatever lands here next.
+#
+# What it was -- measured 2026-09-26 through the client's own query builder,
+# one shape at a time, each with the transport's three attempts:
 #
 #   POHistorySet        $top=1 | +$orderby (full key, Ebeln) | Ebeln eq '...'
 #                       | Ebeln eq +$orderby | two Ebeln (or)        all 500
@@ -291,18 +338,20 @@ COUNT_CAPPED_SETS: frozenset[str] = frozenset()
 # next sweep rebuilds the baseline in full. Its parent's watermark has moved
 # on while it was out, and a delta from the parent's current mark would skip
 # everything changed in between with no way back.
-READ_BROKEN_SETS: dict[str, str] = {
-    "POHistorySet": "every row read is HTTP 500 since 2026-09-26; $count answers",
-    "POScheduleLineSet": "every row read is HTTP 500 since 2026-09-26; $count answers",
-    "ChangeDocHeaderSet": (
-        "every row read is HTTP 500 since 2026-09-26, with the Objectclas "
-        "predicate it requires; $count answers"
-    ),
-}
+#
+# Removing the three on 2026-10-07 needed no odata_ table drops: the database
+# was wiped on 2026-10-06 and reloaded from the CSV route, so no odata_ table
+# exists and the next sweep builds every baseline in full anyway.
+READ_BROKEN_SETS: dict[str, str] = {}
 
 # Tables the CSV extract job (ZMM_GET_CSV_SRV) acknowledges and never delivers.
 #
-# Measured 2026-09-25/26: 39 requests for EKKO and 21 for EKET across every
+# EMPTY since 2026-09-30, when SAP rebuilt the job: EKKO and EKET deliver, in
+# the narrow layout (exactly the OData projection, no client column), with
+# exact counts -- EKKO 3,140 and EKET 3,631, reconciled again on 2026-10-06.
+# The history is kept below.
+#
+# What it was -- measured 2026-09-25/26: 39 requests for EKKO and 21 for EKET across every
 # shape the entity key allows -- window wide, one year, recent, ending today,
 # from 1900, blank; dates as YYYYMMDD and YYYY-MM-DD; MaxRows 1, 100, 50000
 # and none; IsDelta='X'; TabName upper, lower and mixed case; the /sap/ path
@@ -315,10 +364,7 @@ READ_BROKEN_SETS: dict[str, str] = {
 # A table listed here is left out of a sweep with the reason shown, rather
 # than fired and timed out fifteen minutes later. An explicit --table still
 # fires it, so the day SAP fixes the job the fix is one deletion here.
-CSV_UNDELIVERED_TABLES: dict[str, str] = {
-    "EKKO": "SAP acknowledges and never extracts it (60 requests, every shape, 25-26 Sep 2026)",
-    "EKET": "SAP acknowledges and never extracts it (60 requests, every shape, 25-26 Sep 2026)",
-}
+CSV_UNDELIVERED_TABLES: dict[str, str] = {}
 
 # Entity sets whose DECLARED key does not uniquely address a row.
 #
