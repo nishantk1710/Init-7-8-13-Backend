@@ -139,8 +139,6 @@ def _capture_plan_through_the_chat(material: str, plant: str) -> str:
                 # register as a breach and confuse what the test is measuring.
                 "window_start": (today + timedelta(days=30)).isoformat(),
                 "window_end": (today + timedelta(days=60)).isoformat(),
-                "cost_centre": None,
-                "order_number": None,
             }
         },
     )

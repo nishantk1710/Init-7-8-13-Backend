@@ -395,6 +395,9 @@ class I13SummaryResponse(BaseModel):
     no_plan_count: int
     reclassification_candidate_count: int
     valuation_is_mocked: bool
+    #: Generated reference plans behind the plan-based counts; 0 unless
+    #: I13_REFERENCE_PLANS_ENABLED is on. See I13Summary.reference_plan_count.
+    reference_plan_count: int
 
 
 class SnapshotStatusResponse(BaseModel):

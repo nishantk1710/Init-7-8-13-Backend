@@ -15,7 +15,7 @@ from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.exceptions import build_exception_queue
 from app.initiatives.i13.models import AgingBand, ExceptionType
 from app.initiatives.i13.movement_metrics import compute_all_movement_metrics
-from app.initiatives.i13.plans import ConsumptionPlan
+from app.initiatives.i13.plans import ConsumptionPlan, load_reference_plans
 from app.initiatives.i13.reclassification import build_reclassification_candidates
 from app.initiatives.i13.snapshot import I13Snapshot, exception_queue
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
@@ -35,6 +35,11 @@ class I13Summary:
     no_plan_count: int
     reclassification_candidate_count: int
     valuation_is_mocked: bool
+    #: Generated plans from ``consumption_plans.csv`` that fed the counts above.
+    #: 0 unless ``I13_REFERENCE_PLANS_ENABLED`` is on -- served so the frontend
+    #: can say how much of acquired-versus-plan rests on fabricated input
+    #: instead of hard-coding a number that is only true in one environment.
+    reference_plan_count: int
 
 
 def build_summary(
@@ -90,6 +95,7 @@ def build_summary(
         no_plan_count=exception_counts[ExceptionType.NO_PLAN],
         reclassification_candidate_count=candidate_count,
         valuation_is_mocked=True,
+        reference_plan_count=len(load_reference_plans(data_dir)),
     )
 
 
@@ -117,4 +123,5 @@ def summary_from_snapshot(snapshot: I13Snapshot, plans: list[ConsumptionPlan]) -
         no_plan_count=exception_counts[ExceptionType.NO_PLAN],
         reclassification_candidate_count=sum(1 for c in snapshot.reclassification if c.candidate_flag),
         valuation_is_mocked=True,
+        reference_plan_count=len(snapshot.reference_plans),
     )
