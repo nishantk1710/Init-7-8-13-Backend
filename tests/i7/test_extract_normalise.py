@@ -380,3 +380,72 @@ class TestOdataPrices:
         monkeypatch.setattr(extract, "_odata_prices", lambda session, rejections: {"x": (Decimal(1), "ZAR")})
 
         assert extract._price_by_material(session=None, rejections=_Rejections(1)) == {"x": (Decimal(1), "ZAR")}
+
+
+class TestPlantScope:
+    """I07 covers Gamsberg (1500) and Black Mountain (1300); the extract
+    delivers thirteen plants. VZI confirmed the narrowing on 2026-10-07.
+
+    The scope filters I07's *staging* only -- raw_*, the n_<table> views, I08,
+    I13 and the assistant are deliberately untouched by it.
+    """
+
+    SCOPE = frozenset({"1500", "1300"})
+
+    def test_an_empty_scope_admits_every_plant(self) -> None:
+        """The default. An unset I7_PLANTS must not silently stage nothing."""
+        assert extract._out_of_scope("3000", frozenset()) is False
+        assert extract._out_of_scope("1300", frozenset()) is False
+
+    def test_a_scoped_plant_is_kept_and_an_unscoped_one_is_not(self) -> None:
+        assert extract._out_of_scope("1500", self.SCOPE) is False
+        assert extract._out_of_scope("1300", self.SCOPE) is False
+        assert extract._out_of_scope("3000", self.SCOPE) is True
+        assert extract._out_of_scope("2000", self.SCOPE) is True
+
+    def test_a_null_plant_is_left_for_the_caller_to_reject(self) -> None:
+        """MISSING_PLANT is a data fault with its own rejection reason.
+
+        Swallowing it here as "out of scope" would hide a malformed row behind
+        a business decision and drop it from the rejection counts.
+        """
+        assert extract._out_of_scope(None, self.SCOPE) is False
+
+    def test_a_non_numeric_plant_code_compares_as_a_string(self) -> None:
+        """PDWB is a real plant in this extract, so the comparison may never
+        become an integer one."""
+        assert extract._out_of_scope("PDWB", self.SCOPE) is True
+        assert extract._out_of_scope("PDWB", frozenset({"PDWB"})) is False
+
+    def test_consumption_outside_the_scope_is_not_aggregated(self) -> None:
+        rows = [
+            _movement(material="M1", plant="1300", quantity="5"),
+            _movement(material="M2", plant="3000", quantity="99"),
+            _movement(material="M3", plant="1500", quantity="7"),
+        ]
+        totals = aggregate_consumption(rows, ISSUES, REVERSALS, _Rejections(1), self.SCOPE)
+
+        plants = {plant for _, plant, _ in totals}
+        assert plants == {"1300", "1500"}
+        assert not any(m == "M2" for m, _, _ in totals)
+
+    def test_consumption_with_no_scope_keeps_every_plant(self) -> None:
+        rows = [_movement(material="M1", plant="1300"), _movement(material="M2", plant="3000")]
+        totals = aggregate_consumption(rows, ISSUES, REVERSALS, _Rejections(1))
+
+        assert {plant for _, plant, _ in totals} == {"1300", "3000"}
+
+    def test_an_out_of_scope_row_is_not_counted_as_a_rejection(self) -> None:
+        """Out of scope is a business boundary, not a data fault. Counting it
+        would bury the real rejections under thousands of entries."""
+        rejections = _Rejections(1)
+        aggregate_consumption(
+            [_movement(plant="3000"), _movement(plant="2000")],
+            ISSUES, REVERSALS, rejections, self.SCOPE,
+        )
+        assert rejections.counts == {}
+
+    def test_no_scope_means_no_material_restriction(self) -> None:
+        """``None``, not an empty set: "not configured" and "matched nothing"
+        are different, and the second is a mistake worth seeing."""
+        assert extract._materials_in_plant_scope(session=None, scope=frozenset()) is None

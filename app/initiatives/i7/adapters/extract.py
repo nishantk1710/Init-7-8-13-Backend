@@ -144,6 +144,26 @@ def _read(session: Session, statement: str, params: dict[str, Any] | None = None
     return session.execute(text(statement), params or {}).all()
 
 
+def _out_of_scope(plant: str | None, scope: frozenset[str]) -> bool:
+    """Whether ``plant`` falls outside the configured plant scope.
+
+    Filtered here rather than in each SELECT because the five staging queries
+    name the plant column differently (``plant``, ``p.plant``) and two are
+    already parameterised; a WHERE clause per query is five places for the
+    scope to drift out of step. An empty scope admits everything, so this is a
+    no-op until ``I7_PLANTS`` is set.
+
+    A row whose plant is NULL is NOT filtered here -- the callers already
+    reject it as MISSING_PLANT with its own reason, and swallowing it as
+    "out of scope" would hide a malformed row behind a business decision.
+    """
+    if not scope:
+        return False
+    if plant is None:
+        return False
+    return plant not in scope
+
+
 def _safe_batch_size(model: type, requested: int, session: Session | None = None) -> int:
     """Largest batch that stays under the engine's bind-parameter ceiling.
 
@@ -305,16 +325,50 @@ def _odata_prices(session: Session, rejections: _Rejections) -> dict[str, tuple[
     return prices
 
 
+def _materials_in_plant_scope(session: Session, scope: frozenset[str]) -> set[str] | None:
+    """Materials present at one of the scoped plants, or ``None`` for no scope.
+
+    ``None`` rather than "every material" so the caller can tell "no filter
+    configured" from "the filter matched nothing" -- the second is a mistake
+    worth seeing, and an empty set would silently stage zero materials.
+
+    Read from n_marc and n_mard together: a material can hold stock at a plant
+    with no MARC row, and dropping it would lose a real position.
+    """
+    if not scope:
+        return None
+    placeholders = ", ".join(f":p{i}" for i in range(len(scope)))
+    params = {f"p{i}": plant for i, plant in enumerate(sorted(scope))}
+    found: set[str] = set()
+    for table in ("n_marc", "n_mard"):
+        rows = _read(
+            session,
+            f"SELECT DISTINCT material FROM {table} WHERE plant IN ({placeholders})",
+            params,
+        )
+        found.update(m for m in (clean(r.material) for r in rows) if m is not None)
+    logger.info("plant scope %s: %d material(s) in scope", ",".join(sorted(scope)), len(found))
+    return found
+
+
 def _stage_materials(
     session: Session, run_id: int, policy: ExtractIngestionPolicy, rejections: _Rejections
 ) -> int:
     prices = _price_by_material(session, rejections)
+    in_scope_materials = _materials_in_plant_scope(session, policy.plant_scope)
 
     def rows() -> Iterator[dict[str, Any]]:
         for row in _read(session, _MATERIAL_SQL):
             material = clean(row.material)
             if material is None:
                 rejections.add("n_mara", None, RejectionReason.MISSING_MATERIAL)
+                continue
+            # MARA is client-level and carries no plant, so a material is in
+            # scope when it exists at one of the scoped plants. Staging the
+            # rest would leave material rows no material-plant row ever
+            # references -- harmless in isolation, but every catalogue-wide
+            # percentage the reports quote is counted over this table.
+            if in_scope_materials is not None and material not in in_scope_materials:
                 continue
             yield {
                 "sap_material_number": material,
@@ -475,6 +529,8 @@ def _stage_material_plants(
     gaps = _marc_gaps(session)
     from_odata = _odata_mrp_fields(session, gaps)
     source_table = f"n_marc+{ODATA_MATERIAL_PLANT}" if from_odata else "n_marc"
+    scope = policy.plant_scope
+    skipped_out_of_scope = [0]
 
     def rows() -> Iterator[dict[str, Any]]:
         for row in _read(session, _MATERIAL_PLANT_SQL):
@@ -485,6 +541,13 @@ def _stage_material_plants(
                 continue
             if plant is None:
                 rejections.add("n_marc", material, RejectionReason.MISSING_PLANT)
+                continue
+            # Out of scope is not a rejection: the row is well-formed and
+            # belongs to a site this initiative does not cover, which is a
+            # business boundary rather than a data fault. Counting it as one
+            # would bury the real rejections in thousands of entries.
+            if _out_of_scope(plant, scope):
+                skipped_out_of_scope[0] += 1
                 continue
             values = dict(row._mapping)
             odata_values = from_odata.get((material, plant), {})
@@ -524,6 +587,11 @@ def _stage_material_plants(
     for batch in _batched(rows(), _safe_batch_size(StagedMaterialPlant, policy.batch_size, session)):
         _upsert(session, StagedMaterialPlant, batch, ["sap_material_number", "sap_plant_code"])
         staged += len(batch)
+    if skipped_out_of_scope[0]:
+        logger.info(
+            "plant scope %s: staged %d material-plant row(s), skipped %d outside it",
+            ",".join(sorted(scope)), staged, skipped_out_of_scope[0],
+        )
     return staged
 
 
@@ -542,6 +610,8 @@ _STOCK_SQL = """
 def _stage_stock(
     session: Session, run_id: int, policy: ExtractIngestionPolicy, rejections: _Rejections
 ) -> int:
+    scope = policy.plant_scope
+
     def rows() -> Iterator[dict[str, Any]]:
         for row in _read(session, _STOCK_SQL):
             material = clean(row.material)
@@ -553,6 +623,8 @@ def _stage_stock(
                 continue
             if plant is None:
                 rejections.add("n_mard", material, RejectionReason.MISSING_PLANT)
+                continue
+            if _out_of_scope(plant, scope):
                 continue
             if storage_location is None:
                 # Not a documented rejection reason of its own: MARD's key
@@ -606,6 +678,7 @@ def aggregate_consumption(
     issue_types: frozenset[str],
     reversal_types: frozenset[str],
     rejections: _Rejections,
+    plant_scope: frozenset[str] = frozenset(),
 ) -> dict[tuple[str, str, date], dict[str, Any]]:
     """Net monthly consumption per material-plant, from movement rows.
 
@@ -627,6 +700,8 @@ def aggregate_consumption(
             continue
         if plant is None:
             rejections.add("n_mseg", material, RejectionReason.MISSING_PLANT)
+            continue
+        if _out_of_scope(plant, plant_scope):
             continue
         posted = parse_date(row.posting_date)
         if posted is None:
@@ -669,6 +744,7 @@ def _stage_consumption(
         frozenset(policy.consumption.issue_movement_types),
         frozenset(policy.consumption.reversal_movement_types),
         rejections,
+        policy.plant_scope,
     )
 
     def rows() -> Iterator[dict[str, Any]]:
@@ -777,6 +853,7 @@ def _stage_purchase_orders(
         rejections,
     )
     schedule = schedule_dates_by_line(_read(session, _SCHEDULE_SQL))
+    scope = policy.plant_scope
 
     def rows() -> Iterator[dict[str, Any]]:
         for row in _read(session, _PURCHASE_ORDER_SQL):
@@ -794,6 +871,8 @@ def _stage_purchase_orders(
                 continue
             if plant is None:
                 rejections.add("n_ekpo", key, RejectionReason.MISSING_PLANT)
+                continue
+            if _out_of_scope(plant, scope):
                 continue
 
             created_on = parse_date(row.created_on)
@@ -854,8 +933,17 @@ def stage_extract(policy: ExtractIngestionPolicy | None = None) -> StagingResult
 
     Idempotent: running twice converges on the same state. Raw tables are only
     ever read.
+
+    ``policy`` defaults to one carrying ``I7_PLANTS`` (app.core.config), so a
+    normal run is scoped to the plants VZI named without every caller having
+    to know they exist. A caller passing its own policy decides for itself --
+    ``ExtractIngestionPolicy()`` alone still means every plant, which is what
+    the tests construct and what this did before plant scope existed.
     """
-    policy = policy or ExtractIngestionPolicy()
+    if policy is None:
+        from app.core.config import get_settings
+
+        policy = ExtractIngestionPolicy(plants=get_settings().i7_plant_list)
     session_factory = get_sessionmaker()
 
     with session_factory() as session:
