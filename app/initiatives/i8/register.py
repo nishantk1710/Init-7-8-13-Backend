@@ -74,16 +74,16 @@ ZERO = Decimal(0)
 
 # Repair status, matching the frontend's RepairStatus union exactly.
 #
-# Two members of that union are never emitted, and both for the same reason --
-# the data does not support them, so inventing them would be a lie the UI
-# renders confidently:
+# One member of that union is never emitted, because the data does not support
+# it and inventing it would be a lie the UI renders confidently:
 #
 #   "PR Raised"        the register is built from PO lines, so a PO always
 #                      exists by construction. A requisition with no PO yet is
 #                      W5.3/W5.5 territory, not this read model.
-#   "In Transit Return" nothing in MSEG or EKBE distinguishes "the vendor has
-#                      shipped it back" from "still at the vendor". There is no
-#                      goods-in-transit movement on these lines.
+#
+# "In Transit Return" was removed from the union on 07-Oct-2026: it is not an
+# FRS stage, and nothing in MSEG or EKBE distinguishes "the vendor has shipped
+# it back" from "still at the vendor".
 PO_ISSUED = "PO Issued"
 AT_VENDOR = "At Vendor"
 RECEIVED_STATUS = "Received"

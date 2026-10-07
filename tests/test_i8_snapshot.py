@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import date, datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -152,6 +154,165 @@ class TestTheCache:
         build.fail = False
         assert get_snapshot(DB, wait_seconds=5) is build.result
         assert build.calls == 2
+
+
+class TestTheSourceFingerprint:
+    """A reload underneath a running process has to reach the screens.
+
+    The snapshot used to be cached until the process restarted, on the stated
+    assumption that its source was a frozen July extract. A CSV full pull
+    replaces ``raw_<table>`` whole, so a pull that landed at 05:00 stayed
+    invisible until somebody restarted the App Service -- and the register went
+    on reporting the previous pull's figures with nothing on the page to say so.
+    """
+
+    @staticmethod
+    def _snapshot_with(fingerprint: str) -> SimpleNamespace:
+        return SimpleNamespace(source_fingerprint=fingerprint, source_loaded_at=None)
+
+    def _cache(self, monkeypatch, fingerprint: str) -> FakeBuild:
+        """A cached snapshot built from ``fingerprint``."""
+        build = _install(monkeypatch, FakeBuild())
+        build.result = self._snapshot_with(fingerprint)
+        assert get_snapshot(DB) is build.result
+        return build
+
+    @staticmethod
+    def _source(monkeypatch, fingerprint: str) -> None:
+        """What the raw layer says it is now."""
+        monkeypatch.setattr(
+            service,
+            "source_state",
+            lambda db, *, reference_date: service.SourceState(fingerprint, None),
+        )
+
+    @staticmethod
+    def _never(message: str):
+        def _call(db, *, reference_date):
+            raise AssertionError(message)
+
+        return _call
+
+    def test_an_unchanged_source_does_not_rebuild(self, monkeypatch) -> None:
+        build = self._cache(monkeypatch, "same")
+        self._source(monkeypatch, "same")
+        assert service.check_source_fingerprint(DB, min_interval_seconds=0) is False
+        assert build.calls == 1
+
+    def test_a_reload_rebuilds(self, monkeypatch) -> None:
+        build = self._cache(monkeypatch, "before the pull")
+        self._source(monkeypatch, "after the pull")
+        assert service.check_source_fingerprint(DB, min_interval_seconds=0) is True
+        service._state.thread.join(5)
+        assert build.calls == 2
+        assert get_snapshot(DB, wait_seconds=0) is build.result
+
+    def test_the_old_snapshot_keeps_serving_while_the_rebuild_runs(self, monkeypatch) -> None:
+        """A rebuild must not turn every request into a 503 the way a first
+        build does. There is a perfectly good answer cached; it is merely old."""
+        build = self._cache(monkeypatch, "before")
+        stale = build.result
+        gate = threading.Event()
+        build.gate = gate
+        build.result = self._snapshot_with("after")
+        self._source(monkeypatch, "after")
+
+        assert service.check_source_fingerprint(DB, min_interval_seconds=0) is True
+        try:
+            assert get_snapshot(DB, wait_seconds=0) is stale
+        finally:
+            _finish(gate)
+        assert get_snapshot(DB, wait_seconds=0) is build.result
+        assert build.calls == 2
+
+    def test_the_check_is_rate_limited(self, monkeypatch) -> None:
+        build = self._cache(monkeypatch, "before")
+        self._source(monkeypatch, "after")
+
+        # The first check runs however long the machine has been up. That is
+        # what `last_check is None` buys: against a 0.0 default this assertion
+        # fails on any host whose boot was less than `interval` ago, because
+        # time.monotonic() counts from boot on Linux. It passed on a developer
+        # laptop and failed on a fresh CI runner.
+        assert service._state.last_check is None
+        assert service.check_source_fingerprint(DB, min_interval_seconds=3600) is True
+        service._state.thread.join(5)
+        assert service._state.last_check is not None
+
+        monkeypatch.setattr(
+            service, "source_state", self._never("the source was queried inside the rate limit")
+        )
+        assert service.check_source_fingerprint(DB, min_interval_seconds=3600) is False
+        assert build.calls == 2
+
+    def test_there_is_nothing_to_check_before_the_first_build(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            service, "source_state", self._never("the source was queried with nothing to compare")
+        )
+        assert service.check_source_fingerprint(DB, min_interval_seconds=0) is False
+
+
+class TestWhatTheFingerprintCovers:
+    """``source_state`` itself, without a database."""
+
+    class _Db:
+        def __init__(self, rows: list[tuple]) -> None:
+            self.rows = rows
+
+        def execute(self, _statement):
+            return self
+
+        def all(self) -> list[tuple]:
+            return self.rows
+
+    def test_a_new_day_is_a_new_fingerprint(self) -> None:
+        """With I8_REFERENCE_DATE unset the snapshot measures aging as of the
+        day it was built. One that survives midnight reports yesterday's
+        overdue counts under today's heading unless the date is in here."""
+        db = self._Db([])
+        monday = service.source_state(db, reference_date=date(2026, 10, 6))
+        tuesday = service.source_state(db, reference_date=date(2026, 10, 7))
+        assert monday.fingerprint != tuesday.fingerprint
+
+    def test_a_reload_of_any_one_table_changes_it(self) -> None:
+        before = service.source_state(
+            self._Db([("raw_mara", 1, None), ("raw_ekpo", 7, None)]),
+            reference_date=date(2026, 10, 7),
+        )
+        after = service.source_state(
+            self._Db([("raw_mara", 1, None), ("raw_ekpo", 8, None)]),
+            reference_date=date(2026, 10, 7),
+        )
+        assert before.fingerprint != after.fingerprint
+
+    def test_loaded_at_is_the_newest_load_and_survives_a_table_with_none(self) -> None:
+        """A table that has never loaded reports None, and mixing None into
+        ``max()`` is a TypeError -- a crash in the watcher, not a wrong date."""
+        state = service.source_state(
+            self._Db(
+                [
+                    ("raw_ekpo", 2, datetime(2026, 10, 7, 5, 1, tzinfo=timezone.utc)),
+                    ("raw_mara", 1, datetime(2026, 10, 7, 5, 0, tzinfo=timezone.utc)),
+                    ("raw_zmm065_gb", 3, None),
+                ]
+            ),
+            reference_date=date(2026, 10, 7),
+        )
+        assert state.loaded_at == datetime(2026, 10, 7, 5, 1, tzinfo=timezone.utc)
+
+    def test_nothing_loaded_is_reported_as_nothing(self) -> None:
+        state = service.source_state(self._Db([]), reference_date=date(2026, 10, 7))
+        assert state.loaded_at is None
+
+    def test_every_table_the_views_read_is_covered(self) -> None:
+        """A table missing from SOURCE_TABLES is a reload I08 never notices, so
+        the list is checked against the views rather than trusted. v_zmm065 is
+        the union that makes this a mapping and not a rename."""
+        from app.initiatives.i8.views import VIEWS
+
+        expected = {f"raw_{view.removeprefix('v_')}" for view in VIEWS} - {"raw_zmm065"}
+        expected |= {"raw_zmm065_bmm", "raw_zmm065_gb"}
+        assert set(service.SOURCE_TABLES) == expected
 
 
 class TestOneBuildAtATime:

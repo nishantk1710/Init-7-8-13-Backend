@@ -134,8 +134,9 @@ def attestation_view_dependency(
 ) -> AttestationView:
     """Coverage, the declaration queue and the exception queue.
 
-    Cached separately from the snapshot: the July extract never changes, but
-    attestations do, and a planner who records one must see it immediately.
+    Cached separately from the snapshot: the snapshot turns over when its
+    source is reloaded, but an attestation must be visible the moment the
+    planner who recorded it reloads the queue.
     """
     return get_attestation_view(db, snapshot)
 
@@ -557,7 +558,7 @@ def get_declarations(
     status_filter: str | None = Query(
         None,
         alias="status",
-        description="Required, Pending, Completed or Flagged",
+        description="Required, Completed or Flagged",
     ),
     outstanding_only: bool = Query(
         False,
@@ -768,6 +769,7 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
         reference_date=snapshot.reference_date,
         built_at=snapshot.built_at,
         build_seconds=snapshot.build_seconds,
+        source_loaded_at=snapshot.source_loaded_at,
         repair_register=register_meta(snapshot.register_stats),
         universe=universe_meta(snapshot.universe_stats),
         rules={
