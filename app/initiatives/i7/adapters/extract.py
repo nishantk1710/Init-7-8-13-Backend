@@ -351,11 +351,16 @@ def _stage_materials(
 
 # --- Material-plant ----------------------------------------------------
 
-# EISBE (safety stock) is absent from the MARC extract -- see MARC_MISSING_FIELDS
-# in field_map. current_safety_stock therefore stages as NULL throughout.
+# EISBE (safety stock) IS delivered in the MARC extract -- verified 2026-10-07
+# against raw_marc in Azure SQL: the column is present and 37 rows carry a
+# non-zero value. It was previously declared absent (field_map's
+# MARC_MISSING_FIELDS) and staged as a hardcoded NULL, which discarded every
+# one of those maintained values and made the "current vs recommended" safety
+# stock comparison wrong for exactly the materials somebody had bothered to
+# maintain. A blank or unreadable value still stages as NULL, never 0.
 _MATERIAL_PLANT_SQL = """
     SELECT material, plant, mrp_type, planned_deliv_time,
-           reorder_point, maximum_stock_level, df_at_plant_level
+           reorder_point, safety_stock, maximum_stock_level, df_at_plant_level
       FROM n_marc
 """
 
@@ -503,9 +508,11 @@ def _stage_material_plants(
                 # what it means.
                 "mrp_type": clean(values["mrp_type"]),
                 "planned_delivery_time_days": parse_int(values["planned_deliv_time"]),
-                # EISBE is not in the extract. NULL, not 0: zero safety stock is
-                # a real and different claim from "not supplied".
-                "current_safety_stock": None,
+                # Staged as delivered. parse_decimal returns None for a blank
+                # or unparseable value, so "not supplied" stays NULL rather
+                # than becoming 0 -- zero safety stock is a real and different
+                # claim from "not maintained".
+                "current_safety_stock": parse_decimal(values["safety_stock"]),
                 "current_reorder_point": parse_decimal(values["reorder_point"]),
                 "current_maximum_stock": parse_decimal(values["maximum_stock_level"]),
                 "deletion_flag": parse_flag(values["df_at_plant_level"]),

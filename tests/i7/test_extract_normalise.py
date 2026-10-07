@@ -156,7 +156,7 @@ class TestOdataFill:
 
     def test_a_workbook_marc_takes_nothing_from_odata(self, monkeypatch) -> None:
         workbook = ["material", "plant", "mrp_type", "planned_deliv_time", "reorder_point",
-                    "maximum_stock_level", "df_at_plant_level"]
+                    "safety_stock", "maximum_stock_level", "df_at_plant_level"]
         monkeypatch.setattr(extract, "_columns", lambda session, table: workbook)
 
         assert extract._marc_gaps(session=None) == []
@@ -241,17 +241,17 @@ class TestMaterialPlantStagingAppliesTheOdataConversion:
         with engine.begin() as connection:
             connection.execute(text(
                 "CREATE TABLE n_marc (material TEXT, plant TEXT, mrp_type TEXT, "
-                "planned_deliv_time TEXT, reorder_point TEXT, maximum_stock_level TEXT, "
-                "df_at_plant_level TEXT)"
+                "planned_deliv_time TEXT, reorder_point TEXT, safety_stock TEXT, "
+                "maximum_stock_level TEXT, df_at_plant_level TEXT)"
             ))
             for r in marc_rows:
                 connection.execute(
                     text(
                         "INSERT INTO n_marc VALUES (:material, :plant, :mrp_type, "
-                        ":planned_deliv_time, :reorder_point, :maximum_stock_level, "
-                        ":df_at_plant_level)"
+                        ":planned_deliv_time, :reorder_point, :safety_stock, "
+                        ":maximum_stock_level, :df_at_plant_level)"
                     ),
-                    r,
+                    {"safety_stock": None, **r},
                 )
         session = Session(engine)
 
