@@ -7,7 +7,7 @@ all computation lives in ``app.initiatives.i13``.
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -84,20 +84,32 @@ _I13_TABLES = ("raw_eban", "raw_ekpo", "raw_ekbe", "raw_mseg", "raw_mkpf", "raw_
 
 @router.get("/summary", response_model=I13SummaryResponse)
 def get_summary(
+    plant: str | None = Query(None, description="Count one plant only (1300 or 1500). Omitted: both plants."),
+    material: str | None = Query(None, description="Count one material only."),
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
     data_dir: Path = Depends(get_data_dir),
     snapshot: I13Snapshot | None = Depends(snapshot_or_live),
 ) -> I13SummaryResponse:
     if snapshot is not None:
-        return I13SummaryResponse(**asdict(summary_from_snapshot(snapshot, current_plans(db, snapshot))))
+        summary = summary_from_snapshot(snapshot, current_plans(db, snapshot), plant=plant, material=material)
+        return I13SummaryResponse(**asdict(summary))
 
     movement_repo = PostgresMovementRepository(db)
     procurement_repo = PostgresProcurementRepository(db)
     reservation_repo = PostgresReservationRepository(db)
-    material_scope_index = fetch_material_scope_index(db)
+    material_scope_index = fetch_material_scope_index(db, material=material, plant=plant)
 
-    summary = build_summary(movement_repo, procurement_repo, reservation_repo, material_scope_index, config, data_dir)
+    summary = build_summary(
+        movement_repo,
+        procurement_repo,
+        reservation_repo,
+        material_scope_index,
+        config,
+        data_dir,
+        plant=plant,
+        material=material,
+    )
     return I13SummaryResponse(**asdict(summary))
 
 
