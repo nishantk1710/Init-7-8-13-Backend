@@ -23,7 +23,7 @@ Four details in that string are load-bearing, all of them learned the hard way:
 * ``RequestId`` must be unique. Refiring a used one returns the same cheerful
   acknowledgement and delivers nothing at all.
 
-WHY THE WHOLE SWEEP IS FIRED AT ONCE
+WHY TABLES ARE FIRED TOGETHER
 
 Serialised -- fire one, wait for it, fire the next -- this route delivered
 nothing, a dozen attempts running. Fired as a batch it has never failed:
@@ -46,6 +46,19 @@ exactly one is. But a chunk DOES carry a header naming its table, and
 serialisation: several tables may be in flight together, and only a second
 request for the SAME table is ambiguous, because those two would be
 indistinguishable. ``fire`` refuses that one case and nothing else.
+
+BATCHES OF TWO
+
+Fired all at once, a sweep has SAP pushing every table's chunks at the
+receiver together, and on the shared B1 plan that ended in an out-of-memory
+kill (2026-10-08 08:12). Since then a sweep fires two tables, waits until both
+are delivered and reconciled, and only then fires the next two
+(``Settings.csv_pull_batch_size``). Each batch is still two tables fired
+together -- the shape that delivered in the table above -- never one table on
+its own. What has not yet been seen is a batch of two delivering after an
+earlier batch was waited on. If later batches come back TIMEOUT for tables
+that delivered before, set CSV_PULL_BATCH_SIZE=0 (or pass --batch-size 0) to
+fire the whole sweep at once again.
 
 THE ACKNOWLEDGEMENT PROVES NOTHING
 
@@ -93,6 +106,13 @@ FIRST_CHUNK_TIMEOUT_SECONDS = 15 * 60
 # protocol says "that was the final chunk", so silence is the only signal
 # available. Generous: a 50,000-row chunk of a 277-column table is ~64 MB.
 QUIET_PERIOD_SECONDS = 5 * 60
+
+# Once the rows received reach the $count taken before firing, everything SAP
+# was going to send has arrived, and the five minutes above only cost time --
+# twelve batches of two would spend an hour on them. A minute of silence is
+# still asked for: a table that grew during the extract can reach its count on
+# a 50,000-row boundary with one more chunk on the way.
+COUNT_REACHED_SETTLE_SECONDS = 60
 
 POLL_SECONDS = 15
 
@@ -576,13 +596,18 @@ def pull_all(
     wait_for_open: bool = True,
     gap: int = FIRE_GAP_SECONDS,
     sleeper=time.sleep,
+    batch_size: int | None = None,
     **window,
 ) -> list[PullResult]:
-    """Fire every table, then collect whatever comes back.
+    """Fire the tables in batches, collecting each batch before the next.
 
-    Fired as a batch, not one at a time -- see the module docstring. A table
-    that fails does not stop the run: the others are independent, and a partial
-    refresh beats no refresh.
+    ``batch_size`` tables are fired together (``gap`` seconds apart), then
+    waited on until every one of them is delivered and reconciled -- complete,
+    failed or timed out -- before the next batch is fired. None takes
+    Settings.csv_pull_batch_size (2). 0 fires every table at once, the shape
+    the module docstring records as proven; so does ``wait=False``, which has
+    no deliveries to wait between. A table that fails does not stop the run:
+    the others are independent, and a partial refresh beats no refresh.
     """
     # Every table, the undelivered ones included: a sweep is the evidence that
     # SAP was asked, and the day the job is fixed it just starts delivering.
@@ -596,6 +621,12 @@ def pull_all(
         )
         logger.error(detail)
         return [PullResult(name, "", STATUS_FAILED, error=detail) for name in names]
+
+    size = _batch_size() if batch_size is None else max(0, int(batch_size))
+    if wait and 0 < size < len(names):
+        return _pull_in_batches(
+            names, size, max_rows=max_rows, gap=gap, sleeper=sleeper, **window
+        )
 
     logger.info("firing %d extract(s), %ds apart", len(names), gap)
     fired: list[PullResult] = []
@@ -622,6 +653,63 @@ def pull_all(
 
     collected = {r.request_id: r for r in wait_for_all(accepted, sleeper=sleeper)}
     return [collected.get(r.request_id, r) for r in fired]
+
+
+def _batch_size() -> int:
+    """Settings.csv_pull_batch_size, or 0 (all at once) if it cannot be read."""
+    try:
+        from app.core.config import get_settings
+
+        return max(0, int(get_settings().csv_pull_batch_size))
+    except Exception:  # noqa: BLE001 -- a settings problem must not cost the sweep
+        return 0
+
+
+def _pull_in_batches(
+    names: list[str],
+    size: int,
+    *,
+    max_rows: str,
+    gap: int,
+    sleeper,
+    **window,
+) -> list[PullResult]:
+    """Fire ``size`` tables, wait for all of them, then the next ``size``.
+
+    So SAP pushes at most ``size`` tables at the receiver at once, and each
+    batch is known landed and reconciled before more is asked for. Within a
+    batch the tables are still fired together -- two tables twenty seconds
+    apart delivered both (module docstring); it is only firing ONE table and
+    waiting that was measured delivering nothing.
+    """
+    batches = [names[start : start + size] for start in range(0, len(names), size)]
+    logger.info(
+        "firing %d extract(s) in %d batch(es) of up to %d, each collected before the next",
+        len(names), len(batches), size,
+    )
+    results: list[PullResult] = []
+    for number, batch in enumerate(batches, 1):
+        logger.info("batch %d/%d: %s", number, len(batches), ", ".join(batch))
+        fired: list[PullResult] = []
+        for index, name in enumerate(batch, 1):
+            result = fire(name, max_rows=max_rows, **window)
+            fired.append(result)
+            if result.status != STATUS_OPEN:
+                logger.error("%s: %s -- %s", name, result.status, result.error or "")
+            elif index < len(batch):
+                sleeper(gap)
+
+        accepted = [r.request_id for r in fired if r.status == STATUS_OPEN]
+        if accepted:
+            collected = {r.request_id: r for r in wait_for_all(accepted, sleeper=sleeper)}
+            fired = [collected.get(r.request_id, r) for r in fired]
+        for result in fired:
+            logger.info(
+                "batch %d/%d: %s %s, %d row(s)",
+                number, len(batches), result.sap_table, result.status, result.received_rows,
+            )
+        results.extend(fired)
+    return results
 
 
 def wait_for_all(
@@ -702,7 +790,15 @@ def _judge(
         logger.error("%s: %s", record.sap_table, detail)
         return
 
-    if (now - last).total_seconds() <= quiet_period:
+    silence = (now - last).total_seconds()
+    cap = (record.max_rows or "").strip()
+    count_reached = (
+        record.expected_rows is not None
+        and record.expected_rows > 0
+        and not (cap.isdigit() and int(cap) > 0)
+        and record.received_rows >= record.expected_rows
+    )
+    if silence <= (min(quiet_period, COUNT_REACHED_SETTLE_SECONDS) if count_reached else quiet_period):
         return
 
     verdict, detail = _verdict(record)

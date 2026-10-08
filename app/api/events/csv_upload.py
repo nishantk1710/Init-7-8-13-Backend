@@ -24,11 +24,14 @@ keep the file, validate against a schema, or route anywhere. The sha256 of the
 bytes comes back so a re-send can be recognised as the same file.
 """
 
+import asyncio
 import codecs
 import csv
 import hashlib
 import io
 import re
+import time
+from collections.abc import Iterator
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -365,7 +368,53 @@ async def receive_csv(request: Request) -> CsvAccepted:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="The sender disconnected before the body arrived.",
         ) from None
-    return await run_in_threadpool(_accept, raw, content_type)
+    return await _process(raw, content_type)
+
+
+# One gate per event loop: an asyncio semaphore belongs to the loop it first
+# waits on, and a test client runs a loop of its own. The app has one.
+_slots: tuple[asyncio.AbstractEventLoop, asyncio.Semaphore] | None = None
+
+
+def _processing_slots() -> asyncio.Semaphore:
+    global _slots
+    loop = asyncio.get_running_loop()
+    if _slots is None or _slots[0] is not loop:
+        limit = getattr(get_settings(), "csv_upload_max_concurrent", 2)
+        _slots = (loop, asyncio.Semaphore(max(1, int(limit))))
+    return _slots[1]
+
+
+async def _process(raw: bytes, content_type: str) -> CsvAccepted:
+    """Land one chunk, at most ``csv_upload_max_concurrent`` at a time.
+
+    The wait is on the event loop, NOT on a worker thread: FastAPI serves every
+    synchronous route from the same thread pool, so twenty chunks queued on
+    threads would leave the I07/I08/I13 pages waiting behind them. And it is
+    bounded -- past ``csv_upload_max_wait_seconds`` the chunk goes ahead
+    without a slot, because a request held past App Service's 230 seconds is
+    a failure to the sender even when we land it.
+    """
+    slots = _processing_slots()
+    limit = getattr(get_settings(), "csv_upload_max_wait_seconds", 120)
+    queued = time.monotonic()
+    acquired = False
+    try:
+        await asyncio.wait_for(slots.acquire(), timeout=max(1, int(limit)))
+        acquired = True
+    except asyncio.TimeoutError:
+        logger.warning(
+            "CSV chunk waited %ds for a processing slot; landing it anyway so the "
+            "request finishes inside App Service's time limit", limit,
+        )
+    waited = time.monotonic() - queued
+    if acquired and waited >= 1:
+        logger.info("CSV chunk waited %.1fs for a processing slot", waited)
+    try:
+        return await run_in_threadpool(_accept, raw, content_type)
+    finally:
+        if acquired:
+            slots.release()
 
 
 def _accept(raw: bytes, content_type: str) -> CsvAccepted:
@@ -386,7 +435,8 @@ def _accept(raw: bytes, content_type: str) -> CsvAccepted:
     # A stray NUL makes the csv module raise rather than skip. That happens for
     # real -- a UTF-16 export mislabelled as 8-bit decodes to text peppered with
     # them -- and losing the extract to it would be the wrong outcome.
-    if "\x00" in text:
+    nul_stripped = "\x00" in text
+    if nul_stripped:
         logger.warning("CSV upload contains NUL bytes; stripping them before parsing")
         text = text.replace("\x00", "")
 
@@ -395,7 +445,7 @@ def _accept(raw: bytes, content_type: str) -> CsvAccepted:
     # newline="" leaves quoted fields containing line breaks intact, and the
     # reader handles CR, LF and CRLF alike -- so SAP's line endings do not
     # matter either.
-    reader = csv.reader(io.StringIO(text, newline=""), delimiter=delimiter)
+    reader = csv.reader(_lines(text), delimiter=delimiter)
 
     header: list[str] = []
     preview: list[list[str]] = []
@@ -439,7 +489,12 @@ def _accept(raw: bytes, content_type: str) -> CsvAccepted:
             delimiter,
         )
 
-    stored = _land(text, header, data_rows=rows, raw_bytes=len(raw))
+    # SAP's own bytes are stored as they came when they ARE the UTF-8 the
+    # file is kept in: decoded strictly (no BOM, nothing replaced) and nothing
+    # stripped. Re-encoding the text would only make a second 6 MB copy of
+    # identical bytes. Anything else is stored from the decoded text, as UTF-8.
+    utf8 = raw if encoding == "utf-8" and not nul_stripped else None
+    stored = _land(text, header, data_rows=rows, raw_bytes=len(raw), utf8=utf8)
 
     return CsvAccepted(
         status="received",
@@ -454,12 +509,38 @@ def _accept(raw: bytes, content_type: str) -> CsvAccepted:
     )
 
 
+def _lines(text: str) -> Iterator[str]:
+    """The text a line at a time, line endings kept -- what csv.reader needs.
+
+    In place of ``io.StringIO(text)``, which holds the whole chunk again at
+    four bytes a character: a 6 MB push became a 24 MB buffer, and twenty
+    chunks arriving together were an out-of-memory kill on the B1 plan
+    (2026-10-08). Splits on ``\n`` only, as the csv module expects, so CRLF
+    endings and line breaks inside quoted fields parse exactly as before. A
+    file using bare ``\r`` endings has no ``\n`` to split on and takes the
+    old route, which does recognise them.
+    """
+    if "\n" not in text and "\r" in text:
+        yield from io.StringIO(text, newline="")
+        return
+    start, find = 0, text.find
+    while True:
+        end = find("\n", start)
+        if end < 0:
+            if start < len(text):
+                yield text[start:]
+            return
+        yield text[start : end + 1]
+        start = end + 1
+
+
 def _land(
     text: str,
     first_row: list[str],
     *,
     data_rows: int = 0,
     raw_bytes: int = 0,
+    utf8: bytes | None = None,
 ) -> str | None:
     """Append this chunk to its table's file, best effort.
 
@@ -487,8 +568,14 @@ def _land(
         logger.debug("STORAGE_URL is not set; CSV not landed")
         return None
 
-    payload = text if text.endswith("\n") else text + "\n"
-    first_line, _, remainder = payload.partition("\n")
+    # Bytes from here on: the file is stored as UTF-8, and working in bytes
+    # once costs one copy of the chunk instead of three (a padded text, its
+    # remainder, and that remainder encoded).
+    payload = utf8 if utf8 is not None else text.encode("utf-8")
+    if not payload.endswith(b"\n"):
+        payload += b"\n"
+    newline = payload.index(b"\n")
+    first_line = payload[:newline].decode("utf-8", errors="replace").rstrip("\r")
     key = "(undetermined)"
 
     try:
@@ -504,9 +591,9 @@ def _land(
 
         if not storage.exists(header_key):
             with storage.open_write(header_key) as sink:
-                sink.write(first_line.rstrip("\r").encode("utf-8"))
+                sink.write(first_line.encode("utf-8"))
             with storage.open_write(key) as sink:
-                sink.write(payload.encode("utf-8"))
+                sink.write(payload)
             logger.info("CSV landed at %s (new file, table=%s)", key, table)
             record_chunk(table, key, rows=data_rows, raw_bytes=raw_bytes)
             _set_open_table(storage, table)
@@ -515,10 +602,10 @@ def _land(
         with storage.open_read(header_key) as source:
             known = source.read().decode("utf-8")
 
-        repeats_header = first_line.rstrip("\r") == known
-        body = remainder if repeats_header else payload
+        repeats_header = first_line == known
+        body = payload[newline + 1 :] if repeats_header else payload
         if body:
-            size = storage.append(key, body.encode("utf-8"))
+            size = storage.append(key, body)
             logger.info(
                 "CSV appended to %s (table=%s, header repeated=%s, now %d bytes)",
                 key, table, repeats_header, size,
@@ -540,7 +627,7 @@ def _land(
 
 
 def _append_continuation(
-    storage, payload: str, *, data_rows: int = 0, raw_bytes: int = 0
+    storage, payload: bytes, *, data_rows: int = 0, raw_bytes: int = 0
 ) -> str | None:
     """A chunk with no header. Every row is data; attribute it to the open table."""
     table = _get_open_table(storage)
@@ -552,7 +639,7 @@ def _append_continuation(
         return None
 
     key, _ = _keys_for(table)
-    size = storage.append(key, payload.encode("utf-8"))
+    size = storage.append(key, payload)
     logger.info(
         "CSV appended to %s (table=%s, headerless chunk, now %d bytes)",
         key, table, size,

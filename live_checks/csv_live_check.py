@@ -38,13 +38,16 @@ What it checks, per table:
 
 Usage -- on the Azure SSH box, from backend/:
 
-    python live_checks/csv_live_check.py                         # fire all 21, wait, analyse
+    python live_checks/csv_live_check.py                         # all 21, two at a time, analyse
+    python live_checks/csv_live_check.py --batch-size 0          # all 21 fired at once
     python live_checks/csv_live_check.py --tables EKPO MSEG
     python live_checks/csv_live_check.py --inspect               # no fire: analyse latest landed files
     python live_checks/csv_live_check.py --odata-report /home/live_checks/odata_<time>.json
 
-Takes ~10 minutes (5 for the slowest delivery to go quiet, 5 for EKKO/EKET to
-time out); run it under nohup:
+Two tables are fired, watched until both have delivered (5 minutes with no
+growth) or timed out, then the next two -- so each batch costs its delivery
+plus 5 minutes, about an hour or more for all 21. --batch-size 0 fires them
+all at once and takes ~10 minutes. Run it under nohup:
 
     nohup python -u live_checks/csv_live_check.py > /home/live_checks/csv_run.log 2>&1 &
     tail -f /home/live_checks/csv_run.log
@@ -545,10 +548,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--to-date", default=FULL_TO, help=f"extract window end (default {FULL_TO})")
     parser.add_argument("--max-rows", default="", help="cap per table, e.g. 100 (default: none)")
     parser.add_argument("--gap", type=int, default=3, help="seconds between fires (default 3)")
+    parser.add_argument("--batch-size", type=int, default=2, metavar="N",
+                        help="fire N tables, wait until they are delivered, then the next N "
+                             "(default 2; 0 = fire every table at once)")
     parser.add_argument("--poll", type=int, default=15, help="seconds between storage checks (default 15)")
     parser.add_argument("--quiet", type=int, default=300, help="no growth for this long = delivered (default 300)")
     parser.add_argument("--first-chunk-timeout", type=int, default=300, help="nothing by then = timeout (default 300)")
-    parser.add_argument("--max-wait", type=int, default=1800, help="hard stop for the whole wait (default 1800)")
+    parser.add_argument("--max-wait", type=int, default=1800, help="hard stop for each batch's wait (default 1800)")
     parser.add_argument("--force", action="store_true", help="fire even where the app has an extract open")
     parser.add_argument("--odata-report", help="JSON from odata_live_check.py (default: the newest one in the report folder)")
     parser.add_argument("--coverage-from", metavar="CSV_JSON",
@@ -594,25 +600,37 @@ def main(argv: list[str] | None = None) -> int:
         for job in jobs:
             if busy and job.table.sap in busy and not args.force:
                 job.status, job.note = "skipped", f"the app has request {busy[job.table.sap]} open for it (--force to fire anyway)"
-        print(f"\nFIRING  {sum(j.status == 'pending' for j in jobs)} table(s), {args.gap}s apart")
         for job in jobs:
             if job.status != "pending":
                 print(f"  {job.table.sap:<6} skipped: {job.note}")
-                continue
-            for key in landing_candidates(job.table.sap):
-                job.baseline[key] = job.seen[key] = lake.size(key)
-            job.rid = request_id(job.table.sap)
-            reply = cpi.get(extract_path(job.rid, job.table.sap, args.from_date, args.to_date, args.max_rows), "")
-            job.fired_at = time.time()
-            job.ack = " ".join(reply.text.split())[:200] if reply.ok else short_error(reply)
-            job.fired_ok = reply.ok and "success" in reply.text.lower()
-            if not job.fired_ok:
-                job.status, job.note = "fire-failed", job.ack
-            print(f"  {job.table.sap:<6} {job.rid}  HTTP {reply.status}  {job.ack[:100]}")
-            time.sleep(args.gap)
-        print(f"\nWAITING  delivered = {args.quiet}s with no growth; timeout = nothing in "
-              f"{args.first_chunk_timeout // 60} min")
-        watch(lake, jobs, poll=args.poll, quiet=args.quiet, first_timeout=args.first_chunk_timeout, max_wait=args.max_wait)
+        to_fire = [j for j in jobs if j.status == "pending"]
+        size = args.batch_size if 0 < args.batch_size < len(to_fire) else len(to_fire)
+        batches = [to_fire[start:start + size] for start in range(0, len(to_fire), size)] if to_fire else []
+        print(f"\nFIRING  {len(to_fire)} table(s), {args.gap}s apart"
+              + (f", in {len(batches)} batches of up to {size} -- each delivered before the next"
+                 if len(batches) > 1 else ""))
+        for number, batch in enumerate(batches, 1):
+            if len(batches) > 1:
+                print(f"\nBATCH {number}/{len(batches)}  {' '.join(j.table.sap for j in batch)}")
+            for index, job in enumerate(batch, 1):
+                for key in landing_candidates(job.table.sap):
+                    job.baseline[key] = job.seen[key] = lake.size(key)
+                job.rid = request_id(job.table.sap)
+                reply = cpi.get(extract_path(job.rid, job.table.sap, args.from_date, args.to_date, args.max_rows), "")
+                job.fired_at = time.time()
+                job.ack = " ".join(reply.text.split())[:200] if reply.ok else short_error(reply)
+                job.fired_ok = reply.ok and "success" in reply.text.lower()
+                if not job.fired_ok:
+                    job.status, job.note = "fire-failed", job.ack
+                print(f"  {job.table.sap:<6} {job.rid}  HTTP {reply.status}  {job.ack[:100]}")
+                if index < len(batch):
+                    time.sleep(args.gap)
+            print(f"\nWAITING  delivered = {args.quiet}s with no growth; timeout = nothing in "
+                  f"{args.first_chunk_timeout // 60} min")
+            watch(lake, batch, poll=args.poll, quiet=args.quiet, first_timeout=args.first_chunk_timeout,
+                  max_wait=args.max_wait)
+            if len(batches) > 1:
+                print("  " + "  ".join(f"{j.table.sap} {j.status}" for j in batch))
 
     report: dict[str, Any] = {
         "run": {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "mode": mode,
