@@ -42,6 +42,12 @@ class I13Summary:
     reference_plan_count: int
 
 
+def _in_scope(material: str, plant: str, *, plant_filter: str | None, material_filter: str | None) -> bool:
+    """Whether a material-plant falls inside the requested scope. No filter is
+    everything, so an unfiltered summary is exactly the combined one."""
+    return (not plant_filter or plant == plant_filter) and (not material_filter or material == material_filter)
+
+
 def build_summary(
     movement_repository: PostgresMovementRepository,
     procurement_repository: PostgresProcurementRepository,
@@ -51,13 +57,30 @@ def build_summary(
     data_dir: Path,
     *,
     as_of: date | None = None,
+    plant: str | None = None,
+    material: str | None = None,
 ) -> I13Summary:
+    """``plant`` and ``material`` narrow every count to that scope -- the same
+    filters the rest of the dashboard applies -- and push down to the SQL reads
+    where the builders accept them."""
     as_of = as_of or date.today()
 
-    oar_keys = {key for key, dismm in material_scope_index.items() if classify_material_scope(dismm) is MaterialScope.OAR}
+    def in_scope(m: str, p: str) -> bool:
+        return _in_scope(m, p, plant_filter=plant, material_filter=material)
+
+    oar_keys = {
+        key
+        for key, dismm in material_scope_index.items()
+        if classify_material_scope(dismm) is MaterialScope.OAR and in_scope(*key)
+    }
 
     metrics = compute_all_movement_metrics(
-        movement_repository, thresholds=config.aging, window_months=config.watch.consumption_window_months, as_of=as_of
+        movement_repository,
+        thresholds=config.aging,
+        window_months=config.watch.consumption_window_months,
+        as_of=as_of,
+        material=material,
+        plant=plant,
     )
     band_counts = {AgingBand.FAST: 0, AgingBand.SLOW: 0, AgingBand.NON_MOVING: 0}
     oar_keys_seen: set[tuple[str, str]] = set()
@@ -74,14 +97,25 @@ def build_summary(
     band_counts[AgingBand.NON_MOVING] += len(oar_keys - oar_keys_seen)
 
     exceptions = build_exception_queue(
-        movement_repository, procurement_repository, reservation_repository, material_scope_index, config, data_dir, as_of=as_of
+        movement_repository,
+        procurement_repository,
+        reservation_repository,
+        material_scope_index,
+        config,
+        data_dir,
+        material=material,
+        plant=plant,
+        as_of=as_of,
     )
     exception_counts = {exception_type: 0 for exception_type in ExceptionType}
     for exception in exceptions:
-        exception_counts[exception.type] += 1
+        # Plan breaches are raised per plan, not per pushed-down row, so the
+        # scope is applied to the items as well.
+        if in_scope(exception.material, exception.plant):
+            exception_counts[exception.type] += 1
 
     reclassification_candidates = build_reclassification_candidates(
-        movement_repository, material_scope_index, config, as_of=as_of
+        movement_repository, material_scope_index, config, material=material, plant=plant, as_of=as_of
     )
     candidate_count = sum(1 for candidate in reclassification_candidates if candidate.candidate_flag)
 
@@ -95,11 +129,17 @@ def build_summary(
         no_plan_count=exception_counts[ExceptionType.NO_PLAN],
         reclassification_candidate_count=candidate_count,
         valuation_is_mocked=True,
-        reference_plan_count=len(load_reference_plans(data_dir)),
+        reference_plan_count=sum(1 for p in load_reference_plans(data_dir) if in_scope(p.material, p.plant)),
     )
 
 
-def summary_from_snapshot(snapshot: I13Snapshot, plans: list[ConsumptionPlan]) -> I13Summary:
+def summary_from_snapshot(
+    snapshot: I13Snapshot,
+    plans: list[ConsumptionPlan],
+    *,
+    plant: str | None = None,
+    material: str | None = None,
+) -> I13Summary:
     """:func:`build_summary`'s counts, read from the I13 snapshot.
 
     The aging bands and reclassification count depend only on SAP data and
@@ -108,10 +148,19 @@ def summary_from_snapshot(snapshot: I13Snapshot, plans: list[ConsumptionPlan]) -
     requester can add at any moment through the assistant -- so they come from
     the legacy exception queue recomputed over the snapshot with ``plans`` (the
     live set), and move as soon as a plan is captured.
+
+    ``plant`` and ``material`` narrow every count to that scope. Unfiltered,
+    the build-time totals are returned as they always were; filtered, the bands
+    are recounted from the snapshot's own rows -- the same rule, the same OAR
+    keys, nothing read from SAP again.
     """
     exception_counts = {exception_type: 0 for exception_type in ExceptionType}
     for exception in exception_queue(snapshot, plans):
-        exception_counts[exception.type] += 1
+        if _in_scope(exception.material, exception.plant, plant_filter=plant, material_filter=material):
+            exception_counts[exception.type] += 1
+
+    if plant or material:
+        return _scoped_summary(snapshot, exception_counts, plant=plant, material=material)
 
     return I13Summary(
         total_oar_positions=snapshot.oar_position_count,
@@ -124,4 +173,47 @@ def summary_from_snapshot(snapshot: I13Snapshot, plans: list[ConsumptionPlan]) -
         reclassification_candidate_count=sum(1 for c in snapshot.reclassification if c.candidate_flag),
         valuation_is_mocked=True,
         reference_plan_count=len(snapshot.reference_plans),
+    )
+
+
+def _scoped_summary(
+    snapshot: I13Snapshot,
+    exception_counts: dict[ExceptionType, int],
+    *,
+    plant: str | None,
+    material: str | None,
+) -> I13Summary:
+    """The snapshot summary for one plant and/or material.
+
+    Counted exactly as the build counts ``band_counts``: OAR keys only, and an
+    OAR key with no movement history is NON_MOVING. Summed over every plant,
+    these equal the unfiltered totals.
+    """
+
+    def in_scope(m: str, p: str) -> bool:
+        return _in_scope(m, p, plant_filter=plant, material_filter=material)
+
+    oar_keys = {
+        key
+        for key, dismm in snapshot.material_scope_index.items()
+        if classify_material_scope(dismm) is MaterialScope.OAR and in_scope(*key)
+    }
+    band_by_key = {(m.material, m.plant): m.aging_band for m in snapshot.movement_metrics}
+    band_counts = {AgingBand.FAST: 0, AgingBand.SLOW: 0, AgingBand.NON_MOVING: 0}
+    for key in oar_keys:
+        band_counts[band_by_key.get(key, AgingBand.NON_MOVING)] += 1
+
+    return I13Summary(
+        total_oar_positions=len(oar_keys),
+        fast_moving_count=band_counts[AgingBand.FAST],
+        slow_moving_count=band_counts[AgingBand.SLOW],
+        non_moving_count=band_counts[AgingBand.NON_MOVING],
+        gr_not_issued_30_day_count=exception_counts[ExceptionType.GR_NOT_ISSUED_30_DAY],
+        plan_breach_count=exception_counts[ExceptionType.PLAN_BREACH],
+        no_plan_count=exception_counts[ExceptionType.NO_PLAN],
+        reclassification_candidate_count=sum(
+            1 for c in snapshot.reclassification if c.candidate_flag and in_scope(c.material, c.plant)
+        ),
+        valuation_is_mocked=True,
+        reference_plan_count=sum(1 for p in snapshot.reference_plans if in_scope(p.material, p.plant)),
     )
