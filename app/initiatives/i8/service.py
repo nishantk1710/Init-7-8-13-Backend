@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 
 from sqlalchemy import func, select
@@ -60,6 +60,9 @@ from app.initiatives.i8.coding_candidates import CodingCandidate, ScreenStats, s
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.declarations import DeclarationRow, build_queue
 from app.initiatives.i8.exceptions import ExceptionItem, ExceptionStats, build_exceptions
+from app.initiatives.i8.line_justifications import LineJustification
+from app.initiatives.i8.line_justifications import by_line as justifications_by_line
+from app.initiatives.i8.line_justifications import index_size as justification_counts
 from app.initiatives.i8.register import (
     RegisterStats,
     RepairLine,
@@ -512,26 +515,33 @@ class AttestationView:
     """What the attestation and justification tables looked like when this was
     built. A different fingerprint on read means another writer moved them."""
 
-    @property
-    def declaration_status_by_line(self) -> dict[tuple[str, str], str]:
-        """(document, item) -> declaration status, for the register.
+    justifications: dict[tuple[str, str], LineJustification] = field(default_factory=dict)
+    """(document, item) -> the line's justification, for the register's
+    Justification column. Lines with none are absent. Built here because it
+    reads the same justifications and the same exception queue as the rest of
+    this view, and must change with them."""
 
-        The register carries a declarationStatus column that the UI renders.
-        Until W5.3 it was a hard-coded "Required" placeholder with a note saying
-        W5.3 owned it; this is that ownership arriving. Memoised on the instance
-        because the register maps 1,225 rows and rebuilding the index per row
-        would be the per-row cost this whole view exists to avoid.
+    @property
+    def declaration_by_line(self) -> dict[tuple[str, str], DeclarationRow]:
+        """(document, item) -> the line's declaration-queue row, for the register.
+
+        The register carries the declaration status, and since the Declaration
+        Queue screen was folded into it (08-Oct-2026) also who declared, when,
+        the condition and the next action -- all of which the queue row already
+        holds. Memoised on the instance because the register maps 1,225 rows
+        and rebuilding the index per row would be the per-row cost this whole
+        view exists to avoid.
         """
-        cached = self.__dict__.get("_status_index")
+        cached = self.__dict__.get("_declaration_index")
         if cached is None:
             cached = {
                 # DeclarationRow.related_repair_id is "{document}-{item}", the
                 # same key the register uses, but the line's own tuple is what
                 # the caller holds -- so it is rebuilt from the id's parts.
-                tuple(row.related_repair_id.rsplit("-", 1)): row.status
+                tuple(row.related_repair_id.rsplit("-", 1)): row
                 for row in self.declarations
             }
-            object.__setattr__(self, "_status_index", cached)
+            object.__setattr__(self, "_declaration_index", cached)
         return cached
 
 
@@ -567,15 +577,18 @@ def build_attestation_view(
     purchase against the justifications. Always does the work."""
     cfg = cfg or get_i8_settings()
     cover = attestation_coverage(db, snapshot.lines, cfg)
+    justifications = load_justifications(db)
     exceptions, exception_stats = build_exceptions(
         snapshot.lines,
         cover,
         cutover=cfg.attestation_cutover_date_value,
         acquisitions=snapshot.acquisitions,
-        justifications=load_justifications(db),
+        justifications=justifications,
         justification_window_days=cfg.justification_window_days,
         justification_cutover=cfg.justification_cutover_date_value,
     )
+    by_line = justifications_by_line(snapshot.lines, justifications, exceptions)
+    logger.info("I08 register justifications: %s", justification_counts(by_line))
     return AttestationView(
         coverage=cover,
         declarations=tuple(build_queue(snapshot.lines, cover)),
@@ -583,6 +596,7 @@ def build_attestation_view(
         exception_stats=exception_stats,
         built_at=datetime.now(timezone.utc),
         source_fingerprint=fingerprint,
+        justifications=by_line,
     )
 
 

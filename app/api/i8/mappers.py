@@ -23,7 +23,10 @@ from app.api.i8.schemas import (
     PlantReference,
     RegisterMeta,
     RepairChain,
+    RepairJustification,
+    RepairJustificationEntry,
     SAPDocumentReference,
+    UnjustifiedPurchase,
     UniverseItem,
     UniverseMeta,
     UniverseSources,
@@ -39,6 +42,7 @@ from app.initiatives.i8.coding_candidates import (
 from app.initiatives.i8.config import I8Settings
 from app.initiatives.i8.declarations import DeclarationRow
 from app.initiatives.i8.exceptions import RAISED_BY_I8, ExceptionItem, ExceptionStats
+from app.initiatives.i8.line_justifications import LineJustification
 from app.initiatives.i8.models import RepairAttestation
 from app.initiatives.i8.register import RegisterStats, RepairLine
 from app.initiatives.i8.universe import UniverseRow, UniverseStats
@@ -88,6 +92,8 @@ def repair_chain(
     new_unit_lead_time_days: int | None = None,
     declaration_status: str = "Required",
     criticality: str | None = None,
+    declaration: DeclarationRow | None = None,
+    justification: LineJustification | None = None,
 ) -> RepairChain:
     """One register row.
 
@@ -100,7 +106,13 @@ def repair_chain(
     from the July snapshot. It defaults to "Required" because that is the honest
     answer for a line nobody has checked -- but it is now a real computed value
     rather than the placeholder it was through W5.2.
+
+    ``declaration`` is the line's queue row, when the caller has the view: its
+    status overrides ``declaration_status``, and it brings who declared, when,
+    the condition and the next action with it.
     """
+    if declaration is not None:
+        declaration_status = declaration.status
     return RepairChain(
         id=f"{line.purchasing_document}-{line.item}",
         material=MaterialReference(
@@ -152,6 +164,43 @@ def repair_chain(
         schedule_lines=line.schedule_lines,
         criticality=criticality,
         po_blocked=line.po_blocked,
+        declared_by=declaration.declared_by if declaration else None,
+        declared_at=declaration.declared_at if declaration else None,
+        condition=declaration.condition if declaration else None,
+        next_action=declaration.next_action if declaration else None,
+        requester=line.requisitioner,
+        justification=repair_justification(justification) if justification else None,
+    )
+
+
+def repair_justification(value: LineJustification) -> RepairJustification:
+    """One line's Justification cell."""
+    return RepairJustification(
+        status=value.status,
+        entries=[
+            RepairJustificationEntry(
+                id=record.id,
+                reason_category=record.reason_category,
+                free_text=record.free_text,
+                author=record.author,
+                recorded_at=record.recorded_at,
+                session_id=record.session_id,
+            )
+            for record in value.recorded
+        ],
+        unjustified_purchases=[
+            UnjustifiedPurchase(
+                exception_id=item.id,
+                purchase=SAPDocumentReference(
+                    type="PO",
+                    document_number=item.acquisition_document or "",
+                    line=item.acquisition_item,
+                ),
+                raised_at=item.raised_at,
+                pre_automation=item.pre_automation,
+            )
+            for item in value.unjustified
+        ],
     )
 
 

@@ -173,6 +173,14 @@ class TestResponseShapeMatchesTheFrontend:
             "expectedReturn",
             "daysRemainingInRepair",
             "receivedAt",
+            # The Declaration Queue and Justifications screens, folded into
+            # the register on 08-Oct-2026.
+            "declaredBy",
+            "declaredAt",
+            "condition",
+            "nextAction",
+            "requester",
+            "justification",
         }
         assert expected <= wire, f"missing: {sorted(expected - wire)}"
 

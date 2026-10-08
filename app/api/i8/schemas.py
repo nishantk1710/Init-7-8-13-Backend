@@ -156,6 +156,46 @@ class UniverseDetail(I8Model):
 # --- Register (W5.2) ------------------------------------------------------
 
 
+class RepairJustificationEntry(I8Model):
+    """One NEW_ACQUISITION justification recorded while the line was out."""
+
+    id: str | None = None
+    reason_category: str | None = None
+    free_text: str | None = None
+    author: str | None = None
+    recorded_at: datetime | None = None
+    session_id: str | None = None
+    """The assistant session it was recorded in -- the link to the
+    conversation."""
+
+
+class UnjustifiedPurchase(I8Model):
+    """A new unit bought while the line was out, with no reason on record.
+
+    The same finding as the ``UNJUSTIFIED_ACQUISITION`` exception, which
+    ``exception_id`` names.
+    """
+
+    exception_id: str
+    purchase: SAPDocumentReference
+    raised_at: date | None = None
+    pre_automation: bool = False
+    """Bought before the justification control existed -- nobody was asked."""
+
+
+class RepairJustification(I8Model):
+    """The register's Justification cell for one repair line."""
+
+    status: Literal["RECORDED", "MISSING"]
+    """MISSING whenever any purchase overlapping the line has no reason, even
+    if another one does: that is the one somebody has to act on."""
+
+    entries: list[RepairJustificationEntry]
+    """Newest first. Empty when the line is only MISSING."""
+
+    unjustified_purchases: list[UnjustifiedPurchase]
+
+
 class RepairChain(I8Model):
     """One repair PO line. Mirrors the frontend's RepairChain."""
 
@@ -194,6 +234,28 @@ class RepairChain(I8Model):
         "Required"
     )
     """W5.3 owns this. Served as the hook, never computed here."""
+
+    # --- the declaration, in full -------------------------------------
+    # The Declaration Queue screen was folded into the register on
+    # 08-Oct-2026, so what it showed per row now travels on the row itself.
+    # Same values as ``DeclarationItem``, from the same attestation view.
+
+    declared_by: str | None = None
+    declared_at: datetime | None = None
+    condition: Literal["Repairable", "Beyond Economical Repair", "Scrap"] | None = None
+    """What the attestation concluded. None when there is no attestation."""
+
+    next_action: str | None = None
+    """What a person should do about this line's declaration, as a sentence."""
+
+    requester: str | None = None
+    """EKPO.AFNAM, a code rather than a name -- no person directory was
+    delivered."""
+
+    justification: RepairJustification | None = None
+    """FR-7 on this line: a NEW_ACQUISITION reason recorded while it was out,
+    or a new purchase that overlapped it with none. None when neither --
+    see ``app.initiatives.i8.line_justifications``."""
 
     days_open: int | None = None
     """Raised to received, or raised to today while still out -- the same
