@@ -362,15 +362,15 @@ class TestLeadTime:
     def test_the_clock_stops_at_the_receipt(self) -> None:
         """A repair that came back inside its planned time stays inside it.
 
-        days_open keeps counting to today for every line, which is right for
-        "how old is this record" and wrong for "did this repair overrun". A
-        closed line must not drift into breach months later.
+        Raised-to-today keeps counting for every line, which is right for "how
+        old is this record" and wrong for "did this repair overrun". A closed
+        line must not drift into breach months later.
         """
         raised, received = date(2026, 1, 1), date(2026, 1, 15)
         elapsed = elapsed_days(raised_at=raised, received_at=received, today=TODAY)
         assert elapsed == 14
         assert lead_time_state(elapsed=elapsed, lead_time_days=21) == WITHIN_LEAD_TIME
-        # ... whereas the register's days_open for the same line is enormous.
+        # ... whereas raised-to-today for the same line is enormous.
         assert days_between(raised, TODAY) > 200
 
     def test_an_open_line_keeps_ageing(self) -> None:
@@ -496,8 +496,19 @@ class TestTheLeadTimeReachesTheLine:
         line = self._line(lead_time=21, received_at=date(2026, 6, 10))
         assert line.days_elapsed == 9
         assert line.lead_time_status == "WITHIN_LEAD_TIME"
-        # days_open keeps counting to today; the lead-time clock does not.
+
+    def test_days_open_stops_at_the_receipt(self) -> None:
+        """A closed line reads its turnaround, not how old the record is -- and
+        its aging band follows, so the register's filter agrees with the column."""
+        line = self._line(lead_time=21, received_at=date(2026, 6, 10))
+        assert line.days_open == 9
+        assert line.aging_bucket == "0-15"
+
+    def test_days_open_keeps_ageing_while_the_unit_is_out(self) -> None:
+        line = self._line(lead_time=21)
         assert line.days_open == days_between(date(2026, 6, 1), TODAY)
+        assert line.days_open == line.days_elapsed
+        assert line.aging_bucket == "60+"
 
     def test_a_zero_plifz_is_coerced_away_at_the_boundary(self) -> None:
         """So no rule downstream has to remember that 0 means "unmaintained"."""
