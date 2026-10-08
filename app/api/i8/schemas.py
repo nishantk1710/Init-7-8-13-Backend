@@ -196,7 +196,11 @@ class RepairChain(I8Model):
     """W5.3 owns this. Served as the hook, never computed here."""
 
     days_open: int | None = None
+    """Raised to received, or raised to today while still out -- the same
+    number as ``daysElapsed``. A closed line shows its turnaround, not the age
+    of the record."""
     aging_bucket: str | None = None
+    """The band ``daysOpen`` falls in."""
 
     lead_time_days: int | None = None
     """MARC.PLIFZ for this material at this plant -- planned delivery time in
@@ -206,8 +210,7 @@ class RepairChain(I8Model):
 
     days_elapsed: int | None = None
     """Raised to received, or raised to today while still out. What
-    ``leadTimeStatus`` is measured on -- it stops when the unit comes back,
-    unlike ``daysOpen``."""
+    ``leadTimeStatus`` is measured on -- it stops when the unit comes back."""
 
     days_over_lead_time: int | None = None
     """Positive once past the planned time, negative while inside it, null when

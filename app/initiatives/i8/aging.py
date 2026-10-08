@@ -202,10 +202,10 @@ def elapsed_days(
 
     To the receipt where there is one, to today where there is not -- the same
     shape as ``daysAtVendor``, and the reason a closed repair stops ageing the
-    moment the unit comes back. ``days_open`` deliberately keeps counting to
-    today for every line; that is the right answer for "how old is this record"
-    and the wrong one for "did this repair overrun", which is what the
-    lead-time check asks.
+    moment the unit comes back. The register serves this as ``days_open`` too:
+    raised-to-today answers "how old is this record", which nobody reading a
+    closed line asks, and is the wrong answer for "did this repair overrun",
+    which is what the lead-time check asks.
 
     >>> elapsed_days(raised_at=date(2026, 1, 1), received_at=date(2026, 2, 1),
     ...              today=date(2026, 9, 1))
