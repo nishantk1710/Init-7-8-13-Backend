@@ -163,10 +163,12 @@ class RepairLine:
 
     qty_under_repair: Decimal
     days_open: int | None
+    """The same clock as ``days_elapsed``: raised to received, or raised to
+    today while still out. A returned repair stops ageing at its receipt, so a
+    closed line reads its turnaround rather than how old the record is."""
     days_elapsed: int | None
     """Raised to received, or raised to today while still out. What the
-    lead-time check measures -- unlike ``days_open``, it stops when the unit
-    comes back."""
+    lead-time check measures, and stops when the unit comes back."""
 
     days_over_lead_time: int | None
     """Positive once past the planned time, negative while inside it, None when
@@ -589,9 +591,10 @@ def _build_line(
         default=None,
     )
 
-    # The lead-time clock. Stops at the receipt, unlike days_open -- so a repair
-    # that came back inside its planned time does not drift into breach months
-    # later just because the record is old.
+    # The repair clock, behind days open, the aging band and the lead-time
+    # check alike. Stops at the receipt -- so a repair that came back inside its
+    # planned time does not drift into breach months later, and a closed line
+    # does not read "200 days open" just because the record is old.
     elapsed = elapsed_days(raised_at=raised_at, received_at=received_at, today=today)
 
     return RepairLine(
@@ -645,16 +648,17 @@ def _build_line(
         qty_under_repair=(
             ZERO if received_at is not None else max(ordered_qty - received_qty, ZERO)
         ),
-        days_open=days_between(raised_at, today),
+        days_open=elapsed,
         # The number that matters: how long this unit has actually been away.
         # Measured to the receipt where there is one, to today where there is
         # not -- so an open repair keeps ageing instead of freezing.
         days_at_vendor=days_between(dispatched_at, received_at or today),
         days_in_current_stage=days_between(stage_started, today),
         days_remaining=days_remaining(due_date, today),
-        aging_bucket=aging_bucket(
-            days_between(raised_at, today), cfg.aging_band_boundaries_list
-        ),
+        # Banded on days open, so the register's aging filter agrees with the
+        # column beside it. Open lines are unaffected: until the receipt the
+        # repair clock and raised-to-today are the same number.
+        aging_bucket=aging_bucket(elapsed, cfg.aging_band_boundaries_list),
         po_blocked=row["loekz"] == cfg.po_blocked_indicator,
     )
 
