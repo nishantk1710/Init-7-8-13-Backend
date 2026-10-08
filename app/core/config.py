@@ -159,6 +159,34 @@ class Settings(BaseSettings):
     # must not run DDL when it starts.
     normalise_views_on_startup: bool = True
 
+    # --- CSV receiver (/api/events/csv) -------------------------------------
+    #
+    # How many pushed CSV chunks one worker decodes, parses and lands at the
+    # same time. SAP pushes every table of a sweep at once, 50,000 rows a chunk.
+    # Measured on one 6 MB, 50,000-row push: the handler peaked at 54 MB before
+    # lean handling and 24 MB after. Twenty of the old kind together were an
+    # out-of-memory kill on the shared B1 plan (2026-10-08 08:12); six of the
+    # new kind is ~150 MB -- wide enough that a queue rarely forms.
+    # The rest wait their turn on the event loop, which costs nothing.
+    csv_upload_max_concurrent: int = 6
+
+    # Seconds a chunk waits for a slot before it is processed anyway. The
+    # SENDER waits with it: SAP's push stays open until we answer, and a sender
+    # that gives up marks the chunk failed even if we then land it -- a resend
+    # would land it twice. Kept short for that reason; set it below SAP's (or
+    # CPI's) own HTTP timeout once they confirm it.
+    csv_upload_max_wait_seconds: int = 30
+
+    # --- CSV pull batching ----------------------------------------------------
+    #
+    # Tables per batch in a CSV sweep (--csv-pull --all, and the nightly full
+    # refresh): fire this many, wait until each is delivered and reconciled --
+    # complete, failed or timed out -- then fire the next. 2 since 2026-10-08,
+    # so SAP never pushes more than two tables at the shared B1 plan at once.
+    # 0 fires every table together, the shape this route was proven on
+    # (21 tables, 38 deliveries); --batch-size overrides it per run.
+    csv_pull_batch_size: int = 2
+
     # --- Workbook fallback --------------------------------------------------
     #
     # The local folder `python -m app.ingest.fallback --upload` (no arguments)

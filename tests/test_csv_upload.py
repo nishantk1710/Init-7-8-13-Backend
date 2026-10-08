@@ -341,6 +341,70 @@ class TestChunkLanding:
         assert response.json()["stored"] is None
         assert response.json()["rows"] == 1
 
+    def test_a_lost_race_on_the_open_table_marker_does_not_lose_the_chunk(
+        self, landing, monkeypatch
+    ) -> None:
+        """Two workers rewriting _open_table.txt at once: ADLS refuses one
+        (ConditionNotMet, 2026-10-08). That came AFTER the rows were appended,
+        and used to fail the landing -- the rows sat in the file uncounted."""
+        counted: list[tuple] = []
+        monkeypatch.setattr(csv_upload, "record_chunk", lambda *a, **k: counted.append((a, k)))
+        real = landing.open_write
+
+        def racing(key):
+            if key == csv_upload.OPEN_TABLE_KEY:
+                raise RuntimeError("ConditionNotMet: the condition specified is not met")
+            return real(key)
+
+        monkeypatch.setattr(landing, "open_write", racing)
+
+        first = post_chunk(f"{EKPO_HEADER}\n800,4500000001,00010,\n").json()["stored"]
+        second = post_chunk(f"{EKPO_HEADER}\n800,4500000002,00020,\n").json()["stored"]
+
+        assert first and first == second
+        assert len(counted) == 2, "both chunks counted"
+        assert read_stored(landing, first).splitlines()[1:] == [
+            "800,4500000001,00010,", "800,4500000002,00020,",
+        ]
+
+    def test_parsing_and_landing_run_off_the_event_loop(self, landing, monkeypatch) -> None:
+        """Blocking work on the event loop stalled every other upload on the
+        worker until SAP's sender gave up (ClientDisconnect, 2026-10-08)."""
+        import threading
+
+        threads: dict[str, int] = {}
+        real_read, real_land = csv_upload._read_body, csv_upload._land
+
+        async def read(request):
+            threads["read"] = threading.get_ident()
+            return await real_read(request)
+
+        def land(*args, **kwargs):
+            threads["land"] = threading.get_ident()
+            return real_land(*args, **kwargs)
+
+        monkeypatch.setattr(csv_upload, "_read_body", read)
+        monkeypatch.setattr(csv_upload, "_land", land)
+
+        assert post_chunk(f"{EKPO_HEADER}\n800,4500000001,00010,\n").status_code == 202
+        assert threads["land"] != threads["read"]
+
+    def test_a_sender_that_hangs_up_is_one_warning_not_a_crash(self, landing, monkeypatch, caplog) -> None:
+        from starlette.requests import ClientDisconnect
+
+        async def gone(request):
+            raise ClientDisconnect()
+
+        monkeypatch.setattr(csv_upload, "_read_body", gone)
+
+        with caplog.at_level(logging.WARNING):
+            response = post_chunk(f"{EKPO_HEADER}\n800,4500000001,00010,\n")
+
+        assert response.status_code == 400
+        assert "ABANDONED" in caplog.text and "resend" in caplog.text
+        assert "Unhandled error" not in caplog.text
+        assert list(landing.list("csv")) == [], "an incomplete body is never landed"
+
     def test_nothing_is_written_when_storage_is_not_configured(self, monkeypatch) -> None:
         monkeypatch.setattr(
             csv_upload, "get_settings",
@@ -378,3 +442,163 @@ class TestTableOf:
 
     def test_case_and_whitespace_do_not_change_the_answer(self) -> None:
         assert csv_upload.table_of([" mandt ", "ebeln", "ebelp"]) == "EKPO"
+
+
+# ---------------------------------------------------------------------------
+# How many chunks are processed at once.
+#
+# SAP pushes every table of a sweep together. On the shared B1 plan twenty
+# chunks decoded and landed side by side were an out-of-memory kill
+# (2026-10-08 08:12), so a worker processes a few at a time -- and never makes
+# a chunk wait so long that the request outlives App Service's time limit.
+# ---------------------------------------------------------------------------
+
+import asyncio
+import threading
+import time as _time
+
+
+class _Gate:
+    """Stands in for _accept: records how many run at once."""
+
+    def __init__(self, seconds: float) -> None:
+        self.seconds = seconds
+        self.running = 0
+        self.peak = 0
+        self.lock = threading.Lock()
+
+    def __call__(self, raw, content_type):
+        with self.lock:
+            self.running += 1
+            self.peak = max(self.peak, self.running)
+        _time.sleep(self.seconds)
+        with self.lock:
+            self.running -= 1
+        return "landed"
+
+
+def _settings(**values):
+    base = {"storage_url": "", "csv_upload_max_concurrent": 2, "csv_upload_max_wait_seconds": 120}
+    base.update(values)
+    return type("S", (), base)()
+
+
+def _run_together(count: int):
+    async def main():
+        return await asyncio.gather(*(csv_upload._process(b"x", "text/csv") for _ in range(count)))
+
+    return asyncio.run(main())
+
+
+class TestProcessingSlots:
+    def test_no_more_than_the_limit_are_processed_at_once(self, monkeypatch) -> None:
+        gate = _Gate(0.2)
+        monkeypatch.setattr(csv_upload, "_accept", gate)
+        monkeypatch.setattr(csv_upload, "get_settings", lambda: _settings(csv_upload_max_concurrent=2))
+
+        results = _run_together(6)
+
+        assert results == ["landed"] * 6, "every chunk is still landed"
+        assert gate.peak == 2
+
+    def test_a_chunk_never_waits_past_the_limit(self, monkeypatch, caplog) -> None:
+        """Past the wait limit it goes ahead without a slot: a request held
+        past 230 seconds is a failure to the sender even when we land it."""
+        gate = _Gate(1.5)
+        monkeypatch.setattr(csv_upload, "_accept", gate)
+        monkeypatch.setattr(
+            csv_upload, "get_settings",
+            lambda: _settings(csv_upload_max_concurrent=1, csv_upload_max_wait_seconds=1),
+        )
+
+        with caplog.at_level(logging.WARNING):
+            results = _run_together(2)
+
+        assert results == ["landed", "landed"]
+        assert gate.peak == 2, "the second went ahead after its wait ran out"
+        assert "landing it anyway" in caplog.text
+
+    def test_waiting_does_not_hold_a_thread(self, monkeypatch) -> None:
+        """Synchronous routes share the thread pool; queued chunks must not
+        occupy it. While one chunk holds the only slot, the waiting ones run
+        no code at all on a worker thread."""
+        gate = _Gate(0.2)
+        pool = {"active": 0, "peak": 0}
+        real = csv_upload.run_in_threadpool
+
+        async def counting(fn, *args):
+            pool["active"] += 1
+            pool["peak"] = max(pool["peak"], pool["active"])
+            try:
+                return await real(fn, *args)
+            finally:
+                pool["active"] -= 1
+
+        monkeypatch.setattr(csv_upload, "_accept", gate)
+        monkeypatch.setattr(csv_upload, "run_in_threadpool", counting)
+        monkeypatch.setattr(csv_upload, "get_settings", lambda: _settings(csv_upload_max_concurrent=1))
+
+        _run_together(4)
+
+        # Gated on threads, all four would sit in the pool at once.
+        assert pool["peak"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Lean handling: what one chunk costs.
+#
+# A 6 MB push used to be held about seven times over (a StringIO at four bytes
+# a character, a padded copy, its remainder, that remainder re-encoded). The
+# parse is now line by line and a UTF-8 push is stored as the bytes SAP sent.
+# ---------------------------------------------------------------------------
+
+import csv
+import io as _io
+
+
+class TestLeanHandling:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            'A,B\r\n1,"two\nlines"\r\n3,"x,y"\r\n4,last',
+            "A,B\n1,2\n",
+            "A,B\n1,2",
+            'A;B\n"q""uote";2\n',
+            "only one line",
+            "",
+        ],
+    )
+    def test_line_by_line_parses_exactly_as_the_stringio_did(self, text) -> None:
+        old = list(csv.reader(_io.StringIO(text, newline="")))
+        new = list(csv.reader(csv_upload._lines(text)))
+        assert new == old
+
+    def test_bare_cr_line_endings_still_parse(self) -> None:
+        """No \n to split on: those take the old route, which knows \r."""
+        text = "A,B\r1,2\r3,4\r"
+        assert list(csv.reader(csv_upload._lines(text))) == [["A", "B"], ["1", "2"], ["3", "4"]]
+
+    def test_a_utf8_push_is_stored_as_the_bytes_sap_sent(self, landing) -> None:
+        body = f"{EKPO_HEADER}\n800,4500000001,00010,Müller Ørsted ☂\n".encode("utf-8")
+
+        key = client.post("/api/events/csv", content=body, headers={"Content-Type": "text/csv"}).json()["stored"]
+
+        with landing.open_read(key) as handle:
+            assert handle.read() == body
+
+    def test_a_non_utf8_push_is_still_stored_as_utf8(self, landing) -> None:
+        body = f"{EKPO_HEADER}\n800,4500000001,00010,Müller\n".encode("cp1252")
+
+        key = client.post("/api/events/csv", content=body, headers={"Content-Type": "text/csv"}).json()["stored"]
+
+        assert read_stored(landing, key).splitlines()[1] == "800,4500000001,00010,Müller"
+
+    def test_the_defaults_keep_the_sender_waiting_briefly(self) -> None:
+        """Six at once is ~150 MB of chunks in flight now that each peaks at
+        ~24 MB (54 MB before); the wait stays short because SAP's push waits
+        with it."""
+        from app.core.config import Settings
+
+        settings = Settings(_env_file=None)
+        assert settings.csv_upload_max_concurrent == 6
+        assert settings.csv_upload_max_wait_seconds == 30

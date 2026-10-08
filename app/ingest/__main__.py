@@ -111,6 +111,16 @@ def _parser() -> argparse.ArgumentParser:
         help="widen the transaction window to N years back instead of three",
     )
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        metavar="N",
+        help=(
+            "CSV sweep: fire N tables, wait until each is delivered and "
+            "reconciled, then the next N (default CSV_PULL_BATCH_SIZE, 2). "
+            "0 fires every table at once."
+        ),
+    )
+    parser.add_argument(
         "--no-wait",
         action="store_true",
         help=(
@@ -346,7 +356,15 @@ def _csv(args) -> int:
         else:
             span = "default (3 years for transaction tables)"
 
-        shape = "fired together, then collected" if len(names) > 1 else "single table"
+        if len(names) == 1:
+            shape = "single table"
+        else:
+            size = args.batch_size if args.batch_size is not None else get_settings().csv_pull_batch_size
+            shape = (
+                f"in batches of {size}, each collected before the next"
+                if size and 0 < size < len(names) and not args.no_wait
+                else "fired together, then collected"
+            )
         if args.all:
             for t in CSV_TABLES:
                 if t.blocked:
@@ -361,6 +379,7 @@ def _csv(args) -> int:
                 max_rows=args.max_rows,
                 tables=names,
                 wait=not args.no_wait,
+                batch_size=args.batch_size,
                 **window,
             )
             if len(names) > 1

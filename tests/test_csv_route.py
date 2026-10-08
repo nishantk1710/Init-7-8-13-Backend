@@ -636,7 +636,7 @@ WINDOW = {"from_date": "20230101", "to_date": "20260101"}
 
 
 class TestBatchFiring:
-    """Fire all 21, then collect.
+    """Tables in flight together; with batching off (0), all 21 at once.
 
     Serialised -- fire, wait, fire the next -- this route delivered nothing, a
     dozen attempts running, while every batch fire delivered: 21 tables twice
@@ -667,8 +667,9 @@ class TestBatchFiring:
     def test_every_table_is_fired_before_any_is_waited_on(
         self, db, monkeypatch
     ) -> None:
-        """The whole point. A wait that begins before the last fire is the
-        serialised shape under a different name."""
+        """With batching off, the shape that delivered 38 of 38. A wait that
+        begins before the last fire is the serialised shape under a different
+        name."""
         real_fire = csv_pull.fire
         transport = _Acks()
         order: list[str] = []
@@ -683,7 +684,8 @@ class TestBatchFiring:
         )
 
         csv_pull.pull_all(
-            tables=["MARA", "MAKT", "EKPO"], gap=0, sleeper=lambda s: None
+            tables=["MARA", "MAKT", "EKPO"], gap=0, sleeper=lambda s: None,
+            batch_size=0,
         )
 
         assert order == ["fire:MARA", "fire:MAKT", "fire:EKPO", "wait"]
@@ -731,14 +733,15 @@ class TestBatchFiring:
         assert [r.status for r in results] == [csv_pull.STATUS_OPEN] * 2
 
     def test_a_sweep_leaves_one_open_request_per_table(self, db, monkeypatch) -> None:
-        """Twenty-one open rows at once is now the normal state, and each must
-        name a different table for the receiver to resolve chunks against."""
+        """With batching off, twenty-one open rows at once, and each must name
+        a different table for the receiver to resolve chunks against."""
         monkeypatch.setattr(csv_pull, "wait_for_all", lambda ids, **kw: [])
 
         csv_pull.pull_all(
             tables=["MARA", "MAKT", "EKPO"],
             gap=0,
             sleeper=lambda s: None,
+            batch_size=0,
             transport=_Acks(),
             client=None,
             **WINDOW,
@@ -752,6 +755,234 @@ class TestBatchFiring:
             ]
         assert sorted(open_tables) == ["EKPO", "MAKT", "MARA"]
         assert len(open_tables) == len(set(open_tables))
+
+
+class TestBatchesOfTwo:
+    """Two tables fired, both delivered and reconciled, then the next two."""
+
+    def _spy(self, monkeypatch, order, verdicts=None):
+        """fire and wait_for_all, recording the order they ran in.
+
+        wait_for_all answers with ``verdicts`` (table -> status, COMPLETE by
+        default) so a batch can be made to fail or time out.
+        """
+        real_fire = csv_pull.fire
+        transport = _Acks()
+        table_of: dict[str, str] = {}
+
+        def spy_fire(name, **kwargs):
+            order.append(f"fire:{name}")
+            result = real_fire(name, transport=transport, client=None, **WINDOW)
+            table_of[result.request_id] = name
+            return result
+
+        def spy_wait(ids, **kwargs):
+            tables = [table_of[i] for i in ids]
+            order.append("wait:" + "+".join(tables))
+            return [
+                csv_pull.PullResult(
+                    table, i, (verdicts or {}).get(table, STATUS_COMPLETE), received_rows=10
+                )
+                for table, i in zip(tables, ids)
+            ]
+
+        monkeypatch.setattr(csv_pull, "fire", spy_fire)
+        monkeypatch.setattr(csv_pull, "wait_for_all", spy_wait)
+
+    def test_each_batch_is_collected_before_the_next_is_fired(
+        self, db, monkeypatch
+    ) -> None:
+        order: list[str] = []
+        self._spy(monkeypatch, order)
+
+        csv_pull.pull_all(
+            tables=["MARA", "MAKT", "EKPO", "MSEG", "MKPF"],
+            gap=0,
+            sleeper=lambda s: None,
+            batch_size=2,
+        )
+
+        assert order == [
+            "fire:MARA", "fire:MAKT", "wait:MARA+MAKT",
+            "fire:EKPO", "fire:MSEG", "wait:EKPO+MSEG",
+            "fire:MKPF", "wait:MKPF",
+        ]
+
+    def test_two_is_the_default(self, db, monkeypatch) -> None:
+        from types import SimpleNamespace
+
+        from app.core import config
+
+        assert config.Settings.model_fields["csv_pull_batch_size"].default == 2
+        monkeypatch.setattr(
+            config, "get_settings", lambda: SimpleNamespace(csv_pull_batch_size=2)
+        )
+        order: list[str] = []
+        self._spy(monkeypatch, order)
+
+        csv_pull.pull_all(
+            tables=["MARA", "MAKT", "EKPO"], gap=0, sleeper=lambda s: None
+        )
+
+        assert order == [
+            "fire:MARA", "fire:MAKT", "wait:MARA+MAKT", "fire:EKPO", "wait:EKPO",
+        ]
+
+    def test_an_unreadable_setting_fires_everything_at_once(self, monkeypatch) -> None:
+        """The proven shape, rather than no sweep at all."""
+        from app.core import config
+
+        def broken():
+            raise ValueError("CSV_PULL_BATCH_SIZE=two")
+
+        monkeypatch.setattr(config, "get_settings", broken)
+
+        assert csv_pull._batch_size() == 0
+
+    def test_the_gap_is_kept_between_fires_not_after_a_batch(
+        self, db, monkeypatch
+    ) -> None:
+        """The wait already separates one batch from the next."""
+        order: list[str] = []
+        self._spy(monkeypatch, order)
+
+        csv_pull.pull_all(
+            tables=["MARA", "MAKT", "EKPO", "MSEG"],
+            gap=3,
+            sleeper=lambda s: order.append(f"sleep:{s}"),
+            batch_size=2,
+        )
+
+        assert order == [
+            "fire:MARA", "sleep:3", "fire:MAKT", "wait:MARA+MAKT",
+            "fire:EKPO", "sleep:3", "fire:MSEG", "wait:EKPO+MSEG",
+        ]
+
+    def test_a_failed_batch_does_not_stop_the_next(self, db, monkeypatch) -> None:
+        """A partial refresh beats no refresh, batch by batch as table by table."""
+        from app.models.csv_extract import STATUS_TIMEOUT
+
+        order: list[str] = []
+        self._spy(
+            monkeypatch, order, verdicts={"MARA": STATUS_TIMEOUT, "MAKT": STATUS_FAILED}
+        )
+
+        results = csv_pull.pull_all(
+            tables=["MARA", "MAKT", "EKPO"], gap=0, sleeper=lambda s: None, batch_size=2
+        )
+
+        assert order[-2:] == ["fire:EKPO", "wait:EKPO"]
+        assert [(r.sap_table, r.status) for r in results] == [
+            ("MARA", STATUS_TIMEOUT), ("MAKT", STATUS_FAILED), ("EKPO", STATUS_COMPLETE),
+        ]
+
+    def test_a_refused_batch_is_not_waited_on(self, db, monkeypatch) -> None:
+        """Nothing was accepted, so there is nothing to wait for."""
+        _open_row(db, "MARA", "MARAAAAA")
+        _open_row(db, "MAKT", "MAKTAAAA")
+        order: list[str] = []
+        self._spy(monkeypatch, order)
+
+        results = csv_pull.pull_all(
+            tables=["MARA", "MAKT", "EKPO"],
+            gap=0,
+            sleeper=lambda s: None,
+            wait_for_open=False,
+            batch_size=2,
+        )
+
+        assert order == ["fire:MARA", "fire:MAKT", "fire:EKPO", "wait:EKPO"]
+        assert [r.status for r in results] == [STATUS_FAILED, STATUS_FAILED, STATUS_COMPLETE]
+
+    def test_no_wait_fires_everything_whatever_the_batch_size(
+        self, db, monkeypatch
+    ) -> None:
+        """There is no delivery to wait between, so batches would mean nothing."""
+        order: list[str] = []
+        self._spy(monkeypatch, order)
+
+        results = csv_pull.pull_all(
+            tables=["MARA", "MAKT", "EKPO"],
+            wait=False,
+            gap=0,
+            sleeper=lambda s: None,
+            batch_size=2,
+        )
+
+        assert order == ["fire:MARA", "fire:MAKT", "fire:EKPO"]
+        assert [r.status for r in results] == [csv_pull.STATUS_OPEN] * 3
+
+    def test_a_batch_as_large_as_the_list_is_one_fire_and_one_wait(
+        self, db, monkeypatch
+    ) -> None:
+        order: list[str] = []
+        self._spy(monkeypatch, order)
+
+        csv_pull.pull_all(
+            tables=["MARA", "MAKT"], gap=0, sleeper=lambda s: None, batch_size=2
+        )
+
+        assert order == ["fire:MARA", "fire:MAKT", "wait:MARA+MAKT"]
+
+
+class TestCountReached:
+    """A table whose rows reach its $count is judged after a minute, not five.
+
+    Twelve batches each waiting out five minutes of silence would add an hour
+    to a sweep. Only a delivery that has provably arrived in full is judged
+    early; everything else waits the whole quiet period as before.
+    """
+
+    NOW = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+
+    def _judged(self, silence: int, **kwargs) -> CsvExtractRequest:
+        record = request(
+            status=csv_pull.STATUS_OPEN,
+            fired_at=self.NOW - timedelta(minutes=30),
+            last_chunk_at=self.NOW - timedelta(seconds=silence),
+            **kwargs,
+        )
+        csv_pull._judge(
+            record,
+            self.NOW,
+            csv_pull.FIRST_CHUNK_TIMEOUT_SECONDS,
+            csv_pull.QUIET_PERIOD_SECONDS,
+        )
+        return record
+
+    def test_a_full_delivery_is_judged_after_a_minute(self) -> None:
+        record = self._judged(90, reconcile="exact", expected_rows=2183, received_rows=2183)
+        assert record.status == STATUS_COMPLETE
+        assert record.completed_at == self.NOW
+
+    def test_a_full_delivery_still_gets_its_minute(self) -> None:
+        """A table that grew during the extract can reach its count on a chunk
+        boundary with one more chunk on the way."""
+        record = self._judged(30, reconcile="exact", expected_rows=2183, received_rows=2183)
+        assert record.status == csv_pull.STATUS_OPEN
+
+    def test_a_short_delivery_waits_the_whole_quiet_period(self) -> None:
+        """A windowed table's count is the whole set, so it never gets here
+        early -- and a whole-table extract still short may have chunks to come."""
+        assert self._judged(90, expected_rows=40651, received_rows=9000).status == csv_pull.STATUS_OPEN
+        assert self._judged(301, expected_rows=40651, received_rows=9000).status == STATUS_COMPLETE
+
+    def test_a_capped_extract_waits_the_whole_quiet_period(self) -> None:
+        """MaxRows makes the count the wrong yardstick."""
+        record = self._judged(
+            90, max_rows="100", reconcile="exact", expected_rows=100, received_rows=100
+        )
+        assert record.status == csv_pull.STATUS_OPEN
+
+    def test_no_count_waits_the_whole_quiet_period(self) -> None:
+        record = self._judged(90, expected_rows=None, received_rows=500)
+        assert record.status == csv_pull.STATUS_OPEN
+
+    def test_judging_early_still_refuses_a_double_delivery(self) -> None:
+        """Early only changes when the verdict is taken, never what it is."""
+        record = self._judged(90, expected_rows=40651, received_rows=81302)
+        assert record.status == STATUS_FAILED
+        assert "twice" in record.error
 
 
 class TestChunkAttribution:
