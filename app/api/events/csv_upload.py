@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
+from starlette.requests import ClientDisconnect
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -335,9 +337,39 @@ async def _read_body(request: Request) -> bytes:
     },
 )
 async def receive_csv(request: Request) -> CsvAccepted:
-    raw = await _read_body(request)
-    content_type = request.headers.get("content-type", "(none)")
+    """Read the upload on the event loop; do everything else on a thread.
 
+    Everything after the read -- decoding megabytes, parsing 50,000 rows,
+    the ADLS appends and the database tally -- is blocking work. Done on the
+    event loop, as it was until 2026-10-08, it stalled the worker for the
+    length of each chunk, and SAP QA's push (many 50,000-row chunks at once,
+    into an app also building its snapshots after a restart) waited, gave up
+    and hung up: ClientDisconnect, and a chunk that was never landed. On a
+    thread, the loop keeps reading the other uploads while one is stored.
+    """
+    content_type = request.headers.get("content-type", "(none)")
+    try:
+        raw = await _read_body(request)
+    except ClientDisconnect:
+        # The sender gave up before the body arrived. Nothing was read, so
+        # nothing is landed or counted, and the request's reconciliation
+        # will show the chunk missing. One line, not a crash traceback.
+        logger.warning(
+            "CSV upload ABANDONED by the sender before its body arrived "
+            "(Content-Length %s, Content-Type %s). Nothing was landed; SAP has "
+            "to resend this chunk.",
+            request.headers.get("content-length", "?"),
+            content_type,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The sender disconnected before the body arrived.",
+        ) from None
+    return await run_in_threadpool(_accept, raw, content_type)
+
+
+def _accept(raw: bytes, content_type: str) -> CsvAccepted:
+    """Decode, parse and land one upload. Blocking; runs on a worker thread."""
     if not raw.strip():
         logger.warning(
             "CSV upload REJECTED (empty body). Content-Type: %s, %d bytes.",
@@ -475,9 +507,9 @@ def _land(
                 sink.write(first_line.rstrip("\r").encode("utf-8"))
             with storage.open_write(key) as sink:
                 sink.write(payload.encode("utf-8"))
-            _set_open_table(storage, table)
             logger.info("CSV landed at %s (new file, table=%s)", key, table)
             record_chunk(table, key, rows=data_rows, raw_bytes=raw_bytes)
+            _set_open_table(storage, table)
             return key
 
         with storage.open_read(header_key) as source:
@@ -491,14 +523,16 @@ def _land(
                 "CSV appended to %s (table=%s, header repeated=%s, now %d bytes)",
                 key, table, repeats_header, size,
             )
-        _set_open_table(storage, table)
         # A repeated header row is not a record. Counting it would inflate the
-        # tally the completeness check depends on.
+        # tally the completeness check depends on. Counted before the open-
+        # table marker is touched: the rows are in the file at this point, and
+        # nothing after it may stop them being counted.
         record_chunk(
             table, key,
             rows=data_rows if repeats_header else data_rows + 1,
             raw_bytes=raw_bytes,
         )
+        _set_open_table(storage, table)
         return key
     except Exception:
         logger.exception("CSV not landed at %s", key)
@@ -539,8 +573,25 @@ def _keys_for(table: str) -> tuple[str, str]:
 
 
 def _set_open_table(storage, table: str) -> None:
-    with storage.open_write(OPEN_TABLE_KEY) as sink:
-        sink.write(table.encode("utf-8"))
+    """Remember which table is arriving, for a later headerless chunk. Best effort.
+
+    One small file every worker rewrites, so two chunks landing at the same
+    moment race on it, and ADLS refuses the loser (ConditionNotMet, measured
+    2026-10-08 with SAP QA pushing CDHDR and EKBE at once). It used to raise
+    out of ``_land`` AFTER the chunk's rows were appended -- logged as "not
+    landed" and never counted, so a complete file read as a short one. The
+    marker only matters for a chunk without a header, and SAP repeats the
+    header on every chunk, so losing one update costs nothing worth a chunk.
+    """
+    try:
+        with storage.open_write(OPEN_TABLE_KEY) as sink:
+            sink.write(table.encode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 -- the chunk is already landed and counted
+        logger.warning(
+            "could not record %s as the open table (%s: %s); its chunk is landed "
+            "and counted regardless",
+            table, type(exc).__name__, str(exc).splitlines()[0][:120],
+        )
 
 
 def _get_open_table(storage) -> str | None:

@@ -341,6 +341,70 @@ class TestChunkLanding:
         assert response.json()["stored"] is None
         assert response.json()["rows"] == 1
 
+    def test_a_lost_race_on_the_open_table_marker_does_not_lose_the_chunk(
+        self, landing, monkeypatch
+    ) -> None:
+        """Two workers rewriting _open_table.txt at once: ADLS refuses one
+        (ConditionNotMet, 2026-10-08). That came AFTER the rows were appended,
+        and used to fail the landing -- the rows sat in the file uncounted."""
+        counted: list[tuple] = []
+        monkeypatch.setattr(csv_upload, "record_chunk", lambda *a, **k: counted.append((a, k)))
+        real = landing.open_write
+
+        def racing(key):
+            if key == csv_upload.OPEN_TABLE_KEY:
+                raise RuntimeError("ConditionNotMet: the condition specified is not met")
+            return real(key)
+
+        monkeypatch.setattr(landing, "open_write", racing)
+
+        first = post_chunk(f"{EKPO_HEADER}\n800,4500000001,00010,\n").json()["stored"]
+        second = post_chunk(f"{EKPO_HEADER}\n800,4500000002,00020,\n").json()["stored"]
+
+        assert first and first == second
+        assert len(counted) == 2, "both chunks counted"
+        assert read_stored(landing, first).splitlines()[1:] == [
+            "800,4500000001,00010,", "800,4500000002,00020,",
+        ]
+
+    def test_parsing_and_landing_run_off_the_event_loop(self, landing, monkeypatch) -> None:
+        """Blocking work on the event loop stalled every other upload on the
+        worker until SAP's sender gave up (ClientDisconnect, 2026-10-08)."""
+        import threading
+
+        threads: dict[str, int] = {}
+        real_read, real_land = csv_upload._read_body, csv_upload._land
+
+        async def read(request):
+            threads["read"] = threading.get_ident()
+            return await real_read(request)
+
+        def land(*args, **kwargs):
+            threads["land"] = threading.get_ident()
+            return real_land(*args, **kwargs)
+
+        monkeypatch.setattr(csv_upload, "_read_body", read)
+        monkeypatch.setattr(csv_upload, "_land", land)
+
+        assert post_chunk(f"{EKPO_HEADER}\n800,4500000001,00010,\n").status_code == 202
+        assert threads["land"] != threads["read"]
+
+    def test_a_sender_that_hangs_up_is_one_warning_not_a_crash(self, landing, monkeypatch, caplog) -> None:
+        from starlette.requests import ClientDisconnect
+
+        async def gone(request):
+            raise ClientDisconnect()
+
+        monkeypatch.setattr(csv_upload, "_read_body", gone)
+
+        with caplog.at_level(logging.WARNING):
+            response = post_chunk(f"{EKPO_HEADER}\n800,4500000001,00010,\n")
+
+        assert response.status_code == 400
+        assert "ABANDONED" in caplog.text and "resend" in caplog.text
+        assert "Unhandled error" not in caplog.text
+        assert list(landing.list("csv")) == [], "an incomplete body is never landed"
+
     def test_nothing_is_written_when_storage_is_not_configured(self, monkeypatch) -> None:
         monkeypatch.setattr(
             csv_upload, "get_settings",
