@@ -144,12 +144,18 @@ class TestI13Shape:
         names = {f.name for f in step.fields}
         assert {"window_start", "window_end"} <= names
 
-    def test_the_optional_fields_are_optional(self) -> None:
+    def test_every_plan_field_is_required(self) -> None:
+        """Without a window end a plan can never breach, so both dates are
+        required alongside the purpose and quantity."""
         step = i13_step({script.I13_ASSESSMENT: {"choice": script.PROCEED}})
         by_name = {f.name: f for f in step.fields}
-        assert by_name["window_start"].required is False
-        assert by_name["window_end"].required is False
-        assert by_name["purpose"].required is True
+        for name in ("purpose", "planned_quantity", "window_start", "window_end"):
+            assert by_name[name].required is True, name
+
+    def test_the_quantity_asks_how_many_to_procure(self) -> None:
+        step = i13_step({script.I13_ASSESSMENT: {"choice": script.PROCEED}})
+        by_name = {f.name: f for f in step.fields}
+        assert by_name["planned_quantity"].label == "How many should be procured"
 
     def test_the_plan_form_does_not_ask_for_cost_centre_or_work_order(self) -> None:
         step = i13_step({script.I13_ASSESSMENT: {"choice": script.PROCEED}})
