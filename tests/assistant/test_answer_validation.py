@@ -146,7 +146,6 @@ class TestDatesAndTheWindow:
         assert cleaned["window_end"] == "2026-08-01"
 
 
-
 class TestSelectFields:
     def test_a_configured_category_is_accepted(self) -> None:
         cleaned = validate(
