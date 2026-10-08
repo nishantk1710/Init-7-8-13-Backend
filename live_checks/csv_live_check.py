@@ -44,10 +44,9 @@ Usage -- on the Azure SSH box, from backend/:
     python live_checks/csv_live_check.py --inspect               # no fire: analyse latest landed files
     python live_checks/csv_live_check.py --odata-report /home/live_checks/odata_<time>.json
 
-Two tables are fired, watched until both have delivered (5 minutes with no
+Two tables are fired, watched until both have delivered (2 minutes with no
 growth) or timed out, then the next two -- so each batch costs its delivery
-plus 5 minutes, about an hour or more for all 21. --batch-size 0 fires them
-all at once and takes ~10 minutes. Run it under nohup:
+plus 2 minutes. --batch-size 0 fires them all at once. Run it under nohup:
 
     nohup python -u live_checks/csv_live_check.py > /home/live_checks/csv_run.log 2>&1 &
     tail -f /home/live_checks/csv_run.log
@@ -552,7 +551,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="fire N tables, wait until they are delivered, then the next N "
                              "(default 2; 0 = fire every table at once)")
     parser.add_argument("--poll", type=int, default=15, help="seconds between storage checks (default 15)")
-    parser.add_argument("--quiet", type=int, default=300, help="no growth for this long = delivered (default 300)")
+    parser.add_argument("--quiet", type=int, default=120,
+                        help="no growth for this long = delivered (default 120; SAP sends a chunk every ~9s, "
+                             "so a pause longer than this -- e.g. the app restarting -- ends the wait early)")
     parser.add_argument("--first-chunk-timeout", type=int, default=300, help="nothing by then = timeout (default 300)")
     parser.add_argument("--max-wait", type=int, default=1800, help="hard stop for each batch's wait (default 1800)")
     parser.add_argument("--force", action="store_true", help="fire even where the app has an extract open")
