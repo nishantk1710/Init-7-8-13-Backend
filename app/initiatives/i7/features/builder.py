@@ -117,13 +117,21 @@ def _densify(
     return ConsumptionSeries(key=key, observations=tuple(observations))
 
 
-def _load_consumption(session: Session) -> dict[tuple[str, str], list[tuple[date, Decimal, str | None]]]:
-    """Every staged consumption row, grouped by material-plant.
+def _load_consumption(
+    session: Session, staging_run_id: int
+) -> dict[tuple[str, str], list[tuple[date, Decimal, str | None]]]:
+    """Every consumption row ``staging_run_id`` staged, grouped by material-plant.
 
     One ordered scan rather than a query per material. The staged table holds
     ~13.7k rows -- Phase 2 already collapsed 233k movements into it -- so this
     is small enough to group in memory, and doing so avoids tens of thousands of
     round trips.
+
+    **Filtered to one staging run.** The upsert refreshes ``staging_run_id`` on
+    every row it writes, so the rows carrying this run's id are exactly the ones
+    it staged. Without the filter a row left behind by an older or failed run is
+    indistinguishable from a current one, and the resulting series silently
+    mixes two extracts.
     """
     grouped: dict[tuple[str, str], list[tuple[date, Decimal, str | None]]] = {}
     statement = (
@@ -133,7 +141,9 @@ def _load_consumption(session: Session) -> dict[tuple[str, str], list[tuple[date
             StagedConsumption.period,
             StagedConsumption.quantity,
             StagedConsumption.unit_of_measure,
-        ).order_by(
+        )
+        .where(StagedConsumption.staging_run_id == staging_run_id)
+        .order_by(
             StagedConsumption.sap_material_number,
             StagedConsumption.sap_plant_code,
             StagedConsumption.period,
@@ -145,7 +155,7 @@ def _load_consumption(session: Session) -> dict[tuple[str, str], list[tuple[date
 
 
 def _load_consumption_event_counts(
-    session: Session,
+    session: Session, staging_run_id: int
 ) -> dict[tuple[str, str], list[tuple[date, int, int]]]:
     """Every staged consumption row's issue/reversal transaction counts, grouped
     by material-plant.
@@ -163,6 +173,8 @@ def _load_consumption_event_counts(
         StagedConsumption.period,
         StagedConsumption.issue_count,
         StagedConsumption.reversal_count,
+    ).where(
+        StagedConsumption.staging_run_id == staging_run_id
     ).order_by(
         StagedConsumption.sap_material_number,
         StagedConsumption.sap_plant_code,
@@ -207,16 +219,28 @@ def consumption_count_12m(
     return max(total, 0)
 
 
-def observation_window(session: Session) -> tuple[date, date] | None:
+def observation_window(
+    session: Session, staging_run_id: int | None = None
+) -> tuple[date, date] | None:
     """The extract's demand observation window: first to last staged month.
 
     Derived from the data rather than configured, because it is a property of
     what was delivered. Returns ``None`` when nothing is staged, which is the
     only case where no window exists.
+
+    Scoped to one staging run when given one. The window sets ``n`` for *every*
+    material-plant through densification, so a stale row from an older extract
+    does not merely add itself -- it lengthens the window, and with it the
+    zero-filled history of every series in the build. ``staging_run_id=None``
+    keeps the unscoped behaviour for callers that genuinely want "everything
+    staged", and for the existing tests that assert on it.
     """
-    low, high = session.execute(
-        select(func.min(StagedConsumption.period), func.max(StagedConsumption.period))
-    ).one()
+    statement = select(
+        func.min(StagedConsumption.period), func.max(StagedConsumption.period)
+    )
+    if staging_run_id is not None:
+        statement = statement.where(StagedConsumption.staging_run_id == staging_run_id)
+    low, high = session.execute(statement).one()
     if low is None or high is None:
         return None
     return low, high
@@ -243,8 +267,17 @@ _STOCK_SQL = """
            SUM(returns_stock) AS returns_stock,
            COUNT(*) AS storage_location_count
       FROM i7_staged_stock
+     WHERE is_active = 1
      GROUP BY sap_material_number, sap_plant_code
 """
+# ``is_active = 1`` here as well as in the universe CTE, and the two are not
+# redundant. The CTE decides whether a material-plant EXISTS; this decides what
+# its stock IS. A material-plant can be active -- still carried by MARC, still
+# holding stock at other storage locations -- while one of its MARD rows has
+# gone from the snapshot. Summing that dead location back in would overstate
+# on-hand stock and inflate storage_location_count for a material-plant that is
+# otherwise entirely current, and on-hand stock is what ROP is compared
+# against. The row itself stays, deactivated, as the audit of what was there.
 
 
 def _load_stock(session: Session) -> dict[tuple[str, str], _StockPosition]:
@@ -299,9 +332,17 @@ _ATTRIBUTE_SQL = """
         -- classification) are correctly unavailable for Gamsberg until MARC is
         -- re-extracted -- but that is a reason for those specific columns to be
         -- NULL, not a reason for the material-plant row itself to not exist.
+        -- is_active = 1 only: a material-plant a COMPLETE snapshot stopped
+        -- carrying is excluded here, which excludes it from the feature store
+        -- and therefore from forecasting, inventory, OAR and recommendations
+        -- at once -- the same single-gate reasoning as the deletion_flag
+        -- filter below. Deactivation is reversible (the row returns to an
+        -- extract, the sweep reactivates it); the row itself is never deleted.
         SELECT sap_material_number, sap_plant_code FROM i7_staged_material_plant
+         WHERE is_active = 1
         UNION
         SELECT sap_material_number, sap_plant_code FROM i7_staged_stock
+         WHERE is_active = 1
     )
     SELECT u.sap_material_number,
            u.sap_plant_code,
@@ -350,42 +391,120 @@ def _upsert(session: Session, rows: list[dict[str, Any]]) -> None:
     upsert(session, MaterialFeature, rows, ["sap_material_number", "sap_plant_code"])
 
 
+class StagingNotReady(RuntimeError):
+    """No staging run this build is allowed to read.
+
+    Raised rather than returned so no caller can mistake it for an empty
+    catalogue: "nothing was staged successfully" and "everything was staged and
+    none of it qualified" produce the same zero and mean opposite things.
+    """
+
+
+def resolve_staging_run(session: Session) -> StagingRun:
+    """The one staging run features may be built from.
+
+    The newest ``succeeded`` run, and nothing else. Two states are refused
+    rather than worked around:
+
+    * **A run still ``running``.** Its ``i7_staging_run`` row is committed before
+      any staging work begins, so a concurrent build can see the run exists while
+      its rows are still being written -- and a run killed mid-write (an App
+      Service restart, an OOM) leaves that row saying ``running`` forever with
+      whatever it had managed to commit. Either way the rows carry no mark saying
+      they are incomplete, so the run's status is the only thing that can say so.
+    * **No succeeded run at all.** A first-ever build, or every run so far
+      failed. Either way there is no consistent version to read.
+
+    A ``failed`` run newer than the newest succeeded one is *not* an error: its
+    partial rows stay in the table (staging upserts and never rolls back), but
+    pinning to the succeeded run means they are not read, because every staged
+    row carries the id of the run that wrote it.
+    """
+    running = session.execute(
+        select(StagingRun.id)
+        .where(StagingRun.status == "running")
+        .order_by(StagingRun.id.desc())
+        .limit(1)
+    ).scalar()
+    if running is not None:
+        raise StagingNotReady(
+            f"staging run {running} is still running; features would be built "
+            "from a partially written run"
+        )
+
+    run = session.execute(
+        select(StagingRun)
+        .where(StagingRun.status == STATUS_SUCCEEDED)
+        .order_by(StagingRun.id.desc())
+        .limit(1)
+    ).scalars().first()
+    if run is None:
+        raise StagingNotReady(
+            "no staging run has succeeded; run app.initiatives.i7.adapters."
+            "extract.stage_extract first"
+        )
+    return run
+
+
 def build_features(policy: PolicyDocument | None = None) -> FeatureBuildResult:
     """Compute features for every staged material-plant.
 
     Idempotent: a second build converges on the same rows.
+
+    Refuses to build when staging is not in a readable state -- see
+    :func:`resolve_staging_run`. The refusal is recorded as a ``failed``
+    feature run rather than raised to the caller, so an operator asking "what
+    happened at 02:00?" finds the answer in the same table as every other run.
     """
     policy = policy or PolicyDocument()
     session_factory = get_sessionmaker()
 
     with session_factory() as session:
-        movement_types = session.execute(
-            select(StagingRun.consumption_movement_types)
-            .where(StagingRun.status == "succeeded")
-            .order_by(StagingRun.id.desc())
-            .limit(1)
-        ).scalar()
+        try:
+            staging_run = resolve_staging_run(session)
+        except StagingNotReady as exc:
+            detail = f"StagingNotReady: {exc}"
+            logger.error("feature build refused: %s", exc)
+            run = FeatureBuildRun(
+                status=STATUS_FAILED,
+                policy_id=policy.policy_id,
+                policy_version=policy.policy_version,
+                error=detail[:4000],
+                finished_at=datetime.now(timezone.utc),
+            )
+            session.add(run)
+            session.commit()
+            return FeatureBuildResult(
+                run_id=run.id, status=STATUS_FAILED, error=detail
+            )
 
+        staging_run_id = staging_run.id
         run = FeatureBuildRun(
             status="running",
             policy_id=policy.policy_id,
             policy_version=policy.policy_version,
-            consumption_movement_types=movement_types,
+            consumption_movement_types=staging_run.consumption_movement_types,
+            staging_run_id=staging_run_id,
+            source_fingerprint=staging_run.source_fingerprint,
         )
         session.add(run)
         session.commit()
         run_id = run.id
+
+    logger.info(
+        "feature run %d: building from staging run %d", run_id, staging_run_id
+    )
 
     result = FeatureBuildResult(run_id=run_id)
 
     try:
         with session_factory() as session:
             logger.info("feature run %d: loading consumption", run_id)
-            consumption = _load_consumption(session)
-            consumption_events = _load_consumption_event_counts(session)
+            consumption = _load_consumption(session, staging_run_id)
+            consumption_events = _load_consumption_event_counts(session, staging_run_id)
             purchase_orders = _load_purchase_order_counts(session)
             stock = _load_stock(session)
-            window = observation_window(session)
+            window = observation_window(session, staging_run_id)
 
             logger.info("feature run %d: computing features", run_id)
             batch_size = safe_batch_size(MaterialFeature, 2000, session.get_bind().dialect.name)

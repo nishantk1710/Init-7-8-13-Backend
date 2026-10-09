@@ -24,6 +24,7 @@ from app.models.i7_recommendation import (
     SapAdoptionResult,
     SapExecutionEvidence,
 )
+from app.models.i7_pipeline import PipelineRun
 from app.models.i7_policy import PolicyVersion
 from app.models.i7_reporting import QuarterlyReportRecord
 from app.models.i7_staging import (

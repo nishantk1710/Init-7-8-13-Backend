@@ -496,6 +496,28 @@ class Settings(BaseSettings):
     # Codes are strings, not integers: PDWB is a real plant in this extract.
     i7_plants: str = "1500,1300"
 
+    # --- I07 pipeline watcher -----------------------------------------------
+    #
+    # OFF by default, and deliberately so. The watcher runs the whole I07
+    # pipeline in-process, which is far heavier than the I08/I13 fingerprint
+    # checks it is modelled on, and it would share one gunicorn worker with
+    # I13's ~1.3 GB snapshot. Whether that is safe is a question about peak RSS
+    # and run duration against the real database, and neither has been
+    # measured -- see docs/i07_pipeline_automation.md. Until it has, this stays
+    # false and the pipeline is run on purpose:
+    #     python -m scripts.run_full_pipeline
+    i7_pipeline_watch_enabled: bool = False
+
+    # Seconds between fingerprint checks. The check itself is one grouped query
+    # over ingestion_run; the PIPELINE it may start is the expensive part, and
+    # that is bounded by the fingerprint changing, not by this interval.
+    i7_pipeline_check_interval_seconds: int = 300
+
+    # Seconds to wait after start-up before the first check, so a deploy does
+    # not begin a pipeline run while migrations may still be applying. Matches
+    # the delta scheduler's reasoning and its default.
+    i7_pipeline_initial_delay_seconds: int = 120
+
     # Current VZI OAR material-scope ruling (MARC.DISMM), comma-separated.
     # See app/shared/material_scope/policy.py -- this is shared platform
     # config, not owned by any single initiative.

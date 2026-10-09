@@ -10,7 +10,16 @@ without any route formatting its own error body.
 
 from fastapi import APIRouter
 
-from app.api.i7 import adoption, approval_history, approvals, health, recommendations, reports, runs
+from app.api.i7 import (
+    adoption,
+    approval_history,
+    approvals,
+    health,
+    pipeline_runs,
+    recommendations,
+    reports,
+    runs,
+)
 
 router = APIRouter(prefix="/v1/i7")
 
@@ -25,6 +34,11 @@ router.include_router(recommendations.router)
 router.include_router(approvals.router)
 router.include_router(approval_history.router)
 router.include_router(runs.router)
+# /pipeline-runs, a distinct prefix from runs.py's /runs -- so registration
+# order between the two does not matter. Order WITHIN pipeline_runs.py does,
+# and is handled there: /pipeline-runs/latest is declared before
+# /pipeline-runs/{run_id}, or "latest" would be parsed as an id.
+router.include_router(pipeline_runs.router)
 # reports.py's paths are all under /reports/quarterly/... -- no collision
 # with runs.py's /runs/... or recommendations.py's /recommendations/...
 # prefixes, so registration order relative to those routers does not matter.

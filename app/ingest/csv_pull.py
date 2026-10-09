@@ -71,6 +71,7 @@ lands, never by what the trigger said.
 from __future__ import annotations
 
 import re
+import secrets
 import threading
 import time
 from dataclasses import dataclass
@@ -205,6 +206,19 @@ def new_request_id(sap_table: str, *, now: float | None = None) -> str:
     return f"{_ID_PREFIX}{table}{seconds:0{REQUEST_ID_DIGITS}d}"
 
 
+def new_sweep_id(now: datetime | None = None) -> str:
+    """``S<YYYYMMDDHHMMSS><4 hex>`` -- one id for one full-refresh sweep.
+
+    Unlike ``request_id`` this is never sent to SAP, so it has no shape
+    constraint to satisfy; it only has to be unique and sortable. The timestamp
+    makes it readable in a log and orderable in a query, and the random tail
+    keeps two sweeps started in the same second apart -- which a scale-out or a
+    hand-run beside the timer could otherwise produce.
+    """
+    stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%d%H%M%S")
+    return f"S{stamp}{secrets.token_hex(2)}"
+
+
 def extract_path(
     request_id: str,
     sap_table: str,
@@ -269,8 +283,14 @@ def fire(
     to_date: str | None = None,
     transport: CpiTransport | None = None,
     client: SapClient | None = None,
+    sweep_id: str | None = None,
 ) -> PullResult:
-    """Record the request, then ask SAP for it. Never raises."""
+    """Record the request, then ask SAP for it. Never raises.
+
+    ``sweep_id`` marks this request as part of one full-refresh sweep. Only
+    :func:`pull_all` supplies it; a single-table fire leaves it None, because
+    one table is not a snapshot and must not read as one.
+    """
     spec = csv_table(sap_table)
     if spec.blocked:
         # Fired anyway: the request is then on record on SAP's side, which is
@@ -313,6 +333,7 @@ def fire(
             status=STATUS_OPEN,
             reconcile=spec.reconcile.value,
             expected_rows=expected,
+            sweep_id=sweep_id,
         )
         session.add(record)
         session.commit()
@@ -597,6 +618,7 @@ def pull_all(
     gap: int = FIRE_GAP_SECONDS,
     sleeper=time.sleep,
     batch_size: int | None = None,
+    sweep_id: str | None = None,
     **window,
 ) -> list[PullResult]:
     """Fire the tables in batches, collecting each batch before the next.
@@ -622,17 +644,26 @@ def pull_all(
         logger.error(detail)
         return [PullResult(name, "", STATUS_FAILED, error=detail) for name in names]
 
+    # One id for everything this call fires, minted before the first fire so
+    # every request carries it -- including the ones that fail or time out.
+    # That matters: a sweep is only a snapshot if EVERY table in it landed, so
+    # the failures have to be attributable to the same sweep as the successes,
+    # or a partial refresh would look complete by their absence.
+    sweep_id = sweep_id or new_sweep_id()
+    logger.info("sweep %s: %d table(s)", sweep_id, len(names))
+
     size = _batch_size() if batch_size is None else max(0, int(batch_size))
     if wait and 0 < size < len(names):
         return _pull_in_batches(
-            names, size, max_rows=max_rows, gap=gap, sleeper=sleeper, **window
+            names, size, max_rows=max_rows, gap=gap, sleeper=sleeper,
+            sweep_id=sweep_id, **window
         )
 
     logger.info("firing %d extract(s), %ds apart", len(names), gap)
     fired: list[PullResult] = []
     for index, name in enumerate(names, 1):
         logger.info("[%d/%d] %s", index, len(names), name)
-        result = fire(name, max_rows=max_rows, **window)
+        result = fire(name, max_rows=max_rows, sweep_id=sweep_id, **window)
         fired.append(result)
         if result.status != STATUS_OPEN:
             logger.error("%s: %s -- %s", name, result.status, result.error or "")
@@ -672,6 +703,7 @@ def _pull_in_batches(
     max_rows: str,
     gap: int,
     sleeper,
+    sweep_id: str | None = None,
     **window,
 ) -> list[PullResult]:
     """Fire ``size`` tables, wait for all of them, then the next ``size``.
@@ -692,7 +724,7 @@ def _pull_in_batches(
         logger.info("batch %d/%d: %s", number, len(batches), ", ".join(batch))
         fired: list[PullResult] = []
         for index, name in enumerate(batch, 1):
-            result = fire(name, max_rows=max_rows, **window)
+            result = fire(name, max_rows=max_rows, sweep_id=sweep_id, **window)
             fired.append(result)
             if result.status != STATUS_OPEN:
                 logger.error("%s: %s -- %s", name, result.status, result.error or "")

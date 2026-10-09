@@ -34,6 +34,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -70,6 +71,38 @@ class StagingRun(Base):
     # The movement-type set used, recorded because it is unconfirmed: a later
     # correction needs to know which rows were built under which definition.
     consumption_movement_types: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    source_fingerprint: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    """Which raw-layer load this run read, as ``app.shared.source_state`` builds
+    it. Answers "which ingestion refresh produced these rows?" -- the question
+    ``source`` alone cannot, because it names the vocabulary and not the load.
+
+    Nullable: a run staged before this column existed, or one started by hand
+    with no fingerprint resolved, genuinely does not know. A wrong value would
+    be worse than an absent one.
+    """
+
+    snapshot_complete: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("0")
+    )
+    """Whether this run read a COMPLETE snapshot of its sources.
+
+    The deactivation sweep is gated on this and nothing else. A CSV full pull
+    replaces ``raw_<table>`` whole (``app.ingest.csv_load``: "Replace, not
+    merge"), so absence from it is evidence of deletion. An OData delta merges
+    into what is already there, so absence from it means only "unchanged" --
+    sweeping on one would deactivate the entire catalogue bar the few rows that
+    happened to move. Defaults False: not knowing must never sweep.
+    """
+
+    deactivated: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
+    )
+    """Rows this run marked inactive. Zero on a delta run, always.
+
+    Server default as well as a Python one, matching the migration: the column
+    is NOT NULL, and an INSERT that does not mention it (any path not going
+    through this mapper) would otherwise be refused rather than defaulted."""
 
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -148,8 +181,30 @@ class StagedMaterialPlant(Base):
 
     deletion_flag: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
+    """False when a COMPLETE snapshot no longer carried this material-plant.
+
+    Distinct from ``deletion_flag``, which is SAP's own LVORM -- a statement SAP
+    made. This is a statement *we* made, by observing that a full extract that
+    should have contained the row did not. Keeping them apart matters: LVORM
+    coming back means SAP un-flagged it; this coming back means the row
+    reappeared in an extract. Conflating them would lose which happened.
+
+    Never set by a delta run -- see ``StagingRun.snapshot_complete``. Soft, so
+    the row and its history survive: a material deactivated in error is one
+    extract away from returning, and a hard delete would have taken its staged
+    consumption with it.
+
+    Owned by the sweep (``extract.deactivate_unseen``), which is the only thing
+    that writes it in either direction -- the staged row dictionaries do not
+    carry this column, so the upsert never touches it.
+    """
+
     source_table: Mapped[str] = mapped_column(String(64))
     staging_run_id: Mapped[int] = mapped_column(Integer, index=True)
+    """Which run last WROTE this row. The upsert refreshes every non-key column,
+    so a row re-seen by run N carries N, and a row that has vanished keeps the
+    older id. That difference is exactly what the sweep reads."""
 
 
 class StagedStock(Base):
@@ -207,6 +262,12 @@ class StagedStock(Base):
 
     returns_stock: Mapped[Decimal | None] = mapped_column(QUANTITY, nullable=True)
     """RETME."""
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
+    """False when a COMPLETE snapshot no longer carried this storage location.
+    See the same column on :class:`StagedMaterialPlant`; MARD is swept on the
+    same terms, because the feature universe is the UNION of the two and a row
+    left active here would hold a deactivated material-plant in scope."""
 
     source_table: Mapped[str] = mapped_column(String(64))
     staging_run_id: Mapped[int] = mapped_column(Integer, index=True)
