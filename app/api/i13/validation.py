@@ -13,6 +13,11 @@ they are:
 A report that is not loaded yields its result rows as REFERENCE_UNAVAILABLE and
 its detail block as null.
 
+ZMM065 is uploaded monthly by VZI (``POST /validation/zmm065/uploads``, see
+``app.initiatives.i13.zmm065_upload``). Without ``report_month`` validation reads
+the latest upload per plant, falling back to the seeded July workbook for a
+plant with none; with ``report_month`` it reads only that month's uploads.
+
 The two ``*_reference_count`` query parameters predate the reports being
 loaded, when a person typed the counts in. They are still accepted so an older
 client does not error, and ignored: a typed count was compared against figures
@@ -24,10 +29,10 @@ from dataclasses import asdict
 from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.api.i13.deps import snapshot_or_live
+from app.api.i13.deps import Actor, get_current_actor, snapshot_or_live
 from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.movements import ISSUE_TYPES, RECEIPT_TYPES, last_unreversed_date, reversal_types_for
@@ -39,19 +44,35 @@ from app.initiatives.i13.report_validation import (
     validate_zmm065,
 )
 from app.initiatives.i13.snapshot import I13Snapshot
+from app.initiatives.i13.zmm065_upload import (
+    Zmm065DuplicateUpload,
+    Zmm065UploadError,
+    current_uploads,
+    list_uploads,
+    parse_month,
+    parse_zmm065_workbook,
+    store_upload,
+    zmm065_reference,
+)
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
-from app.integrations.sap.postgres_reports import fetch_gr_30day_rows, fetch_zmm065_rows
+from app.integrations.sap.postgres_reports import fetch_gr_30day_rows
 from app.schemas.i13 import (
     Gr30DayValidationResponse,
     ReconciliationSourceResult,
     ValidationResponse,
+    Zmm065SourceResponse,
+    Zmm065UploadResponse,
+    Zmm065UploadResultResponse,
     Zmm065ValidationResponse,
 )
 
 router = APIRouter()
 
 Key = tuple[str, str]
+
+#: The largest workbook accepted. The July reports are ~3 MB each.
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 @router.get("/validation", response_model=ValidationResponse)
@@ -61,6 +82,11 @@ def get_validation(
     ),
     gr_30_day_reference_count: int | None = Query(
         None, description="Deprecated and ignored: the 30-Day GR Report is now read from the database."
+    ),
+    report_month: str | None = Query(
+        None,
+        description="YYYY-MM: reconcile against that month's ZMM065 uploads only. "
+        "Omitted: the latest upload per plant, else the seeded report.",
     ),
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
@@ -77,7 +103,11 @@ def get_validation(
     def last_issue_as_of(key: Key, day: date) -> date | None:
         return last_unreversed_date(list(issue_events.get(key, ())), ISSUE_TYPES, as_of=day)
 
-    zmm065_rows = fetch_zmm065_rows(db)
+    try:
+        month = parse_month(report_month) if report_month else None
+    except Zmm065UploadError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
+    zmm065_rows, zmm065_sources = zmm065_reference(db, month)
     zmm065 = (
         validate_zmm065(
             zmm065_rows,
@@ -107,6 +137,64 @@ def get_validation(
         results=[ReconciliationSourceResult.model_validate(r) for r in results],
         zmm065=_zmm065_response(zmm065) if zmm065 else None,
         gr_30_day=_gr_response(gr) if gr else None,
+        zmm065_report_month=month,
+        zmm065_sources=[Zmm065SourceResponse.model_validate(source) for source in zmm065_sources],
+    )
+
+
+@router.get("/validation/zmm065/uploads", response_model=list[Zmm065UploadResponse])
+def get_zmm065_uploads(db: Session = Depends(get_db)) -> list[Zmm065UploadResponse]:
+    """Every ZMM065 upload, newest month first. ``is_current`` marks the one
+    per plant that validation reads by default."""
+    uploads = list_uploads(db)
+    current = {upload.id for upload in current_uploads(uploads).values()}
+    return [
+        Zmm065UploadResponse.model_validate(upload).model_copy(update={"is_current": upload.id in current})
+        for upload in uploads
+    ]
+
+
+@router.post(
+    "/validation/zmm065/uploads",
+    response_model=Zmm065UploadResultResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def upload_zmm065(
+    file: UploadFile = File(..., description="One site's ZMM065 aging report, .xlsx"),
+    report_month: str = Form(..., description="YYYY-MM, the month the report is for"),
+    replace: bool = Form(False, description="Supersede an earlier upload for the same plant and month"),
+    db: Session = Depends(get_db),
+    actor: Actor = Depends(get_current_actor),
+) -> Zmm065UploadResultResponse:
+    """Store one month's ZMM065 report for one plant. The plant is read from
+    the rows. 409 when that plant and month is already uploaded and ``replace``
+    is not set; 422 when the file is not a usable ZMM065 workbook."""
+    file_name = file.filename or "zmm065.xlsx"
+    if not file_name.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{file_name} is not an Excel workbook; upload the ZMM065 export as .xlsx.",
+        )
+    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"{file_name} is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
+        )
+    try:
+        month = parse_month(report_month)
+        parsed = parse_zmm065_workbook(file.file)
+        upload, replaced_earlier = store_upload(
+            db, parsed, report_month=month, file_name=file_name, uploaded_by=actor.id, replace=replace
+        )
+    except Zmm065DuplicateUpload as duplicate:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(duplicate)) from None
+    except Zmm065UploadError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
+    return Zmm065UploadResultResponse(
+        upload=Zmm065UploadResponse.model_validate(upload).model_copy(update={"is_current": True}),
+        skipped_out_of_scope=parsed.skipped_out_of_scope,
+        skipped_blank=parsed.skipped_blank,
+        replaced_earlier=replaced_earlier,
     )
 
 

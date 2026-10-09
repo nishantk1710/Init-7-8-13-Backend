@@ -162,6 +162,12 @@ def validate_zmm065(
     date in the platform's movement history.
     """
     report_date = zmm065_report_date(rows)
+    # Each plant's report is run on its own day -- uploaded months can differ
+    # per site -- so each row is classified as of its own plant's run date.
+    by_plant: dict[str, list[Zmm065Row]] = {}
+    for row in rows:
+        by_plant.setdefault(row.plant, []).append(row)
+    plant_dates = {plant: zmm065_report_date(plant_rows) for plant, plant_rows in by_plant.items()}
     excluded: Counter[str] = Counter()
     report_counts: Counter[AgingBand] = Counter()
     platform_counts: Counter[AgingBand] = Counter()
@@ -174,10 +180,11 @@ def validate_zmm065(
         if report_band is None:
             excluded[row.stock_type or "(blank)"] += 1
             continue
-        if report_date is None:
+        as_of = plant_dates.get(row.plant)
+        if as_of is None:
             continue
-        platform_last = last_issue_as_of((row.material, row.plant), report_date)
-        days = (report_date - platform_last).days if platform_last else None
+        platform_last = last_issue_as_of((row.material, row.plant), as_of)
+        days = (as_of - platform_last).days if platform_last else None
         platform_band = classify_aging_band(days, thresholds)
 
         report_counts[report_band] += 1
@@ -205,7 +212,7 @@ def validate_zmm065(
         reconcile(
             f"ZMM065 · {BAND_LABEL[band]}",
             platform_counts[band],
-            report_counts[band] if report_date is not None else None,
+            report_counts[band] if any(plant_dates.values()) else None,
             tolerance_pct=tolerance_pct,
         )
         for band in (AgingBand.FAST, AgingBand.SLOW, AgingBand.NON_MOVING)

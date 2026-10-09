@@ -89,6 +89,11 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "Rebuilds the in-memory I13 snapshot in the background. Writes no table: "
         "it re-reads raw_* and swaps the process's cached copy."
     ),
+    ("/api/i13/validation/zmm065/uploads", "post"): (
+        "I13 FR-6 -> i13_zmm065_upload + i13_zmm065_upload_row: VZI's monthly "
+        "ZMM065 aging report, the reference validation reconciles against. "
+        "Appended, never overwritten; raw_zmm065_* (criticality) is not touched."
+    ),
     ("/api/i13/act/exceptions/{exception_id}/confirmation", "post"): (
         "Records a requester's confirmation and justification against an "
         "exception."

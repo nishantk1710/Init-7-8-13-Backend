@@ -45,6 +45,7 @@ from app.models.i13_quantity_suggestion import QuantityJustificationRecord, Quan
 from app.models.i13_reclassification import ReclassificationCandidateMart
 from app.models.i13_session_link import SessionReservationLink, UatReservationSgtxt
 from app.models.i13_watch_mart import WatchMetricMart
+from app.models.i13_zmm065_upload import Zmm065Upload, Zmm065UploadRow
 from app.models.ingest_watermark import IngestWatermark
 from app.models.ingestion import IngestionRun
 from app.models.serving import MaterialPlant
@@ -95,4 +96,6 @@ __all__ = [
     "UatReservationSgtxt",
     "ReclassificationCandidateMart",
     "WatchMetricMart",
+    "Zmm065Upload",
+    "Zmm065UploadRow",
 ]
