@@ -35,7 +35,7 @@ the backfill: the staging upsert writes column lists that do not always include
 ``is_active``, and without a server default those inserts would fail.
 
 Revision ID: a4f1c8e27b63
-Revises: 5c9e2a7d4f18
+Revises: b4d1e8a63c27
 Create Date: 2026-10-09 00:00:00.000000
 
 """
@@ -47,7 +47,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "a4f1c8e27b63"
-down_revision: Union[str, Sequence[str], None] = "5c9e2a7d4f18"
+down_revision: Union[str, Sequence[str], None] = "b4d1e8a63c27"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
