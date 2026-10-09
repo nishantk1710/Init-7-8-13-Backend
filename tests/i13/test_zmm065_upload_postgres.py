@@ -1,8 +1,11 @@
 """FR-6: the ZMM065 upload API against real Postgres -- store, duplicate
 refusal, replace, and validation reading the upload.
 
-Skipped when no ``DATABASE_URL`` is configured. Every upload written here is
-deleted at the end, so the shared database is left as it was found.
+Skipped when no ``DATABASE_URL`` is configured. The two ``/validation`` tests
+also need seeded SAP tables -- the route reads the I13 snapshot -- so they are
+marked ``needs_seed_data`` like the other real-data tests. Every upload
+written here is deleted at the end, so the shared database is left as it was
+found.
 """
 
 from io import BytesIO
@@ -89,6 +92,7 @@ def test_the_same_plant_and_month_is_refused_without_replace_and_kept_with_it() 
     assert first["id"] in listed, "the earlier upload is kept, never overwritten"
 
 
+@pytest.mark.needs_seed_data  # /validation serves from the I13 snapshot
 def test_validation_for_the_month_reads_that_upload() -> None:
     upload = _post().json()["upload"]
     body = client.get("/api/i13/validation", params={"report_month": MONTH}).json()
@@ -98,6 +102,7 @@ def test_validation_for_the_month_reads_that_upload() -> None:
     assert body["zmm065"]["excluded_non_aging"] == {"OBSOLETE": 1}
 
 
+@pytest.mark.needs_seed_data  # /validation serves from the I13 snapshot
 def test_a_month_with_no_upload_is_reference_unavailable() -> None:
     body = client.get("/api/i13/validation", params={"report_month": "2000-01"}).json()
     assert body["zmm065"] is None
