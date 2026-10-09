@@ -936,11 +936,18 @@ def test_build_does_not_query_per_material_plant(session):
         _load_consumption,
         _load_purchase_order_counts,
         observation_window,
+        resolve_staging_run,
     )
 
-    consumption = _load_consumption(session)
+    # The loaders are scoped to one staging run: the build reads the run it
+    # pinned, never "every staged row". That is the point of the signature this
+    # test guards -- a regression to per-material queries would still have to
+    # change it, and so would a regression to reading across runs.
+    staging_run_id = resolve_staging_run(session).id
+
+    consumption = _load_consumption(session, staging_run_id)
     orders = _load_purchase_order_counts(session)
-    window = observation_window(session)
+    window = observation_window(session, staging_run_id)
 
     assert isinstance(consumption, dict)
     assert isinstance(orders, dict)
