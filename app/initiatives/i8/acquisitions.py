@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -78,12 +78,22 @@ class NewAcquisition:
 
 @dataclass(frozen=True)
 class JustificationRecord:
-    """A NEW_ACQUISITION justification, reduced to what matching needs."""
+    """A NEW_ACQUISITION justification: what matching needs, and what the
+    register shows on the line it belongs to."""
 
     material_id: str
     plant: str
     recorded_on: date
     exception_id: str | None = None
+
+    # Display only -- matching never reads these. Optional so a test can build
+    # a record from the three fields the rules actually use.
+    id: str | None = None
+    reason_category: str | None = None
+    free_text: str | None = None
+    author: str | None = None
+    recorded_at: datetime | None = None
+    session_id: str | None = None
 
 
 def is_new_purchase_line(row: Mapping, cfg: I8Settings) -> bool:
@@ -174,6 +184,11 @@ def load_justifications(db: Session) -> list[JustificationRecord]:
             Justification.plant,
             Justification.recorded_at,
             Justification.exception_id,
+            Justification.id,
+            Justification.reason_category,
+            Justification.free_text,
+            Justification.author,
+            Justification.session_id,
         ).where(Justification.kind == NEW_ACQUISITION_KIND)
     ).all()
     return [
@@ -185,6 +200,22 @@ def load_justifications(db: Session) -> list[JustificationRecord]:
             plant=(plant or "").strip(),
             recorded_on=recorded_at.date(),
             exception_id=exception_id,
+            id=justification_id,
+            reason_category=reason_category,
+            free_text=free_text,
+            author=author,
+            recorded_at=recorded_at,
+            session_id=session_id,
         )
-        for material_id, plant, recorded_at, exception_id in rows
+        for (
+            material_id,
+            plant,
+            recorded_at,
+            exception_id,
+            justification_id,
+            reason_category,
+            free_text,
+            author,
+            session_id,
+        ) in rows
     ]

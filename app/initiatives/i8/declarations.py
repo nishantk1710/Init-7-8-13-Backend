@@ -1,11 +1,17 @@
-"""W5.3 -- the declaration queue the UI renders.
+"""W5.3 -- the declaration queue.
 
 One row per repair line, saying whether somebody assessed the part before it was
 sent away, and what they concluded.
 
 This is the read side of the attestation. :mod:`app.initiatives.i8.attestation`
-records judgements; this turns "which lines have one" into the queue a planner
+records judgements; this turns "which lines have one" into the rows a planner
 works through.
+
+Since 08-Oct-2026 there is no separate Declaration Queue screen: each row
+travels on its repair line in the register (status, who declared, when, the
+condition and the next action), and the attestation form sits on the repair
+detail page. ``GET /declarations`` still serves the rows, and the Overview's
+outstanding count reads it.
 
 Vocabulary is the frontend's, not ours
 ---------------------------------------

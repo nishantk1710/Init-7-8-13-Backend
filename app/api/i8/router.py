@@ -186,14 +186,15 @@ def _chain(
     line: RepairLine,
     cfg: I8Settings,
     lookup: dict[tuple[str, str | None], UniverseRow],
-    declaration_statuses: dict[tuple[str, str], str] | None = None,
+    view: AttestationView | None = None,
 ) -> RepairChain:
     """A register row enriched with its material's stock position.
 
     Stock and reorder point live on the material+plant, not on the PO line, so
     they come from the universe rather than from a second query. The declaration
-    status comes from W5.3's attestation view for the same reason -- and because
-    that table changes while the process runs, which the July snapshot does not.
+    and the justification come from W5.3's attestation view for the same reason
+    -- and because those tables change while the process runs, which the July
+    snapshot does not.
     """
     row = lookup.get((line.material_id, line.plant))
     return repair_chain(
@@ -202,8 +203,9 @@ def _chain(
         stock_on_hand=row.stock_on_hand if row else None,
         reorder_point=row.reorder_point if row else None,
         new_unit_lead_time_days=row.planned_delivery_days if row else None,
-        declaration_status=(declaration_statuses or {}).get(line.key, "Required"),
         criticality=row.criticality if row else None,
+        declaration=view.declaration_by_line.get(line.key) if view else None,
+        justification=view.justifications.get(line.key) if view else None,
     )
 
 
@@ -310,7 +312,7 @@ def get_universe_material(
         ),
         plants=[universe_item(row, cfg) for row in rows],
         repair_lines=[
-            _chain(line, cfg, _stock_lookup(snapshot), view.declaration_status_by_line)
+            _chain(line, cfg, _stock_lookup(snapshot), view)
             for line in lines
         ],
     )
@@ -370,7 +372,7 @@ def get_register(
     lookup = _stock_lookup(snapshot)
     return RegisterResponse(
         items=[
-            _chain(line, cfg, lookup, view.declaration_status_by_line)
+            _chain(line, cfg, lookup, view)
             for line in page_lines
         ],
         page=page,
@@ -400,7 +402,7 @@ def get_repair_line(
             detail=f"No repair line {document}/{item} in this extract.",
         )
     return RepairDetail(
-        line=_chain(line, cfg, _stock_lookup(snapshot), view.declaration_status_by_line),
+        line=_chain(line, cfg, _stock_lookup(snapshot), view),
         timeline=timeline(
             line, snapshot.reference_date, view.coverage.covered.get(line.key)
         ),
