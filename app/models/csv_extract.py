@@ -49,6 +49,28 @@ class CsvExtractRequest(Base):
     sap_table: Mapped[str] = mapped_column(String(32), index=True)
     entity_set: Mapped[str] = mapped_column(String(128))
 
+    sweep_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
+    """Which full-refresh sweep fired this request, when one did.
+
+    The table's own ``request_id`` is ``F<TABLE><epoch-seconds>`` -- unique per
+    REQUEST, deliberately, because SAP dedupes on it. Nothing in it, or in any
+    other column here, says which rows were fired *together*: the window dates
+    differ by table (``windowed`` tables get three years, the rest a wide
+    window), and ``fired_at`` cannot stand in for membership because a sweep
+    runs for ~15 minutes, fires in batches, and can cross midnight.
+
+    So this exists to answer exactly one question, asked by
+    ``app.initiatives.i7.snapshot``: did a COMPLETE snapshot of the I07 source
+    tables land, as one sweep? Absent that, a snapshot could only be inferred
+    from timestamps, and inferring it wrongly would run the deactivation sweep
+    over a partial refresh -- deactivating most of the catalogue.
+
+    Nullable, and null is not a defect: a single-table ``--csv-pull --table
+    EKPO`` is not a sweep and must never be mistaken for one. Rows fired before
+    this column existed are null for the same reason, and read as "no verified
+    sweep", which is the safe answer.
+    """
+
     from_date: Mapped[str] = mapped_column(String(8))
     to_date: Mapped[str] = mapped_column(String(8))
     max_rows: Mapped[str] = mapped_column(String(16), default="")

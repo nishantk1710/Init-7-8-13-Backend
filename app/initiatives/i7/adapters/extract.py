@@ -45,7 +45,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Iterable, Iterator
 
-from sqlalchemy import bindparam, inspect, text
+from sqlalchemy import bindparam, inspect, text, update
 from sqlalchemy.orm import Session
 
 from app.core.db import get_sessionmaker
@@ -97,6 +97,8 @@ class StagingResult:
     stock: int = 0
     consumption: int = 0
     purchase_orders: int = 0
+    deactivated: int = 0
+    """Rows a complete-snapshot sweep marked inactive. Always 0 on a delta run."""
     rejections: dict[str, int] = field(default_factory=dict)
     error: str | None = None
 
@@ -925,10 +927,75 @@ def _stage_purchase_orders(
     return staged
 
 
+# --- Deactivation ------------------------------------------------------
+
+
+# The tables the feature universe is built from, and the only ones swept.
+# Consumption, purchase orders and material attributes are deliberately NOT
+# swept: they are historical records of events that happened. A movement from
+# March is not retracted by its absence from a June extract -- the extract
+# simply does not reach back that far -- and deactivating it would rewrite
+# demand history every time the extract window moved forward.
+_SWEPT = (StagedMaterialPlant, StagedStock)
+
+
+def deactivate_unseen(session: Session, staging_run_id: int) -> int:
+    """Reconcile ``is_active`` against what this run staged. Returns the number
+    of rows DEACTIVATED (reactivations are logged, not counted, because the
+    figure stored on the run row answers "what did this extract drop?").
+
+    **Only ever called for a run over a complete snapshot** -- the caller gates
+    this, and ``stage_extract`` records the gate it applied on the run row.
+    Absence from a delta means "unchanged", and sweeping on one would deactivate
+    everything that merely did not move.
+
+    The test is ``staging_run_id``: the upsert refreshes that column on every
+    row it writes, so a row re-seen carries this run's id and a row that has
+    vanished keeps an older one.
+
+    **Both directions are written explicitly.** Reactivation cannot be left to
+    the upsert: ``app.core.upsert._updatable`` builds its UPDATE column list
+    from the keys actually present in the staged dictionaries, and those do not
+    carry ``is_active`` -- the column exists for this sweep to own, not for the
+    adapter to supply per row. So a row deactivated in June and present again in
+    July is re-staged with a fresh ``staging_run_id`` but keeps
+    ``is_active = 0``, and without the second statement below it would stay out
+    of scope permanently while looking perfectly current.
+    """
+    total = 0
+    for model in _SWEPT:
+        gone = session.execute(
+            update(model)
+            .where(model.staging_run_id != staging_run_id, model.is_active.is_(True))
+            .values(is_active=False)
+        )
+        total += gone.rowcount or 0
+
+        back = session.execute(
+            update(model)
+            .where(model.staging_run_id == staging_run_id, model.is_active.is_(False))
+            .values(is_active=True)
+        )
+        if back.rowcount:
+            logger.info(
+                "staging run %d: %d %s row(s) reactivated -- present again in "
+                "this snapshot",
+                staging_run_id,
+                back.rowcount,
+                model.__tablename__,
+            )
+    return total
+
+
 # --- Entry point -------------------------------------------------------
 
 
-def stage_extract(policy: ExtractIngestionPolicy | None = None) -> StagingResult:
+def stage_extract(
+    policy: ExtractIngestionPolicy | None = None,
+    *,
+    snapshot_complete: bool = False,
+    source_fingerprint: str | None = None,
+) -> StagingResult:
     """Stage the SAP raw layer, through the normalise views, into canonical staging.
 
     Idempotent: running twice converges on the same state. Raw tables are only
@@ -939,6 +1006,15 @@ def stage_extract(policy: ExtractIngestionPolicy | None = None) -> StagingResult
     to know they exist. A caller passing its own policy decides for itself --
     ``ExtractIngestionPolicy()`` alone still means every plant, which is what
     the tests construct and what this did before plant scope existed.
+
+    ``snapshot_complete`` says whether the raw layer this run reads is a
+    complete snapshot of its sources rather than a delta merged into one. It
+    gates the deactivation sweep and nothing else, and it **defaults False**:
+    a caller that has not established the question's answer must not sweep.
+    Only the daily CSV full refresh replaces ``raw_<table>`` whole
+    (``app.ingest.csv_load``), so only a run following one may pass True.
+
+    ``source_fingerprint`` records which raw-layer load was read, for lineage.
     """
     if policy is None:
         from app.core.config import get_settings
@@ -951,6 +1027,8 @@ def stage_extract(policy: ExtractIngestionPolicy | None = None) -> StagingResult
             source=SOURCE_NORMALISE_VIEWS,
             status="running",
             consumption_movement_types=",".join(policy.consumption.all_movement_types),
+            snapshot_complete=snapshot_complete,
+            source_fingerprint=source_fingerprint,
         )
         session.add(run)
         session.commit()
@@ -978,11 +1056,32 @@ def stage_extract(policy: ExtractIngestionPolicy | None = None) -> StagingResult
 
             rejections.flush(session)
             result.rejections = dict(rejections.counts)
+
+            # After every staging write, before the run is marked succeeded, and
+            # in the same transaction as the rows it is judging: a sweep that
+            # committed separately could deactivate rows belonging to a staging
+            # pass that then failed and rolled back.
+            if snapshot_complete:
+                result.deactivated = deactivate_unseen(session, run_id)
+                logger.info(
+                    "staging run %d: %d row(s) deactivated -- absent from a "
+                    "complete snapshot",
+                    run_id,
+                    result.deactivated,
+                )
+            else:
+                logger.info(
+                    "staging run %d: no deactivation sweep (not a complete "
+                    "snapshot); absence here means unchanged, not deleted",
+                    run_id,
+                )
+
             session.commit()
 
         with session_factory() as session:
             stored = session.get(StagingRun, run_id)
             stored.status = STATUS_SUCCEEDED
+            stored.deactivated = result.deactivated
             stored.materials_staged = result.materials
             stored.material_plants_staged = result.material_plants
             stored.stock_staged = result.stock

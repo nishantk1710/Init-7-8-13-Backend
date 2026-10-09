@@ -66,6 +66,23 @@ class FeatureBuildRun(Base):
     """Carried through from staging. The set is unconfirmed, so which definition
     of demand produced these numbers has to travel with them."""
 
+    staging_run_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    """The staging run these features were built from -- one run, resolved once
+    and pinned, never "whatever is latest" re-derived per query.
+
+    This is the column that makes the build answerable rather than merely
+    plausible. Before it existed the builder read every staged row regardless of
+    which run wrote it or whether that run succeeded, so a half-written run and a
+    complete one were indistinguishable once the rows were in the table.
+
+    Nullable only for runs recorded before this column existed: their provenance
+    is genuinely unknown, and NULL says so. Every new run sets it.
+    """
+
+    source_fingerprint: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    """Carried through from the staging run, so the raw-layer load behind these
+    features is answerable without joining back through staging."""
+
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     started_at: Mapped[datetime] = mapped_column(

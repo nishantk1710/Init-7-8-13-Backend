@@ -938,9 +938,17 @@ def test_build_does_not_query_per_material_plant(session):
         observation_window,
     )
 
-    consumption = _load_consumption(session)
+    # The consumption loaders are scoped to one staging run -- the build reads
+    # the run it pinned, never "every staged row". Any id proves the shape:
+    # this test asserts on the SHAPE of what comes back, not on its contents,
+    # and a run with nothing staged returns empty collections rather than
+    # failing. Resolving a real run here would make the test need staged data,
+    # which it has never needed and which a fresh CI database does not have.
+    staging_run_id = 0
+
+    consumption = _load_consumption(session, staging_run_id)
     orders = _load_purchase_order_counts(session)
-    window = observation_window(session)
+    window = observation_window(session, staging_run_id)
 
     assert isinstance(consumption, dict)
     assert isinstance(orders, dict)
