@@ -376,6 +376,52 @@ class Gr30DayValidationResponse(BaseModel):
     unconfirmed: list[GrReceiptCheckResponse]
 
 
+class Zmm065SourceResponse(BaseModel):
+    """Where one plant's ZMM065 rows came from: a monthly upload, or the
+    seeded July workbook when that plant has no upload."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    plant: str
+    source: str
+    row_count: int
+    upload_id: int | None = None
+    report_month: date | None = None
+    report_date: date | None = None
+    file_name: str | None = None
+    uploaded_by: str | None = None
+    uploaded_at: datetime | None = None
+
+
+class Zmm065UploadResponse(BaseModel):
+    """One uploaded ZMM065 monthly report."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    plant: str
+    report_month: date
+    report_date: date | None
+    file_name: str
+    sheet_name: str
+    row_count: int
+    uploaded_by: str
+    uploaded_at: datetime
+    #: Whether validation reads this upload when no month is chosen -- the
+    #: latest upload for its plant.
+    is_current: bool = False
+
+
+class Zmm065UploadResultResponse(BaseModel):
+    """What ``POST /validation/zmm065/uploads`` stored, and what it skipped."""
+
+    upload: Zmm065UploadResponse
+    skipped_out_of_scope: int
+    skipped_blank: int
+    #: True when this upload superseded an earlier one for the same plant and month.
+    replaced_earlier: bool
+
+
 class ValidationResponse(BaseModel):
     tolerance_pct: Decimal
     results: list[ReconciliationSourceResult]
@@ -383,6 +429,10 @@ class ValidationResponse(BaseModel):
     #: REFERENCE_UNAVAILABLE.
     zmm065: Zmm065ValidationResponse | None = None
     gr_30_day: Gr30DayValidationResponse | None = None
+    #: The month asked for, or null for "latest per plant".
+    zmm065_report_month: date | None = None
+    #: Per plant, which ZMM065 the reconciliation used.
+    zmm065_sources: list[Zmm065SourceResponse] = []
 
 
 class I13SummaryResponse(BaseModel):
