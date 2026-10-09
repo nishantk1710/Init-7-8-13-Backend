@@ -89,11 +89,10 @@ class TestFormSteps:
         with pytest.raises(AnswerError, match="purpose is required"):
             validate(PLAN_STEP, _plan(purpose=""), SETTINGS)
 
-    def test_optional_fields_may_be_omitted(self) -> None:
-        """Blank is a real answer for the usage window."""
-        cleaned = validate(PLAN_STEP, _plan(window_start=None, window_end=None), SETTINGS)
-        assert cleaned["window_start"] is None
-        assert cleaned["window_end"] is None
+    @pytest.mark.parametrize("missing", ["window_start", "window_end"])
+    def test_both_ends_of_the_window_are_required(self, missing) -> None:
+        with pytest.raises(AnswerError, match=f"{missing} is required"):
+            validate(PLAN_STEP, _plan(**{missing: None}), SETTINGS)
 
     def test_cost_centre_is_no_longer_accepted(self) -> None:
         """The form stopped asking for it, so a client sending it is refused
@@ -145,12 +144,6 @@ class TestDatesAndTheWindow:
             PLAN_STEP, _plan(window_start="2026-08-01", window_end="2026-08-01"), SETTINGS
         )
         assert cleaned["window_end"] == "2026-08-01"
-
-    def test_only_one_end_of_the_window_is_allowed(self) -> None:
-        """A requester may know when they will start and not when they finish."""
-        cleaned = validate(PLAN_STEP, _plan(window_end=None), SETTINGS)
-        assert cleaned["window_start"] == "2026-08-01"
-        assert cleaned["window_end"] is None
 
 
 class TestSelectFields:

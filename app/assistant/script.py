@@ -271,7 +271,7 @@ def _i13(
                 ),
                 Field(
                     name="planned_quantity",
-                    label="How many you plan to use",
+                    label="How many should be procured",
                     type=FieldType.NUMBER,
                     required=True,
                     default=(
@@ -282,19 +282,20 @@ def _i13(
                 ),
                 # A WINDOW, not a single date -- FR-2(b). FR-7 breaches on
                 # "window end plus grace", which is a different date from the
-                # single planned_use_date today's detection reads.
+                # single planned_use_date today's detection reads. Both ends
+                # are required: a plan without a window end can never breach,
+                # so an optional window left most plans unmeasurable.
                 Field(
                     name="window_start",
                     label="Expected to be used from",
                     type=FieldType.DATE,
-                    required=False,
-                    help_text="Leave blank if you genuinely do not know yet.",
+                    required=True,
                 ),
                 Field(
                     name="window_end",
                     label="...and by",
                     type=FieldType.DATE,
-                    required=False,
+                    required=True,
                 ),
                 # Cost centre and work order are no longer asked for. The plan
                 # columns stay (nullable) so earlier captures keep their values;
