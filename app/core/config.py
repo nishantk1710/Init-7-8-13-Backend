@@ -447,6 +447,20 @@ class Settings(BaseSettings):
     # ISO date to measure every snapshot metric as of. Empty = today, the date
     # every live route has always used (plan decision D1 left open).
     i13_snapshot_reference_date: str = ""
+    # Where the snapshot lives. "memory" (the default) holds it in this
+    # process, as it always has. "sql" builds it in material batches and stores
+    # it in Azure SQL (app/initiatives/i13/snapshot_store/) -- for a production-
+    # sized extract, where the in-memory build no longer fits the App Service.
+    # The routes answer the same either way.
+    i13_snapshot_store: str = "memory"
+    # "sql" store only: how many distinct materials one build batch covers. A
+    # batch is read, computed and written before the next one starts, so this
+    # bounds the build's memory -- smaller is leaner and slower.
+    i13_build_batch_materials: int = 2000
+    # "sql" store only: how many calendar months of monthly usage are kept per
+    # material-plant (the usage-pattern screens). Aging and 12-month
+    # consumption read the full movement history regardless.
+    i13_usage_history_months: int = 36
 
     # --- Initiative 08: the in-memory snapshot (app/initiatives/i8/service.py). ---
     i8_snapshot_warm_on_startup: bool = True
