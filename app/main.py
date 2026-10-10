@@ -164,13 +164,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Say which I13 snapshot answered, on every I13 response."""
         response = await call_next(request)
         if request.url.path.startswith(f"{settings.api_prefix}/i13"):
-            current = i13_snapshot.peek_i13_snapshot()
-            if current is not None:
-                response.headers["X-I13-Snapshot-Built-At"] = current.built_at.isoformat()
-                response.headers["X-I13-Data-As-Of"] = current.reference_date.isoformat()
-                response.headers["X-I13-Snapshot-Status"] = (
-                    "rebuilding" if i13_snapshot.snapshot_status()["rebuilding"] else "ready"
-                )
+            served = i13_snapshot.served_info()
+            if served is not None:
+                response.headers["X-I13-Snapshot-Built-At"] = served["built_at"].isoformat()
+                response.headers["X-I13-Data-As-Of"] = served["reference_date"].isoformat()
+                response.headers["X-I13-Snapshot-Status"] = "rebuilding" if served["rebuilding"] else "ready"
         return response
 
     application.add_middleware(

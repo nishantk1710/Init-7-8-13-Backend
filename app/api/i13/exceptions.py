@@ -10,6 +10,7 @@ from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.exceptions import build_exception_queue
 from app.initiatives.i13.snapshot import I13Snapshot, current_plans, exception_queue
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
@@ -31,8 +32,17 @@ def list_exceptions(
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
     data_dir: Path = Depends(get_data_dir),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> list[ExceptionResponse]:
+    if isinstance(snapshot, SqlSnapshot):
+        # The stored queue (reference plans) with captured plans applied to
+        # the material-plants they touch -- see SqlSnapshot.exception_queue.
+        rows, total = snapshot.exception_queue(
+            snapshot.current_plans(), plant=plant, material=material,
+            exception_type=exception_type, status=exception_status, limit=limit, offset=offset,
+        )
+        response.headers["X-Total-Count"] = str(total)
+        return [ExceptionResponse.model_validate(row) for row in rows]
     if snapshot is not None:
         # Recomputed over the snapshot with the CURRENT plans (captured ones
         # included), and cached until those plans change.

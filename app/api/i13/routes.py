@@ -29,6 +29,7 @@ from app.api.i13.deps import get_data_dir, snapshot_or_live
 from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.snapshot import I13Snapshot, current_plans, snapshot_status, start_background_build
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.initiatives.i13.summary import build_summary, summary_from_snapshot
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
@@ -89,8 +90,11 @@ def get_summary(
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
     data_dir: Path = Depends(get_data_dir),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> I13SummaryResponse:
+    if isinstance(snapshot, SqlSnapshot):
+        summary = snapshot.summary(snapshot.current_plans(), plant=plant, material=material)
+        return I13SummaryResponse(**asdict(summary))
     if snapshot is not None:
         summary = summary_from_snapshot(snapshot, current_plans(db, snapshot), plant=plant, material=material)
         return I13SummaryResponse(**asdict(summary))

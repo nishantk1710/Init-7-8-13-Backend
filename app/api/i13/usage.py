@@ -23,16 +23,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from app.api.i13.deps import page, require_snapshot
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.snapshot import GrniEntry, I13Snapshot, MonthlyConsumption
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.schemas.i13 import GrniEntryResponse, MonthlyConsumptionResponse, UsagePatternResponse
 from app.shared.material_scope import MaterialScope
 
 router = APIRouter()
 
 
-def _require_snapshot() -> I13Snapshot:
+def _require_snapshot(snapshot: I13Snapshot | SqlSnapshot = Depends(require_snapshot)) -> I13Snapshot | SqlSnapshot:
     """These routes have no live path, so they serve the snapshot even when
     ``I13_SNAPSHOT_ENABLED`` is off for the others."""
-    return require_snapshot()
+    return snapshot
 
 
 def _grni_response(item: GrniEntry, threshold_days: int) -> GrniEntryResponse:
@@ -68,10 +69,18 @@ def list_grni(
     include_out_of_scope: bool = Query(False, description="Include non-OAR (Min-Max/Excluded) materials."),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
-    snapshot: I13Snapshot = Depends(_require_snapshot),
+    snapshot: I13Snapshot | SqlSnapshot = Depends(_require_snapshot),
     config: I13Config = Depends(get_i13_config),
 ) -> list[GrniEntryResponse]:
     """Oldest goods receipt first. ``X-Total-Count`` carries the full count."""
+    if isinstance(snapshot, SqlSnapshot):
+        rows, total = snapshot.grni(
+            plant=plant, material=material, min_days=min_days, oar_only=not include_out_of_scope,
+            limit=limit, offset=offset,
+        )
+        response.headers["X-Total-Count"] = str(total)
+        threshold_days = config.watch.gr_not_issued_threshold_days
+        return [_grni_response(item, threshold_days) for item in rows]
     items = [
         item
         for item in snapshot.grni_entries
@@ -113,6 +122,28 @@ def _usage_response(snapshot: I13Snapshot, key: tuple[str, str]) -> UsagePattern
     )
 
 
+def _stored_usage_response(row, watch, months: tuple[str, ...]) -> UsagePatternResponse:
+    """:func:`_usage_response` for one row of the SQL store's usage."""
+    (material, plant), series, stock, scope = row
+    issued_months = [m for m in series if m.issued_quantity > 0]
+    if watch is not None:
+        scope = watch.material_scope.value
+    return UsagePatternResponse(
+        material=material,
+        plant=plant,
+        material_scope=scope,
+        aging_band=watch.aging_band.value if watch else None,
+        stock_on_hand=watch.stock_on_hand if watch else stock,
+        average_monthly_consumption=watch.average_monthly_consumption if watch else None,
+        months_of_cover=watch.months_of_cover if watch else None,
+        issued_quantity_total=sum((m.issued_quantity for m in series), Decimal("0")),
+        issue_count_total=sum(m.issue_count for m in series),
+        active_months=len(issued_months),
+        last_issue_month=issued_months[-1].month if issued_months else None,
+        months=[MonthlyConsumptionResponse.model_validate(m) for m in _filled_months(series, months)],
+    )
+
+
 @router.get("/usage-patterns", response_model=list[UsagePatternResponse])
 def list_usage_patterns(
     response: Response,
@@ -122,13 +153,25 @@ def list_usage_patterns(
     include_out_of_scope: bool = Query(False, description="Include non-OAR (Min-Max/Excluded) materials."),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    snapshot: I13Snapshot = Depends(_require_snapshot),
+    snapshot: I13Snapshot | SqlSnapshot = Depends(_require_snapshot),
 ) -> list[UsagePatternResponse]:
     """Material-plants with any movement history, most issued first.
 
     ``X-I13-History-Months`` names the first and last month the delivered
-    movement history covers (e.g. ``2025-08..2026-08``).
+    movement history covers (e.g. ``2025-08..2026-08``). From the SQL store,
+    the last ``I13_USAGE_HISTORY_MONTHS`` of it.
     """
+    if isinstance(snapshot, SqlSnapshot):
+        rows, total = snapshot.usage(
+            plant=plant, material=material, aging_band=aging_band, oar_only=not include_out_of_scope,
+            limit=limit, offset=offset,
+        )
+        response.headers["X-Total-Count"] = str(total)
+        months = snapshot.history_months
+        if months:
+            response.headers["X-I13-History-Months"] = f"{months[0]}..{months[-1]}"
+        watch = snapshot.watch_for_keys(row[0] for row in rows)
+        return [_stored_usage_response(row, watch.get(row[0]), months) for row in rows]
     wanted_band = aging_band.upper() if aging_band else None
     keys = [
         key
@@ -153,9 +196,17 @@ def list_usage_patterns(
 
 @router.get("/usage-patterns/{material}/{plant}", response_model=UsagePatternResponse)
 def get_usage_pattern(
-    material: str, plant: str, snapshot: I13Snapshot = Depends(_require_snapshot)
+    material: str, plant: str, snapshot: I13Snapshot | SqlSnapshot = Depends(_require_snapshot)
 ) -> UsagePatternResponse:
     key = (material, plant)
+    if isinstance(snapshot, SqlSnapshot):
+        row = snapshot.usage_for(material, plant)
+        watch = snapshot.watch_row(material, plant)
+        if row is None and watch is None:
+            raise HTTPException(status_code=404, detail="No movement history for this material/plant")
+        if row is None:
+            row = (key, (), watch.stock_on_hand, watch.material_scope.value)
+        return _stored_usage_response(row, watch, snapshot.history_months)
     if key not in snapshot.monthly_consumption and key not in snapshot.watch:
         raise HTTPException(status_code=404, detail="No movement history for this material/plant")
     return _usage_response(snapshot, key)

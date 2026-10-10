@@ -14,6 +14,7 @@ from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.movement_metrics import compute_all_movement_metrics
 from app.initiatives.i13.snapshot import I13Snapshot
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
 from app.schemas.i13 import MovementMetricsResponse
 
@@ -30,8 +31,14 @@ def list_movement_metrics(
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> list[MovementMetricsResponse]:
+    if isinstance(snapshot, SqlSnapshot):
+        rows, total = snapshot.movement_metrics(
+            plant=plant, material=material, aging_band=aging_band, limit=limit, offset=offset
+        )
+        response.headers["X-Total-Count"] = str(total)
+        return [MovementMetricsResponse.model_validate(row) for row in rows]
     if snapshot is not None:
         metrics = [
             m
@@ -61,9 +68,11 @@ def get_movement_metrics(
     plant: str,
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> MovementMetricsResponse:
-    if snapshot is not None:
+    if isinstance(snapshot, SqlSnapshot):
+        metrics, _ = snapshot.movement_metrics(material=material, plant=plant, limit=1)
+    elif snapshot is not None:
         metrics = [m for m in snapshot.movement_metrics if m.material == material and m.plant == plant]
     else:
         repository = PostgresMovementRepository(db)

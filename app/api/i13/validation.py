@@ -44,6 +44,7 @@ from app.initiatives.i13.report_validation import (
     validate_zmm065,
 )
 from app.initiatives.i13.snapshot import I13Snapshot
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.initiatives.i13.zmm065_upload import (
     Zmm065DuplicateUpload,
     Zmm065UploadError,
@@ -90,10 +91,23 @@ def get_validation(
     ),
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> ValidationResponse:
     tolerance = config.reconciliation.tolerance_pct
-    if snapshot is not None:
+    try:
+        month = parse_month(report_month) if report_month else None
+    except Zmm065UploadError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
+    zmm065_rows, zmm065_sources = zmm065_reference(db, month)
+    gr_rows = fetch_gr_30day_rows(db)
+
+    if isinstance(snapshot, SqlSnapshot):
+        # Only what the two reports name, read from the stored version's work
+        # tables -- the store keeps no per-movement index for this.
+        issue_events = snapshot.issue_events_for((r.material, r.plant) for r in (zmm065_rows or ()))
+        history_start = snapshot.movement_history_start()
+        po_line_plant, receipt_dates = snapshot.po_lines_for((r.po_number, r.po_item) for r in (gr_rows or ()))
+    elif snapshot is not None:
         issue_events, history_start = snapshot.issue_events, snapshot.movement_history_start
         po_line_plant = _po_line_plant(snapshot.procurement_chain)
         receipt_dates = snapshot.receipt_dates_by_po_line
@@ -103,11 +117,6 @@ def get_validation(
     def last_issue_as_of(key: Key, day: date) -> date | None:
         return last_unreversed_date(list(issue_events.get(key, ())), ISSUE_TYPES, as_of=day)
 
-    try:
-        month = parse_month(report_month) if report_month else None
-    except Zmm065UploadError as error:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
-    zmm065_rows, zmm065_sources = zmm065_reference(db, month)
     zmm065 = (
         validate_zmm065(
             zmm065_rows,
@@ -119,7 +128,6 @@ def get_validation(
         if zmm065_rows is not None
         else None
     )
-    gr_rows = fetch_gr_30day_rows(db)
     gr = (
         validate_gr_30day(gr_rows, po_line_plant=po_line_plant, receipt_dates=receipt_dates, tolerance_pct=tolerance)
         if gr_rows is not None

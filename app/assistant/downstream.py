@@ -94,7 +94,7 @@ def apply_capture(
     """
     from app.initiatives.i13.act_runner import run_detection
     from app.initiatives.i13.config import get_i13_config
-    from app.initiatives.i13.snapshot import peek_i13_snapshot, refresh_key
+    from app.initiatives.i13.snapshot import refresh_key, serving_snapshot
 
     settings = get_settings()
     outcome: dict[str, object] = {"watch_refreshed": False, "detection": None}
@@ -113,7 +113,7 @@ def apply_capture(
             as_of_time=datetime.now(timezone.utc),
             material=material,
             plant=plant,
-            snapshot=peek_i13_snapshot() if settings.i13_snapshot_enabled else None,
+            snapshot=serving_snapshot(db),
         )
         db.commit()
         outcome["detection"] = result

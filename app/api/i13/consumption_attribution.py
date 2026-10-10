@@ -21,6 +21,7 @@ from app.initiatives.i13.models import ConsumptionAttribution
 from app.initiatives.i13.plans import load_consumption_plans
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
 from app.initiatives.i13.snapshot import I13Snapshot
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
@@ -105,8 +106,15 @@ def list_consumption_attribution(
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
     data_dir: Path = Depends(get_data_dir),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> list[ConsumptionAttributionResponse]:
+    if isinstance(snapshot, SqlSnapshot):
+        rows, total = snapshot.attribution(
+            material=material, plant=plant, reservation_number=reservation_number, pr_number=pr_number,
+            oar_only=not include_out_of_scope, limit=limit, offset=offset,
+        )
+        response.headers["X-Total-Count"] = str(total)
+        return [ConsumptionAttributionResponse.model_validate(a) for a in rows]
     filters = dict(
         material=material,
         plant=plant,
@@ -132,10 +140,17 @@ def get_consumption_attribution_entry(
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
     data_dir: Path = Depends(get_data_dir),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> ConsumptionAttributionResponse:
     filters = dict(reservation_number=reservation_number, include_out_of_scope=include_out_of_scope)
-    attributions = _from_snapshot(snapshot, **filters) if snapshot is not None else _attribute(db, config, data_dir, **filters)
+    if isinstance(snapshot, SqlSnapshot):
+        attributions, _ = snapshot.attribution(
+            reservation_number=reservation_number, oar_only=not include_out_of_scope
+        )
+    elif snapshot is not None:
+        attributions = _from_snapshot(snapshot, **filters)
+    else:
+        attributions = _attribute(db, config, data_dir, **filters)
     matching = [a for a in attributions if a.reservation_item == reservation_item]
     if not matching:
         raise HTTPException(status_code=404, detail="Consumption attribution entry not found")
