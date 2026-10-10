@@ -45,6 +45,7 @@ from app.models.i13_consumption_attribution import ConsumptionAttributionRecord
 from app.models.i13_quantity_suggestion import QuantityJustificationRecord, QuantitySuggestionRecord
 from app.models.i13_reclassification import ReclassificationCandidateMart
 from app.models.i13_session_link import SessionReservationLink, UatReservationSgtxt
+from app.models.i13_snapshot_store import I13SnapshotRecord, I13SnapshotRun
 from app.models.i13_watch_mart import WatchMetricMart
 from app.models.i13_zmm065_upload import Zmm065Upload, Zmm065UploadRow
 from app.models.ingest_watermark import IngestWatermark
@@ -88,6 +89,8 @@ __all__ = [
     "Base",
     "ConsumptionAttributionRecord",
     "CsvExtractRequest",
+    "I13SnapshotRecord",
+    "I13SnapshotRun",
     "IngestionRun",
     "IngestWatermark",
     "MaterialPlant",

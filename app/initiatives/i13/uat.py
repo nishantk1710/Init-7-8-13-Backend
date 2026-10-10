@@ -84,13 +84,13 @@ def _apply(db: Session, material: str, plant: str) -> None:
     from app.initiatives.i13.act_runner import run_detection
     from app.initiatives.i13.config import get_i13_config
     from app.initiatives.i13.session_link import sync_links
-    from app.initiatives.i13.snapshot import peek_i13_snapshot, refresh_material
+    from app.initiatives.i13.snapshot import refresh_material, serving_snapshot
 
     settings = get_settings()
-    snapshot = peek_i13_snapshot() if settings.i13_snapshot_enabled else None
+    snapshot = serving_snapshot(db)
     if snapshot is not None:
         refresh_material(db, material, plant, reservations=True)
-        snapshot = peek_i13_snapshot()
+        snapshot = serving_snapshot(db)
     else:
         sync_links(db, fetch_reservations(db, material=material, plant=plant), scope=(material, plant))
     db.flush()

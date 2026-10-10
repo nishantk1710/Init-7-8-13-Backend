@@ -13,6 +13,7 @@ from app.core.db import get_db
 from app.initiatives.i13.models import LifecycleStatus
 from app.initiatives.i13.procurement_chain import build_procurement_chain, compute_chain_diagnostics
 from app.initiatives.i13.snapshot import I13Snapshot
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.schemas.i13 import PartialLedgerEntryResponse, ProcurementChainDiagnosticsResponse
 
@@ -30,8 +31,19 @@ def list_partial_ledger(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> list[PartialLedgerEntryResponse]:
+    if isinstance(snapshot, SqlSnapshot):
+        try:
+            wanted_status = LifecycleStatus(lifecycle_status.upper()).value if lifecycle_status else None
+        except ValueError:
+            wanted_status = ""  # matches nothing, as the in-memory filter does
+        rows, total = snapshot.procurement_chain(
+            material=material, plant=plant, pr_number=pr_number, po_number=po_number,
+            lifecycle_status=wanted_status, limit=limit, offset=offset,
+        )
+        response.headers["X-Total-Count"] = str(total)
+        return [PartialLedgerEntryResponse.model_validate(row) for row in rows]
     if snapshot is not None:
         entries = [
             e
@@ -60,7 +72,7 @@ def get_partial_ledger_diagnostics(
     material: str | None = Query(None),
     plant: str | None = Query(None),
     db: Session = Depends(get_db),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> ProcurementChainDiagnosticsResponse:
     # Only the tenant-wide diagnostics are precomputed; a filtered call is a
     # scoped query over EBAN/EKPO and stays live.

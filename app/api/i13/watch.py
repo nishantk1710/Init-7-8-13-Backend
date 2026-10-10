@@ -9,6 +9,7 @@ from app.api.i13.deps import get_data_dir, page, snapshot_or_live
 from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.snapshot import I13Snapshot
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.initiatives.i13.watch import compute_watch_metrics
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
@@ -30,8 +31,14 @@ def list_watch_metrics(
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
     data_dir: Path = Depends(get_data_dir),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> list[WatchMetricResponse]:
+    if isinstance(snapshot, SqlSnapshot):
+        rows, total = snapshot.watch(
+            plant=plant, material=material, aging_band=aging_band, limit=limit, offset=offset
+        )
+        response.headers["X-Total-Count"] = str(total)
+        return [WatchMetricResponse.model_validate(row) for row in rows]
     if snapshot is not None:
         metrics = [
             m

@@ -36,6 +36,7 @@ from app.initiatives.i13.act_runner import run_detection
 from app.initiatives.i13.act_stock_provider import PostgresCrossPlantStockProvider
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.snapshot import I13Snapshot
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.initiatives.i13.watch_mart import get_watch_metric, list_watch_metrics
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
 from app.schemas.i13 import WatchMetricResponse
@@ -84,7 +85,7 @@ def list_act_utilisation(
     limit: int = Query(1000, ge=1, le=5000, description="See the note on pagination below."),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> list[WatchMetricResponse]:
     """Read-only over the persisted W6.3 mart -- never recalculates months
     of cover, aging, GRNI or acquired-vs-plan (see
@@ -97,6 +98,13 @@ def list_act_utilisation(
     data it was relying on, and the frontend discloses on screen when a
     response was capped -- an undisclosed cap reads as "that is all there is".
     """
+    if isinstance(snapshot, SqlSnapshot):
+        rows, total = snapshot.watch(
+            plant=plant, material=material, aging_band=aging_band, grni=grni,
+            acquired_vs_plan_status=acquired_vs_plan_status, oar_only=True, limit=limit, offset=offset,
+        )
+        response.headers["X-Total-Count"] = str(total)
+        return [WatchMetricResponse.model_validate(row) for row in rows]
     if snapshot is not None:
         # The snapshot's WATCH rows, OAR only -- the same population the mart
         # held by design (oar_only=True), but complete and current.
@@ -129,9 +137,12 @@ def get_act_utilisation(
     material: str,
     plant: str,
     db: Session = Depends(get_db),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> WatchMetricResponse:
-    row = snapshot.watch.get((material, plant)) if snapshot is not None else get_watch_metric(db, material, plant)
+    if isinstance(snapshot, SqlSnapshot):
+        row = snapshot.watch_row(material, plant)
+    else:
+        row = snapshot.watch.get((material, plant)) if snapshot is not None else get_watch_metric(db, material, plant)
     if row is None:
         raise HTTPException(status_code=404, detail="no WATCH mart row for this material/plant yet -- run the W6.3 refresh first")
     return WatchMetricResponse.model_validate(row)
@@ -264,7 +275,7 @@ def run_detect_exceptions(
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
     data_dir: Path = Depends(get_data_dir),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> DetectionRunResponse:
     """Evidence gathering lives in ``app.initiatives.i13.act_runner`` -- shared
     with the assistant, which runs this scoped to one material after a capture.

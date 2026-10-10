@@ -17,6 +17,7 @@ from collections.abc import Mapping
 
 from app.initiatives.i13.session_link import session_by_reservation
 from app.initiatives.i13.snapshot import I13Snapshot
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.initiatives.i13.uat import SIMULATED_RANGE_START
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
@@ -65,10 +66,27 @@ def list_reservation_ledger(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> list[ReservationLedgerEntryResponse]:
     sessions = session_by_reservation(db)
     sgtxt: Mapping[tuple[str, str], str] | None = None
+    if isinstance(snapshot, SqlSnapshot):
+        try:
+            wanted_status = LifecycleStatus(lifecycle_status.upper()).value if lifecycle_status else None
+        except ValueError:
+            wanted_status = ""  # matches nothing, as the in-memory filter does
+        keys = None
+        if session_id:
+            wanted_session = session_id.strip().upper()
+            keys = {key for key, sid in sessions.items() if sid == wanted_session}
+        rows, total = snapshot.reservation_ledger(
+            material=material, plant=plant, reservation_number=reservation_number, pr_number=pr_number,
+            lifecycle_status=wanted_status, oar_only=not include_out_of_scope, reservation_keys=keys,
+            limit=limit, offset=offset,
+        )
+        response.headers["X-Total-Count"] = str(total)
+        texts = {(e.reservation_number, e.reservation_item): s for e, s in rows if s}
+        return [_to_response(entry, sessions, texts) for entry, _ in rows]
     if snapshot is not None:
         sgtxt = snapshot.sgtxt_by_reservation
         source = snapshot.reservation_ledger if include_out_of_scope else snapshot.reservation_ledger_oar
@@ -119,8 +137,17 @@ def get_reservation_ledger_entry(
     reservation_item: str,
     include_out_of_scope: bool = Query(False, description="See /utilisation-ledger."),
     db: Session = Depends(get_db),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> ReservationLedgerEntryResponse:
+    if isinstance(snapshot, SqlSnapshot):
+        found = snapshot.reservation_entries(
+            reservation_number, reservation_item, oar_only=not include_out_of_scope
+        )
+        if not found:
+            raise HTTPException(status_code=404, detail="Reservation ledger entry not found")
+        entry, text = found[0]
+        key = (entry.reservation_number, entry.reservation_item)
+        return _to_response(entry, session_by_reservation(db), {key: text} if text else {})
     if snapshot is not None:
         matching = [
             e

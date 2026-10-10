@@ -86,8 +86,15 @@ from app.initiatives.i13.models import (
 )
 from app.initiatives.i13.movement_metrics import compute_all_movement_metrics
 from app.initiatives.i13.movements import ISSUE_TYPES, RECEIPT_TYPES, reversal_types_for
-from app.initiatives.i13.plans import ConsumptionPlan, load_captured_plans, load_reference_plans
-from app.initiatives.i13.procurement_chain import build_procurement_chain, compute_chain_diagnostics
+from app.initiatives.i13.plans import (
+    ConsumptionPlan,
+    load_captured_plans,
+    load_reference_plans,
+)
+from app.initiatives.i13.procurement_chain import (
+    build_procurement_chain,
+    compute_chain_diagnostics,
+)
 from app.initiatives.i13.reclassification import build_reclassification_candidates
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
 from app.initiatives.i13.session_link import sync_links
@@ -567,7 +574,18 @@ def start_background_build(reason: str, *, after: threading.Thread | None = None
     With ``after``, the build starts only once that thread has finished -- how
     start-up puts it behind the I08 build. Routes see ``building`` meanwhile,
     rather than starting a build of their own.
+
+    With ``I13_SNAPSHOT_STORE=sql`` the build is the batched one into Azure SQL
+    (``snapshot_store``), and start-up builds only when nothing current is
+    stored -- see ``snapshot_store/lifecycle.py``.
     """
+    from app.initiatives.i13.snapshot_store import lifecycle
+
+    if lifecycle.enabled():
+        if reason == "start-up":
+            threading.Thread(target=lifecycle.start_up, args=(after,), name="i13-store-start", daemon=True).start()
+            return True
+        return lifecycle.start_background_build(reason, after=after)
     with _lock:
         if _state.thread is not None and _state.thread.is_alive():
             return False
@@ -616,7 +634,44 @@ def peek_i13_snapshot() -> I13Snapshot | None:
         return _state.snapshot
 
 
+def serving_snapshot(db: Session):
+    """What a scoped background job (post-capture detection, UAT) should read:
+    the stored version over ``db`` with ``I13_SNAPSHOT_STORE=sql``, else the
+    in-memory snapshot if one is built. ``None`` sends the caller live."""
+    if not get_settings().i13_snapshot_enabled:
+        return None
+    from app.initiatives.i13.snapshot_store import lifecycle
+
+    if lifecycle.enabled():
+        from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
+
+        run = lifecycle.ready_run(db)
+        return SqlSnapshot(db, run) if run is not None else None
+    return peek_i13_snapshot()
+
+
+def served_info() -> dict[str, Any] | None:
+    """What the I13 response headers report: when the served snapshot was
+    built, as of which date, and whether a rebuild is running."""
+    from app.initiatives.i13.snapshot_store import lifecycle
+
+    if lifecycle.enabled():
+        return lifecycle.served_info()
+    current = peek_i13_snapshot()
+    if current is None:
+        return None
+    return {
+        "built_at": current.built_at,
+        "reference_date": current.reference_date,
+        "rebuilding": snapshot_status()["rebuilding"],
+    }
+
+
 def snapshot_status() -> dict[str, Any]:
+    from app.initiatives.i13.snapshot_store import lifecycle
+
+    if lifecycle.enabled():
+        return lifecycle.status()
     with _lock:
         snapshot = _state.snapshot
         return {
@@ -639,6 +694,10 @@ def check_fingerprint(db: Session, *, min_interval_seconds: float | None = None)
     Rate-limited to one check per ``i13_snapshot_check_interval_seconds``.
     Returns True when a rebuild was started.
     """
+    from app.initiatives.i13.snapshot_store import lifecycle
+
+    if lifecycle.enabled():
+        return lifecycle.check_fingerprint(db, min_interval_seconds=min_interval_seconds)
     interval = (
         get_settings().i13_snapshot_check_interval_seconds if min_interval_seconds is None else min_interval_seconds
     )
@@ -664,6 +723,14 @@ def refresh_material(db: Session, material: str, plant: str, *, reservations: bo
     session links. Scoped, so it costs about what the assistant's own
     assessment costs, not a rebuild. Returns False when there is no snapshot.
     """
+    from app.initiatives.i13.snapshot_store import lifecycle
+
+    if lifecycle.enabled():
+        from app.initiatives.i13.snapshot_store.refresh import (
+            refresh_material as refresh_stored,
+        )
+
+        return refresh_stored(db, material, plant, reservations=reservations)
     snapshot = peek_i13_snapshot()
     if snapshot is None:
         return False

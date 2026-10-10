@@ -5,10 +5,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeVar
 
-from fastapi import Header, HTTPException, Query, Response, status
+from fastapi import Depends, Header, HTTPException, Query, Response, status
+from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.db import get_db
 from app.initiatives.i13.snapshot import I13Snapshot, SnapshotBuilding, SnapshotFailed, get_i13_snapshot
+from app.initiatives.i13.snapshot_store import lifecycle as store
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 
 T = TypeVar("T")
 
@@ -24,7 +28,8 @@ def snapshot_or_live(
             "For parity checks; slow on unfiltered calls."
         ),
     ),
-) -> I13Snapshot | None:
+    db: Session = Depends(get_db),
+) -> I13Snapshot | SqlSnapshot | None:
     """The I13 snapshot to serve from, or ``None`` to take the live path.
 
     ``None`` when ``?live=true`` or when ``I13_SNAPSHOT_ENABLED`` is false.
@@ -34,13 +39,19 @@ def snapshot_or_live(
     """
     if live or not get_settings().i13_snapshot_enabled:
         return None
-    return require_snapshot()
+    return require_snapshot(db)
 
 
-def require_snapshot() -> I13Snapshot:
+def require_snapshot(db: Session = Depends(get_db)) -> I13Snapshot | SqlSnapshot:
     """The snapshot, for routes that have no live path at all (GRNI, usage
-    patterns). Same 503s as :func:`snapshot_or_live` while it is unavailable."""
+    patterns). Same 503s as :func:`snapshot_or_live` while it is unavailable.
+
+    With ``I13_SNAPSHOT_STORE=sql`` this is a :class:`SqlSnapshot` over the
+    request's own session: routes check which they were given.
+    """
     try:
+        if store.enabled():
+            return store.current(db)
         return get_i13_snapshot()
     except SnapshotBuilding as building:
         raise HTTPException(

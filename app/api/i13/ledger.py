@@ -29,6 +29,7 @@ from app.api.i13.deps import page, snapshot_or_live
 from app.core.db import get_db
 from app.initiatives.i13.ledger_compat import build_legacy_ledger
 from app.initiatives.i13.snapshot import I13Snapshot
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
@@ -49,8 +50,14 @@ def list_ledger_entries(
     limit: int = Query(100, ge=1, le=1000, description="Not in the original contract -- see module docstring."),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> list[UtilisationLedgerEntryResponse]:
+    if isinstance(snapshot, SqlSnapshot):
+        rows, total = snapshot.legacy_ledger(
+            plant=plant, material=material, oar_only=not include_out_of_scope, limit=limit, offset=offset
+        )
+        response.headers["X-Total-Count"] = str(total)
+        return [UtilisationLedgerEntryResponse.model_validate(row) for row in rows]
     if snapshot is not None:
         source = snapshot.legacy_ledger if include_out_of_scope else snapshot.legacy_ledger_oar
         entries = [e for e in source if (not plant or e.plant == plant) and (not material or e.material == material)]
@@ -73,8 +80,13 @@ def get_ledger_entry(
     ledger_id: str,
     include_out_of_scope: bool = Query(False, description="See /ledger."),
     db: Session = Depends(get_db),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> UtilisationLedgerEntryResponse:
+    if isinstance(snapshot, SqlSnapshot):
+        found = snapshot.legacy_entry(ledger_id, oar_only=not include_out_of_scope)
+        if found is None:
+            raise HTTPException(status_code=404, detail="Ledger entry not found")
+        return UtilisationLedgerEntryResponse.model_validate(found)
     if snapshot is not None:
         entry = snapshot.legacy_ledger_by_id.get(ledger_id)
         if entry is not None and (

@@ -8,6 +8,7 @@ from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.reclassification import build_reclassification_candidates
 from app.initiatives.i13.snapshot import I13Snapshot
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
 from app.schemas.i13 import ReclassificationCandidateResponse
@@ -25,8 +26,14 @@ def list_reclassification_candidates(
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> list[ReclassificationCandidateResponse]:
+    if isinstance(snapshot, SqlSnapshot):
+        rows, total = snapshot.reclassification(
+            plant=plant, material=material, candidates_only=candidates_only, limit=limit, offset=offset
+        )
+        response.headers["X-Total-Count"] = str(total)
+        return [ReclassificationCandidateResponse.model_validate(row) for row in rows]
     if snapshot is not None:
         candidates = [
             c

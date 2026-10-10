@@ -32,6 +32,7 @@ from app.initiatives.i13.session_link import (
     session_status,
 )
 from app.initiatives.i13.snapshot import I13Snapshot
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.models.i13_session_link import SessionReservationLink
 from app.schemas.i13 import (
     SessionComplianceResponse,
@@ -68,7 +69,7 @@ def list_session_links(
 def get_session_compliance(
     plant: str | None = Query(None),
     db: Session = Depends(get_db),
-    snapshot: I13Snapshot = Depends(require_snapshot),
+    snapshot: I13Snapshot | SqlSnapshot = Depends(require_snapshot),
 ) -> SessionComplianceResponse:
     """Counted over OAR reservations whose requirement date is on or after the
     go-live date -- the reservation carries no creation date in the extract, so
@@ -78,7 +79,15 @@ def get_session_compliance(
     sessions = load_sessions(db, set(linked.values()))
     counts = {COVERED: 0, SESSION_WITHOUT_PLAN: 0, INVALID_SESSION: 0, MISSING_SESSION: 0}
     seen: set[tuple[str, str]] = set()
-    for entry in snapshot.reservation_ledger:
+    if isinstance(snapshot, SqlSnapshot):
+        # Only entries required since go-live are read: the filter is in SQL.
+        entries = snapshot.ledger_with_sgtxt_since(start, plant=plant)
+    else:
+        entries = [
+            (e, snapshot.sgtxt_by_reservation.get((e.reservation_number, e.reservation_item)))
+            for e in snapshot.reservation_ledger
+        ]
+    for entry, sgtxt in entries:
         key = (entry.reservation_number, entry.reservation_item)
         if key in seen or entry.material_scope is not MaterialScope.OAR:
             continue
@@ -87,7 +96,7 @@ def get_session_compliance(
         if entry.requirement_date is None or entry.requirement_date < start:
             continue
         seen.add(key)
-        counts[session_status(snapshot.sgtxt_by_reservation.get(key), linked.get(key), sessions)] += 1
+        counts[session_status(sgtxt, linked.get(key), sessions)] += 1
     return SessionComplianceResponse(
         go_live_date=start,
         reservations=len(seen),
@@ -124,7 +133,7 @@ def list_uat_candidates(
     session_id: str = Query(...),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    snapshot: I13Snapshot = Depends(require_snapshot),
+    snapshot: I13Snapshot | SqlSnapshot = Depends(require_snapshot),
 ) -> list[UatCandidateResponse]:
     """Existing reservations of the session's material and plant, latest
     requirement date first -- what a session ID could be stamped onto."""
@@ -136,7 +145,14 @@ def list_uat_candidates(
     linked = session_by_reservation(db)
     seen: set[tuple[str, str]] = set()
     rows: list[UatCandidateResponse] = []
-    for entry in snapshot.reservation_ledger:
+    if isinstance(snapshot, SqlSnapshot):
+        entries = snapshot.ledger_with_sgtxt_for(session.material_id, session.plant)
+    else:
+        entries = [
+            (e, snapshot.sgtxt_by_reservation.get((e.reservation_number, e.reservation_item)))
+            for e in snapshot.reservation_ledger
+        ]
+    for entry, sgtxt in entries:
         key = (entry.reservation_number, entry.reservation_item)
         if (entry.material, entry.plant) != (session.material_id, session.plant) or key in seen:
             continue
@@ -149,7 +165,7 @@ def list_uat_candidates(
                 reservation_item=entry.reservation_item,
                 requirement_date=entry.requirement_date,
                 reservation_quantity=entry.reservation_quantity,
-                sgtxt=snapshot.sgtxt_by_reservation.get(key),
+                sgtxt=sgtxt,
                 session_id=linked.get(key),
                 lifecycle_status=entry.lifecycle_status.value,
             )
