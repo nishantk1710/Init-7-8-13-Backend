@@ -59,6 +59,12 @@ class CriticalityNotConfiguredError(CriticalityError):
     """The selected source has nothing to read -- no database, no credentials."""
 
 
+class CriticalityNotLoadedError(CriticalityError):
+    """The source is configured but its data has not been loaded (e.g. the
+    ZMM065 report tables do not exist). Optional data: every lookup answers
+    "unknown" meanwhile, so readiness reports it without failing."""
+
+
 class UnknownCriticalitySourceError(CriticalityError):
     """CRITICALITY_SOURCE names a provider that does not exist."""
 

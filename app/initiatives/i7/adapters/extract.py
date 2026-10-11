@@ -201,7 +201,10 @@ def _batched(iterator: Iterator[dict[str, Any]], size: int) -> Iterator[list[dic
 #
 # ZMM065 is joined from its raw tables: it is a report only the workbook loader
 # fills, always in the workbook vocabulary, with material numbers unpadded --
-# the same form the normalise views give n_mara.material.
+# the same form the normalise views give n_mara.material. It may not be loaded
+# at all (it is not part of the SAP CSV pull): __ZMM065__ is the tables that
+# exist, or an empty stand-in, so criticality is NULL rather than the staging
+# failing -- see _material_sql.
 _MATERIAL_SQL = """
     SELECT a.material,
            a.material_group,
@@ -222,13 +225,27 @@ _MATERIAL_SQL = """
       ) t ON t.material = a.material
       LEFT JOIN (
             SELECT mat_code, MAX(criticality) AS criticality
-              FROM (SELECT mat_code, criticality FROM raw_zmm065_bmm
-                    UNION ALL
-                    SELECT mat_code, criticality FROM raw_zmm065_gb) u
+              FROM (__ZMM065__) u
              WHERE NULLIF(criticality, '') IS NOT NULL
              GROUP BY mat_code
       ) z ON z.mat_code = a.material
 """
+_ZMM065_TABLES = ("raw_zmm065_bmm", "raw_zmm065_gb")
+
+
+def _material_sql(session: Session) -> str:
+    """_MATERIAL_SQL over whichever ZMM065 tables exist."""
+    from app.shared.optional_tables import existing
+
+    tables = existing(session, _ZMM065_TABLES)
+    if tables:
+        source = " UNION ALL ".join(f"SELECT mat_code, criticality FROM {table}" for table in tables)
+    else:
+        logger.info("ZMM065 is not loaded; materials stage with no criticality")
+        source = "SELECT CAST(NULL AS NVARCHAR(200)) AS mat_code, CAST(NULL AS NVARCHAR(200)) AS criticality WHERE 1 = 0"
+    return _MATERIAL_SQL.replace("__ZMM065__", source)
+
+
 # Price and currency come from wherever SAP supplied them, never assumed:
 #
 #   raw_mbew carries a moving price (the July workbook)  -> n_mbew.moving_price,
@@ -360,7 +377,7 @@ def _stage_materials(
     in_scope_materials = _materials_in_plant_scope(session, policy.plant_scope)
 
     def rows() -> Iterator[dict[str, Any]]:
-        for row in _read(session, _MATERIAL_SQL):
+        for row in _read(session, _material_sql(session)):
             material = clean(row.material)
             if material is None:
                 rejections.add("n_mara", None, RejectionReason.MISSING_MATERIAL)

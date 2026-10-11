@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import gc
 import json
-import math
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -182,25 +181,62 @@ def _clip40(value: str | None) -> str | None:
 # --- batches -----------------------------------------------------------------
 
 
-def plan_batches(db: Session, work: WorkTables, batch_materials: int) -> list[Batch]:
-    """Contiguous material ranges of about ``batch_materials`` each, covering
-    every material any work table holds. Boundaries come from SQL Server's own
-    ordering, so the range predicates select exactly one batch each."""
+def plan_batches(
+    db: Session, work: WorkTables, batch_materials: int, batch_rows: int | None = None
+) -> list[Batch]:
+    """Contiguous material ranges covering every material any work table holds.
+
+    A batch closes at ``batch_materials`` materials or ``batch_rows`` rows of
+    goods movements plus reservations, whichever comes first, so its memory is
+    bounded by what it reads, not by how many materials it names: one busy
+    reagent can carry more movements than a thousand slow-moving spares. A
+    material over ``batch_rows`` on its own gets a batch of its own.
+
+    The materials and their weights come back in SQL Server's own order, and a
+    batch is a run of consecutive ones, so the range predicates select exactly
+    one batch each.
+    """
     union = " UNION ".join(
         f"SELECT material FROM {t}" for t in (work.marc, work.mov, work.stock, work.pr, work.po, work.resb)
     )
-    total = db.execute(text(f"SELECT COUNT(*) FROM ({union}) u")).scalar_one()
-    if not total:
-        return []
-    tiles = max(1, math.ceil(total / max(batch_materials, 1)))
     rows = db.execute(
         text(
-            f"SELECT MIN(material) AS lo, MAX(material) AS hi FROM ("
-            f"SELECT material, NTILE({tiles}) OVER (ORDER BY material) AS tile FROM ({union}) u"
-            f") t GROUP BY tile ORDER BY MIN(material)"
+            f"SELECT u.material, ISNULL(m.n, 0) + ISNULL(r.n, 0) AS weight FROM ({union}) u "
+            f"LEFT JOIN (SELECT material, COUNT(*) AS n FROM {work.mov} GROUP BY material) m "
+            "ON m.material = u.material "
+            f"LEFT JOIN (SELECT material, COUNT(*) AS n FROM {work.resb} GROUP BY material) r "
+            "ON r.material = u.material "
+            "ORDER BY u.material"
         )
     ).fetchall()
-    return [Batch(r.lo, r.hi) for r in rows]
+    return cut_batches([(r[0], r[1]) for r in rows], batch_materials, batch_rows)
+
+
+def cut_batches(
+    weighted: list[tuple[str, int]], batch_materials: int, batch_rows: int | None = None
+) -> list[Batch]:
+    """Consecutive (material, rows) pairs, already in SQL order, cut into
+    batches of at most ``batch_materials`` materials and ``batch_rows`` rows. A
+    material over ``batch_rows`` on its own is a batch by itself."""
+    max_materials = max(batch_materials, 1)
+    max_rows = max(batch_rows, 1) if batch_rows else None
+    batches: list[Batch] = []
+    lo = hi = None
+    count = weight = 0
+    for material, rows_for_material in weighted:
+        if lo is not None and (
+            count >= max_materials or (max_rows is not None and weight + rows_for_material > max_rows)
+        ):
+            batches.append(Batch(lo, hi))
+            lo, count, weight = None, 0, 0
+        if lo is None:
+            lo = material
+        hi = material
+        count += 1
+        weight += rows_for_material
+    if lo is not None:
+        batches.append(Batch(lo, hi))
+    return batches
 
 
 def _monthly(movements, keep_months: int, as_of: date):
@@ -386,9 +422,12 @@ def build(
         stats.work_rows = work_tables.create(db.connection(), work, log=log)
         db.commit()
 
-        batches = plan_batches(db, work, settings.i13_build_batch_materials)
+        batches = plan_batches(db, work, settings.i13_build_batch_materials, settings.i13_build_batch_rows)
         stats.batches = len(batches)
-        log(f"I13 store: v{version} {len(batches)} batches of ~{settings.i13_build_batch_materials} materials")
+        log(
+            f"I13 store: v{version} {len(batches)} batches (at most {settings.i13_build_batch_materials} materials "
+            f"or {settings.i13_build_batch_rows} rows each)"
+        )
 
         reference_plans = load_reference_plans(data_dir)
         all_plans = list(reference_plans) + load_captured_plans(db)

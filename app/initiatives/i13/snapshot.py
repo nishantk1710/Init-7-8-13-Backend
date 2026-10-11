@@ -585,7 +585,9 @@ def start_background_build(reason: str, *, after: threading.Thread | None = None
         if reason == "start-up":
             threading.Thread(target=lifecycle.start_up, args=(after,), name="i13-store-start", daemon=True).start()
             return True
-        return lifecycle.start_background_build(reason, after=after)
+        # A manual refresh is someone asking on purpose: it is not held back
+        # by the automatic-attempt limit.
+        return lifecycle.start_background_build(reason, after=after, manual=reason.startswith("manual"))
     with _lock:
         if _state.thread is not None and _state.thread.is_alive():
             return False

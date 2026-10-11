@@ -457,6 +457,17 @@ class Settings(BaseSettings):
     # batch is read, computed and written before the next one starts, so this
     # bounds the build's memory -- smaller is leaner and slower.
     i13_build_batch_materials: int = 2000
+    # "sql" store only: the most rows (goods movements + reservations) one batch
+    # reads. Batches are cut by this AND by I13_BUILD_BATCH_MATERIALS, whichever
+    # comes first -- a handful of high-volume materials can hold more movements
+    # than thousands of slow movers, so a count of materials alone does not
+    # bound a batch's memory. A single material over it gets a batch of its own.
+    i13_build_batch_rows: int = 150000
+    # "sql" store only: automatic build attempts for the same data before the
+    # store stops retrying (a manual POST /api/i13/snapshot/refresh still runs).
+    # A build that fails the same way every time otherwise re-copies the large
+    # tables forever.
+    i13_build_max_attempts: int = 3
     # "sql" store only: how many calendar months of monthly usage are kept per
     # material-plant (the usage-pattern screens). Aging and 12-month
     # consumption read the full movement history regardless.

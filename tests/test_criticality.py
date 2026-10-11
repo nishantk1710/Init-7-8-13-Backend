@@ -520,4 +520,4 @@ class TestReadiness:
 
         body = TestClient(app).get("/api/ready").json()
         assert "criticality" in body
-        assert body["criticality"] in ("ok", "not_configured", "unavailable")
+        assert body["criticality"] in ("ok", "not_configured", "unavailable", "not_loaded")
