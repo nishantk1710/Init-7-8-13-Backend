@@ -57,6 +57,7 @@ output -- every field here is either a raw deterministic reference or
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from typing import Any
 
@@ -121,16 +122,25 @@ class ConsumptionAttributionService:
         made (memoized per repository instance, so reusing that instance
         costs no extra query -- see ``postgres_reservation.py``). ``plans``
         is optional platform ``ConsumptionPlan`` context (``plans.py``)."""
+        return list(self.iter_attribute_entries(entries, reservation_rows, plans))
+
+    def iter_attribute_entries(
+        self,
+        entries: list[ReservationLedgerEntry],
+        reservation_rows: list[Row],
+        plans: list[ConsumptionPlan] | None = None,
+    ) -> Iterator[ConsumptionAttribution]:
+        """``attribute_entries``, one at a time -- for the stored snapshot's
+        build, which writes each as it comes rather than holding a quarter of
+        a million at once."""
         index = _index_by_reservation_line(reservation_rows)
         plan_index = _index_plans_by_reservation_line(plans or [])
-        return [
-            self.attribute_entry(
+        for entry in entries:
+            yield self.attribute_entry(
                 entry,
                 index.get((entry.reservation_number, entry.reservation_item), []),
                 plan_index.get((entry.reservation_number, entry.reservation_item)),
             )
-            for entry in entries
-        ]
 
     def attribute_entry(
         self,
