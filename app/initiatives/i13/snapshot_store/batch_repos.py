@@ -25,6 +25,7 @@ tables hold plants 1300/1500 only:
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -33,7 +34,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.initiatives.i13.snapshot_store.work_tables import WorkTables
-from app.integrations.sap._request_cache import memoize_per_instance
 from app.integrations.sap.postgres_movements import _decimal, _to_movement_row
 from app.integrations.sap.postgres_procurement import (
     _to_gi_link_row,
@@ -87,26 +87,195 @@ def _filters(spec: dict[str, tuple[str, str | None]]) -> tuple[str, dict[str, st
     return " ".join(clauses), params
 
 
+# --- memory --------------------------------------------------------------------
+#
+# A batch is bounded by rows, but one material is never split, and a handful of
+# materials on the production extract carry half a million movements or a
+# quarter of a million reservations each (measured 11 Oct 2026). Held the
+# straightforward way -- fetchall(), then a dict per row with its own copy of
+# every value -- one such material outgrew the App Service. Three things here
+# keep a row's cost down without changing a single value a builder sees:
+#
+# * rows are converted as the driver hands them over, never all fetched first,
+#   so the driver's rows and the dicts are not held at the same time;
+# * the values that repeat across rows -- material, plant, movement type,
+#   quantities, dates, units -- are kept once per batch and shared. Decimals
+#   are pooled by their exact digits and exponent, so ``1`` and ``1.000`` stay
+#   distinct values, as they were;
+# * rows of one shape share one key table. A row is still a plain, mutable
+#   ``dict``; it is built as an object's attribute dict, which CPython stores
+#   as values only, the keys held once for every object of the class (PEP 412's
+#   key-sharing dictionaries). A 21-key reservation row drops from ~470 to
+#   ~280 bytes, a movement row from ~280 to ~150. Should an interpreter not
+#   share keys, the rows are ordinary dicts and only the saving is lost.
+
+#: Row keys whose values repeat across rows. Identifiers that are unique per
+#: row (reservation, PO and PR numbers, texts) are left alone: pooling those
+#: would cost an entry per row and save nothing.
+_POOLED = frozenset(
+    {
+        "Matnr", "Werks", "Bwart", "Menge", "BudatMkpf", "Ebelp", "Bnfpo", "Rspos", "Lgort", "Bdter", "Bdmng",
+        "Meins", "Enmng", "Enwrt", "Umwrk", "Umlgo", "Wempf", "Badat",
+    }
+)
+
+
+class _Pool:
+    """Builds a batch's rows: one shared copy of each distinct ``_POOLED``
+    value, and one shared key table per row shape (per converter)."""
+
+    __slots__ = ("_seen", "_shapes")
+
+    def __init__(self) -> None:
+        self._seen: dict[tuple, Any] = {}
+        self._shapes: dict[Any, type] = {}
+
+    def row(self, convert, record: Any) -> Row:
+        """``convert(record)``, rebuilt compactly. Equal to it, key for key and
+        in the same key order."""
+        shape = self._shapes.get(convert)
+        if shape is None:
+            shape = self._shapes[convert] = type("BatchRow", (), {})
+        holder = shape()
+        seen = self._seen
+        for key, value in convert(record).items():
+            if value is not None and key in _POOLED:
+                ident = (Decimal, value.as_tuple()) if value.__class__ is Decimal else (value.__class__, value)
+                value = seen.setdefault(ident, value)
+            setattr(holder, key, value)
+        return holder.__dict__
+
+
+def _read(db: Session, sql: str, params: dict[str, str], convert, pool: _Pool) -> list[Row]:
+    """``convert`` each row of ``sql`` as it arrives, compactly (``_Pool``)."""
+    row = pool.row
+    return [row(convert, record) for record in db.execute(text(sql), params)]
+
+
+def _memoized(method):
+    """``memoize_per_instance``, keyed by the filters that are actually set.
+
+    Every filter here is ``AND col = :value`` only when the value is truthy
+    (``_filters``), so ``get_reservations()``, ``get_reservations(material=None,
+    plant=None)`` and ``get_reservations(reservation_number=None)`` are one
+    query -- the builders call it all three ways. Keyed on the arguments as
+    written, they were three cache entries and three copies of the batch's
+    reservations; keyed on what they select, they are one.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, **filters):
+        key = (method.__name__, tuple(sorted((k, v) for k, v in filters.items() if v)))
+        cache = self._cache
+        if key not in cache:
+            cache[key] = method(self, **filters)
+        return cache[key]
+
+    return wrapper
+
+
+# SQL Server compares strings ignoring trailing spaces, and NULL matches
+# nothing: these say what the removed WHERE clauses said, for rows already read.
+def _blank(value: str | None) -> bool:
+    return value is None or value.rstrip(" ") == ""
+
+
+def _is_issue(movement_type: str | None) -> bool:
+    return movement_type is not None and movement_type.rstrip(" ") in ("201", "261")
+
+
+@dataclass
+class BatchMovements:
+    """The batch's goods movements, read ONCE for the three repositories.
+
+    Movement history, issues by reservation and issues by PO are three
+    readings of the same work table; on 5000017969 two of them are nearly the
+    whole table (222k of 240k rows). Read separately, each was fetched and
+    converted on its own. Here one pass yields all three, through one pool, in
+    the table's order -- and each list holds exactly the rows its own query
+    selected:
+
+        history            every row
+        issues by resv.    movement_type IN ('201','261') AND reservation <> '' AND reservation <> '0'
+        issues by PO       movement_type IN ('201','261') AND purchase_order <> '' AND item <> ''
+
+    ``drop_history`` lets the builder release the largest of the three once
+    nothing reads it any more.
+    """
+
+    db: Session
+    work: WorkTables
+    batch: Batch
+    _pool: _Pool = field(default_factory=_Pool, repr=False, compare=False)
+    _history: list[Row] | None = field(default=None, repr=False, compare=False)
+    _by_reservation: list[Row] | None = field(default=None, repr=False, compare=False)
+    _by_po: list[Row] | None = field(default=None, repr=False, compare=False)
+
+    def _load(self) -> None:
+        if self._by_reservation is not None:
+            return
+        history: list[Row] = []
+        by_reservation: list[Row] = []
+        by_po: list[Row] = []
+        row = self._pool.row
+        result = self.db.execute(
+            text(
+                "SELECT material, plant, movement_type, quantity, posting_date, purchase_order, item, "
+                f"reservation, item_no_stock_transfer_reserv FROM {self.work.mov} WHERE {self.batch.predicate()}"
+            ),
+            self.batch.params(),
+        )
+        for r in result:
+            history.append(row(_to_movement_row, r))
+            if _is_issue(r.movement_type):
+                if not _blank(r.reservation) and r.reservation.rstrip(" ") != "0":
+                    by_reservation.append(row(_to_gi_by_reservation_row, r))
+                if not _blank(r.purchase_order) and not _blank(r.item):
+                    by_po.append(row(_to_gi_link_row, r))
+        self._history, self._by_reservation, self._by_po = history, by_reservation, by_po
+
+    def history(self) -> list[Row]:
+        self._load()
+        if self._history is None:
+            raise RuntimeError("I13 store: the batch's movement history was released and read again")
+        return self._history
+
+    def issues_by_reservation(self) -> list[Row]:
+        self._load()
+        return self._by_reservation
+
+    def issues_by_po(self) -> list[Row]:
+        self._load()
+        return self._by_po
+
+    def drop_history(self) -> None:
+        self._history = None
+
+
 @dataclass
 class BatchMovementRepository:
     db: Session
     work: WorkTables
     batch: Batch
+    movements: BatchMovements | None = None
     _cache: dict = field(default_factory=dict, repr=False, compare=False)
+    _pool: _Pool = field(default_factory=_Pool, repr=False, compare=False)
 
-    @memoize_per_instance
+    @_memoized
     def get_movement_history(self, *, material: str | None = None, plant: str | None = None) -> list[Row]:
+        if self.movements is not None and not material and not plant:
+            return self.movements.history()
         extra, params = _filters({"material": ("material", material), "plant": ("plant", plant)})
-        rows = self.db.execute(
-            text(
-                "SELECT material, plant, movement_type, quantity, posting_date, purchase_order, item "
-                f"FROM {self.work.mov} WHERE {self.batch.predicate()} {extra}"
-            ),
+        return _read(
+            self.db,
+            "SELECT material, plant, movement_type, quantity, posting_date, purchase_order, item "
+            f"FROM {self.work.mov} WHERE {self.batch.predicate()} {extra}",
             {**self.batch.params(), **params},
-        ).fetchall()
-        return [_to_movement_row(r) for r in rows]
+            _to_movement_row,
+            self._pool,
+        )
 
-    @memoize_per_instance
+    @_memoized
     def get_current_stock(
         self, *, material: str | None = None, plant: str | None = None
     ) -> dict[tuple[str, str], Decimal]:
@@ -117,7 +286,7 @@ class BatchMovementRepository:
                 f"WHERE {self.batch.predicate()} {extra}"
             ),
             {**self.batch.params(), **params},
-        ).fetchall()
+        )
         totals: dict[tuple[str, str], Decimal] = {}
         for r in rows:
             key = (r.material.strip(), r.plant.strip())
@@ -130,9 +299,11 @@ class BatchProcurementRepository:
     db: Session
     work: WorkTables
     batch: Batch
+    movements: BatchMovements | None = None
     _cache: dict = field(default_factory=dict, repr=False, compare=False)
+    _pool: _Pool = field(default_factory=_Pool, repr=False, compare=False)
 
-    @memoize_per_instance
+    @_memoized
     def get_purchase_requisitions(
         self, *, pr_number: str | None = None, material: str | None = None, plant: str | None = None
     ) -> list[Row]:
@@ -143,17 +314,17 @@ class BatchProcurementRepository:
                 "plant": ("plant", plant),
             }
         )
-        rows = self.db.execute(
-            text(
-                "SELECT purchase_requisition, item_of_requisition, material, plant, quantity_requested, "
-                f"requisition_date, purchase_order, purchase_order_item FROM {self.work.pr} "
-                f"WHERE {self.batch.predicate()} {extra}"
-            ),
+        return _read(
+            self.db,
+            "SELECT purchase_requisition, item_of_requisition, material, plant, quantity_requested, "
+            f"requisition_date, purchase_order, purchase_order_item FROM {self.work.pr} "
+            f"WHERE {self.batch.predicate()} {extra}",
             {**self.batch.params(), **params},
-        ).fetchall()
-        return [_to_pr_row(r) for r in rows]
+            _to_pr_row,
+            self._pool,
+        )
 
-    @memoize_per_instance
+    @_memoized
     def get_purchase_order_items(
         self,
         *,
@@ -170,43 +341,45 @@ class BatchProcurementRepository:
                 "plant": ("plant", plant),
             }
         )
-        rows = self.db.execute(
-            text(
-                "SELECT purchasing_document, item, purchase_requisition, item_of_requisition, material, plant, "
-                f"order_quantity FROM {self.work.po} WHERE {self.batch.predicate()} {extra}"
-            ),
+        return _read(
+            self.db,
+            "SELECT purchasing_document, item, purchase_requisition, item_of_requisition, material, plant, "
+            f"order_quantity FROM {self.work.po} WHERE {self.batch.predicate()} {extra}",
             {**self.batch.params(), **params},
-        ).fetchall()
-        return [_to_po_item_row(r) for r in rows]
+            _to_po_item_row,
+            self._pool,
+        )
 
-    @memoize_per_instance
+    @_memoized
     def get_goods_receipt_history(self, *, po_number: str | None = None) -> list[Row]:
         extra, params = _filters({"po_number": ("purchasing_document", po_number)})
         # A GR line carries its PO line's material, not a plant: the plant
         # narrowing of a one-material refresh is applied through the PO line.
         batch = Batch(self.batch.lo, self.batch.hi)
-        rows = self.db.execute(
-            text(
-                "SELECT purchasing_document, item, movement_type, quantity, posting_date "
-                f"FROM {self.work.gr} WHERE {batch.predicate()} {extra}"
-            ),
+        return _read(
+            self.db,
+            "SELECT purchasing_document, item, movement_type, quantity, posting_date "
+            f"FROM {self.work.gr} WHERE {batch.predicate()} {extra}",
             {**batch.params(), **params},
-        ).fetchall()
-        return [_to_gr_row(r) for r in rows]
+            _to_gr_row,
+            self._pool,
+        )
 
-    @memoize_per_instance
+    @_memoized
     def get_deterministic_gi_candidates(self, *, po_number: str | None = None) -> list[Row]:
+        if self.movements is not None and not po_number:
+            return self.movements.issues_by_po()
         extra, params = _filters({"po_number": ("purchase_order", po_number)})
-        rows = self.db.execute(
-            text(
-                "SELECT material, plant, movement_type, quantity, posting_date, purchase_order, item "
-                f"FROM {self.work.mov} WHERE {self.batch.predicate()} "
-                "AND movement_type IN ('201', '261') AND purchase_order <> '' AND item <> '' "
-                f"{extra}"
-            ),
+        return _read(
+            self.db,
+            "SELECT material, plant, movement_type, quantity, posting_date, purchase_order, item "
+            f"FROM {self.work.mov} WHERE {self.batch.predicate()} "
+            "AND movement_type IN ('201', '261') AND purchase_order <> '' AND item <> '' "
+            f"{extra}",
             {**self.batch.params(), **params},
-        ).fetchall()
-        return [_to_gi_link_row(r) for r in rows]
+            _to_gi_link_row,
+            self._pool,
+        )
 
 
 @dataclass
@@ -214,9 +387,11 @@ class BatchReservationRepository:
     db: Session
     work: WorkTables
     batch: Batch
+    movements: BatchMovements | None = None
     _cache: dict = field(default_factory=dict, repr=False, compare=False)
+    _pool: _Pool = field(default_factory=_Pool, repr=False, compare=False)
 
-    @memoize_per_instance
+    @_memoized
     def get_reservations(
         self,
         *,
@@ -233,17 +408,17 @@ class BatchReservationRepository:
                 "plant": ("plant", plant),
             }
         )
-        rows = self.db.execute(
-            text(
-                "SELECT reservation, item_no_stock_transfer_reserv, item_deleted, final_issue, material, plant, "
-                "storage_location, requirement_date, requirement_quantity, base_unit_of_measure, "
-                'quantity_withdrawn, value_withdrawn, purchase_requisition, item_of_requisition, "order", '
-                "movement_type, receiving_plant, receiving_stor_loc, goods_recipient, text "
-                f"FROM {self.work.resb} WHERE {self.batch.predicate()} {extra}"
-            ),
+        result = _read(
+            self.db,
+            "SELECT reservation, item_no_stock_transfer_reserv, item_deleted, final_issue, material, plant, "
+            "storage_location, requirement_date, requirement_quantity, base_unit_of_measure, "
+            'quantity_withdrawn, value_withdrawn, purchase_requisition, item_of_requisition, "order", '
+            "movement_type, receiving_plant, receiving_stor_loc, goods_recipient, text "
+            f"FROM {self.work.resb} WHERE {self.batch.predicate()} {extra}",
             {**self.batch.params(), **params},
-        ).fetchall()
-        result = [_to_reservation_row(r) for r in rows]
+            _to_reservation_row,
+            self._pool,
+        )
 
         from app.core.config import get_settings
 
@@ -261,19 +436,21 @@ class BatchReservationRepository:
             result = [r for r in result if not r.get("UatSimulated") or self.batch.holds(r["Matnr"], r["Werks"])]
         return result
 
-    @memoize_per_instance
+    @_memoized
     def get_goods_issue_by_reservation(self, *, reservation_number: str | None = None) -> list[Row]:
+        if self.movements is not None and not reservation_number:
+            return self.movements.issues_by_reservation()
         extra, params = _filters({"reservation_number": ("reservation", reservation_number)})
-        rows = self.db.execute(
-            text(
-                "SELECT reservation, item_no_stock_transfer_reserv, movement_type, quantity, posting_date "
-                f"FROM {self.work.mov} WHERE {self.batch.predicate()} "
-                "AND movement_type IN ('201', '261') AND reservation <> '' AND reservation <> '0' "
-                f"{extra}"
-            ),
+        return _read(
+            self.db,
+            "SELECT reservation, item_no_stock_transfer_reserv, movement_type, quantity, posting_date "
+            f"FROM {self.work.mov} WHERE {self.batch.predicate()} "
+            "AND movement_type IN ('201', '261') AND reservation <> '' AND reservation <> '0' "
+            f"{extra}",
             {**self.batch.params(), **params},
-        ).fetchall()
-        return [_to_gi_by_reservation_row(r) for r in rows]
+            _to_gi_by_reservation_row,
+            self._pool,
+        )
 
 
 def scope_index(db: Session, work: WorkTables, batch: Batch) -> dict[tuple[str, str], str | None]:

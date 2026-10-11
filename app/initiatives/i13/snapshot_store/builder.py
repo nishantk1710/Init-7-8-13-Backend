@@ -35,7 +35,7 @@ import gc
 import json
 import time
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -64,6 +64,7 @@ from app.initiatives.i13.snapshot_store import kinds, work_tables
 from app.initiatives.i13.snapshot_store.batch_repos import (
     Batch,
     BatchMovementRepository,
+    BatchMovements,
     BatchProcurementRepository,
     BatchReservationRepository,
     scope_index,
@@ -111,7 +112,12 @@ _INSERT = (
 
 
 class RecordWriter:
-    """Bulk inserts of ``Record``s under one version, numbering them per kind."""
+    """Bulk inserts of ``Record``s under one version, numbering them per kind.
+
+    ``write`` takes any iterable and inserts every ``_WRITE_CHUNK`` records as
+    it goes, so a generator of a quarter of a million ledger items never sits
+    in memory whole -- neither as items nor as insert rows.
+    """
 
     def __init__(self, db: Session, version: int) -> None:
         self.db = db
@@ -119,9 +125,7 @@ class RecordWriter:
         self.seq: dict[str, int] = defaultdict(int)
         self.counts: dict[str, int] = defaultdict(int)
 
-    def write(self, records: list[kinds.Record]) -> None:
-        if not records:
-            return
+    def write(self, records: Iterable[kinds.Record]) -> None:
         rows = []
         for r in records:
             if len(r.payload) > PAYLOAD_MAX:
@@ -139,6 +143,13 @@ class RecordWriter:
                     (r.text1 or None) and r.text1[:400], r.payload,
                 )
             )
+            if len(rows) >= _WRITE_CHUNK:
+                self._insert(rows)
+                rows = []
+        if rows:
+            self._insert(rows)
+
+    def _insert(self, rows: list[tuple]) -> None:
         connection = self.db.connection()
         if connection.dialect.name == "mssql":
             cursor = connection.connection.cursor()
@@ -164,8 +175,7 @@ class RecordWriter:
                         (pyodbc.SQL_VARCHAR, PAYLOAD_MAX, 0),
                     ]
                 )
-                for start in range(0, len(rows), _WRITE_CHUNK):
-                    cursor.executemany(_INSERT, rows[start : start + _WRITE_CHUNK])
+                cursor.executemany(_INSERT, rows)
             finally:
                 cursor.close()
         else:  # pragma: no cover - the app runs on SQL Server only
@@ -275,99 +285,127 @@ def _build_batch(
     diagnostics: list[ProcurementChainDiagnostics],
     sgtxt_rows: list[dict],
 ) -> None:
-    movement_repo = BatchMovementRepository(db, work, batch)
-    procurement_repo = BatchProcurementRepository(db, work, batch)
-    reservation_repo = BatchReservationRepository(db, work, batch)
+    # Each result is written as soon as it is computed and released as soon as
+    # nothing later reads it, so a batch's peak is its largest stage, not the
+    # sum of all of them. Kinds are numbered separately, so the order they are
+    # written in changes no stored row. What every stage reads is fixed by the
+    # repositories, which are memoized: the order they run in changes no value.
+    movements = BatchMovements(db, work, batch)  # one read of the movement table for all three
+    movement_repo = BatchMovementRepository(db, work, batch, movements)
+    procurement_repo = BatchProcurementRepository(db, work, batch, movements)
+    reservation_repo = BatchReservationRepository(db, work, batch, movements)
 
     index = scope_index(db, work, batch)
 
     def is_oar(material: str, plant: str) -> bool:
         return classify_material_scope(index.get((material, plant))) is MaterialScope.OAR
 
+    # Movement metrics, and the summary band counts exactly as the in-memory
+    # build counts them.
     movement_metrics = compute_all_movement_metrics(
         movement_repo,
         thresholds=config.aging,
         window_months=config.watch.consumption_window_months,
         as_of=as_of,
     )
-    chain = build_procurement_chain(procurement_repo)
-    diagnostics.append(compute_chain_diagnostics(procurement_repo))
-    ledger = build_reservation_ledger(
-        reservation_repo, procurement_repo, material_scope_index=index, include_out_of_scope=True
-    )
-    legacy = build_legacy_ledger(procurement_repo, reservation_repo, index, include_out_of_scope=True)
-    watch = compute_watch_metrics(
-        movement_repo, procurement_repo, reservation_repo, index, config, data_dir, as_of=as_of, db=db
-    )
-    reservation_rows = reservation_repo.get_reservations()
-    attribution = ConsumptionAttributionService(
-        cost_centre_enabled=config.attribution.cost_centre_enabled
-    ).attribute_entries(ledger, reservation_rows, all_plans)
-    reclassification = build_reclassification_candidates(movement_repo, index, config, as_of=as_of)
-    monthly = _monthly(movement_repo.get_movement_history(), settings.i13_usage_history_months, as_of)
-    stock_by_key = movement_repo.get_current_stock()
-
-    sgtxt = {(r["Rsnum"], r["Rspos"]): r["Sgtxt"] for r in reservation_rows if r.get("Sgtxt")}
-    sgtxt_rows.extend(
-        {k: r.get(k) for k in ("Rsnum", "Rspos", "Matnr", "Werks", "Sgtxt", "UatSimulated", "UatStamped")}
-        for r in reservation_rows
-        if r.get("Sgtxt")
-    )
-
-    # Summary band counts, exactly as the in-memory build counts them.
     band_by_key = {(m.material, m.plant): m.aging_band.value for m in movement_metrics}
     oar_keys = [key for key, dismm in index.items() if classify_material_scope(dismm) is MaterialScope.OAR]
     for key in sorted(oar_keys):
         band = band_by_key.get(key, AgingBand.NON_MOVING.value)
         stats.band_counts[band] += 1
     stats.oar_positions += len(oar_keys)
+    writer.write(kinds.movement(m, is_oar(m.material, m.plant)) for m in movement_metrics)
+    writer.write(kinds.oar_key(k[0], k[1], band_by_key.get(k, AgingBand.NON_MOVING.value)) for k in sorted(oar_keys))
+    del movement_metrics, band_by_key, oar_keys
 
-    watch_by_key = {(m.material, m.plant): m for m in watch}
-    pr_by_ledger = {e.ledger_id: e.pr_number for e in ledger}
-
-    # GRNI per ledger entry -- snapshot.I13Snapshot.grni_entries' rule.
-    threshold = config.watch.gr_not_issued_threshold_days
-    grni_records = []
-    for entry in ledger:
-        if entry.last_gr_date is None:
-            continue
-        outstanding = (entry.received_quantity or Decimal(0)) - entry.issued_quantity
-        age = (as_of - entry.last_gr_date).days
-        if outstanding > 0 and age >= threshold:
-            grni_records.append(kinds.grni(entry, outstanding, age))
-
-    # The stored legacy queue: reference plans only, those of this batch.
-    batch_plans = [p for p in reference_plans if batch.holds(p.material)]
-    queue = exception_queue_from(
-        ledger, batch_plans, sorted(watch, key=lambda m: (m.material, m.plant)), config, as_of=as_of
+    writer.write(
+        kinds.reclass(c, is_oar(c.material, c.plant))
+        for c in build_reclassification_candidates(movement_repo, index, config, as_of=as_of)
     )
 
-    usage_records = []
-    for key in sorted(monthly):
-        series = monthly[key]
-        if not series:
-            continue
-        stats.months.update(m.month for m in series)
-        w = watch_by_key.get(key)
-        usage_records.append(
-            kinds.usage(
+    watch = sorted(
+        compute_watch_metrics(
+            movement_repo, procurement_repo, reservation_repo, index, config, data_dir, as_of=as_of, db=db
+        ),
+        key=lambda m: (m.material, m.plant),
+    )
+    watch_by_key = {(m.material, m.plant): m for m in watch}
+
+    monthly = _monthly(movement_repo.get_movement_history(), settings.i13_usage_history_months, as_of)
+    stock_by_key = movement_repo.get_current_stock()
+
+    def usage_records(monthly, stock_by_key, watch_by_key):
+        for key in sorted(monthly):
+            series = monthly[key]
+            if not series:
+                continue
+            stats.months.update(m.month for m in series)
+            w = watch_by_key.get(key)
+            yield kinds.usage(
                 key[0], key[1], classify_material_scope(index.get(key)).value, series,
                 w.stock_on_hand if w else stock_by_key.get(key),
                 w.aging_band.value if w else None,
             )
-        )
 
-    writer.write([kinds.watch(m, m.material_scope is MaterialScope.OAR) for m in sorted(watch, key=lambda m: (m.material, m.plant))])
-    writer.write([kinds.movement(m, is_oar(m.material, m.plant)) for m in movement_metrics])
-    writer.write([kinds.oar_key(k[0], k[1], band_by_key.get(k, AgingBand.NON_MOVING.value)) for k in sorted(oar_keys)])
-    writer.write([kinds.rledger(e, sgtxt.get((e.reservation_number, e.reservation_item))) for e in ledger])
-    writer.write([kinds.lledger(e, is_oar(e.material, e.plant)) for e in legacy])
-    writer.write([kinds.chain(e, is_oar(e.material, e.plant)) for e in chain])
-    writer.write([kinds.attrib(a, is_oar(a.material, a.plant), pr_by_ledger.get(a.ledger_id)) for a in attribution])
-    writer.write([kinds.reclass(c, is_oar(c.material, c.plant)) for c in reclassification])
-    writer.write(usage_records)
-    writer.write(grni_records)
-    writer.write([kinds.exception(item, is_oar(item.material, item.plant)) for item in queue])
+    writer.write(usage_records(monthly, stock_by_key, watch_by_key))
+    # Nothing reads the movement history after this: release the largest list.
+    del monthly, stock_by_key, watch_by_key
+    del movement_repo
+    movements.drop_history()
+
+    writer.write(kinds.chain(e, is_oar(e.material, e.plant)) for e in build_procurement_chain(procurement_repo))
+    diagnostics.append(compute_chain_diagnostics(procurement_repo))
+    writer.write(
+        kinds.lledger(e, is_oar(e.material, e.plant))
+        for e in build_legacy_ledger(procurement_repo, reservation_repo, index, include_out_of_scope=True)
+    )
+
+    ledger = build_reservation_ledger(
+        reservation_repo, procurement_repo, material_scope_index=index, include_out_of_scope=True
+    )
+    reservation_rows = reservation_repo.get_reservations()
+    sgtxt = {(r["Rsnum"], r["Rspos"]): r["Sgtxt"] for r in reservation_rows if r.get("Sgtxt")}
+    sgtxt_rows.extend(
+        {k: r.get(k) for k in ("Rsnum", "Rspos", "Matnr", "Werks", "Sgtxt", "UatSimulated", "UatStamped")}
+        for r in reservation_rows
+        if r.get("Sgtxt")
+    )
+    writer.write(kinds.rledger(e, sgtxt.get((e.reservation_number, e.reservation_item))) for e in ledger)
+    del sgtxt
+
+    pr_by_ledger = {e.ledger_id: e.pr_number for e in ledger}
+    writer.write(
+        kinds.attrib(a, is_oar(a.material, a.plant), pr_by_ledger.get(a.ledger_id))
+        for a in ConsumptionAttributionService(
+            cost_centre_enabled=config.attribution.cost_centre_enabled
+        ).iter_attribute_entries(ledger, reservation_rows, all_plans)
+    )
+    # The SAP rows are all read now: release them with their repositories.
+    del pr_by_ledger, reservation_rows
+    del procurement_repo, reservation_repo, movements
+
+    # GRNI per ledger entry -- snapshot.I13Snapshot.grni_entries' rule.
+    threshold = config.watch.gr_not_issued_threshold_days
+
+    def grni_records(ledger):
+        for entry in ledger:
+            if entry.last_gr_date is None:
+                continue
+            outstanding = (entry.received_quantity or Decimal(0)) - entry.issued_quantity
+            age = (as_of - entry.last_gr_date).days
+            if outstanding > 0 and age >= threshold:
+                yield kinds.grni(entry, outstanding, age)
+
+    writer.write(grni_records(ledger))
+
+    # The stored legacy queue: reference plans only, those of this batch.
+    batch_plans = [p for p in reference_plans if batch.holds(p.material)]
+    writer.write(
+        kinds.exception(item, is_oar(item.material, item.plant))
+        for item in exception_queue_from(ledger, batch_plans, watch, config, as_of=as_of)
+    )
+    del ledger
+    writer.write(kinds.watch(m, m.material_scope is MaterialScope.OAR) for m in watch)
 
 
 # --- the whole build -------------------------------------------------------
