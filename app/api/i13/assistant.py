@@ -53,6 +53,7 @@ from app.assistant.session import SessionError
 from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.snapshot import I13Snapshot
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.initiatives.i13.quantity import build_quantity_config, suggest
 from app.initiatives.i13.watch import compute_watch_metrics
 from app.integrations.sap.postgres_material import fetch_material_scope_index
@@ -278,7 +279,7 @@ def get_quantity_suggestion(
     quantity: Annotated[str, Query(description="What the requester wants to reserve")],
     config: Annotated[I13Config, Depends(get_i13_config)],
     data_dir: Annotated[Path, Depends(get_data_dir)],
-    snapshot: Annotated[I13Snapshot | None, Depends(snapshot_or_live)],
+    snapshot: Annotated[I13Snapshot | SqlSnapshot | None, Depends(snapshot_or_live)],
 ) -> QuantitySuggestionResponse:
     """The suggestion on its own, without a conversation.
 
@@ -292,7 +293,7 @@ def get_quantity_suggestion(
     plant_key = plant.strip()
 
     if snapshot is not None:
-        metric = snapshot.watch.get((material_key, plant_key))
+        metric = snapshot.watch_row(material_key, plant_key)
     else:
         metrics = compute_watch_metrics(
             PostgresMovementRepository(db),

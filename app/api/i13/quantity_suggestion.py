@@ -23,6 +23,7 @@ from app.api.i13.deps import Actor, get_current_actor, snapshot_or_live
 from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.snapshot import I13Snapshot
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.initiatives.i13.quantity_suggestion_store import (
     WatchMetricNotFoundError,
     add_justification,
@@ -58,7 +59,7 @@ def create_quantity_suggestion(
     payload: QuantitySuggestionRequest,
     db: Session = Depends(get_db),
     config: I13Config = Depends(get_i13_config),
-    snapshot: I13Snapshot | None = Depends(snapshot_or_live),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> QuantitySuggestionResponse:
     """Compute and persist one suggestion.
 
@@ -70,7 +71,7 @@ def create_quantity_suggestion(
     This request boundary is where the wall clock is read; everything past
     it takes ``as_of`` as a plain argument, the same as W6.6's detection run.
     """
-    watch_row = snapshot.watch.get((payload.material, payload.plant)) if snapshot is not None else None
+    watch_row = snapshot.watch_row(payload.material, payload.plant) if snapshot is not None else None
     if snapshot is not None and watch_row is None:
         raise HTTPException(
             status_code=404,
