@@ -18,10 +18,14 @@ The overall ``status`` is ``ready`` only when every dependency is ``ok``.
 from fastapi import APIRouter, Response, status
 from pydantic import BaseModel
 
+from app.core.ai import AINotConfiguredError, get_llm
+from app.core.criticality import (
+    CriticalityNotConfiguredError,
+    CriticalityNotLoadedError,
+    get_criticality_source,
+)
 from app.core.db import DatabaseNotConfiguredError, check_connection
 from app.core.logging import get_logger
-from app.core.ai import AINotConfiguredError, get_llm
-from app.core.criticality import CriticalityNotConfiguredError, get_criticality_source
 from app.core.storage import StorageNotConfiguredError, get_storage
 
 logger = get_logger(__name__)
@@ -31,6 +35,9 @@ router = APIRouter(tags=["health"])
 OK = "ok"
 NOT_CONFIGURED = "not_configured"
 UNAVAILABLE = "unavailable"
+#: Criticality only: configured, but its optional data (ZMM065) is not loaded.
+#: Every lookup answers "unknown" meanwhile, so it does not fail readiness.
+NOT_LOADED = "not_loaded"
 
 
 class ReadinessResponse(BaseModel):
@@ -92,6 +99,8 @@ def _check_criticality() -> tuple[str, str | None]:
     """
     try:
         get_criticality_source().check_connection()
+    except CriticalityNotLoadedError as exc:
+        return NOT_LOADED, str(exc)
     except CriticalityNotConfiguredError as exc:
         return NOT_CONFIGURED, str(exc)
     except Exception as exc:
@@ -112,9 +121,11 @@ def get_ready(response: Response) -> ReadinessResponse:
     ai, ai_detail = _check_ai()
     criticality, criticality_detail = _check_criticality()
 
-    if database == OK and storage == OK and ai == OK and criticality == OK:
+    if database == OK and storage == OK and ai == OK and criticality in (OK, NOT_LOADED):
+        # Unloaded ZMM065 is optional data, not an outage: ready, and said so.
         return ReadinessResponse(
-            status="ready", database=OK, storage=OK, ai=OK, criticality=OK
+            status="ready", database=OK, storage=OK, ai=OK, criticality=criticality,
+            detail=criticality_detail if criticality == NOT_LOADED else None,
         )
 
     response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE

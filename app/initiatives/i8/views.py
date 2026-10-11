@@ -184,6 +184,28 @@ def render(sql: str, mssql: bool) -> list[str]:
     return [part.strip().rstrip(";") for part in sql.split(_BATCH_MARKER) if part.strip()]
 
 
+#: Report tables that may not be loaded (not part of the SAP CSV pull), and the
+#: columns the views read from them. A missing one is replaced by an empty
+#: stand-in with these columns, so ``v_zmm065`` -- and every view after it, which
+#: the failed CREATE used to take down with it -- still builds, just with no rows.
+OPTIONAL_REPORT_TABLES = {
+    "raw_zmm065_bmm": ("mat_code", "plant", "criticality", "material_description", "mattyp", "mrp_type"),
+    "raw_zmm065_gb": ("mat_code", "plant", "criticality", "material_description", "mattyp", "mrp_type"),
+}
+
+
+def _stand_in(table: str) -> str:
+    columns = ", ".join(f"CAST(NULL AS NVARCHAR(200)) AS {c}" for c in OPTIONAL_REPORT_TABLES[table])
+    return f"(SELECT {columns} WHERE 1 = 0) AS {table}"
+
+
+def _with_missing_reports(sql: str, missing: set[str]) -> str:
+    """``from <table>`` for each missing report table -> its empty stand-in."""
+    for table in missing:
+        sql = re.sub(rf"(?i)\bfrom\s+{table}\b", f"from {_stand_in(table)}", sql)
+    return sql
+
+
 def ensure_views(engine: Engine | None = None) -> list[str]:
     """Create or replace every function and view. Returns the view names.
 
@@ -197,10 +219,17 @@ def ensure_views(engine: Engine | None = None) -> list[str]:
         raise FileNotFoundError(f"No helper script {scripts[0]}")
 
     with engine.begin() as connection:
+        missing: set[str] = set()
+        if mssql:
+            from app.shared.optional_tables import existing
+
+            missing = set(OPTIONAL_REPORT_TABLES) - set(existing(connection, OPTIONAL_REPORT_TABLES))
+            if missing:
+                logger.info("I08: report tables not loaded, their views build empty: %s", ", ".join(sorted(missing)))
         # Before the views: every one of them that carries a plant calls it.
         connection.execute(text(_IN_SCOPE_PLANT_MSSQL if mssql else _IN_SCOPE_PLANT_SQL))
         for script in scripts:
-            for statement in render(script.read_text(encoding="utf-8"), mssql):
+            for statement in render(_with_missing_reports(script.read_text(encoding="utf-8"), missing), mssql):
                 connection.execute(text(statement))
         if mssql:
             logger.info("I08: %d views ready on SQL Server (%s)", len(VIEWS), ", ".join(VIEWS))

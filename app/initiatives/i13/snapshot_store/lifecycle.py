@@ -5,28 +5,46 @@
 this module when ``I13_SNAPSHOT_STORE=sql``, so ``app.main`` and the callers
 elsewhere do not change.
 
-Differences from the in-memory lifecycle, all because the snapshot now
-outlives the process:
+How a build runs
+----------------
+**As its own process** (``python -m app.initiatives.i13.snapshot_store build``),
+never as a thread of the web worker. Inside the worker a heavy batch could take
+the worker's memory or stall its heartbeat past gunicorn's 120 s timeout, and
+gunicorn then killed the worker: the site went down and took the build with it.
 
-* **Start-up does not always build.** A ready version whose fingerprint still
-  matches the data is served as it is; a restart costs nothing. Only a missing
-  or stale version starts a build, and a build a restart interrupted is
-  cleared first (``builder.abandon_unfinished``).
-* **A data pull is waited out.** A CSV full refresh replaces ~24 tables over a
-  few hours, each changing the fingerprint. Rebuilding on every one would
-  build against half-loaded data, over and over. A change is acted on only
-  once no CSV extract request is open and no load has finished in the last
-  ``_SETTLE_SECONDS``.
-* **The previous version serves throughout.** Routes answer 503 only when no
-  version has ever been built.
+**Under a database lock** (``build_lock``). Only the process holding it may
+build, and start-up clean-up only touches builds when it can take the lock
+itself -- so a running build, in this process or another container, is never
+cleaned up from under it. A killed build releases the lock with its connection.
+
+Who starts a build
+------------------
+Start-up (when nothing current is stored), the data-change watcher, and a manual
+``POST /api/i13/snapshot/refresh``. **A page request never does**: before this,
+a request finding no version started one, which raced start-up's clean-up --
+the clean-up then deleted the new build's tables, and with the frontend
+retrying it happened again and again (48 failed builds overnight on 10-11 Oct).
+
+Automatic attempts at the same data stop after ``I13_BUILD_MAX_ATTEMPTS`` in an
+hour, so a build that fails the same way every time does not re-copy the large
+tables forever; the error stays in ``GET /api/i13/snapshot`` and a manual
+refresh still runs.
+
+Otherwise as before: a restart serves the stored version without rebuilding;
+a data pull is waited out (no open CSV request, no load in the last
+``_SETTLE_SECONDS``); the previous version serves until a new one is complete.
 """
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select
@@ -38,13 +56,15 @@ from app.core.logging import get_logger
 from app.models import IngestionRun
 from app.models.csv_extract import STATUS_OPEN, CsvExtractRequest
 from app.models.i13_snapshot_store import I13SnapshotRun
-from app.shared.snapshot_builds import exclusive_build
 
 logger = get_logger(__name__)
 
 #: A load newer than this is taken to be part of a pull still running.
 _SETTLE_SECONDS = 600
-_RETRY_AFTER_FAILURE_SECONDS = 300.0
+#: The window I13_BUILD_MAX_ATTEMPTS counts over.
+_ATTEMPT_WINDOW = timedelta(hours=1)
+#: Where `python -m app...` runs from: the directory holding the `app` package.
+_APP_ROOT = Path(__file__).resolve().parents[4]
 
 
 def enabled() -> bool:
@@ -53,19 +73,38 @@ def enabled() -> bool:
 
 @dataclass
 class _State:
+    #: The thread that launched, and waits for, this process's build process.
     thread: threading.Thread | None = None
+    process: subprocess.Popen | None = None
     building_since: datetime | None = None
     last_error: str | None = None
     last_check: float = 0.0
-    failed_at: float = 0.0
 
 
 _state = _State()
 _lock = threading.Lock()
 
 
-def _building() -> bool:
+def _building_here() -> bool:
     return _state.thread is not None and _state.thread.is_alive()
+
+
+def _lock_held() -> bool:
+    from app.initiatives.i13.snapshot_store import build_lock
+
+    try:
+        return build_lock.held()
+    except Exception:
+        logger.warning("I13 store: could not test the build lock", exc_info=True)
+        return False
+
+
+def building() -> bool:
+    """A build is running -- launched here, or by any other process."""
+    with _lock:
+        if _building_here():
+            return True
+    return _lock_held()
 
 
 def ready_run(db: Session) -> I13SnapshotRun | None:
@@ -83,13 +122,30 @@ def ready_run(db: Session) -> I13SnapshotRun | None:
     return run
 
 
+def _latest_run(db: Session) -> I13SnapshotRun | None:
+    return db.execute(select(I13SnapshotRun).order_by(I13SnapshotRun.version.desc()).limit(1)).scalar_one_or_none()
+
+
+def _last_failure(db: Session, running: bool) -> str | None:
+    """The newest run's error, if it failed -- or was interrupted: still marked
+    ``building`` with no build running anywhere."""
+    latest = _latest_run(db)
+    if latest is None or latest.status == "ready":
+        return None
+    if latest.status == "failed":
+        return latest.error
+    if latest.status == "building" and not running:
+        return f"interrupted: build v{latest.version} stopped before it finished"
+    return None
+
+
 def current(db: Session):
     """The served version as a ``SqlSnapshot``.
 
-    Raises ``SnapshotBuilding`` while the first version is being built and
-    ``SnapshotFailed`` when none could be -- the same contract as
-    ``snapshot.get_i13_snapshot``, so ``deps.require_snapshot`` maps both to
-    the same 503s.
+    Raises ``SnapshotBuilding`` while a first version is being built and
+    ``SnapshotFailed`` when there is none and none is building -- the same
+    contract as ``snapshot.get_i13_snapshot``, so ``deps.require_snapshot`` maps
+    both to the same 503s. **Never starts a build**: see the module docstring.
     """
     from app.initiatives.i13.snapshot import SnapshotBuilding, SnapshotFailed
     from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
@@ -97,45 +153,102 @@ def current(db: Session):
     run = ready_run(db)
     if run is not None:
         return SqlSnapshot(db, run)
-    with _lock:
-        building, since, error = _building(), _state.building_since, _state.last_error
-        failed_ago = time.monotonic() - _state.failed_at
-    if building:
+    if building():
+        latest = _latest_run(db)
+        since = _state.building_since or (latest.started_at if latest is not None else None)
         raise SnapshotBuilding(since)
-    if error is not None and failed_ago < _RETRY_AFTER_FAILURE_SECONDS:
-        raise SnapshotFailed(error)
-    start_background_build("no stored snapshot")
-    raise SnapshotBuilding(datetime.now(timezone.utc))
+    raise SnapshotFailed(
+        _state.last_error
+        or _last_failure(db, running=False)
+        or "no I13 snapshot has been built yet; it builds at start-up and when new data loads "
+        "(POST /api/i13/snapshot/refresh starts one now)"
+    )
 
 
-def _run_build(reason: str, after: threading.Thread | None) -> None:
+# --- starting a build ----------------------------------------------------------
+
+
+def _attempts_left(db: Session) -> int:
+    """Automatic attempts left at the current data (same fingerprint)."""
+    from app.initiatives.i13.snapshot import compute_fingerprint
+
+    fingerprint = compute_fingerprint(db)
+    since = datetime.now(timezone.utc) - _ATTEMPT_WINDOW
+    tried = db.execute(
+        select(func.count())
+        .select_from(I13SnapshotRun)
+        .where(
+            I13SnapshotRun.fingerprint == fingerprint,
+            I13SnapshotRun.status != "ready",
+            I13SnapshotRun.started_at >= since,
+        )
+    ).scalar_one()
+    return max(get_settings().i13_build_max_attempts - tried, 0)
+
+
+def _command(reason: str) -> list[str]:
+    return [sys.executable, "-m", "app.initiatives.i13.snapshot_store", "build", "--reason", reason]
+
+
+def _launch_and_wait(reason: str, after: threading.Thread | None, manual: bool) -> None:
     if after is not None:
         after.join()
-    from app.initiatives.i13.snapshot_store import builder
-
-    db = get_sessionmaker()()
     try:
-        with exclusive_build("I13"):
-            builder.build(db, reason=reason)
+        if _lock_held():
+            logger.info("I13 store: a build is already running elsewhere; not starting another (%s)", reason)
+            return
+        if not manual:
+            db = get_sessionmaker()()
+            try:
+                left = _attempts_left(db)
+            finally:
+                db.close()
+            if left <= 0:
+                logger.warning(
+                    "I13 store: %d automatic attempts at this data in the last hour all failed; "
+                    "not retrying (%s). See GET /api/i13/snapshot; POST /api/i13/snapshot/refresh to force one.",
+                    get_settings().i13_build_max_attempts,
+                    reason,
+                )
+                return
+        logger.info("I13 store: starting a build process (%s)", reason)
+        process = subprocess.Popen(
+            _command(reason), cwd=_APP_ROOT, env=os.environ.copy(), stdin=subprocess.DEVNULL
+        )
         with _lock:
-            _state.last_error = None
+            _state.process = process
+        code = process.wait()
+        error = None
+        if code not in (0, 3):
+            db = get_sessionmaker()()
+            try:
+                error = _last_failure(db, running=False) or f"build process exited with code {code}"
+            finally:
+                db.close()
+        with _lock:
+            _state.last_error = error
             _state.last_check = time.monotonic()
-    except Exception as exc:  # noqa: BLE001 -- recorded and surfaced via status
+        logger.info("I13 store: build process finished with code %s (%s)", code, reason)
+    except Exception as exc:
+        logger.exception("I13 store: could not run a build (%s)", reason)
         with _lock:
             _state.last_error = f"{type(exc).__name__}: {exc}"
-            _state.failed_at = time.monotonic()
     finally:
-        db.close()
         with _lock:
+            _state.process = None
             _state.building_since = None
 
 
-def start_background_build(reason: str, *, after: threading.Thread | None = None) -> bool:
+def start_background_build(reason: str, *, after: threading.Thread | None = None, manual: bool = False) -> bool:
+    """Launch a build process from a daemon thread that waits for it. False if
+    this process already has one running. ``manual`` skips the attempt limit."""
     with _lock:
-        if _building():
+        if _building_here():
             return False
         _state.building_since = datetime.now(timezone.utc)
-        thread = threading.Thread(target=_run_build, args=(reason, after), name="i13-store-build", daemon=True)
+        thread = threading.Thread(
+            target=_launch_and_wait, args=(reason, after, manual), name="i13-store-build", daemon=True
+        )
         _state.thread = thread
     thread.start()
     return True
@@ -158,15 +271,26 @@ def _pull_in_progress(db: Session) -> str | None:
 
 
 def start_up(after: threading.Thread | None = None) -> None:
-    """Clear interrupted builds; build only if nothing current is stored."""
+    """Clear builds that died (only while no build is running anywhere), then
+    build if nothing current is stored."""
     from app.initiatives.i13.snapshot import compute_fingerprint
     from app.initiatives.i13.snapshot_store import builder
+    from app.initiatives.i13.snapshot_store.build_lock import BuildLock
 
+    if after is not None:
+        after.join()
     db = get_sessionmaker()()
     try:
-        abandoned = builder.abandon_unfinished(db)
-        if abandoned:
-            logger.info("I13 store: cleared %d build(s) a restart interrupted", abandoned)
+        lock = BuildLock()
+        if not lock.acquire():
+            logger.info("I13 store: a build is running in another process; start-up leaves it alone")
+            return
+        try:
+            abandoned = builder.abandon_unfinished(db)
+            if abandoned:
+                logger.info("I13 store: cleared %d build(s) that stopped before finishing", abandoned)
+        finally:
+            lock.release()
         run = ready_run(db)
         if run is not None and run.fingerprint == compute_fingerprint(db):
             logger.info("I13 store: serving v%s (built %s); no build needed", run.version, run.built_at)
@@ -179,7 +303,7 @@ def start_up(after: threading.Thread | None = None) -> None:
     if waiting:
         logger.info("I13 store: data changed but a pull is running (%s); serving the stored version", waiting)
         return
-    start_background_build("start-up", after=after)
+    start_background_build("start-up")
 
 
 def check_fingerprint(db: Session, *, min_interval_seconds: float | None = None) -> bool:
@@ -189,9 +313,11 @@ def check_fingerprint(db: Session, *, min_interval_seconds: float | None = None)
         get_settings().i13_snapshot_check_interval_seconds if min_interval_seconds is None else min_interval_seconds
     )
     with _lock:
-        if _building() or time.monotonic() - _state.last_check < interval:
+        if _building_here() or time.monotonic() - _state.last_check < interval:
             return False
         _state.last_check = time.monotonic()
+    if _lock_held():
+        return False
     run = ready_run(db)
     if run is not None and run.fingerprint == compute_fingerprint(db):
         return False
@@ -201,6 +327,8 @@ def check_fingerprint(db: Session, *, min_interval_seconds: float | None = None)
         return False
     return start_background_build("data changed")
 
+
+# --- what is being served ------------------------------------------------------
 
 _served_cache: tuple[float, dict[str, Any] | None] = (0.0, None)
 _SERVED_TTL_SECONDS = 30.0
@@ -216,15 +344,13 @@ def served_info() -> dict[str, Any] | None:
     db = get_sessionmaker()()
     try:
         run = ready_run(db)
-    except Exception:  # noqa: BLE001 -- a header must never fail the response
+    except Exception:
         logger.warning("I13 store: could not read the served version for the response headers", exc_info=True)
         run = None
     finally:
         db.close()
-    with _lock:
-        building = _building()
     info = (
-        {"built_at": run.built_at, "reference_date": run.reference_date, "rebuilding": building}
+        {"built_at": run.built_at, "reference_date": run.reference_date, "rebuilding": building()}
         if run is not None and run.built_at is not None
         else None
     )
@@ -233,27 +359,24 @@ def served_info() -> dict[str, Any] | None:
 
 
 def status() -> dict[str, Any]:
+    running = building()
     db = get_sessionmaker()()
     try:
         run = ready_run(db)
-        latest = db.execute(
-            select(I13SnapshotRun).order_by(I13SnapshotRun.version.desc()).limit(1)
-        ).scalar_one_or_none()
+        latest = _latest_run(db)
+        error = _state.last_error or _last_failure(db, running=running)
     finally:
         db.close()
-    with _lock:
-        building, since, error = _building(), _state.building_since, _state.last_error
-    if error is None and latest is not None and latest.status == "failed":
-        error = latest.error
+    since = _state.building_since or (latest.started_at if running and latest is not None else None)
     return {
-        "status": "building" if building else ("ready" if run is not None else ("failed" if error else "idle")),
+        "status": "building" if running else ("ready" if run is not None else ("failed" if error else "idle")),
         "enabled": get_settings().i13_snapshot_enabled,
         "version": run.version if run else None,
         "reference_date": run.reference_date if run else None,
         "built_at": run.built_at if run else None,
         "build_seconds": float(run.build_seconds) if run and run.build_seconds is not None else None,
         "fingerprint": run.fingerprint if run else None,
-        "building_since": since if building else None,
-        "rebuilding": building and run is not None,
+        "building_since": since if running else None,
+        "rebuilding": running and run is not None,
         "last_error": error,
     }

@@ -4,7 +4,6 @@ Run locally:
     uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 """
 
-import asyncio
 import contextlib
 import threading
 from collections.abc import AsyncIterator, Callable
@@ -84,27 +83,39 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
     settings = get_settings()
 
-    # Before the snapshot, which is built from them: every I08/I13 read goes
-    # through the n_<table> views, and a fresh database has none. Awaited, not
-    # backgrounded, so the first request cannot race a build against views that
-    # do not exist yet. Never raises; bounded by the connect timeout when the
-    # database is unreachable.
-    if settings.database_url and settings.normalise_views_on_startup:
-        from app.shared import sap_normalise
-
-        await asyncio.to_thread(sap_normalise.rebuild_read_layers)
-
-    # I08 first, then I13 -- one after the other, never side by side. Built
-    # together they starved the one-vCore Azure SQL until the I08 build timed
-    # out on every attempt (app/shared/snapshot_builds.py has the numbers).
+    # The views first, then I08, then I13 -- one after the other, never side by
+    # side (built together they starved the one-vCore Azure SQL; see
+    # app/shared/snapshot_builds.py) -- but all of it in the background.
+    #
+    # The view rebuild used to be awaited here, before the server listened. On
+    # the production extract, with the database busy, it outlasted Azure's
+    # 230-second start-up probe and Azure killed the container (10 Oct 2026,
+    # 13:37). The views persist in the database, so the previous ones serve
+    # while they are rebuilt; only a brand-new database has none for a moment.
     stop = threading.Event()
 
-    i8_warm: threading.Thread | None = None
+    def warm() -> None:
+        try:
+            if settings.database_url and settings.normalise_views_on_startup:
+                from app.shared import sap_normalise
+
+                sap_normalise.rebuild_read_layers()
+            i8_warm: threading.Thread | None = None
+            if settings.database_url and settings.i8_snapshot_warm_on_startup:
+                from app.initiatives.i8 import service as i8_service
+
+                i8_service.start_background_build("start-up")
+                i8_warm = i8_service.build_thread()
+            if settings.i13_snapshot_enabled and settings.i13_snapshot_warm_on_startup:
+                i13_snapshot.start_background_build("start-up", after=i8_warm)
+        except Exception:  # a failed warm-up must not take the API down
+            logger.exception("start-up warm-up failed; the API keeps serving")
+
+    threading.Thread(target=warm, name="start-up-warm", daemon=True).start()
+
     if settings.database_url and settings.i8_snapshot_warm_on_startup:
         from app.initiatives.i8 import service as i8_service
 
-        i8_service.start_background_build("start-up")
-        i8_warm = i8_service.build_thread()
         # I08 gets the same watcher I13 has. Without it a CSV full pull -- which
         # replaces raw_<table> whole -- was invisible to the register until
         # somebody restarted the App Service.
@@ -121,7 +132,6 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         ).start()
 
     if settings.i13_snapshot_enabled and settings.i13_snapshot_warm_on_startup:
-        i13_snapshot.start_background_build("start-up", after=i8_warm)
         threading.Thread(
             target=_watch_fingerprint,
             args=(

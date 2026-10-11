@@ -19,6 +19,13 @@ lookup without one is answered only when the material is unambiguous.
 
 Every value stays text through the raw layer on purpose (see ``app.seed.reader``),
 so the mapping to a tier happens here, in one place, via ``parse_tier``.
+
+**Either report may not be loaded.** ZMM065 is not part of the SAP CSV pull, and
+on a database filled only by that pull neither table exists. Each lookup unions
+only the tables that exist (``app.shared.optional_tables``); with neither, every
+answer is "no tier" with the reason ``ZMM065 not loaded`` -- never an error, so
+the builds that ask (I13 reclassification, I08) carry on with criticality
+unknown, and ``check_connection`` reports ``CriticalityNotLoadedError``.
 """
 
 from __future__ import annotations
@@ -30,12 +37,14 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.criticality import (
     CriticalityNotConfiguredError,
+    CriticalityNotLoadedError,
     CriticalityResult,
     CriticalitySource,
     parse_tier,
 )
 from app.core.db import DatabaseNotConfiguredError, get_sessionmaker
 from app.core.logging import get_logger
+from app.shared.optional_tables import existing
 
 logger = get_logger(__name__)
 
@@ -44,53 +53,61 @@ SOURCE_NAME = "zmm065"
 #: The delivered tables, in the order the seed manifest declares them.
 TABLES = ("raw_zmm065_bmm", "raw_zmm065_gb")
 
+NOT_LOADED = "ZMM065 not loaded"
+
 # One row per material-plant. NULLIF drops blank criticality so a row that
 # carries no tier reads as absent rather than as an empty-string tier.
 #
-# Table names are interpolated from the module-level TABLES constant, never from
-# input -- a raw table name cannot be a bind parameter, and the only values that
-# reach this string are the two literals above.
-_UNION = " UNION ALL ".join(
-    f"SELECT mat_code, plant, criticality FROM {table}" for table in TABLES
-)
+# Table names are interpolated from the module-level TABLES constant (the
+# subset that exists), never from input -- a raw table name cannot be a bind
+# parameter, and the only values that reach these strings are the two literals
+# above.
 
-_BY_MATERIAL_PLANT = text(
-    f"""
-    SELECT criticality
-      FROM ({_UNION}) z
-     WHERE z.mat_code = :material
-       AND z.plant = :plant
-       AND NULLIF(z.criticality, '') IS NOT NULL
-    """
-)
+
+def _union(tables: tuple[str, ...]) -> str:
+    return " UNION ALL ".join(f"SELECT mat_code, plant, criticality FROM {table}" for table in tables)
+
+
+def _by_material_plant(tables: tuple[str, ...]):
+    return text(
+        f"""
+        SELECT criticality
+          FROM ({_union(tables)}) z
+         WHERE z.mat_code = :material
+           AND z.plant = :plant
+           AND NULLIF(z.criticality, '') IS NOT NULL
+        """
+    )
+
 
 # Without a plant, every distinct tier the material carries is returned so the
 # caller can be told *why* an answer is being withheld rather than getting one
 # plant's tier at random.
-_BY_MATERIAL = text(
-    f"""
-    SELECT DISTINCT criticality
-      FROM ({_UNION}) z
-     WHERE z.mat_code = :material
-       AND NULLIF(z.criticality, '') IS NOT NULL
-    """
-)
+def _by_material(tables: tuple[str, ...]):
+    return text(
+        f"""
+        SELECT DISTINCT criticality
+          FROM ({_union(tables)}) z
+         WHERE z.mat_code = :material
+           AND NULLIF(z.criticality, '') IS NOT NULL
+        """
+    )
 
-# Proves the tables exist without reading a row -- portable, unlike LIMIT.
-_PROBE = text(f"SELECT 1 FROM ({_UNION}) z WHERE 1 = 0")
 
 # Every row for a batch of materials, in one round trip. The plant is NOT
 # filtered here: one pass over the requested materials answers both the
 # per-plant keys and the any-plant keys, and the grouping happens in Python
 # where the ambiguity rule already lives.
-_MANY = text(
-    f"""
-    SELECT z.mat_code, z.plant, z.criticality
-      FROM ({_UNION}) z
-     WHERE z.mat_code IN :materials
-       AND NULLIF(z.criticality, '') IS NOT NULL
-    """
-).bindparams(bindparam("materials", expanding=True))
+def _many(tables: tuple[str, ...]):
+    return text(
+        f"""
+        SELECT z.mat_code, z.plant, z.criticality
+          FROM ({_union(tables)}) z
+         WHERE z.mat_code IN :materials
+           AND NULLIF(z.criticality, '') IS NOT NULL
+        """
+    ).bindparams(bindparam("materials", expanding=True))
+
 
 #: Materials per _MANY round trip. Each is one bind parameter, and SQL Server
 #: refuses a statement with more than 2,100.
@@ -116,14 +133,17 @@ class Zmm065CriticalitySource(CriticalitySource):
             )
 
         with self._session() as session:
-            if plant is not None:
+            tables = existing(session, TABLES)
+            if not tables:
+                raw, reason = None, NOT_LOADED
+            elif plant is not None:
                 row = session.execute(
-                    _BY_MATERIAL_PLANT, {"material": material, "plant": plant}
+                    _by_material_plant(tables), {"material": material, "plant": plant}
                 ).first()
                 raw = row[0] if row else None
                 reason = None if row else f"{material} not present at plant {plant} in ZMM065"
             else:
-                rows = session.execute(_BY_MATERIAL, {"material": material}).fetchall()
+                rows = session.execute(_by_material(tables), {"material": material}).fetchall()
                 tiers = {r[0] for r in rows}
                 if not tiers:
                     raw, reason = None, f"{material} not present in ZMM065"
@@ -183,15 +203,22 @@ class Zmm065CriticalitySource(CriticalitySource):
         # plant-less ambiguity rule needs.
         by_material_plant: dict[tuple[str, str], str] = {}
         by_material: dict[str, set[str]] = {}
+        loaded = True
         if materials:
             with self._session() as session:
-                rows = [
-                    row
-                    for start in range(0, len(materials), _MANY_CHUNK)
-                    for row in session.execute(
-                        _MANY, {"materials": materials[start : start + _MANY_CHUNK]}
-                    ).fetchall()
-                ]
+                tables = existing(session, TABLES)
+                loaded = bool(tables)
+                rows = (
+                    [
+                        row
+                        for start in range(0, len(materials), _MANY_CHUNK)
+                        for row in session.execute(
+                            _many(tables), {"materials": materials[start : start + _MANY_CHUNK]}
+                        ).fetchall()
+                    ]
+                    if loaded
+                    else []
+                )
             for mat_code, plant, criticality in rows:
                 material = (mat_code or "").strip()
                 plant_code = (plant or "").strip() or None
@@ -216,7 +243,9 @@ class Zmm065CriticalitySource(CriticalitySource):
                 )
                 continue
 
-            if plant is not None:
+            if not loaded:
+                raw, reason = None, NOT_LOADED
+            elif plant is not None:
                 raw = by_material_plant.get((material, plant))
                 reason = (
                     None
@@ -250,9 +279,16 @@ class Zmm065CriticalitySource(CriticalitySource):
         return results
 
     def check_connection(self) -> None:
-        """Prove both tables exist and are readable."""
+        """Prove the loaded tables are readable. Neither loaded is
+        ``CriticalityNotLoadedError``: optional data, not an outage."""
         with self._session() as session:
-            session.execute(_PROBE)
+            tables = existing(session, TABLES)
+            if not tables:
+                raise CriticalityNotLoadedError(
+                    "ZMM065 is not loaded (raw_zmm065_bmm, raw_zmm065_gb); criticality reads as unknown. "
+                    "Load it with: python -m app.ingest.fallback --load zmm065_bmm zmm065_gb"
+                )
+            session.execute(text(f"SELECT 1 FROM ({_union(tables)}) z WHERE 1 = 0"))
 
     def _session(self):
         try:
