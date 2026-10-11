@@ -161,11 +161,16 @@ def _assessment_for(
     # same numbers the WATCH screen shows, and no recompute on every turn (gap
     # G10). Otherwise the single-material live compute, as before. Never waits
     # for, or triggers, a snapshot build.
-    from app.initiatives.i13.snapshot import peek_i13_snapshot
+    #
+    # ``serving_snapshot``, not ``peek_i13_snapshot``: with I13_SNAPSHOT_STORE=sql
+    # the served version is in SQL and the in-memory slot is always empty, so
+    # peeking sent every session to the live compute -- a full scan of the
+    # unindexable n_* views per table, minutes on the production extract.
+    from app.initiatives.i13.snapshot import serving_snapshot
 
-    snapshot = peek_i13_snapshot() if settings.i13_snapshot_enabled else None
+    snapshot = serving_snapshot(db)
     if snapshot is not None and snapshot.reference_date == today:
-        metric = snapshot.watch.get((routed.material_id, routed.plant))
+        metric = snapshot.watch_row(routed.material_id, routed.plant)
     else:
         metrics = compute_watch_metrics(
             movement_repository,

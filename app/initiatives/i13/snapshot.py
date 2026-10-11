@@ -221,6 +221,12 @@ class I13Snapshot:
     def scope_of(self, material: str, plant: str) -> MaterialScope:
         return classify_material_scope(self.material_scope_index.get((material, plant)))
 
+    def watch_row(self, material: str, plant: str) -> WatchMetric | None:
+        """One WATCH row -- the same call ``SqlSnapshot.watch_row`` answers, so a
+        caller holding either store reads it the same way. (``watch`` itself is
+        a mapping here and a paged query there.)"""
+        return self.watch.get((material, plant))
+
     @cached_property
     def watch_sorted(self) -> tuple[WatchMetric, ...]:
         return tuple(self.watch[key] for key in sorted(self.watch))
