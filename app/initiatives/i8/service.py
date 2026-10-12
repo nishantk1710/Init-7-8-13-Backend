@@ -71,6 +71,7 @@ from app.initiatives.i8.register import (
     open_repair_index,
     timed_step,
 )
+from app.initiatives.i8.staged import staged_sources
 from app.initiatives.i8.universe import UniverseRow, UniverseStats, load_universe
 from app.initiatives.i8.vendors import VendorTurnaround, vendor_turnaround
 from app.models import IngestionRun
@@ -194,11 +195,20 @@ class Snapshot:
 
 
 def build_snapshot(
-    db: Session, cfg: I8Settings | None = None, *, today: date | None = None
+    db: Session,
+    cfg: I8Settings | None = None,
+    *,
+    today: date | None = None,
+    staged: bool | None = None,
 ) -> Snapshot:
     """Assemble the register, the universe and the vendor analytics.
 
     Always does the work. :func:`get_snapshot` is the cached entry point.
+
+    ``staged`` (default: ``I8_SNAPSHOT_STAGED``, on) reads narrowed copies of the
+    sources on SQL Server instead of the views over the whole extract -- see
+    ``staged.py``. Off reads the views directly, as before; the parity test
+    builds both ways.
     """
     cfg = cfg or get_i8_settings()
     reference_date = today or cfg.reference_date_value or date.today()
@@ -211,18 +221,22 @@ def build_snapshot(
     # new data, and the mixture would never be corrected.
     source = source_state(db, reference_date=reference_date)
 
-    with statement_timeout(db, get_settings().i8_snapshot_statement_timeout_seconds):
-        # One EKPO pull for both readings of it: repair lines and new purchases.
-        with timed_step("PO lines (EKPO)"):
-            candidates = fetch_candidate_lines(db)
-        lines, register_stats = load_repair_lines(
-            db, cfg, today=reference_date, candidates=candidates
-        )
-        acquisitions = find_new_acquisitions(candidates, cfg)
-        with timed_step("repairable universe"):
-            universe, universe_stats = load_universe(
-                db, cfg, open_repair_index=open_repair_index(lines)
+    settings = get_settings()
+    staged = settings.i8_snapshot_staged if staged is None else staged
+    with statement_timeout(db, settings.i8_snapshot_statement_timeout_seconds):
+        with staged_sources(db, cfg, enabled=staged) as sources:
+            # One EKPO pull for both readings of it: repair lines and new purchases.
+            with timed_step("PO lines (EKPO)"):
+                candidates = fetch_candidate_lines(db, sources=sources)
+            lines, register_stats = load_repair_lines(
+                db, cfg, today=reference_date, candidates=candidates, sources=sources
             )
+            acquisitions = find_new_acquisitions(candidates, cfg)
+            del candidates
+            with timed_step("repairable universe"):
+                universe, universe_stats = load_universe(
+                    db, cfg, open_repair_index=open_repair_index(lines), sources=sources
+                )
     vendors = vendor_turnaround(lines)
 
     elapsed = time.monotonic() - started

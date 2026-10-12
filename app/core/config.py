@@ -485,6 +485,12 @@ class Settings(BaseSettings):
     # serving -- so this is how long a reload stays invisible, not how long a
     # request waits.
     i8_snapshot_check_interval_seconds: int = 60
+    # Read narrowed copies of the I08 sources during a snapshot build instead of
+    # the views over the whole extract (app/initiatives/i8/staged.py). The
+    # views call a scalar function per row, which on the production extract ran
+    # one build query past its limit and pulled 805k EKPO lines into the worker.
+    # Off is the old path, kept as a switch while the staged one is new.
+    i8_snapshot_staged: bool = True
 
     # Session <-> reservation linking (app/initiatives/i13/session_link.py).
     # The requester types the assistant's session ID into the reservation's item
