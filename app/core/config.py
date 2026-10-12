@@ -569,6 +569,74 @@ class Settings(BaseSettings):
     # the delta scheduler's reasoning and its default.
     i7_pipeline_initial_delay_seconds: int = 120
 
+    # --- I07 OAR donor similarity: retrieval -------------------------------
+    #
+    # Operational knobs for app/initiatives/i7/oar/retrieval.py. They decide how
+    # much work a run does, not what a neighbour is -- the business rules
+    # (threshold, K, evidence, eligibility) live in SimilarityPolicy. See
+    # docs/i07_oar_similarity_engine.md for what each one trades.
+    #
+    # "two_stage" (default): a vectorised pre-score over the eligible donors
+    #   picks a shortlist; only the shortlist gets the exact, explainable score.
+    # "exhaustive": every eligible donor gets the exact score -- the pre-2
+    #   behaviour, kept as the reference and for calibration runs.
+    i7_oar_retrieval_mode: str = "two_stage"
+
+    # Shortlist channels, merged and de-duplicated: best by structured+business
+    # pre-score, best by description similarity, best by the full combined
+    # pre-score. Up to their sum (200 by default) per target, usually fewer.
+    i7_oar_structured_pool: int = 50
+    i7_oar_semantic_pool: int = 50
+    i7_oar_fused_pool: int = 100
+
+    # A criticality partition with at most this many eligible donors is scored
+    # exhaustively -- retrieval would save nothing there.
+    i7_oar_exhaustive_below: int = 200
+
+    # Targets pre-scored together (one matrix product per batch). Bounds the
+    # batch x donors similarity block held at once.
+    i7_oar_target_batch_size: int = 256
+
+    # Descriptions sent to the embedding model per call.
+    i7_oar_embedding_batch_size: int = 64
+
+    # Keep embeddings in i7_oar_embedding so the next run reuses them. Off means
+    # every run embeds every description again (same result, more work).
+    i7_oar_embedding_cache: bool = True
+
+    # Target results written per batch, so a run never holds every neighbour
+    # row of every target in memory at once.
+    i7_oar_write_batch_size: int = 2000
+
+    @field_validator("i7_oar_retrieval_mode")
+    @classmethod
+    def _oar_retrieval_mode(cls, value: str) -> str:
+        mode = (value or "").strip().lower()
+        if mode not in ("two_stage", "exhaustive"):
+            raise ValueError("I7_OAR_RETRIEVAL_MODE must be 'two_stage' or 'exhaustive'")
+        return mode
+
+    @field_validator(
+        "i7_oar_structured_pool",
+        "i7_oar_semantic_pool",
+        "i7_oar_fused_pool",
+        "i7_oar_target_batch_size",
+        "i7_oar_embedding_batch_size",
+        "i7_oar_write_batch_size",
+    )
+    @classmethod
+    def _oar_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("OAR retrieval sizes must be at least 1")
+        return value
+
+    @field_validator("i7_oar_exhaustive_below")
+    @classmethod
+    def _oar_non_negative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("I7_OAR_EXHAUSTIVE_BELOW must not be negative")
+        return value
+
     # Current VZI OAR material-scope ruling (MARC.DISMM), comma-separated.
     # See app/shared/material_scope/policy.py -- this is shared platform
     # config, not owned by any single initiative.

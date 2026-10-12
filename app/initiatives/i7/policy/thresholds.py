@@ -15,7 +15,7 @@ Relaxing them to make the data look better would change what "high confidence"
 means to an approver, which is a business decision and not ours.
 """
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class HistoryGatePolicy(BaseModel):
@@ -67,6 +67,20 @@ class ModelAdoptionPolicy(BaseModel):
     """Bias may not worsen by more than this fraction (<=5%)."""
 
 
+SIMILARITY_FEATURES = (
+    "material_group",
+    "equipment_type",
+    "base_unit_of_measure",
+    "manufacturer",
+    "unit_price",
+    "description",
+)
+"""The features an OAR similarity score can rest on. Must equal
+``app.initiatives.i7.oar.types.FEATURE_NAMES`` -- duplicated rather than
+imported because the OAR package imports this module, and a test pins the two
+together. Circuit is deliberately absent: there is no source for it."""
+
+
 class SimilarityPolicy(BaseModel):
     """Stage 5 -- OAR cold-start similarity.
 
@@ -102,6 +116,28 @@ class SimilarityPolicy(BaseModel):
 
     minimum_neighbour_history_months: int = Field(default=12, ge=1)
     """Hard constraint: a neighbour needs at least this much history."""
+
+    minimum_evidence_features: int = Field(default=2, ge=0)
+    """Admission gate (oar-similarity-2): a pair is admitted as a neighbour only
+    if at least this many features were actually compared -- known on both
+    sides. Renormalising over available features otherwise lets one feature
+    alone produce a 1.0. 0 disables the count requirement."""
+
+    identity_evidence_features: tuple[str, ...] = ("material_group", "description")
+    """Admission gate (oar-similarity-2): at least one of these must have been
+    compared. They say what a part IS; unit of measure and price only say how
+    it is counted and what it costs, and thousands of unrelated parts share
+    both. Empty disables the requirement."""
+
+    @field_validator("identity_evidence_features")
+    @classmethod
+    def _known_features(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        unknown = [name for name in value if name not in SIMILARITY_FEATURES]
+        if unknown:
+            raise ValueError(
+                f"unknown similarity feature(s) {unknown}; expected some of {SIMILARITY_FEATURES}"
+            )
+        return value
 
     @model_validator(mode="after")
     def _weights_and_k(self) -> "SimilarityPolicy":
