@@ -236,3 +236,86 @@ def test_vendors_and_acquisitions_are_identical(built) -> None:
     direct, staged, _ = built
     assert _plain(staged.vendors) == _plain(direct.vendors)
     assert _plain(staged.acquisitions) == _plain(direct.acquisitions)
+
+
+# --- the stored snapshot (I8_SNAPSHOT_STORE=sql) --------------------------------
+
+
+@pytest.fixture()
+def no_runs(tenant):
+    from app.core.db import get_engine
+
+    def clear():
+        with get_engine().begin() as conn:
+            conn.execute(text("DELETE FROM i8_snapshot_run"))
+
+    clear()
+    yield
+    clear()
+
+
+def _without_clocks(snapshot) -> dict:
+    plain = dataclasses.asdict(snapshot)
+    plain.pop("built_at"), plain.pop("build_seconds")
+    return {k: (sorted(map(repr, v)) if isinstance(v, (list, tuple)) else v) for k, v in plain.items()}
+
+
+def test_a_build_process_stores_what_a_direct_build_returns(no_runs, monkeypatch) -> None:
+    """The process's work in this process: lock, staged build, store; then the
+    stored payload decoded against a direct build of the same data and day."""
+    import app.initiatives.i8.universe as universe
+    from app.core.db import get_sessionmaker
+    from app.initiatives.i8.service import build_snapshot
+    from app.initiatives.i8.snapshot_store import store
+    from app.initiatives.i8.snapshot_store.__main__ import EXIT_BUILT, build
+
+    monkeypatch.setattr(universe, "get_criticality_source", _Criticality)
+    assert build("parity test") == EXIT_BUILT
+
+    db = get_sessionmaker()()
+    try:
+        run = store.latest_ready(db)
+        assert run is not None and run.payload_bytes and run.fingerprint
+        stored = store.load(run)
+        direct = build_snapshot(db, staged=False)
+        assert _without_clocks(stored) == _without_clocks(direct)
+        assert stored.source_fingerprint == run.fingerprint
+
+        # Unchanged data: a second process finds it current and builds nothing.
+        assert build("again") == EXIT_BUILT
+        db.rollback()
+        assert store.latest_ready(db).version == run.version
+        # A forced one builds a new version and supersedes the old.
+        assert build("manual refresh", force=True) == EXIT_BUILT
+        db.rollback()
+        newer = store.latest_ready(db)
+        assert newer.version == run.version + 1
+        old = db.get(type(run), run.version)
+        db.refresh(old)
+        assert old.status == store.SUPERSEDED and old.payload is None
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_a_failed_build_is_recorded_on_its_run(no_runs, monkeypatch) -> None:
+    import app.initiatives.i8.service as service
+    from app.core.db import get_sessionmaker
+    from app.initiatives.i8.snapshot_store import store
+    from app.initiatives.i8.snapshot_store.__main__ import EXIT_FAILED, build
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("v_ekpo went away\n[SQL: select secret from v_ekpo]")
+
+    monkeypatch.setattr(service, "build_snapshot", broken)
+    assert build("will fail") == EXIT_FAILED
+
+    db = get_sessionmaker()()
+    try:
+        last = store.latest(db)
+        assert last.status == store.FAILED
+        assert last.error == "RuntimeError: v_ekpo went away"
+        assert store.latest_ready(db) is None
+        assert store.recent_failures(db) == 1
+    finally:
+        db.close()
