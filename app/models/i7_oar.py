@@ -16,6 +16,7 @@ from sqlalchemy import (
     DateTime,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -67,6 +68,12 @@ class OarRun(Base):
     business_weight: Mapped[Decimal] = mapped_column(SCORE)
     top_k: Mapped[int] = mapped_column(Integer)
     minimum_history_months: Mapped[int] = mapped_column(Integer)
+
+    retrieval_config: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    """How candidates were found (``oar.retrieval.RetrievalConfig.describe``):
+    ``mode=exhaustive``, or the two-stage pool sizes. Part of the reuse key, so a
+    run is never reused for a different retrieval configuration. NULL on runs
+    made before it existed."""
 
     targets_evaluated: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -121,6 +128,13 @@ class OarTargetResult(Base):
     estimate_trace: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     detail: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    low_evidence_candidates: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Eligible candidates refused as neighbours because their score rested on
+    too little evidence. NULL on rows written before oar-similarity-2."""
+    shortlisted_candidates: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """Candidates that received the exact score -- all eligible ones under
+    exhaustive retrieval, the merged shortlist under two-stage."""
 
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -178,8 +192,49 @@ class OarNeighbour(Base):
     """Whether this neighbour's Phase 5 values may contribute to the weighted
     estimate -- distinct from being an eligible similarity candidate."""
 
+    score_explanation: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    """``oar.scoring.explain``: the features that entered the score, the ones
+    that could not be compared, the renormalised weights, the text status and
+    the evidence verdict. NULL on rows written before oar-similarity-2."""
+
     def __repr__(self) -> str:
         return (
             f"<OarNeighbour {self.sap_material_number}/{self.sap_plant_code} "
             f"-> {self.neighbour_material}/{self.neighbour_plant} rank={self.rank}>"
         )
+
+
+class OarEmbedding(Base):
+    """A description embedding, kept so the next OAR run does not recompute it.
+
+    Keyed by ``oar.text_similarity.cache_key``, which covers the normalised
+    description, the model name, the model version and the preprocessing
+    version. A change to any of them is a different key, so a stale vector is
+    never looked up -- nothing here has to be invalidated by hand, and old rows
+    are only dead weight until pruned (``oar.embedding_store``).
+
+    The vector is little-endian float32 bytes (384 x 4 = 1,536 bytes for
+    MiniLM), not text: a binary column is the portable way to hold it, and it
+    round-trips exactly.
+    """
+
+    __tablename__ = "i7_oar_embedding"
+
+    cache_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    model_name: Mapped[str] = mapped_column(String(128))
+    model_version: Mapped[str] = mapped_column(String(128))
+    preprocessing_version: Mapped[str] = mapped_column(String(32))
+    text_hash: Mapped[str] = mapped_column(String(32), index=True)
+    """``text_similarity.description_hash`` of the normalised description."""
+    dimensions: Mapped[int] = mapped_column(Integer)
+    vector: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_i7_oar_embedding_model", "model_name", "model_version", "preprocessing_version"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<OarEmbedding {self.cache_key[:12]} {self.model_name}@{self.model_version}>"

@@ -8,12 +8,18 @@ ordering, which is stable until the day it is not.
 
 Order:
 
-1. minimum_similarity admission -- a candidate below the floor is dropped
-   before ranking even considers it (never used to pad the neighbour count)
+1. admission -- a candidate is dropped before ranking even considers it when
+   its combined score is below ``minimum_similarity`` or rests on too little
+   evidence (``CombinedScore.evidence_sufficient``); never used to pad the
+   neighbour count
 2. combined similarity, descending
-3. same circuit first (the Solution Design's soft preference)
-4. material number, ascending
-5. plant, ascending
+3. material number, ascending
+4. plant, ascending
+
+Circuit is not part of the order (since ``oar-similarity-2``): no source
+carries it, so a "same circuit first" rule would only ever have compared two
+unknowns. The ``same_circuit`` slot in each entry is accepted for compatibility
+and ignored.
 
 Fewer than K qualifying candidates yields fewer than K neighbours. Nothing is
 duplicated or padded to reach the target.
@@ -25,16 +31,23 @@ from app.initiatives.i7.oar.types import CombinedScore, Neighbour
 
 
 def sort_key(
-    material: str, plant: str, score: CombinedScore, same_circuit: bool | None
+    material: str, plant: str, score: CombinedScore, same_circuit: bool | None = None
 ) -> tuple:
     """Deterministic ordering key.
 
-    Similarity and the circuit flag are negated so that a plain ascending sort
-    puts the best first, while the identifiers stay ascending as a final,
-    always-decisive tie-break.
+    Similarity is negated so that a plain ascending sort puts the best first,
+    while the identifiers stay ascending as a final, always-decisive tie-break.
+    ``same_circuit`` is accepted and ignored -- see the module docstring.
     """
     similarity = score.combined if score.combined is not None else Decimal(-1)
-    return (-similarity, 0 if same_circuit else 1, material, plant)
+    return (-similarity, material, plant)
+
+
+def admitted(score: CombinedScore, minimum_similarity: Decimal | None) -> bool:
+    """Whether a scored candidate may become a neighbour at all."""
+    if score.combined is None or not score.evidence_sufficient:
+        return False
+    return minimum_similarity is None or score.combined >= minimum_similarity
 
 
 def select_top_k(
@@ -46,7 +59,8 @@ def select_top_k(
 
     Candidates whose combined score could not be computed are dropped: a
     neighbour with no measurable similarity is not evidence of anything, and
-    ranking it would place an unmeasured material above a measured one.
+    ranking it would place an unmeasured material above a measured one. So are
+    candidates whose score rests on too little evidence.
 
     ``minimum_similarity``, when given, is a hard admission floor applied with
     ``>=`` *before* the Top-K cut -- a candidate below it never becomes a
@@ -55,17 +69,15 @@ def select_top_k(
     the minimum-neighbour check downstream sees only genuinely qualifying
     candidates, never candidates kept solely to pad the count.
     """
-    measurable = [entry for entry in scored if entry[2].combined is not None]
-    if minimum_similarity is not None:
-        measurable = [entry for entry in measurable if entry[2].combined >= minimum_similarity]
+    qualifying = [entry for entry in scored if admitted(entry[2], minimum_similarity)]
 
     ordered = sorted(
-        measurable,
-        key=lambda entry: sort_key(entry[0], entry[1], entry[2], entry[3]),
+        qualifying,
+        key=lambda entry: sort_key(entry[0], entry[1], entry[2]),
     )
 
     neighbours: list[Neighbour] = []
-    for rank, (material, plant, score, same_circuit, extra) in enumerate(
+    for rank, (material, plant, score, _same_circuit, extra) in enumerate(
         ordered[:top_k], start=1
     ):
         neighbours.append(
@@ -74,7 +86,7 @@ def select_top_k(
                 plant=plant,
                 rank=rank,
                 score=score,
-                same_circuit=same_circuit,
+                same_circuit=None,
                 same_material_group=extra.get("same_material_group"),
                 criticality=extra.get("criticality"),
                 history_months=extra.get("history_months"),

@@ -195,12 +195,11 @@ def test_the_build_runs_as_its_own_process(clean, settings) -> None:  # noqa: F8
 
 @needs_db
 def test_it_builds_without_zmm065(clean, settings) -> None:  # noqa: F811
-    """Last: drops the tenant's ZMM065 tables (its teardown drops the rest)."""
+    """Last: drops the tenant's criticality table (its teardown drops the rest)."""
     from app.initiatives.i13.snapshot_store import builder, lifecycle
     from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 
-    clean.execute(text("DROP TABLE IF EXISTS raw_zmm065_bmm"))
-    clean.execute(text("DROP TABLE IF EXISTS raw_zmm065_gb"))
+    clean.execute(text("DROP TABLE IF EXISTS criticality_current"))
     clean.commit()
     builder.build(clean, reason="no zmm065", settings=settings)
     stored = SqlSnapshot(clean, lifecycle.ready_run(clean))

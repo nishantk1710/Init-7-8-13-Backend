@@ -1,9 +1,10 @@
 """Shared FastAPI dependencies for the Initiative 13 routes."""
 
-from collections.abc import Sequence
+import functools
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from fastapi import Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
@@ -13,6 +14,7 @@ from app.core.db import get_db
 from app.initiatives.i13.snapshot import I13Snapshot, SnapshotBuilding, SnapshotFailed, get_i13_snapshot
 from app.initiatives.i13.snapshot_store import lifecycle as store
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
+from app.shared.material_names import attach_material_names
 
 T = TypeVar("T")
 
@@ -108,3 +110,27 @@ def get_current_actor(x_actor_id: str | None = Header(default=None, alias="X-Act
     ``Actor`` (the W6.6 routes and application services) stays the same.
     """
     return Actor(id=x_actor_id or "unknown-actor")
+
+
+def with_material_names(
+    row_of: Callable[[Any], Any] | None = None,
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Fill ``material_description`` on whatever a list route returns.
+
+    Placed under ``@router.get``. Reads the in-memory name list only (see
+    ``app.shared.material_names``), so it adds no query to the route.
+    ``row_of`` picks the object carrying ``material`` when a response row
+    nests it (a confirmation and its exception).
+    """
+
+    def decorate(route: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(route)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            result = route(*args, **kwargs)
+            rows = result if isinstance(result, list) else [result]
+            attach_material_names([row_of(r) for r in rows] if row_of else rows)
+            return result
+
+        return wrapper
+
+    return decorate

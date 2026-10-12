@@ -66,23 +66,26 @@ def score(
 ) -> DimensionScore:
     """Gower similarity over the structured features."""
     distances: list[Decimal] = []
-    missing = 0
+    used: list[str] = []
+    missing: list[str] = []
 
     for feature in CATEGORICAL_FEATURES:
         distance = categorical_distance(
             getattr(target, feature), getattr(candidate, feature)
         )
         if distance is None:
-            missing += 1
+            missing.append(feature)
         else:
             distances.append(distance)
+            used.append(feature)
 
     if not distances:
         return DimensionScore(
             value=None,
             status=SimilarityStatus.NOT_AVAILABLE_NO_FEATURES,
             available_features=0,
-            missing_features=missing,
+            missing_features=len(missing),
+            missing=tuple(missing),
         )
 
     mean_distance = sum(distances, Decimal(0)) / Decimal(len(distances))
@@ -90,5 +93,7 @@ def score(
         value=Decimal(1) - mean_distance,
         status=SimilarityStatus.AVAILABLE,
         available_features=len(distances),
-        missing_features=missing,
+        missing_features=len(missing),
+        features=tuple(used),
+        missing=tuple(missing),
     )

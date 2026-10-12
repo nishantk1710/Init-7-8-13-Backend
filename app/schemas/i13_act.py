@@ -25,6 +25,10 @@ class ActExceptionResponse(BaseModel):
     status: ExceptionStatus
 
     material: str
+
+    material_description: str | None = None
+
+    """MAKT / ZMM065 name, where either has one -- see app.shared.material_names."""
     plant: str
 
     reservation_number: str | None
@@ -61,6 +65,14 @@ class ActExceptionEventResponse(BaseModel):
     actor_type: str
     timestamp: datetime
     metadata: dict[str, str]
+
+
+class ActExceptionEventFeedItem(ActExceptionEventResponse):
+    """An event in the portfolio-wide feed. Identical to one in a single
+    exception's history plus the exception it belongs to -- the history route
+    can leave that out because the URL already names it; a feed cannot."""
+
+    exception_id: str
 
 
 class RequesterConfirmationRequest(BaseModel):

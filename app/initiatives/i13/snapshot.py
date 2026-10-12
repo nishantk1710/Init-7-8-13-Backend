@@ -112,8 +112,9 @@ logger = get_logger(__name__)
 Key = tuple[str, str]
 Row = dict[str, Any]
 
-#: The raw extract tables whose reload changes an I13 answer. ZMM065 is here
-#: because reclassification reads criticality from it.
+#: The tables whose reload changes an I13 answer. ``criticality_current`` is
+#: here because reclassification reads criticality from it, and a monthly
+#: criticality upload writes an ingestion_run row for it.
 FINGERPRINT_TABLES = (
     "raw_eban",
     "raw_ekpo",
@@ -123,8 +124,7 @@ FINGERPRINT_TABLES = (
     "raw_mard",
     "raw_resb",
     "raw_marc",
-    "raw_zmm065_bmm",
-    "raw_zmm065_gb",
+    "criticality_current",
 )
 
 

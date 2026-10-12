@@ -12,6 +12,7 @@ from fastapi import APIRouter
 
 from app.api.i7 import (
     adoption,
+    approval_events,
     approval_history,
     approvals,
     health,
@@ -33,6 +34,10 @@ router.include_router(adoption.router)
 router.include_router(recommendations.router)
 router.include_router(approvals.router)
 router.include_router(approval_history.router)
+# /approval-events is a literal path directly under the router root, so
+# recommendations.py's /recommendations/{recommendation_id} can never read it
+# as an id, and registration order relative to that router does not matter.
+router.include_router(approval_events.router)
 router.include_router(runs.router)
 # /pipeline-runs, a distinct prefix from runs.py's /runs -- so registration
 # order between the two does not matter. Order WITHIN pipeline_runs.py does,

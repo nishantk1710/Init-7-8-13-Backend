@@ -1,6 +1,6 @@
 """The opener's material search -- by number or by name.
 
-No database. Each source the search reads (MAKT, the two ZMM065 reports, MARC,
+No database. Each source the search reads (MAKT, the criticality reports, MARC,
 MARD) is a list of rows on a fake session, which answers a query by the table it
 names and applies the query's own LIKE / IN parameters. That is enough to test
 what the search does with what comes back -- precedence, normalising, ranking,
@@ -35,9 +35,12 @@ class _Makt:
 
 @dataclass(frozen=True)
 class _Zmm:
-    mat_code: str
+    """One ``criticality_current`` row. ``zmm_bmm`` and ``zmm_gb`` on the fake
+    are kept as two lists only so each test still reads as one plant's report."""
+
+    material: str
     plant: str
-    material_description: str
+    description: str
 
 
 @dataclass(frozen=True)
@@ -94,14 +97,13 @@ class _FakeDb:
                 rows = [r for r in rows if _like(r.material, params["number_like"])]
             return _Result([r for r in rows if all(_like(r.material_description, w) for w in words)])
 
-        for table, rows in (("raw_zmm065_bmm", self.zmm_bmm), ("raw_zmm065_gb", self.zmm_gb)):
-            if f"FROM {table}" in sql:
-                if rows is None:
-                    raise ProgrammingError(sql, params, Exception("no such table"))
-                rows = [r for r in rows if in_scope(r.plant)]
-                if "number_like" in params:
-                    rows = [r for r in rows if _like(r.mat_code, params["number_like"])]
-                return _Result([r for r in rows if all(_like(r.material_description, w) for w in words)])
+        if "FROM criticality_current" in sql:
+            if self.zmm_bmm is None and self.zmm_gb is None:
+                raise ProgrammingError(sql, params, Exception("no such table"))
+            rows = [r for r in [*(self.zmm_bmm or []), *(self.zmm_gb or [])] if in_scope(r.plant)]
+            if "number_like" in params:
+                rows = [r for r in rows if _like(r.material, params["number_like"])]
+            return _Result([r for r in rows if all(_like(r.description, w) for w in words)])
 
         for table, rows in (("n_marc", self.marc), ("n_mard", self.mard)):
             if f"FROM {table}" in sql:

@@ -70,7 +70,7 @@ from app.api.assistant.schemas import (
     SuggestionModel,
     TurnModel,
 )
-from app.api.i13.deps import Actor, get_current_actor
+from app.api.deps import Actor, get_current_actor
 from app.assistant import intents
 from app.assistant import material_search
 from app.assistant import session as session_service
@@ -86,6 +86,7 @@ from app.assistant.steps import Step
 from app.assistant.turns import AnswerError
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
+from app.shared.material_names import attach_material_names
 
 router = APIRouter(prefix="/assistant", tags=["assistant - reservation-time"])
 
@@ -419,6 +420,7 @@ def list_sessions(
             )
         )
 
+    attach_material_names(items, field="material_id")
     return SessionListResponse(
         items=items,
         total=len(items),
@@ -477,7 +479,7 @@ def get_session(session_id: str, db: DbDep) -> SessionTraceResponse:
 
     links = links_by_session(db).get(session.id, [])
 
-    return SessionTraceResponse(
+    trace = SessionTraceResponse(
         session_id=session.id,
         flow=session.flow,
         outcome=session_service.outcome(session, turn_rows).value,
@@ -514,6 +516,8 @@ def get_session(session_id: str, db: DbDep) -> SessionTraceResponse:
         linked_reservations=[_linked_model(l) for l in links],
         linkage_note=LINKED_NOTE if links else LINKAGE_NOTE,
     )
+    attach_material_names([trace], field="material_id")
+    return trace
 
 
 # --- Justifications, shared by both initiatives ---------------------------

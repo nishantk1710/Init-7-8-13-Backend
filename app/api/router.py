@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from app.api import health, ready
 from app.api.assistant.router import justifications_router
 from app.api.assistant.router import router as assistant_router
+from app.api.criticality.router import router as criticality_router
 from app.api.events import csv_upload, pr
 from app.api.i7.router import router as i7_router
 from app.api.i13.routes import router as i13_router
@@ -29,6 +30,10 @@ api_router.include_router(i13_router)  # -> /api/i13/*
 api_router.include_router(assistant_router)       # -> /api/assistant/*
 api_router.include_router(justifications_router)  # -> /api/justifications
 api_router.include_router(csv_upload.router)
+
+# The monthly criticality reports feed I07, I08 and I13 alike, so like the
+# assistant they sit outside every initiative prefix.
+api_router.include_router(criticality_router)  # -> /api/criticality/*
 
 # --- Extension points: one Spares AI backend, three business modules. ---
 from app.api.i8.router import router as i8_router
