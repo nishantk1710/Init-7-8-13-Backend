@@ -132,6 +132,17 @@ class Settings(BaseSettings):
     # not begin a pull while migrations may still be applying.
     delta_initial_delay_seconds: int = 120
 
+    # Run the same delta cycle when SAP posts a purchase requisition to
+    # /api/events/pr, instead of waiting for the next timer tick. Independent of
+    # DELTA_SCHEDULE_ENABLED: the timer can stay off and an event still
+    # triggers. Off by default for the same reason the timer is.
+    delta_on_pr_event_enabled: bool = False
+
+    # Seconds between a PR event and the cycle it triggers. PRs arrive in
+    # bursts (a release, an MRP run), and every event inside the wait rides the
+    # same cycle rather than starting one each.
+    delta_event_debounce_seconds: int = 120
+
     # --- Full refresh schedule -----------------------------------------------
     #
     # Once a day: every table over the CSV route, loaded, then the OData sets
