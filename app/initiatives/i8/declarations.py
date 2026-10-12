@@ -75,6 +75,7 @@ class DeclarationRow:
     related_repair_id: str
 
     status: str
+
     declared_by: str | None
     declared_at: datetime | None
     condition: str | None
@@ -83,6 +84,16 @@ class DeclarationRow:
 
     next_action: str
     created_at: date | None
+
+    declaration_id: str | None = None
+    """The attestation covering this line, when one does.
+
+    Served so a screen can offer to AMEND it. Without the id the only thing a
+    reader could do with a declaration they disagree with is record a second,
+    unrelated one -- which is how an audit chain turns into a pile.
+
+    Last in the dataclass, with a default, so adding it did not force every
+    existing construction site to name it."""
 
     @property
     def is_outstanding(self) -> bool:
@@ -156,6 +167,7 @@ def build_queue(
                 has_active_repair=line.is_open,
                 related_repair_id=f"{line.purchasing_document}-{line.item}",
                 status=status,
+                declaration_id=attestation.id if attestation else None,
                 declared_by=attestation.attestor if attestation else None,
                 declared_at=attestation.attested_at if attestation else None,
                 condition=condition,

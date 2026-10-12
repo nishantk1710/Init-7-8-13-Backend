@@ -8,6 +8,8 @@ changing underneath it.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from app.api.i8.schemas import (
     Attestation,
     CodingCandidateItem,
@@ -16,6 +18,7 @@ from app.api.i8.schemas import (
     CodingCandidateTwin,
     DeclarationItem,
     DeclarationMeta,
+    ExceptionHistoryEntry,
     ExceptionMeta,
     ExceptionQueueItem,
     LifecycleStage,
@@ -26,10 +29,10 @@ from app.api.i8.schemas import (
     RepairJustification,
     RepairJustificationEntry,
     SAPDocumentReference,
-    UnjustifiedPurchase,
     UniverseItem,
     UniverseMeta,
     UniverseSources,
+    UnjustifiedPurchase,
     VendorTurnaroundItem,
 )
 from app.initiatives.i8.aging import days_between
@@ -43,7 +46,8 @@ from app.initiatives.i8.config import I8Settings
 from app.initiatives.i8.declarations import DeclarationRow
 from app.initiatives.i8.exceptions import RAISED_BY_I8, ExceptionItem, ExceptionStats
 from app.initiatives.i8.line_justifications import LineJustification
-from app.initiatives.i8.models import RepairAttestation
+from app.initiatives.i8.exception_state import UNTOUCHED, ExceptionWorkState
+from app.initiatives.i8.models import ExceptionEvent, RepairAttestation
 from app.initiatives.i8.register import RegisterStats, RepairLine
 from app.initiatives.i8.universe import UniverseRow, UniverseStats
 from app.initiatives.i8.vendors import VendorTurnaround
@@ -164,6 +168,7 @@ def repair_chain(
         schedule_lines=line.schedule_lines,
         criticality=criticality,
         po_blocked=line.po_blocked,
+        declaration_id=declaration.declaration_id if declaration else None,
         declared_by=declaration.declared_by if declaration else None,
         declared_at=declaration.declared_at if declaration else None,
         condition=declaration.condition if declaration else None,
@@ -423,6 +428,7 @@ def declaration_item(row: DeclarationRow, cfg: I8Settings) -> DeclarationItem:
         has_active_repair=row.has_active_repair,
         related_repair_id=row.related_repair_id,
         status=row.status,
+        declaration_id=row.declaration_id,
         declared_by=row.declared_by,
         declared_at=row.declared_at,
         condition=row.condition,
@@ -443,7 +449,19 @@ def declaration_meta(rows, window_days: int) -> DeclarationMeta:
     )
 
 
-def exception_item(item: ExceptionItem, cfg: I8Settings) -> ExceptionQueueItem:
+def exception_item(
+    item: ExceptionItem,
+    cfg: I8Settings,
+    state: ExceptionWorkState | None = None,
+    still_detected: bool = True,
+) -> ExceptionQueueItem:
+    """One computed finding, plus whatever people have done about it.
+
+    ``state`` is None for an item nobody has touched, and ``UNTOUCHED`` is then
+    the truth about it rather than a placeholder: an exception starts OPEN and
+    unassigned, which is exactly what an empty history means.
+    """
+    work = state or UNTOUCHED
     return ExceptionQueueItem(
         id=item.id,
         type=item.type,
@@ -471,6 +489,22 @@ def exception_item(item: ExceptionItem, cfg: I8Settings) -> ExceptionQueueItem:
         raised_at=item.raised_at,
         is_open_repair=item.is_open_repair,
         pre_automation=item.pre_automation,
+        status=work.status,
+        owner=work.owner,
+        still_detected=still_detected,
+        history=[exception_history_entry(e) for e in work.history],
+    )
+
+
+def exception_history_entry(event: ExceptionEvent) -> ExceptionHistoryEntry:
+    return ExceptionHistoryEntry(
+        id=event.id,
+        kind=event.kind,
+        status=event.status,
+        owner=event.owner,
+        actor=event.actor,
+        text=event.text or "",
+        at=event.at,
     )
 
 
