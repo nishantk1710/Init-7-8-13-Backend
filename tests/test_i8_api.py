@@ -53,18 +53,18 @@ class TestRoutesAreMounted:
             "/api/i8/exceptions",
         } <= paths
 
-    # --- The read-only guarantee, as it stands after W5.3 -----------------
+    # --- The read-only guarantee, as it stands after FR-11 ----------------
     #
-    # This test used to read "the module is read-only: anything other than GET
-    # is a mistake, not a feature." W5.3 makes that false, so the test was
-    # CHANGED rather than deleted -- deleting it would have quietly dropped the
-    # guarantee instead of restating it.
+    # This test once read "the module is read-only: anything other than GET is
+    # a mistake, not a feature." W5.3 made that false and the test was CHANGED
+    # rather than deleted, because deleting it would have quietly dropped the
+    # guarantee instead of restating it. FR-11 loosens it one more step, and
+    # the same rule applies: restate, do not delete.
     #
-    # The loosening is exactly one step, and the three tests below pin each part
-    # of the new, narrower promise:
+    # The promise is now in three parts, one test each:
     #
-    #   1. exactly ONE write path exists, and it is the attestation
-    #   2. it writes to one table WE own, and never updates or deletes
+    #   1. the write paths are a closed, named set -- nothing else writes
+    #   2. no audit record is ever updated or deleted
     #   3. nothing in I08 writes to SAP -- unchanged, and the one that matters
     #
     # Point 3 is the real guarantee. The platform reads SAP and records its own
@@ -72,8 +72,14 @@ class TestRoutesAreMounted:
     # into SAP. That is what makes "we cannot enforce this control, only observe
     # it" an honest statement rather than an excuse.
 
-    def test_the_module_is_read_only_except_for_attestations(self, openapi) -> None:
-        """Exactly one write path, and it is the one W5.3 added."""
+    def test_the_module_writes_only_what_it_owns(self, openapi) -> None:
+        """A closed set of write paths, each against a table I08 owns.
+
+        The attestation (W5.3) records a person's judgement. The two exception
+        routes (FR-11) record who is working a finding and what they said about
+        it -- they cannot change the finding itself, which is recomputed from
+        SAP data on every read and has no stored form to edit.
+        """
         i8_paths = {p: v for p, v in openapi["paths"].items() if p.startswith("/api/i8")}
         assert i8_paths, "no /api/i8 paths in the spec -- is the router mounted?"
 
@@ -83,21 +89,38 @@ class TestRoutesAreMounted:
             for verb in operations
             if verb != "get"
         }
-        assert writes == {("/api/i8/attestations", "post")}, (
-            f"I08 has exactly one write path -- the attestation. Found: {sorted(writes)}"
-        )
+        assert writes == {
+            ("/api/i8/attestations", "post"),
+            ("/api/i8/exceptions/{exception_id}", "patch"),
+            ("/api/i8/exceptions/{exception_id}/comments", "post"),
+        }, f"I08's write paths are a closed set. Found: {sorted(writes)}"
 
-    def test_nothing_updates_or_deletes(self, openapi) -> None:
-        """Attestations are audit records: append-only, no exceptions.
+    def test_no_audit_record_is_updated_or_deleted(self, openapi) -> None:
+        """Append-only where it counts, and nothing is ever destroyed.
 
-        An amendment is a new row pointing at the one it supersedes. So PUT,
-        PATCH and DELETE must not exist anywhere in the module -- not even on
-        the attestation route.
+        DELETE and PUT must not exist anywhere in the module. PATCH exists on
+        exactly one route -- the exception's workflow state, which is a
+        current-value record (who owns it, what state it is in) and not an
+        audit record. Its history is append-only and lives in a separate table.
+
+        Attestations stay strictly append-only: an amendment is a new row
+        pointing at the one it supersedes, so no verb other than POST may ever
+        appear on the attestation route.
         """
         i8_paths = {p: v for p, v in openapi["paths"].items() if p.startswith("/api/i8")}
+
         for path, operations in i8_paths.items():
-            forbidden = {"put", "patch", "delete"} & set(operations)
+            forbidden = {"put", "delete"} & set(operations)
             assert not forbidden, f"{path} exposes {sorted(forbidden)}"
+
+        patched = {p for p, ops in i8_paths.items() if "patch" in ops}
+        assert patched == {"/api/i8/exceptions/{exception_id}"}, (
+            f"PATCH belongs to the exception's workflow state alone. Found: {sorted(patched)}"
+        )
+
+        assert "patch" not in i8_paths["/api/i8/attestations"], (
+            "an attestation is an audit record -- amend it with a new POST"
+        )
 
     def test_no_route_writes_to_sap(self) -> None:
         """The guarantee that actually matters, and the one that did not change.

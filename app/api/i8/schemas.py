@@ -240,6 +240,10 @@ class RepairChain(I8Model):
     # 08-Oct-2026, so what it showed per row now travels on the row itself.
     # Same values as ``DeclarationItem``, from the same attestation view.
 
+    declaration_id: str | None = None
+    """The attestation covering this line, when one does -- so a screen can
+    offer to amend it rather than only to add another."""
+
     declared_by: str | None = None
     declared_at: datetime | None = None
     condition: Literal["Repairable", "Beyond Economical Repair", "Scrap"] | None = None
@@ -541,6 +545,10 @@ class DeclarationItem(I8Model):
     """No "Pending": that would mean "submitted, awaiting sign-off", and no such
     state exists -- there is no approval workflow in SAP, here or in the FRS."""
 
+    declaration_id: str | None = None
+    """The attestation covering this line, when one does -- so the queue can
+    offer to amend it rather than only to add another."""
+
     declared_by: str | None = None
     declared_at: datetime | None = None
     condition: Literal["Repairable", "Beyond Economical Repair", "Scrap"] | None = None
@@ -566,6 +574,28 @@ class DeclarationResponse(I8Model):
     total: int
     meta: DeclarationMeta
     reference_date: date
+
+
+class ExceptionHistoryEntry(I8Model):
+    """One thing that happened to an exception: an assignment, a comment, a
+    status change, or the queue resolving the item itself."""
+
+    id: str
+    kind: Literal["ASSIGNED", "COMMENT", "STATUS", "AUTO_RESOLVED"]
+    """``AUTO_RESOLVED`` is kept apart from ``STATUS`` deliberately. "Priya
+    resolved this" and "the check stopped finding it" are different claims,
+    and rendering them identically invites the first to be read where only the
+    second happened."""
+
+    status: str | None = None
+    """The status this entry set. Null on a comment or an assignment."""
+
+    actor: str
+    """``system`` on ``AUTO_RESOLVED``; otherwise whoever acted. Server-set,
+    never taken from the request body."""
+
+    text: str = ""
+    at: datetime
 
 
 class ExceptionQueueItem(I8Model):
@@ -600,6 +630,30 @@ class ExceptionQueueItem(I8Model):
     """The line predates the control it is measured against, so the gap is
     explained by when it was raised rather than by anyone failing to act.
     Always false while no cutover date is configured."""
+
+    # --- FR-11: the state people put it in ------------------------------
+    #
+    # The item above is recomputed on every read; everything below is stored
+    # against its id in i8_exception_state. An item nobody has touched has no
+    # row there and reports the defaults -- OPEN and unassigned -- which is
+    # the truth about it rather than a placeholder.
+
+    status: Literal["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"] = "OPEN"
+
+    owner: str | None = None
+    """Null means unassigned, which is a real state and the common one."""
+
+    still_detected: bool = True
+    """Whether the check still finds this item.
+
+    Always true for an item in the list -- being listed is what detection
+    means. It is served because a RESOLVED item may be listed when the caller
+    asks for one by id or by status, and then the distinction between "someone
+    resolved it" and "the data moved" is the whole story."""
+
+    history: list[ExceptionHistoryEntry] = []
+    """Oldest first, the order a history is read in. Empty for an item nobody
+    has touched."""
 
 
 class ExceptionMeta(I8Model):
@@ -877,3 +931,28 @@ class RepairableUnitResponse(I8Model):
     caveats: list[str]
     evidence: list[RepairEvidenceItem]
     reference_date: date
+
+
+class ExceptionUpdateRequest(I8Model):
+    """Move an exception, or change who owns it (FR-11).
+
+    Both fields are optional and either may be sent alone: assigning without
+    moving, and moving without reassigning, are both ordinary.
+
+    ``owner`` distinguishes "leave it alone" from "unassign it" by whether the
+    field was sent at all, not by its value -- ``{"owner": null}`` unassigns,
+    an absent ``owner`` does not. Pydantic records that in ``model_fields_set``
+    and the route reads it there.
+    """
+
+    status: Literal["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"] | None = None
+    owner: str | None = Field(default=None, max_length=128)
+    note: str = Field(default="", max_length=2000)
+    """Why. Optional, and worth sending: the status change is recorded either
+    way, but a history of bare transitions explains nothing later."""
+
+
+class ExceptionCommentRequest(I8Model):
+    """Say something about an exception without moving it."""
+
+    text: str = Field(min_length=1, max_length=2000)

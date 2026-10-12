@@ -39,6 +39,8 @@ absence** is the other half, and that is
 
 from __future__ import annotations
 
+import threading
+import time
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -238,3 +240,144 @@ class CodingVerdict(Base):
             unique=True,
         ),
     )
+
+
+# --- FR-11: working an exception, not just seeing it ----------------------
+
+
+#: Guards :func:`new_exception_event_id`'s monotonic counter. Ids are minted
+#: under whatever thread the request lands on, and two threads reading the
+#: clock at once must not be handed the same stamp.
+_event_id_lock = threading.Lock()
+
+#: The last microsecond stamp handed out by this process. See the function.
+_last_event_stamp = 0
+
+
+def new_exception_event_id() -> str:
+    """A stable, **strictly increasing** id for one entry in a history.
+
+    Deliberately unlike :func:`new_attestation_id`, which is a plain UUID.
+    That one is a lone record and its id only has to be unique; these are read
+    as a sequence, and ``ORDER BY at, id`` has to put them in the order they
+    happened. ``at`` alone cannot do it: two entries recorded in the same tick
+    share a timestamp, and the tiebreak then decides the order a person reads
+    the history in.
+
+    So the id carries the time -- microseconds since the epoch, hex, fixed
+    width so that sorting it as text sorts it as a number.
+
+    **The counter is not decoration.** ``time.time_ns()`` is backed by the
+    system clock, and on Windows that clock advances in ~15ms steps: every
+    call inside one step returns the *same* value. Two events a millisecond
+    apart therefore get identical stamps, and without the bump below the
+    tiebreak falls through to the random suffix -- which is how the history
+    came back with an assignment displayed after the comment that followed it.
+    That was caught by a test that failed roughly one run in three.
+
+    Bumping by one microsecond when the clock has not moved keeps ids strictly
+    increasing within a process. The value is an ordering key, not a reading of
+    the clock; the time anybody reads is the ``at`` column, which is set by the
+    database.
+
+    Across processes two events in the same microsecond remain possible, and
+    the random suffix keeps them distinct. Their relative order is then decided
+    by ``at``, which has microsecond precision on Postgres and Azure SQL.
+    """
+    global _last_event_stamp
+    with _event_id_lock:
+        stamp = time.time_ns() // 1_000
+        if stamp <= _last_event_stamp:
+            stamp = _last_event_stamp + 1
+        _last_event_stamp = stamp
+    return f"EXE-{stamp:014X}{uuid.uuid4().hex[:6].upper()}"
+
+
+class ExceptionState(Base):
+    """What people have done about one exception-queue item.
+
+    The items themselves are **not** stored. They are recomputed from the
+    register and the attestation table on every read, which is what keeps the
+    queue honest: an item exists exactly as long as its check still finds it.
+
+    This table is the other half -- the part a check cannot derive. Who owns
+    it, what state it is in, and what was said about it. Keyed by the
+    exception's own deterministic id (``EX-MISSING_ATTESTATION-4500000677-20``),
+    so a row here attaches to the finding whenever the check raises it again.
+
+    A consequence worth stating: a row can outlive the item it describes. When
+    a declaration is recorded the missing-attestation check stops finding that
+    line, and this row is what remembers that somebody was working it. That is
+    the auto-resolution path -- see
+    :func:`app.initiatives.i8.exception_state.auto_resolve`.
+    """
+
+    __tablename__ = "i8_exception_state"
+
+    exception_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    """The computed item's id. Not a foreign key -- there is no table to point
+    at, by design."""
+
+    status: Mapped[str] = mapped_column(String(16), index=True, default="OPEN")
+    """OPEN / IN_PROGRESS / RESOLVED / CLOSED."""
+
+    owner: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    """Null means unassigned, which is a real and common state -- not a blank
+    to be filled in with whoever touched it last."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<ExceptionState {self.exception_id} {self.status} owner={self.owner}>"
+
+
+class ExceptionEvent(Base):
+    """One entry in an exception's history: an assignment, a comment, a status
+    change, or the queue resolving the item itself.
+
+    Append-only, for the same reason :class:`RepairAttestation` is: the value
+    of a history is that it cannot be tidied up afterwards.
+    """
+
+    __tablename__ = "i8_exception_event"
+
+    id: Mapped[str] = mapped_column(
+        String(32), primary_key=True, default=new_exception_event_id
+    )
+    exception_id: Mapped[str] = mapped_column(String(128), index=True)
+
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    """ASSIGNED / COMMENT / STATUS / AUTO_RESOLVED.
+
+    AUTO_RESOLVED is kept distinct from STATUS on purpose. "Priya resolved
+    this" and "the check stopped finding it" are different claims, and a
+    history that renders them the same way invites the first to be read where
+    only the second happened."""
+
+    status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """The status this entry set, for STATUS and AUTO_RESOLVED. Null on a
+    comment or an assignment, which do not move the item."""
+
+    actor: Mapped[str] = mapped_column(String(128))
+    """Set by the server from the caller, never from the body -- the same rule
+    as the attestor on an attestation. ``system`` for AUTO_RESOLVED."""
+
+    text: Mapped[str] = mapped_column(Text, default="")
+    """What was said, or why the item resolved itself."""
+
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    __table_args__ = (
+        # The drawer's access pattern: one exception's history, oldest first.
+        Index("ix_i8_exception_event_exception_at", "exception_id", "at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ExceptionEvent {self.id} {self.exception_id} {self.kind} by {self.actor}>"

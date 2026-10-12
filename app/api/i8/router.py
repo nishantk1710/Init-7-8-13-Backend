@@ -36,6 +36,7 @@ from app.api.i8.mappers import (
     coding_candidate_meta,
     declaration_item,
     declaration_meta,
+    exception_history_entry,
     exception_item,
     exception_meta,
     register_meta,
@@ -51,13 +52,17 @@ from app.api.i8.schemas import (
     AttestationResponse,
     CodingCandidateResponse,
     DeclarationResponse,
+    ExceptionCommentRequest,
+    ExceptionQueueItem,
     ExceptionResponse,
+    ExceptionUpdateRequest,
     MaterialReference,
     RepairChain,
     RegisterResponse,
     RepairableUnitResponse,
     RepairDetail,
     RepairEvidenceItem,
+    SAPDocumentReference,
     SnapshotInfo,
     UniverseDetail,
     UniverseResponse,
@@ -78,6 +83,16 @@ from app.initiatives.i8.coding_candidates import (
     meets_confidence_threshold,
 )
 from app.initiatives.i8.config import I8Settings, get_i8_settings
+from app.initiatives.i8.exception_state import (
+    ExceptionStateError,
+    add_comment,
+    assign,
+    auto_resolve,
+    load_histories,
+    load_states,
+    set_status,
+)
+from app.initiatives.i8.exceptions import ExceptionItem
 from app.initiatives.i8.material_number import is_eighty_series, normalise
 from app.initiatives.i8.register import RepairLine
 from app.initiatives.i8.repairable_unit import assess as assess_repairable_unit
@@ -611,10 +626,30 @@ def get_exceptions(
     view: AttestationViewDep,
     snapshot: SnapshotDep,
     cfg: SettingsDep,
+    db: DbDep,
     type_filter: str | None = Query(
         None, alias="type", description="MISSING_ATTESTATION"
     ),
     plant: str | None = Query(None, description="Plant code, e.g. 1300"),
+    repair: str | None = Query(
+        None,
+        description=(
+            "One repair line, as the register keys it -- '4500000677-20'. "
+            "Everything raised against that line, whatever the check."
+        ),
+    ),
+    status_filter: str | None = Query(
+        None,
+        alias="status",
+        description="OPEN / IN_PROGRESS / RESOLVED / CLOSED",
+    ),
+    owner: str | None = Query(
+        None,
+        description=(
+            "Items owned by this person. The literal 'unassigned' returns "
+            "the ones nobody has taken."
+        ),
+    ),
     open_only: bool = Query(
         False,
         alias="openOnly",
@@ -631,22 +666,81 @@ def get_exceptions(
     Expect this to be large. Every historical repair line raises it, because the
     control did not exist before this platform -- that number is the business
     case for W5.3, not a bug in it.
+
+    The items are recomputed on every read; their status, owner and history
+    come from ``i8_exception_state`` and are merged on here. An item nobody has
+    touched reports OPEN and unassigned, which is the truth about it rather
+    than a placeholder.
     """
     items = view.exceptions
+
+    # Before any filtering, and over every computed id: a state row still
+    # OPEN whose item is no longer raised describes a finding that has gone
+    # away -- somebody recorded the declaration, or the goods receipt landed.
+    # Resolving it here means the person who owned it sees why, instead of
+    # watching it vanish from their queue.
+    auto_resolve(db, (i.id for i in items))
 
     if type_filter:
         wanted = type_filter.strip().upper()
         items = tuple(i for i in items if i.type == wanted)
     if plant:
         items = tuple(i for i in items if i.plant == plant)
+    if repair:
+        wanted_line = repair.strip()
+        items = tuple(
+            i
+            for i in items
+            if f"{i.purchasing_document}-{i.item}" == wanted_line
+            or i.purchasing_document == wanted_line
+        )
     if open_only:
         items = tuple(i for i in items if i.is_open_repair)
+
+    # Loaded once for the whole filtered set, because status and owner filter
+    # on it -- paging first would filter a page rather than the queue.
+    states = load_states(db, [i.id for i in items])
+
+    if status_filter:
+        wanted_status = status_filter.strip().upper()
+        items = tuple(
+            i
+            for i in items
+            if (states[i.id].status if i.id in states else "OPEN") == wanted_status
+        )
+    if owner:
+        wanted_owner = owner.strip()
+        if wanted_owner.lower() == "unassigned":
+            items = tuple(
+                i for i in items if i.id not in states or not states[i.id].owner
+            )
+        else:
+            items = tuple(
+                i
+                for i in items
+                if i.id in states and states[i.id].owner == wanted_owner
+            )
 
     size = min(page_size or cfg.default_page_size, cfg.max_page_size)
     page_items, total = _paginate(items, page, size)
 
+    # Only the page's histories: the queue runs to thousands of items and a
+    # history per row is the one part of this response that has no bound.
+    histories = load_histories(db, [i.id for i in page_items])
+
     return ExceptionResponse(
-        items=[exception_item(i, cfg) for i in page_items],
+        items=[
+            exception_item(
+                i,
+                cfg,
+                state=states.get(i.id),
+                history=histories.get(i.id, ()),
+                # Listed means raised: these all came from a check that just
+                # ran. The flag matters for an item fetched by id elsewhere.
+                still_detected=True,
+            )
+            for i in page_items
+        ],
         page=page,
         page_size=size,
         total=total,
@@ -915,4 +1009,125 @@ def get_repairable_unit(
             for item in verdict.evidence
         ],
         reference_date=snapshot.reference_date,
+    )
+
+
+@router.patch(
+    "/exceptions/{exception_id}",
+    response_model=ExceptionQueueItem,
+    summary="Move an exception, or change who owns it",
+)
+def patch_exception(
+    exception_id: str,
+    body: ExceptionUpdateRequest,
+    view: AttestationViewDep,
+    cfg: SettingsDep,
+    db: DbDep,
+) -> ExceptionQueueItem:
+    """**Writes the state, never the finding.**
+
+    The exception itself is computed from SAP data and this cannot change it.
+    What it changes is who owns the finding and what state the work is in,
+    which is the half FR-11 asks for and no check can derive.
+
+    An unknown id is still accepted. The checks are recomputed on every read,
+    so an id can be real and currently unraised -- the gap it describes was
+    closed since the caller loaded the screen. Rejecting it would lose the
+    comment somebody just typed about exactly that.
+    """
+    found = next((i for i in view.exceptions if i.id == exception_id), None)
+
+    try:
+        if "owner" in body.model_fields_set:
+            assign(db, exception_id, body.owner, actor=_current_user())
+        if body.status is not None:
+            set_status(
+                db, exception_id, body.status, actor=_current_user(), note=body.note
+            )
+    except ExceptionStateError as exc:
+        # 422, not 400: well-formed JSON that broke a rule of the queue.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if body.status is None and "owner" not in body.model_fields_set:
+        raise HTTPException(
+            status_code=422,
+            detail="send a status, an owner, or both -- this request changes nothing",
+        )
+
+    return _exception_response(db, cfg, exception_id, found)
+
+
+@router.post(
+    "/exceptions/{exception_id}/comments",
+    response_model=ExceptionQueueItem,
+    status_code=status.HTTP_201_CREATED,
+    summary="Say something about an exception",
+)
+def post_exception_comment(
+    exception_id: str,
+    body: ExceptionCommentRequest,
+    view: AttestationViewDep,
+    cfg: SettingsDep,
+    db: DbDep,
+) -> ExceptionQueueItem:
+    """Add a comment without moving the item.
+
+    Chasing a vendor, recording what somebody said on the phone, noting why
+    this one is being left alone -- none of which is a status change, and all
+    of which is the reason anybody can follow the item later.
+    """
+    found = next((i for i in view.exceptions if i.id == exception_id), None)
+    try:
+        add_comment(db, exception_id, body.text, actor=_current_user())
+    except ExceptionStateError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _exception_response(db, cfg, exception_id, found)
+
+
+def _exception_response(
+    db: DbDep,
+    cfg: I8Settings,
+    exception_id: str,
+    found: ExceptionItem | None,
+) -> ExceptionQueueItem:
+    """The item as it now stands, for a write to return.
+
+    ``found`` is None when the checks are no longer raising this id. The row
+    still answers -- with ``stillDetected`` false, and a placeholder body that
+    says the finding is gone rather than inventing a repair line for it. That
+    is the honest answer to "I just commented on something that resolved
+    underneath me".
+    """
+    states = load_states(db, [exception_id])
+    histories = load_histories(db, [exception_id])
+
+    if found is not None:
+        return exception_item(
+            found,
+            cfg,
+            state=states.get(exception_id),
+            history=histories.get(exception_id, ()),
+            still_detected=True,
+        )
+
+    state = states.get(exception_id)
+    return ExceptionQueueItem(
+        id=exception_id,
+        type="UNKNOWN",
+        severity="info",
+        material=MaterialReference(material_id="", material_code="", description=None),
+        plant=None,
+        repair_line=SAPDocumentReference(type="PO", document_number="", line=None),
+        title="No longer raised",
+        detail=(
+            "No check is currently raising this item. The data it was found on "
+            "has changed since it was listed."
+        ),
+        raised_at=None,
+        is_open_repair=False,
+        pre_automation=False,
+        status=state.status if state else "OPEN",
+        owner=state.owner if state else None,
+        still_detected=False,
+        history=[exception_history_entry(e) for e in histories.get(exception_id, ())],
     )
