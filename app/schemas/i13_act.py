@@ -63,6 +63,14 @@ class ActExceptionEventResponse(BaseModel):
     metadata: dict[str, str]
 
 
+class ActExceptionEventFeedItem(ActExceptionEventResponse):
+    """An event in the portfolio-wide feed. Identical to one in a single
+    exception's history plus the exception it belongs to -- the history route
+    can leave that out because the URL already names it; a feed cannot."""
+
+    exception_id: str
+
+
 class RequesterConfirmationRequest(BaseModel):
     reason_category: str = Field(..., min_length=1, max_length=60)
     free_text: str = Field(..., min_length=1, max_length=2000)

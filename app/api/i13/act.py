@@ -44,6 +44,7 @@ from app.shared.material_scope import MaterialScope
 from app.schemas.i13_act import (
     ActConfirmationWithExceptionResponse,
     ActExceptionDetailResponse,
+    ActExceptionEventFeedItem,
     ActExceptionEventResponse,
     ActExceptionResponse,
     CrossPlantStockResponse,
@@ -263,6 +264,31 @@ def get_act_exception_history(exception_id: str, db: Session = Depends(get_db)) 
         raise HTTPException(status_code=404, detail="ACT exception not found")
     events = repository.list_events(exception_id)
     return [ActExceptionEventResponse.model_validate(event) for event in events]
+
+
+@router.get("/events", response_model=list[ActExceptionEventFeedItem])
+def list_act_events(
+    response: Response,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    from_ts: datetime | None = Query(None, description="Inclusive lower bound on timestamp."),
+    to_ts: datetime | None = Query(None, description="Exclusive upper bound on timestamp."),
+    db: Session = Depends(get_db),
+) -> list[ActExceptionEventFeedItem]:
+    """Every ACT event across all exceptions, newest first -- the feed an audit
+    screen reads.
+
+    The portfolio-wide sibling of ``/exceptions/{id}/history``. Over the same
+    append-only table: nothing is written or recalculated. Paging and the date
+    bounds happen in SQL, and the size of the whole filtered population travels
+    in ``X-Total-Count`` (this module's convention: a bare array body, the total
+    in a header).
+    """
+    events, total = _repository(db).list_all_events(
+        from_ts=from_ts, to_ts=to_ts, limit=limit, offset=offset
+    )
+    response.headers["X-Total-Count"] = str(total)
+    return [ActExceptionEventFeedItem.model_validate(event) for event in events]
 
 
 # --- Detection / escalation (callable manually/locally today; a future

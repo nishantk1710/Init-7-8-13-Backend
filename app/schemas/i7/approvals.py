@@ -85,3 +85,20 @@ class ApprovalHistoryResponse(BaseModel):
 
     recommendation_id: str
     items: list[ApprovalHistoryEntry]
+
+
+class ApprovalEventsResponse(BaseModel):
+    """A page of the approval ledger across every recommendation, newest first.
+
+    The portfolio-wide sibling of :class:`ApprovalHistoryResponse`: that one is
+    one recommendation's complete history; this is the feed an audit trail
+    reads. ``total`` is the whole filtered population, so a caller paging
+    through it can say "12 of N" truthfully.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[ApprovalHistoryEntry]
+    total: int
+    limit: int
+    offset: int
