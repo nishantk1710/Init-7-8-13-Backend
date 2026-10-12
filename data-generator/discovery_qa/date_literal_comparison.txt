@@ -1,0 +1,16 @@
+Date literal comparison, 2026-09-22T16:53:53Z
+
+Kasif 23-Sep: SAP date fields are DATS (D(8), no time), so the time component in
+datetime'...T00:00:00' may be what breaks the date filters. Each row below runs the
+same predicate both ways against the same set, so the two are directly comparable.
+
+  predicate                                                   with time        date only   verdict
+  date eq (control)                                                 919         HTTP 400   DIFFERENT
+  date ge                                                             2         HTTP 400   DIFFERENT
+  date ge on CDHDR                                             HTTP 400         HTTP 400   identical - time component is not the cause here
+  date ge on PO header                                               23         HTTP 400   DIFFERENT
+  date ge on S032                                                    12         HTTP 400   DIFFERENT
+  date range                                                      40651         HTTP 400   DIFFERENT
+  eq + date ge                                                 HTTP 400         HTTP 400   identical - time component is not the cause here
+
+Pairs that differ: date eq (control), date ge, date ge on PO header, date ge on S032, date range. Dropping the time component changes the result on these, which supports the DATS hypothesis for them.
