@@ -98,12 +98,25 @@ class ExceptionType(str, Enum):
     UNJUSTIFIED_ACQUISITION = "UNJUSTIFIED_ACQUISITION"
     """FR-8, a new unit bought while a repair was open, with no justification."""
 
+    OVERDUE_REPAIR = "OVERDUE_REPAIR"
+    """FR-9, a repair past its promised return with the unit still at a vendor.
+
+    FR-9 asks for overdue "as an explicit dashboard exception state". It was
+    shown as a register column and an overview tile and raised nowhere, so the
+    one screen built to list what needs chasing did not list the repairs that
+    are late -- the most chaseable thing I08 knows about.
+    """
+
 
 #: Which types this module actually raises. The difference between this and
 #: ExceptionType is the point: the vocabulary is wider than the implementation,
 #: and that is recorded rather than implied.
 RAISED_BY_I8: frozenset[ExceptionType] = frozenset(
-    {ExceptionType.MISSING_ATTESTATION, ExceptionType.UNJUSTIFIED_ACQUISITION}
+    {
+        ExceptionType.MISSING_ATTESTATION,
+        ExceptionType.UNJUSTIFIED_ACQUISITION,
+        ExceptionType.OVERDUE_REPAIR,
+    }
 )
 
 
@@ -268,6 +281,72 @@ def missing_attestations(
         sum(1 for i in items if i.is_open_repair),
         sum(1 for i in items if not i.is_open_repair),
         sum(1 for i in items if i.pre_automation),
+    )
+    return items
+
+
+def overdue_repairs(lines, *, grace_days: int) -> list[ExceptionItem]:
+    """Raise OVERDUE_REPAIR for every open line past its due date plus grace.
+
+    The register already decides this per line -- ``overdue_status`` is
+    computed once, against ``EKET.EINDT`` plus ``I8_OVERDUE_GRACE_DAYS`` -- so
+    this reads that verdict rather than recomputing it. Two places deciding
+    what "overdue" means is how a column and a queue end up disagreeing about
+    the same line.
+
+    **Open lines only.** A line that came back late is history: the delay
+    happened, and nobody can now chase a unit that is already on the shelf. It
+    is counted in the register's own figures and is not an item of work.
+
+    No pre-automation concept here, unlike MISSING_ATTESTATION. A repair being
+    late is not a control somebody failed to follow before we built it -- it
+    is a fact about a vendor, and it was just as true in 2018.
+    """
+    items: list[ExceptionItem] = []
+
+    for line in sorted(lines, key=lambda line: (line.purchasing_document, line.item)):
+        if not line.is_open or not line.is_overdue:
+            continue
+
+        days_late = None
+        if line.due_date is not None and line.days_remaining is not None:
+            # days_remaining goes negative once the date has passed.
+            days_late = -line.days_remaining if line.days_remaining < 0 else None
+
+        where = f" at {line.vendor_name or line.vendor}" if (line.vendor_name or line.vendor) else ""
+        due = line.due_date.isoformat() if line.due_date else "an unrecorded date"
+
+        items.append(
+            ExceptionItem(
+                id=f"EX-{ExceptionType.OVERDUE_REPAIR.value}-{line.purchasing_document}-{line.item}",
+                type=ExceptionType.OVERDUE_REPAIR.value,
+                # Every one of these is open and chaseable by definition, so
+                # there is no INFO tier here -- unlike the attestation check,
+                # where most rows are history nobody can act on.
+                severity=Severity.WARNING.value,
+                material_id=line.material_id,
+                description=line.description,
+                plant=line.plant,
+                purchasing_document=line.purchasing_document,
+                item=line.item,
+                title="Repair overdue",
+                detail=(
+                    f"Promised back on {due}{where}, past the "
+                    f"{grace_days}-day grace period"
+                    + (f" by {days_late} days" if days_late is not None else "")
+                    + ". The unit is still at the vendor."
+                ),
+                raised_at=line.raised_at,
+                is_open_repair=True,
+            )
+        )
+
+    logger.info(
+        "I08 exceptions: %d OVERDUE_REPAIR of %d repair lines checked "
+        "(grace %d days)",
+        len(items),
+        len(list(lines)),
+        grace_days,
     )
     return items
 
@@ -442,6 +521,7 @@ def build_exceptions(
     justifications: Sequence[JustificationRecord] = (),
     justification_window_days: int = 30,
     justification_cutover: date | None = None,
+    overdue_grace_days: int = 7,
 ) -> tuple[list[ExceptionItem], ExceptionStats]:
     """The whole exception queue for one snapshot, and its counts."""
     items = missing_attestations(lines, coverage, cutover=cutover)
@@ -452,6 +532,7 @@ def build_exceptions(
         window_days=justification_window_days,
         cutover=justification_cutover,
     )
+    items += overdue_repairs(lines, grace_days=overdue_grace_days)
 
     by_type: dict[str, int] = {}
     by_severity: dict[str, int] = {}

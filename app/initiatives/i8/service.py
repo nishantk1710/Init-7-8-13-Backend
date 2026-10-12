@@ -606,6 +606,7 @@ def build_attestation_view(
         justifications=justifications,
         justification_window_days=cfg.justification_window_days,
         justification_cutover=cfg.justification_cutover_date_value,
+        overdue_grace_days=cfg.overdue_grace_days,
     )
     by_line = justifications_by_line(snapshot.lines, justifications, exceptions)
     logger.info("I08 register justifications: %s", justification_counts(by_line))
