@@ -22,9 +22,34 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import NamedTuple
 
-ALGORITHM_VERSION = "oar-similarity-1"
+ALGORITHM_VERSION = "oar-similarity-2"
 """Identifies the similarity implementation behind a stored result. Not a
-semantic version -- nothing here maintains a release contract."""
+semantic version -- nothing here maintains a release contract.
+
+``oar-similarity-2`` changed three things against ``-1``, all recorded so a
+stored result is never compared with one built under different rules:
+
+* Circuit no longer contributes to the business score or to tie-breaking. No
+  trustworthy source exists (see ``CandidateAttributes.circuit``).
+* A pair must carry a minimum amount of evidence to be admitted as a neighbour
+  (``SimilarityPolicy.minimum_evidence_features`` and
+  ``identity_evidence_features``) -- a 1.0 resting on a shared unit of measure
+  alone is no longer a neighbour.
+* Candidates are retrieved in two stages (``oar.retrieval``) instead of every
+  donor being scored exactly against every target. The exact scoring of the
+  shortlist is unchanged.
+"""
+
+FEATURE_NAMES = (
+    "material_group",
+    "equipment_type",
+    "base_unit_of_measure",
+    "manufacturer",
+    "unit_price",
+    "description",
+)
+"""Every feature a score can rest on, by the name explanations use. Circuit is
+deliberately absent -- see ``CandidateAttributes.circuit``."""
 
 
 class EligibilityRejection(StrEnum):
@@ -122,6 +147,12 @@ class DimensionScore(NamedTuple):
     status: SimilarityStatus
     available_features: int = 0
     missing_features: int = 0
+    features: tuple[str, ...] = ()
+    """The features (``FEATURE_NAMES``) known on BOTH sides, so they were
+    actually compared. Empty for a dimension that could not be computed."""
+    missing: tuple[str, ...] = ()
+    """The features this dimension could not compare, because one side or both
+    lacked them. Never counted as a match."""
 
     @property
     def is_available(self) -> bool:
@@ -144,6 +175,20 @@ class CombinedScore(NamedTuple):
     applied_weights: tuple[tuple[str, str], ...] = ()
     """The renormalised weights actually used, so a score can be recomputed."""
 
+    features_used: tuple[str, ...] = ()
+    """Every feature that entered the score, across all three dimensions."""
+    features_missing: tuple[str, ...] = ()
+    """Every feature that could not be compared for this pair."""
+
+    evidence_sufficient: bool = True
+    """Whether the score rests on enough evidence to admit the pair as a
+    neighbour -- see ``scoring.assess_evidence``. A score can be high and still
+    insufficient: 1.0 from a shared unit of measure alone says almost nothing
+    about whether two spare parts are alike. Defaults True so a score built by
+    hand, without an evidence policy, behaves as it always did."""
+    evidence_detail: str | None = None
+    """Why the evidence fell short, when it did."""
+
 
 class CandidateAttributes(NamedTuple):
     """What the engine needs to know about a material-plant.
@@ -165,6 +210,11 @@ class CandidateAttributes(NamedTuple):
     equipment_type: str | None
     base_unit_of_measure: str | None
     circuit: str | None
+    """NOT USED BY SIMILARITY. Circuit (Crushing / Milling / ...) has no
+    trustworthy source in the SAP data delivered so far, so it awards no match
+    bonus, no difference penalty and no tie-break, and two missing circuits are
+    never read as "the same circuit". The field stays so existing callers and
+    stored shapes keep working; scoring it again needs a real source first."""
     manufacturer: str | None
     unit_price: Decimal | None
     description: str | None
@@ -178,6 +228,8 @@ class Neighbour(NamedTuple):
     rank: int
     score: CombinedScore
     same_circuit: bool | None
+    """Always ``None`` since ``oar-similarity-2``: circuit is not evaluated
+    (see ``CandidateAttributes.circuit``). Kept so stored and API shapes hold."""
     same_material_group: bool | None
     criticality: str | None
     history_months: int | None
@@ -229,3 +281,13 @@ class OarResult(NamedTuple):
     best_similarity: Decimal | None
     generated_at: datetime
     detail: str | None = None
+
+    low_evidence_candidates: int = 0
+    """Eligible candidates whose score rested on too little evidence to be
+    admitted (``CombinedScore.evidence_sufficient`` False). Counted over every
+    eligible candidate, whichever retrieval mode ran."""
+    shortlisted_candidates: int | None = None
+    """How many candidates received the exact, explainable score. Every eligible
+    candidate under exhaustive retrieval; the merged shortlist under two-stage."""
+    retrieval: str | None = None
+    """``"exhaustive"`` or ``"two_stage"`` -- which retrieval produced this."""
