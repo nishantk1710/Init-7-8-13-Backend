@@ -27,7 +27,9 @@ Two steps per view, both inside the build's own connection (temp tables):
    #i8s_v_<table> FROM (<the view body, reading #i8b_<table>>)``. The view
    scripts are read and rendered exactly as ``views.ensure_views`` renders them,
    so every rule -- the key normalisation, the date and number casts, the
-   ``'0'`` item mapped to NULL -- still lives in one place.
+   ``'0'`` item mapped to NULL -- still lives in one place. The helper calls in
+   them are written inline (:data:`INLINE_HELPERS`): called outside a view,
+   they need a permission the API's database identity does not have.
 
 The build's queries then read ``#i8s_v_<table>`` where they read ``v_<table>``,
 and return what they returned. ``candidates_scanned`` -- the EKPO lines the
@@ -130,6 +132,42 @@ def _body(view: str) -> str:
     return statement[match.end():]
 
 
+# The helpers' bodies, written inline. Called directly -- as a view body run
+# outside its view calls them -- a scalar function needs EXECUTE permission,
+# which the API's database identity does not have; inside a view, ownership
+# chaining covers it, so the views never needed it. (Azure, 12 Oct 2026: "The
+# EXECUTE permission was denied on the object 'sap_date'".) Inline, the staged
+# copies need nothing beyond SELECT, and SQL Server evaluates them set-wise
+# instead of one call per row. ``{v}`` is the argument, cast as the function's
+# nvarchar(4000) parameter casts it. Pinned to the bodies in
+# 00_functions.mssql.sql by tests/test_i8_staged_sql.py.
+INLINE_HELPERS: dict[str, str] = {
+    "sap_key": "nullif(substring(trim({v}), patindex('%[^0]%', trim({v}) + '.'), 4000), '')",
+    "sap_date": (
+        "case when trim({v}) like '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'"
+        " then try_convert(date, trim({v}), 23) end"
+    ),
+    "sap_num": "try_cast(trim({v}) as decimal(38, 6))",
+}
+_HELPER_CALL = re.compile(r"(?i)\bdbo\.(" + "|".join(INLINE_HELPERS) + r")\((\w+)\)")
+_IN_SCOPE_CALL = re.compile(r"(?i)\bdbo\.in_scope_plant\((\w+)\)\s*=\s*1")
+_ANY_CALL = re.compile(r"(?i)\bdbo\.\w+\(")
+
+
+def inline_helpers(body: str) -> str:
+    """``body`` with every I08 helper call replaced by the helper's own SQL."""
+    body = _IN_SCOPE_CALL.sub(lambda m: f"({_in_scope(m.group(1))})", body)
+
+    def inline(match: re.Match) -> str:
+        argument = f"CAST({match.group(2)} AS NVARCHAR(4000))"
+        return "(" + INLINE_HELPERS[match.group(1).lower()].format(v=argument) + ")"
+
+    body = _HELPER_CALL.sub(inline, body)
+    if _ANY_CALL.search(body):
+        raise ValueError("I08: a helper call could not be inlined -- only a bare column argument is supported")
+    return body
+
+
 def _over(body: str, sources: dict[str, str]) -> str:
     """``body`` reading ``sources[table]`` wherever it reads ``table``."""
     for table, staged in sources.items():
@@ -146,7 +184,7 @@ def _materialise(db: Session, view: str, sources: dict[str, str]) -> str:
     db.execute(text(f"DROP TABLE IF EXISTS {staged}"))
     # No bind parameters anywhere in staging: a parameterised statement runs in
     # sp_executesql, which drops a temp table it creates when it returns.
-    db.execute(text(f"SELECT * INTO {staged} FROM (\n{_over(_body(view), sources)}\n) AS v"))
+    db.execute(text(f"SELECT * INTO {staged} FROM (\n{_over(inline_helpers(_body(view)), sources)}\n) AS v"))
     return staged
 
 
