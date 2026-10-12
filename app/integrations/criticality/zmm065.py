@@ -253,9 +253,9 @@ class Zmm065CriticalitySource(CriticalitySource):
         with self._session() as session:
             if not _has_rows(session):
                 raise CriticalityNotLoadedError(
-                    "No criticality report is loaded; criticality reads as unknown. Upload one on the "
-                    "Inventory Planning 'Criticality reports' page, or import the July delivery with: "
-                    "python -m app.integrations.criticality.baseline"
+                    "Criticality is not loaded (no report in criticality_current); it reads as unknown. "
+                    "Upload one on the Inventory Planning 'Criticality Reports' page, or import the July "
+                    "delivery with: python -m app.integrations.criticality.baseline"
                 )
 
     def _session(self):
