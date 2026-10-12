@@ -28,7 +28,7 @@ SQL.
 Portable constructs only -- this creates identically on Postgres and Azure SQL.
 
 Revision ID: c7d2e94a1f36
-Revises: a1c6f20d9b84
+Revises: d7f3485533dd
 Create Date: 2026-10-12 19:20:00.000000
 
 """
@@ -40,7 +40,10 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'c7d2e94a1f36'
-down_revision: Union[str, Sequence[str], None] = 'a1c6f20d9b84'
+# Re-pointed onto the merge revision when main was brought into this branch.
+# This creates a new table and depends on nothing either line changed, so it
+# simply sits after the join rather than forking a second head.
+down_revision: Union[str, Sequence[str], None] = 'd7f3485533dd'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
