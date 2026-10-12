@@ -28,9 +28,19 @@ entry per material-plant-month or PO line.
 **Every read finishes before any write starts.** SQL Server refuses a statement
 on a connection that still has an open result ("Connection is busy with results
 for another command") unless MARS is on, which is not this driver's default. So
-a query is fetched whole (:func:`_read`) and only then upserted -- interleaving a
-streamed read with batched MERGEs worked on Postgres and failed on the first
-batch on Azure SQL. The volumes are thousands to tens of thousands of rows.
+a read is either fetched whole (:func:`_read`) or streamed to completion
+(:func:`_stream`) and only then upserted -- interleaving a streamed read with
+batched MERGEs worked on Postgres and failed on the first batch on Azure SQL.
+
+**What is streamed, and why.** The big reads -- movements (n_mseg), goods
+receipts (n_ekbe) and schedule lines (n_eket) -- are folded into small
+dictionaries by the aggregators below, one pass each, so there is no reason to
+hold the raw rows: on the full extract they are over a million rows apiece, and
+fetching them whole cost on the order of a gigabyte of Python objects inside the
+web app's own container. Each stream is consumed completely by its aggregator
+before the first write, so the rule above still holds. Reads that are written
+while they are read (the purchase-order lines) stay whole, and are narrowed in
+SQL to the plant scope instead.
 
 **Idempotency is a database property.** Each staging table has a unique natural
 key, and writes go through an atomic upsert (``MERGE`` on SQL Server, ``ON
@@ -136,14 +146,85 @@ class _Rejections:
             self._rows = []
 
 
-def _read(session: Session, statement: str, params: dict[str, Any] | None = None) -> list[Any]:
+def _statement(statement: Any) -> Any:
+    """A SQL string as a ``text()`` clause; a prepared clause passes through."""
+    return text(statement) if isinstance(statement, str) else statement
+
+
+def _read(session: Session, statement: Any, params: dict[str, Any] | None = None) -> list[Any]:
     """Run a query and fetch every row, closing its result before returning.
 
     Fetched whole on purpose, not streamed: the caller upserts on the same
     connection, and SQL Server will not run a MERGE while a result is still
     open on it. See the module docstring.
     """
-    return session.execute(text(statement), params or {}).all()
+    return session.execute(_statement(statement), params or {}).all()
+
+
+#: Rows pulled from the driver per round trip by :func:`_stream`. Large enough
+#: that the round trips do not dominate, small enough that a chunk is a few MB.
+STREAM_CHUNK = 10_000
+
+
+def _stream(
+    session: Session, statement: Any, params: dict[str, Any] | None = None
+) -> Iterator[Any]:
+    """Rows of a query, a chunk at a time, closing the result when done.
+
+    For a read an aggregator folds into a small dictionary in one pass, so the
+    raw rows never have to exist all at once. The caller MUST consume it to the
+    end before it writes: the result is held open until then, and SQL Server
+    refuses a MERGE on a connection with an open result. Every use below hands
+    the stream straight to an aggregator that exhausts it, which is what makes
+    that true by construction rather than by care.
+
+    ``finally`` closes the result even when the aggregator raises part-way, so
+    a failure cannot leave the connection busy for the next statement.
+    """
+    result = session.execute(_statement(statement), params or {}).yield_per(STREAM_CHUNK)
+    try:
+        yield from result
+    finally:
+        result.close()
+
+
+def _plant_scope_clause(column: str, scope: frozenset[str], *keys: str) -> str:
+    """A SQL pre-filter that drops rows ``_out_of_scope`` would drop. Empty
+    scope gives no clause, matching ``_out_of_scope``'s "no filter".
+
+    It is a PRE-filter, not a replacement: every caller still applies
+    ``_out_of_scope`` afterwards, so this only has to be no stricter than the
+    Python test, never exactly as strict. Four details keep it so:
+
+    * The value is trimmed first, as ``clean()`` trims it in Python, so a
+      padded ``'1300 '`` still reaches the plant it names.
+    * A NULL or blank plant is let THROUGH. The callers count those as
+      ``MISSING_PLANT`` rejections, and a filter that dropped them would make
+      malformed rows vanish from the counts instead of being reported.
+    * So is a row missing any of ``keys`` -- the fields the callers reject on
+      BEFORE they look at the plant (the material of a movement; the document
+      and item of a PO line). A malformed row at an out-of-scope plant is
+      counted today, and dropping it here would quietly change the counts.
+    * Case and trailing blanks are compared the way SQL Server compares them
+      (insensitively), which can only let more rows through to Python.
+
+    ``column`` and ``keys`` are always literal column references in this module,
+    never caller-supplied, which is why they are formatted in rather than bound.
+    """
+    if not scope:
+        return ""
+    trimmed = f"LTRIM(RTRIM({column}))"
+    passthrough = " OR ".join(
+        [f"NULLIF({trimmed}, '') IS NULL"]
+        + [f"NULLIF(LTRIM(RTRIM({key})), '') IS NULL" for key in keys]
+    )
+    return f" AND ({passthrough} OR {trimmed} IN :plant_scope)"
+
+
+def _scoped(statement: Any, scope: frozenset[str]) -> Any:
+    """``statement`` with the expanding ``plant_scope`` bind declared, if the
+    scope clause was added to it."""
+    return statement.bindparams(bindparam("plant_scope", expanding=True)) if scope else statement
 
 
 def _out_of_scope(plant: str | None, scope: frozenset[str]) -> bool:
@@ -682,14 +763,54 @@ def _stage_stock(
 
 # The movement rows the policy counts, one per material document line. Totalled
 # per material-plant-month by aggregate_consumption() below.
-_CONSUMPTION_SQL = text(
-    """
+_CONSUMPTION_SELECT = """
     SELECT material, plant, posting_date, quantity, debit_credit_ind,
            movement_type, base_unit_of_measure
       FROM n_mseg
      WHERE movement_type IN :movement_types
+"""
+
+#: The unscoped statement: every plant. Kept as it was, and what an empty
+#: ``I7_PLANTS`` runs.
+_CONSUMPTION_SQL = text(_CONSUMPTION_SELECT).bindparams(
+    bindparam("movement_types", expanding=True)
+)
+
+
+def _consumption_statement(scope: frozenset[str]) -> Any:
+    """The movement query, narrowed to ``scope`` in SQL when there is one.
+
+    Measured on the full extract: 1,160,647 movement rows across all plants,
+    848,125 in the two scoped plants. The rest used to be fetched and thrown
+    away in Python.
     """
-).bindparams(bindparam("movement_types", expanding=True))
+    statement = text(_CONSUMPTION_SELECT + _plant_scope_clause("plant", scope, "material")).bindparams(
+        bindparam("movement_types", expanding=True)
+    )
+    return _scoped(statement, scope)
+
+
+def _consumption_totals(
+    session: Session, policy: ExtractIngestionPolicy, rejections: _Rejections
+) -> dict[tuple[str, str, date], dict[str, Any]]:
+    """Monthly consumption per material-plant, aggregated from a stream.
+
+    ``aggregate_consumption`` reads its rows once and keeps one entry per
+    material-plant-month, so the million-odd movements are never held -- only
+    the totals are, which is a small fraction of them. Unchanged by this: which
+    rows count, how issues and reversals net, and which rows are rejected.
+    """
+    scope = policy.plant_scope
+    params: dict[str, Any] = {"movement_types": list(policy.consumption.all_movement_types)}
+    if scope:
+        params["plant_scope"] = sorted(scope)
+    return aggregate_consumption(
+        _stream(session, _consumption_statement(scope), params),
+        frozenset(policy.consumption.issue_movement_types),
+        frozenset(policy.consumption.reversal_movement_types),
+        rejections,
+        scope,
+    )
 
 
 def aggregate_consumption(
@@ -755,16 +876,9 @@ def aggregate_consumption(
 def _stage_consumption(
     session: Session, run_id: int, policy: ExtractIngestionPolicy, rejections: _Rejections
 ) -> int:
-    movement_rows = session.execute(
-        _CONSUMPTION_SQL, {"movement_types": list(policy.consumption.all_movement_types)}
-    ).all()
-    totals = aggregate_consumption(
-        movement_rows,
-        frozenset(policy.consumption.issue_movement_types),
-        frozenset(policy.consumption.reversal_movement_types),
-        rejections,
-        policy.plant_scope,
-    )
+    # Fully consumed here, before the first upsert below: the stream is exhausted
+    # (and its result closed) when aggregate_consumption returns.
+    totals = _consumption_totals(session, policy, rejections)
 
     def rows() -> Iterator[dict[str, Any]]:
         for (material, plant, period), entry in totals.items():
@@ -810,6 +924,23 @@ _PURCHASE_ORDER_SQL = """
       LEFT JOIN n_ekko k ON k.purchasing_document = p.purchasing_document
      WHERE NULLIF(p.material, '') IS NOT NULL
 """
+
+
+def _purchase_order_statement(scope: frozenset[str]) -> Any:
+    """The PO-line query, narrowed to ``scope`` in SQL when there is one.
+
+    Measured on the full extract: 700,922 lines across all plants, 472,321 in
+    the two scoped plants. Unlike the movement read this one cannot be streamed
+    -- its rows are upserted while they are produced, and SQL Server refuses a
+    MERGE with a result open -- so narrowing it is what keeps it small.
+    """
+    return _scoped(
+        text(
+            _PURCHASE_ORDER_SQL
+            + _plant_scope_clause("p.plant", scope, "p.purchasing_document", "p.item")
+        ),
+        scope,
+    )
 
 _GOODS_RECEIPT_SQL = """
     SELECT purchasing_document, item, posting_date, quantity
@@ -863,19 +994,23 @@ def schedule_dates_by_line(rows: Iterable[Any]) -> dict[tuple[str, str], date]:
 def _stage_purchase_orders(
     session: Session, run_id: int, policy: ExtractIngestionPolicy, rejections: _Rejections
 ) -> int:
+    # Goods receipts (1.4M rows) and schedule lines (0.7M) are streamed into the
+    # dictionaries that fold them per PO line; each is exhausted before the next
+    # statement runs, and all of it before the first upsert.
     receipts = receipts_by_line(
-        _read(
+        _stream(
             session,
             _GOODS_RECEIPT_SQL,
             {"gr_category": GOODS_RECEIPT_HISTORY_CATEGORY, "gr_movement": GOODS_RECEIPT_MOVEMENT_TYPE},
         ),
         rejections,
     )
-    schedule = schedule_dates_by_line(_read(session, _SCHEDULE_SQL))
+    schedule = schedule_dates_by_line(_stream(session, _SCHEDULE_SQL))
     scope = policy.plant_scope
+    po_params: dict[str, Any] = {"plant_scope": sorted(scope)} if scope else {}
 
     def rows() -> Iterator[dict[str, Any]]:
-        for row in _read(session, _PURCHASE_ORDER_SQL):
+        for row in _read(session, _purchase_order_statement(scope), po_params):
             document = clean(row.purchasing_document)
             item = clean(row.item)
             material = clean(row.material)
