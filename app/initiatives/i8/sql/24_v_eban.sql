@@ -33,7 +33,11 @@ select
     nullif(item_category, '')          as pstyp,
     nullif(short_text, '')             as txz01,
     sap_num(quantity_requested)        as menge,
-    nullif(base_unit_of_measure, '')   as meins,
+-- No MEINS. EBAN's base unit is not one of the columns the extract
+-- carries -- see the 'eban' vocabulary in app/shared/sap_normalise.py --
+-- so selecting it here did not fail quietly, it stopped the whole view
+-- from building. Nothing reads a unit off this view: the coding screen
+-- wants the text, and the register takes its unit from EKPO.
     sap_date(requisition_date)         as badat,
     sap_date(delivery_date)            as lfdat,
     nullif(deletion_indicator, '')     as loekz,
