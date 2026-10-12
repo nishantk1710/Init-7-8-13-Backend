@@ -459,4 +459,5 @@ def scope_index(db: Session, work: WorkTables, batch: Batch) -> dict[tuple[str, 
         text(f"SELECT material, plant, mrp_type FROM {work.marc} WHERE {batch.predicate()}"),
         batch.params(),
     ).fetchall()
-    return {(r.material.strip(), r.plant.strip()): (r.mrp_type or "").strip() or None for r in rows}
+    # Blank stays "" (OAR), distinct from a missing pair (None) -- as there.
+    return {(r.material.strip(), r.plant.strip()): (r.mrp_type or "").strip() for r in rows}

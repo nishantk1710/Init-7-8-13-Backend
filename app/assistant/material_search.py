@@ -326,7 +326,8 @@ def _plants(
     ).fetchall()
     for row in marc:
         key = (normalise(row.material) or "", (row.plant or "").strip())
-        mrp_types[key] = (row.mrp_type or "").strip() or None
+        # Blank stays "" -- a blank DISMM is OAR; None means no MARC row.
+        mrp_types[key] = (row.mrp_type or "").strip()
         pairs.add(key)
 
     mard = db.execute(

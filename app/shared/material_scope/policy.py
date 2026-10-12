@@ -32,15 +32,20 @@ class MaterialScope(str, Enum):
 def classify_material_scope(dismm: str | None) -> MaterialScope:
     """Classify a material+plant's OAR/Min-Max/Excluded scope from its DISMM.
 
-    Normalises whitespace and case before matching. Anything not explicitly
-    configured as OAR or Min-Max -- including blank and ``None`` -- is
-    ``EXCLUDED``.
+    Normalises whitespace and case before matching. ``None`` means MARC has no
+    row for the material+plant and is always ``EXCLUDED``. A blank string is a
+    MARC row with no MRP type: ``OAR`` while
+    ``Settings.i13_oar_include_blank_mrp_type`` is on, else ``EXCLUDED``.
+    Anything else not configured as OAR or Min-Max is ``EXCLUDED``.
     """
+    if dismm is None:
+        return MaterialScope.EXCLUDED
+
     settings = get_settings()
-    normalized = (dismm or "").strip().upper()
+    normalized = dismm.strip().upper()
 
     if not normalized:
-        return MaterialScope.EXCLUDED
+        return MaterialScope.OAR if settings.i13_oar_include_blank_mrp_type else MaterialScope.EXCLUDED
     if normalized in settings.i13_oar_mrp_type_set:
         return MaterialScope.OAR
     if normalized in settings.i13_min_max_mrp_type_set:
