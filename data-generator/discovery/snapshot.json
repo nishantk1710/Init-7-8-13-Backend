@@ -1,7 +1,10 @@
 {
-  "cpi_path": "/http/SAPECC/OdataConsumption",
-  "label": "DEV",
-  "captured_at": "2026-10-07T09:45:14Z",
-  "services": ["ZMM_KPI02_ADD_SRV", "ZMM_KPI02_TAB_SRV"],
-  "note": "Contract files ($metadata, entity_sets.csv, properties.csv, counts.csv, filter_support.csv) from cpi_discovery.py --skip-probes --skip-profiles; delta_support.csv from python -m app.ingest.delta_probe, same day."
+  "cpi_path": "/http/SAPECCQA/OdataConsumption",
+  "label": "",
+  "captured_at": "2026-10-11T05:18:02Z",
+  "services": [
+    "ZMM_KPI02_ADD_SRV",
+    "ZMM_KPI02_TAB_SRV"
+  ],
+  "note": "Written by cpi_discovery.py. Measure the deltas against the same system next: python -m app.ingest.delta_probe"
 }

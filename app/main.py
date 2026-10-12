@@ -145,6 +145,10 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         stop.set()
+        # A delta a PR event asked for and has not started yet: cancelled, not
+        # left to run against a process that is going away.
+        with contextlib.suppress(Exception):
+            await scheduler.stop_event_runner()
         if task is not None:
             task.cancel()
             with contextlib.suppress(Exception):

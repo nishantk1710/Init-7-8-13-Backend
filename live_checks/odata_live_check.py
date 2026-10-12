@@ -753,6 +753,11 @@ DERIVED_PROBES: tuple[tuple[str, str, str, str | None, str | None, str], ...] = 
 )
 
 KEY_BATCH = 50  # the pipeline's batch size for parent keys
+# Most child rows a derived probe reads for one batch of parent keys. Fifty
+# purchase orders have hundreds of children, not tens of thousands; a filter
+# that is honoured never comes near this, one that is ignored is caught on
+# its first page -- this is only the backstop.
+DERIVED_ROW_CAP = 20_000
 
 
 def _string_date_format(samples: list[Any]) -> str | None:
@@ -889,8 +894,11 @@ def probe_derived(
         result["verdict"] = "NO PARENT KEYS in the window"
         return result
 
+    child_key = next((p for p in child.props if norm(p) == norm(key)), key)
+
     def fetch(batch: list[str]) -> tuple[list[dict] | None, str | None]:
         clause = combine(predicate, " or ".join(f"{key} eq '{k}'" for k in batch))
+        asked = {norm_key(k) for k in batch}
         got: list[dict] = []
         skip = 0
         order = child.keys
@@ -902,7 +910,13 @@ def probe_derived(
             if page is None:
                 return None, err
             got.extend(page)
-            if len(page) < 1000:
+            # One row for a key nobody asked for proves the filter was ignored.
+            # Paging on would read the WHOLE child set into memory -- on SAP QA,
+            # where $filter is dropped, that was all of EKPO/EKBE/MSEG and both
+            # 8-Oct runs died here.
+            if any(norm_key(r.get(child_key)) not in asked for r in page):
+                return got, None
+            if len(page) < 1000 or len(got) >= DERIVED_ROW_CAP:
                 return got, None
             skip += len(page)
 
@@ -923,7 +937,6 @@ def probe_derived(
         result.update(verdict="REJECTED", error=error)
         return result
     wanted = {norm_key(k) for k in batch}
-    child_key = next((p for p in child.props if norm(p) == norm(key)), key)
     outside = [r for r in got if norm_key(r.get(child_key)) not in wanted]
     matched = {norm_key(r.get(child_key)) for r in got} & wanted
     result.update(rows=len(got), parents_matched=len(matched), rows_outside_keys=len(outside))
