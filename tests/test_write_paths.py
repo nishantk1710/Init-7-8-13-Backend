@@ -107,7 +107,9 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "exception."
     ),
     ("/api/events/pr", "post"): (
-        "Inbound procurement event listener. Writes only to platform tables."
+        "Inbound procurement event listener. Writes only to platform tables; "
+        "with DELTA_ON_PR_EVENT_ENABLED it also starts the delta cycle, which "
+        "READS SAP and merges into raw_<table> -- it never writes to SAP."
     ),
     # --- W7: the reservation-time assistant --------------------------------
     ("/api/assistant/sessions", "post"): (
@@ -148,6 +150,13 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "I13 FR-3 -> quantity_suggestion acceptance. FRS §8 counts avoided "
         "purchase benefit only where the requester accepted the suggestion, "
         "so this is the row that attribution is measured from."
+    ),
+    # --- Shared: monthly criticality reports ---------------------------------
+    ("/api/criticality/uploads", "post"): (
+        "Monthly criticality report for one plant -> criticality_report_upload + "
+        "criticality_report_row (append-only) and a rebuild of criticality_current, "
+        "which I07, I08 and I13 read. Also copies the file to platform storage and "
+        "writes an ingestion_run row. raw_zmm065_* is not touched."
     ),
     # --- Events ---------------------------------------------------------------
     ("/api/events/csv", "post"): (
@@ -240,7 +249,9 @@ class TestNothingWritesToSap:
         "app/api/i8",
         "app/api/i13",
         "app/api/assistant",
+        "app/api/criticality",
         "app/assistant",
+        "app/integrations/criticality",
     )
 
     def test_no_package_imports_the_sap_client(self) -> None:

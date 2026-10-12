@@ -25,7 +25,7 @@ page a UI should call routinely.
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
-from app.api.i13.deps import page, snapshot_or_live
+from app.api.i13.deps import page, snapshot_or_live, with_material_names
 from app.core.db import get_db
 from app.initiatives.i13.ledger_compat import build_legacy_ledger
 from app.initiatives.i13.snapshot import I13Snapshot
@@ -40,6 +40,7 @@ router = APIRouter()
 
 
 @router.get("/ledger", response_model=list[UtilisationLedgerEntryResponse])
+@with_material_names()
 def list_ledger_entries(
     response: Response,
     plant: str | None = Query(None),

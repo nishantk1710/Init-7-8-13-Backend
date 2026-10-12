@@ -20,7 +20,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
-from app.api.i13.deps import page, require_snapshot
+from app.api.i13.deps import page, require_snapshot, with_material_names
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.snapshot import GrniEntry, I13Snapshot, MonthlyConsumption
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
@@ -61,6 +61,7 @@ def _grni_response(item: GrniEntry, threshold_days: int) -> GrniEntryResponse:
 
 
 @router.get("/grni", response_model=list[GrniEntryResponse])
+@with_material_names()
 def list_grni(
     response: Response,
     plant: str | None = Query(None),
@@ -145,6 +146,7 @@ def _stored_usage_response(row, watch, months: tuple[str, ...]) -> UsagePatternR
 
 
 @router.get("/usage-patterns", response_model=list[UsagePatternResponse])
+@with_material_names()
 def list_usage_patterns(
     response: Response,
     plant: str | None = Query(None),

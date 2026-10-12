@@ -66,6 +66,7 @@ from app.initiatives.i8.aging import (
 )
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.material_number import is_eighty_series
+from app.initiatives.i8.staged import Sources, reading
 from app.shared.sql_lists import fetch_in_chunks
 
 logger = get_logger(__name__)
@@ -230,16 +231,25 @@ where p.ebeln is not null
 
 
 def fetch_candidate_lines(
-    db: Session, *, plant: str | None = None, material: str | None = None
+    db: Session,
+    *,
+    plant: str | None = None,
+    material: str | None = None,
+    sources: Sources | None = None,
 ) -> list[Mapping]:
     """Pull PO lines, unfiltered by item category. Deliberately.
 
     This is the "EKPO pull" the task plan names. It applies only filters that
     survive the round trip to SAP; the repair-PO test happens in Python, in
     :func:`is_repair_line`.
+
+    ``sources`` is a snapshot build's staged copies (``staged.py``): there the
+    pull reads a copy already narrowed to repair and 80-series lines -- still
+    without a pstyp predicate in this query, and still decided by
+    :func:`is_repair_line`.
     """
     return list(
-        db.execute(text(_CANDIDATES_SQL), {"plant": plant, "material": material})
+        db.execute(text(reading(_CANDIDATES_SQL, sources)), {"plant": plant, "material": material})
         .mappings()
         .all()
     )
@@ -418,6 +428,7 @@ def _evidence(
     documents: Sequence[str],
     materials: Sequence[str],
     cfg: I8Settings,
+    sources: Sources | None = None,
 ) -> tuple[dict, dict, dict, dict, dict, dict]:
     """Fetch every lifecycle source for the identified repair documents.
 
@@ -439,14 +450,14 @@ def _evidence(
     with timed_step("schedule lines (EKET)"):
         schedules = {
             (r["ebeln"], r["ebelp"]): r
-            for r in fetch_in_chunks(db, _SCHEDULE_SQL, "documents", documents)
+            for r in fetch_in_chunks(db, reading(_SCHEDULE_SQL, sources), "documents", documents)
         }
     with timed_step("goods receipts (EKBE)"):
         receipts = {
             (r["ebeln"], r["ebelp"]): r
             for r in fetch_in_chunks(
                 db,
-                _RECEIPTS_SQL,
+                reading(_RECEIPTS_SQL, sources),
                 "documents",
                 documents,
                 {
@@ -467,16 +478,17 @@ def _evidence(
                     "dispatch": cfg.dispatch_movement_type,
                     "vendor_stock": cfg.vendor_special_stock,
                 },
+                source=reading("v_mseg", sources),
             )
         }
     with timed_step("PO headers (EKKO)"):
-        headers = {r["ebeln"]: r for r in fetch_in_chunks(db, _HEADER_SQL, "documents", documents)}
+        headers = {r["ebeln"]: r for r in fetch_in_chunks(db, reading(_HEADER_SQL, sources), "documents", documents)}
     with timed_step("vendor names (LFA1)"):
-        vendors = {r["lifnr"]: r["name1"] for r in db.execute(text(_VENDOR_SQL)).mappings()}
+        vendors = {r["lifnr"]: r["name1"] for r in db.execute(text(reading(_VENDOR_SQL, sources))).mappings()}
     with timed_step("lead times (MARC)"):
         lead_times = {
             (r["matnr"], r["werks"]): r["plifz"]
-            for r in fetch_in_chunks(db, _LEAD_TIME_SQL, "materials", materials)
+            for r in fetch_in_chunks(db, reading(_LEAD_TIME_SQL, sources), "materials", materials)
         }
     return schedules, receipts, dispatches, headers, vendors, lead_times
 
@@ -743,6 +755,7 @@ def load_repair_lines(
     plant: str | None = None,
     material: str | None = None,
     candidates: Sequence[Mapping] | None = None,
+    sources: Sources | None = None,
 ) -> tuple[list[RepairLine], RegisterStats]:
     """Build the register. Layers 1 and 2, then the Layer 3 arithmetic.
 
@@ -753,12 +766,21 @@ def load_repair_lines(
     ``candidates`` lets a caller that already holds the EKPO pull pass it in,
     so the snapshot reads the 82,718 rows once for both the register and the
     new-acquisition check rather than twice.
+
+    ``sources`` is a snapshot build's staged copies (``staged.py``). There the
+    candidates are already narrowed, so ``candidates_scanned`` is the count the
+    staging took over the unfiltered EKPO, not ``len(candidates)``.
     """
     cfg = cfg or get_i8_settings()
     today = today or cfg.reference_date_value or date.today()
 
     if candidates is None:
-        candidates = fetch_candidate_lines(db, plant=plant, material=material)
+        candidates = fetch_candidate_lines(db, plant=plant, material=material, sources=sources)
+    scanned = (
+        sources.candidates_scanned
+        if sources is not None and sources.candidates_scanned is not None
+        else len(candidates)
+    )
 
     # Layer 1. The Pstyp ruling: in Python, over rows already fetched.
     repair_candidates = [row for row in candidates if is_repair_line(row, cfg)]
@@ -767,13 +789,13 @@ def load_repair_lines(
 
     if not repair_rows:
         return [], RegisterStats(
-            candidates_scanned=len(candidates), excluded_deleted_lines=excluded_deleted
+            candidates_scanned=scanned, excluded_deleted_lines=excluded_deleted
         )
 
     documents = sorted({row["ebeln"] for row in repair_rows})
     materials = sorted({row["matnr"] for row in repair_rows if row["matnr"]})
     schedules, receipts, dispatches, headers, vendor_names, lead_times = _evidence(
-        db, documents, materials, cfg
+        db, documents, materials, cfg, sources
     )
 
     lines = [
@@ -828,7 +850,7 @@ def load_repair_lines(
         vendors_resolved_to_a_name=len(
             {line.vendor for line in lines if line.vendor and line.vendor_name}
         ),
-        candidates_scanned=len(candidates),
+        candidates_scanned=scanned,
         excluded_deleted_lines=excluded_deleted,
         blocked_lines=sum(1 for line in lines if line.po_blocked),
     )

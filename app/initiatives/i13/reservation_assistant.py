@@ -45,6 +45,17 @@ from app.initiatives.i13.act.domain import CrossPlantStockInfo
 from app.initiatives.i13.models import AgingBand, WatchMetric
 from app.shared.numbers import plain
 
+#: Why months of cover is missing, in words. The codes are the API's; a sentence
+#: a requester reads must not carry them.
+_COVER_REASONS = {
+    "INSUFFICIENT_HISTORY": "not enough consumption history",
+}
+
+
+def cover_reason_text(reason: str) -> str:
+    """``INSUFFICIENT_HISTORY`` -> ``not enough consumption history``."""
+    return _COVER_REASONS.get(reason, reason.replace("_", " ").lower())
+
 
 @dataclass(frozen=True)
 class I13Assessment:
@@ -104,14 +115,14 @@ class I13Assessment:
             )
 
         if self.metric.open_po_quantity > 0:
-            parts.append(f"{plain(self.metric.open_po_quantity)} already on order")
+            parts.append(f"{plain(self.metric.open_po_quantity)} on open PO")
 
         if self.metric.months_of_cover is not None:
             parts.append(
                 f"about {plain(self.metric.months_of_cover)} months of cover"
             )
         elif self.metric.months_of_cover_reason:
-            parts.append(f"cover cannot be calculated ({self.metric.months_of_cover_reason})")
+            parts.append(f"cover cannot be calculated ({cover_reason_text(self.metric.months_of_cover_reason)})")
 
         sentence = ", ".join(parts) + "."
 
@@ -121,7 +132,7 @@ class I13Assessment:
             band = self.metric.aging_band.value.replace("_", "-").lower()
             sentence += (
                 f" This part has not moved in "
-                f"{self.metric.days_since_last_movement} days ({band})."
+                f"{self.metric.days_since_last_movement} days (stock type: {band})."
             )
 
         if self.cross_plant_stock:

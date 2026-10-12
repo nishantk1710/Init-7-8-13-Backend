@@ -12,11 +12,12 @@ initiative.
 """
 
 from app.models.base import Base
+from app.models.criticality_report import CriticalityCurrent, CriticalityReportRow, CriticalityReportUpload
 from app.models.csv_extract import CsvExtractRequest
 from app.models.i7_features import FeatureBuildRun, MaterialFeature
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun, SegmentModelDecision
 from app.models.i7_inventory import InventoryCalculation, InventoryRun
-from app.models.i7_oar import OarNeighbour, OarRun, OarTargetResult
+from app.models.i7_oar import OarEmbedding, OarNeighbour, OarRun, OarTargetResult
 from app.models.i7_recommendation import (
     ApprovalLedgerEntry,
     Recommendation,
@@ -48,6 +49,7 @@ from app.models.i13_session_link import SessionReservationLink, UatReservationSg
 from app.models.i13_snapshot_store import I13SnapshotRecord, I13SnapshotRun
 from app.models.i13_watch_mart import WatchMetricMart
 from app.models.i13_zmm065_upload import Zmm065Upload, Zmm065UploadRow
+from app.models.i8_snapshot_store import I8SnapshotRun
 from app.models.ingest_watermark import IngestWatermark
 from app.models.ingestion import IngestionRun
 from app.models.serving import MaterialPlant
@@ -88,9 +90,13 @@ __all__ = [
     "ActNotificationRecord",
     "Base",
     "ConsumptionAttributionRecord",
+    "CriticalityCurrent",
+    "CriticalityReportRow",
+    "CriticalityReportUpload",
     "CsvExtractRequest",
     "I13SnapshotRecord",
     "I13SnapshotRun",
+    "I8SnapshotRun",
     "IngestionRun",
     "IngestWatermark",
     "MaterialPlant",

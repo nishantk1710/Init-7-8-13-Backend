@@ -1,0 +1,10 @@
+{
+  "cpi_path": "/http/SAPECCQA/OdataConsumption",
+  "label": "QA",
+  "captured_at": "2026-10-11T05:18:02Z",
+  "services": [
+    "ZMM_KPI02_ADD_SRV",
+    "ZMM_KPI02_TAB_SRV"
+  ],
+  "note": "Written by cpi_discovery.py. Measure the deltas against the same system next: python -m app.ingest.delta_probe"
+}

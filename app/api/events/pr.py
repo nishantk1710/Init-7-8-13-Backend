@@ -18,8 +18,13 @@ all of which serialise to JSON strings, e.g.::
         "MESSAGE":    "PR Created Successfully"
     }
 
-Still a connectivity stub in what it *does*: it records the event and returns
-202. It does not persist, classify, call SAP, or route into I07/I08/I13.
+What it does: records the event and returns 202. With DELTA_ON_PR_EVENT_ENABLED
+on, it also asks for a delta cycle (``app.ingest.scheduler.request_delta_cycle``):
+every set with a runnable delta is fetched from SAP and merged into its
+``raw_<table>``, after a short debounce so a burst of requisitions shares one
+cycle. The cycle runs in the background -- SAP gets its 202 at once -- and is the
+same one the timer runs, with the same gates. It does not classify the PR or
+route it into I07/I08/I13; it reads SAP, it never writes to it.
 
 WHY THIS READS THE RAW BODY INSTEAD OF TAKING A MODEL PARAMETER
 
@@ -121,6 +126,15 @@ class PREventAccepted(BaseModel):
             "refused -- it was accepted and logged either way."
         ),
     )
+    delta: str | None = Field(
+        default=None,
+        description=(
+            "What the event did to the delta pull: 'scheduled' (a cycle starts "
+            "shortly), 'queued' (one is already pending and covers this event), "
+            "'disabled' (DELTA_ON_PR_EVENT_ENABLED is off) or 'unavailable' "
+            "(nothing to run it against). Never affects acceptance."
+        ),
+    )
 
 
 def _reject(reason: str, content_type: str, raw: bytes) -> HTTPException:
@@ -202,7 +216,13 @@ async def receive_pr_event(request: Request) -> PREventAccepted:
 
     stored = _append_event(payload, raw, banfn)
 
-    return PREventAccepted(status="received", stored=stored)
+    # Imported here, like app.main does, so importing this module never
+    # reaches the ingest stack. request_delta_cycle never raises.
+    from app.ingest import scheduler
+
+    delta = scheduler.request_delta_cycle(f"PR {banfn or '(no BANFN)'}")
+
+    return PREventAccepted(status="received", stored=stored, delta=delta)
 
 
 def _append_event(payload: dict, raw: bytes, banfn: str | None) -> str | None:

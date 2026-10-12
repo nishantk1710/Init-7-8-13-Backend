@@ -1,12 +1,20 @@
 """OAR similarity orchestration.
 
     Phase 3 cold-start targets + classified candidate population
-        -> hard filter -> three dimensions -> combined score -> rank -> Top-K
+        -> hard filter -> [two-stage shortlist] -> three dimensions
+        -> combined score + evidence -> rank -> Top-K
         -> confidence -> weighted estimate (only from Phase 5 SUCCESS neighbours)
 
 Reads Phase 3 features, Phase 2 staging, and Phase 5 inventory calculations.
 Never ``raw_*``. Never recomputes the Phase 3 history gate or OAR rule -- a
 target is whatever Phase 3 already routed to NO_HISTORY or COLD_START.
+
+Two ways to the same answer. :func:`evaluate_target` scores every eligible
+candidate exactly -- the reference, and what ``I7_OAR_RETRIEVAL_MODE=
+exhaustive`` runs. ``oar.engine.evaluate_targets`` (the default) shortlists
+first and scores only the shortlist. Both build their results through
+:func:`scored_entry` and :func:`finalise_target`, so they can differ only in
+which candidates were scored; the tests hold them to identical output.
 """
 
 import logging
@@ -31,7 +39,14 @@ from app.initiatives.i7.oar import (
     scoring,
     structured_similarity,
 )
-from app.initiatives.i7.oar.text_similarity import EmbeddingProvider, MiniLmEmbeddingProvider
+from app.initiatives.i7.oar.retrieval import RetrievalConfig
+from app.initiatives.i7.oar.text_similarity import (
+    EmbeddingCache,
+    EmbeddingProvider,
+    EmbeddingStats,
+    MiniLmEmbeddingProvider,
+    PrecomputedEmbeddingProvider,
+)
 from app.initiatives.i7.oar.types import (
     ALGORITHM_VERSION,
     CandidateAttributes,
@@ -68,6 +83,13 @@ class OarRunResult:
     neighbour_count_distribution: dict[str, int] = field(default_factory=dict)
     text_similarity_available: bool = False
     error: str | None = None
+    embeddings_generated: int = 0
+    """Descriptions embedded by the model in this run -- 0 when every one was
+    already stored by an earlier run."""
+    embedding_cache_hit_rate: float = 0.0
+    scored_fraction: float = 0.0
+    """Exact scores computed, as a share of eligible (target, donor) pairs.
+    1.0 under exhaustive retrieval."""
 
 
 def _score_pair(
@@ -85,7 +107,14 @@ def _score_pair(
 
         text = text_score(target.description, candidate.description, provider)
     else:
-        text = DimensionScore(value=None, status=SimilarityStatus.NOT_AVAILABLE_NO_MODEL)
+        # Reported as a missing feature, the same as an absent description, so
+        # the stored explanation says the description was not compared.
+        text = DimensionScore(
+            value=None,
+            status=SimilarityStatus.NOT_AVAILABLE_NO_MODEL,
+            missing_features=1,
+            missing=("description",),
+        )
 
     return scoring.combine(
         struct,
@@ -94,6 +123,8 @@ def _score_pair(
         Decimal(str(policy.structural_weight)),
         Decimal(str(policy.text_weight)),
         Decimal(str(policy.business_weight)),
+        minimum_evidence_features=policy.minimum_evidence_features,
+        identity_evidence_features=tuple(policy.identity_evidence_features),
     )
 
 
@@ -145,20 +176,63 @@ def _oar_service_level_configured(policy: PolicyDocument) -> bool:
     return True
 
 
-def evaluate_target(
+def scored_entry(
     target: CandidateAttributes,
-    candidate_population: list[CandidateAttributes],
-    provider: EmbeddingProvider,
-    price_range: Decimal | None,
+    candidate: CandidateAttributes,
+    combined: CombinedScore,
     inventory_values: dict[tuple[str, str], dict],
-    policy: PolicyDocument,
-) -> OarResult:
-    """The full similarity pipeline for one cold-start target."""
-    eligible, rejections = eligibility.filter_candidates(
-        target, candidate_population, policy.similarity.minimum_neighbour_history_months
+) -> tuple[str, str, CombinedScore, bool | None, dict]:
+    """One candidate's score plus what ranking and persistence need about it.
+
+    ``same_circuit`` is always ``None``: circuit is not evaluated (see
+    ``CandidateAttributes.circuit``), and two missing circuits are never read as
+    the same circuit.
+    """
+    same_group = (
+        None
+        if target.material_group is None or candidate.material_group is None
+        else target.material_group == candidate.material_group
+    )
+    inventory = inventory_values.get(
+        (candidate.sap_material_number, candidate.sap_plant_code)
+    )
+    return (
+        candidate.sap_material_number,
+        candidate.sap_plant_code,
+        combined,
+        None,
+        {
+            "same_material_group": same_group,
+            "criticality": candidate.criticality,
+            "history_months": candidate.history_months,
+            "is_active": candidate.is_active,
+            "safety_stock": inventory["safety_stock"] if inventory else None,
+            "rop": inventory["rop"] if inventory else None,
+            "max_stock": inventory["max_stock"] if inventory else None,
+            "inventory_eligible": inventory is not None,
+        },
     )
 
-    if not eligible:
+
+def finalise_target(
+    target: CandidateAttributes,
+    scored: list[tuple[str, str, CombinedScore, bool | None, dict]],
+    *,
+    population_size: int,
+    eligible_count: int,
+    rejections: dict[str, int],
+    low_evidence: int,
+    shortlisted: int,
+    retrieval: str,
+    policy: PolicyDocument,
+) -> OarResult:
+    """Ranking, confidence and the weighted estimate for one target.
+
+    Shared by the exhaustive reference (:func:`evaluate_target`) and the
+    two-stage engine (``oar.engine``), so the two can differ only in WHICH
+    candidates were scored, never in what happens to the scores.
+    """
+    if eligible_count == 0:
         return OarResult(
             sap_material_number=target.sap_material_number,
             sap_plant_code=target.sap_plant_code,
@@ -168,48 +242,16 @@ def evaluate_target(
             estimate=OarEstimate(
                 status=estimate_module.EstimateStatus.NOT_EVALUABLE_NO_NEIGHBORS
             ),
-            candidates_considered=len(candidate_population),
+            candidates_considered=population_size,
             eligible_candidates=0,
             rejection_counts=tuple(sorted(rejections.items())),
             best_similarity=None,
             generated_at=datetime.now(timezone.utc),
             detail="no candidate satisfied criticality, active-status and "
             "history hard constraints",
-        )
-
-    scored: list[tuple[str, str, CombinedScore, bool | None, dict]] = []
-    for candidate in eligible:
-        combined = _score_pair(target, candidate, provider, price_range, policy.similarity)
-        same_circuit = (
-            None
-            if target.circuit is None or candidate.circuit is None
-            else target.circuit == candidate.circuit
-        )
-        same_group = (
-            None
-            if target.material_group is None or candidate.material_group is None
-            else target.material_group == candidate.material_group
-        )
-        inventory = inventory_values.get(
-            (candidate.sap_material_number, candidate.sap_plant_code)
-        )
-        scored.append(
-            (
-                candidate.sap_material_number,
-                candidate.sap_plant_code,
-                combined,
-                same_circuit,
-                {
-                    "same_material_group": same_group,
-                    "criticality": candidate.criticality,
-                    "history_months": candidate.history_months,
-                    "is_active": candidate.is_active,
-                    "safety_stock": inventory["safety_stock"] if inventory else None,
-                    "rop": inventory["rop"] if inventory else None,
-                    "max_stock": inventory["max_stock"] if inventory else None,
-                    "inventory_eligible": inventory is not None,
-                },
-            )
+            low_evidence_candidates=0,
+            shortlisted_candidates=0,
+            retrieval=retrieval,
         )
 
     minimum_similarity = Decimal(str(policy.similarity.minimum_similarity))
@@ -234,6 +276,13 @@ def evaluate_target(
         default=None,
     )
 
+    detail = None
+    if low_evidence and len(neighbours) < policy.similarity.minimum_neighbours:
+        detail = (
+            f"{low_evidence} eligible candidate(s) refused for too little evidence "
+            "(see SimilarityPolicy.minimum_evidence_features / identity_evidence_features)"
+        )
+
     return OarResult(
         sap_material_number=target.sap_material_number,
         sap_plant_code=target.sap_plant_code,
@@ -241,11 +290,57 @@ def evaluate_target(
         confidence=grade,
         neighbours=tuple(neighbours),
         estimate=oar_estimate,
-        candidates_considered=len(candidate_population),
-        eligible_candidates=len(eligible),
+        candidates_considered=population_size,
+        eligible_candidates=eligible_count,
         rejection_counts=tuple(sorted(rejections.items())),
         best_similarity=best,
         generated_at=datetime.now(timezone.utc),
+        detail=detail,
+        low_evidence_candidates=low_evidence,
+        shortlisted_candidates=shortlisted,
+        retrieval=retrieval,
+    )
+
+
+def evaluate_target(
+    target: CandidateAttributes,
+    candidate_population: list[CandidateAttributes],
+    provider: EmbeddingProvider,
+    price_range: Decimal | None,
+    inventory_values: dict[tuple[str, str], dict],
+    policy: PolicyDocument,
+) -> OarResult:
+    """The full similarity pipeline for one cold-start target, exhaustively.
+
+    Every eligible candidate gets the exact score. This is the reference the
+    two-stage engine (``oar.engine.evaluate_targets``) is tested against, and
+    what ``I7_OAR_RETRIEVAL_MODE=exhaustive`` runs.
+    """
+    eligible, rejections = eligibility.filter_candidates(
+        target, candidate_population, policy.similarity.minimum_neighbour_history_months
+    )
+
+    scored = [
+        scored_entry(
+            target,
+            candidate,
+            _score_pair(target, candidate, provider, price_range, policy.similarity),
+            inventory_values,
+        )
+        for candidate in eligible
+    ]
+    low_evidence = sum(1 for entry in scored if not entry[2].evidence_sufficient)
+
+    return finalise_target(
+        target,
+        scored,
+        population_size=len(candidate_population),
+        eligible_count=len(eligible),
+        rejections=rejections,
+        low_evidence=low_evidence,
+        shortlisted=len(eligible),
+        retrieval="exhaustive",
+        policy=policy,
     )
 
 
@@ -255,17 +350,98 @@ def _trace_text(trace: tuple[tuple[str, str], ...]) -> str | None:
     return ";".join(f"{key}={value}" for key, value in trace)[:1000]
 
 
+def _target_row(run_id: int, outcome: OarResult) -> dict[str, Any]:
+    detail = "; ".join(
+        part for part in (outcome.detail, outcome.estimate.detail) if part
+    ) or None
+    return {
+        "oar_run_id": run_id,
+        "sap_material_number": outcome.sap_material_number,
+        "sap_plant_code": outcome.sap_plant_code,
+        "status": outcome.status.value,
+        "confidence": outcome.confidence.value,
+        "candidates_considered": outcome.candidates_considered,
+        "eligible_candidates": outcome.eligible_candidates,
+        "neighbour_count": len(outcome.neighbours),
+        "best_similarity": outcome.best_similarity,
+        "rejection_summary": ";".join(
+            f"{reason}={count}" for reason, count in outcome.rejection_counts
+        )[:500]
+        or None,
+        "estimate_status": outcome.estimate.status.value,
+        "estimate_label": (
+            outcome.estimate.label if outcome.estimate.status.value == "SUCCESS" else None
+        ),
+        "safety_stock": outcome.estimate.safety_stock,
+        "rop": outcome.estimate.rop,
+        "max_stock": outcome.estimate.max_stock,
+        "inventory_eligible_neighbours": outcome.estimate.inventory_eligible_neighbours,
+        "inventory_ineligible_neighbours": outcome.estimate.inventory_ineligible_neighbours,
+        "estimate_trace": _trace_text(outcome.estimate.trace),
+        "detail": detail[:500] if detail else None,
+        "low_evidence_candidates": outcome.low_evidence_candidates,
+        "shortlisted_candidates": outcome.shortlisted_candidates,
+    }
+
+
+def _neighbour_row(run_id: int, outcome: OarResult, neighbour: Neighbour) -> dict[str, Any]:
+    return {
+        "oar_run_id": run_id,
+        "sap_material_number": outcome.sap_material_number,
+        "sap_plant_code": outcome.sap_plant_code,
+        "neighbour_material": neighbour.material,
+        "neighbour_plant": neighbour.plant,
+        "rank": neighbour.rank,
+        "combined_similarity": neighbour.score.combined,
+        "structured_similarity": neighbour.score.structured.value,
+        "text_similarity": neighbour.score.text.value,
+        "business_similarity": neighbour.score.business.value,
+        "score_completeness": neighbour.score.score_completeness,
+        "same_circuit": neighbour.same_circuit,
+        "same_material_group": neighbour.same_material_group,
+        "criticality": neighbour.criticality,
+        "history_months": neighbour.history_months,
+        "is_active": neighbour.is_active,
+        "safety_stock": neighbour.safety_stock,
+        "rop": neighbour.rop,
+        "max_stock": neighbour.max_stock,
+        "inventory_eligible": neighbour.inventory_eligible,
+        "score_explanation": scoring.explain(neighbour.score),
+    }
+
+
+def prepare_embeddings(
+    provider: EmbeddingProvider,
+    descriptions,
+    *,
+    store=None,
+    batch_size: int = 64,
+) -> tuple[dict | None, EmbeddingStats | None]:
+    """One vector per unique description for this run, or ``None`` without a model.
+
+    Memory first, then ``store`` (normally ``SqlEmbeddingStore``), then the
+    model in bounded batches for whatever is left.
+    """
+    if not getattr(provider, "is_available", True):
+        return None, None
+    cache = EmbeddingCache(provider, store=store, batch_size=batch_size)
+    vectors = cache.ensure(descriptions)
+    return vectors, cache.stats
+
+
 def run_oar_similarity(
     policy: PolicyDocument | None = None,
     *,
     provider: EmbeddingProvider | None = None,
     force: bool = False,
+    config: RetrievalConfig | None = None,
 ) -> OarRunResult:
     """Compute similarity-based neighbours and estimates for every cold-start
     material-plant.
 
-    Idempotent: a run is identified by feature run, inventory run, policy and
-    embedding-model version, matching the pattern of every earlier phase.
+    Idempotent: a run is identified by feature run, inventory run, policy,
+    algorithm version, embedding-model version and retrieval configuration,
+    matching the pattern of every earlier phase.
 
     ``policy`` defaults to the dev-fixture-aware default (see
     ``app.initiatives.i7.policy.dev_fixtures.default_policy``), the same
@@ -278,11 +454,22 @@ def run_oar_similarity(
     neighbours' own numbers sat in ``i7_inventory_calculation``. Production
     is unaffected -- with neither dev flag set, ``default_policy()`` returns
     exactly the ``PolicyDocument()`` this line used to construct.
+
+    ``config`` defaults to the ``I7_OAR_*`` settings. Two-stage retrieval
+    (``oar.engine``) is the default; ``exhaustive`` scores every eligible
+    candidate exactly, as before.
     """
+    from sqlalchemy import select
+
+    from app.core.config import get_settings
+    from app.initiatives.i7.oar import engine as engine_module
+    from app.initiatives.i7.oar.embedding_store import SqlEmbeddingStore
     from app.initiatives.i7.policy.dev_fixtures import default_policy
 
+    settings = get_settings()
     policy = policy or default_policy()
-    provider = provider or MiniLmEmbeddingProvider()
+    provider = provider or MiniLmEmbeddingProvider(batch_size=settings.i7_oar_embedding_batch_size)
+    config = config or RetrievalConfig.from_settings(settings)
     session_factory = get_sessionmaker()
 
     embedding_version = provider.model_version if provider.is_available else (
@@ -297,8 +484,6 @@ def run_oar_similarity(
             text("select max(id) from i7_inventory_run where status = 'succeeded'")
         ).scalar()
 
-        from sqlalchemy import select
-
         existing = session.execute(
             select(OarRun).where(
                 OarRun.feature_run_id == feature_run_id,
@@ -307,6 +492,7 @@ def run_oar_similarity(
                 OarRun.policy_version == policy.policy_version,
                 OarRun.algorithm_version == ALGORITHM_VERSION,
                 OarRun.embedding_model_version == embedding_version,
+                OarRun.retrieval_config == config.describe(),
                 OarRun.status == STATUS_SUCCEEDED,
             )
         ).scalar_one_or_none()
@@ -335,6 +521,7 @@ def run_oar_similarity(
             business_weight=Decimal(str(policy.similarity.business_weight)),
             top_k=policy.similarity.maximum_neighbours,
             minimum_history_months=policy.similarity.minimum_neighbour_history_months,
+            retrieval_config=config.describe(),
         )
         session.add(run)
         session.commit()
@@ -352,30 +539,71 @@ def run_oar_similarity(
             price_span = repository.price_range(candidates)
             inventory_values = repository.load_inventory_values(session, inventory_run_id)
 
+        logger.info(
+            "OAR run %d: %d targets, %d candidates in the donor population (%s)",
+            run_id,
+            len(targets),
+            len(candidates),
+            config.describe(),
+        )
+
+        store = (
+            SqlEmbeddingStore(session_factory) if settings.i7_oar_embedding_cache else None
+        )
+        embeddings, embedding_stats = prepare_embeddings(
+            provider,
+            [t.description for t in targets] + [c.description for c in candidates],
+            store=store,
+            batch_size=settings.i7_oar_embedding_batch_size,
+        )
+        if embedding_stats is not None:
             logger.info(
-                "OAR run %d: %d targets, %d candidates in the donor population",
+                "OAR run %d: embeddings %d unique, %d from memory, %d from the store, "
+                "%d generated in %d batch(es)",
                 run_id,
-                len(targets),
-                len(candidates),
+                embedding_stats.unique,
+                embedding_stats.memory_hits,
+                embedding_stats.store_hits,
+                embedding_stats.generated,
+                embedding_stats.batches,
+            )
+            result.embeddings_generated = embedding_stats.generated
+            result.embedding_cache_hit_rate = embedding_stats.hit_rate
+        result.text_similarity_available = embeddings is not None
+
+        scoring_provider = PrecomputedEmbeddingProvider(
+            embeddings, provider.model_name, provider.model_version
+        )
+
+        stats = engine_module.EngineStats()
+        if config.mode == "exhaustive":
+            outcomes = (
+                evaluate_target(
+                    target, candidates, scoring_provider, price_span, inventory_values, policy
+                )
+                for target in targets
+            )
+        else:
+            outcomes = engine_module.evaluate_targets(
+                targets,
+                candidates,
+                provider=scoring_provider,
+                embeddings=embeddings,
+                price_range=price_span,
+                inventory_values=inventory_values,
+                policy=policy,
+                config=config,
+                stats=stats,
             )
 
+        write_batch = max(1, settings.i7_oar_write_batch_size)
+        with session_factory() as session:
             target_rows: list[dict[str, Any]] = []
             neighbour_rows: list[dict[str, Any]] = []
 
-            for target in targets:
-                outcome = evaluate_target(
-                    target, candidates, provider, price_span, inventory_values, policy
-                )
-
-                bucket = (
-                    "0"
-                    if len(outcome.neighbours) == 0
-                    else "1-2"
-                    if len(outcome.neighbours) <= 2
-                    else "3-4"
-                    if len(outcome.neighbours) <= 4
-                    else "5+"
-                )
+            for outcome in outcomes:
+                count = len(outcome.neighbours)
+                bucket = "0" if count == 0 else "1-2" if count <= 2 else "3-4" if count <= 4 else "5+"
                 result.neighbour_count_distribution[bucket] = (
                     result.neighbour_count_distribution.get(bucket, 0) + 1
                 )
@@ -385,84 +613,45 @@ def run_oar_similarity(
                 result.estimate_status_counts[outcome.estimate.status.value] = (
                     result.estimate_status_counts.get(outcome.estimate.status.value, 0) + 1
                 )
-
-                target_rows.append(
-                    {
-                        "oar_run_id": run_id,
-                        "sap_material_number": outcome.sap_material_number,
-                        "sap_plant_code": outcome.sap_plant_code,
-                        "status": outcome.status.value,
-                        "confidence": outcome.confidence.value,
-                        "candidates_considered": outcome.candidates_considered,
-                        "eligible_candidates": outcome.eligible_candidates,
-                        "neighbour_count": len(outcome.neighbours),
-                        "best_similarity": outcome.best_similarity,
-                        "rejection_summary": ";".join(
-                            f"{reason}={count}" for reason, count in outcome.rejection_counts
-                        )[:500]
-                        or None,
-                        "estimate_status": outcome.estimate.status.value,
-                        "estimate_label": (
-                            outcome.estimate.label
-                            if outcome.estimate.status.value == "SUCCESS"
-                            else None
-                        ),
-                        "safety_stock": outcome.estimate.safety_stock,
-                        "rop": outcome.estimate.rop,
-                        "max_stock": outcome.estimate.max_stock,
-                        "inventory_eligible_neighbours": (
-                            outcome.estimate.inventory_eligible_neighbours
-                        ),
-                        "inventory_ineligible_neighbours": (
-                            outcome.estimate.inventory_ineligible_neighbours
-                        ),
-                        "estimate_trace": _trace_text(outcome.estimate.trace),
-                        "detail": outcome.detail or outcome.estimate.detail,
-                    }
+                target_rows.append(_target_row(run_id, outcome))
+                neighbour_rows.extend(
+                    _neighbour_row(run_id, outcome, neighbour) for neighbour in outcome.neighbours
                 )
+                result.targets_evaluated += 1
 
-                for neighbour in outcome.neighbours:
-                    neighbour_rows.append(
-                        {
-                            "oar_run_id": run_id,
-                            "sap_material_number": outcome.sap_material_number,
-                            "sap_plant_code": outcome.sap_plant_code,
-                            "neighbour_material": neighbour.material,
-                            "neighbour_plant": neighbour.plant,
-                            "rank": neighbour.rank,
-                            "combined_similarity": neighbour.score.combined,
-                            "structured_similarity": neighbour.score.structured.value,
-                            "text_similarity": neighbour.score.text.value,
-                            "business_similarity": neighbour.score.business.value,
-                            "score_completeness": neighbour.score.score_completeness,
-                            "same_circuit": neighbour.same_circuit,
-                            "same_material_group": neighbour.same_material_group,
-                            "criticality": neighbour.criticality,
-                            "history_months": neighbour.history_months,
-                            "is_active": neighbour.is_active,
-                            "safety_stock": neighbour.safety_stock,
-                            "rop": neighbour.rop,
-                            "max_stock": neighbour.max_stock,
-                            "inventory_eligible": neighbour.inventory_eligible,
-                        }
-                    )
+                # Written in batches, inside the one transaction committed below:
+                # memory stays bounded by the batch, and a failure part-way still
+                # leaves no partial run visible.
+                if len(target_rows) >= write_batch:
+                    session.bulk_insert_mappings(OarTargetResult, target_rows)
+                    session.bulk_insert_mappings(OarNeighbour, neighbour_rows)
+                    target_rows, neighbour_rows = [], []
 
-            session.bulk_insert_mappings(OarTargetResult, target_rows)
-            session.bulk_insert_mappings(OarNeighbour, neighbour_rows)
-            result.targets_evaluated = len(target_rows)
+            if target_rows:
+                session.bulk_insert_mappings(OarTargetResult, target_rows)
+                session.bulk_insert_mappings(OarNeighbour, neighbour_rows)
             session.commit()
+
+        result.scored_fraction = stats.scored_fraction if config.mode != "exhaustive" else 1.0
 
         with session_factory() as session:
             stored = session.get(OarRun, run_id)
             stored.status = STATUS_SUCCEEDED
             stored.targets_evaluated = result.targets_evaluated
+            if embeddings is None:
+                # The provider said it was available but produced nothing; record
+                # the run as made without text similarity, which is what it was.
+                stored.embedding_model = None
+                stored.embedding_model_version = NO_EMBEDDING_MODEL_VERSION
             stored.finished_at = datetime.now(timezone.utc)
             session.commit()
 
         logger.info(
-            "OAR run %d: %d targets; confidence %s; estimates %s",
+            "OAR run %d: %d targets; exact scores for %.1f%% of eligible pairs; "
+            "confidence %s; estimates %s",
             run_id,
             result.targets_evaluated,
+            100 * result.scored_fraction,
             result.confidence_counts,
             result.estimate_status_counts,
         )

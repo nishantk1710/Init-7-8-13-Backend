@@ -39,9 +39,9 @@ RAW = {
     "raw_eban": ["BANFN", "BNFPO", "MATNR", "WERKS", "MENGE", "BADAT", "EBELN", "EBELP"],
     "raw_ekpo": ["EBELN", "EBELP", "MATNR", "WERKS", "MENGE", "BANFN", "BNFPO"],
     "raw_ekbe": ["EBELN", "EBELP", "BEWTP", "BWART", "BUDAT", "MENGE"],
-    # Criticality, for reclassification's Critical impact (workbook labels).
-    "raw_zmm065_bmm": ["mat_code", "plant", "criticality"],
-    "raw_zmm065_gb": ["mat_code", "plant", "criticality"],
+    # Criticality, for reclassification's Critical impact: what the monthly
+    # criticality reports add up to.
+    "criticality_current": ["material", "plant", "criticality"],
 }
 
 ROWS = {
@@ -94,8 +94,9 @@ ROWS = {
         ("4500000001", "10", "E", "101", "01.08.2026", "5"),
         ("4500000002", "10", "E", "101", "25.09.2026", "3"),
     ],
-    "raw_zmm065_bmm": [("1000000001", "1300", "CRITICAL"), ("1000000005", "1300", "NORMAL")],
-    "raw_zmm065_gb": [("1000000002", "1500", "IMPACT")],
+    "criticality_current": [
+        ("1000000001", "1300", "CRITICAL"), ("1000000005", "1300", "NORMAL"), ("1000000002", "1500", "IMPACT"),
+    ],
 }
 
 

@@ -40,6 +40,15 @@ The CSV full pull is deliberately NOT on a timer either: it is serialised
 across the whole system, it moves gigabytes, and firing one automatically while
 another is open would be refused anyway. Full pulls stay a command somebody
 runs on purpose.
+
+WHAT ELSE STARTS A CYCLE
+
+A purchase requisition SAP posts to /api/events/pr, when
+DELTA_ON_PR_EVENT_ENABLED is on (``request_delta_cycle``). It runs the very
+same cycle -- same gates, same sets, same lock -- after a short wait, so a burst
+of requisitions shares one cycle. A cycle the lock refuses (the timer, or
+another worker, is mid-run) is retried until it runs or the attempts run out:
+the run in progress may have read its windows before this requisition existed.
 """
 
 from __future__ import annotations
@@ -202,18 +211,23 @@ def run_delta_cycle() -> dict:
     return summary
 
 
-async def _tick() -> None:
+async def _tick(trigger: str = "timer") -> bool:
+    """One delta cycle under the lock. Returns whether it ran.
+
+    False means the lock was held elsewhere or unreachable -- the timer just
+    waits for its next tick, an event retries (see ``_event_runner``).
+    """
     lock = _Lock()
     try:
         if not lock.acquire():
-            logger.debug("delta tick skipped: another worker holds the lock")
-            return
+            logger.debug("delta tick (%s) skipped: another worker holds the lock", trigger)
+            return False
     except Exception as exc:
-        logger.warning("delta tick skipped: could not reach the lock (%s)", exc)
-        return
+        logger.warning("delta tick (%s) skipped: could not reach the lock (%s)", trigger, exc)
+        return False
 
     started = datetime.now(timezone.utc)
-    logger.info("delta cycle starting")
+    logger.info("delta cycle starting (%s)", trigger)
     try:
         summary = await asyncio.to_thread(run_delta_cycle)
         elapsed = (datetime.now(timezone.utc) - started).total_seconds()
@@ -229,6 +243,7 @@ async def _tick() -> None:
         logger.exception("delta cycle raised")
     finally:
         lock.release()
+    return True
 
 
 async def _loop(interval_seconds: int, initial_delay: int) -> None:
@@ -238,6 +253,93 @@ async def _loop(interval_seconds: int, initial_delay: int) -> None:
     while True:
         await _tick()
         await asyncio.sleep(interval_seconds)
+
+
+# --- A cycle on request: the PR event ---------------------------------------
+#
+# One runner per process. Events that arrive while it waits ride the cycle it
+# is about to run; an event that arrives while the cycle RUNS asks for one more,
+# because that cycle may already have fetched the sets the new requisition
+# touches. Per process, not per system: several workers each run their own,
+# and the SQL Server lock keeps their cycles from overlapping.
+
+# Results of request_delta_cycle(), also returned to SAP in the event's reply.
+EVENT_DISABLED = "disabled"        # DELTA_ON_PR_EVENT_ENABLED is off
+EVENT_UNAVAILABLE = "unavailable"  # no database or storage to run against
+EVENT_SCHEDULED = "scheduled"      # a cycle will start after the debounce
+EVENT_QUEUED = "queued"            # a cycle is already pending; this event rides it
+
+# A cycle the lock refuses is retried this often, this many times: long enough
+# to outlast a cycle in progress, bounded so a wedged lock cannot keep a task
+# alive forever.
+EVENT_RETRY_SECONDS = 60
+EVENT_MAX_ATTEMPTS = 30
+
+_event_task: asyncio.Task | None = None
+_event_again = False
+
+
+def request_delta_cycle(reason: str) -> str:
+    """Ask for a delta cycle soon. Never raises, never blocks.
+
+    Called from the PR event endpoint, inside the running event loop. Returns
+    one of the EVENT_* states, which the endpoint reports back to SAP.
+    """
+    global _event_task, _event_again
+    try:
+        settings = get_settings()
+        if not settings.delta_on_pr_event_enabled:
+            return EVENT_DISABLED
+        if not settings.database_url or not settings.storage_url:
+            logger.warning("delta on %s not run: DATABASE_URL or STORAGE_URL is unset", reason)
+            return EVENT_UNAVAILABLE
+        if _event_task is not None and not _event_task.done():
+            _event_again = True
+            logger.info("delta on %s: a cycle is already pending; this event rides it", reason)
+            return EVENT_QUEUED
+        delay = max(settings.delta_event_debounce_seconds, 0)
+        _event_again = False
+        _event_task = asyncio.get_running_loop().create_task(_event_runner(reason, delay))
+        logger.info("delta on %s: cycle scheduled in %ds", reason, delay)
+        return EVENT_SCHEDULED
+    except Exception:
+        logger.exception("delta on %s could not be scheduled", reason)
+        return EVENT_UNAVAILABLE
+
+
+async def _event_runner(reason: str, delay: int) -> None:
+    global _event_again
+    attempts = 0
+    wait = delay
+    while True:
+        await asyncio.sleep(wait)
+        # Everything that arrived during the wait is covered by this cycle;
+        # only what arrives from here on asks for another.
+        _event_again = False
+        if await _tick(trigger=f"event: {reason}"):
+            if not _event_again:
+                return
+            reason, wait, attempts = "events during the last cycle", delay, 0
+            continue
+        attempts += 1
+        if attempts >= EVENT_MAX_ATTEMPTS:
+            logger.warning(
+                "delta on %s given up after %d attempts: the lock stayed held; "
+                "the next timer tick or event will pick the changes up",
+                reason, attempts,
+            )
+            return
+        wait = EVENT_RETRY_SECONDS
+
+
+async def stop_event_runner() -> None:
+    """Cancel a pending event cycle on shutdown."""
+    global _event_task
+    task, _event_task = _event_task, None
+    if task is not None and not task.done():
+        task.cancel()
+        with contextlib.suppress(BaseException):
+            await task
 
 
 # --- The full refresh -------------------------------------------------------
@@ -374,6 +476,12 @@ def start(app) -> asyncio.Task | None:
         logger.info(
             "delta scheduler is off (DELTA_SCHEDULE_ENABLED is not 'true'); "
             "run deltas with: python -m app.ingest --fetch --load --delta --all"
+        )
+
+    if settings.delta_on_pr_event_enabled:
+        logger.info(
+            "delta on PR event on: a requisition posted to /api/events/pr starts a "
+            "delta cycle after %ds", settings.delta_event_debounce_seconds,
         )
 
     if settings.full_refresh_enabled:

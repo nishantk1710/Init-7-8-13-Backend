@@ -116,17 +116,19 @@ class TestNoScope:
         assert decision.in_scope is False
 
     def test_a_missing_marc_row_is_reported_as_a_data_gap_not_a_classification(self) -> None:
-        """47% of rows have no DISMM at all. "MARC does not know" and "MARC says
-        this is not OAR" are different statements and the reason says which."""
+        """"MARC does not know" and "MARC says this is not OAR" are different
+        statements and the reason says which."""
         decision = route(_FakeSession([]), "1000000123", "1300")
         assert decision.flow is Flow.NONE
         assert decision.mrp_type is None
-        assert "MARC has no MRP type" in decision.reason
+        assert "MARC has no row" in decision.reason
 
-    def test_a_blank_dismm_is_excluded_rather_than_guessed(self) -> None:
+    def test_a_blank_dismm_is_oar(self) -> None:
+        """A MARC row with no MRP type is OAR, alongside ND and PD."""
         decision = route(_marc(material="1000000123", mrp_type=""), "1000000123", "1300")
-        assert decision.material_scope is MaterialScope.EXCLUDED
-        assert decision.flow is Flow.NONE
+        assert decision.material_scope is MaterialScope.OAR
+        assert decision.flow is Flow.I13
+        assert "MRP type blank" in decision.reason
 
 
 class TestPrecedence:

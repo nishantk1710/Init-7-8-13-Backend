@@ -228,6 +228,8 @@ class PlanModel(AssistantModel):
     id: str
     session_id: str
     material: str
+    material_description: str | None = None
+    """MAKT / ZMM065 name, where either has one -- see app.shared.material_names."""
     plant: str
     purpose: str
     planned_quantity: str
@@ -308,6 +310,8 @@ class SessionTraceResponse(AssistantModel):
     flow: str
     outcome: Literal["OPEN", "COMPLETED", "ABANDONED"]
     material_id: str
+    material_description: str | None = None
+    """MAKT / ZMM065 name -- see app.shared.material_names."""
     plant: str
     department: str | None = None
     requested_for: str | None = None
@@ -342,6 +346,8 @@ class SessionSummary(AssistantModel):
     flow: str
     outcome: str
     material_id: str
+    material_description: str | None = None
+    """MAKT / ZMM065 name -- see app.shared.material_names."""
     plant: str
     department: str | None = None
     requested_for: str | None = None

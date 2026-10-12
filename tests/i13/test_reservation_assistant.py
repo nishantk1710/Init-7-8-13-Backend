@@ -36,7 +36,7 @@ class TestWhatItSays:
 
     def test_open_orders_are_stated_because_they_stop_a_second_order(self) -> None:
         assessment = _assessment(watch_metric(open_po_quantity=Decimal("3")))
-        assert "3 already on order" in assessment.headline
+        assert "3 on open PO" in assessment.headline
 
     def test_no_open_orders_is_simply_not_mentioned(self) -> None:
         assessment = _assessment(watch_metric(open_po_quantity=Decimal("0")))
@@ -56,7 +56,7 @@ class TestDormantParts:
         assessment = _assessment(
             watch_metric(aging_band=AgingBand.NON_MOVING, days_since_last_movement=400)
         )
-        assert "has not moved in 400 days (non-moving)" in assessment.headline
+        assert "has not moved in 400 days (stock type: non-moving)" in assessment.headline
 
     def test_a_fast_moving_part_is_not_editorialised(self) -> None:
         assessment = _assessment(watch_metric(aging_band=AgingBand.FAST))
@@ -121,11 +121,18 @@ class TestAbsencesAreAnswers:
         assert assessment.cover_is_unknown is True
         assert any("effectively" in note and "unlimited" in note for note in assessment.caveats)
 
-    def test_the_cover_reason_is_carried_so_the_ui_can_explain_a_blank(self) -> None:
+    def test_the_cover_reason_is_said_in_words_not_as_a_code(self) -> None:
         assessment = _assessment(
             watch_metric(months_of_cover=None, months_of_cover_reason="NO_CONSUMPTION")
         )
-        assert "NO_CONSUMPTION" in assessment.headline
+        assert "(no consumption)" in assessment.headline
+        assert "NO_CONSUMPTION" not in assessment.headline
+
+    def test_insufficient_history_reads_as_a_sentence(self) -> None:
+        assessment = _assessment(
+            watch_metric(months_of_cover=None, months_of_cover_reason="INSUFFICIENT_HISTORY")
+        )
+        assert "cover cannot be calculated (not enough consumption history)" in assessment.headline
 
 
 class TestExistingExceptions:

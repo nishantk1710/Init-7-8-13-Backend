@@ -73,10 +73,14 @@ I7_CSV_TABLES: tuple[str, ...] = (
 #: fields the OAR rule is evaluated on.
 ENRICHMENT_SET = "MaterialPlantSet"
 
-#: The raw tables a delta can merge into that I07 reads. Same list as the CSV
-#: tables, plus the enrichment target.
+#: The tables whose change should re-run I07. Same list as the CSV tables, plus
+#: the enrichment target and ``criticality_current``: the monthly criticality
+#: upload writes an ingestion_run row for it, and criticality is a staged
+#: material attribute. (``_deltas_since`` keys on an ``odata:`` source file, so
+#: the upload is correctly not read as a delta.)
 I7_RAW_TABLES: tuple[str, ...] = tuple(f"raw_{t.lower()}" for t in I7_CSV_TABLES) + (
     "odata_material_plant",
+    "criticality_current",
 )
 
 

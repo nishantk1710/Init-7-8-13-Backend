@@ -8,7 +8,7 @@ thin; all stitching lives in ``app.initiatives.i13.reservation_ledger``.
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
-from app.api.i13.deps import page, snapshot_or_live
+from app.api.i13.deps import page, snapshot_or_live, with_material_names
 from app.core.db import get_db
 from app.initiatives.i13.attribution import attribute_consumption
 from app.initiatives.i13.models import LifecycleStatus, ReservationLedgerEntry
@@ -54,6 +54,7 @@ def _to_response(
 
 
 @router.get("/utilisation-ledger", response_model=list[ReservationLedgerEntryResponse])
+@with_material_names()
 def list_reservation_ledger(
     response: Response,
     material: str | None = Query(None),

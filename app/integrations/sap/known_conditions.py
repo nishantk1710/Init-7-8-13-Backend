@@ -171,7 +171,9 @@ DISMM_VALUE_DOMAIN: dict[str, int] = {
     "VM": 7,
 }
 
-# The MRP types the OAR rule treats as in scope (08-Sep VZI ruling).
+# The MRP types the OAR rule treats as in scope (08-Sep VZI ruling). I13 also
+# treats a blank DISMM as OAR (Settings.i13_oar_include_blank_mrp_type, via
+# app/shared/material_scope); this constant is the serving/I7 view and is not.
 OAR_MRP_TYPES = frozenset({"ND", "PD"})
 
 # Reorder-point planned, i.e. Min-Max managed -- the opposite of OAR.
