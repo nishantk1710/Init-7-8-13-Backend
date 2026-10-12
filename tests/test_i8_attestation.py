@@ -1145,6 +1145,46 @@ class TestExplainCoverage:
         assert covered == []
 
 
+class TestLinesByAttestation:
+    """The Declarations screen's "matched to repair PO", read off the queue."""
+
+    @staticmethod
+    def _attestation(attestation_id: str):
+        from app.initiatives.i8.models import RepairAttestation
+
+        return RepairAttestation(
+            id=attestation_id,
+            material_id="8000005632",
+            plant="1300",
+            quantity=Decimal(1),
+            condition_description="Assessed.",
+            fault_category="WEAR",
+            recommendation="REPAIRABLE",
+            attestor="tester",
+            attested_at=datetime(2026, 5, 3, tzinfo=timezone.utc),
+        )
+
+    def test_it_inverts_the_queue_match(self) -> None:
+        first, second = self._attestation("ATT-1"), self._attestation("ATT-2")
+        cover = AttestationCoverage(
+            covered={("4500", "20"): first, ("4500", "10"): first, ("4600", "10"): second},
+            uncovered={("4700", "10")},
+            window_days=30,
+        )
+
+        assert cover.lines_by_attestation() == {
+            "ATT-1": ["4500-10", "4500-20"],
+            "ATT-2": ["4600-10"],
+        }
+
+    def test_an_attestation_with_no_line_is_absent(self) -> None:
+        """A part declared before it is sent anywhere covers nothing yet --
+        absent, so the caller reads it as an empty list, not an error."""
+        cover = AttestationCoverage(covered={}, uncovered={("4700", "10")}, window_days=30)
+
+        assert cover.lines_by_attestation() == {}
+
+
 @needs_views
 class TestThePostExplainsItself:
     @pytest.fixture(autouse=True)
@@ -1164,7 +1204,7 @@ class TestThePostExplainsItself:
         yield
         wipe()
 
-    def test_post_says_what_it_covered_and_get_does_not(self) -> None:
+    def test_post_explains_what_it_covered_and_get_lists_it(self) -> None:
         created = client.post(
             ATTESTATIONS,
             json={
@@ -1183,8 +1223,8 @@ class TestThePostExplainsItself:
         assert body["coversRepairLines"] is not None
         assert body["coverageNote"]
 
-        # On GET the caller is reading history, and the fields stay null rather
-        # than recomputing a per-row answer nobody asked for.
+        # On GET the caller is reading history: the lines it covers are listed
+        # (the Declarations screen shows them), the explanation is not.
         listed = client.get(ATTESTATIONS).json()["items"][0]
-        assert listed["coversRepairLines"] is None
+        assert listed["coversRepairLines"] == body["coversRepairLines"]
         assert listed["coverageNote"] is None

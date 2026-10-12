@@ -481,8 +481,11 @@ class Attestation(I8Model):
 
     # --- What this attestation actually covers ------------------------------
     #
-    # Populated on POST only, and null on GET, where the caller is reading
-    # history rather than asking "did the thing I just did land?".
+    # ``covers_repair_lines`` is populated on POST and on GET: the Declarations
+    # screen shows each declaration's repair line, and a part declared before
+    # it is sent anywhere has none yet. ``coverage_note`` is POST only -- it
+    # answers "did the thing I just did land?", which a history read is not
+    # asking.
     #
     # These exist because of a real and non-obvious trap. An attestation's
     # timestamp is server-set -- that is what makes it an audit record -- and
@@ -498,7 +501,10 @@ class Attestation(I8Model):
 
     covers_repair_lines: list[str] | None = None
     """Register line ids (``{EBELN}-{EBELP}``) this attestation now covers.
-    Empty list means it was recorded and covers nothing."""
+    Empty list means it was recorded and covers nothing.
+
+    On GET it is read off the declaration queue's own matching, so a line
+    listed here is a line whose Declaration status this attestation sets."""
 
     coverage_note: str | None = None
     """Plain-language explanation of ``coversRepairLines``, including WHY it is
