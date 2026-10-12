@@ -117,7 +117,8 @@ def with_material_names(
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Fill ``material_description`` on whatever a list route returns.
 
-    Placed under ``@router.get``. The route must take ``db`` as a parameter.
+    Placed under ``@router.get``. Reads the in-memory name list only (see
+    ``app.shared.material_names``), so it adds no query to the route.
     ``row_of`` picks the object carrying ``material`` when a response row
     nests it (a confirmation and its exception).
     """
@@ -127,7 +128,7 @@ def with_material_names(
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             result = route(*args, **kwargs)
             rows = result if isinstance(result, list) else [result]
-            attach_material_names(kwargs["db"], [row_of(r) for r in rows] if row_of else rows)
+            attach_material_names([row_of(r) for r in rows] if row_of else rows)
             return result
 
         return wrapper
