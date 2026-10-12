@@ -23,14 +23,20 @@ from app.initiatives.i8.coding_candidates import (
     ACTIONABLE,
     PROMPT_ID,
     CandidateLine,
+    CandidateSource,
+    CodingCandidate,
     Verdict,
+    drop_converted_requisitions,
+    drop_deleted_requisitions,
     fetch_repair_language_lines,
     find_twins,
     matched_keywords,
     parse_verdict,
     partition,
+    rank_candidates,
     screen,
 )
+from app.initiatives.i8.coding_store import text_fingerprint
 from app.initiatives.i8.config import get_i8_settings
 from app.main import app
 from tests.i8_support import needs_views
@@ -42,8 +48,9 @@ CANDIDATES = "/api/i8/coding-candidates"
 
 def a_line(**overrides) -> CandidateLine:
     base = dict(
-        purchasing_document="4500000001",
-        item="10",
+        source=CandidateSource.PO.value,
+        document="4500000001",
+        document_item="10",
         material_id="5000094118",
         plant="1300",
         short_text="RECONDITIONED BRAKE FOOTVALVE EMEM5893",
@@ -53,6 +60,31 @@ def a_line(**overrides) -> CandidateLine:
     )
     base.update(overrides)
     return CandidateLine(**base)
+
+
+def a_requisition(**overrides) -> CandidateLine:
+    """A PR line. Same material and words, a different document."""
+    base = dict(
+        source=CandidateSource.PR.value,
+        document="0010000123",
+        document_item="0001",
+        item_category="0",
+        became=None,
+    )
+    base.update(overrides)
+    return a_line(**base)
+
+
+def a_movement(**overrides) -> CandidateLine:
+    """A goods-movement line. No item category, by nature."""
+    base = dict(
+        source=CandidateSource.MOVEMENT.value,
+        document="4900000001",
+        document_item="0001",
+        item_category=None,
+    )
+    base.update(overrides)
+    return a_line(**base)
 
 
 # --- The keyword pass, no database -----------------------------------------
@@ -86,14 +118,26 @@ class TestKeywordMatching:
         # parameters built from config. Checked against the SQL constants
         # themselves rather than the whole file, which is full of these words in
         # prose and would make this test fail on a comment.
-        from app.initiatives.i8.coding_candidates import _CANDIDATE_SQL, _TWIN_TEXTS_SQL
+        #
+        # Every source, not just the PO one: a second free-text source is a
+        # second chance to write a keyword into a query by hand.
+        from app.initiatives.i8.coding_candidates import _SOURCES, _TWIN_TEXTS_SQL
         from app.shared.sql_lists import like_any
 
-        assert "{keyword_match}" in _CANDIDATE_SQL
-        match, params = like_any("upper(p.txz01)", "keyword", cfg.repair_language_like_patterns)
-        rendered = _CANDIDATE_SQL.replace("{keyword_match}", match)
-        assert set(params.values()) == set(cfg.repair_language_like_patterns)
-        for sql in (rendered, _TWIN_TEXTS_SQL):
+        rendered = [_TWIN_TEXTS_SQL]
+        for spec in _SOURCES.values():
+            assert "{keyword_match}" in spec.candidates, (
+                f"{spec.source} has no keyword placeholder -- it would screen "
+                f"every line of that source"
+            )
+            match, params = like_any(
+                spec.text_column, "keyword", cfg.repair_language_like_patterns
+            )
+            assert set(params.values()) == set(cfg.repair_language_like_patterns)
+            rendered.append(spec.candidates.replace("{keyword_match}", match))
+            rendered.append(spec.text_total)
+
+        for sql in rendered:
             for keyword in cfg.repair_language_list:
                 assert keyword not in sql.lower(), (
                     f"{keyword!r} is written into a query -- it belongs in config"
@@ -133,9 +177,9 @@ class TestPartition:
         times could produce four verdicts and no way to choose between them."""
         groups = partition(
             [
-                a_line(item="10"),
-                a_line(item="20"),
-                a_line(item="30", material_id="5000094245"),
+                a_line(document_item="10"),
+                a_line(document_item="20"),
+                a_line(document_item="30", material_id="5000094245"),
             ]
         )
         assert set(groups.by_material) == {"5000094118", "5000094245"}
@@ -364,10 +408,261 @@ class TestScreeningOneMaterial:
         llm = canned('{"verdict":"UNCLEAR","confidence":"low","reason":"x"}')
         screen_material(
             "5000094118",
-            [a_line(item="10"), a_line(item="20"), a_line(item="30")],
+            [a_line(document_item="10"), a_line(document_item="20"), a_line(document_item="30")],
             in_universe=False,
         )
         assert len(llm.prompts) == 1
+
+
+# --- The three free-text sources (FR-2) ------------------------------------
+#
+# FR-2 names three fields, and only one of them was ever read. These tests are
+# about the two rules that decide what the other two contribute: a deleted
+# requisition is not a request, and a requisition that became a PO is the same
+# request twice.
+
+
+class TestTheSourcesAreConfiguration:
+    def test_the_default_reads_po_and_pr_but_not_movement(self) -> None:
+        """MOVEMENT is off until somebody measures whether it finds anything.
+
+        A 541 is a part already on its way to a vendor for repair, so its
+        comments sit mostly on materials that ARE 80-series -- which makes them
+        already_coded, not candidates. Shipping it on by default would spend
+        model calls finding that out.
+        """
+        cfg = get_i8_settings()
+        assert cfg.coding_candidate_source_list == ("PO", "PR")
+
+    def test_every_named_source_has_a_query(self) -> None:
+        from app.initiatives.i8.coding_candidates import _SOURCES
+
+        assert set(_SOURCES) == {s.value for s in CandidateSource}
+
+    def test_an_unknown_source_narrows_rather_than_crashing(self) -> None:
+        """A typo in a deployment setting must not stop the app from starting.
+
+        It narrows the screen visibly instead -- the response reports which
+        sources ran -- and the opposite rule applies to the query parameter,
+        where a typo is a caller's mistake and is told to them.
+        """
+        from app.initiatives.i8.config import I8Settings
+
+        cfg = I8Settings(coding_candidate_sources="PO,NOPE", _env_file=None)
+        assert cfg.coding_candidate_source_list == ("PO",)
+
+    def test_configuring_nothing_still_reads_po(self) -> None:
+        """A screen that reads nothing is never what anybody meant."""
+        from app.initiatives.i8.config import I8Settings
+
+        cfg = I8Settings(coding_candidate_sources="", _env_file=None)
+        assert cfg.coding_candidate_source_list == ("PO",)
+
+
+class TestDroppingRequisitionsThatAreNotEvidence:
+    def test_a_deleted_requisition_is_not_a_request_for_anything(self) -> None:
+        lines = [a_line(), a_requisition(deleted=True)]
+        kept, dropped = drop_deleted_requisitions(lines)
+
+        assert dropped == 1
+        assert [line.source for line in kept] == [CandidateSource.PO.value]
+
+    def test_a_live_requisition_survives(self) -> None:
+        kept, dropped = drop_deleted_requisitions([a_requisition()])
+        assert dropped == 0
+        assert len(kept) == 1
+
+    def test_a_requisition_that_became_a_po_in_this_run_is_dropped(self) -> None:
+        """One request, counted once.
+
+        The buyer kept the requester's wording, so the same words are in the
+        run twice -- once as the PR, once as the PO it turned into. Counting
+        both inflates every line figure and shows a reader two rows for one
+        event.
+        """
+        po = a_line(document="4500000001", document_item="10")
+        pr = a_requisition(became=("4500000001", "10"))
+
+        kept, dropped = drop_converted_requisitions([po, pr])
+
+        assert dropped == 1
+        # The PO is what is kept: it is the document that exists in SAP now.
+        assert [line.source for line in kept] == [CandidateSource.PO.value]
+
+    def test_a_requisition_whose_po_is_not_in_the_run_survives(self) -> None:
+        """The buyer rewrote the text, so the PO did not match the keywords.
+
+        The requester's original wording is then the ONLY place the repair
+        language survives, and dropping it would lose the finding entirely.
+        """
+        po = a_line(document="4500000001", document_item="10")
+        pr = a_requisition(became=("4500000999", "20"))
+
+        kept, dropped = drop_converted_requisitions([po, pr])
+
+        assert dropped == 0
+        assert len(kept) == 2
+
+    def test_an_unconverted_requisition_survives(self) -> None:
+        kept, dropped = drop_converted_requisitions([a_requisition(became=None)])
+        assert dropped == 0
+        assert len(kept) == 1
+
+    def test_a_po_is_never_dropped_as_a_duplicate_of_itself(self) -> None:
+        po = a_line(document="4500000001", document_item="10")
+        kept, dropped = drop_converted_requisitions([po, po])
+        assert dropped == 0
+        assert len(kept) == 2
+
+
+class TestLinesFromEverySourceGroupTogether:
+    def test_one_material_gathers_its_po_pr_and_movement_lines(self) -> None:
+        """The screen judges a MATERIAL, so every document carrying its text is
+        evidence in the same call -- which is also why the source has to be on
+        the line: three documents, three numbering schemes."""
+        groups = partition([a_line(), a_requisition(), a_movement()])
+
+        assert len(groups.by_material) == 1
+        sources = {line.source for line in groups.by_material["5000094118"]}
+        assert sources == {"PO", "PR", "MOVEMENT"}
+
+    def test_a_movement_has_no_item_category(self) -> None:
+        """An absence, not an unknown: a goods movement has no PSTYP at all."""
+        assert a_movement().item_category is None
+
+
+# --- Ranking (FR-2: "a ranked list") ---------------------------------------
+
+
+def a_candidate(**overrides) -> CodingCandidate:
+    base = dict(
+        material_id="5000094118",
+        lines=(a_line(),),
+        verdict=Verdict.MISCODED_REPAIRABLE.value,
+        confidence="high",
+        reason="reads like a repairable spare",
+        in_repairable_universe=False,
+        twins=(),
+    )
+    base.update(overrides)
+    return CodingCandidate(**base)
+
+
+class TestRanking:
+    def test_corroboration_outranks_any_verdict(self) -> None:
+        """A twin is SAP contradicting itself -- the same description on the
+        same part, coded both ways. That is evidence, and it beats the
+        strongest opinion a model can offer."""
+        opinion = a_candidate(
+            material_id="1", verdict=Verdict.MISCODED_REPAIRABLE.value, confidence="high"
+        )
+        evidence = a_candidate(
+            material_id="2",
+            verdict=Verdict.UNCLEAR.value,
+            confidence="low",
+            twins=(("8000005737", "RECONDITIONED BRAKE FOOTVALVE"),),
+        )
+
+        assert [c.material_id for c in rank_candidates([opinion, evidence])] == ["2", "1"]
+
+    def test_the_finding_comes_before_the_rejections(self) -> None:
+        order = [
+            Verdict.REPAIR_SERVICE.value,
+            Verdict.UNSCREENED.value,
+            Verdict.MISCODED_REPAIRABLE.value,
+            Verdict.CONSUMABLE_FOR_REPAIR.value,
+            Verdict.UNCLEAR.value,
+        ]
+        ranked = rank_candidates(
+            [a_candidate(material_id=str(i), verdict=v) for i, v in enumerate(order)]
+        )
+        assert [c.verdict for c in ranked] == [
+            Verdict.MISCODED_REPAIRABLE.value,
+            Verdict.UNCLEAR.value,
+            Verdict.CONSUMABLE_FOR_REPAIR.value,
+            Verdict.REPAIR_SERVICE.value,
+            Verdict.UNSCREENED.value,
+        ]
+
+    def test_unscreened_is_ranked_last_but_never_dropped(self) -> None:
+        """Last because it is the ABSENCE of a judgement, not a weak one.
+
+        Still served, because a screen that quietly hides what it did not judge
+        is the one failure this whole module is built around.
+        """
+        ranked = rank_candidates(
+            [
+                a_candidate(material_id="1", verdict=Verdict.UNSCREENED.value, confidence=""),
+                a_candidate(material_id="2", verdict=Verdict.REPAIR_SERVICE.value),
+            ]
+        )
+        assert len(ranked) == 2
+        assert ranked[-1].verdict == Verdict.UNSCREENED.value
+
+    def test_confidence_breaks_a_verdict_tie(self) -> None:
+        ranked = rank_candidates(
+            [
+                a_candidate(material_id="1", confidence="low"),
+                a_candidate(material_id="2", confidence="high"),
+                a_candidate(material_id="3", confidence="medium"),
+            ]
+        )
+        assert [c.confidence for c in ranked] == ["high", "medium", "low"]
+
+    def test_more_evidence_breaks_a_confidence_tie(self) -> None:
+        ranked = rank_candidates(
+            [
+                a_candidate(material_id="1", lines=(a_line(),)),
+                a_candidate(material_id="2", lines=(a_line(), a_line(), a_line())),
+            ]
+        )
+        assert [c.material_id for c in ranked] == ["2", "1"]
+
+    def test_the_order_is_stable_between_two_identical_runs(self) -> None:
+        """So a reader can diff one run against the next."""
+        candidates = [a_candidate(material_id=str(i)) for i in range(5)]
+        assert [c.material_id for c in rank_candidates(candidates)] == [
+            c.material_id for c in rank_candidates(list(reversed(candidates)))
+        ]
+
+    def test_an_unscreened_run_still_comes_back_in_a_useful_order(self) -> None:
+        """Verdict and confidence say nothing when no model ran. Corroboration
+        and evidence volume still do, and that is the point of ranking on
+        them."""
+        plain = a_candidate(material_id="1", verdict=Verdict.UNSCREENED.value, confidence="")
+        twinned = a_candidate(
+            material_id="2",
+            verdict=Verdict.UNSCREENED.value,
+            confidence="",
+            twins=(("8000005737", "RECONDITIONED BRAKE FOOTVALVE"),),
+        )
+        assert [c.material_id for c in rank_candidates([plain, twinned])] == ["2", "1"]
+
+
+# --- Not buying the same verdict twice -------------------------------------
+
+
+class TestTheTextFingerprint:
+    def test_the_same_texts_in_any_order_are_one_fingerprint(self) -> None:
+        """Row order is not guaranteed across a reload, and a verdict must not
+        be re-bought because the database returned two rows the other way
+        round."""
+        assert text_fingerprint(["A", "B"]) == text_fingerprint(["B", "A"])
+
+    def test_whitespace_and_case_do_not_change_it(self) -> None:
+        assert text_fingerprint(["Recon  Pump"]) == text_fingerprint(["RECON PUMP"])
+
+    def test_changed_wording_changes_it(self) -> None:
+        """The whole correctness rule. A re-worded PO line is new evidence, and
+        serving the old verdict against it would miss exactly the change this
+        screen exists to notice."""
+        assert text_fingerprint(["RECON PUMP"]) != text_fingerprint(["RECON PUMP MK2"])
+
+    def test_an_added_text_changes_it(self) -> None:
+        assert text_fingerprint(["A"]) != text_fingerprint(["A", "B"])
+
+    def test_empty_texts_are_ignored(self) -> None:
+        assert text_fingerprint(["A", "", "   "]) == text_fingerprint(["A"])
 
 
 # --- Against the seeded extract --------------------------------------------
@@ -375,6 +670,14 @@ class TestScreeningOneMaterial:
 
 @needs_views
 class TestAgainstTheRealExtract:
+    """Every figure asserted here was measured against PO text alone.
+
+    So every call pins ``sources=("PO",)`` rather than taking the configured
+    default. Letting a deployment setting change what these assert would turn a
+    documented measurement into a number nobody has ever checked -- and the
+    first symptom would be this suite failing for a reason that is not a bug.
+    """
+
     @pytest.fixture
     def db(self):
         from app.core.db import get_sessionmaker
@@ -386,7 +689,7 @@ class TestAgainstTheRealExtract:
         """The plan's 305 and 6, plus the already-coded lines it counted
         separately. If this moves, find out what changed before anything else.
         """
-        lines = fetch_repair_language_lines(db)
+        lines = fetch_repair_language_lines(db, sources=("PO",))
         groups = partition(lines)
 
         # Pre-ruling: 311 lines, 6 already coded, 305 screened. The two-plant
@@ -402,12 +705,12 @@ class TestAgainstTheRealExtract:
         Pre-ruling this was 183 of 305, also 60%. The proportion barely moved
         when the scope narrowed, which is worth knowing: the free-text repair
         spend is not a quirk of one site."""
-        groups = partition(fetch_repair_language_lines(db))
+        groups = partition(fetch_repair_language_lines(db, sources=("PO",)))
         assert len(groups.without_material) == 174
         assert sum(len(v) for v in groups.by_material.values()) == 122
 
     def test_122_lines_collapse_to_41_materials(self, db) -> None:
-        groups = partition(fetch_repair_language_lines(db))
+        groups = partition(fetch_repair_language_lines(db, sources=("PO",)))
         assert len(groups.by_material) == 41
 
     def test_no_candidate_is_already_in_the_repairable_universe(self, db) -> None:
@@ -416,7 +719,7 @@ class TestAgainstTheRealExtract:
         """
         from app.initiatives.i8.material_number import is_eighty_series
 
-        groups = partition(fetch_repair_language_lines(db))
+        groups = partition(fetch_repair_language_lines(db, sources=("PO",)))
         assert not [m for m in groups.by_material if is_eighty_series(m)]
 
     def test_the_twin_corroboration_finds_the_part_coded_both_ways(self, db) -> None:
@@ -426,7 +729,7 @@ class TestAgainstTheRealExtract:
         correctly) AND 5000094118 (not). Identical text, same physical part,
         both ways in one extract.
         """
-        groups = partition(fetch_repair_language_lines(db))
+        groups = partition(fetch_repair_language_lines(db, sources=("PO",)))
         twins = find_twins(db, groups.by_material)
 
         assert "5000094118" in twins
@@ -436,7 +739,7 @@ class TestAgainstTheRealExtract:
 
     def test_the_screen_runs_end_to_end_with_no_model(self, db) -> None:
         """Every deterministic half works with no credentials at all."""
-        candidates, stats = screen(db, use_model=False)
+        candidates, stats = screen(db, use_model=False, sources=("PO",))
 
         assert stats.materials_screened == 41
         assert stats.lines_with_repair_language == 300
@@ -447,7 +750,7 @@ class TestAgainstTheRealExtract:
 
     def test_a_limit_is_reported_rather_than_applied_silently(self, db) -> None:
         """A silent cap reads as "we checked everything" when it did not."""
-        _candidates, stats = screen(db, use_model=False, limit=5)
+        _candidates, stats = screen(db, use_model=False, limit=5, sources=("PO",))
         assert stats.materials_screened == 5
         assert stats.materials_found == 41
         assert stats.was_truncated is True
@@ -466,11 +769,11 @@ class TestTheApi:
     def test_it_defaults_to_the_fast_pass(self) -> None:
         """One model call per material is 246 seconds against live gpt-4o. A
         page load must not do that by accident."""
-        body = client.get(f"{CANDIDATES}?limit=3").json()
+        body = client.get(f"{CANDIDATES}?limit=3&sources=PO").json()
         assert body["meta"]["byVerdict"] == {"UNSCREENED": 3}
 
     def test_the_meta_reports_every_number_with_what_it_counts(self) -> None:
-        meta = client.get(f"{CANDIDATES}?limit=1").json()["meta"]
+        meta = client.get(f"{CANDIDATES}?limit=1&sources=PO").json()["meta"]
         assert meta["linesWithText"] == 80880
         assert meta["linesWithRepairLanguage"] == 300
         assert meta["linesAlreadyEightySeries"] == 4
@@ -481,28 +784,28 @@ class TestTheApi:
     def test_filtering_does_not_move_the_meta_counts(self) -> None:
         """"How much of the free text was searched" must not change because
         somebody asked for one verdict."""
-        everything = client.get(CANDIDATES).json()
-        filtered = client.get(f"{CANDIDATES}?corroboratedOnly=true").json()
+        everything = client.get(f"{CANDIDATES}?sources=PO").json()
+        filtered = client.get(f"{CANDIDATES}?corroboratedOnly=true&sources=PO").json()
         assert filtered["total"] < everything["total"]
         assert filtered["meta"]["materialsFound"] == everything["meta"]["materialsFound"]
 
     def test_every_item_carries_a_confidence_threshold_flag(self) -> None:
         """Default pass is unscreened -- empty confidence never meets a
         threshold, however low, so the flag reads False for every item."""
-        for item in client.get(f"{CANDIDATES}?limit=5").json()["items"]:
+        for item in client.get(f"{CANDIDATES}?limit=5&sources=PO").json()["items"]:
             assert item["meetsConfidenceThreshold"] is False
 
     def test_confidence_threshold_filter_does_not_move_the_meta_counts(self) -> None:
-        everything = client.get(f"{CANDIDATES}?limit=5").json()
+        everything = client.get(f"{CANDIDATES}?limit=5&sources=PO").json()
         filtered = client.get(
-            f"{CANDIDATES}?limit=5&meetsConfidenceThresholdOnly=true"
+            f"{CANDIDATES}?limit=5&sources=PO&meetsConfidenceThresholdOnly=true"
         ).json()
         assert everything["total"] == 5
         assert filtered["total"] == 0
         assert filtered["meta"]["materialsFound"] == everything["meta"]["materialsFound"]
 
     def test_the_corroborated_candidate_is_served_with_its_twin(self) -> None:
-        body = client.get(f"{CANDIDATES}?corroboratedOnly=true").json()
+        body = client.get(f"{CANDIDATES}?corroboratedOnly=true&sources=PO").json()
         assert body["total"] == 1
 
         item = body["items"][0]
@@ -512,7 +815,7 @@ class TestTheApi:
         assert "BRAKE FOOTVALVE" in item["twins"][0]["sharedText"].upper()
 
     def test_every_item_carries_the_text_it_was_judged_on(self) -> None:
-        for item in client.get(f"{CANDIDATES}?limit=5").json()["items"]:
+        for item in client.get(f"{CANDIDATES}?limit=5&sources=PO").json()["items"]:
             assert item["distinctTexts"]
             assert item["lines"]
             assert all(line["shortText"] for line in item["lines"])
@@ -521,5 +824,5 @@ class TestTheApi:
     def test_no_item_claims_to_be_in_the_repairable_universe(self) -> None:
         """True here would mean the screen and W5.1 disagree about the same
         material, which is a bug worth failing over."""
-        for item in client.get(CANDIDATES).json()["items"]:
+        for item in client.get(f"{CANDIDATES}?sources=PO").json()["items"]:
             assert item["inRepairableUniverse"] is False

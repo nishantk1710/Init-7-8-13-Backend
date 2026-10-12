@@ -108,6 +108,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from enum import Enum
+from typing import Sequence
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -115,6 +116,12 @@ from sqlalchemy.orm import Session
 from app.core.ai import AIError, Completion
 from app.core.logging import get_logger
 from app.core.prompts import PromptError, complete_with_prompt
+from app.initiatives.i8.coding_store import (
+    StoredVerdict,
+    load_verdicts,
+    save_verdict,
+    text_fingerprint,
+)
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.material_number import is_eighty_series
 from app.shared.sql_lists import fetch_in_chunks, like_any
@@ -175,14 +182,47 @@ def meets_confidence_threshold(confidence: str, threshold: str) -> bool:
     return _CONFIDENCE_RANK.get(confidence, -1) >= _CONFIDENCE_RANK.get(threshold, 0)
 
 
+class CandidateSource(str, Enum):
+    """Which free-text field a line's words came from.
+
+    FR-2 names three, and they are not interchangeable evidence. A PO line is
+    money already committed. A PR line is a request that may never become one,
+    and is the earlier -- so more useful -- signal. A movement comment is
+    neither: it is a note somebody typed while moving stock.
+
+    Carried on every line rather than inferred, because "4500000001/10" and
+    "0010000123/0001" look alike and mean different things, and a reader
+    checking a verdict needs to know which document to open.
+    """
+
+    PO = "PO"
+    """EKPO.TXZ01 -- purchase order item short text."""
+
+    PR = "PR"
+    """EBAN.TXZ01 -- purchase requisition item short text."""
+
+    MOVEMENT = "MOVEMENT"
+    """MSEG.SGTXT -- goods movement item text."""
+
+
 @dataclass(frozen=True)
 class CandidateLine:
-    """One PO line whose free text mentions repair."""
+    """One document line whose free text mentions repair."""
 
-    purchasing_document: str
-    item: str
+    source: str
+    """Which of :class:`CandidateSource` this came from."""
+
+    document: str
+    """EBELN for a PO, BANFN for a PR, MBLNR for a movement."""
+
+    document_item: str
+    """EBELP, BNFPO or ZEILE. Deliberately NOT called ``item``: the three
+    number differently, and a bare ``item`` reads as a PO item everywhere
+    else in this package."""
+
     material_id: str | None
-    """None on 174 of the 296 matching lines -- a free-text service purchase."""
+    """None on 174 of the 296 matching PO lines -- a free-text service
+    purchase. A movement always carries one; a requisition need not."""
 
     plant: str | None
     short_text: str
@@ -192,6 +232,22 @@ class CandidateLine:
 
     raised_at: date | None
     item_category: str | None
+    """PSTYP on a PO or PR line. Always None on a movement, which has no item
+    category at all -- an absence, not an unknown."""
+
+    deleted: bool = False
+    """LOEKZ is set on this line. Only ever true on :data:`CandidateSource.PR`:
+    EKPO's deleted lines are already out of scope upstream, and a goods
+    movement is reversed rather than deleted."""
+
+    became: tuple[str, str] | None = None
+    """For a PR line, the ``(EBELN, EBELP)`` it was converted into.
+
+    Only ever set on :data:`CandidateSource.PR`. It exists so
+    :func:`drop_converted_requisitions` can recognise the duplicate without a
+    second query, and so a dropped line can be explained rather than merely
+    absent.
+    """
 
 
 @dataclass(frozen=True)
@@ -261,22 +317,57 @@ class CodingCandidate:
 class ScreenStats:
     """Counts, each with the thing it counts stated. Never a bare number."""
 
-    lines_with_text: int
-    lines_with_repair_language: int
-    lines_already_eighty_series: int
+    sources: tuple[str, ...] = ()
+    """Which of :class:`CandidateSource` this run actually read.
+
+    First field, and reported on every response, because every count below is
+    relative to it: "41 materials found" means something different when
+    requisitions were read and when they were not. A run cannot be compared
+    against another without it."""
+
+    lines_with_text: int = 0
+    """Lines carrying ANY free text, across the sources that ran. The
+    denominator -- how much text was searched."""
+
+    lines_with_text_by_source: dict[str, int] = field(default_factory=dict)
+    lines_with_repair_language: int = 0
+    lines_by_source: dict[str, int] = field(default_factory=dict)
+    """Repair-language hits per source. The number to read when deciding
+    whether a source earns its keep -- see I8_CODING_CANDIDATE_SOURCES."""
+
+    deleted_requisitions_dropped: int = 0
+    """PR lines dropped because LOEKZ is set. A deleted requisition is not a
+    request for anything, so its text is not evidence of anything."""
+
+    converted_requisitions_dropped: int = 0
+    """PR lines dropped because the PO they became is in this same run.
+
+    One request, counted once. Reported rather than silent: a reader comparing
+    `lines_with_repair_language` against the per-source numbers would otherwise
+    find them not adding up."""
+
+    lines_already_eighty_series: int = 0
     """Repair language on a material that IS coded repairable. Not a candidate
     -- the convention worked. Measured at 6."""
 
-    lines_without_material: int
+    lines_without_material: int = 0
     """Free-text service purchases. Cannot be mis-coded because there is nothing
     to re-code. Measured at 174, which is 59% of the matches."""
 
-    lines_screened: int
-    materials_screened: int
+    lines_screened: int = 0
+    materials_screened: int = 0
     materials_found: int = 0
     """How many materials the keyword pass produced. Differs from
     ``materials_screened`` only when a limit truncated the run, and the two are
     reported separately so a truncated screen cannot read as a complete one."""
+
+    verdicts_reused: int = 0
+    """How many verdicts came from the store rather than from a model call.
+
+    The difference between a four-minute run and a four-second one, and worth
+    reporting for that reason alone: a reader who sees 41 materials screened in
+    three seconds should be able to see WHY without guessing that something was
+    skipped."""
 
     corroborated: int = 0
     """How many candidates have an 80-series twin -- the ones that are provable
@@ -312,16 +403,152 @@ class ScreenStats:
 # stricter -- it would drop a material like '80' that the real predicate
 # rejects anyway, but also anything the predicate would have kept. The set is
 # ~300 rows, so it is filtered in Python where the one true test lives.
-_CANDIDATE_SQL = """
+# One per source. The shape is identical -- "every line of this document type
+# whose free text matches a configured keyword" -- but the column names, the
+# date that means "raised", and whether an item category exists at all are
+# not, so each carries its own mapper rather than being forced into a UNION
+# with null padding. A UNION would also have to agree on types across three
+# views and two dialects, which is a lot of casting to save one round trip
+# over a few hundred rows.
+#
+# Note what is NOT in any of them: no 80-series exclusion (partition() owns
+# that), no deletion filter and no conversion filter. Those are judgements,
+# they are applied in Python where they can be unit-tested and counted, and
+# the counts are reported. See 24_v_eban.sql.
+
+
+@dataclass(frozen=True)
+class _SourceQuery:
+    """How to read one free-text source."""
+
+    source: str
+    text_column: str
+    """The qualified column the keyword patterns are matched against."""
+
+    candidates: str
+    """SQL with a ``{keyword_match}`` placeholder."""
+
+    text_total: str
+    """How many lines of this source carry any text at all -- the denominator."""
+
+    def text_of(self, row) -> str:
+        """The free text this source screens, from one row."""
+        raise NotImplementedError
+
+    def to_line(self, row, matched: tuple[str, ...]) -> "CandidateLine":
+        raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class _PurchaseOrderSource(_SourceQuery):
+    def text_of(self, row):
+        return row["txz01"]
+
+    def to_line(self, row, matched):
+        return CandidateLine(
+            source=CandidateSource.PO.value,
+            document=row["ebeln"],
+            document_item=row["ebelp"],
+            material_id=row["matnr"],
+            plant=row["werks"],
+            short_text=row["txz01"],
+            matched=matched,
+            raised_at=row["erdat"],
+            item_category=row["pstyp"],
+        )
+
+
+@dataclass(frozen=True)
+class _RequisitionSource(_SourceQuery):
+    def text_of(self, row):
+        return row["txz01"]
+
+    def to_line(self, row, matched):
+        po = row["ebeln"]
+        item = row["ebelp"]
+        return CandidateLine(
+            source=CandidateSource.PR.value,
+            document=row["banfn"],
+            document_item=row["bnfpo"],
+            material_id=row["matnr"],
+            plant=row["werks"],
+            short_text=row["txz01"],
+            matched=matched,
+            # BADAT, the requisition date. The PR equivalent of EKPO.ERDAT:
+            # when somebody asked, rather than when a buyer acted.
+            raised_at=row["badat"],
+            item_category=row["pstyp"],
+            deleted=bool((row["loekz"] or "").strip()),
+            became=(po, item) if po and item else None,
+        )
+
+
+@dataclass(frozen=True)
+class _MovementSource(_SourceQuery):
+    def text_of(self, row):
+        return row["sgtxt"]
+
+    def to_line(self, row, matched):
+        return CandidateLine(
+            source=CandidateSource.MOVEMENT.value,
+            document=row["mblnr"],
+            document_item=row["zeile"],
+            material_id=row["matnr"],
+            plant=row["werks"],
+            short_text=row["sgtxt"],
+            matched=matched,
+            # BUDAT. Not "raised" in the sense a PO line is -- a movement is
+            # not a request for anything -- but it is when the words were
+            # written, which is what the column means to a reader.
+            raised_at=row["budat"],
+            # A goods movement has no item category. None here is an absence,
+            # not an unknown.
+            item_category=None,
+        )
+
+
+_SOURCES: dict[str, _SourceQuery] = {
+    CandidateSource.PO.value: _PurchaseOrderSource(
+        source=CandidateSource.PO.value,
+        text_column="upper(p.txz01)",
+        candidates="""
 select
     p.ebeln, p.ebelp, p.matnr, p.werks, p.txz01, p.erdat, p.pstyp
 from v_ekpo p
 where coalesce(p.txz01, '') <> ''
   and {keyword_match}
 order by p.ebeln, p.ebelp
-"""
-
-_TEXT_TOTAL_SQL = "select count(*) from v_ekpo where coalesce(txz01, '') <> ''"
+""",
+        text_total="select count(*) from v_ekpo where coalesce(txz01, '') <> ''",
+    ),
+    CandidateSource.PR.value: _RequisitionSource(
+        source=CandidateSource.PR.value,
+        text_column="upper(r.txz01)",
+        candidates="""
+select
+    r.banfn, r.bnfpo, r.matnr, r.werks, r.txz01, r.badat, r.pstyp,
+    r.loekz, r.ebeln, r.ebelp
+from v_eban r
+where coalesce(r.txz01, '') <> ''
+  and {keyword_match}
+order by r.banfn, r.bnfpo
+""",
+        text_total="select count(*) from v_eban where coalesce(txz01, '') <> ''",
+    ),
+    CandidateSource.MOVEMENT.value: _MovementSource(
+        source=CandidateSource.MOVEMENT.value,
+        text_column="upper(m.sgtxt)",
+        candidates="""
+select
+    m.mblnr, m.zeile, m.matnr, m.werks, m.sgtxt, m.budat
+from v_mseg m
+where coalesce(m.sgtxt, '') <> ''
+  and {keyword_match}
+order by m.mblnr, m.zeile
+""",
+        text_total="select count(*) from v_mseg where coalesce(sgtxt, '') <> ''",
+    ),
+}
 
 
 def matched_keywords(short_text: str, cfg: I8Settings) -> tuple[str, ...]:
@@ -331,34 +558,112 @@ def matched_keywords(short_text: str, cfg: I8Settings) -> tuple[str, ...]:
 
 
 def fetch_repair_language_lines(
-    db: Session, cfg: I8Settings | None = None
+    db: Session,
+    cfg: I8Settings | None = None,
+    *,
+    sources: Sequence[str] | None = None,
 ) -> list[CandidateLine]:
-    """Every PO line whose free text mentions repair, coded or not.
+    """Every line whose free text mentions repair, coded or not.
 
     The keyword pass, and nothing more. It does not decide anything: the
-    80-series test and the model both run over what this returns.
+    80-series test, the deletion rule, the conversion rule and the model all
+    run over what this returns.
+
+    ``sources`` overrides ``I8_CODING_CANDIDATE_SOURCES``. Tests that assert a
+    measured figure pass it explicitly, because every one of those figures was
+    measured against PO text alone and adding a source silently would turn a
+    documented measurement into a number nobody has ever checked.
     """
     cfg = cfg or get_i8_settings()
-    keyword_match, params = like_any("upper(p.txz01)", "keyword", cfg.repair_language_like_patterns)
-    rows = (
-        db.execute(text(_CANDIDATE_SQL.replace("{keyword_match}", keyword_match)), params)
-        .mappings()
-        .all()
-    )
+    wanted = tuple(sources) if sources is not None else cfg.coding_candidate_source_list
 
-    return [
-        CandidateLine(
-            purchasing_document=row["ebeln"],
-            item=row["ebelp"],
-            material_id=row["matnr"],
-            plant=row["werks"],
-            short_text=row["txz01"],
-            matched=matched_keywords(row["txz01"], cfg),
-            raised_at=row["erdat"],
-            item_category=row["pstyp"],
+    lines: list[CandidateLine] = []
+    for name in wanted:
+        spec = _SOURCES.get(name)
+        if spec is None:
+            continue
+        keyword_match, params = like_any(
+            spec.text_column, "keyword", cfg.repair_language_like_patterns
         )
-        for row in rows
+        rows = (
+            db.execute(
+                text(spec.candidates.replace("{keyword_match}", keyword_match)), params
+            )
+            .mappings()
+            .all()
+        )
+        lines.extend(
+            spec.to_line(row, matched_keywords(spec.text_of(row), cfg)) for row in rows
+        )
+    return lines
+
+
+def fetch_text_totals(
+    db: Session, sources: Sequence[str]
+) -> dict[str, int]:
+    """How many lines of each source carry any free text -- the denominator.
+
+    Separate from the keyword pass because it is the thing the hit count is a
+    fraction OF, and a hit count served without it ("296 lines mention
+    repair") is a number with no scale.
+    """
+    totals: dict[str, int] = {}
+    for name in sources:
+        spec = _SOURCES.get(name)
+        if spec is None:
+            continue
+        totals[name] = int(db.execute(text(spec.text_total)).scalar() or 0)
+    return totals
+
+
+def drop_deleted_requisitions(
+    lines: Sequence[CandidateLine],
+) -> tuple[list[CandidateLine], int]:
+    """Remove PR lines flagged for deletion. Returns what is left, and how many went.
+
+    A deleted requisition is not a request for anything, so its text is not
+    evidence that somebody wants a repairable part. The register already
+    applies this rule to PO lines; applying a different one here would mean
+    the same material read as a candidate on one screen and not the other.
+    """
+    kept = [line for line in lines if not line.deleted]
+    return kept, len(lines) - len(kept)
+
+
+def drop_converted_requisitions(
+    lines: Sequence[CandidateLine],
+) -> tuple[list[CandidateLine], int]:
+    """Remove PR lines whose PO is already in this run. One request, counted once.
+
+    A requisition that has been converted carries the ``(EBELN, EBELP)`` it
+    became. When that PO line is also in the keyword hits -- which it will be
+    whenever the buyer kept the requester's wording, and they usually do --
+    the same request is present twice. Counting it twice inflates
+    ``lines_screened`` and shows a reader two rows for one event.
+
+    The PO is kept rather than the PR, deliberately: it is the document that
+    exists in SAP now, it is what a cataloguer would open, and it carries the
+    item category the PR's copy may not.
+
+    A PR pointing at a PO that did NOT match the keywords is kept -- the buyer
+    rewrote the text, and the requester's original wording is then the only
+    place the repair language survives.
+    """
+    po_keys = {
+        (line.document, line.document_item)
+        for line in lines
+        if line.source == CandidateSource.PO.value
+    }
+    kept = [
+        line
+        for line in lines
+        if not (
+            line.source == CandidateSource.PR.value
+            and line.became is not None
+            and line.became in po_keys
+        )
     ]
+    return kept, len(lines) - len(kept)
 
 
 @dataclass(frozen=True)
@@ -471,11 +776,39 @@ def find_twins(
     # normalised text -> {material: its alphabetically first raw text}. The
     # first raw text is the sample shown as the shared text, as min() gave.
     by_text: dict[str, dict[str, str]] = {}
-    for row in fetch_in_chunks(db, _TWIN_TEXTS_SQL, "materials", sorted(coded_set | suspect_set)):
-        materials_with_text = by_text.setdefault(normalise_text(row["txz01"]), {})
-        current = materials_with_text.get(row["matnr"])
-        if current is None or row["txz01"] < current:
-            materials_with_text[row["matnr"]] = row["txz01"]
+
+    def remember(material: str, raw: str) -> None:
+        if not raw:
+            return
+        materials_with_text = by_text.setdefault(normalise_text(raw), {})
+        current = materials_with_text.get(material)
+        if current is None or raw < current:
+            materials_with_text[material] = raw
+
+    # The CODED side comes from v_ekpo: the convention being applied correctly
+    # is a fact about the purchase order catalogue.
+    for row in fetch_in_chunks(db, _TWIN_TEXTS_SQL, "materials", sorted(coded_set)):
+        remember(row["matnr"], row["txz01"])
+
+    # The SUSPECT side comes from the lines already in hand, whatever source
+    # they came from -- NOT from a second query over v_ekpo. A candidate whose
+    # repair language is on a requisition or a movement comment may have no PO
+    # line at all, and re-reading v_ekpo for it would find no text, hence no
+    # twin, for precisely the candidates the extra sources contributed.
+    #
+    # A caller may also pass bare material numbers with no lines (the rules
+    # tests do). There is nothing in hand for those, so their text is read from
+    # v_ekpo as before -- the original behaviour, kept rather than made an
+    # error, because it is correct whenever the suspect DOES have a PO line.
+    lines_by_material = materials if hasattr(materials, "items") else {}
+    for material in suspects:
+        for line in lines_by_material.get(material, ()):
+            remember(material, line.short_text)
+
+    textless = [m for m in suspects if not lines_by_material.get(m)]
+    if textless:
+        for row in fetch_in_chunks(db, _TWIN_TEXTS_SQL, "materials", sorted(textless)):
+            remember(row["matnr"], row["txz01"])
 
     found: dict[str, list[tuple[str, str]]] = {}
     for materials_with_text in by_text.values():
@@ -654,6 +987,96 @@ def screen_material(
     )
 
 
+# --- Ranking ---------------------------------------------------------------
+#
+# The screen used to serve candidates in material-number order, which puts the
+# strongest finding and the weakest one wherever their numbers happen to fall.
+# FR-2 asks for a ranked list.
+#
+# Note what is NOT reordered: `materials = sorted(...)` inside screen() below.
+# That sort decides WHICH materials a `limit` screens, so it has to stay
+# deterministic and independent of any verdict -- verdicts do not exist yet at
+# that point. Ranking is therefore a presentation order applied after the
+# judging, never a change to what gets judged.
+
+#: Most worth a human's time first. UNSCREENED last, because it is the absence
+#: of a judgement rather than a weak one -- but it is still SERVED, never
+#: dropped: a screen that quietly hides what it did not judge is the failure
+#: this module is built around.
+_VERDICT_RANK: dict[str, int] = {
+    Verdict.MISCODED_REPAIRABLE.value: 0,
+    Verdict.UNCLEAR.value: 1,
+    Verdict.CONSUMABLE_FOR_REPAIR.value: 2,
+    Verdict.REPAIR_SERVICE.value: 3,
+    Verdict.UNSCREENED.value: 4,
+}
+
+
+def rank_candidates(candidates: Sequence[CodingCandidate]) -> list[CodingCandidate]:
+    """Order candidates by how much they deserve a cataloguer's attention.
+
+    1. **Corroborated first.** A twin is SAP contradicting itself -- the same
+       description on the same part, coded both ways -- and it owes nothing to
+       a model. It outranks any verdict, including a high-confidence one,
+       because it is evidence rather than opinion.
+    2. **Verdict**, most actionable first (:data:`_VERDICT_RANK`).
+    3. **Confidence**, high before low. Empty confidence sorts last, the same
+       rule :func:`meets_confidence_threshold` applies: unscreened is not a
+       weak judgement, it is no judgement.
+    4. **Evidence volume** -- more repair-language lines, more to go on.
+    5. **Material number**, so the order is stable between two identical runs
+       and a reader can diff one against the next.
+
+    Rules 2 and 3 do nothing on a run with no model, where every verdict is
+    UNSCREENED and every confidence empty. That is deliberate, and it is why
+    rules 1 and 4 exist: the deterministic half of the screen still produces an
+    order worth reading.
+    """
+    return sorted(
+        candidates,
+        key=lambda c: (
+            0 if c.is_corroborated else 1,
+            _VERDICT_RANK.get(c.verdict, len(_VERDICT_RANK)),
+            -_CONFIDENCE_RANK.get(c.confidence, -1),
+            -len(c.lines),
+            c.material_id,
+        ),
+    )
+
+
+# --- The whole screen ------------------------------------------------------
+
+
+def _from_stored(
+    material_id: str,
+    lines: Sequence[CandidateLine],
+    stored: StoredVerdict,
+    *,
+    in_universe: bool,
+    twins: tuple[tuple[str, str], ...],
+) -> CodingCandidate:
+    """Rebuild a candidate from a verdict already paid for.
+
+    The twins and the universe cross-check are recomputed every run rather than
+    read back: both are deterministic, both are cheap, and both are facts about
+    the extract rather than about the model's opinion. Only the judgement is
+    cached.
+    """
+    return CodingCandidate(
+        material_id=material_id,
+        lines=tuple(lines),
+        verdict=stored.verdict,
+        confidence=stored.confidence,
+        reason=stored.reason,
+        in_repairable_universe=in_universe,
+        twins=twins,
+        model=stored.model,
+        provider=stored.provider,
+        prompt_version=stored.prompt_version,
+        screened_at=stored.screened_at,
+    )
+
+
 def screen(
     db: Session,
     cfg: I8Settings | None = None,
@@ -661,19 +1084,30 @@ def screen(
     limit: int | None = None,
     universe_materials: set[str] | None = None,
     use_model: bool = True,
+    sources: Sequence[str] | None = None,
+    reuse_stored: bool = True,
 ) -> tuple[list[CodingCandidate], ScreenStats]:
-    """The whole screen: keyword pass, split, then one model call per material.
+    """The whole screen: keyword pass, exclusions, split, then the model.
 
     ``use_model=False`` runs everything EXCEPT the model: the keyword pass, the
-    split, and the twin corroboration -- all of which are deterministic, need no
-    credentials and take under a second. Every material comes back UNSCREENED,
-    which is the honest description of what happened.
+    exclusions, the split, and the twin corroboration -- all of which are
+    deterministic, need no credentials and take under a second. Every material
+    comes back UNSCREENED, which is the honest description of what happened.
 
     That split exists because the model pass is slow enough to matter. Measured
     on 15-Sep against live gpt-4o: **41 materials, 246 seconds**, roughly six
     seconds each and strictly sequential. That is fine for a batch and far too
     slow for a page load, so the API defaults to the fast half and asks for the
     model explicitly.
+
+    ``reuse_stored`` serves a verdict already paid for when the material's text
+    has not changed since (:mod:`app.initiatives.i8.coding_store`). It is what
+    makes the run after a reload cost seconds rather than four minutes. Pass
+    ``False`` to force every material back to the model -- what you want after
+    a prompt or deployment change, which no automatic rule can detect.
+
+    ``sources`` overrides ``I8_CODING_CANDIDATE_SOURCES``; see
+    :func:`fetch_repair_language_lines`.
 
     ``universe_materials`` is the repairable universe, passed in rather than
     rebuilt -- the caller already holds it in the cached snapshot and building
@@ -692,8 +1126,18 @@ def screen(
     it did not.
     """
     cfg = cfg or get_i8_settings()
+    wanted = tuple(sources) if sources is not None else cfg.coding_candidate_source_list
 
-    lines = fetch_repair_language_lines(db, cfg)
+    raw = fetch_repair_language_lines(db, cfg, sources=wanted)
+    # Counted before the exclusions, so each per-source number describes what
+    # that source actually carries rather than what survived our rules.
+    lines_by_source: dict[str, int] = {}
+    for line in raw:
+        lines_by_source[line.source] = lines_by_source.get(line.source, 0) + 1
+
+    lines, deleted_dropped = drop_deleted_requisitions(raw)
+    lines, converted_dropped = drop_converted_requisitions(lines)
+
     groups = partition(lines, cfg)
     known_universe = universe_materials or set()
     # Computed BEFORE the model runs, for all candidates at once. It is
@@ -713,45 +1157,105 @@ def screen(
             len(materials) - len(screened_materials),
         )
 
-    candidates = [
-        screen_material(
-            material,
-            groups.by_material[material],
-            in_universe=material in known_universe,
-            twins=twins.get(material, ()),
-            cfg=cfg,
-        )
-        if use_model
-        else _unscreened(
-            material,
-            groups.by_material[material],
-            in_universe=material in known_universe,
-            twins=twins.get(material, ()),
-            reason=(
-                "the model pass was not requested. The keyword screen, the "
-                "material split and the twin check have all run -- only the "
-                "language judgement is outstanding."
-            ),
+    # One fingerprint per material, over the distinct text it is about to be
+    # judged on. Built for the screened materials only -- there is no point
+    # looking up a verdict for a material a limit has already excluded.
+    fingerprints = {
+        material: text_fingerprint(
+            line.short_text for line in groups.by_material[material]
         )
         for material in screened_materials
-    ]
+    }
+    stored = load_verdicts(db, fingerprints) if (use_model and reuse_stored) else {}
+
+    candidates: list[CodingCandidate] = []
+    reused = 0
+    for material in screened_materials:
+        material_lines = tuple(groups.by_material[material])
+        in_universe = material in known_universe
+        material_twins = twins.get(material, ())
+
+        if not use_model:
+            candidates.append(
+                _unscreened(
+                    material,
+                    material_lines,
+                    in_universe=in_universe,
+                    twins=material_twins,
+                    reason=(
+                        "the model pass was not requested. The keyword screen, "
+                        "the exclusions, the material split and the twin check "
+                        "have all run -- only the language judgement is "
+                        "outstanding."
+                    ),
+                )
+            )
+            continue
+
+        already = stored.get(material)
+        if already is not None:
+            reused += 1
+            candidates.append(
+                _from_stored(
+                    material,
+                    material_lines,
+                    already,
+                    in_universe=in_universe,
+                    twins=material_twins,
+                )
+            )
+            continue
+
+        candidate = screen_material(
+            material,
+            material_lines,
+            in_universe=in_universe,
+            twins=material_twins,
+            cfg=cfg,
+        )
+        candidates.append(candidate)
+
+        # UNSCREENED is never stored: a stub run, a missing credential and an
+        # unreadable reply all land there, and caching any of them would turn
+        # "nobody looked" into an answer nobody looks at again.
+        if candidate.verdict != Verdict.UNSCREENED.value:
+            save_verdict(
+                db,
+                material_id=material,
+                fingerprint=fingerprints[material],
+                verdict=candidate.verdict,
+                confidence=candidate.confidence,
+                reason=candidate.reason,
+                model=candidate.model,
+                provider=candidate.provider,
+                prompt_version=candidate.prompt_version,
+                screened_at=candidate.screened_at or datetime.now(timezone.utc),
+            )
+
+    candidates = rank_candidates(candidates)
 
     by_verdict: dict[str, int] = {}
     for candidate in candidates:
         by_verdict[candidate.verdict] = by_verdict.get(candidate.verdict, 0) + 1
 
-    lines_with_text = db.execute(text(_TEXT_TOTAL_SQL)).scalar() or 0
+    text_totals = fetch_text_totals(db, wanted)
     provider = next((c.provider for c in candidates if c.provider), "")
     model = next((c.model for c in candidates if c.model), "")
 
     stats = ScreenStats(
-        lines_with_text=int(lines_with_text),
+        sources=wanted,
+        lines_with_text=sum(text_totals.values()),
+        lines_with_text_by_source=text_totals,
         lines_with_repair_language=len(groups.all_lines),
+        lines_by_source=lines_by_source,
+        deleted_requisitions_dropped=deleted_dropped,
+        converted_requisitions_dropped=converted_dropped,
         lines_already_eighty_series=len(groups.already_coded),
         lines_without_material=len(groups.without_material),
         lines_screened=sum(len(c.lines) for c in candidates),
         materials_screened=len(candidates),
         materials_found=len(materials),
+        verdicts_reused=reused,
         corroborated=sum(1 for c in candidates if c.is_corroborated),
         by_verdict=by_verdict,
         keywords=cfg.repair_language_list,
@@ -760,13 +1264,19 @@ def screen(
     )
 
     logger.info(
-        "I08 coding candidates: %d lines with repair language of %d with text; "
-        "%d already 80-series, %d with no material; %d materials screened %s",
+        "I08 coding candidates (%s): %d lines with repair language of %d with "
+        "text; %d already 80-series, %d with no material; %d PR lines dropped "
+        "as deleted, %d as already converted; %d materials screened, %d "
+        "verdicts reused %s",
+        ",".join(wanted),
         stats.lines_with_repair_language,
         stats.lines_with_text,
         stats.lines_already_eighty_series,
         stats.lines_without_material,
+        stats.deleted_requisitions_dropped,
+        stats.converted_requisitions_dropped,
         stats.materials_screened,
+        stats.verdicts_reused,
         by_verdict,
     )
     return candidates, stats

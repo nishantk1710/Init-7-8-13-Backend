@@ -79,8 +79,8 @@ from app.shared.snapshot_builds import exclusive_build
 logger = get_logger(__name__)
 
 
-# The raw tables every I08 view reads -- twelve, for the eleven views listed in
-# ``app/initiatives/i8/views.py``, because v_zmm065 is a union of two.
+# The raw tables every I08 view reads -- thirteen, for the twelve views listed
+# in ``app/initiatives/i8/views.py``, because v_zmm065 is a union of two.
 #
 # Written out rather than derived from that list: a view name does not say what
 # fills it, and guessing ``v_x -> raw_x`` would silently miss the zmm065 pair
@@ -95,6 +95,7 @@ SOURCE_TABLES: tuple[str, ...] = (
     "raw_ekpo",
     "raw_eket",
     "raw_ekbe",
+    "raw_eban",
     "raw_mseg",
     "raw_lfa1",
     "raw_zmm065_bmm",
@@ -313,6 +314,24 @@ def _build_locked(db: Session, cfg: I8Settings | None, reason: str) -> Snapshot:
         _state.snapshot = snapshot
         _state.last_error = None
         _state.building_since = None
+
+    # The two caches BUILT ON TOP of this one cannot outlive it.
+    #
+    # This used to be missing, and it is the whole of audit finding 11.2. The
+    # attestation view is rebuilt only when somebody writes an attestation or a
+    # justification, and the coding screen only on restart -- so after a SAP
+    # reload the register showed new repair lines beside declaration and
+    # justification columns computed from the data before it, and the exception
+    # list did not contain the new lines at all. That breaks acceptance
+    # criterion 5 ("raised as an exception within one refresh cycle") after
+    # every single reload.
+    #
+    # Here rather than in reset_snapshot(): THIS is the line that makes a new
+    # snapshot live, and the reload path never calls reset_snapshot() at all.
+    # Anything derived has to be dropped at the same instant, or there is a
+    # window where the two disagree.
+    reset_attestation_view()
+    reset_coding_screen()
     return snapshot
 
 
@@ -432,7 +451,8 @@ def reset_snapshot() -> None:
         _state.building_since = None
         _state.last_check = None
     # The attestation view and the coding screen are both derived from the
-    # snapshot, so neither can outlive it.
+    # snapshot, so neither can outlive it. _build_locked does the same thing
+    # when it swaps a NEW snapshot in; this is the drop-to-nothing case.
     reset_attestation_view()
     reset_coding_screen()
 
@@ -668,9 +688,13 @@ class CodingScreen:
 
 
 _screen_lock = threading.Lock()
-#: Keyed by (use_model, limit) so a fast run and a full run do not evict each
-#: other -- a demo typically wants both.
-_screens: dict[tuple[bool, int | None], CodingScreen] = {}
+#: Keyed by (use_model, limit, sources) so a fast run and a full run do not
+#: evict each other -- a demo typically wants both -- and so a run over one set
+#: of free-text sources is never served for a request that asked for another.
+#: The sources belong in the key for correctness, not convenience: the whole
+#: point of asking for PO,PR,MOVEMENT is to compare it against PO,PR, and a
+#: cache that ignored them would answer both questions with one number.
+_screens: dict[tuple[bool, int | None, tuple[str, ...]], CodingScreen] = {}
 
 
 def build_coding_screen(
@@ -680,6 +704,7 @@ def build_coding_screen(
     *,
     use_model: bool = False,
     limit: int | None = None,
+    sources: tuple[str, ...] | None = None,
 ) -> CodingScreen:
     """Run the screen. Always does the work."""
     cfg = cfg or get_i8_settings()
@@ -692,6 +717,7 @@ def build_coding_screen(
         # hold rather than a five-second rebuild.
         universe_materials={row.material_id for row in snapshot.universe},
         use_model=use_model,
+        sources=sources,
     )
     return CodingScreen(
         candidates=tuple(candidates),
@@ -709,14 +735,21 @@ def get_coding_screen(
     *,
     use_model: bool = False,
     limit: int | None = None,
+    sources: tuple[str, ...] | None = None,
     refresh: bool = False,
 ) -> CodingScreen:
-    """The cached screen for this (use_model, limit), built on first use."""
-    key = (use_model, limit)
+    """The cached screen for this (use_model, limit, sources), built on first use."""
+    cfg = cfg or get_i8_settings()
+    # Resolved here rather than left as None, so the key names the sources the
+    # run actually read. Two requests that resolve to the same sources -- one
+    # naming them, one taking the default -- are the same run and should share
+    # one cache entry.
+    resolved = tuple(sources) if sources is not None else cfg.coding_candidate_source_list
+    key = (use_model, limit, resolved)
     with _screen_lock:
         if refresh or key not in _screens:
             _screens[key] = build_coding_screen(
-                db, snapshot, cfg, use_model=use_model, limit=limit
+                db, snapshot, cfg, use_model=use_model, limit=limit, sources=resolved
             )
         return _screens[key]
 

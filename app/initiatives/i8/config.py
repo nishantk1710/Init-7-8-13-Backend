@@ -253,6 +253,26 @@ class I8Settings(BaseSettings):
         "repair,refurb,overhaul,recon,rebuild,service exchange,rotable"
     )
 
+    # Which free-text sources the keyword pass reads, comma separated.
+    #
+    # FR-2 names three: PO short text (EKPO.TXZ01), PR short text
+    # (EBAN.TXZ01) and goods-movement text (MSEG.SGTXT). All three are built
+    # and all three are tested. MOVEMENT is NOT in the default, and that is a
+    # deliberate decision rather than an omission.
+    #
+    # The reason: a 541 is by definition a part already on its way to a
+    # vendor for repair, so repair words in a movement comment sit mostly on
+    # materials that are ALREADY 80-series -- which lands them in
+    # `already_coded`, not in the candidate pool. Whether it finds anything
+    # that PO and PR text do not is a question about the data, and nobody has
+    # measured it yet. Shipping it on by default would spend model calls on
+    # the answer before knowing there is one.
+    #
+    # To measure: set I8_CODING_CANDIDATE_SOURCES=PO,PR,MOVEMENT in one
+    # environment and compare `meta.linesBySource` and `meta.materialsFound`
+    # against the default. It is a setting, so that costs a restart.
+    coding_candidate_sources: str = "PO,PR"
+
     # How sure the model has to be before a candidate counts as meeting the
     # bar, one of "low" / "medium" / "high".
     #
@@ -287,6 +307,26 @@ class I8Settings(BaseSettings):
     # 781 open repair lines will not render in one response.
     default_page_size: int = 50
     max_page_size: int = 500
+
+    @property
+    def coding_candidate_source_list(self) -> tuple[str, ...]:
+        """The configured sources, upper-cased and de-duplicated in order.
+
+        An unrecognised name is dropped rather than raising: a typo in one
+        environment's setting should narrow the screen visibly -- the response
+        reports which sources ran -- not stop the application from starting.
+        Dropping every name leaves PO, because a screen that reads nothing is
+        never the intended configuration.
+        """
+        from app.initiatives.i8.coding_candidates import CandidateSource
+
+        known = {s.value for s in CandidateSource}
+        seen: list[str] = []
+        for raw in self.coding_candidate_sources.split(","):
+            name = raw.strip().upper()
+            if name in known and name not in seen:
+                seen.append(name)
+        return tuple(seen) or (CandidateSource.PO.value,)
 
     @property
     def repair_language_list(self) -> tuple[str, ...]:

@@ -34,6 +34,14 @@ select
     nullif(special_stock, '')            as sobkz,
     sap_key(purchase_order)              as ebeln,
     nullif(nullif(item, ''), '0')        as ebelp,
-    sap_key(supplier)                    as lifnr
+    sap_key(supplier)                    as lifnr,
+    -- SGTXT. The movement's own free text, and the third source FR-2 asks the
+    -- coding screen to read. Exposed rather than used here: whether a movement
+    -- comment is evidence of mis-coding is a judgement for the screen, and it
+    -- is off by default until measured (I8_CODING_CANDIDATE_SOURCES).
+    --
+    -- APPENDED AT THE END, and it has to stay that way -- `create or replace
+    -- view` can only add columns after the existing ones. See 21_v_ekpo.sql.
+    nullif(text, '')                     as sgtxt
 from n_mseg
 where in_scope_plant(plant);

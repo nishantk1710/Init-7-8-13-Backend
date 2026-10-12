@@ -650,10 +650,22 @@ class ExceptionResponse(I8Model):
 
 
 class CodingCandidateLine(I8Model):
-    """One PO line whose free text mentioned repair."""
+    """One document line whose free text mentioned repair."""
 
-    purchasing_document: str
-    item: str
+    source: str
+    """PO, PR or MOVEMENT -- which free-text field the words came from.
+
+    Served because ``document``/``documentItem`` alone are ambiguous: a
+    purchase order item and a requisition item look alike and are opened in
+    different SAP transactions."""
+
+    document: str
+    """EBELN for a PO, BANFN for a PR, MBLNR for a movement."""
+
+    document_item: str
+    """EBELP, BNFPO or ZEILE. Not called ``item``: the three number
+    differently, and a bare ``item`` reads as a PO item everywhere else."""
+
     plant: PlantReference | None = None
     short_text: str
     """**The text the verdict was reached on.** Served with every candidate so a
@@ -665,7 +677,11 @@ class CodingCandidateLine(I8Model):
     needs no explanation."""
 
     raised_at: date | None = None
+    """ERDAT on a PO line, BADAT on a requisition, BUDAT on a movement --
+    when the words were written, whichever document carries them."""
+
     item_category: str | None = None
+    """PSTYP on a PO or PR line. Always null on a movement, which has none."""
 
 
 class CodingCandidateTwin(I8Model):
@@ -728,8 +744,33 @@ class CodingCandidateItem(I8Model):
 class CodingCandidateMeta(I8Model):
     """Every count, with the thing it counts named."""
 
+    sources: list[str]
+    """Which free-text sources this run read -- PO, PR, MOVEMENT. Every count
+    below is relative to it, so two runs cannot be compared without it. Set by
+    ``I8_CODING_CANDIDATE_SOURCES``; MOVEMENT is off until measured."""
+
     lines_with_text: int
+    """Lines carrying any free text across those sources -- the denominator."""
+
+    lines_with_text_by_source: dict[str, int] = {}
     lines_with_repair_language: int
+    lines_by_source: dict[str, int] = {}
+    """Repair-language hits per source. The number to read when deciding
+    whether a source earns its keep."""
+
+    deleted_requisitions_dropped: int = 0
+    """PR lines ignored because LOEKZ is set -- a deleted requisition is not a
+    request for anything."""
+
+    converted_requisitions_dropped: int = 0
+    """PR lines ignored because the PO they became is in this same run. One
+    request, counted once; the PO is kept because it is the document that
+    exists in SAP now."""
+
+    verdicts_reused: int = 0
+    """Verdicts served from the store rather than bought from the model again,
+    because the material's text has not changed since it was judged."""
+
     lines_already_eighty_series: int
     """Repair language on a material that IS coded repairable -- the convention
     worked. Measured at 6."""
