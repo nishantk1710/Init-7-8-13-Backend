@@ -12,6 +12,7 @@ initiative.
 """
 
 from app.models.base import Base
+from app.models.criticality_report import CriticalityCurrent, CriticalityReportRow, CriticalityReportUpload
 from app.models.csv_extract import CsvExtractRequest
 from app.models.i7_features import FeatureBuildRun, MaterialFeature
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun, SegmentModelDecision
@@ -89,6 +90,9 @@ __all__ = [
     "ActNotificationRecord",
     "Base",
     "ConsumptionAttributionRecord",
+    "CriticalityCurrent",
+    "CriticalityReportRow",
+    "CriticalityReportUpload",
     "CsvExtractRequest",
     "I13SnapshotRecord",
     "I13SnapshotRun",

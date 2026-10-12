@@ -1,39 +1,37 @@
-"""Criticality from the delivered ZMM065 aging reports -- the default source.
+"""Criticality from the monthly ZMM065 reports -- the default source.
 
-ZMM065 arrives as two workbooks, one per site, already loaded into the raw layer
-by ``app.seed``:
+ZMM065 is each plant's criticality report, reissued every month. Reports are
+uploaded on the Inventory Planning "Criticality reports" page (and the July
+delivery imported as the first one), and ``criticality_current`` holds what
+they add up to: one row per material-plant, the newest non-blank tier any
+effective report gave (``app.integrations.criticality.reports``). This source
+reads that table, so a new month's upload changes the answer for I07, I08 and
+I13 together, with nothing in any of them changing.
 
-    raw_zmm065_bmm   Black Mountain, plant 1300, 10,521 rows
-    raw_zmm065_gb    Gamsberg,       plant 1500,  7,449 rows
+**Per material-plant, never collapsed to one row per material.** 561 materials
+appear in both plants, and an aggregate over them would have to pick a winner.
+There is no correct winner: a material genuinely can be CRITICAL at Gamsberg
+and NORMAL at Black Mountain, and both statements are true at their own plant.
+Callers therefore pass the plant, and a lookup without one is answered only
+when the material is unambiguous.
 
-Both carry ``mat_code``, ``plant`` and ``criticality``, and both are indexed on
-``mat_code`` and ``plant`` by the seed loader, so a lookup is an index hit rather
-than a scan over 18k rows.
+**The material is compared in the stored form** -- leading zeros stripped,
+trimmed -- so a padded and an unpadded number find the same row.
 
-**The two tables are unioned, then filtered by plant -- never collapsed to one
-row per material.** 561 materials appear in both deliveries, and an aggregate
-over them would have to pick a winner. There is no correct winner: a material
-genuinely can be CRITICAL at Gamsberg and NORMAL at Black Mountain, and both
-statements are true at their own plant. Callers therefore pass the plant, and a
-lookup without one is answered only when the material is unambiguous.
-
-Every value stays text through the raw layer on purpose (see ``app.seed.reader``),
-so the mapping to a tier happens here, in one place, via ``parse_tier``.
-
-**Either report may not be loaded.** ZMM065 is not part of the SAP CSV pull, and
-on a database filled only by that pull neither table exists. Each lookup unions
-only the tables that exist (``app.shared.optional_tables``); with neither, every
-answer is "no tier" with the reason ``ZMM065 not loaded`` -- never an error, so
-the builds that ask (I13 reclassification, I08) carry on with criticality
-unknown, and ``check_connection`` reports ``CriticalityNotLoadedError``.
+**Not loaded is not an error.** Before the first report is imported (or before
+the migration has run) every answer is "no tier" with the reason ``ZMM065 not
+loaded`` -- never a raised error, so the builds that ask (I13 reclassification,
+I08) carry on with criticality unknown -- and ``check_connection`` reports
+``CriticalityNotLoadedError``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
-from sqlalchemy import bindparam, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError, SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from app.core.criticality import (
     CriticalityNotConfiguredError,
@@ -44,78 +42,32 @@ from app.core.criticality import (
 )
 from app.core.db import DatabaseNotConfiguredError, get_sessionmaker
 from app.core.logging import get_logger
-from app.shared.optional_tables import existing
+from app.integrations.criticality.report_parser import material_key
+from app.models.criticality_report import CriticalityCurrent
 
 logger = get_logger(__name__)
 
 SOURCE_NAME = "zmm065"
 
-#: The delivered tables, in the order the seed manifest declares them.
-TABLES = ("raw_zmm065_bmm", "raw_zmm065_gb")
-
 NOT_LOADED = "ZMM065 not loaded"
 
-# One row per material-plant. NULLIF drops blank criticality so a row that
-# carries no tier reads as absent rather than as an empty-string tier.
-#
-# Table names are interpolated from the module-level TABLES constant (the
-# subset that exists), never from input -- a raw table name cannot be a bind
-# parameter, and the only values that reach these strings are the two literals
-# above.
-
-
-def _union(tables: tuple[str, ...]) -> str:
-    return " UNION ALL ".join(f"SELECT mat_code, plant, criticality FROM {table}" for table in tables)
-
-
-def _by_material_plant(tables: tuple[str, ...]):
-    return text(
-        f"""
-        SELECT criticality
-          FROM ({_union(tables)}) z
-         WHERE z.mat_code = :material
-           AND z.plant = :plant
-           AND NULLIF(z.criticality, '') IS NOT NULL
-        """
-    )
-
-
-# Without a plant, every distinct tier the material carries is returned so the
-# caller can be told *why* an answer is being withheld rather than getting one
-# plant's tier at random.
-def _by_material(tables: tuple[str, ...]):
-    return text(
-        f"""
-        SELECT DISTINCT criticality
-          FROM ({_union(tables)}) z
-         WHERE z.mat_code = :material
-           AND NULLIF(z.criticality, '') IS NOT NULL
-        """
-    )
-
-
-# Every row for a batch of materials, in one round trip. The plant is NOT
-# filtered here: one pass over the requested materials answers both the
-# per-plant keys and the any-plant keys, and the grouping happens in Python
-# where the ambiguity rule already lives.
-def _many(tables: tuple[str, ...]):
-    return text(
-        f"""
-        SELECT z.mat_code, z.plant, z.criticality
-          FROM ({_union(tables)}) z
-         WHERE z.mat_code IN :materials
-           AND NULLIF(z.criticality, '') IS NOT NULL
-        """
-    ).bindparams(bindparam("materials", expanding=True))
-
-
-#: Materials per _MANY round trip. Each is one bind parameter, and SQL Server
+#: Materials per round trip. Each is one bind parameter, and SQL Server
 #: refuses a statement with more than 2,100.
 _MANY_CHUNK = 1000
 
 
+def _has_rows(session: Session) -> bool:
+    """Whether any criticality is loaded. A table that does not exist yet (the
+    migration has not run) reads as not loaded, not as a failure."""
+    try:
+        return session.execute(select(CriticalityCurrent.material).limit(1)).first() is not None
+    except DBAPIError:
+        session.rollback()
+        return False
+
+
 class Zmm065CriticalitySource(CriticalitySource):
-    """Reads the seeded ZMM065 raw tables. Deterministic and read-only."""
+    """Reads ``criticality_current``. Deterministic and read-only."""
 
     name = SOURCE_NAME
 
@@ -132,19 +84,34 @@ class Zmm065CriticalitySource(CriticalitySource):
                 reason="no material number given",
             )
 
+        stored = material_key(material)
         with self._session() as session:
-            tables = existing(session, TABLES)
-            if not tables:
+            if not _has_rows(session):
                 raw, reason = None, NOT_LOADED
             elif plant is not None:
                 row = session.execute(
-                    _by_material_plant(tables), {"material": material, "plant": plant}
+                    select(CriticalityCurrent.criticality).where(
+                        CriticalityCurrent.material == stored,
+                        CriticalityCurrent.plant == plant,
+                        CriticalityCurrent.criticality.is_not(None),
+                    )
                 ).first()
                 raw = row[0] if row else None
                 reason = None if row else f"{material} not present at plant {plant} in ZMM065"
             else:
-                rows = session.execute(_by_material(tables), {"material": material}).fetchall()
-                tiers = {r[0] for r in rows}
+                # Without a plant, every distinct tier the material carries is
+                # returned so the caller can be told *why* an answer is being
+                # withheld rather than getting one plant's tier at random.
+                tiers = set(
+                    session.scalars(
+                        select(CriticalityCurrent.criticality)
+                        .where(
+                            CriticalityCurrent.material == stored,
+                            CriticalityCurrent.criticality.is_not(None),
+                        )
+                        .distinct()
+                    )
+                )
                 if not tiers:
                     raw, reason = None, f"{material} not present in ZMM065"
                 elif len(tiers) == 1:
@@ -195,7 +162,7 @@ class Zmm065CriticalitySource(CriticalitySource):
             return {}
 
         materials = sorted(
-            {(key[0] or "").strip() for key in wanted if (key[0] or "").strip()}
+            {material_key(key[0]) for key in wanted if (key[0] or "").strip()}
         )
 
         # by_material_plant answers the keys that name a plant; by_material
@@ -206,27 +173,28 @@ class Zmm065CriticalitySource(CriticalitySource):
         loaded = True
         if materials:
             with self._session() as session:
-                tables = existing(session, TABLES)
-                loaded = bool(tables)
+                loaded = _has_rows(session)
                 rows = (
                     [
                         row
                         for start in range(0, len(materials), _MANY_CHUNK)
                         for row in session.execute(
-                            _many(tables), {"materials": materials[start : start + _MANY_CHUNK]}
-                        ).fetchall()
+                            select(
+                                CriticalityCurrent.material,
+                                CriticalityCurrent.plant,
+                                CriticalityCurrent.criticality,
+                            ).where(
+                                CriticalityCurrent.material.in_(materials[start : start + _MANY_CHUNK]),
+                                CriticalityCurrent.criticality.is_not(None),
+                            )
+                        ).all()
                     ]
                     if loaded
                     else []
                 )
-            for mat_code, plant, criticality in rows:
-                material = (mat_code or "").strip()
-                plant_code = (plant or "").strip() or None
-                if plant_code is not None:
-                    # .first() in the single-key query means first row wins; the
-                    # same rule here, via setdefault.
-                    by_material_plant.setdefault((material, plant_code), criticality)
-                by_material.setdefault(material, set()).add(criticality)
+            for stored, plant_code, criticality in rows:
+                by_material_plant.setdefault((stored, plant_code), criticality)
+                by_material.setdefault(stored, set()).add(criticality)
 
         results: dict[tuple[str, str | None], CriticalityResult] = {}
         for key in wanted:
@@ -243,17 +211,18 @@ class Zmm065CriticalitySource(CriticalitySource):
                 )
                 continue
 
+            stored = material_key(material)
             if not loaded:
                 raw, reason = None, NOT_LOADED
             elif plant is not None:
-                raw = by_material_plant.get((material, plant))
+                raw = by_material_plant.get((stored, plant))
                 reason = (
                     None
                     if raw is not None
                     else f"{material} not present at plant {plant} in ZMM065"
                 )
             else:
-                tiers = by_material.get(material, set())
+                tiers = by_material.get(stored, set())
                 if not tiers:
                     raw, reason = None, f"{material} not present in ZMM065"
                 elif len(tiers) == 1:
@@ -279,24 +248,22 @@ class Zmm065CriticalitySource(CriticalitySource):
         return results
 
     def check_connection(self) -> None:
-        """Prove the loaded tables are readable. Neither loaded is
+        """Prove the loaded reports are readable. None loaded is
         ``CriticalityNotLoadedError``: optional data, not an outage."""
         with self._session() as session:
-            tables = existing(session, TABLES)
-            if not tables:
+            if not _has_rows(session):
                 raise CriticalityNotLoadedError(
-                    "ZMM065 is not loaded (raw_zmm065_bmm, raw_zmm065_gb); criticality reads as unknown. "
-                    "Load it with: python -m app.ingest.fallback --load zmm065_bmm zmm065_gb"
+                    "No criticality report is loaded; criticality reads as unknown. Upload one on the "
+                    "Inventory Planning 'Criticality reports' page, or import the July delivery with: "
+                    "python -m app.integrations.criticality.baseline"
                 )
-            session.execute(text(f"SELECT 1 FROM ({_union(tables)}) z WHERE 1 = 0"))
 
     def _session(self):
         try:
             return get_sessionmaker()()
         except DatabaseNotConfiguredError as exc:
             raise CriticalityNotConfiguredError(
-                "ZMM065 criticality needs the database that holds the seeded raw "
-                "tables. Set DATABASE_URL and run `python -m app.seed --all`."
+                "Criticality needs the database that holds the uploaded reports. Set DATABASE_URL."
             ) from exc
         except SQLAlchemyError as exc:  # pragma: no cover - driver-level failure
             raise CriticalityNotConfiguredError(f"ZMM065 source unusable: {exc}") from exc

@@ -293,7 +293,7 @@ class TestWhatTheFingerprintCovers:
                 [
                     ("raw_ekpo", 2, datetime(2026, 10, 7, 5, 1, tzinfo=timezone.utc)),
                     ("raw_mara", 1, datetime(2026, 10, 7, 5, 0, tzinfo=timezone.utc)),
-                    ("raw_zmm065_gb", 3, None),
+                    ("criticality_current", 3, None),
                 ]
             ),
             reference_date=date(2026, 10, 7),
@@ -306,12 +306,13 @@ class TestWhatTheFingerprintCovers:
 
     def test_every_table_the_views_read_is_covered(self) -> None:
         """A table missing from SOURCE_TABLES is a reload I08 never notices, so
-        the list is checked against the views rather than trusted. v_zmm065 is
-        the union that makes this a mapping and not a rename."""
+        the list is checked against the views rather than trusted. v_zmm065 reads
+        criticality_current, not a raw table, which is what makes this a mapping
+        and not a rename."""
         from app.initiatives.i8.views import VIEWS
 
         expected = {f"raw_{view.removeprefix('v_')}" for view in VIEWS} - {"raw_zmm065"}
-        expected |= {"raw_zmm065_bmm", "raw_zmm065_gb"}
+        expected |= {"criticality_current"}
         assert set(service.SOURCE_TABLES) == expected
 
 

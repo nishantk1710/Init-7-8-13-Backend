@@ -70,7 +70,7 @@ from app.api.assistant.schemas import (
     SuggestionModel,
     TurnModel,
 )
-from app.api.i13.deps import Actor, get_current_actor
+from app.api.deps import Actor, get_current_actor
 from app.assistant import intents
 from app.assistant import material_search
 from app.assistant import session as session_service

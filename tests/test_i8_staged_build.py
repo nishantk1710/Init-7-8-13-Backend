@@ -54,8 +54,8 @@ RAW: dict[str, list[str]] = {
     "raw_mseg": ["MBLNR", "MJAHR", "ZEILE", "BWART", "MATNR", "WERKS", "LGORT", "MENGE", "BUDAT_MKPF",
                  "SOBKZ", "LIFNR", "SHKZG", "EBELN", "EBELP"],
     "raw_lfa1": ["LIFNR", "NAME1", "LAND1"],
-    "raw_zmm065_bmm": ["mat_code", "plant", "criticality", "material_description", "mattyp", "mrp_type"],
-    "raw_zmm065_gb": ["mat_code", "plant", "criticality", "material_description", "mattyp", "mrp_type"],
+    # What the monthly criticality reports add up to (not a raw workbook table).
+    "criticality_current": ["material", "material_raw", "plant", "criticality", "description", "mattyp", "mrp_type"],
 }
 
 ROWS: dict[str, list[tuple]] = {
@@ -127,8 +127,11 @@ ROWS: dict[str, list[tuple]] = {
     ],
     "raw_lfa1": [("0000100234", "ACME ROTATING", "ZA"), ("100235", "BETA VALVES", "ZA"),
                  ("0000100236", "GAMMA SUPPLY", "ZA"), ("0000999999", "NOBODY", "ZA")],
-    "raw_zmm065_bmm": [(A, "1300", "critical", "PUMP", "ZREP", "ND"), (N, "1300", "normal", "GLOVES", "ERSA", "VB")],
-    "raw_zmm065_gb": [(B, "1500", "IMPACT", "VALVE", "ZREP", "PD")],
+    "criticality_current": [
+        (A, A, "1300", "CRITICAL", "PUMP", "ZREP", "ND"),
+        (N, N, "1300", "NORMAL", "GLOVES", "ERSA", "VB"),
+        (B, B, "1500", "IMPACT", "VALVE", "ZREP", "PD"),
+    ],
 }
 
 

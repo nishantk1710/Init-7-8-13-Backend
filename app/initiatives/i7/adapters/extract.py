@@ -280,12 +280,21 @@ def _batched(iterator: Iterator[dict[str, Any]], size: int) -> Iterator[list[dic
 # Afrikaans and German); joining it straight would multiply MARA rows and put
 # the same key into one upsert batch twice. English first, else any.
 #
-# ZMM065 is joined from its raw tables: it is a report only the workbook loader
-# fills, always in the workbook vocabulary, with material numbers unpadded --
-# the same form the normalise views give n_mara.material. It may not be loaded
-# at all (it is not part of the SAP CSV pull): __ZMM065__ is the tables that
-# exist, or an empty stand-in, so criticality is NULL rather than the staging
-# failing -- see _material_sql.
+# Criticality is joined from ``criticality_current`` -- what the monthly ZMM065
+# reports add up to (``app.integrations.criticality.reports``) -- with material
+# numbers in the same stripped form the normalise views give n_mara.material.
+# It is per material-plant there, and this staging table holds one value per
+# material, so a material whose plants disagree takes its MOST SEVERE tier
+# (``SEVERITY_ORDER``): the stock policy errs towards protecting a part that is
+# critical anywhere. This replaces a plain MAX() over the text, which ranked the
+# tiers alphabetically -- CRITICAL < IMPACT < INSURANCE < NORMAL < OBSOLETE --
+# and so staged a part that is CRITICAL at one plant and NORMAL at the other as
+# NORMAL, and anything OBSOLETE anywhere as OBSOLETE.
+#
+# Criticality may not be loaded at all (no report imported yet, or the
+# migration has not run): __CRITICALITY__ is the real table, or an empty
+# stand-in, so criticality is NULL rather than the staging failing -- see
+# _material_sql.
 _MATERIAL_SQL = """
     SELECT a.material,
            a.material_group,
@@ -305,26 +314,36 @@ _MATERIAL_SQL = """
              GROUP BY material
       ) t ON t.material = a.material
       LEFT JOIN (
-            SELECT mat_code, MAX(criticality) AS criticality
-              FROM (__ZMM065__) u
+            SELECT material,
+                   CASE MIN(CASE criticality __RANK__ END) __UNRANK__ END AS criticality
+              FROM (__CRITICALITY__) u
              WHERE NULLIF(criticality, '') IS NOT NULL
-             GROUP BY mat_code
-      ) z ON z.mat_code = a.material
+             GROUP BY material
+      ) z ON z.material = a.material
 """
-_ZMM065_TABLES = ("raw_zmm065_bmm", "raw_zmm065_gb")
 
 
 def _material_sql(session: Session) -> str:
-    """_MATERIAL_SQL over whichever ZMM065 tables exist."""
+    """_MATERIAL_SQL over ``criticality_current``, or an empty stand-in when it
+    does not exist yet."""
+    from app.core.criticality import SEVERITY_ORDER
+    from app.models.criticality_report import CriticalityCurrent
     from app.shared.optional_tables import existing
 
-    tables = existing(session, _ZMM065_TABLES)
-    if tables:
-        source = " UNION ALL ".join(f"SELECT mat_code, criticality FROM {table}" for table in tables)
+    table = CriticalityCurrent.__tablename__
+    if existing(session, (table,)):
+        source = f"SELECT material, criticality FROM {table}"
     else:
-        logger.info("ZMM065 is not loaded; materials stage with no criticality")
-        source = "SELECT CAST(NULL AS NVARCHAR(200)) AS mat_code, CAST(NULL AS NVARCHAR(200)) AS criticality WHERE 1 = 0"
-    return _MATERIAL_SQL.replace("__ZMM065__", source)
+        logger.info("No criticality report is loaded; materials stage with no criticality")
+        source = "SELECT CAST(NULL AS NVARCHAR(200)) AS material, CAST(NULL AS NVARCHAR(200)) AS criticality WHERE 1 = 0"
+    # Tier names come from the enum, never from input.
+    rank = " ".join(f"WHEN '{tier.value}' THEN {n}" for n, tier in enumerate(SEVERITY_ORDER, start=1))
+    unrank = " ".join(f"WHEN {n} THEN '{tier.value}'" for n, tier in enumerate(SEVERITY_ORDER, start=1))
+    return (
+        _MATERIAL_SQL.replace("__CRITICALITY__", source)
+        .replace("__RANK__", rank)
+        .replace("__UNRANK__", unrank)
+    )
 
 
 # Price and currency come from wherever SAP supplied them, never assumed:

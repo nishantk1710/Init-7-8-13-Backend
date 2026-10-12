@@ -96,6 +96,13 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
     def warm() -> None:
         try:
+            if settings.database_url:
+                # First, so the I08 views and snapshots below are built over the
+                # criticality the July delivery supplies. Idempotent, and it
+                # logs rather than raises when the database or seed is absent.
+                from app.integrations.criticality import baseline
+
+                baseline.run()
             if settings.database_url and settings.normalise_views_on_startup:
                 from app.shared import sap_normalise
 
