@@ -105,9 +105,9 @@ class RoutedFlow:
     """The I13 classification. ``EXCLUDED`` also covers "MARC has no row"."""
 
     mrp_type: str | None
-    """The raw DISMM the scope was classified from. ``None`` where MARC has no
-    row for this material at this plant -- which is 47% of rows today, and is a
-    data gap rather than a classification."""
+    """The raw DISMM the scope was classified from. ``""`` where MARC has a row
+    with no MRP type (classified OAR); ``None`` where MARC has no row for this
+    material at this plant, which is a data gap rather than a classification."""
 
     also_matched: Flow | None = None
     """Set when both predicates matched and precedence decided it. The flow that
@@ -131,18 +131,18 @@ class RoutedFlow:
         if self.flow is Flow.I13:
             return (
                 f"{self.material_id} is OAR (planned on demand) at plant "
-                f"{self.plant} -- MRP type {self.mrp_type}."
+                f"{self.plant} -- MRP type {self.mrp_type or 'blank'}."
             )
         if self.mrp_type is None:
             return (
-                f"{self.material_id} is not 80-series, and MARC has no MRP type "
+                f"{self.material_id} is not 80-series, and MARC has no row "
                 f"for it at plant {self.plant}, so it cannot be classified as "
                 "OAR either. The assistant has nothing to say about it."
             )
         return (
             f"{self.material_id} is not 80-series, and MRP type "
-            f"{self.mrp_type} is not in the OAR list. The assistant has nothing "
-            "to say about it."
+            f"{self.mrp_type or 'blank'} is not in the OAR list. The assistant "
+            "has nothing to say about it."
         )
 
 

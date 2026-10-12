@@ -642,6 +642,10 @@ class Settings(BaseSettings):
     # config, not owned by any single initiative.
     i13_oar_mrp_types: str = "ND,PD"
     i13_min_max_mrp_types: str = "VB"
+    # A MARC row whose DISMM is blank also counts as OAR. A blank cannot be
+    # written into the comma list above, hence its own switch. A material+plant
+    # with no MARC row at all is never OAR, whatever this says.
+    i13_oar_include_blank_mrp_type: bool = True
 
     # Aging bands (days since last goods movement).
     i13_aging_fast_max_days: int = 365
