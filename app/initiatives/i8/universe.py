@@ -53,6 +53,7 @@ from app.core.db import MSSQL
 from app.core.logging import get_logger
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.material_number import is_eighty_series, series_like_patterns
+from app.initiatives.i8.staged import Sources, reading
 from app.shared import CriticalitySource, get_criticality_source
 from app.shared.sql_lists import like_any
 
@@ -348,6 +349,7 @@ def load_universe(
     cfg: I8Settings | None = None,
     open_repair_index: OpenRepairIndex | None = None,
     criticality_source: CriticalitySource | None = None,
+    sources: Sources | None = None,
 ) -> tuple[list[UniverseRow], UniverseStats]:
     """Build the repairable universe.
 
@@ -360,6 +362,8 @@ def load_universe(
     ``criticality_source`` is the shared W3.4 port. It defaults to the
     configured process-wide source and is injectable so a test can vary the
     tiers without a database.
+
+    ``sources`` is a snapshot build's staged copies -- see ``staged.py``.
     """
     cfg = cfg or get_i8_settings()
     patterns = series_like_patterns(cfg)
@@ -368,7 +372,9 @@ def load_universe(
     # One OR of LIKEs, reused by every source below: SQL Server has no
     # ``like any(array)``. Each pattern is still a bind parameter.
     matnr_like, pattern_params = like_any("matnr", "pattern", patterns)
-    rows = fetch_universe_candidates(db, matnr_like, pattern_params)
+    # A snapshot build's staged copies (staged.py) where it has them.
+    views = _VIEWS if sources is None else {view: reading(view, sources) for view in _SOURCE_COLUMNS}
+    rows = fetch_universe_candidates(db, matnr_like, pattern_params, sources=views)
 
     # THE gate, applied before anything else looks at these rows. The database
     # prefilter above only narrowed the candidates; this is what decides, and it

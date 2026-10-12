@@ -496,6 +496,21 @@ class Settings(BaseSettings):
     # serving -- so this is how long a reload stays invisible, not how long a
     # request waits.
     i8_snapshot_check_interval_seconds: int = 60
+    # Read narrowed copies of the I08 sources during a snapshot build instead of
+    # the views over the whole extract (app/initiatives/i8/staged.py). The
+    # views call a scalar function per row, which on the production extract ran
+    # one build query past its limit and pulled 805k EKPO lines into the worker.
+    # Off is the old path, kept as a switch while the staged one is new.
+    i8_snapshot_staged: bool = True
+    # Where the I08 snapshot lives. "memory" builds it in the web worker, as it
+    # always has. "sql" builds it in its own process and stores it in
+    # i8_snapshot_run (app/initiatives/i8/snapshot_store): the worker only loads
+    # it, and a restart reloads the stored version instead of rebuilding.
+    i8_snapshot_store: str = "memory"
+    # "sql" store only: automatic build failures per hour before the store stops
+    # retrying. `python -m app.initiatives.i8.snapshot_store build --force`
+    # still runs one.
+    i8_build_max_attempts: int = 3
 
     # Session <-> reservation linking (app/initiatives/i13/session_link.py).
     # The requester types the assistant's session ID into the reservation's item

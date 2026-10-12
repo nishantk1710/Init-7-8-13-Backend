@@ -71,6 +71,7 @@ from app.initiatives.i8.register import (
     open_repair_index,
     timed_step,
 )
+from app.initiatives.i8.staged import staged_sources
 from app.initiatives.i8.universe import UniverseRow, UniverseStats, load_universe
 from app.initiatives.i8.vendors import VendorTurnaround, vendor_turnaround
 from app.models import IngestionRun
@@ -194,11 +195,20 @@ class Snapshot:
 
 
 def build_snapshot(
-    db: Session, cfg: I8Settings | None = None, *, today: date | None = None
+    db: Session,
+    cfg: I8Settings | None = None,
+    *,
+    today: date | None = None,
+    staged: bool | None = None,
 ) -> Snapshot:
     """Assemble the register, the universe and the vendor analytics.
 
     Always does the work. :func:`get_snapshot` is the cached entry point.
+
+    ``staged`` (default: ``I8_SNAPSHOT_STAGED``, on) reads narrowed copies of the
+    sources on SQL Server instead of the views over the whole extract -- see
+    ``staged.py``. Off reads the views directly, as before; the parity test
+    builds both ways.
     """
     cfg = cfg or get_i8_settings()
     reference_date = today or cfg.reference_date_value or date.today()
@@ -211,18 +221,22 @@ def build_snapshot(
     # new data, and the mixture would never be corrected.
     source = source_state(db, reference_date=reference_date)
 
-    with statement_timeout(db, get_settings().i8_snapshot_statement_timeout_seconds):
-        # One EKPO pull for both readings of it: repair lines and new purchases.
-        with timed_step("PO lines (EKPO)"):
-            candidates = fetch_candidate_lines(db)
-        lines, register_stats = load_repair_lines(
-            db, cfg, today=reference_date, candidates=candidates
-        )
-        acquisitions = find_new_acquisitions(candidates, cfg)
-        with timed_step("repairable universe"):
-            universe, universe_stats = load_universe(
-                db, cfg, open_repair_index=open_repair_index(lines)
+    settings = get_settings()
+    staged = settings.i8_snapshot_staged if staged is None else staged
+    with statement_timeout(db, settings.i8_snapshot_statement_timeout_seconds):
+        with staged_sources(db, cfg, enabled=staged) as sources:
+            # One EKPO pull for both readings of it: repair lines and new purchases.
+            with timed_step("PO lines (EKPO)"):
+                candidates = fetch_candidate_lines(db, sources=sources)
+            lines, register_stats = load_repair_lines(
+                db, cfg, today=reference_date, candidates=candidates, sources=sources
             )
+            acquisitions = find_new_acquisitions(candidates, cfg)
+            del candidates
+            with timed_step("repairable universe"):
+                universe, universe_stats = load_universe(
+                    db, cfg, open_repair_index=open_repair_index(lines), sources=sources
+                )
     vendors = vendor_turnaround(lines)
 
     elapsed = time.monotonic() - started
@@ -293,14 +307,26 @@ def _describe(exc: Exception) -> str:
     return f"{type(exc).__name__}: {first_line}"
 
 
-def _build_locked(db: Session, cfg: I8Settings | None, reason: str) -> Snapshot:
-    """Build and record the outcome. The caller holds ``_build_lock``."""
+def _build_locked(
+    db: Session, cfg: I8Settings | None, reason: str, *, rebuild: bool = False
+) -> Snapshot:
+    """Build and record the outcome. The caller holds ``_build_lock``.
+
+    With ``I8_SNAPSHOT_STORE=sql`` nothing is built here: the newest stored
+    snapshot is loaded, after a build PROCESS when ``rebuild`` or when none is
+    stored yet (``snapshot_store/lifecycle.py``). The web worker only waits.
+    """
+    from app.initiatives.i8.snapshot_store import lifecycle as store_lifecycle
+
     with _state_lock:
         _state.building_since = datetime.now(timezone.utc)
     logger.info("I08 snapshot build started (%s)", reason)
     try:
-        with exclusive_build("I08"):
-            snapshot = build_snapshot(db, cfg)
+        if store_lifecycle.enabled():
+            snapshot = store_lifecycle.load_or_build(db, reason, rebuild=rebuild)
+        else:
+            with exclusive_build("I08"):
+                snapshot = build_snapshot(db, cfg)
     except Exception as exc:
         logger.exception("I08 snapshot build failed (%s)", reason)
         message = _describe(exc)
@@ -351,7 +377,7 @@ def get_snapshot(
                 return snapshot
             if last_error is not None and failed_ago < _RETRY_AFTER_FAILURE_SECONDS:
                 raise SnapshotFailed(last_error)
-        return _build_locked(db, cfg, "refresh" if refresh else "first request")
+        return _build_locked(db, cfg, "refresh" if refresh else "first request", rebuild=refresh)
     finally:
         _build_lock.release()
 
@@ -413,7 +439,7 @@ def _build_in_background(reason: str, force: bool = False) -> None:
                 return
         db = get_sessionmaker()()
         try:
-            _build_locked(db, None, reason)
+            _build_locked(db, None, reason, rebuild=force)
         except SnapshotFailed:
             pass  # already logged and recorded for the next request to report
         finally:
@@ -459,6 +485,16 @@ def check_source_fingerprint(db: Session, *, min_interval_seconds: float | None 
         if snapshot is None or (checked is not None and time.monotonic() - checked < interval):
             return False
         _state.last_check = time.monotonic()
+
+    from app.initiatives.i8.snapshot_store import lifecycle as store_lifecycle
+
+    if store_lifecycle.enabled():
+        # A version another process stored (a build run by hand, the other
+        # container during a restart) replaces this one without a build here.
+        newer = store_lifecycle.newer_stored(db, snapshot.built_at)
+        if newer is not None:
+            with _state_lock:
+                _state.snapshot = snapshot = newer
 
     cfg = get_i8_settings()
     current = source_state(db, reference_date=cfg.reference_date_value or date.today())

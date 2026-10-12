@@ -48,6 +48,7 @@ from app.models.i13_session_link import SessionReservationLink, UatReservationSg
 from app.models.i13_snapshot_store import I13SnapshotRecord, I13SnapshotRun
 from app.models.i13_watch_mart import WatchMetricMart
 from app.models.i13_zmm065_upload import Zmm065Upload, Zmm065UploadRow
+from app.models.i8_snapshot_store import I8SnapshotRun
 from app.models.ingest_watermark import IngestWatermark
 from app.models.ingestion import IngestionRun
 from app.models.serving import MaterialPlant
@@ -91,6 +92,7 @@ __all__ = [
     "CsvExtractRequest",
     "I13SnapshotRecord",
     "I13SnapshotRun",
+    "I8SnapshotRun",
     "IngestionRun",
     "IngestWatermark",
     "MaterialPlant",
