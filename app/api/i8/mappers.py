@@ -46,7 +46,8 @@ from app.initiatives.i8.config import I8Settings
 from app.initiatives.i8.declarations import DeclarationRow
 from app.initiatives.i8.exceptions import RAISED_BY_I8, ExceptionItem, ExceptionStats
 from app.initiatives.i8.line_justifications import LineJustification
-from app.initiatives.i8.models import ExceptionEvent, ExceptionState, RepairAttestation
+from app.initiatives.i8.exception_state import UNTOUCHED, ExceptionWorkState
+from app.initiatives.i8.models import ExceptionEvent, RepairAttestation
 from app.initiatives.i8.register import RegisterStats, RepairLine
 from app.initiatives.i8.universe import UniverseRow, UniverseStats
 from app.initiatives.i8.vendors import VendorTurnaround
@@ -451,16 +452,16 @@ def declaration_meta(rows, window_days: int) -> DeclarationMeta:
 def exception_item(
     item: ExceptionItem,
     cfg: I8Settings,
-    state: ExceptionState | None = None,
-    history: Sequence[ExceptionEvent] = (),
+    state: ExceptionWorkState | None = None,
     still_detected: bool = True,
 ) -> ExceptionQueueItem:
     """One computed finding, plus whatever people have done about it.
 
-    ``state`` is None for an item nobody has touched, and the defaults below
-    are then the truth about it rather than a placeholder: an exception starts
-    OPEN and unassigned, which is exactly what no row means.
+    ``state`` is None for an item nobody has touched, and ``UNTOUCHED`` is then
+    the truth about it rather than a placeholder: an exception starts OPEN and
+    unassigned, which is exactly what an empty history means.
     """
+    work = state or UNTOUCHED
     return ExceptionQueueItem(
         id=item.id,
         type=item.type,
@@ -488,10 +489,10 @@ def exception_item(
         raised_at=item.raised_at,
         is_open_repair=item.is_open_repair,
         pre_automation=item.pre_automation,
-        status=state.status if state else "OPEN",
-        owner=state.owner if state else None,
+        status=work.status,
+        owner=work.owner,
         still_detected=still_detected,
-        history=[exception_history_entry(e) for e in history],
+        history=[exception_history_entry(e) for e in work.history],
     )
 
 
@@ -500,6 +501,7 @@ def exception_history_entry(event: ExceptionEvent) -> ExceptionHistoryEntry:
         id=event.id,
         kind=event.kind,
         status=event.status,
+        owner=event.owner,
         actor=event.actor,
         text=event.text or "",
         at=event.at,

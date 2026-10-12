@@ -293,55 +293,30 @@ def new_exception_event_id() -> str:
     return f"EXE-{stamp:014X}{uuid.uuid4().hex[:6].upper()}"
 
 
-class ExceptionState(Base):
-    """What people have done about one exception-queue item.
-
-    The items themselves are **not** stored. They are recomputed from the
-    register and the attestation table on every read, which is what keeps the
-    queue honest: an item exists exactly as long as its check still finds it.
-
-    This table is the other half -- the part a check cannot derive. Who owns
-    it, what state it is in, and what was said about it. Keyed by the
-    exception's own deterministic id (``EX-MISSING_ATTESTATION-4500000677-20``),
-    so a row here attaches to the finding whenever the check raises it again.
-
-    A consequence worth stating: a row can outlive the item it describes. When
-    a declaration is recorded the missing-attestation check stops finding that
-    line, and this row is what remembers that somebody was working it. That is
-    the auto-resolution path -- see
-    :func:`app.initiatives.i8.exception_state.auto_resolve`.
-    """
-
-    __tablename__ = "i8_exception_state"
-
-    exception_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    """The computed item's id. Not a foreign key -- there is no table to point
-    at, by design."""
-
-    status: Mapped[str] = mapped_column(String(16), index=True, default="OPEN")
-    """OPEN / IN_PROGRESS / RESOLVED / CLOSED."""
-
-    owner: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    """Null means unassigned, which is a real and common state -- not a blank
-    to be filled in with whoever touched it last."""
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
-
-    def __repr__(self) -> str:
-        return f"<ExceptionState {self.exception_id} {self.status} owner={self.owner}>"
-
-
 class ExceptionEvent(Base):
-    """One entry in an exception's history: an assignment, a comment, a status
-    change, or the queue resolving the item itself.
+    """One thing that happened to an exception-queue item, and the ONLY thing
+    this module stores about one.
 
-    Append-only, for the same reason :class:`RepairAttestation` is: the value
-    of a history is that it cannot be tidied up afterwards.
+    The items themselves are not stored. They are recomputed from the register
+    and the attestation table on every read, which is what keeps the queue from
+    drifting away from the data: an item exists exactly as long as its check
+    still finds it.
+
+    What a check cannot derive is who owns a finding and what state the work is
+    in -- and that is not stored either, as a value. It is **folded from this
+    log**: the last status an entry set, the owner the last ``ASSIGNED`` entry
+    named. An item nobody has touched has no rows here at all and folds to OPEN
+    and unassigned, which is the truth about it rather than a default.
+
+    Append-only, like :class:`RepairAttestation` and
+    ``assistant_session``, and for the same reason: there is no UPDATE to make,
+    so there is no edit anybody can make to a history afterwards. It is also
+    why the API exposes one POST and no PATCH -- see ``tests/test_write_paths``.
+
+    Keyed by the exception's own deterministic id
+    (``EX-MISSING_ATTESTATION-4500000677-20``), so the history re-attaches
+    whenever the check raises the same finding again. Not a foreign key: there
+    is no table of exceptions to point at, by design.
     """
 
     __tablename__ = "i8_exception_event"
@@ -362,6 +337,13 @@ class ExceptionEvent(Base):
     status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     """The status this entry set, for STATUS and AUTO_RESOLVED. Null on a
     comment or an assignment, which do not move the item."""
+
+    owner: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    """Who the item was assigned to, on an ``ASSIGNED`` entry.
+
+    Null on every other kind, and null on an ``ASSIGNED`` entry means the item
+    was UNASSIGNED -- handing something back is an action, and the kind is what
+    tells the two nulls apart."""
 
     actor: Mapped[str] = mapped_column(String(128))
     """Set by the server from the caller, never from the body -- the same rule

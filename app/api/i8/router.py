@@ -52,10 +52,9 @@ from app.api.i8.schemas import (
     AttestationResponse,
     CodingCandidateResponse,
     DeclarationResponse,
-    ExceptionCommentRequest,
+    ExceptionEventRequest,
     ExceptionQueueItem,
     ExceptionResponse,
-    ExceptionUpdateRequest,
     MaterialReference,
     RepairChain,
     RegisterResponse,
@@ -84,13 +83,15 @@ from app.initiatives.i8.coding_candidates import (
 )
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.exception_state import (
+    UNTOUCHED,
     ExceptionStateError,
     add_comment,
     assign,
     auto_resolve,
-    load_histories,
     load_states,
     set_status,
+    state_of,
+    validate_kind,
 )
 from app.initiatives.i8.exceptions import ExceptionItem
 from app.initiatives.i8.material_number import is_eighty_series, normalise
@@ -697,36 +698,28 @@ def get_exceptions(
     if open_only:
         items = tuple(i for i in items if i.is_open_repair)
 
-    # Loaded once for the whole filtered set, because status and owner filter
-    # on it -- paging first would filter a page rather than the queue.
-    states = load_states(db, [i.id for i in items])
+    # Folded once for the whole filtered set, because status and owner filter
+    # on it -- paging first would filter a page rather than the queue. Only
+    # items somebody has touched have a history, so this stays small while the
+    # queue runs to thousands.
+    states = load_states(db)
 
     if status_filter:
         wanted_status = status_filter.strip().upper()
         items = tuple(
-            i
-            for i in items
-            if (states[i.id].status if i.id in states else "OPEN") == wanted_status
+            i for i in items if states.get(i.id, UNTOUCHED).status == wanted_status
         )
     if owner:
         wanted_owner = owner.strip()
         if wanted_owner.lower() == "unassigned":
-            items = tuple(
-                i for i in items if i.id not in states or not states[i.id].owner
-            )
+            items = tuple(i for i in items if not states.get(i.id, UNTOUCHED).owner)
         else:
             items = tuple(
-                i
-                for i in items
-                if i.id in states and states[i.id].owner == wanted_owner
+                i for i in items if states.get(i.id, UNTOUCHED).owner == wanted_owner
             )
 
     size = min(page_size or cfg.default_page_size, cfg.max_page_size)
     page_items, total = _paginate(items, page, size)
-
-    # Only the page's histories: the queue runs to thousands of items and a
-    # history per row is the one part of this response that has no bound.
-    histories = load_histories(db, [i.id for i in page_items])
 
     return ExceptionResponse(
         items=[
@@ -734,7 +727,6 @@ def get_exceptions(
                 i,
                 cfg,
                 state=states.get(i.id),
-                history=histories.get(i.id, ()),
                 # Listed means raised: these all came from a check that just
                 # ran. The flag matters for an item fetched by id elsewhere.
                 still_detected=True,
@@ -1012,75 +1004,54 @@ def get_repairable_unit(
     )
 
 
-@router.patch(
-    "/exceptions/{exception_id}",
+@router.post(
+    "/exceptions/{exception_id}/events",
     response_model=ExceptionQueueItem,
-    summary="Move an exception, or change who owns it",
+    status_code=status.HTTP_201_CREATED,
+    summary="Append one entry to an exception's history",
 )
-def patch_exception(
+def post_exception_event(
     exception_id: str,
-    body: ExceptionUpdateRequest,
+    body: ExceptionEventRequest,
     view: AttestationViewDep,
     cfg: SettingsDep,
     db: DbDep,
 ) -> ExceptionQueueItem:
-    """**Writes the state, never the finding.**
+    """**Writes the history, never the finding.**
 
     The exception itself is computed from SAP data and this cannot change it.
-    What it changes is who owns the finding and what state the work is in,
-    which is the half FR-11 asks for and no check can derive.
+    What it records is who is working the finding and what they said -- the
+    half FR-11 asks for and no check can derive.
+
+    One POST for assigning, commenting and moving, because all three are the
+    same operation on the same append-only table. There is deliberately no
+    PATCH: the item's status is not a column somebody edits, it is the last
+    entry that set one, and ``tests/test_write_paths.py`` holds the whole
+    application to that.
 
     An unknown id is still accepted. The checks are recomputed on every read,
     so an id can be real and currently unraised -- the gap it describes was
-    closed since the caller loaded the screen. Rejecting it would lose the
-    comment somebody just typed about exactly that.
+    closed since the caller loaded the screen. Rejecting it would throw away
+    the comment somebody just typed about exactly that.
     """
     found = next((i for i in view.exceptions if i.id == exception_id), None)
 
     try:
-        if "owner" in body.model_fields_set:
+        kind = validate_kind(body.kind)
+        if kind == "ASSIGNED":
             assign(db, exception_id, body.owner, actor=_current_user())
-        if body.status is not None:
+        elif kind == "STATUS":
+            if body.status is None:
+                raise ExceptionStateError("a STATUS entry needs a status")
             set_status(
-                db, exception_id, body.status, actor=_current_user(), note=body.note
+                db, exception_id, body.status, actor=_current_user(), note=body.text
             )
+        else:
+            add_comment(db, exception_id, body.text, actor=_current_user())
     except ExceptionStateError as exc:
         # 422, not 400: well-formed JSON that broke a rule of the queue.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    if body.status is None and "owner" not in body.model_fields_set:
-        raise HTTPException(
-            status_code=422,
-            detail="send a status, an owner, or both -- this request changes nothing",
-        )
-
-    return _exception_response(db, cfg, exception_id, found)
-
-
-@router.post(
-    "/exceptions/{exception_id}/comments",
-    response_model=ExceptionQueueItem,
-    status_code=status.HTTP_201_CREATED,
-    summary="Say something about an exception",
-)
-def post_exception_comment(
-    exception_id: str,
-    body: ExceptionCommentRequest,
-    view: AttestationViewDep,
-    cfg: SettingsDep,
-    db: DbDep,
-) -> ExceptionQueueItem:
-    """Add a comment without moving the item.
-
-    Chasing a vendor, recording what somebody said on the phone, noting why
-    this one is being left alone -- none of which is a status change, and all
-    of which is the reason anybody can follow the item later.
-    """
-    found = next((i for i in view.exceptions if i.id == exception_id), None)
-    try:
-        add_comment(db, exception_id, body.text, actor=_current_user())
-    except ExceptionStateError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _exception_response(db, cfg, exception_id, found)
 
 
@@ -1098,19 +1069,11 @@ def _exception_response(
     is the honest answer to "I just commented on something that resolved
     underneath me".
     """
-    states = load_states(db, [exception_id])
-    histories = load_histories(db, [exception_id])
+    work = state_of(db, exception_id)
 
     if found is not None:
-        return exception_item(
-            found,
-            cfg,
-            state=states.get(exception_id),
-            history=histories.get(exception_id, ()),
-            still_detected=True,
-        )
+        return exception_item(found, cfg, state=work, still_detected=True)
 
-    state = states.get(exception_id)
     return ExceptionQueueItem(
         id=exception_id,
         type="UNKNOWN",
@@ -1126,8 +1089,8 @@ def _exception_response(
         raised_at=None,
         is_open_repair=False,
         pre_automation=False,
-        status=state.status if state else "OPEN",
-        owner=state.owner if state else None,
+        status=work.status,
+        owner=work.owner,
         still_detected=False,
-        history=[exception_history_entry(e) for e in histories.get(exception_id, ())],
+        history=[exception_history_entry(e) for e in work.history],
     )

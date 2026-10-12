@@ -590,6 +590,10 @@ class ExceptionHistoryEntry(I8Model):
     status: str | None = None
     """The status this entry set. Null on a comment or an assignment."""
 
+    owner: str | None = None
+    """Who the item was assigned to, on an ``ASSIGNED`` entry. Null there means
+    it was unassigned -- ``kind`` tells the two nulls apart."""
+
     actor: str
     """``system`` on ``AUTO_RESOLVED``; otherwise whoever acted. Server-set,
     never taken from the request body."""
@@ -933,26 +937,29 @@ class RepairableUnitResponse(I8Model):
     reference_date: date
 
 
-class ExceptionUpdateRequest(I8Model):
-    """Move an exception, or change who owns it (FR-11).
+class ExceptionEventRequest(I8Model):
+    """Append one entry to an exception's history (FR-11).
 
-    Both fields are optional and either may be sent alone: assigning without
-    moving, and moving without reassigning, are both ordinary.
+    One request shape for all three actions, because they are one operation on
+    one append-only table. There is no PATCH anywhere in this application: a
+    status is not a column to be edited, it is the last entry that set one.
 
-    ``owner`` distinguishes "leave it alone" from "unassign it" by whether the
-    field was sent at all, not by its value -- ``{"owner": null}`` unassigns,
-    an absent ``owner`` does not. Pydantic records that in ``model_fields_set``
-    and the route reads it there.
+    ====================  ============================================
+    ``kind``              what else to send
+    ====================  ============================================
+    ``ASSIGNED``          ``owner`` -- or null to unassign, which is
+                          an action and gets its own entry
+    ``STATUS``            ``status``, and ideally ``text`` saying why
+    ``COMMENT``           ``text``
+    ====================  ============================================
+
+    ``AUTO_RESOLVED`` is not accepted: only the queue writes those, because
+    only a check can know it has stopped finding something.
     """
 
+    kind: Literal["ASSIGNED", "STATUS", "COMMENT"]
     status: Literal["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"] | None = None
     owner: str | None = Field(default=None, max_length=128)
-    note: str = Field(default="", max_length=2000)
-    """Why. Optional, and worth sending: the status change is recorded either
-    way, but a history of bare transitions explains nothing later."""
-
-
-class ExceptionCommentRequest(I8Model):
-    """Say something about an exception without moving it."""
-
-    text: str = Field(min_length=1, max_length=2000)
+    text: str = Field(default="", max_length=2000)
+    """What was said, or why the status moved. Optional on a status change and
+    worth sending: a history of bare transitions explains nothing later."""

@@ -64,7 +64,7 @@ class TestRoutesAreMounted:
     # The promise is now in three parts, one test each:
     #
     #   1. the write paths are a closed, named set -- nothing else writes
-    #   2. no audit record is ever updated or deleted
+    #   2. nothing is ever updated or deleted: no PUT, PATCH or DELETE
     #   3. nothing in I08 writes to SAP -- unchanged, and the one that matters
     #
     # Point 3 is the real guarantee. The platform reads SAP and records its own
@@ -75,10 +75,10 @@ class TestRoutesAreMounted:
     def test_the_module_writes_only_what_it_owns(self, openapi) -> None:
         """A closed set of write paths, each against a table I08 owns.
 
-        The attestation (W5.3) records a person's judgement. The two exception
-        routes (FR-11) record who is working a finding and what they said about
-        it -- they cannot change the finding itself, which is recomputed from
-        SAP data on every read and has no stored form to edit.
+        The attestation (W5.3) records a person's judgement. The exception
+        event (FR-11) records who is working a finding and what they said about
+        it -- it cannot change the finding itself, which is recomputed from SAP
+        data on every read and has no stored form to edit.
         """
         i8_paths = {p: v for p, v in openapi["paths"].items() if p.startswith("/api/i8")}
         assert i8_paths, "no /api/i8 paths in the spec -- is the router mounted?"
@@ -91,36 +91,27 @@ class TestRoutesAreMounted:
         }
         assert writes == {
             ("/api/i8/attestations", "post"),
-            ("/api/i8/exceptions/{exception_id}", "patch"),
-            ("/api/i8/exceptions/{exception_id}/comments", "post"),
+            ("/api/i8/exceptions/{exception_id}/events", "post"),
         }, f"I08's write paths are a closed set. Found: {sorted(writes)}"
 
-    def test_no_audit_record_is_updated_or_deleted(self, openapi) -> None:
-        """Append-only where it counts, and nothing is ever destroyed.
+    def test_nothing_updates_or_deletes(self, openapi) -> None:
+        """Every table I08 owns is append-only, and the API says so.
 
-        DELETE and PUT must not exist anywhere in the module. PATCH exists on
-        exactly one route -- the exception's workflow state, which is a
-        current-value record (who owns it, what state it is in) and not an
-        audit record. Its history is append-only and lives in a separate table.
+        PUT, PATCH and DELETE must not exist anywhere in the module -- not on
+        the attestation, and not on the exception queue either. An amendment to
+        an attestation is a new row pointing at the one it supersedes; an
+        exception's status is not a column but the last history entry that set
+        one. Neither has anything to edit.
 
-        Attestations stay strictly append-only: an amendment is a new row
-        pointing at the one it supersedes, so no verb other than POST may ever
-        appear on the attestation route.
+        This was briefly written the other way, allowing PATCH on the queue's
+        workflow state. ``tests/test_write_paths.py`` holds the whole
+        application to append-only and caught it, which is what that file is
+        for -- the I08-scoped copy here is kept honest so the two cannot drift.
         """
         i8_paths = {p: v for p, v in openapi["paths"].items() if p.startswith("/api/i8")}
-
         for path, operations in i8_paths.items():
-            forbidden = {"put", "delete"} & set(operations)
+            forbidden = {"put", "patch", "delete"} & set(operations)
             assert not forbidden, f"{path} exposes {sorted(forbidden)}"
-
-        patched = {p for p, ops in i8_paths.items() if "patch" in ops}
-        assert patched == {"/api/i8/exceptions/{exception_id}"}, (
-            f"PATCH belongs to the exception's workflow state alone. Found: {sorted(patched)}"
-        )
-
-        assert "patch" not in i8_paths["/api/i8/attestations"], (
-            "an attestation is an audit record -- amend it with a new POST"
-        )
 
     def test_no_route_writes_to_sap(self) -> None:
         """The guarantee that actually matters, and the one that did not change.

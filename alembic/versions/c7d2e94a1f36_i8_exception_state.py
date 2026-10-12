@@ -1,23 +1,29 @@
-"""i8_exception_state
+"""i8_exception_event
 
 FR-11: the exception queue becomes something people work, not only something
-they look at. Two tables, and neither one stores an exception.
+they look at. One table, and it does not store an exception.
 
 The items stay computed -- recomputed from the register and the attestation
 table on every read, so the queue cannot drift away from the data. What a
 check cannot derive is who owns a finding and what was said about it, and that
 is what lands here.
 
-``i8_exception_state`` is keyed by the exception's own deterministic id
+There is no companion "state" table holding status and owner. Those are folded
+from this log: the last entry that set a status, the owner the last ASSIGNED
+entry named. A state table would have to be UPDATEd, and every table this
+application owns is append-only -- a rule tests/test_write_paths.py holds the
+whole app to. Folding also means the current state and the audit trail cannot
+disagree, because they are the same rows read two ways.
+
+Keyed by the exception's own deterministic id
 (``EX-MISSING_ATTESTATION-4500000677-20``) rather than a surrogate, so the
-state re-attaches whenever the check raises the same finding again. It is NOT
+history re-attaches whenever the check raises the same finding again. It is NOT
 a foreign key: there is no table of exceptions to point at, by design.
 
-``i8_exception_event`` is append-only, like i8_attestation and for the same
-reason -- a history that can be tidied up afterwards is not a history. It is
-not protected by a trigger the way attestations are, because this records
-workflow rather than a person's professional judgement; the audit weight is
-different and a trigger per table is not free on Azure SQL.
+No immutability trigger, unlike i8_attestation. That table records a person's
+professional judgement and is worth a trigger per row; this records workflow,
+the API exposes no verb that could edit it, and a trigger is not free on Azure
+SQL.
 
 Portable constructs only -- this creates identically on Postgres and Azure SQL.
 
@@ -42,36 +48,18 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema."""
     op.create_table(
-        'i8_exception_state',
+        'i8_exception_event',
+        sa.Column('id', sa.String(length=32), nullable=False),
         # 128 rather than 64: the id carries the check name and the full SAP
         # document and item, and MISSING_ATTESTATION on a long document number
         # is already 38 characters before anything is added to the vocabulary.
         sa.Column('exception_id', sa.String(length=128), nullable=False),
-        sa.Column('status', sa.String(length=16), nullable=False,
-                  server_default='OPEN'),
-        # Nullable on purpose: unassigned is a real state, and the default
-        # must not be "whoever touched it last".
-        sa.Column('owner', sa.String(length=128), nullable=True),
-        sa.Column('created_at', sa.DateTime(timezone=True),
-                  server_default=sa.func.now(), nullable=False),
-        sa.Column('updated_at', sa.DateTime(timezone=True),
-                  server_default=sa.func.now(), nullable=False),
-        sa.PrimaryKeyConstraint('exception_id'),
-    )
-    op.create_index(
-        'ix_i8_exception_state_status', 'i8_exception_state', ['status']
-    )
-    op.create_index(
-        'ix_i8_exception_state_owner', 'i8_exception_state', ['owner']
-    )
-
-    op.create_table(
-        'i8_exception_event',
-        sa.Column('id', sa.String(length=32), nullable=False),
-        sa.Column('exception_id', sa.String(length=128), nullable=False),
         sa.Column('kind', sa.String(length=16), nullable=False),
         # Null on a comment or an assignment: those do not move the item.
         sa.Column('status', sa.String(length=16), nullable=True),
+        # Set on an ASSIGNED entry. Null there means UNASSIGNED -- handing
+        # something back is an action, and `kind` tells the two nulls apart.
+        sa.Column('owner', sa.String(length=128), nullable=True),
         sa.Column('actor', sa.String(length=128), nullable=False),
         sa.Column('text', sa.Text(), nullable=False, server_default=''),
         sa.Column('at', sa.DateTime(timezone=True),
@@ -83,8 +71,10 @@ def upgrade() -> None:
         ['exception_id']
     )
     op.create_index('ix_i8_exception_event_kind', 'i8_exception_event', ['kind'])
+    op.create_index('ix_i8_exception_event_owner', 'i8_exception_event', ['owner'])
     op.create_index('ix_i8_exception_event_at', 'i8_exception_event', ['at'])
-    # The drawer's access pattern: one exception's history, oldest first.
+    # The drawer's access pattern, and the fold's: one exception's history,
+    # oldest first.
     op.create_index(
         'ix_i8_exception_event_exception_at', 'i8_exception_event',
         ['exception_id', 'at']
@@ -100,10 +90,7 @@ def downgrade() -> None:
     """
     op.drop_index('ix_i8_exception_event_exception_at', table_name='i8_exception_event')
     op.drop_index('ix_i8_exception_event_at', table_name='i8_exception_event')
+    op.drop_index('ix_i8_exception_event_owner', table_name='i8_exception_event')
     op.drop_index('ix_i8_exception_event_kind', table_name='i8_exception_event')
     op.drop_index('ix_i8_exception_event_exception_id', table_name='i8_exception_event')
     op.drop_table('i8_exception_event')
-
-    op.drop_index('ix_i8_exception_state_owner', table_name='i8_exception_state')
-    op.drop_index('ix_i8_exception_state_status', table_name='i8_exception_state')
-    op.drop_table('i8_exception_state')
