@@ -143,6 +143,13 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "purchase benefit only where the requester accepted the suggestion, "
         "so this is the row that attribution is measured from."
     ),
+    # --- Shared: monthly criticality reports ---------------------------------
+    ("/api/criticality/uploads", "post"): (
+        "Monthly criticality report for one plant -> criticality_report_upload + "
+        "criticality_report_row (append-only) and a rebuild of criticality_current, "
+        "which I07, I08 and I13 read. Also copies the file to platform storage and "
+        "writes an ingestion_run row. raw_zmm065_* is not touched."
+    ),
     # --- Events ---------------------------------------------------------------
     ("/api/events/csv", "post"): (
         "CSV feed listener: SAP pushes extract chunks here. Reads whatever "
@@ -234,7 +241,9 @@ class TestNothingWritesToSap:
         "app/api/i8",
         "app/api/i13",
         "app/api/assistant",
+        "app/api/criticality",
         "app/assistant",
+        "app/integrations/criticality",
     )
 
     def test_no_package_imports_the_sap_client(self) -> None:

@@ -98,8 +98,9 @@ SOURCE_TABLES: tuple[str, ...] = (
     "raw_ekbe",
     "raw_mseg",
     "raw_lfa1",
-    "raw_zmm065_bmm",
-    "raw_zmm065_gb",
+    # What the monthly criticality uploads add up to; an upload writes an
+    # ingestion_run row for it (app/integrations/criticality/reports.py).
+    "criticality_current",
 )
 
 

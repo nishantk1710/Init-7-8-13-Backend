@@ -263,9 +263,9 @@ def _stage(db: Session, cfg: I8Settings) -> Sources:
     present = set(existing(db, OPTIONAL_REPORT_TABLES))
     stage("v_zmm065", {
         table: (
-            _narrow(db, table.removeprefix("raw_"), table, f"{_in_scope()} AND {_series('mat_code', cfg)}")
+            _narrow(db, table, table, f"{_in_scope()} AND {_series('material', cfg)}")
             if table in present
-            else _empty_report(db, table.removeprefix("raw_"))
+            else _empty_report(db, table)
         )
         for table in OPTIONAL_REPORT_TABLES
     })
@@ -303,7 +303,7 @@ def staged_sources(db: Session, cfg: I8Settings, *, enabled: bool = True) -> Ite
         for table in [*sources.views.values(), "#i8s_docs", "#i8s_mats"]:
             db.execute(text(f"DROP TABLE IF EXISTS {table}"))
         for name in ("ekpo", "ekko", "eket", "ekbe", "mseg", "lfa1", "mara", "makt", "mard", "marc",
-                     "zmm065_bmm", "zmm065_gb"):
+                     "criticality_current"):
             db.execute(text(f"DROP TABLE IF EXISTS #i8b_{name}"))
 
 
