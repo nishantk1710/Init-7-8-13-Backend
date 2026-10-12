@@ -784,6 +784,60 @@ class TestReadinessReportsAI:
         assert response.json()["ai"] == "not_configured"
         reset_ai_cache()
 
+    def test_it_names_which_provider_answered(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """"ai: ok" alone is not an answer anybody can act on.
+
+        The stub's check_connection() returns immediately and always passes --
+        by design -- so a deployment with no model configured looks exactly
+        like a working one by status alone. That cost a day of "which provider
+        is the deployed app using?" during the 09-Oct FRS audit, and it could
+        not be settled without reading Azure app settings.
+
+        The provider is pinned here rather than taken from the environment: a
+        developer with real credentials in their .env would otherwise see this
+        assert "foundry" and a CI runner would see "stub", and the test would
+        be about the machine rather than about the endpoint.
+        """
+        import app.core.ai as ai_module
+
+        monkeypatch.setattr(
+            ai_module,
+            "get_settings",
+            lambda: Settings(llm_provider="stub", _env_file=None),
+        )
+        reset_ai_cache()
+        try:
+            body = client.get("/api/ready").json()
+            assert body["aiProvider"] == "stub"
+            assert body["ai"] == "ok", "the stub always passes -- that is the point"
+        finally:
+            reset_ai_cache()
+
+    def test_the_provider_is_named_even_when_it_is_unreachable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """"foundry, unavailable" is a far more useful line than
+        "unavailable".
+
+        The failure is injected rather than reached over the network: an
+        unroutable endpoint would spend the configured timeout and retries
+        before answering, which is minutes per run for one assertion.
+        """
+        import app.api.ready as ready_module
+
+        class Unreachable:
+            name = "foundry"
+
+            def check_connection(self):
+                raise ConnectionError("no route to host")
+
+        monkeypatch.setattr(ready_module, "get_llm", lambda: Unreachable())
+        body = client.get("/api/ready").json()
+        assert body["aiProvider"] == "foundry"
+        assert body["ai"] == "unavailable"
+
 
 # --- W1.7: conformance against the live provider --------------------------
 #

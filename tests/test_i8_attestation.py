@@ -41,6 +41,7 @@ from app.initiatives.i8.exceptions import (
     RAISED_BY_I8,
     ExceptionType,
     build_exceptions,
+    overdue_repairs,
 )
 from app.main import app
 from tests.i8_support import needs_db, needs_views
@@ -76,13 +77,27 @@ def a_draft(**overrides) -> AttestationDraft:
 
 
 class FakeLine:
-    """The three fields coverage() reads off a repair line.
+    """The fields the exception detectors read off a repair line.
 
     A stand-in rather than a real RepairLine so the window rule can be tested
-    without a database or a 40-field constructor.
+    without a database or a 40-field constructor. It has to carry everything
+    every detector touches, not just coverage()'s three -- build_exceptions
+    runs them all over the same lines, so a fake missing one field fails a
+    test about a different check entirely.
     """
 
-    def __init__(self, document, item, material_id, plant, raised_at):
+    def __init__(
+        self,
+        document,
+        item,
+        material_id,
+        plant,
+        raised_at,
+        *,
+        overdue_status="ON_TIME",
+        due_date=None,
+        days_remaining=None,
+    ):
         self.purchasing_document = document
         self.item = item
         self.material_id = material_id
@@ -93,10 +108,21 @@ class FakeLine:
         self.pr_number = "PR1"
         self.pr_item = "10"
         self.requisitioner = "10316"
+        # Read by overdue_repairs(). Default ON_TIME so every existing test
+        # keeps testing what it was written to test.
+        self.overdue_status = overdue_status
+        self.due_date = due_date
+        self.days_remaining = days_remaining
+        self.vendor = None
+        self.vendor_name = None
 
     @property
     def is_open(self) -> bool:
         return self.received_at is None
+
+    @property
+    def is_overdue(self) -> bool:
+        return self.overdue_status == "OVERDUE"
 
     @property
     def key(self):
@@ -425,8 +451,80 @@ class TestMissingAttestationException:
         count is distinguishable from an unimplemented check."""
         assert {t.value for t in ExceptionType} > {t.value for t in RAISED_BY_I8}
         assert RAISED_BY_I8 == frozenset(
-            {ExceptionType.MISSING_ATTESTATION, ExceptionType.UNJUSTIFIED_ACQUISITION}
+            {
+                ExceptionType.MISSING_ATTESTATION,
+                ExceptionType.UNJUSTIFIED_ACQUISITION,
+                ExceptionType.OVERDUE_REPAIR,
+            }
         )
+        # The one still declared and not raised. When this stops being true the
+        # assertion above fails first, which is the intended order.
+        assert ExceptionType.MISSING_SESSION_ID not in RAISED_BY_I8
+
+    def test_an_overdue_open_line_is_raised(self) -> None:
+        """FR-9 asks for overdue "as an explicit dashboard exception state".
+
+        It was a register column and an overview tile and nothing else, so the
+        one screen built to list what needs chasing did not list the repairs
+        that are late -- the most chaseable thing I08 knows about.
+        """
+        line = FakeLine(
+            "4500",
+            "10",
+            "8000005632",
+            "1300",
+            date(2026, 5, 1),
+            overdue_status="OVERDUE",
+            due_date=date(2026, 6, 1),
+            days_remaining=-40,
+        )
+        items = overdue_repairs([line], grace_days=7)
+
+        assert len(items) == 1
+        assert items[0].type == ExceptionType.OVERDUE_REPAIR.value
+        assert items[0].is_open_repair is True
+        # The rule is traceable from the row: when it was promised, and the
+        # grace it is measured against.
+        assert "2026-06-01" in items[0].detail
+        assert "7-day grace" in items[0].detail
+        assert "40 days" in items[0].detail
+
+    def test_an_on_time_line_is_not_raised(self) -> None:
+        line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
+        assert overdue_repairs([line], grace_days=7) == []
+
+    def test_a_late_line_that_came_back_is_not_an_item_of_work(self) -> None:
+        """The delay happened and nobody can chase a unit already on the shelf.
+
+        It stays in the register's own figures; it is not a queue item.
+        """
+        line = FakeLine(
+            "4500",
+            "10",
+            "8000005632",
+            "1300",
+            date(2026, 5, 1),
+            overdue_status="OVERDUE",
+            due_date=date(2026, 6, 1),
+        )
+        line.received_at = date(2026, 7, 1)
+        assert overdue_repairs([line], grace_days=7) == []
+
+    def test_overdue_is_read_from_the_register_not_recomputed(self) -> None:
+        """Two places deciding what "overdue" means is how a column and a queue
+        end up disagreeing about the same line."""
+        line = FakeLine(
+            "4500",
+            "10",
+            "8000005632",
+            "1300",
+            date(2026, 5, 1),
+            # A due date long past, but the register says ON_TIME -- whatever
+            # its reason (grace, no schedule line), the queue must agree.
+            overdue_status="ON_TIME",
+            due_date=date(2020, 1, 1),
+        )
+        assert overdue_repairs([line], grace_days=7) == []
 
     def test_a_line_with_no_plant_is_not_reported(self) -> None:
         """The material-plant key cannot be formed, so an exception for it could

@@ -85,6 +85,7 @@ VIEWS: tuple[str, ...] = (
     "v_ekpo",
     "v_eket",
     "v_ekbe",
+    "v_eban",
     "v_mseg",
     "v_lfa1",
     "v_zmm065",

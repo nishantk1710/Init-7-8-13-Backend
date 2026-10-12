@@ -73,7 +73,10 @@ from app.initiatives.i8.attestation import (
     find as find_attestations,
     record as record_attestation,
 )
-from app.initiatives.i8.coding_candidates import meets_confidence_threshold
+from app.initiatives.i8.coding_candidates import (
+    CandidateSource,
+    meets_confidence_threshold,
+)
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.material_number import is_eighty_series, normalise
 from app.initiatives.i8.register import RepairLine
@@ -658,6 +661,36 @@ def get_exceptions(
 # --- W5.5: coding candidates -----------------------------------------------
 
 
+def _parse_sources(raw: str | None) -> tuple[str, ...] | None:
+    """A comma-separated ``sources`` query into the tuple the screen wants.
+
+    None means "take the configured default", which is not the same as an
+    empty list. An unrecognised name raises rather than being dropped: a typo
+    in a query string is a caller's mistake and should be told to them, unlike
+    a typo in a deployment setting, which must never stop the app from
+    starting.
+    """
+    if raw is None:
+        return None
+    names = tuple(part.strip().upper() for part in raw.split(",") if part.strip())
+    known = {s.value for s in CandidateSource}
+    unknown = [n for n in names if n not in known]
+    if unknown or not names:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Unknown coding-candidate source(s): {', '.join(unknown) or '(none given)'}. "
+                f"Valid: {', '.join(sorted(known))}."
+            ),
+        )
+    # De-duplicated, order preserved: PO,PO,PR is one PO read, not two.
+    seen: list[str] = []
+    for name in names:
+        if name not in seen:
+            seen.append(name)
+    return tuple(seen)
+
+
 @router.get(
     "/coding-candidates",
     response_model=CodingCandidateResponse,
@@ -694,6 +727,18 @@ def get_coding_candidates(
         alias="actionableOnly",
         description="Only MISCODED_REPAIRABLE and UNCLEAR -- the rows worth reading",
     ),
+    sources: str | None = Query(
+        None,
+        description=(
+            "Which free-text sources to read, comma separated: PO (EKPO.TXZ01), "
+            "PR (EBAN.TXZ01), MOVEMENT (MSEG.SGTXT). Defaults to "
+            "I8_CODING_CANDIDATE_SOURCES. MOVEMENT is off by default because "
+            "nobody has measured whether it finds anything PO and PR text do "
+            "not -- a 541 is already a part on its way to repair, so its "
+            "comments sit mostly on materials that ARE 80-series. Pass "
+            "sources=PO,PR,MOVEMENT and compare meta.linesBySource to settle it"
+        ),
+    ),
     corroborated_only: bool = Query(
         False,
         alias="corroboratedOnly",
@@ -723,7 +768,10 @@ def get_coding_candidates(
     truncated the run, and -- crucially -- WHICH PROVIDER answered. A `provider`
     of `stub` means no model judged anything and every verdict is UNSCREENED.
     """
-    result = get_coding_screen(db, snapshot, cfg, use_model=screen, limit=limit)
+    wanted = _parse_sources(sources)
+    result = get_coding_screen(
+        db, snapshot, cfg, use_model=screen, limit=limit, sources=wanted
+    )
     items = result.candidates
 
     if verdict:

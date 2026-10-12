@@ -508,8 +508,9 @@ def coding_candidate_item(
         plants=list(candidate.plants),
         lines=[
             CodingCandidateLine(
-                purchasing_document=line.purchasing_document,
-                item=line.item,
+                source=line.source,
+                document=line.document,
+                document_item=line.document_item,
                 plant=plant_reference(line.plant, cfg),
                 short_text=line.short_text,
                 matched_keywords=list(line.matched),
@@ -538,8 +539,14 @@ def coding_candidate_item(
 
 def coding_candidate_meta(stats: ScreenStats) -> CodingCandidateMeta:
     return CodingCandidateMeta(
+        sources=list(stats.sources),
         lines_with_text=stats.lines_with_text,
+        lines_with_text_by_source=dict(stats.lines_with_text_by_source),
         lines_with_repair_language=stats.lines_with_repair_language,
+        lines_by_source=dict(stats.lines_by_source),
+        deleted_requisitions_dropped=stats.deleted_requisitions_dropped,
+        converted_requisitions_dropped=stats.converted_requisitions_dropped,
+        verdicts_reused=stats.verdicts_reused,
         lines_already_eighty_series=stats.lines_already_eighty_series,
         lines_without_material=stats.lines_without_material,
         lines_screened=stats.lines_screened,

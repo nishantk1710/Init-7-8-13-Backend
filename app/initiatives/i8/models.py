@@ -148,3 +148,93 @@ class RepairAttestation(Base):
             f"<RepairAttestation {self.id} {self.material_id}@{self.plant} "
             f"{self.recommendation} by {self.attestor}>"
         )
+
+
+# --- W5.5: the coding screen's verdicts -----------------------------------
+
+
+class CodingVerdict(Base):
+    """One model verdict about one material's text, kept so it is not re-bought.
+
+    Why this table exists
+    ---------------------
+    The screen costs roughly six seconds per material, strictly sequential, and
+    it ran entirely in process memory. Three things followed from that, and all
+    three were defects rather than trade-offs:
+
+    * a restart lost every verdict, so the screen reported UNSCREENED again;
+    * a SAP reload did not clear it, so verdicts outlived the text they judged;
+    * with more than one worker, two requests could see different answers.
+
+    What it is NOT
+    --------------
+    **Not an audit record.** :class:`RepairAttestation` above is immutable
+    because it records what a person judged; this records what a model said,
+    and a later run with a better model SHOULD replace it. So a row here is
+    updated in place, and nothing chains.
+
+    It is a cache with a correctness rule, and the rule is
+    :attr:`text_fingerprint`.
+
+    The fingerprint, and why it is the key
+    --------------------------------------
+    A verdict is only about the words it was shown. Keying on the material
+    alone would serve a stale judgement after somebody re-worded the PO line --
+    the exact case the screen exists to catch. Keying on the material AND a
+    digest of its distinct texts means a reload re-screens the materials whose
+    text moved and reuses the rest, which is what makes a four-minute run
+    affordable after the first one.
+
+    UNSCREENED is never stored. A stub run, a missing credential and an
+    unreadable reply all produce it, and persisting any of them would turn "no
+    model has looked at this" into a cached answer -- the one failure this
+    module is built to avoid.
+    """
+
+    __tablename__ = "i8_coding_verdict"
+
+    id: Mapped[str] = mapped_column(
+        String(32), primary_key=True, default=lambda: uuid.uuid4().hex
+    )
+
+    material_id: Mapped[str] = mapped_column(String(40), index=True)
+    """Normalised, the same as everywhere else in I08 (ruling 5.1)."""
+
+    text_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    """SHA-256 of this material's distinct texts, normalised and ordered.
+    See :func:`app.initiatives.i8.coding_candidates.text_fingerprint`."""
+
+    # --- what the model said ---------------------------------------------
+
+    verdict: Mapped[str] = mapped_column(String(32), index=True)
+    """Never ``UNSCREENED`` -- see the class docstring."""
+
+    confidence: Mapped[str] = mapped_column(String(16), default="")
+    reason: Mapped[str] = mapped_column(Text, default="")
+
+    # --- who answered, so a verdict can be re-judged later ----------------
+
+    model: Mapped[str] = mapped_column(String(128), default="")
+    provider: Mapped[str] = mapped_column(String(32), default="")
+    """``foundry`` / ``openai``. Stored so that when the deployment changes,
+    the verdicts produced by the old one can be found and re-run."""
+
+    prompt_version: Mapped[int | None] = mapped_column(nullable=True)
+    """Which registry prompt version produced it. Same reason as ``provider``:
+    a prompt change invalidates judgements the old prompt made."""
+
+    screened_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    __table_args__ = (
+        # One verdict per (material, exact text). The upsert depends on it, and
+        # without it a race between two workers leaves two rows and the screen
+        # picks whichever the database returns first.
+        Index(
+            "uq_i8_coding_verdict_material_text",
+            "material_id",
+            "text_fingerprint",
+            unique=True,
+        ),
+    )
