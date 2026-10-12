@@ -420,7 +420,7 @@ def list_sessions(
             )
         )
 
-    attach_material_names(db, items, field="material_id")
+    attach_material_names(items, field="material_id")
     return SessionListResponse(
         items=items,
         total=len(items),
@@ -516,7 +516,7 @@ def get_session(session_id: str, db: DbDep) -> SessionTraceResponse:
         linked_reservations=[_linked_model(l) for l in links],
         linkage_note=LINKED_NOTE if links else LINKAGE_NOTE,
     )
-    attach_material_names(db, [trace], field="material_id")
+    attach_material_names([trace], field="material_id")
     return trace
 
 

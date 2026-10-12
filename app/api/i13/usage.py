@@ -19,10 +19,8 @@ rebuild per request without it.
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy.orm import Session
 
 from app.api.i13.deps import page, require_snapshot, with_material_names
-from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.snapshot import GrniEntry, I13Snapshot, MonthlyConsumption
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
@@ -72,7 +70,6 @@ def list_grni(
     include_out_of_scope: bool = Query(False, description="Include non-OAR (Min-Max/Excluded) materials."),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db),
     snapshot: I13Snapshot | SqlSnapshot = Depends(_require_snapshot),
     config: I13Config = Depends(get_i13_config),
 ) -> list[GrniEntryResponse]:
@@ -158,7 +155,6 @@ def list_usage_patterns(
     include_out_of_scope: bool = Query(False, description="Include non-OAR (Min-Max/Excluded) materials."),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db),
     snapshot: I13Snapshot | SqlSnapshot = Depends(_require_snapshot),
 ) -> list[UsagePatternResponse]:
     """Material-plants with any movement history, most issued first.
