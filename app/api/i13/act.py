@@ -20,7 +20,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
-from app.api.i13.deps import Actor, get_current_actor, get_data_dir, page, snapshot_or_live
+from app.api.i13.deps import Actor, get_current_actor, get_data_dir, page, snapshot_or_live, with_material_names
 from app.core.db import get_db
 from app.initiatives.i13.act.domain import ExceptionStatus, ExceptionType
 from app.initiatives.i13.act.service import (
@@ -76,6 +76,7 @@ def _parse_enum(enum_cls, raw: str | None, field_name: str):
 
 
 @router.get("/utilisation", response_model=list[WatchMetricResponse])
+@with_material_names()
 def list_act_utilisation(
     response: Response,
     plant: str | None = Query(None),
@@ -153,6 +154,7 @@ def get_act_utilisation(
 
 
 @router.get("/exceptions", response_model=list[ActExceptionResponse])
+@with_material_names()
 def list_act_exceptions(
     response: Response,
     plant: str | None = Query(None),
@@ -188,6 +190,7 @@ def list_act_exceptions(
 
 
 @router.get("/confirmations", response_model=list[ActConfirmationWithExceptionResponse])
+@with_material_names(lambda row: row.exception)
 def list_act_confirmations(
     response: Response,
     plant: str | None = Query(None),
