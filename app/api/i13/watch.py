@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
-from app.api.i13.deps import get_data_dir, page, snapshot_or_live
+from app.api.i13.deps import get_data_dir, page, snapshot_or_live, with_material_names
 from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.snapshot import I13Snapshot
@@ -21,6 +21,7 @@ router = APIRouter()
 
 
 @router.get("/watch", response_model=list[WatchMetricResponse])
+@with_material_names()
 def list_watch_metrics(
     response: Response,
     plant: str | None = Query(None),

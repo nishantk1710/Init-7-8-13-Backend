@@ -25,6 +25,10 @@ class ActExceptionResponse(BaseModel):
     status: ExceptionStatus
 
     material: str
+
+    material_description: str | None = None
+
+    """MAKT / ZMM065 name, where either has one -- see app.shared.material_names."""
     plant: str
 
     reservation_number: str | None
