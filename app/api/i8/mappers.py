@@ -368,22 +368,24 @@ def attestation_item(
     superseded_by: str | None = None,
     covers_repair_lines: list[str] | None = None,
     coverage_note: str | None = None,
+    description: str | None = None,
 ) -> Attestation:
     """One stored attestation.
 
     ``superseded_by`` is passed in rather than followed from the row, because
     resolving it per row is a query per attestation. The caller already has the
     whole list and can build the reverse index once.
+
+    ``description`` is the caller's to look up, at read time, from the
+    repairable universe. The attestation table does not carry one, and copying
+    it in at write time would freeze a description that lives somewhere else.
     """
     return Attestation(
         id=row.id,
         material=MaterialReference(
             material_id=row.material_id,
             material_code=row.material_id,
-            # No description here on purpose: the attestation table does not
-            # carry one, and copying it from the register at write time would
-            # freeze a description that lives somewhere else.
-            description=None,
+            description=description,
         ),
         plant=plant_reference(row.plant, cfg),
         quantity=row.quantity,

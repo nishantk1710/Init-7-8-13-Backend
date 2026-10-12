@@ -514,6 +514,8 @@ def post_attestation(
 def get_attestations(
     db: DbDep,
     cfg: SettingsDep,
+    view: AttestationViewDep,
+    snapshot: SnapshotDep,
     material_id: str | None = Query(
         None, alias="materialId", description="Material number, padded or not"
     ),
@@ -537,9 +539,23 @@ def get_attestations(
     # Reverse index built once rather than a query per row.
     superseded_by = {r.supersedes: r.id for r in rows if r.supersedes}
 
+    # What each attestation covers, read off the cached queue rather than
+    # re-matched per row: the Declarations screen and the register's
+    # Declaration status are then one answer, not two. A superseded attestation
+    # takes no part in matching, so it reads as covering nothing.
+    covers = view.coverage.lines_by_attestation()
+    descriptions = {u.material_id: u.description for u in snapshot.universe if u.description}
+
     return AttestationResponse(
         items=[
-            attestation_item(r, cfg, superseded_by=superseded_by.get(r.id)) for r in rows
+            attestation_item(
+                r,
+                cfg,
+                superseded_by=superseded_by.get(r.id),
+                covers_repair_lines=covers.get(r.id, []),
+                description=descriptions.get(r.material_id),
+            )
+            for r in rows
         ],
         total=len(rows),
         # Served with the data so a form does not hard-code VZI's vocabulary.

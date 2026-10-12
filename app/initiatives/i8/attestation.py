@@ -329,6 +329,24 @@ class AttestationCoverage:
     def checked(self) -> int:
         return len(self.covered) + len(self.uncovered)
 
+    def lines_by_attestation(self) -> dict[str, list[str]]:
+        """Attestation id -> the register line ids (``{EBELN}-{EBELP}``) it covers.
+
+        The same answer the declaration queue gives, read the other way round:
+        an inversion of ``covered``, not a second run of the window rule. So the
+        Declarations screen's "matched to repair PO" can never disagree with the
+        register's Declaration status for the same line.
+
+        An attestation absent from the result covers nothing -- no repair line
+        for its part yet, which is the normal case for a part declared before
+        it is sent anywhere. Where two attestations fit one line, the line
+        counts once, under the one ``covered`` holds.
+        """
+        result: dict[str, list[str]] = {}
+        for (document, item), attestation in sorted(self.covered.items()):
+            result.setdefault(attestation.id, []).append(f"{document}-{item}")
+        return result
+
 
 def _within_window(
     attested_at: datetime, raised_at: date | None, window: timedelta
