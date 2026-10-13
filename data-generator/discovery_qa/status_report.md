@@ -1,19 +1,27 @@
-# VZI CPI OData status, 2026-09-28T08:41:07Z
+# VZI CPI OData status, 2026-10-13T07:17:36Z
 
-Run mode: --fields --out ./discovery_qa
+Run mode: --out data-generator/discovery_qa --label QA --env-file .env --skip-probes --skip-profiles
 
-Calls: 2  |  failures: 2  |  total elapsed: 10s
+Calls: 329  |  failures: 146  |  total elapsed: 324s
 
 ## Services
-- ZMM_KPI02_ADD_SRV: $metadata returned HTTP 500 - service unreachable, every dependent check below is unevidenced.
-- ZMM_KPI02_TAB_SRV: $metadata returned HTTP 500 - service unreachable, every dependent check below is unevidenced.
+- ZMM_KPI02_ADD_SRV: reachable, 14 entity sets in $metadata.
+- ZMM_KPI02_TAB_SRV: reachable, 7 entity sets in $metadata.
+
+## Defects
+- B1: /$count succeeded on every reachable set - the defect appears FIXED.
+- F1: 1 of 157 tested properties silently ignore $filter. Previously 85 of 230.
+- R1 (ReservationItemSet priority fix): 0 ignored propert(ies) - appears FIXED.
 
 ## Field exposure
-- 0 FRS-required field(s) absent from the projection; 0 newly exposed since the FRS; 0 regression(s).
+- 2 FRS-required field(s) absent from the projection; 7 newly exposed since the FRS; 0 regression(s).
 
 ## Slowest calls (W8.1 performance baseline)
-- 5.3s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/$metadata  
-- 4.6s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/$metadata  
+- 59.6s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet/$count  
+- 28.0s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count  
+- 18.1s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet/$count  $filter=Ebeln eq 'ZZ~NOPE'
+- 16.6s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet/$count  $filter=Ebelp eq 'ZZ~NOPE'
+- 16.4s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count  
 
 ## Confirmed defect register
 

@@ -453,8 +453,11 @@ class Settings(BaseSettings):
     # does not pay for it. Off in tests, where the first use builds it lazily.
     i13_snapshot_warm_on_startup: bool = True
     # How often (seconds, at most) the fingerprint is re-checked for a reseed
-    # or a new day. One cheap grouped query over ingestion_run.
-    i13_snapshot_check_interval_seconds: int = 60
+    # or a new day. One cheap grouped query over ingestion_run -- but every
+    # delta cycle writes ingestion_run, so a change it finds is a full rebuild
+    # (~78 minutes on the "sql" store over the production extract). Hourly,
+    # to match DELTA_INTERVAL_MINUTES: at most one rebuild per delta cycle.
+    i13_snapshot_check_interval_seconds: int = 3600
     # ISO date to measure every snapshot metric as of. Empty = today, the date
     # every live route has always used (plan decision D1 left open).
     i13_snapshot_reference_date: str = ""
@@ -494,8 +497,9 @@ class Settings(BaseSettings):
     # reload or a new day. One cheap grouped query over ingestion_run. The
     # rebuild it triggers is a background one -- the current snapshot keeps
     # serving -- so this is how long a reload stays invisible, not how long a
-    # request waits.
-    i8_snapshot_check_interval_seconds: int = 60
+    # request waits. Hourly, like I13's: each delta cycle writes ingestion_run,
+    # and checking more often than the deltas arrive only finds them sooner.
+    i8_snapshot_check_interval_seconds: int = 3600
 
     # Session <-> reservation linking (app/initiatives/i13/session_link.py).
     # The requester types the assistant's session ID into the reservation's item

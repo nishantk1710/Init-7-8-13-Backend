@@ -565,7 +565,9 @@ def test_a_direct_delta_filters_on_its_date(storage, no_watermark_io) -> None:
         run_date=RUN_DATE, mode="delta", since="2026-09-01T00:00:00", parent_keys=[],
     )
 
-    assert client.filters == ["Aedat ge datetime'2026-09-01T00:00:00'"]
+    # EKKO.Aedat is Edm.String since the 2026-10 transport: a datetime literal
+    # is HTTP 400, the DATS text is honoured (delta_support.csv).
+    assert client.filters == ["Aedat ge '20260901'"]
 
 
 def test_a_text_date_delta_sends_its_measured_shape(storage, no_watermark_io) -> None:
