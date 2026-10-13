@@ -306,12 +306,25 @@ def start_up(after: threading.Thread | None = None) -> None:
     start_background_build("start-up")
 
 
+def too_soon(built_at: datetime | None, now: datetime, gap_minutes: int) -> timedelta | None:
+    """How much longer the rebuild gap holds, or None when a build may start.
+
+    Pure, for the tests. ``built_at`` is when the served version was built;
+    a store with nothing served has no gap to keep.
+    """
+    if built_at is None or gap_minutes <= 0:
+        return None
+    if built_at.tzinfo is None:
+        built_at = built_at.replace(tzinfo=timezone.utc)
+    remaining = built_at + timedelta(minutes=gap_minutes) - now
+    return remaining if remaining > timedelta(0) else None
+
+
 def check_fingerprint(db: Session, *, min_interval_seconds: float | None = None) -> bool:
     from app.initiatives.i13.snapshot import compute_fingerprint
 
-    interval = (
-        get_settings().i13_snapshot_check_interval_seconds if min_interval_seconds is None else min_interval_seconds
-    )
+    settings = get_settings()
+    interval = settings.i13_snapshot_check_interval_seconds if min_interval_seconds is None else min_interval_seconds
     with _lock:
         if _building_here() or time.monotonic() - _state.last_check < interval:
             return False
@@ -324,6 +337,17 @@ def check_fingerprint(db: Session, *, min_interval_seconds: float | None = None)
     waiting = _pull_in_progress(db)
     if waiting:
         logger.info("I13 store: data changed; waiting for the pull to finish (%s)", waiting)
+        return False
+    remaining = too_soon(
+        run.built_at if run is not None else None, datetime.now(timezone.utc), settings.i13_rebuild_min_gap_minutes
+    )
+    if remaining is not None:
+        # Automatic builds only: a manual refresh goes through
+        # start_background_build directly and is not held back.
+        logger.info(
+            "I13 store: data changed; serving v%s until the rebuild gap passes (%d min left of %d)",
+            run.version, int(remaining.total_seconds() // 60) + 1, settings.i13_rebuild_min_gap_minutes,  # type: ignore[union-attr]
+        )
         return False
     return start_background_build("data changed")
 

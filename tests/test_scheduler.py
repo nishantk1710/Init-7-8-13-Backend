@@ -5,6 +5,7 @@ Everything the cycle calls is stubbed; the sequencing is what is tested.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -50,6 +51,82 @@ class _Fake:
         monkeypatch.setattr(csv_load, "load_all", load_all)
         monkeypatch.setattr(fetch, "fetch_set", fetch_set)
         monkeypatch.setattr(load, "load_set", load_set)
+
+
+class TestSnapshotRefreshAfterDelta:
+    """A cycle that loaded rows asks the snapshots to check their fingerprints;
+    one that loaded nothing, or is switched off, leaves them to their watchers."""
+
+    @staticmethod
+    def _tick_with(monkeypatch, summary: dict, *, enabled: bool = True) -> list[str]:
+        asked: list[str] = []
+
+        class _Lock:
+            def acquire(self) -> bool:
+                return True
+
+            def release(self) -> None:
+                pass
+
+        monkeypatch.setattr(scheduler, "_Lock", _Lock)
+        monkeypatch.setattr(scheduler, "run_delta_cycle", lambda: summary)
+        monkeypatch.setattr(scheduler, "_schedule_snapshot_refresh", lambda trigger: asked.append(trigger))
+        monkeypatch.setattr(
+            scheduler, "get_settings",
+            lambda: type("S", (), {"snapshot_refresh_after_delta": enabled})(),
+        )
+        asyncio.run(scheduler._tick("timer"))
+        return asked
+
+    def test_a_cycle_that_loaded_rows_asks_for_a_check(self, monkeypatch) -> None:
+        summary = {"fetched": 7, "loaded": 7, "rows": 1200, "failed": 0, "skipped": 14, "errors": []}
+        assert self._tick_with(monkeypatch, summary) == ["timer"]
+
+    def test_a_cycle_that_loaded_nothing_does_not(self, monkeypatch) -> None:
+        summary = {"fetched": 0, "loaded": 0, "rows": 0, "failed": 1, "skipped": 0, "errors": ["delta cycle refused: x"]}
+        assert self._tick_with(monkeypatch, summary) == []
+
+    def test_switched_off_leaves_it_to_the_watchers(self, monkeypatch) -> None:
+        summary = {"fetched": 7, "loaded": 7, "rows": 1200, "failed": 0, "skipped": 14, "errors": []}
+        assert self._tick_with(monkeypatch, summary, enabled=False) == []
+
+    def test_a_pending_refresh_absorbs_a_second_request(self, monkeypatch) -> None:
+        """Two cycles inside the settle wait share one check, which sees both."""
+        created: list[str] = []
+
+        async def run() -> None:
+            async def never(trigger: str) -> None:
+                created.append(trigger)
+                await asyncio.sleep(3600)
+
+            monkeypatch.setattr(scheduler, "_refresh_snapshots_after_delta", never)
+            scheduler._refresh_task = None
+            scheduler._schedule_snapshot_refresh("timer")
+            scheduler._schedule_snapshot_refresh("event: PR 1")
+            await asyncio.sleep(0)
+            assert created == ["timer"]
+            await scheduler.stop_event_runner()
+            assert scheduler._refresh_task is None
+
+        asyncio.run(run())
+
+    def test_the_checks_run_both_snapshots_and_survive_one_failing(self, monkeypatch) -> None:
+        from app.initiatives.i8 import service as i8_service
+        from app.initiatives.i13 import snapshot as i13_snapshot
+
+        class _Session:
+            def close(self) -> None:
+                pass
+
+        monkeypatch.setattr("app.core.db.get_sessionmaker", lambda: _Session)
+        monkeypatch.setattr(i13_snapshot, "check_fingerprint", lambda db, *, min_interval_seconds: True)
+
+        def boom(db, *, min_interval_seconds):
+            raise RuntimeError("I08 unavailable")
+
+        monkeypatch.setattr(i8_service, "check_source_fingerprint", boom)
+
+        assert scheduler.check_snapshots("timer") == {"I13": True, "I08": False}
 
 
 def test_the_cycle_runs_sweep_then_load_then_enrichment(monkeypatch) -> None:
