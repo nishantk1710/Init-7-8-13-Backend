@@ -511,9 +511,17 @@ def build_features(policy: PolicyDocument | None = None) -> FeatureBuildResult:
             batch: list[dict[str, Any]] = []
             built = 0
 
-            for row in session.execute(
+            # Fetched whole, then written: SQL Server refuses a write on a
+            # connection whose result is still being read ("Connection is busy
+            # with results for another command") unless MARS is in effect, and
+            # on Azure it was not -- the first nonprod feature build failed on
+            # its first batch, 13 Oct 2026. One row per staged material-plant
+            # (about 70,000), so holding them is cheap; staging reads the same
+            # way (see app.initiatives.i7.adapters.extract._read).
+            attribute_rows = session.execute(
                 text(_ATTRIBUTE_SQL), {"not_deleted": False}
-            ).yield_per(5000):
+            ).all()
+            for row in attribute_rows:
                 feature = _build_one(
                     row,
                     consumption,
