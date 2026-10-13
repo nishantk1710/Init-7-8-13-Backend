@@ -7,7 +7,7 @@ at start-up on a live database (startup.sh runs ``alembic upgrade head``).
 Portable constructs only -- this creates identically on Postgres and Azure SQL.
 
 Revision ID: e5b8a3c61d20
-Revises: c7d2e94a1f36
+Revises: e8b4d2c71a93
 Create Date: 2026-10-13 15:00:00.000000
 
 """
@@ -19,7 +19,9 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'e5b8a3c61d20'
-down_revision: Union[str, Sequence[str], None] = 'c7d2e94a1f36'
+# Re-pointed after main gained e8b4d2c71a93 (I08 attestation repair line);
+# this only creates a new table and depends on nothing that one changed.
+down_revision: Union[str, Sequence[str], None] = 'e8b4d2c71a93'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
