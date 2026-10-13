@@ -592,4 +592,6 @@ def coding_candidate_meta(stats: ScreenStats) -> CodingCandidateMeta:
         keywords=list(stats.keywords),
         provider=stats.provider,
         model=stats.model,
+        staged_rows_kept=stats.staged_rows_kept,
+        staged_rows_scanned=stats.staged_rows_scanned,
     )

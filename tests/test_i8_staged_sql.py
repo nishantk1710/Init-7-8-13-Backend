@@ -12,7 +12,8 @@ no database:
 * a call the inliner cannot handle is an error, not a silent pass-through.
 
 ``test_i8_staged_build.py`` then proves on SQL Server that the staged build
-returns what the views return.
+returns what the views return, and ``test_i8_coding_staged.py`` does the same
+for the FR-2 coding screen.
 """
 
 from __future__ import annotations
@@ -63,3 +64,75 @@ def test_in_scope_plant_is_inlined_with_the_module_plants() -> None:
 def test_a_call_it_cannot_inline_is_refused() -> None:
     with pytest.raises(ValueError, match="could not be inlined"):
         staged.inline_helpers("select dbo.sap_key(nullif(material, '')) from n_mara")
+
+
+class TestTheCodingNarrowingIsASuperset:
+    """The FR-2 screen's staging keeps every row its own predicate would match.
+
+    Staging is only safe if the narrowing is a SUPERSET of the query that runs
+    over it. For the coding screen the query is
+    ``upper(<view text>) LIKE '%STEM%' ESCAPE`` per configured stem, and the
+    narrowing is the same LIKE over the raw column the view reads. These pin
+    that they stay the same shape; ``test_i8_coding_staged.py`` proves the
+    rows agree on a real database.
+    """
+
+    def test_every_configured_stem_appears_in_the_narrowing(self) -> None:
+        from app.initiatives.i8.config import get_i8_settings
+
+        cfg = get_i8_settings()
+        sql = staged._mentions("short_text", cfg)
+        for stem in cfg.repair_language_list:
+            assert stem.upper() in sql, f"{stem!r} would be staged away before the screen saw it"
+
+    def test_it_matches_on_upper_like_the_screen_does(self) -> None:
+        from app.initiatives.i8.config import get_i8_settings
+
+        # The screen's text_column is upper(...); a narrowing that compared raw
+        # text would drop every lower-case hit before the screen ran.
+        sql = staged._mentions("short_text", get_i8_settings())
+        assert "UPPER(short_text)" in sql
+
+    def test_no_stems_keeps_nothing_rather_than_everything(self) -> None:
+        """``like_any`` renders ``1 = 0`` for no patterns -- the screen matches
+        nothing -- so the narrowing must agree rather than staging the lot."""
+
+        class NoStems:
+            repair_language_list = ()
+
+        assert staged._mentions("short_text", NoStems()) == "1 = 0"
+
+    def test_a_stem_with_a_wildcard_is_escaped(self) -> None:
+        """A keyword containing % or _ must narrow the search, not become a
+        wildcard -- the same rule config.repair_language_like_patterns keeps."""
+
+        class Odd:
+            repair_language_list = ("re%air",)
+
+        sql = staged._mentions("short_text", Odd())
+        assert r"RE\%AIR" in sql and "ESCAPE" in sql
+
+
+class TestTheCodingDenominator:
+    """The denominator counts the source, never the narrowed copy."""
+
+    def test_it_reads_the_normalised_table_not_a_staged_one(self) -> None:
+        for source, (_, table, _) in staged.CODING_SOURCES.items():
+            sql = staged.plain_text_total(source)
+            assert f"FROM {table}" in sql, source
+            assert "#i8" not in sql, f"{source}: the denominator must not read a staged copy"
+
+    def test_it_applies_the_view_s_own_predicates(self) -> None:
+        """The view is ``nullif(<raw>, '')`` over in-scope plants; counting the
+        table without both would not be the same number."""
+        for source, (_, _, column) in staged.CODING_SOURCES.items():
+            sql = staged.plain_text_total(source)
+            assert f"NULLIF({column}, '') IS NOT NULL" in sql, source
+            assert "plant" in sql, source
+
+    def test_it_calls_no_helper_function(self) -> None:
+        for source in staged.CODING_SOURCES:
+            assert not re.search(r"(?i)dbo\.\w+\(", staged.plain_text_total(source))
+
+    def test_an_unknown_source_has_no_plain_count(self) -> None:
+        assert staged.plain_text_total("NOT_A_SOURCE") is None
