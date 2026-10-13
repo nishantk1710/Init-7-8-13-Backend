@@ -530,6 +530,59 @@ def test_every_route_answers_the_same_from_either_store(both, monkeypatch) -> No
     assert one.status_code == 200 and one.json()["months"]
 
 
+def test_a_reage_answers_what_a_full_build_answers_on_the_new_day(both, db, monkeypatch) -> None:
+    """A new day re-ages the stored version (builder.reage) instead of
+    rebuilding it. Re-aged on a later date, every route must answer exactly what
+    a fresh build on that date answers -- past the GRNI threshold, the plan
+    grace, the aging bands and the 12-month window."""
+    from fastapi.testclient import TestClient
+
+    from app.initiatives.i13 import snapshot as snapshot_module
+    from app.initiatives.i13.snapshot import build_i13_snapshot
+    from app.initiatives.i13.snapshot_store import builder, lifecycle, work_tables
+    from app.main import app
+
+    _, stored = both
+    source = stored.run.version
+    monkeypatch.setenv("I13_SNAPSHOT_REFERENCE_DATE", "2027-03-15")
+    get_settings.cache_clear()
+
+    version = builder.reage(db, reason="re-age test", settings=get_settings())
+    assert version == source + 1
+    run = lifecycle.ready_run(db)
+    assert run.version == version and run.reference_date == date(2027, 3, 15)
+    # The work tables went with the version (the per-material refresh reads them).
+    names = {r[0] for r in db.execute(text("SELECT name FROM sys.tables WHERE name LIKE 'i13[_]w%'")).all()}
+    assert work_tables.WorkTables(version).mov in names and work_tables.WorkTables(source).mov not in names
+    # A second re-age on the same day has nothing to do.
+    assert builder.reage(db, reason="again", settings=get_settings()) == version
+
+    later = build_i13_snapshot(db)
+    db.commit()
+    client = TestClient(app)
+
+    def fetch(store: str) -> dict:
+        monkeypatch.setenv("I13_SNAPSHOT_STORE", store)
+        get_settings.cache_clear()
+        return {
+            url: (r.status_code, r.headers.get("x-total-count"), _strip_clocks(r.json()))
+            for url in ROUTES
+            for r in [client.get(url)]
+        }
+
+    with snapshot_module._lock:
+        snapshot_module._state.snapshot = later
+        snapshot_module._state.status = "ready"
+    try:
+        from_memory = fetch("memory")
+        from_sql = fetch("sql")
+    finally:
+        snapshot_module.reset_i13_snapshot()
+    for url in ROUTES:
+        assert from_memory[url][0] == 200, (url, from_memory[url])
+        assert from_sql[url] == from_memory[url], url
+
+
 # --- when the store builds ---------------------------------------------------------
 
 

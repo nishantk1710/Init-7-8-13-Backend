@@ -1,6 +1,7 @@
-"""Run one I13 snapshot build, as its own process.
+"""Run one I13 snapshot build or re-age, as its own process.
 
     python -m app.initiatives.i13.snapshot_store build --reason "data changed"
+    python -m app.initiatives.i13.snapshot_store reage --reason "new day"
 
 This is how the API starts a build (``lifecycle.start_background_build``): a
 separate process, not a thread in the web worker. A build reads and computes
@@ -10,9 +11,12 @@ killed the worker -- the website went down and the build was lost with it. As
 its own process the build can be as slow as it needs; if it dies, it dies alone,
 and the website keeps serving the last ready version.
 
+``reage`` brings the served version up to today without re-reading SAP
+(``builder.reage``): what a new day needs when the SAP data has not changed.
+
 Holds the build lock (``build_lock``) for its whole run. Exit codes:
 
-    0  built and made the served version
+    0  built (or re-aged) and made the served version
     1  the build failed (the run row carries the error)
     3  another build already holds the lock -- nothing done
 """
@@ -33,7 +37,7 @@ EXIT_FAILED = 1
 EXIT_LOCKED = 3
 
 
-def build(reason: str) -> int:
+def build(reason: str, *, reage: bool = False) -> int:
     from app.initiatives.i13.snapshot_store import builder
     from app.initiatives.i13.snapshot_store.build_lock import BuildLock
 
@@ -43,9 +47,12 @@ def build(reason: str) -> int:
         return EXIT_LOCKED
     db = get_sessionmaker()()
     try:
-        builder.build(db, reason=reason)
+        if reage:
+            builder.reage(db, reason=reason)
+        else:
+            builder.build(db, reason=reason)
         return EXIT_BUILT
-    except Exception:  # noqa: BLE001 -- builder.build logged it and recorded it on the run
+    except Exception:  # noqa: BLE001 -- builder logged it and recorded it on the run
         return EXIT_FAILED
     finally:
         db.close()
@@ -57,10 +64,14 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("build", help="build a new version of the stored I13 snapshot")
     run.add_argument("--reason", default="command line")
+    again = sub.add_parser("reage", help="bring the served version up to today without re-reading SAP")
+    again.add_argument("--reason", default="command line")
     arguments = parser.parse_args(argv)
     configure_logging(get_settings())
     if arguments.command == "build":
         return build(arguments.reason)
+    if arguments.command == "reage":
+        return build(arguments.reason, reage=True)
     return 2  # pragma: no cover - argparse rejects anything else
 
 
