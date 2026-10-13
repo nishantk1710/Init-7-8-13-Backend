@@ -55,7 +55,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Iterable, Iterator
 
-from sqlalchemy import bindparam, inspect, text, update
+from sqlalchemy import bindparam, inspect, select, text, update
 from sqlalchemy.orm import Session
 
 from app.core.db import get_sessionmaker
@@ -1161,16 +1161,154 @@ def deactivate_unseen(session: Session, staging_run_id: int) -> int:
 # --- Entry point -------------------------------------------------------
 
 
+#: The staging steps, in order: (label, StagingResult attribute, StagingRun
+#: column, function). Independent of each other -- each reads the raw layer on
+#: its own -- which is what lets a resumed run skip the ones already saved.
+_STEPS: tuple[tuple[str, str, str, Any], ...] = (
+    ("materials", "materials", "materials_staged", _stage_materials),
+    ("material-plants", "material_plants", "material_plants_staged", _stage_material_plants),
+    ("stock", "stock", "stock_staged", _stage_stock),
+    ("consumption", "consumption", "consumption_staged", _stage_consumption),
+    ("purchase orders", "purchase_orders", "purchase_orders_staged", _stage_purchase_orders),
+)
+
+#: Held for the life of a staging run (``sp_getapplock``, session-owned, so SQL
+#: Server lets go if the process dies). Holding it proves no other staging run
+#: is alive, which is what makes it safe to judge a ``running`` row dead.
+STAGING_LOCK = "spares_ai_i7_staging"
+
+STATUS_RUNNING = "running"
+
+ABANDONED = (
+    "abandoned: its process stopped (an App Service restart, a deploy or an OOM) "
+    "before the run finished; found by staging run {by}"
+)
+
+
+class _NoLock:
+    """Stand-in where there is no SQL Server to hold an application lock
+    (the SQLite tests). Every real deployment is Azure SQL."""
+
+    def acquire(self) -> bool:
+        return True
+
+    def release(self) -> None:
+        return None
+
+
+def _default_lock() -> Any:
+    from app.core.db import get_engine
+
+    if get_engine().dialect.name != "mssql":
+        return _NoLock()
+    from app.ingest.scheduler import _Lock
+
+    return _Lock(STAGING_LOCK)
+
+
+def _current_fingerprint(session: Session) -> str | None:
+    from app.initiatives.i7.watch import source_fingerprint
+
+    try:
+        return source_fingerprint(session) or None
+    except Exception:  # noqa: BLE001 -- lineage only; never fail staging over it
+        session.rollback()
+        return None
+
+
+def _claim_run(
+    session: Session,
+    *,
+    movement_types: str,
+    snapshot_complete: bool,
+    source_fingerprint: str | None,
+    resume: bool,
+) -> tuple[StagingRun, bool]:
+    """The run to write into, and whether it is a resumed one. The caller
+    holds the staging lock and commits.
+
+    **Resumed** when the newest run did not succeed, saved at least one step,
+    and read the same thing this run would: the same source fingerprint (both
+    known), the same consumption movement types and the same snapshot
+    completeness. Anything else starts a new run -- resuming across a reload of
+    the raw layer would mix two versions of the data in one run.
+
+    Every other run still marked ``running`` is dead (the lock proves it) and
+    is marked ``failed``, so it stops blocking the feature build, which refuses
+    to start while any staging run says ``running``.
+    """
+    newest = session.execute(select(StagingRun).order_by(StagingRun.id.desc()).limit(1)).scalars().first()
+    candidate = None
+    if (
+        resume
+        and newest is not None
+        and newest.status != STATUS_SUCCEEDED
+        and any(getattr(newest, column) for _, _, column, _ in _STEPS)
+        and source_fingerprint is not None
+        and newest.source_fingerprint == source_fingerprint
+        and (newest.consumption_movement_types or "") == movement_types
+        and bool(newest.snapshot_complete) == snapshot_complete
+    ):
+        candidate = newest
+
+    if candidate is not None:
+        run = candidate
+        run.status = STATUS_RUNNING
+        run.error = None
+        run.finished_at = None
+        session.flush()
+    else:
+        run = StagingRun(
+            source=SOURCE_NORMALISE_VIEWS,
+            status=STATUS_RUNNING,
+            consumption_movement_types=movement_types,
+            snapshot_complete=snapshot_complete,
+            source_fingerprint=source_fingerprint,
+        )
+        session.add(run)
+        session.flush()
+
+    stale = session.execute(
+        select(StagingRun).where(StagingRun.status == STATUS_RUNNING, StagingRun.id != run.id)
+    ).scalars().all()
+    now = datetime.now(timezone.utc)
+    for old in stale:
+        old.status = STATUS_FAILED
+        old.error = ABANDONED.format(by=run.id)
+        old.finished_at = now
+    if stale:
+        logger.warning(
+            "staging run %d: marked %d dead run(s) failed: %s",
+            run.id, len(stale), ", ".join(str(old.id) for old in stale),
+        )
+    return run, candidate is not None
+
+
 def stage_extract(
     policy: ExtractIngestionPolicy | None = None,
     *,
     snapshot_complete: bool = False,
     source_fingerprint: str | None = None,
+    resume: bool = True,
+    lock: Any = None,
 ) -> StagingResult:
     """Stage the SAP raw layer, through the normalise views, into canonical staging.
 
     Idempotent: running twice converges on the same state. Raw tables are only
     ever read.
+
+    **Each step is committed as it finishes**, together with its count on the
+    run row. Staging the full extract takes about an hour on the nonprod
+    database, and it used to be one transaction: every restart in that hour (a
+    deploy, a manual restart, Azure moving the app to another machine) rolled
+    the whole hour back -- nine runs in a row on 12-13 Oct 2026. Now a restart
+    costs the step in progress, and the next call **resumes** the interrupted
+    run from the first step not yet saved (``resume=False`` forces a fresh
+    run; see :func:`_claim_run` for when a run is resumable).
+
+    The run stays ``running`` until every step is saved, and the feature build
+    refuses to read a run in that state, so a partly staged run is never
+    built from.
 
     ``policy`` defaults to one carrying ``I7_PLANTS`` (app.core.config), so a
     normal run is scoped to the plants VZI named without every caller having
@@ -1183,55 +1321,83 @@ def stage_extract(
     gates the deactivation sweep and nothing else, and it **defaults False**:
     a caller that has not established the question's answer must not sweep.
     Only the daily CSV full refresh replaces ``raw_<table>`` whole
-    (``app.ingest.csv_load``), so only a run following one may pass True.
+    (``app.ingest.csv_load``), so only a run following one may pass True. The
+    sweep runs only after every step is saved, so a run that stops part-way
+    never sweeps.
 
-    ``source_fingerprint`` records which raw-layer load was read, for lineage.
+    ``source_fingerprint`` records which raw-layer load was read, for lineage;
+    when not given it is read from ``ingestion_run``, which is also what makes
+    a resume safe to judge.
     """
     if policy is None:
         from app.core.config import get_settings
 
         policy = ExtractIngestionPolicy(plants=get_settings().i7_plant_list)
+    lock = lock if lock is not None else _default_lock()
+    if not lock.acquire():
+        return StagingResult(
+            status=STATUS_FAILED,
+            error="another staging run holds the staging lock; it is already staging this data",
+        )
+
+    try:
+        return _stage_locked(policy, snapshot_complete, source_fingerprint, resume)
+    finally:
+        lock.release()
+
+
+def _stage_locked(
+    policy: ExtractIngestionPolicy,
+    snapshot_complete: bool,
+    source_fingerprint: str | None,
+    resume: bool,
+) -> StagingResult:
     session_factory = get_sessionmaker()
 
     with session_factory() as session:
-        run = StagingRun(
-            source=SOURCE_NORMALISE_VIEWS,
-            status="running",
-            consumption_movement_types=",".join(policy.consumption.all_movement_types),
+        fingerprint = source_fingerprint or _current_fingerprint(session)
+        run, resumed = _claim_run(
+            session,
+            movement_types=",".join(policy.consumption.all_movement_types),
             snapshot_complete=snapshot_complete,
-            source_fingerprint=source_fingerprint,
+            source_fingerprint=fingerprint,
+            resume=resume,
         )
-        session.add(run)
         session.commit()
         run_id = run.id
+        saved = {column: getattr(run, column) or 0 for _, _, column, _ in _STEPS}
+        rejected_before = run.rejected or 0
 
     result = StagingResult(run_id=run_id)
     rejections = _Rejections(run_id)
+    if resumed:
+        logger.info(
+            "staging run %d: resuming -- already saved: %s",
+            run_id,
+            ", ".join(f"{label} {saved[column]:,}" for label, _, column, _ in _STEPS if saved[column]),
+        )
 
     try:
         with session_factory() as session:
-            logger.info("staging run %d: materials", run_id)
-            result.materials = _stage_materials(session, run_id, policy, rejections)
+            for label, attribute, column, step in _STEPS:
+                if saved[column]:
+                    setattr(result, attribute, saved[column])
+                    logger.info("staging run %d: %s already saved (%d rows), skipped", run_id, label, saved[column])
+                    continue
+                logger.info("staging run %d: %s", run_id, label)
+                count = step(session, run_id, policy, rejections)
+                setattr(result, attribute, count)
+                rejections.flush(session)
+                stored = session.get(StagingRun, run_id)
+                setattr(stored, column, count)
+                stored.rejected = rejected_before + sum(rejections.counts.values())
+                # The step's rows and its count in one commit: a count on the
+                # run row means the step is saved, which is what resume reads.
+                session.commit()
+                logger.info("staging run %d: %s saved (%d rows)", run_id, label, count)
 
-            logger.info("staging run %d: material-plants", run_id)
-            result.material_plants = _stage_material_plants(session, run_id, policy, rejections)
-
-            logger.info("staging run %d: stock", run_id)
-            result.stock = _stage_stock(session, run_id, policy, rejections)
-
-            logger.info("staging run %d: consumption", run_id)
-            result.consumption = _stage_consumption(session, run_id, policy, rejections)
-
-            logger.info("staging run %d: purchase orders", run_id)
-            result.purchase_orders = _stage_purchase_orders(session, run_id, policy, rejections)
-
-            rejections.flush(session)
             result.rejections = dict(rejections.counts)
 
-            # After every staging write, before the run is marked succeeded, and
-            # in the same transaction as the rows it is judging: a sweep that
-            # committed separately could deactivate rows belonging to a staging
-            # pass that then failed and rolled back.
             if snapshot_complete:
                 result.deactivated = deactivate_unseen(session, run_id)
                 logger.info(
@@ -1247,18 +1413,10 @@ def stage_extract(
                     run_id,
                 )
 
-            session.commit()
-
-        with session_factory() as session:
             stored = session.get(StagingRun, run_id)
             stored.status = STATUS_SUCCEEDED
             stored.deactivated = result.deactivated
-            stored.materials_staged = result.materials
-            stored.material_plants_staged = result.material_plants
-            stored.stock_staged = result.stock
-            stored.consumption_staged = result.consumption
-            stored.purchase_orders_staged = result.purchase_orders
-            stored.rejected = result.rejected_total
+            stored.rejected = rejected_before + result.rejected_total
             stored.finished_at = datetime.now(timezone.utc)
             session.commit()
 
@@ -1271,7 +1429,7 @@ def stage_extract(
             result.stock,
             result.consumption,
             result.purchase_orders,
-            result.rejected_total,
+            rejected_before + result.rejected_total,
         )
         return result
 
