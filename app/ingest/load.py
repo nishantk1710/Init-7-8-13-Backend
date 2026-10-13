@@ -323,6 +323,9 @@ def load_set(
 
     raw_note: str | None = None
     refused: str | None = None
+    # Whether the increment now sits in raw_<table>: the baseline a delta
+    # with no odata_<table> yet still has (below).
+    raw_merged = False
     if merge_raw:
         merged = raw_merge.merge_landed(spec, prefix, storage=storage)
         if merged.status == raw_merge.REFUSED:
@@ -331,6 +334,7 @@ def load_set(
             if not allow_unstable:
                 return failure(refused)
         else:
+            raw_merged = merged.status == raw_merge.MERGED
             raw_note = (
                 f"{merged.table}: {merged.detail}" if merged.status == raw_merge.SKIPPED
                 else f"{merged.table}: {merged.updated} changed of {merged.matched} matched, "
@@ -356,15 +360,29 @@ def load_set(
                 merging = strategy == "merge" and _table_exists(
                     cursor, spec.raw_table
                 )
-                if strategy == "merge" and not merging:
-                    # A delta with nothing to merge into. Loading it as a
-                    # replace would leave a table holding only the increment
-                    # and looking complete, which is the worst of both.
+                if strategy == "merge" and not merging and not raw_merged:
+                    # A delta with nothing to merge into anywhere. Loading it
+                    # as a replace would leave a table holding only the
+                    # increment and looking complete, which is the worst of
+                    # both.
                     return failure(
                         f"{spec.raw_table} does not exist, so this delta has "
                         "nothing to merge into. Run a full pull first: "
                         f"python -m app.ingest --fetch --load --full "
                         f"--set {spec.name}"
+                    )
+                if strategy == "merge" and not merging:
+                    # The increment is already where the pages read: the CSV
+                    # route's raw_<table>, merged into above. odata_<table> is
+                    # the OData archive beside it and starts here, from this
+                    # increment; every later cycle merges into it. It holds
+                    # what OData has delivered since this run, not the whole
+                    # set -- raw_<table> is the whole set.
+                    logger.info(
+                        "%s: %s does not exist yet; creating it from this "
+                        "increment. The baseline it was merged into is %s.",
+                        spec.name, spec.raw_table,
+                        raw_merge.raw_table_for(spec).raw_table,  # type: ignore[union-attr]
                     )
 
                 if merging and not expected:

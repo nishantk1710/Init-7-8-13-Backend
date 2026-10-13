@@ -188,8 +188,9 @@ def _parser() -> argparse.ArgumentParser:
             "read only what changed since the stored watermark. With --all, "
             "only the sets whose delta can run (the rest belong to the CSV "
             "route); with --set, a set with no delta falls back to a full "
-            "pull and says so. A set whose odata_ table does not exist yet is "
-            "pulled in full once, to build the baseline."
+            "pull and says so. A set with neither a CSV-loaded raw_ table nor "
+            "an odata_ table to merge into is pulled in full once, to build "
+            "the baseline."
         ),
     )
     parser.add_argument(
@@ -714,7 +715,7 @@ def main(argv: list[str] | None = None) -> int:
                     if outcome.load is not None and outcome.load.raw:
                         print(f"  {outcome.name}: raw {outcome.load.raw}")
             for name in report.baselined:
-                print(f"  {name}: no odata_ table yet, pulled in full to build it")
+                print(f"  {name}: no raw_ or odata_ table with rows yet, pulled in full to build the baseline")
             for name, mark in report.advanced.items():
                 print(f"  {name}: watermark -> {mark}")
             for name, why in report.held.items():
