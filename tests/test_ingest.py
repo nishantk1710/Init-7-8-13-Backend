@@ -423,7 +423,7 @@ class _FakeEngine:
         yield self._Conn()
 
 
-def _land_increment(storage, monkeypatch):
+def _land_increment(storage, monkeypatch, rows=({"Ebeln": "4500000001", "Aedat": "20261010"},)):
     """A PurchaseOrderSet delta landed with load_strategy=merge, and the
     database stubbed out: no odata_ table, merge into raw_ekko MERGED."""
     from app.ingest import raw_merge
@@ -432,7 +432,7 @@ def _land_increment(storage, monkeypatch):
     monkeypatch.setattr(fetch_mod, "get_watermark", lambda *a, **k: "2026-10-08")
     monkeypatch.setattr(fetch_mod, "set_watermark", lambda *a, **k: None)
     landed = fetch_mod.fetch_set(
-        po, root="odata", client=StubClient(StubExtract([{"Ebeln": "4500000001", "Aedat": "20261010"}])),
+        po, root="odata", client=StubClient(StubExtract(list(rows))),
         storage=storage, run_date=RUN_DATE, mode="delta", parent_keys=[],
     )
     assert fetch_mod.read_manifest(storage, landed.prefix)["load_strategy"] == "merge"
@@ -464,6 +464,22 @@ def test_an_increment_with_a_csv_baseline_creates_the_odata_table_from_itself(st
     assert _FakeWriter.loaded == [("odata_purchase_order", 1)]
     assert "raw_ekko: 0 changed of 0 matched, 1 inserted" in result.raw
     assert recorded == [(1, load_mod.STATUS_SUCCEEDED)]
+
+
+def test_an_empty_increment_loads_without_a_data_file(storage, monkeypatch) -> None:
+    """The Data Lake writes no object for an empty upload (POHistorySet,
+    2026-10-13). A fetch that found nothing must still load cleanly: the
+    odata_ table is created empty and nothing is read."""
+    po, recorded = _land_increment(storage, monkeypatch, rows=())
+    for key in [k for k in storage.objects if k.endswith("/data.jsonl")]:
+        del storage.objects[key]  # what ADLS left: a manifest, no data file
+
+    result = load_mod.load_set(po, root="odata", storage=storage)
+
+    assert result.status == load_mod.STATUS_SUCCEEDED, result.error
+    assert result.rows == 0
+    assert _FakeWriter.loaded == [("odata_purchase_order", 0)]
+    assert recorded == [(0, load_mod.STATUS_SUCCEEDED)]
 
 
 def test_an_increment_with_no_baseline_anywhere_is_still_refused(storage, monkeypatch) -> None:
