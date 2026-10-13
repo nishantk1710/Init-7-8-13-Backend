@@ -20,6 +20,7 @@ from app.api.i13 import movement_metrics as movement_metrics_routes
 from app.api.i13 import procurement_chain as procurement_chain_routes
 from app.api.i13 import quantity_suggestion as quantity_suggestion_routes
 from app.api.i13 import reclassification as reclassification_routes
+from app.api.i13 import report as report_routes
 from app.api.i13 import reservation_ledger as reservation_ledger_routes
 from app.api.i13 import validation as validation_routes
 from app.api.i13 import watch as watch_routes
@@ -77,6 +78,8 @@ router.include_router(quantity_suggestion_routes.router)
 router.include_router(usage_routes.router)
 # Session <-> reservation links via RESB.SGTXT, FR-4 compliance, UAT stand-in.
 router.include_router(session_link_routes.router)
+# The summary report over the screens above; 404 unless I13_REPORT_ENABLED.
+router.include_router(report_routes.router)
 
 # The raw extract tables I13 actually reads -- see app/seed/manifest.py for
 # the full delivery; this is the I13-relevant subset.

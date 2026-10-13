@@ -486,6 +486,11 @@ class Settings(BaseSettings):
     # sized extract, where the in-memory build no longer fits the App Service.
     # The routes answer the same either way.
     i13_snapshot_store: str = "memory"
+    # The I13 summary report (app/initiatives/i13/report/): a generated page
+    # summarising the four I13 screens, its words written by the configured AI
+    # provider. Off by default -- while off, its routes answer 404 and the
+    # frontend hides the button, so deploying the code changes nothing visible.
+    i13_report_enabled: bool = False
     # "sql" store only: how many distinct materials one build batch covers. A
     # batch is read, computed and written before the next one starts, so this
     # bounds the build's memory -- smaller is leaner and slower.

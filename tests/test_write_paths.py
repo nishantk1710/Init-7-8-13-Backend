@@ -102,6 +102,11 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "ZMM065 aging report, the reference validation reconciles against. "
         "Appended, never overwritten; raw_zmm065_* (criticality) is not touched."
     ),
+    ("/api/i13/reports/summary", "post"): (
+        "404 unless I13_REPORT_ENABLED: generates the I13 summary report -> "
+        "i13_summary_report, one row per report, never updated. Reads the "
+        "served snapshot; the only external call is the AI provider."
+    ),
     ("/api/i13/act/exceptions/{exception_id}/confirmation", "post"): (
         "Records a requester's confirmation and justification against an "
         "exception."
