@@ -19,14 +19,18 @@ cached, so a process that never touches the database never connects to one.
 """
 
 import contextlib
+import logging
+import time
 from collections.abc import Iterator
 from functools import lru_cache
 
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
+
+_logger = logging.getLogger(__name__)
 
 # The only backend this system runs against: Azure SQL (sqldb-aicom on
 # sql-vzi-aicom-nonprod-san). Local Postgres was a stand-in until VZI's database
@@ -126,7 +130,7 @@ def get_engine() -> Engine:
         "timeout": settings.database_connect_timeout_seconds
     }
 
-    return create_engine(
+    engine = create_engine(
         with_mars(settings.database_url),
         echo=settings.database_echo,
         # Azure SQL closes idle connections aggressively and the App Service can
@@ -139,6 +143,47 @@ def get_engine() -> Engine:
         future=True,
         connect_args=connect_args,
     )
+    event.listen(engine, "do_connect", _connect_with_retry)
+    return engine
+
+
+# --- retrying a connect that Azure SQL dropped ---------------------------------
+#
+# Azure SQL sometimes refuses or resets a connection while it is being set up:
+# a reconfiguration or failover, a serverless database waking, a burst of load
+# -- seen on 13 Oct 2026 as "TCP Provider: Error code 0x68 (104)" on a plain
+# page request. Microsoft's guidance is to retry these; they pass in seconds.
+# Only opening a connection is retried: nothing has been sent yet, so a retry
+# can never run a statement twice.
+
+#: SQLSTATEs of a connection that never opened (08001) or was cut (08S01),
+#: and the login timeout (HYT00).
+_TRANSIENT_STATES = frozenset({"08001", "08S01", "HYT00"})
+#: Azure SQL error numbers its documentation lists as transient.
+_TRANSIENT_CODES = ("40613", "40197", "40501", "49918", "49919", "49920", "4221", "10928", "10929", "10053", "10054", "10060")
+
+
+def is_transient(exc: BaseException) -> bool:
+    """Whether a failed connect is worth retrying. Pure, for the tests."""
+    args = getattr(exc, "args", ())
+    state = args[0] if args and isinstance(args[0], str) else ""
+    message = " ".join(str(a) for a in args)
+    return state in _TRANSIENT_STATES or any(code in message for code in _TRANSIENT_CODES)
+
+
+def _connect_with_retry(dialect, conn_rec, cargs, cparams):
+    settings = get_settings()
+    attempts = max(settings.database_connect_attempts, 1)
+    for attempt in range(1, attempts + 1):
+        try:
+            return dialect.connect(*cargs, **cparams)
+        except Exception as exc:
+            if attempt == attempts or not is_transient(exc):
+                raise
+            wait = settings.database_connect_retry_seconds * 2 ** (attempt - 1)
+            _logger.warning("Database connect failed (%s); retry %d of %d in %.0fs", exc, attempt, attempts - 1, wait)
+            time.sleep(wait)
+    return None  # pragma: no cover - the loop returns or raises
 
 
 @lru_cache

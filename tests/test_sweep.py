@@ -16,6 +16,8 @@ The family, as declared in manifest.DELTAS since 2026-10-07:
 
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 from app.ingest import manifest as manifest_mod
@@ -43,6 +45,8 @@ class Harness:
         self.fail_load: set[str] = set()
         self.rows = {PO: 3, ITEMS: 7, HIST: 2, SCHED: 4}
         self.keys = {HIST: ["4500000001", "4500000002"], ITEMS: ["4500000002", "4500000003"]}
+        # raw_<table> -> the day ingestion_run says it was loaded.
+        self.load_days: dict[str, date] = {}
 
         # The family is fully runnable here whatever SAP is doing today: these
         # tests are about sequencing, and a set blocked in known_conditions
@@ -54,6 +58,8 @@ class Harness:
         monkeypatch.setattr(sweep_mod, "fetch_set", self.fetch)
         monkeypatch.setattr(sweep_mod, "load_set", self.load)
         monkeypatch.setattr(sweep_mod, "set_watermark", self.advance)
+        monkeypatch.setattr(sweep_mod, "get_watermark", lambda name, field: self.marks.get(name))
+        monkeypatch.setattr(sweep_mod, "_load_day", lambda table: self.load_days.get(table))
 
     def resolve_windows(self, chosen, *, since=None):
         self.log.append(("windows",))
@@ -202,6 +208,44 @@ def test_with_neither_table_the_set_is_still_pulled_in_full(h) -> None:
     assert report.baselined == [HIST]
     assert h.fetched(HIST)[2] == "full"
     assert h.fetched(ITEMS)[2] == "delta"
+
+
+RAW_TABLES = {"raw_ekko", "raw_ekpo", "raw_ekbe", "raw_eket"}
+
+
+def test_a_set_with_rows_but_no_mark_starts_from_its_load_day(h) -> None:
+    """The 2026-10-09 migration filled raw_ekpo without seeding a mark. The
+    day ingestion_run says it was loaded, less three days, is the mark -- and
+    the set and the children reading through it run as increments."""
+    del h.marks[ITEMS]
+    h.tables = RAW_TABLES
+    h.load_days = {"raw_ekpo": date(2026, 10, 9)}
+    report = _run()
+    assert report.seeded == {ITEMS: "2026-10-06"}
+    assert h.fetched(ITEMS)[2:4] == ("delta", "2026-10-06")
+    assert h.fetched(SCHED)[2] == "delta" and h.fetched(PO)[2] == "delta"
+    assert [e for e in h.log if e[0] == "keys" and e[1] == ITEMS] == [("keys", ITEMS, "2026-10-06")]
+
+
+def test_a_mark_is_seeded_only_from_a_recorded_load(h) -> None:
+    """No ingestion_run row for the table: nothing honest to seed from. The
+    set is handed to fetch_set with no window, which is what makes the real
+    fetch_set pull it in full (tested in test_ingest)."""
+    del h.marks[ITEMS]
+    h.tables = RAW_TABLES
+    report = _run()
+    assert report.seeded == {}
+    assert h.fetched(ITEMS)[3] is None
+    assert not any(e[0] == "advance" and e[1] == ITEMS and e[2] != ADVANCED for e in h.log)
+
+
+def test_since_overrides_seeding(h) -> None:
+    del h.marks[ITEMS]
+    h.tables = RAW_TABLES
+    h.load_days = {"raw_ekpo": date(2026, 10, 9)}
+    report = _run(since="2026-09-01")
+    assert report.seeded == {}
+    assert h.fetched(ITEMS)[3] == "2026-09-01"
 
 
 def test_a_parent_with_no_mark_sends_its_children_to_a_full_pull(h) -> None:

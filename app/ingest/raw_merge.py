@@ -381,17 +381,17 @@ def merge(
             for column in added:
                 conn.execute(text(_add_column_sql(engine, table, column)))
 
-            # 1. Keys the CSV left blank, filled from OData where exactly one
-            #    incoming row can be theirs. Before the exact match below, so
-            #    a repaired row is then updated in place rather than inserted
-            #    a second time beside its blank-keyed twin.
-            repaired = _repair_blank_keys(conn, table, key_columns, by_key)
-
             meta = MetaData()
             stage = Table(staging, meta, *[Column(c, UnicodeText) for c in columns])
             stage.drop(conn, checkfirst=True)
             stage.create(conn)
             conn.execute(stage.insert(), list(by_key.values()))
+
+            # 1. Keys the CSV left blank, filled from OData where exactly one
+            #    incoming row can be theirs. Before the exact match below, so
+            #    a repaired row is then updated in place rather than inserted
+            #    a second time beside its blank-keyed twin.
+            repaired = _repair_blank_keys(conn, table, key_columns, staging)
 
             match = " AND ".join(f"s.{quote(k)} = t.{quote(k)}" for k in key_columns)
             unmatched = conn.execute(text(
@@ -491,27 +491,28 @@ def merge(
         return result
     except _GuardRefusal as exc:
         logger.error("%s: merge into %s refused -- %s", spec.name, table, exc)
-        _drop_staging(engine, f"{table}{STAGING_SUFFIX}")
+        _drop_staging(engine, f"{table}{STAGING_SUFFIX}", f"{table}{LOOSE_SUFFIX}")
         return MergeResult(table, REFUSED, detail=str(exc))
     except Exception as exc:
         detail = f"{type(exc).__name__}: {exc}"
         logger.error("%s: merge into %s failed -- %s", spec.name, table, detail)
-        _drop_staging(engine, f"{table}{STAGING_SUFFIX}")
+        _drop_staging(engine, f"{table}{STAGING_SUFFIX}", f"{table}{LOOSE_SUFFIX}")
         return MergeResult(table, REFUSED, detail=detail)
 
 
-def _drop_staging(engine: Engine, staging: str) -> None:
-    """Remove a staging table a failed merge may have left. Best effort.
+def _drop_staging(engine: Engine, *tables: str) -> None:
+    """Remove the scratch tables a failed merge may have left. Best effort.
 
-    The rollback removes it on SQL Server, where DDL is transactional; not
+    The rollback removes them on SQL Server, where DDL is transactional; not
     every driver does, and a stale staging table would be reused as-is by
     nothing but would sit in the schema looking like data.
     """
-    try:
-        with engine.begin() as conn:
-            Table(staging, MetaData()).drop(conn, checkfirst=True)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("could not drop %s after a failed merge (%s)", staging, exc)
+    for name in tables:
+        try:
+            with engine.begin() as conn:
+                Table(name, MetaData()).drop(conn, checkfirst=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("could not drop %s after a failed merge (%s)", name, exc)
 
 
 class _GuardRefusal(Exception):
@@ -534,9 +535,10 @@ def _blank(value: Any) -> bool:
     return value is None or str(value).strip() == ""
 
 
-def _repair_blank_keys(
-    conn, table: str, key_columns: list[str], incoming: dict[tuple, dict]
-) -> int:
+LOOSE_SUFFIX = "__odata_loose"
+
+
+def _repair_blank_keys(conn, table: str, key_columns: list[str], staging: str) -> int:
     """Fill key columns the CSV left blank, from the OData row that is theirs.
 
     Measured 2026-10-06: EKBE's CSV extract leaves GJAHR -- one of its seven
@@ -549,18 +551,52 @@ def _repair_blank_keys(
     incoming row agrees with no other blank-keyed row. Anything else is left
     alone -- an unrepaired row costs a duplicate the next CSV load removes; a
     wrong repair would graft one receipt's year onto another.
+
+    The candidates are found in SQL, from the staging table: the incoming keys
+    the table does not hold exactly ("loose"), then only the blank-keyed rows
+    that agree with one of those on every field they do have. Until 2026-10-13
+    this read every key of the table into the process -- 3.66 million rows,
+    seven columns, for EKBE, on every increment -- which on the App Service
+    is the memory the worker does not have. What comes back now is bounded
+    by the increment, and the decision on it is unchanged.
     """
-    blanks_sql = " OR ".join(f"{quote(k)} IS NULL OR {quote(k)} = ''" for k in key_columns)
+    target = quote(table)
+    stage = quote(staging)
+    loose_name = f"{table}{LOOSE_SUFFIX}"
+    loose_table = quote(loose_name)
+    exact = " AND ".join(f"t.{quote(k)} = s.{quote(k)}" for k in key_columns)
+    s_keys = ", ".join(f"s.{quote(k)}" for k in key_columns)
+    t_keys = ", ".join(f"t.{quote(k)}" for k in key_columns)
     key_list = ", ".join(quote(k) for k in key_columns)
-    blank_rows = conn.execute(
-        text(f"SELECT {key_list} FROM {quote(table)} WHERE {blanks_sql}")
-    ).fetchall()
-    if not blank_rows:
+
+    # 1. Incoming keys the table does not hold exactly.
+    loose_rows = conn.execute(text(
+        f"SELECT DISTINCT {s_keys} FROM {stage} s "
+        f"WHERE NOT EXISTS (SELECT 1 FROM {target} t WHERE {exact})"
+    )).fetchall()
+    loose = [tuple(row) for row in loose_rows]
+    if not loose:
         return 0
 
-    present = {tuple(row) for row in conn.execute(text(f"SELECT {key_list} FROM {quote(table)}"))}
-    loose = [key for key in incoming if key not in present]
-    if not loose:
+    # 2. Blank-keyed rows that agree with one of them on every key field they
+    #    do have. Through a scratch table of the loose keys, so the comparison
+    #    runs in the database rather than over every row in the process.
+    scratch = Table(loose_name, MetaData(), *[Column(c, UnicodeText) for c in key_columns])
+    scratch.drop(conn, checkfirst=True)
+    scratch.create(conn)
+    conn.execute(scratch.insert(), [dict(zip(key_columns, key)) for key in loose])
+    blanks_sql = " OR ".join(f"t.{quote(k)} IS NULL OR t.{quote(k)} = ''" for k in key_columns)
+    agree = " AND ".join(
+        f"(t.{quote(k)} = l.{quote(k)} OR t.{quote(k)} IS NULL OR t.{quote(k)} = '')" for k in key_columns
+    )
+    try:
+        blank_rows = conn.execute(text(
+            f"SELECT {t_keys} FROM {target} t WHERE ({blanks_sql}) "
+            f"AND EXISTS (SELECT 1 FROM {loose_table} l WHERE {agree})"
+        )).fetchall()
+    finally:
+        scratch.drop(conn)
+    if not blank_rows:
         return 0
 
     # Two blank-keyed rows identical on every key field cannot be told apart
@@ -675,6 +711,15 @@ def merge_landed(
             spec.raw_table, REFUSED,
             detail=f"the fetch at {prefix} is marked unusable "
                    f"(duplicate_keys={manifest.get('duplicate_keys')}, error={manifest.get('error')!r})",
+        )
+    if manifest.get("rows") == 0:
+        # An empty window. The Data Lake writes no object for an empty upload,
+        # so the data file may not exist -- and there is nothing to read from
+        # it either way. Merged, with nothing changed: the mark may advance.
+        target_spec = raw_table_for(spec)
+        return MergeResult(
+            target_spec.raw_table if target_spec else spec.raw_table, MERGED,
+            detail="the fetch carried no rows",
         )
     rows: list[dict[str, Any]] = []
     with storage.open_read(f"{prefix}/{manifest.get('data_file', DATA_FILE)}") as source:

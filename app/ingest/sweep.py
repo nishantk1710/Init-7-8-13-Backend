@@ -50,7 +50,9 @@ window the merge absorbs; advancing it costs rows.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, timedelta, timezone
 
+from app.core.db import get_sessionmaker
 from app.core.logging import get_logger
 from app.core.storage import Storage, get_storage
 from app.ingest.fetch import (
@@ -60,15 +62,92 @@ from app.ingest.fetch import (
     collect_parent_keys,
     fetch_order,
     fetch_set,
+    has_window,
     resolve_windows,
 )
 from app.ingest.load import STATUS_SUCCEEDED, LoadResult, load_set, table_has_rows
-from app.ingest.manifest import IngestSpec
+from app.ingest.manifest import IngestSpec, spec_for
 from app.ingest.raw_merge import raw_table_for
-from app.ingest.watermarks import set_watermark
+from app.ingest.watermarks import get_watermark, set_watermark
 from app.integrations.sap.client import SapClient
 
 logger = get_logger(__name__)
+
+# A mark seeded from a load date starts this many days before it. The extract
+# SAP wrote the file from was taken on or before the day it was loaded, so the
+# load day alone could miss the day before. Three days of re-reading is a
+# handful of rows the merge absorbs; a missed day is rows nobody asks for again.
+SEED_MARGIN_DAYS = 3
+
+
+def _load_day(raw_table: str) -> date | None:
+    """The day the CSV route's table was last loaded, from ``ingestion_run``.
+
+    Succeeded loads only: a failed one did not put the rows there.
+    """
+    from sqlalchemy import func, select
+
+    from app.models.ingestion import IngestionRun
+
+    with get_sessionmaker()() as session:
+        latest = session.execute(
+            select(func.max(IngestionRun.finished_at)).where(
+                IngestionRun.target_table == raw_table, IngestionRun.status == "succeeded"
+            )
+        ).scalar()
+    if latest is None:
+        return None
+    if latest.tzinfo is None:
+        latest = latest.replace(tzinfo=timezone.utc)
+    return latest.astimezone(timezone.utc).date()
+
+
+def seed_marks_from_load_dates(chosen) -> dict[str, str]:
+    """Give a set that has rows but no mark a starting point: the day its CSV
+    table was loaded, less SEED_MARGIN_DAYS. Returns ``{set: mark}``.
+
+    The CSV loader seeds a mark from the newest date in the file; a table that
+    reached the database another way -- the 2026-10-09 migration -- has rows
+    and no mark, and without one the set and every child reading through it
+    is pulled in full over OData, which for EKBE, MKPF, MSEG and CDHDR is past
+    the read ceiling. The load day is recorded in ``ingestion_run`` either
+    way, and nothing SAP changed after the extract can carry a date before it,
+    so that day, less a margin, is an honest lower bound. Written before the
+    fetch, deliberately: it is a bound derived from the load, not from rows
+    fetched, and a failed fetch leaves it where it is.
+    """
+    owners: dict[str, IngestSpec] = {}
+    for spec in chosen:
+        delta = spec.delta
+        if delta is None:
+            continue
+        if delta.direct:
+            owners.setdefault(spec.name, spec)
+        for parent_name in delta.via:
+            parent = spec_for(parent_name)
+            if has_window(parent):
+                owners.setdefault(parent.name, parent)
+
+    seeded: dict[str, str] = {}
+    for name, owner in owners.items():
+        field_name = owner.delta.field or ""  # type: ignore[union-attr]
+        if get_watermark(name, field_name) is not None:
+            continue
+        target = raw_table_for(owner)
+        if target is None or not table_has_rows(target.raw_table):
+            continue
+        day = _load_day(target.raw_table)
+        if day is None:
+            continue
+        mark = (day - timedelta(days=SEED_MARGIN_DAYS)).isoformat()
+        set_watermark(name, field_name, mark, 0)
+        seeded[name] = mark
+        logger.info(
+            "%s: no watermark, but %s holds rows loaded on %s; mark seeded at %s "
+            "(%d days before) so this runs as an increment, not a full pull",
+            name, target.raw_table, day.isoformat(), mark, SEED_MARGIN_DAYS,
+        )
+    return seeded
 
 
 @dataclass
@@ -130,6 +209,8 @@ class SweepReport:
     held: dict[str, str] = field(default_factory=dict)
     # Sets pulled in full because their table did not exist yet.
     baselined: list[str] = field(default_factory=list)
+    # Sets that had rows but no mark, and the mark seeded from their load day.
+    seeded: dict[str, str] = field(default_factory=dict)
 
     @property
     def failures(self) -> int:
@@ -189,6 +270,11 @@ def run_delta_sweep(
     client = client or SapClient()
     storage = storage or get_storage()
     report = SweepReport()
+
+    # 0. A set with rows but no mark starts from its load day. Not when the
+    #    caller gave --since: that is the window, for every owner.
+    if since is None:
+        report.seeded = seed_marks_from_load_dates(chosen)
 
     # 1. Windows, once. See the module docstring.
     windows = resolve_windows(chosen, since=since)

@@ -453,6 +453,20 @@ class TestMergeLanded:
         assert result.inserted == 1
         assert fetch(engine, "SELECT AEDAT FROM raw_ekpo")[0][0] == "15.09.2026"
 
+    def test_a_fetch_of_no_rows_is_merged_without_a_data_file(self, engine) -> None:
+        """POHistorySet, 2026-10-13: the window was empty, the manifest said
+        rows=0, and the Data Lake had written no data.jsonl for the empty
+        upload. Opening it crashed the whole load run."""
+        csv_shaped_ekpo(engine, [])
+        manifest = {"usable": True, "rows": 0, "data_file": "data.jsonl", "load_strategy": "merge"}
+        storage = _Storage({"p/_manifest.json": json.dumps(manifest).encode()})
+
+        result = raw_merge.merge_landed(EKPO, "p", storage=storage, engine=engine)
+
+        assert result.status == raw_merge.MERGED
+        assert not result.changed_anything
+        assert count(engine, "raw_ekpo") == 0
+
     def test_an_unusable_fetch_is_refused_before_any_row_is_read(self, engine) -> None:
         csv_shaped_ekpo(engine, [])
         storage = _Storage({"p/_manifest.json": json.dumps({"usable": False, "duplicate_keys": 3}).encode()})

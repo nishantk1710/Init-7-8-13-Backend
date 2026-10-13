@@ -1,12 +1,15 @@
-"""The assistant reads the served I13 snapshot, whichever store holds it.
+"""The assistant reads the latest built I13 snapshot, whatever day it was built.
 
 With ``I13_SNAPSHOT_STORE=sql`` the served version lives in Azure SQL and the
-in-memory slot is always empty. The assistant used to ask only the in-memory
-slot (``peek_i13_snapshot``), so on Azure every session fell through to the
-single-material live compute -- full scans of the unindexable ``n_*`` views,
-minutes per session on the production extract. It now asks
-``serving_snapshot``, which returns the SQL version, and reads the row with
-``watch_row`` -- the one call both stores answer.
+in-memory slot is always empty, so the assistant asks ``serving_snapshot`` and
+reads one row with ``watch_row`` -- the one call both stores answer.
+
+It used to accept only a snapshot built *today* and otherwise computed WATCH
+live for the one material. On the production extract that live path scans the
+unindexable ``n_*`` views for minutes, so from midnight until the day's rebuild
+landed every I13 session hung on "Checking..." and timed out. Now a stored row
+from an earlier day is aged to today (``age_watch_row``) and the assistant says
+which day the quantities are from; the live compute is gone from the request.
 
 The stored snapshot is faked here by its interface only: ``reference_date`` and
 ``watch_row``, and a ``watch`` that is a method, as on ``SqlSnapshot``, so any
@@ -15,6 +18,7 @@ return to ``snapshot.watch.get(...)`` fails loudly.
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -24,6 +28,7 @@ from app.assistant import session
 from app.assistant.router import Flow, RoutedFlow
 from app.core.config import get_settings
 from app.initiatives.i13.config import get_i13_config
+from app.initiatives.i13.models import AgingBand
 from app.shared.material_scope import MaterialScope
 from tests.assistant.conftest import TODAY, watch_metric
 
@@ -35,6 +40,7 @@ ROUTED = RoutedFlow(
     material_scope=MaterialScope.OAR,
     mrp_type="PD",
 )
+KEY = ("1000000123", "1300")
 
 
 class StoredSnapshot:
@@ -61,13 +67,13 @@ class _NoCrossPlantStock:
         return ()
 
 
-@pytest.fixture
-def no_live_compute(monkeypatch):
-    def refuse(*args, **kwargs):
-        raise AssertionError("served a snapshot for today, yet the assistant recomputed WATCH live")
-
-    monkeypatch.setattr(session, "compute_watch_metrics", refuse)
+@pytest.fixture(autouse=True)
+def no_cross_plant_reads(monkeypatch):
     monkeypatch.setattr(session, "PostgresCrossPlantStockProvider", _NoCrossPlantStock)
+
+
+def _serve(monkeypatch, snapshot):
+    monkeypatch.setattr(i13_snapshot, "serving_snapshot", lambda db: snapshot)
 
 
 def _assess():
@@ -81,39 +87,55 @@ def _assess():
     )
 
 
-def test_reads_the_stored_watch_row_and_does_not_recompute(monkeypatch, no_live_compute):
+def test_the_live_compute_is_gone_from_the_request_path():
+    """The session module no longer imports it, so nothing can call it."""
+    assert not hasattr(session, "compute_watch_metrics")
+
+
+def test_todays_snapshot_is_read_as_is(monkeypatch):
     metric = watch_metric(stock_on_hand=Decimal("17"))
-    stored = StoredSnapshot(TODAY, {("1000000123", "1300"): metric})
-    monkeypatch.setattr(i13_snapshot, "serving_snapshot", lambda db: stored)
+    stored = StoredSnapshot(TODAY, {KEY: metric})
+    _serve(monkeypatch, stored)
 
     assessment = _assess()
 
-    assert stored.asked == [("1000000123", "1300")]
+    assert stored.asked == [KEY]
     assert assessment.metric is metric
+    assert assessment.figures_as_of is None
+    assert "as of" not in assessment.headline
 
 
-def test_a_snapshot_from_another_day_sends_it_live(monkeypatch):
-    """Unchanged behaviour: a version measured as of yesterday is not today's
-    cover position, so the live compute answers instead."""
-    from datetime import timedelta
-
-    stored = StoredSnapshot(TODAY - timedelta(days=1), {})
-    monkeypatch.setattr(i13_snapshot, "serving_snapshot", lambda db: stored)
-    live = watch_metric(stock_on_hand=Decimal("3"))
-    calls = []
-
-    def compute(*args, **kwargs):
-        calls.append(kwargs)
-        return [live]
-
-    monkeypatch.setattr(session, "compute_watch_metrics", compute)
-    monkeypatch.setattr(session, "PostgresCrossPlantStockProvider", _NoCrossPlantStock)
-    monkeypatch.setattr(session, "fetch_material_scope_index", lambda db, **kw: {})
+def test_yesterdays_snapshot_is_used_aged_and_dated(monkeypatch):
+    """The case that used to hang: served at once, days moved on by one, and
+    the requester told which day the quantities are from."""
+    yesterday = TODAY - timedelta(days=1)
+    stored = StoredSnapshot(yesterday, {KEY: watch_metric(stock_on_hand=Decimal("17"))})
+    _serve(monkeypatch, stored)
 
     assessment = _assess()
 
-    assert stored.asked == []
-    assert len(calls) == 1 and assessment.metric is live
+    assert stored.asked == [KEY]
+    assert assessment.metric.stock_on_hand == Decimal("17")
+    # last movement/issue 2026-06-01, TODAY 2026-07-31.
+    assert assessment.metric.days_since_last_movement == 60
+    assert assessment.figures_as_of == yesterday
+    assert "Stock and usage as of 30 Jul 2026." in assessment.headline
+    assert assessment.as_record(TODAY)["figuresAsOf"] == "2026-07-30"
+
+
+def test_a_never_moved_part_is_still_refused(monkeypatch):
+    _serve(monkeypatch, StoredSnapshot(TODAY - timedelta(days=1), {}))
+
+    with pytest.raises(session.SessionError, match="has no WATCH row"):
+        _assess()
+
+
+def test_no_snapshot_yet_is_refused_at_once(monkeypatch):
+    """First start, nothing built: said immediately, never computed live."""
+    _serve(monkeypatch, None)
+
+    with pytest.raises(session.SessionError, match="not available yet"):
+        _assess()
 
 
 def test_in_memory_snapshot_answers_watch_row_too():
@@ -121,7 +143,70 @@ def test_in_memory_snapshot_answers_watch_row_too():
     which store served them."""
     metric = watch_metric()
     snapshot = object.__new__(i13_snapshot.I13Snapshot)
-    object.__setattr__(snapshot, "watch", {("1000000123", "1300"): metric})
+    object.__setattr__(snapshot, "watch", {KEY: metric})
 
     assert snapshot.watch_row("1000000123", "1300") is metric
     assert snapshot.watch_row("1000000123", "1500") is None
+
+
+def test_aging_moves_the_band_across_a_threshold(monkeypatch):
+    """A part last issued 365 days before the snapshot day is FAST that day and
+    SLOW the next -- the band follows the reading day, not the build day."""
+    issued = TODAY - timedelta(days=366)
+    yesterday = TODAY - timedelta(days=1)
+    stored = StoredSnapshot(
+        yesterday,
+        {KEY: watch_metric(last_issue_date=issued, days_since_last_issue=365, aging_band=AgingBand.FAST)},
+    )
+    _serve(monkeypatch, stored)
+
+    assessment = _assess()
+
+    assert assessment.metric.days_since_last_issue == 366
+    assert assessment.metric.aging_band is AgingBand.SLOW
+
+
+def test_unused_dates_stay_none(monkeypatch):
+    stored = StoredSnapshot(
+        TODAY - timedelta(days=2),
+        {KEY: watch_metric(last_issue_date=None, days_since_last_issue=None, aging_band=AgingBand.NON_MOVING)},
+    )
+    _serve(monkeypatch, stored)
+
+    metric = _assess().metric
+
+    assert metric.days_since_last_issue is None
+    assert metric.aging_band is AgingBand.NON_MOVING
+
+
+def test_grni_age_and_flag_follow_the_reading_day(monkeypatch):
+    received = date(2026, 7, 2)  # 29 days before the snapshot day, 30 before TODAY
+    stored = StoredSnapshot(
+        TODAY - timedelta(days=1),
+        {
+            KEY: watch_metric(
+                gr_not_issued_relevant_gr_date=received,
+                gr_not_issued_days_since_gr=28,
+                gr_not_issued_outstanding_quantity=Decimal("3"),
+                gr_not_issued_flag=False,
+            )
+        },
+    )
+    _serve(monkeypatch, stored)
+
+    metric = _assess().metric
+
+    assert metric.gr_not_issued_days_since_gr == 29
+    assert metric.gr_not_issued_flag is False
+
+    # One more day and it crosses the 30-day threshold.
+    stored.reference_date = TODAY - timedelta(days=2)
+    received_older = date(2026, 7, 1)
+    stored._rows[KEY] = watch_metric(
+        gr_not_issued_relevant_gr_date=received_older,
+        gr_not_issued_days_since_gr=28,
+        gr_not_issued_outstanding_quantity=Decimal("3"),
+    )
+    metric = _assess().metric
+    assert metric.gr_not_issued_days_since_gr == 30
+    assert metric.gr_not_issued_flag is True

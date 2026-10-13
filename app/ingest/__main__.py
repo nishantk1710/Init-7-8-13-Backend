@@ -716,6 +716,8 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"  {outcome.name}: raw {outcome.load.raw}")
             for name in report.baselined:
                 print(f"  {name}: no raw_ or odata_ table with rows yet, pulled in full to build the baseline")
+            for name, mark in report.seeded.items():
+                print(f"  {name}: no watermark; seeded {mark} from the day its table was loaded, ran as an increment")
             for name, mark in report.advanced.items():
                 print(f"  {name}: watermark -> {mark}")
             for name, why in report.held.items():

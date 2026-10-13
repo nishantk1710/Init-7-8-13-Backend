@@ -349,8 +349,18 @@ def reference_date_for(settings: Settings | None = None) -> date:
 
 
 def compute_fingerprint(db: Session, *, settings: Settings | None = None, config: I13Config | None = None) -> str:
-    """Cheap: one grouped query over ``ingestion_run``, plus the config and date."""
+    """Cheap: one grouped query over ``ingestion_run``, plus the config and date.
+
+    On the "sql" store the fingerprint says only whether the SAP rows or the
+    config changed -- what a full build is for. A new day is a re-age
+    (``snapshot_store.builder.reage``, minutes, no SAP read), decided from the
+    served version's reference date instead; and a UAT reservation refreshes
+    its own material in place (``uat._apply``), so neither belongs here: each
+    would otherwise start a full rebuild of over an hour. A pinned reference
+    date still counts, since moving the pin is asking for different numbers.
+    """
     settings = settings or get_settings()
+    stored = settings.i13_snapshot_store.strip().lower() == "sql"
     config = config or get_i13_config()
     rows = db.execute(
         select(IngestionRun.target_table, func.max(IngestionRun.id), func.max(IngestionRun.finished_at))
@@ -367,8 +377,13 @@ def compute_fingerprint(db: Session, *, settings: Settings | None = None, config
         else 0
     )
     parts = [f"{table}:{run_id}:{finished}" for table, run_id, finished in rows]
-    parts += [f"date:{reference_date_for(settings).isoformat()}", f"config:{config!r}", f"plans:{plans_stamp}"]
-    if settings.i13_uat_simulation_enabled:
+    if stored:
+        pinned = (settings.i13_snapshot_reference_date or "").strip()
+        parts += [f"pinned:{pinned}"] if pinned else []
+    else:
+        parts += [f"date:{reference_date_for(settings).isoformat()}"]
+    parts += [f"config:{config!r}", f"plans:{plans_stamp}"]
+    if settings.i13_uat_simulation_enabled and not stored:
         from app.models.i13_session_link import UatReservationSgtxt
 
         uat_count, uat_last = db.execute(

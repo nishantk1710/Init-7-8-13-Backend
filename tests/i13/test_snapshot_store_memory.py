@@ -376,7 +376,9 @@ class _Criticality(CriticalitySource):
         return None
 
 
-def run_batch(tables: dict[str, Table], batch: Batch, *, measure: bool = False):
+def run_batch(
+    tables: dict[str, Table], batch: Batch, *, measure: bool = False, as_of: date = AS_OF, dated_only: bool = False
+):
     """``_build_batch`` over ``tables``. Returns (peak bytes or None, the
     session -- its fingerprints say what was written)."""
     import app.initiatives.i13.consumption_attribution as attribution
@@ -401,9 +403,10 @@ def run_batch(tables: dict[str, Table], batch: Batch, *, measure: bool = False):
             tracemalloc.start()
         builder._build_batch(
             session, WORK, batch,
-            config=get_i13_config(), settings=settings, data_dir=Path(settings.i13_data_dir), as_of=AS_OF,
+            config=get_i13_config(), settings=settings, data_dir=Path(settings.i13_data_dir), as_of=as_of,
             reference_plans=[], all_plans=[],
             writer=builder.RecordWriter(session, 0), stats=builder.BuildStats(), diagnostics=[], sgtxt_rows=[],
+            dated_only=dated_only,
         )
         peak = tracemalloc.get_traced_memory()[1] if measure else None
     finally:
@@ -462,6 +465,52 @@ EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
 def test_records_unchanged(name, tables):
     _, session = run_batch(tables(), ALL)
     assert session.fingerprints() == EXPECTED[name]
+
+
+# --- a new day: re-age, not rebuild (builder.reage) ------------------------------
+#
+# A re-age copies the undated kinds from yesterday's version and recomputes the
+# dated ones. That is only right if (1) the undated kinds really do not move
+# with the date, and (2) the dated-only batch writes exactly what a full batch
+# writes for those kinds on the new date. Both are checked here on the mixed
+# tenant, across 400 days -- past the 30-day GRNI threshold, the 14-day plan
+# grace, the 365/730-day bands and the 12-month window.
+
+LATER = AS_OF + timedelta(days=400)
+
+
+def _kinds(session, names) -> dict[str, tuple[int, str]]:
+    return {k: v for k, v in session.fingerprints().items() if k in names}
+
+
+@pytest.mark.parametrize("make", [mixed_tenant, lambda: giant_reservations(0.02)])
+def test_undated_kinds_do_not_move_with_the_date(make):
+    from app.initiatives.i13.snapshot_store import kinds
+
+    _, today = run_batch(make(), ALL)
+    _, later = run_batch(make(), ALL, as_of=LATER)
+    assert _kinds(today, kinds.UNDATED_KINDS) == _kinds(later, kinds.UNDATED_KINDS)
+    assert _kinds(today, kinds.UNDATED_KINDS)  # they were written at all
+    # ...while the dated ones do move: the test can tell the dates apart.
+    assert _kinds(today, kinds.DATED_KINDS) != _kinds(later, kinds.DATED_KINDS)
+
+
+@pytest.mark.parametrize("make", [mixed_tenant, lambda: giant_reservations(0.02)])
+def test_a_dated_only_batch_writes_what_a_full_batch_writes(make):
+    from app.initiatives.i13.snapshot_store import kinds
+
+    _, full = run_batch(make(), ALL, as_of=LATER)
+    _, reaged = run_batch(make(), ALL, as_of=LATER, dated_only=True)
+    assert set(reaged.fingerprints()) <= set(kinds.DATED_KINDS)
+    assert reaged.fingerprints() == _kinds(full, kinds.DATED_KINDS)
+
+
+def test_every_kind_is_dated_or_undated():
+    from app.initiatives.i13.snapshot_store import kinds
+
+    _, session = run_batch(mixed_tenant(), ALL)
+    assert set(session.fingerprints()) <= set(kinds.DATED_KINDS) | set(kinds.UNDATED_KINDS)
+    assert not set(kinds.DATED_KINDS) & set(kinds.UNDATED_KINDS)
 
 
 # Peak bytes for one batch of each giant shape at 5 % of its production size.
