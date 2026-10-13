@@ -108,6 +108,16 @@ class AttestationDraft:
     serial_number: str | None = None
     evidence_reference: str | None = None
     supersedes: str | None = None
+    repair_document: str | None = None
+    """EKPO.EBELN of the repair line being declared against, when there is one.
+
+    FR-4's "link ... to the repair PR or PO". Supplied by every screen that
+    declares FROM a line, which is the register, the repair detail page and the
+    declarations queue. Absent when a part is declared before anything is
+    raised for it -- the case the date window exists for.
+    """
+    repair_item: str | None = None
+    """EKPO.EBELP of that line. Both or neither; half a key matches nothing."""
 
 
 def validate(
@@ -185,6 +195,18 @@ def validate(
             f"{', '.join(r.value for r in Recommendation)}"
         )
 
+    # Both halves of the repair-line key, or neither. One alone cannot be
+    # matched against anything, and storing it would look like a link while
+    # behaving like an unbound declaration -- the worst of both.
+    repair_document = (draft.repair_document or "").strip() or None
+    repair_item = (draft.repair_item or "").strip() or None
+    if (repair_document is None) != (repair_item is None):
+        raise AttestationError(
+            "repairDocument and repairItem must be given together -- a "
+            "purchase order number without its item number identifies no "
+            "repair line"
+        )
+
     return AttestationDraft(
         # Normalised before storing. Ruling 5.1: an attestation typed against
         # '000000008000005632' and a repair line read as '8000005632' are about
@@ -199,6 +221,8 @@ def validate(
         serial_number=(draft.serial_number or "").strip() or None,
         evidence_reference=(draft.evidence_reference or "").strip() or None,
         supersedes=(draft.supersedes or "").strip() or None,
+        repair_document=repair_document,
+        repair_item=repair_item,
     )
 
 
@@ -217,6 +241,8 @@ def record(
     """
     cfg = cfg or get_i8_settings()
     clean = validate(draft, cfg, known_materials=known_materials)
+    repair_document = clean.repair_document
+    repair_item = clean.repair_item
 
     if clean.supersedes is not None:
         original = db.get(RepairAttestation, clean.supersedes)
@@ -233,6 +259,15 @@ def record(
                 f"an amendment must be for the same material and plant as "
                 f"{original.id} ({original.material_id} at {original.plant})"
             )
+        # An amendment inherits what the original was declared against, unless
+        # the caller names a line itself. The declaration log is the screen
+        # that amends, and it lists attestations rather than repair lines, so
+        # it has no line to pass -- without this, correcting a declaration
+        # would quietly unbind it and the line it covered would go back to
+        # reading Required.
+        if repair_document is None:
+            repair_document = original.repair_document
+            repair_item = original.repair_item
 
     attestation = RepairAttestation(
         material_id=clean.material_id,
@@ -251,6 +286,11 @@ def record(
         # FR-4 / FR-8 and ours; nothing supplies the id yet -- the reservation
         # that would carry it (RESB.BEDNR) is not exposed.
         session_id=None,
+        # FR-4's link to the repair PR or PO, when the screen that recorded
+        # this knew which line it was for. Null for a part declared before
+        # anything was raised against it; those fall back to the date window.
+        repair_document=repair_document,
+        repair_item=repair_item,
         supersedes=clean.supersedes,
     )
     db.add(attestation)
@@ -325,6 +365,14 @@ class AttestationCoverage:
     #: The window that produced this answer, so a result can be explained.
     window_days: int
 
+    #: Of ``covered``, the lines matched by the declaration naming them
+    #: outright rather than by the date window. Kept apart because the two are
+    #: different strengths of claim: a bound declaration IS about this line,
+    #: a windowed one is a part assessed at about the right time and inferred
+    #: to be this one. A screen that reports both as "Completed" should still
+    #: be able to say which it is.
+    bound: frozenset[tuple[str, str]] = frozenset()
+
     @property
     def checked(self) -> int:
         return len(self.covered) + len(self.uncovered)
@@ -364,6 +412,28 @@ def explain_coverage(
     cfg = cfg or get_i8_settings()
     window = timedelta(days=cfg.attestation_window_days)
 
+    # Named a line outright: nothing to infer and nothing to explain away.
+    if attestation.repair_document and attestation.repair_item:
+        key = (attestation.repair_document, attestation.repair_item)
+        named = [line for line in lines if line.key == key]
+        line_id = f"{attestation.repair_document}-{attestation.repair_item}"
+        if named:
+            return (
+                [line_id],
+                f"Recorded against repair line {line_id}. That line now reads "
+                "as declared, whatever its dates -- the declaration names it, "
+                "so no matching rule was needed.",
+            )
+        # The id was supplied and no such line is in scope. Said plainly: the
+        # record is kept and binds nothing, which is a different outcome from
+        # a declaration that simply missed a window.
+        return (
+            [],
+            f"Recorded, but no repair line {line_id} is in scope, so it covers "
+            "nothing. The declaration is kept and will cover that line if it "
+            "appears.",
+        )
+
     same_part = [
         line
         for line in lines
@@ -391,9 +461,9 @@ def explain_coverage(
             [],
             (
                 f"Recorded. No repair line exists for {attestation.material_id} "
-                f"at plant {attestation.plant} in this extract, so it covers "
-                "nothing yet -- which is the normal case for a part assessed "
-                "before it is sent anywhere."
+                f"at plant {attestation.plant}, so it covers nothing yet -- "
+                "which is the normal case for a part assessed before it is "
+                "sent anywhere."
             ),
         )
 
@@ -413,10 +483,12 @@ def explain_coverage(
             f"recent was raised {nearest.isoformat() if nearest else 'unknown'}"
             + (f", {gap} days from this assessment" if gap is not None else "")
             + f" -- outside the {cfg.attestation_window_days}-day matching "
-            "window. This extract is a frozen July-2026 snapshot, so a "
-            "new assessment cannot retrospectively cover a repair that was "
-            "dispatched long ago. The queue will still show those lines as "
-            "outstanding, and that is the correct answer rather than a fault."
+            "window, which is how an unbound declaration is matched to a part "
+            "assessed at about the same time. The repair lines here were "
+            "raised long before today, so a new assessment does not "
+            "retrospectively cover them. To declare one of those lines, open "
+            "it and declare from the line itself -- that records the line on "
+            "the declaration and needs no window at all."
         ),
     )
 
@@ -433,12 +505,24 @@ def coverage(
     a per-request lookup would put a query per line on the page load W5.4 is
     rendering.
 
-    The matching key is material + plant + a date window. That is the only key
-    both sides share -- an attestation is made against a physical part coming
-    off a machine, and nothing in that moment carries the purchase-order number
-    the part will later be repaired under. **It is a proposal, not a confirmed
-    rule** (open question 3), which is why the window comes from configuration
-    and travels with every answer.
+    Two ways a line can be covered, tried in that order.
+
+    **The declaration names the line.** FR-4's "link ... to the repair PR or
+    PO", stored on the attestation since 13-Oct-2026. Every screen that
+    declares FROM a repair line supplies it, so there is nothing to infer: the
+    key is the one the register is built on.
+
+    **Or material + plant + a date window.** The fallback, for a part assessed
+    before any repair was raised against it -- which is how the control is
+    meant to work, and the case where no purchase order exists to name. **It is
+    a proposal, not a confirmed rule** (open question 3), which is why the
+    window comes from configuration and travels with every answer.
+
+    The order matters and is not an optimisation. Before the binding existed
+    this was the ONLY rule, and on the deployed register it matched nothing:
+    lines were raised between 2018 and 2026 while a declaration is stamped
+    today, so every one of 5,155 lines read Required however many declarations
+    were recorded against them.
     """
     cfg = cfg or get_i8_settings()
     window = timedelta(days=cfg.attestation_window_days)
@@ -447,15 +531,32 @@ def coverage(
     # the handful of rows this control has ever produced -- there is nothing to
     # gain from narrowing it, and a per-line query is what this is avoiding.
     by_key: dict[tuple[str, str], list[RepairAttestation]] = {}
+    by_line: dict[tuple[str, str], RepairAttestation] = {}
     for attestation in find(db, include_superseded=False):
         by_key.setdefault((attestation.material_id, attestation.plant), []).append(
             attestation
         )
+        if attestation.repair_document and attestation.repair_item:
+            # `find` returns newest first and nothing superseded, so the first
+            # one seen for a line is the one in force.
+            by_line.setdefault(
+                (attestation.repair_document, attestation.repair_item), attestation
+            )
 
     covered: dict[tuple[str, str], RepairAttestation] = {}
     uncovered: set[tuple[str, str]] = set()
+    bound: set[tuple[str, str]] = set()
 
     for line in lines:
+        # Checked BEFORE the plant guard: a declaration that names this line
+        # covers it whatever else is missing, because somebody stated outright
+        # that this is the line they assessed.
+        named = by_line.get(line.key)
+        if named is not None:
+            covered[line.key] = named
+            bound.add(line.key)
+            continue
+
         if line.plant is None:
             # No plant means the material-plant key cannot be formed at all.
             # That is a data gap, not a missing attestation, and calling it one
@@ -477,13 +578,17 @@ def coverage(
             uncovered.add(line.key)
 
     logger.info(
-        "I08 attestation coverage: %d of %d repair lines covered (window +/-%dd)",
+        "I08 attestation coverage: %d of %d repair lines covered "
+        "(%d by the declaration naming the line, %d by the +/-%dd window)",
         len(covered),
         len(covered) + len(uncovered),
+        len(bound),
+        len(covered) - len(bound),
         cfg.attestation_window_days,
     )
     return AttestationCoverage(
         covered=covered,
         uncovered=uncovered,
         window_days=cfg.attestation_window_days,
+        bound=frozenset(bound),
     )

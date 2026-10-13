@@ -258,6 +258,146 @@ class TestTheMatchingWindow:
         assert _within_window(self._at(date(2020, 1, 1)), None, self.WINDOW)
 
 
+class TestDeclaringAgainstTheLineItself:
+    """FR-4's "link ... to the repair PR or PO", which beats the window.
+
+    The window was the ONLY rule until 13-Oct-2026, and on the deployed
+    register it matched nothing: open lines were raised between 2018 and 2026
+    while a declaration is stamped today, so all 5,155 lines read Required
+    however many declarations had been recorded. Naming the line removes the
+    guess entirely, and these tests pin that the exact key wins, that it wins
+    even where the window would have failed, and that nothing about the
+    unbound path changed.
+    """
+
+    def _attestation(
+        self, when, *, material="8000005632", plant="1300", document=None, item=None
+    ):
+        from app.initiatives.i8.models import RepairAttestation
+
+        return RepairAttestation(
+            id="ATT-BOUND",
+            material_id=material,
+            plant=plant,
+            quantity=Decimal(1),
+            condition_description="Assessed.",
+            fault_category="WEAR",
+            recommendation="REPAIRABLE",
+            attestor="tester",
+            attested_at=when,
+            repair_document=document,
+            repair_item=item,
+        )
+
+    def test_a_named_line_is_covered_however_old_it_is(self, monkeypatch) -> None:
+        """The whole point. A 2021 line, declared today, reads as declared."""
+        from app.initiatives.i8 import attestation as module
+
+        bound = self._attestation(
+            datetime(2026, 10, 13, tzinfo=timezone.utc), document="4500", item="10"
+        )
+        monkeypatch.setattr(module, "find", lambda *a, **k: [bound])
+
+        lines = [FakeLine("4500", "10", "8000005632", "1300", date(2021, 3, 11))]
+        result = module.coverage(db=None, lines=lines)
+
+        assert result.covered[("4500", "10")] is bound
+        assert result.uncovered == set()
+        # And it is reported as the stronger claim, not inferred from dates.
+        assert ("4500", "10") in result.bound
+
+    def test_the_same_declaration_unbound_covers_nothing(self, monkeypatch) -> None:
+        """The control: identical record, no line named, years out of window."""
+        from app.initiatives.i8 import attestation as module
+
+        unbound = self._attestation(datetime(2026, 10, 13, tzinfo=timezone.utc))
+        monkeypatch.setattr(module, "find", lambda *a, **k: [unbound])
+
+        lines = [FakeLine("4500", "10", "8000005632", "1300", date(2021, 3, 11))]
+        result = module.coverage(db=None, lines=lines)
+
+        assert result.covered == {}
+        assert result.uncovered == {("4500", "10")}
+
+    def test_a_declaration_binds_only_the_line_it_names(self, monkeypatch) -> None:
+        """A sibling line for the same part at the same plant is NOT covered.
+
+        Binding is per line; it must not quietly behave like the old
+        material-plant match and clear work nobody assessed.
+        """
+        from app.initiatives.i8 import attestation as module
+
+        bound = self._attestation(
+            datetime(2026, 10, 13, tzinfo=timezone.utc), document="4500", item="10"
+        )
+        monkeypatch.setattr(module, "find", lambda *a, **k: [bound])
+
+        lines = [
+            FakeLine("4500", "10", "8000005632", "1300", date(2021, 3, 11)),
+            FakeLine("4500", "20", "8000005632", "1300", date(2021, 3, 11)),
+        ]
+        result = module.coverage(db=None, lines=lines)
+
+        assert set(result.covered) == {("4500", "10")}
+        assert result.uncovered == {("4500", "20")}
+
+    def test_a_named_line_with_no_plant_is_still_covered(self, monkeypatch) -> None:
+        """The plant guard skips lines whose material-plant key cannot be
+        formed. A declaration that names the line outright does not need that
+        key, so the guard must not drop it."""
+        from app.initiatives.i8 import attestation as module
+
+        bound = self._attestation(
+            datetime(2026, 10, 13, tzinfo=timezone.utc), document="4500", item="10"
+        )
+        monkeypatch.setattr(module, "find", lambda *a, **k: [bound])
+
+        lines = [FakeLine("4500", "10", "8000005632", None, date(2021, 3, 11))]
+        result = module.coverage(db=None, lines=lines)
+
+        assert set(result.covered) == {("4500", "10")}
+
+    def test_half_a_key_is_rejected(self) -> None:
+        """A document with no item identifies no line. Stored, it would look
+        like a link and behave like an unbound record."""
+        from app.initiatives.i8.attestation import AttestationDraft, AttestationError, validate
+
+        for document, item in (("4500", None), (None, "10")):
+            draft = AttestationDraft(
+                material_id="8000005632",
+                plant="1300",
+                quantity=Decimal(1),
+                condition_description="Assessed.",
+                fault_category="WEAR",
+                recommendation="REPAIRABLE",
+                repair_document=document,
+                repair_item=item,
+            )
+            with pytest.raises(AttestationError, match="together"):
+                validate(draft)
+
+    def test_the_note_says_the_line_is_covered_without_mentioning_a_window(
+        self,
+    ) -> None:
+        """What the person reads after saving. A bound declaration needs no
+        explanation about dates, because no dates were consulted."""
+        from app.initiatives.i8.attestation import explain_coverage
+
+        lines = [FakeLine("4500", "10", "8000005632", "1300", date(2021, 3, 11))]
+        covered, note = explain_coverage(
+            self._attestation(
+                datetime(2026, 10, 13, tzinfo=timezone.utc),
+                document="4500",
+                item="10",
+            ),
+            lines,
+        )
+
+        assert covered == ["4500-10"]
+        assert "4500-10" in note
+        assert "matching window" not in note
+
+
 # --- The declaration queue, no database ------------------------------------
 
 
@@ -1144,9 +1284,9 @@ class TestExplainCoverage:
 
     This exists because of a trap that is invisible until somebody uses the
     form. The timestamp is server-set (that is what makes it an audit record)
-    and the extract is a frozen July-2026 snapshot, so an attestation recorded
-    today is months outside the matching window of every line in the register
-    and covers none of them.
+    and the register holds years of purchasing history, so an UNBOUND
+    attestation recorded today is outside the matching window of nearly every
+    line and covers none of them.
 
     Both of those are correct. The danger is a UI that POSTs successfully, shows
     the row still reading "Required", and invites somebody to "fix" it by
@@ -1202,8 +1342,8 @@ class TestExplainCoverage:
     def test_the_trap_is_explained_rather_than_left_to_be_inferred(self) -> None:
         """The part HAS repair lines and they are all outside the window.
 
-        The note must say so, give the gap, and state that the outstanding rows
-        are the correct answer -- otherwise the next person widens the window.
+        The note must say so, give the gap, and point at the route that does
+        work -- otherwise the next person widens the window.
         """
         from app.initiatives.i8.attestation import explain_coverage
 
@@ -1217,7 +1357,8 @@ class TestExplainCoverage:
         assert "2025-04-07" in note
         assert "days from this assessment" in note
         assert "30-day matching window" in note
-        assert "correct answer rather than a fault" in note
+        # The fix is naming the line, not a wider window.
+        assert "declare from the line itself" in note
 
     def test_it_uses_the_same_window_as_the_queue(self) -> None:
         """An explanation derived from a second copy of the rule would

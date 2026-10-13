@@ -401,6 +401,8 @@ def attestation_item(
         attestor=row.attestor,
         attested_at=row.attested_at,
         session_id=row.session_id,
+        repair_document=row.repair_document,
+        repair_item=row.repair_item,
         supersedes=row.supersedes,
         superseded_by=superseded_by,
         covers_repair_lines=covers_repair_lines,
@@ -427,6 +429,13 @@ def declaration_item(row: DeclarationRow, cfg: I8Settings) -> DeclarationItem:
         requester=row.requester,
         has_active_repair=row.has_active_repair,
         related_repair_id=row.related_repair_id,
+        repair_po=(
+            SAPDocumentReference(
+                type="PO", document_number=row.repair_document, line=row.repair_item
+            )
+            if row.repair_document
+            else None
+        ),
         status=row.status,
         declaration_id=row.declaration_id,
         declared_by=row.declared_by,

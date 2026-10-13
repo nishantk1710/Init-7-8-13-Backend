@@ -95,6 +95,17 @@ class DeclarationRow:
     Last in the dataclass, with a default, so adding it did not force every
     existing construction site to name it."""
 
+    repair_document: str | None = None
+    """EKPO.EBELN of this row's repair line.
+
+    ``related_repair_id`` already carries it, joined to the item by a hyphen.
+    These two serve it UNJOINED so the declaration form can send FR-4's link to
+    the repair PO without splitting a string on a character a document number
+    may one day contain."""
+
+    repair_item: str | None = None
+    """EKPO.EBELP of that line."""
+
     @property
     def is_outstanding(self) -> bool:
         return self.status in ("Required", "Flagged")
@@ -166,6 +177,8 @@ def build_queue(
                 # labels are false for every repair line we can see.
                 has_active_repair=line.is_open,
                 related_repair_id=f"{line.purchasing_document}-{line.item}",
+                repair_document=line.purchasing_document,
+                repair_item=line.item,
                 status=status,
                 declaration_id=attestation.id if attestation else None,
                 declared_by=attestation.attestor if attestation else None,

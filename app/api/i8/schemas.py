@@ -455,6 +455,22 @@ class AttestationRequest(I8Model):
     amendment is a new record pointing at the one it replaces, and the original
     stays readable. Must be for the same material and plant."""
 
+    repair_document: str | None = Field(default=None, max_length=20)
+    """EKPO.EBELN of the repair line being declared against.
+
+    FR-4's "link ... to the repair PR or PO". Send it whenever the screen knows
+    which line it is declaring -- the register, the repair detail page and the
+    declarations queue all do -- and the line is then covered outright, with no
+    date matching involved.
+
+    Omit it when assessing a part before anything has been raised for it.
+    There is no purchase order to name in that moment, which is exactly why the
+    date window exists, and it stays the fallback for those."""
+
+    repair_item: str | None = Field(default=None, max_length=10)
+    """EKPO.EBELP of that line. Send with ``repairDocument`` or not at all --
+    half a key identifies no line and is rejected with a 422."""
+
 
 class Attestation(I8Model):
     """One recorded attestation."""
@@ -478,6 +494,13 @@ class Attestation(I8Model):
     session_id: str | None = None
     """Always null. FR-8 session linkage is not in I08's scope."""
 
+    repair_document: str | None = None
+    """The repair line this was declared against (EKPO.EBELN), or null for a
+    declaration recorded before any repair was raised."""
+
+    repair_item: str | None = None
+    """EKPO.EBELP of that line."""
+
     supersedes: str | None = None
     superseded_by: str | None = None
     """Set when a later amendment replaces this one. The original is never
@@ -490,15 +513,19 @@ class Attestation(I8Model):
     #
     # These exist because of a real and non-obvious trap. An attestation's
     # timestamp is server-set -- that is what makes it an audit record -- and
-    # the extract is a frozen July-2026 snapshot whose repair lines were raised
-    # from April 2025. So an attestation recorded TODAY is months outside the
-    # matching window of every line in the register, and covers none of them.
+    # the deployed register holds years of purchasing history, with open lines
+    # raised between 2018 and 2026. An UNBOUND attestation recorded today is
+    # therefore outside the matching window of nearly every line, and covers
+    # none of them: measured 13-Oct-2026, 5,155 of 5,155 lines read Required.
     #
     # Both halves of that are correct and neither should change. But a UI that
     # POSTs successfully and then shows the row still reading "Required" looks
     # broken, and somebody would "fix" it by widening the window until it
     # stopped looking broken -- which would let an assessment from a completely
     # different repair cycle count. So the API says plainly what happened.
+    #
+    # Sending `repairDocument`/`repairItem` avoids the trap rather than
+    # explaining it: the line is named, so it is covered.
 
     covers_repair_lines: list[str] | None = None
     """Register line ids (``{EBELN}-{EBELP}``) this attestation now covers.
@@ -541,6 +568,12 @@ class DeclarationItem(I8Model):
 
     has_active_repair: bool
     related_repair_id: str
+    repair_po: SAPDocumentReference | None = None
+    """This row's repair line, unjoined.
+
+    ``relatedRepairId`` is the same thing as one string. This is served
+    alongside it so the declaration form can send FR-4's link to the repair PO
+    as data rather than splitting that string on a hyphen."""
     status: Literal["Required", "Completed", "Flagged"]
     """No "Pending": that would mean "submitted, awaiting sign-off", and no such
     state exists -- there is no approval workflow in SAP, here or in the FRS."""
