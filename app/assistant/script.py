@@ -140,7 +140,6 @@ def _i08(
 ) -> Step:
     facts = assessment.as_record(today)
     headline = assessment.headline(today)
-    caveats = assessment.verdict.caveats
 
     if I08_ASSESSMENT not in answers:
         if not assessment.verdict.exists:
@@ -156,7 +155,10 @@ def _i08(
         return Step(
             id=I08_ASSESSMENT,
             kind=StepKind.CHOICE,
-            prompt=f"{headline}\n\nDo you still want to reserve a new one?",
+            # The question ONLY. `facts` carries the headline and the card
+            # renders it, so repeating it here printed the same paragraph
+            # twice: once in the card, once in the bubble beneath it.
+            prompt="Do you still want to reserve a new one?",
             choices=(
                 Choice(
                     value=USE_EXISTING,
@@ -170,7 +172,16 @@ def _i08(
                 ),
             ),
             facts=facts,
-            footnote="\n".join(caveats) or None,
+            # No footnote. The caveats were listed here, under the question,
+            # because the card did not show them. It does now, and against
+            # the number each one is about rather than as a block below: an
+            # unreliable due date reads "no longer a forecast" on the date
+            # itself, an overdue line carries its own warning, a line with no
+            # 541 says so, unknown stock says "no stock record", and a vendor
+            # with no master record shows its code.
+            #
+            # They stay in `facts["caveats"]`, so the stored record and the
+            # trace view keep every one of them.
         )
 
     if answers[I08_ASSESSMENT].get("choice") == USE_EXISTING:
@@ -196,7 +207,10 @@ def _i08(
                 _reason_field(reason_categories, "Why a new unit is needed"),
                 _FREE_TEXT,
             ),
-            facts=facts,
+            # No card here. It was repeated so the requester could see what
+            # they were overriding, which made sense for one screen at a time
+            # -- but the conversation is a transcript, and the card from the
+            # question above is still visible a few lines up.
         )
 
     return _terminal(
