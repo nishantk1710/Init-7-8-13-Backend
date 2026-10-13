@@ -47,7 +47,12 @@ the envelope decodes that to 22:00 UTC the evening before, so the calendar day
 is the NEAREST one, not the UTC one. A CSV-shaped table gets ``DD.MM.YYYY``, a
 workbook-shaped one ``YYYY-MM-DD``; both are what the normalise view expects.
 Booleans become SAP's ``X``/blank. Numbers are written as text, as every raw
-column is.
+column is -- and in the CSV extract's German shape when the column is one the
+normalise view reads as a number: ``0,989``, ``1234,5``, ``5,000-``. The view
+strips every ``.`` and turns ``,`` into ``.`` for a CSV-shaped column, so an
+OData ``12.500`` written as-is would be read back as twelve thousand five
+hundred. Which columns are numbers is the view's own declaration
+(``sap_normalise.TABLES``), never a guess from the value.
 
 WHAT IS REFUSED, AND WHY
 
@@ -158,6 +163,13 @@ def _labels_for(table: str, field_name: str) -> list[str]:
     return [col.label for col in TABLES.get(table, ()) if field_name in col.sap]
 
 
+def _is_number(table: str, field_name: str) -> bool:
+    """Whether the normalise view reads this SAP field as a number."""
+    from app.shared.sap_normalise import TABLES
+
+    return any(col.kind == "num" for col in TABLES.get(table, ()) if field_name in col.sap)
+
+
 @dataclass(frozen=True)
 class Resolved:
     prop: str
@@ -165,6 +177,9 @@ class Resolved:
     edm_type: str
     is_key: bool
     added: bool = False
+    # The view parses this column as a number, so it is written in the
+    # vocabulary's number shape (German, for a CSV-shaped table).
+    numeric: bool = False
 
 
 def resolve(
@@ -216,11 +231,12 @@ def resolve(
         if prop in key_hits:
             resolved.append(Resolved(prop, key_hits[prop], types.get(prop, "Edm.String"), True))
             continue
+        numeric = _is_number(table, sap)
         hit = find(order)
         if hit is not None:
-            resolved.append(Resolved(prop, hit, types.get(prop, "Edm.String"), False))
+            resolved.append(Resolved(prop, hit, types.get(prop, "Edm.String"), False, numeric=numeric))
         else:
-            resolved.append(Resolved(prop, sap, types.get(prop, "Edm.String"), False, added=True))
+            resolved.append(Resolved(prop, sap, types.get(prop, "Edm.String"), False, added=True, numeric=numeric))
     return vocabulary, resolved, []
 
 
@@ -236,10 +252,29 @@ def _nearest_day(moment: datetime) -> date:
     return (moment + timedelta(hours=12)).date()
 
 
-def shape(value: Any, edm_type: str, vocabulary: str) -> str | None:
-    """One OData value as the raw table's text, in the table's vocabulary."""
+_PLAIN_NUMBER = re.compile(r"^-?\d+(\.\d+)?$")
+
+
+def _german(text: str) -> str:
+    """``-1234.5`` -> ``1234,5-``, the CSV extract's shape; anything that is
+    not a plain number is kept verbatim, never guessed."""
+    if not _PLAIN_NUMBER.match(text):
+        return text
+    negative = text.startswith("-")
+    return text.lstrip("-").replace(".", ",") + ("-" if negative else "")
+
+
+def shape(value: Any, edm_type: str, vocabulary: str, *, numeric: bool = False) -> str | None:
+    """One OData value as the raw table's text, in the table's vocabulary.
+
+    ``numeric`` says the view reads the column as a number: in the CSV
+    vocabulary that means SAP's German shape (see the module docstring).
+    """
     if value is None:
         return None
+    if numeric and vocabulary == VOCAB_SAP:
+        text = format(value, "f") if isinstance(value, Decimal) else str(value).strip()
+        return _german(text)
     if edm_type in ("Edm.DateTime", "Edm.DateTimeOffset"):
         if isinstance(value, datetime):
             day = _nearest_day(value)
@@ -327,7 +362,9 @@ def merge(
                 without_key += 1
                 continue
             # Last one wins: a chunked read can hand back the same row twice.
-            by_key[key] = {r.column: shape(row.get(r.prop), r.edm_type, vocabulary) for r in resolved}
+            by_key[key] = {
+                r.column: shape(row.get(r.prop), r.edm_type, vocabulary, numeric=r.numeric) for r in resolved
+            }
 
         if not by_key:
             return MergeResult(table, MERGED, vocabulary=vocabulary, rows_without_key=without_key,
