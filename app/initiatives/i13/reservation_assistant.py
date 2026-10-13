@@ -75,6 +75,12 @@ class I13Assessment:
     cross_plant_stock: tuple[CrossPlantStockInfo, ...]
     """Informational only. Never a transfer instruction."""
 
+    figures_as_of: date | None = None
+    """The SAP data's date when it is earlier than the day the advice is given.
+    ``None`` when the figures are as of today. Set when the assistant serves the
+    latest built snapshot rather than waiting for today's -- the requester is
+    told, so a day-old stock figure never reads as this morning's."""
+
     @property
     def total_elsewhere(self) -> Decimal:
         return sum((info.stock_on_hand for info in self.cross_plant_stock), Decimal("0"))
@@ -141,6 +147,9 @@ class I13Assessment:
                 for info in self.cross_plant_stock
             )
             sentence += f" Other plants hold {where}."
+
+        if self.figures_as_of is not None:
+            sentence += f" Stock and usage as of {self.figures_as_of.strftime('%d %b %Y')}."
 
         return sentence
 
@@ -209,6 +218,7 @@ class I13Assessment:
                 for info in self.cross_plant_stock
             ],
             "referenceDate": today.isoformat(),
+            "figuresAsOf": _iso(self.figures_as_of),
         }
 
 
@@ -230,6 +240,7 @@ def build(
     metric: WatchMetric,
     cross_plant_stock: Sequence[CrossPlantStockInfo] = (),
     requested_quantity: Decimal | None = None,
+    figures_as_of: date | None = None,
 ) -> I13Assessment:
     """Assemble the I13 assessment from a WATCH row and cross-plant stock.
 
@@ -253,4 +264,5 @@ def build(
         requested_quantity=requested_quantity,
         metric=metric,
         cross_plant_stock=with_stock,
+        figures_as_of=figures_as_of,
     )
