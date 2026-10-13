@@ -131,8 +131,8 @@ def _series(column: str, cfg: I8Settings) -> str:
 _FILES: dict[str, str] = {
     "v_mara": "10_v_mara.sql", "v_makt": "11_v_makt.sql", "v_marc": "12_v_marc.sql",
     "v_mard": "13_v_mard.sql", "v_ekko": "20_v_ekko.sql", "v_ekpo": "21_v_ekpo.sql",
-    "v_eket": "22_v_eket.sql", "v_ekbe": "23_v_ekbe.sql", "v_mseg": "30_v_mseg.sql",
-    "v_lfa1": "31_v_lfa1.sql", "v_zmm065": "32_v_zmm065.sql",
+    "v_eket": "22_v_eket.sql", "v_ekbe": "23_v_ekbe.sql", "v_eban": "24_v_eban.sql",
+    "v_mseg": "30_v_mseg.sql", "v_lfa1": "31_v_lfa1.sql", "v_zmm065": "32_v_zmm065.sql",
 }
 _HEAD = re.compile(r"(?is)\bCREATE\s+OR\s+ALTER\s+VIEW\s+\w+\s+AS\s")
 
