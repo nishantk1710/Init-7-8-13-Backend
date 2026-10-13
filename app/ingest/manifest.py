@@ -192,7 +192,11 @@ DELTAS: dict[str, Delta] = {
     # order whose items changed (finding 3). A header-only change with no item
     # change (3 of 75 measured) waits for the CSV refresh; reading
     # EINKBELEG change documents to catch those is the next step if it matters.
-    "PurchaseOrderSet": Delta(field="Aedat", via=("PurchaseOrderItemSet",), via_key="Ebeln"),
+    # Text-typed since the 2026-10 transport (Edm.String, '20261013'); the
+    # datetime literal this used to send is HTTP 400 on QA as of 2026-10-13.
+    "PurchaseOrderSet": Delta(
+        field="Aedat", literal=LITERAL_DATS, via=("PurchaseOrderItemSet",), via_key="Ebeln"
+    ),
     # EKET has no date of its own that means "changed" (Eindt is the delivery
     # date). Its changes ride on EKPO.Aedat (finding 1) and its received
     # quantity on EKBE (finding 2), so it is re-read for both sets of keys.

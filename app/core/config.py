@@ -143,6 +143,13 @@ class Settings(BaseSettings):
     # same cycle rather than starting one each.
     delta_event_debounce_seconds: int = 120
 
+    # After a delta cycle that loaded rows, ask the I13 and I08 snapshots to
+    # re-check their source fingerprints (app/ingest/scheduler.py) instead of
+    # leaving it to their periodic watchers. Same gates as the watchers: an
+    # unchanged fingerprint, a build in progress, the settle wait after a
+    # load and the I13 rebuild gap all still apply.
+    snapshot_refresh_after_delta: bool = True
+
     # --- Full refresh schedule -----------------------------------------------
     #
     # Once a day: every table over the CSV route, loaded, then the OData sets
@@ -453,8 +460,13 @@ class Settings(BaseSettings):
     # does not pay for it. Off in tests, where the first use builds it lazily.
     i13_snapshot_warm_on_startup: bool = True
     # How often (seconds, at most) the fingerprint is re-checked for a reseed
-    # or a new day. One cheap grouped query over ingestion_run.
-    i13_snapshot_check_interval_seconds: int = 60
+    # or a new day. One cheap grouped query over ingestion_run -- but every
+    # delta cycle writes ingestion_run, so a change it finds is a full rebuild
+    # (~78 minutes on the "sql" store over the production extract). Hourly,
+    # to match DELTA_INTERVAL_MINUTES. A delta cycle that loaded rows asks
+    # for the check itself (SNAPSHOT_REFRESH_AFTER_DELTA); this is the
+    # fallback for a manual load.
+    i13_snapshot_check_interval_seconds: int = 3600
     # ISO date to measure every snapshot metric as of. Empty = today, the date
     # every live route has always used (plan decision D1 left open).
     i13_snapshot_reference_date: str = ""
@@ -479,6 +491,14 @@ class Settings(BaseSettings):
     # A build that fails the same way every time otherwise re-copies the large
     # tables forever.
     i13_build_max_attempts: int = 3
+    # "sql" store only: the least time between one automatic build finishing
+    # and the next starting. The delta runs hourly and every cycle that loads
+    # rows changes the fingerprint, but a build takes about as long as a cycle,
+    # so without a gap the store would rebuild continuously and keep Azure SQL
+    # busy all day. 0 = no gap (every change rebuilds, as before); set 120 if
+    # builds run back to back. A manual POST /api/i13/snapshot/refresh
+    # ignores the gap.
+    i13_rebuild_min_gap_minutes: int = 0
     # "sql" store only: how many calendar months of monthly usage are kept per
     # material-plant (the usage-pattern screens). Aging and 12-month
     # consumption read the full movement history regardless.
@@ -494,8 +514,10 @@ class Settings(BaseSettings):
     # reload or a new day. One cheap grouped query over ingestion_run. The
     # rebuild it triggers is a background one -- the current snapshot keeps
     # serving -- so this is how long a reload stays invisible, not how long a
-    # request waits.
-    i8_snapshot_check_interval_seconds: int = 60
+    # request waits. Hourly, like I13's. A delta cycle that loaded rows asks
+    # for the check itself (SNAPSHOT_REFRESH_AFTER_DELTA); this is the
+    # fallback for a manual load.
+    i8_snapshot_check_interval_seconds: int = 3600
     # Read narrowed copies of the I08 sources during a snapshot build instead of
     # the views over the whole extract (app/initiatives/i8/staged.py). The
     # views call a scalar function per row, which on the production extract ran

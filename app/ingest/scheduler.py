@@ -239,11 +239,64 @@ async def _tick(trigger: str = "timer") -> bool:
         )
         for error in summary["errors"][:10]:
             logger.error("  %s", error)
+        if summary["loaded"] and get_settings().snapshot_refresh_after_delta:
+            _schedule_snapshot_refresh(trigger)
     except Exception:
         logger.exception("delta cycle raised")
     finally:
         lock.release()
     return True
+
+
+# --- The snapshots, told rather than left to notice -------------------------
+#
+# A merge that changed rows leaves an ingestion_run row, and the I13 and I08
+# snapshots rebuild when their fingerprint over that table moves. Left to their
+# periodic watchers, a change waits up to one check interval to be noticed; a
+# cycle that loaded rows asks for the check itself, once, after the I13 store's
+# settle wait (it refuses to build within ten minutes of a load). The same
+# checks the watchers run, with the same gates, so this is earlier, not more.
+
+_refresh_task: asyncio.Task | None = None
+
+
+def _schedule_snapshot_refresh(trigger: str) -> None:
+    global _refresh_task
+    if _refresh_task is not None and not _refresh_task.done():
+        # A refresh is already waiting; it will see this cycle's rows too.
+        return
+    _refresh_task = asyncio.get_running_loop().create_task(_refresh_snapshots_after_delta(trigger))
+
+
+async def _refresh_snapshots_after_delta(trigger: str) -> None:
+    from app.initiatives.i13.snapshot_store.lifecycle import _SETTLE_SECONDS
+
+    await asyncio.sleep(_SETTLE_SECONDS + 5)
+    await asyncio.to_thread(check_snapshots, trigger)
+
+
+def check_snapshots(trigger: str) -> dict[str, bool]:
+    """Run the I13 and I08 fingerprint checks now. Returns what each started."""
+    from app.core.db import get_sessionmaker
+    from app.initiatives.i8 import service as i8_service
+    from app.initiatives.i13 import snapshot as i13_snapshot
+
+    started: dict[str, bool] = {}
+    for label, check in (("I13", i13_snapshot.check_fingerprint), ("I08", i8_service.check_source_fingerprint)):
+        try:
+            db = get_sessionmaker()()
+            try:
+                started[label] = bool(check(db, min_interval_seconds=0))
+            finally:
+                db.close()
+        except Exception:  # noqa: BLE001 -- one snapshot's failure must not cost the other its check
+            logger.exception("%s snapshot check after the delta (%s) failed", label, trigger)
+            started[label] = False
+    logger.info(
+        "snapshot checks after the delta (%s): %s",
+        trigger, ", ".join(f"{k} {'rebuilding' if v else 'no rebuild needed'}" for k, v in started.items()),
+    )
+    return started
 
 
 async def _loop(interval_seconds: int, initial_delay: int) -> None:
@@ -333,10 +386,11 @@ async def _event_runner(reason: str, delay: int) -> None:
 
 
 async def stop_event_runner() -> None:
-    """Cancel a pending event cycle on shutdown."""
-    global _event_task
-    task, _event_task = _event_task, None
-    if task is not None and not task.done():
+    """Cancel a pending event cycle, and a pending snapshot refresh, on shutdown."""
+    global _event_task, _refresh_task
+    pending = [t for t in (_event_task, _refresh_task) if t is not None and not t.done()]
+    _event_task = _refresh_task = None
+    for task in pending:
         task.cancel()
         with contextlib.suppress(BaseException):
             await task

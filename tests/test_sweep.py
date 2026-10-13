@@ -184,6 +184,26 @@ def test_a_missing_table_is_pulled_in_full_to_build_the_baseline(h) -> None:
     assert h.fetched(ITEMS)[2] == "delta"
 
 
+def test_a_csv_loaded_raw_table_is_a_baseline_without_any_odata_table(h) -> None:
+    """The CSV route fills raw_<table>, the table the pages read and the one
+    the increment is merged into. An odata_ table that was wiped, or never
+    built, must not send the set to a full pull over OData: EKBE is 3.6
+    million rows, past the read ceiling, and would be refused every cycle."""
+    h.tables = {"raw_ekko", "raw_ekpo", "raw_ekbe", "raw_eket"}
+    report = _run()
+    assert report.baselined == []
+    assert all(h.fetched(name)[2] == "delta" for name in (PO, ITEMS, HIST, SCHED))
+
+
+def test_with_neither_table_the_set_is_still_pulled_in_full(h) -> None:
+    h.tables = {"raw_ekko", "raw_ekpo", "raw_eket", "odata_purchase_order",
+                "odata_purchase_order_item", "odata_po_schedule_line"}
+    report = _run()
+    assert report.baselined == [HIST]
+    assert h.fetched(HIST)[2] == "full"
+    assert h.fetched(ITEMS)[2] == "delta"
+
+
 def test_a_parent_with_no_mark_sends_its_children_to_a_full_pull(h) -> None:
     """No window, no keys -- and reading the parent whole to collect them
     would be the child set fifty keys at a time."""

@@ -382,6 +382,106 @@ def test_a_refused_raw_merge_leaves_the_odata_table_untouched(spec, storage, mon
     assert "raw_marc refused -- keys differ" in result.error
 
 
+class _FakeWriter:
+    """RawTableWriter without a database: records what the load asked for."""
+
+    created: list[tuple[str, list[str]]] = []
+    loaded: list[tuple[str, int]] = []
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def create_table(self, cursor, table, columns) -> None:
+        self.created.append((table, list(columns)))
+
+    def bulk_load(self, cursor, table, columns, rows) -> int:
+        count = sum(1 for _ in rows)
+        self.loaded.append((table, count))
+        return count
+
+    def create_index(self, cursor, table, column) -> None:
+        pass
+
+
+class _FakeEngine:
+    """Enough of an Engine for load_set's cursor dance; no SQL is run."""
+
+    class _Cursor:
+        def close(self) -> None:
+            pass
+
+    class _Conn:
+        def __init__(self) -> None:
+            self.connection = self
+            self.driver_connection = self
+
+        def cursor(self):
+            return _FakeEngine._Cursor()
+
+    @contextlib.contextmanager
+    def begin(self):
+        yield self._Conn()
+
+
+def _land_increment(storage, monkeypatch):
+    """A PurchaseOrderSet delta landed with load_strategy=merge, and the
+    database stubbed out: no odata_ table, merge into raw_ekko MERGED."""
+    from app.ingest import raw_merge
+
+    po = spec_for("PurchaseOrderSet")
+    monkeypatch.setattr(fetch_mod, "get_watermark", lambda *a, **k: "2026-10-08")
+    monkeypatch.setattr(fetch_mod, "set_watermark", lambda *a, **k: None)
+    landed = fetch_mod.fetch_set(
+        po, root="odata", client=StubClient(StubExtract([{"Ebeln": "4500000001", "Aedat": "20261010"}])),
+        storage=storage, run_date=RUN_DATE, mode="delta", parent_keys=[],
+    )
+    assert fetch_mod.read_manifest(storage, landed.prefix)["load_strategy"] == "merge"
+
+    recorded: list[tuple] = []
+    _FakeWriter.created, _FakeWriter.loaded = [], []
+    monkeypatch.setattr(load_mod, "RawTableWriter", _FakeWriter)
+    monkeypatch.setattr(load_mod, "get_engine", lambda: _FakeEngine())
+    monkeypatch.setattr(load_mod, "_table_exists", lambda cursor, table: False)
+    monkeypatch.setattr(load_mod, "_record", lambda spec, rows, status, *a, **k: recorded.append((rows, status)))
+    monkeypatch.setattr(
+        raw_merge, "merge_landed",
+        lambda *a, **k: raw_merge.MergeResult("raw_ekko", raw_merge.MERGED, updated=0, inserted=1, matched=0),
+    )
+    return po, recorded
+
+
+def test_an_increment_with_a_csv_baseline_creates_the_odata_table_from_itself(storage, monkeypatch) -> None:
+    """raw_ekko holds the CSV extract and took the increment; odata_purchase_order
+    does not exist. The load used to fail here ("nothing to merge into") and
+    the sweep then full-pulled the set every cycle. The archive table starts
+    from this increment instead."""
+    po, recorded = _land_increment(storage, monkeypatch)
+
+    result = load_mod.load_set(po, root="odata", storage=storage)
+
+    assert result.status == load_mod.STATUS_SUCCEEDED, result.error
+    assert _FakeWriter.created == [("odata_purchase_order", [p.name for p in po.entity_set.properties])]
+    assert _FakeWriter.loaded == [("odata_purchase_order", 1)]
+    assert "raw_ekko: 0 changed of 0 matched, 1 inserted" in result.raw
+    assert recorded == [(1, load_mod.STATUS_SUCCEEDED)]
+
+
+def test_an_increment_with_no_baseline_anywhere_is_still_refused(storage, monkeypatch) -> None:
+    from app.ingest import raw_merge
+
+    po, recorded = _land_increment(storage, monkeypatch)
+    monkeypatch.setattr(
+        raw_merge, "merge_landed",
+        lambda *a, **k: raw_merge.MergeResult("raw_ekko", raw_merge.SKIPPED, detail="raw_ekko does not exist yet"),
+    )
+
+    result = load_mod.load_set(po, root="odata", storage=storage)
+
+    assert result.status == load_mod.STATUS_FAILED
+    assert "nothing to merge into" in result.error
+    assert _FakeWriter.created == []
+
+
 def test_load_says_what_to_do_when_nothing_landed(spec, storage) -> None:
     result = load_mod.load_set(spec, root="odata", storage=storage)
 
@@ -565,7 +665,9 @@ def test_a_direct_delta_filters_on_its_date(storage, no_watermark_io) -> None:
         run_date=RUN_DATE, mode="delta", since="2026-09-01T00:00:00", parent_keys=[],
     )
 
-    assert client.filters == ["Aedat ge datetime'2026-09-01T00:00:00'"]
+    # EKKO.Aedat is Edm.String since the 2026-10 transport: a datetime literal
+    # is HTTP 400, the DATS text is honoured (delta_support.csv).
+    assert client.filters == ["Aedat ge '20260901'"]
 
 
 def test_a_text_date_delta_sends_its_measured_shape(storage, no_watermark_io) -> None:

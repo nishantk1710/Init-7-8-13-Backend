@@ -70,8 +70,8 @@ ZMM_KPI02_ADD_SRV,InfoRecordOrgSet,Peinh,Edm.String,false,,20,,,false,false,Pric
 ZMM_KPI02_ADD_SRV,InfoRecordOrgSet,Effpr,Edm.String,false,,20,,,false,false,Effect. Price
 ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Ebeln,Edm.String,false,K,10,,,false,false,Purchasing Doc.
 ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Bsart,Edm.String,false,,4,,,false,false,Document Type
-ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Aedat,Edm.DateTime,true,,,0,,false,false,Created On
-ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Bedat,Edm.DateTime,true,,,0,,false,false,Purchasing Document Date
+ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Aedat,Edm.String,true,,20,,,false,false,Created On
+ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Bedat,Edm.String,true,,20,,,false,false,Purchasing Document Date
 ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Lifnr,Edm.String,false,,10,,,false,false,Supplier
 ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Ekorg,Edm.String,false,,4,,,false,false,Purchasing Org.
 ZMM_KPI02_ADD_SRV,PurchaseOrderSet,Ekgrp,Edm.String,false,,3,,,false,false,Purch. Group

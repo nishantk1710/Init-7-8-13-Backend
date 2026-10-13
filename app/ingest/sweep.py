@@ -20,13 +20,21 @@ read again for each one; a set with several parents gets the union.
 
 NO BASELINE, NO INCREMENT
 
-A delta merges into an existing ``odata_<table>``. If that table does not
-exist, or exists and is EMPTY, there is nothing to merge into, and loading the
+A delta merges into a table that already holds the set: ``raw_<table>``,
+which the CSV route fills and the pages read (raw_merge puts the increment
+there), or ``odata_<table>``, which an earlier OData pull built. If neither
+exists, or both are EMPTY, there is nothing to merge into, and loading the
 increment as if it were the table would leave one that looks complete and is
 not. So such a set is pulled in full this time -- that is what builds the
 baseline -- and incrementally from then on. Empty counts as missing because
 that is what a wipe leaves: the 2026-10-06 reset deleted every row and kept
 every table.
+
+A CSV-loaded ``raw_<table>`` with an empty ``odata_<table>`` beside it is NOT
+that case. The increment has its baseline, and ``odata_<table>`` is created
+from the increment on its first load (see ``load_set``). Treating it as one
+sent every set to a full OData pull -- and the four over two million rows
+(EKBE, MKPF, MSEG, CDHDR) past the read ceiling, refused, every cycle.
 
 THE MARK MOVES LAST, AND ONLY FOR A WHOLE FAMILY
 
@@ -56,6 +64,7 @@ from app.ingest.fetch import (
 )
 from app.ingest.load import STATUS_SUCCEEDED, LoadResult, load_set, table_has_rows
 from app.ingest.manifest import IngestSpec
+from app.ingest.raw_merge import raw_table_for
 from app.ingest.watermarks import set_watermark
 from app.integrations.sap.client import SapClient
 
@@ -151,6 +160,17 @@ class SweepReport:
         }
 
 
+def _csv_route_has_rows(spec: IngestSpec) -> bool:
+    """Whether the CSV route's ``raw_<table>`` for this set holds rows.
+
+    That table is where the increment actually goes (raw_merge) and what the
+    pages read, so it is a baseline whether or not ``odata_<table>`` was ever
+    built -- or was wiped, as every table was on 2026-10-06.
+    """
+    target = raw_table_for(spec)
+    return target is not None and table_has_rows(target.raw_table)
+
+
 def run_delta_sweep(
     chosen: tuple[IngestSpec, ...] | list[IngestSpec],
     *,
@@ -173,13 +193,14 @@ def run_delta_sweep(
     # 1. Windows, once. See the module docstring.
     windows = resolve_windows(chosen, since=since)
 
-    # 2. Baselines. A delta needs a populated table to merge into.
+    # 2. Baselines. A delta needs a populated table to merge into: the CSV
+    #    route's raw_<table>, or odata_<table>. See the module docstring.
     forced_full: dict[str, str] = {}
     for spec in chosen:
         if spec.runnable_delta is None:
             continue
         try:
-            populated = table_has_rows(spec.raw_table)
+            populated = _csv_route_has_rows(spec) or table_has_rows(spec.raw_table)
         except Exception as exc:
             # Cannot tell. Treat as absent: a needless full pull is recoverable,
             # an increment merged into nothing is not.
@@ -187,11 +208,12 @@ def run_delta_sweep(
                            spec.name, spec.raw_table, exc)
             populated = False
         if not populated:
-            forced_full[spec.name] = f"{spec.raw_table} is missing or empty"
+            forced_full[spec.name] = f"neither the CSV route's table nor {spec.raw_table} holds rows"
             report.baselined.append(spec.name)
             logger.info(
-                "%s: %s is missing or empty, so there is nothing to merge an "
-                "increment into. Pulling in full to build the baseline.",
+                "%s: neither the CSV route's table nor %s holds rows, so there "
+                "is nothing to merge an increment into. Pulling in full to "
+                "build the baseline.",
                 spec.name, spec.raw_table,
             )
 
