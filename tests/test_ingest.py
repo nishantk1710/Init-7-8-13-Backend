@@ -553,6 +553,19 @@ def test_cdhdr_deltas_on_udate_as_text() -> None:
     assert delta_support()[("ChangeDocHeaderSet", "Udate", LITERAL_DATS)] == "HONOURED"
 
 
+def test_eban_deltas_on_badat_as_text() -> None:
+    """New requisitions by Badat, a DATS exposed as Edm.String(10): the text
+    shape is honoured, the dotted and ISO shapes compare as text and the
+    datetime literal is HTTP 400 (measured 2026-10-13 on QA and DEV)."""
+    from app.ingest.manifest import delta_support
+
+    delta = spec_for("PurchaseRequisitionSet").delta
+
+    assert (delta.field, delta.literal) == ("Badat", LITERAL_DATS)
+    assert delta_support()[("PurchaseRequisitionSet", "Badat", LITERAL_DATS)] == "HONOURED"
+    assert spec_for("PurchaseRequisitionSet").runnable_delta is not None
+
+
 def test_cdpos_has_no_delta_because_sap_rejects_the_only_shape() -> None:
     """`Changenr eq 'a' or ...` is REJECTED_HTTP_400 on this set.
 
@@ -891,7 +904,8 @@ def test_fetch_order_puts_parents_first() -> None:
 
 def test_only_deltas_that_can_run_are_runnable(monkeypatch) -> None:
     """Every declared delta runs today: the purchase-order family, MKPF and
-    MSEG by entry date, CDHDR by change date. Sets with no delta do not."""
+    MSEG by entry date, CDHDR by change date, EBAN by requisition date. Sets
+    with no delta do not."""
     from app.ingest import manifest as manifest_mod
 
     monkeypatch.setattr(manifest_mod, "READ_BROKEN_SETS", {})
@@ -899,6 +913,7 @@ def test_only_deltas_that_can_run_are_runnable(monkeypatch) -> None:
     assert runnable == {
         "PurchaseOrderSet", "PurchaseOrderItemSet", "POScheduleLineSet", "POHistorySet",
         "MaterialDocumentHeaderSet", "GoodsMovementItemSet", "ChangeDocHeaderSet",
+        "PurchaseRequisitionSet",
     }
     assert spec_for("MaterialPlantSet").runnable_delta is None
 

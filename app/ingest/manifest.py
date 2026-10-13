@@ -219,6 +219,15 @@ DELTAS: dict[str, Delta] = {
     # demands (combine() sends both). Text-typed since 2026-10; the datetime
     # literal this used to send is now HTTP 400.
     "ChangeDocHeaderSet": Delta(field="Udate", literal=LITERAL_DATS),
+    # EBAN by requisition date: new purchase requisitions. Badat is a DATS
+    # SAP exposes as Edm.String(10); 'yyyymmdd' is honoured (impossible value
+    # -> 0, a real day -> its rows, measured on QA 2026-10-13), the dotted and
+    # ISO shapes are compared as text and the datetime literal is HTTP 400.
+    # EBAN exposes no change date, so a release, a deletion flag or the
+    # purchase order assigned later do not move Badat and wait for the CSV
+    # route -- the same limit EKKO lives with. A requisition SAP posts to
+    # /api/events/pr is therefore in raw_eban one cycle later.
+    "PurchaseRequisitionSet": Delta(field="Badat", literal=LITERAL_DATS),
     # CDPOS deliberately has NO delta, and it is not an oversight.
     #
     # The obvious shape is `via ChangeDocHeaderSet on Changenr`, which builds
