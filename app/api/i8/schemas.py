@@ -852,6 +852,15 @@ class CodingCandidateMeta(I8Model):
     provider: str
     model: str
 
+    staged_rows_kept: dict[str, int] = {}
+    """Rows each staged copy of a view kept, per view. Empty when the screen
+    read the views directly."""
+
+    staged_rows_scanned: dict[str, int] = {}
+    """Rows each staged copy was narrowed FROM. Read with ``stagedRowsKept``:
+    the pair is how selective the keyword narrowing actually is, and the whole
+    screen's speed depends on the first being a small fraction of the second."""
+
 
 class CodingCandidateResponse(I8Model):
     items: list[CodingCandidateItem]

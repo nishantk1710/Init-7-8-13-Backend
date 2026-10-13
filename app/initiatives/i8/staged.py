@@ -1,4 +1,4 @@
-"""The rows an I08 snapshot build reads, staged before any per-row function runs.
+"""The rows an I08 build reads, staged before any per-row function runs.
 
 Why
 ---
@@ -39,6 +39,20 @@ predicates, so the reported figure does not change either.
 ``tests/test_i8_staged_build.py`` builds a seeded tenant both ways and compares
 every line, universe row and statistic.
 
+Who stages what
+---------------
+:func:`staged_sources` serves the snapshot build (the register and universe),
+narrowing on repair item category and 80-series materials.
+
+:func:`coding_sources` serves the FR-2 coding screen, which has a different
+question and therefore a different narrowing: it wants the lines whose free
+text mentions repair, whatever the material. It was left reading the views
+directly when the snapshot build was staged, and paid exactly the price this
+module exists to avoid -- six unfiltered passes over 805,336 EKPO lines, each
+calling ``sap_key`` per row. Measured against nonprod on 13-Oct-2026 the
+endpoint never completed: 504 at the gateway's 240s, and still not cached
+after six idle minutes.
+
 Postgres (local only now) reads the views directly: it inlines the helpers and
 has expression indexes for the material key -- see ``views.INDEXES``.
 """
@@ -46,7 +60,7 @@ has expression indexes for the material key -- see ``views.INDEXES``.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
@@ -178,9 +192,16 @@ def _over(body: str, sources: dict[str, str]) -> str:
 # --- staging ---------------------------------------------------------------
 
 
-def _materialise(db: Session, view: str, sources: dict[str, str]) -> str:
-    """``#i8s_<view>``: the view's own SELECT over the narrowed sources."""
-    staged = f"#i8s_{view}"
+def _materialise(
+    db: Session, view: str, sources: dict[str, str], name: str | None = None
+) -> str:
+    """``#i8s_<view>``: the view's own SELECT over the narrowed sources.
+
+    ``name`` overrides the staged table's name, so one build can hold two
+    differently-narrowed copies of the same view -- which the coding screen
+    does: one narrowed to repair language, one to 80-series materials.
+    """
+    staged = name or f"#i8s_{view}"
     db.execute(text(f"DROP TABLE IF EXISTS {staged}"))
     # No bind parameters anywhere in staging: a parameterised statement runs in
     # sp_executesql, which drops a temp table it creates when it returns.
@@ -188,8 +209,8 @@ def _materialise(db: Session, view: str, sources: dict[str, str]) -> str:
     return staged
 
 
-def _narrow(db: Session, table: str, source: str, where: str) -> str:
-    narrowed = f"#i8b_{table}"
+def _narrow(db: Session, table: str, source: str, where: str, name: str | None = None) -> str:
+    narrowed = name or f"#i8b_{table}"
     db.execute(text(f"DROP TABLE IF EXISTS {narrowed}"))
     db.execute(text(f"SELECT * INTO {narrowed} FROM {source} WHERE {where}"))
     return narrowed
@@ -315,3 +336,174 @@ def reading(sql: str, sources: Sources | None) -> str:
     if sources is None or sources is DIRECT:
         return sql
     return _VIEW_NAME.sub(lambda m: sources.views.get(m.group(0), m.group(0)), sql)
+
+
+# --- FR-2: the coding screen's sources -------------------------------------
+
+#: source -> (view, normalised table, the raw column the view reads as text).
+#: The view's own text column is ``nullif(<raw>, '')``, so a non-empty LIKE
+#: over the raw column matches exactly what a LIKE over the view's would.
+CODING_SOURCES: dict[str, tuple[str, str, str]] = {
+    "PO": ("v_ekpo", "n_ekpo", "short_text"),
+    "PR": ("v_eban", "n_eban", "short_text"),
+    "MOVEMENT": ("v_mseg", "n_mseg", "text"),
+}
+
+
+@dataclass(frozen=True)
+class CodingSources:
+    """Where the coding screen reads, and how much staging kept.
+
+    Two narrowings, because the screen asks two different questions:
+
+    ``candidates``
+        the lines whose free text mentions repair -- any material, since a
+        miscoded material is the thing being looked for.
+    ``twins``
+        the 80-series lines, for the corroboration check: "is this exact text
+        already carried by a material somebody DID code repairable?".
+
+    ``kept`` and ``scanned`` are the selectivity of the narrowing, per staged
+    table. They are reported in the screen's ``meta`` rather than only logged,
+    because the whole approach rests on ``kept`` being a small fraction of
+    ``scanned`` -- and if a keyword list is ever widened until it is not, the
+    number that shows it is on screen.
+    """
+
+    candidates: Sources = DIRECT
+    twins: Sources = DIRECT
+    kept: dict[str, int] = field(default_factory=dict)
+    scanned: dict[str, int] = field(default_factory=dict)
+
+
+DIRECT_CODING = CodingSources()
+
+
+def _mentions(column: str, cfg: I8Settings) -> str:
+    """A superset of the screen's keyword match, over the raw text column.
+
+    The screen matches ``upper(<view text>) LIKE '%STEM%' ESCAPE`` for each
+    configured stem (``I8_CODING_LANGUAGE``), ORed. The view's text column is
+    ``nullif(<raw>, '')``, and an empty string matches no ``'%stem%'`` pattern
+    for a non-empty stem, so the same LIKE over the raw column keeps every row
+    the screen's own predicate would -- and the staged copy is then filtered
+    again by that predicate, so an over-wide superset costs time, never
+    correctness.
+
+    No stems configured means the screen matches nothing, and staging keeps
+    nothing rather than everything.
+    """
+    stems = cfg.repair_language_list
+    if not stems:
+        return "1 = 0"
+    likes = " OR ".join(
+        f"UPPER({column}) LIKE {_literal('%' + like_literal(stem.upper()) + '%')} ESCAPE '{LIKE_ESCAPE}'"
+        for stem in stems
+    )
+    return f"({likes})"
+
+
+def plain_text_total(source: str) -> str | None:
+    """``COUNT(*)`` of a source's lines carrying any free text, without the view.
+
+    The view's text column is ``nullif(<raw>, '')`` and its only other
+    predicate is the plant scope, so counting the normalised table with both
+    written inline returns exactly what counting the view returns -- set-wise,
+    with no per-row function call.
+
+    This exists because the denominator CANNOT come from the staged candidate
+    copies: those hold only lines whose text mentions repair, so counting them
+    would make every source read as 100%.
+    """
+    spec = CODING_SOURCES.get(source)
+    if spec is None:
+        return None
+    _, table, column = spec
+    return (
+        f"SELECT COUNT(*) FROM {table} "
+        f"WHERE {_in_scope()} AND NULLIF({column}, '') IS NOT NULL"
+    )
+
+
+def _stage_coding(db: Session, cfg: I8Settings, wanted: Sequence[str]) -> CodingSources:
+    import time
+
+    started = time.monotonic()
+    kept: dict[str, int] = {}
+    scanned: dict[str, int] = {}
+    candidate_views: dict[str, str] = {}
+
+    # One narrowing per source the run actually reads. A source nobody asked
+    # for is not staged: MOVEMENT is off by default and staging it would cost
+    # a pass over 2.5M MSEG rows to answer a question nobody asked.
+    for source in wanted:
+        spec = CODING_SOURCES.get(source)
+        if spec is None:
+            continue
+        view, table, column = spec
+        narrowed = _narrow(
+            db,
+            table.removeprefix("n_"),
+            table,
+            f"{_in_scope()} AND {_mentions(column, cfg)}",
+            name=f"#i8cb_{table.removeprefix('n_')}",
+        )
+        candidate_views[view] = _materialise(
+            db, view, {table: narrowed}, name=f"#i8cs_{view}"
+        )
+        kept[view] = _count(db, candidate_views[view])
+        # What it was narrowed FROM, with the view's own scope predicate: the
+        # denominator the keyword filter has to be selective against.
+        scanned[view] = int(
+            db.execute(text(f"SELECT COUNT(*) FROM {table} WHERE {_in_scope()}")).scalar_one()
+        )
+
+    # The twin side: 80-series PO lines, whatever their text. Narrowed exactly
+    # as the snapshot build narrows its own 80-series slice.
+    twin_narrowed = _narrow(
+        db, "ekpo", "n_ekpo",
+        f"{_in_scope()} AND {_series('material', cfg)}",
+        name="#i8ct_ekpo",
+    )
+    twin_views = {"v_ekpo": _materialise(db, "v_ekpo", {"n_ekpo": twin_narrowed}, name="#i8ct_v_ekpo")}
+    kept["v_ekpo (twins)"] = _count(db, twin_views["v_ekpo"])
+
+    logger.info(
+        "I08 coding: staged sources in %.1fs (%s)",
+        time.monotonic() - started,
+        ", ".join(f"{view} {n} of {scanned.get(view, n)}" for view, n in kept.items()),
+    )
+    return CodingSources(
+        candidates=Sources(views=candidate_views),
+        twins=Sources(views=twin_views),
+        kept=kept,
+        scanned=scanned,
+    )
+
+
+@contextmanager
+def coding_sources(
+    db: Session, cfg: I8Settings, *, wanted: Sequence[str], enabled: bool = True
+) -> Iterator[CodingSources]:
+    """The sources the FR-2 coding screen reads from, staged for its life.
+
+    Everything is created on ``db``'s connection, so ``db`` must not commit
+    while this is open -- a commit could hand the session another connection,
+    without them. The screen's own writes (stored verdicts) happen after it
+    closes, for that reason.
+    """
+    if not enabled or db.get_bind().dialect.name != MSSQL:
+        yield DIRECT_CODING
+        return
+    sources = _stage_coding(db, cfg, wanted)
+    try:
+        yield sources
+    finally:
+        staged = [
+            *sources.candidates.views.values(),
+            *sources.twins.views.values(),
+            "#i8ct_ekpo",
+            *(f"#i8cb_{table.removeprefix('n_')}" for _, table, _ in CODING_SOURCES.values()),
+        ]
+        for table in staged:
+            db.execute(text(f"DROP TABLE IF EXISTS {table}"))

@@ -124,6 +124,14 @@ from app.initiatives.i8.coding_store import (
 )
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.material_number import is_eighty_series
+from app.core.config import get_settings
+from app.initiatives.i8.staged import (
+    DIRECT_CODING,
+    Sources,
+    coding_sources,
+    plain_text_total,
+    reading,
+)
 from app.shared.sql_lists import fetch_in_chunks, like_any
 
 logger = get_logger(__name__)
@@ -328,6 +336,21 @@ class ScreenStats:
     lines_with_text: int = 0
     """Lines carrying ANY free text, across the sources that ran. The
     denominator -- how much text was searched."""
+
+    staged_rows_kept: dict[str, int] = field(default_factory=dict)
+    """Rows each staged copy KEPT, per view. Empty when the screen read the
+    views directly.
+
+    Reported rather than only logged because the whole approach rests on this
+    being a small fraction of :attr:`staged_rows_scanned`. If a keyword list is
+    ever widened until the narrowing stops narrowing, this is the pair of
+    numbers that shows it -- before somebody has to rediscover why the screen
+    got slow again."""
+
+    staged_rows_scanned: dict[str, int] = field(default_factory=dict)
+    """Rows each staged copy was narrowed FROM, per view -- the in-scope size
+    of the normalised table."""
+
 
     lines_with_text_by_source: dict[str, int] = field(default_factory=dict)
     lines_with_repair_language: int = 0
@@ -562,6 +585,7 @@ def fetch_repair_language_lines(
     cfg: I8Settings | None = None,
     *,
     sources: Sequence[str] | None = None,
+    staged: Sources | None = None,
 ) -> list[CandidateLine]:
     """Every line whose free text mentions repair, coded or not.
 
@@ -573,6 +597,11 @@ def fetch_repair_language_lines(
     measured figure pass it explicitly, because every one of those figures was
     measured against PO text alone and adding a source silently would turn a
     documented measurement into a number nobody has ever checked.
+
+    ``staged`` points the same SQL at narrowed copies of the views -- see
+    :mod:`app.initiatives.i8.staged`. The SQL is unchanged; only the table it
+    reads is. ``None`` reads the views directly, which is what every test
+    without a SQL Server does.
     """
     cfg = cfg or get_i8_settings()
     wanted = tuple(sources) if sources is not None else cfg.coding_candidate_source_list
@@ -587,7 +616,8 @@ def fetch_repair_language_lines(
         )
         rows = (
             db.execute(
-                text(spec.candidates.replace("{keyword_match}", keyword_match)), params
+                text(reading(spec.candidates.replace("{keyword_match}", keyword_match), staged)),
+                params,
             )
             .mappings()
             .all()
@@ -599,20 +629,27 @@ def fetch_repair_language_lines(
 
 
 def fetch_text_totals(
-    db: Session, sources: Sequence[str]
+    db: Session, sources: Sequence[str], staged: Sources | None = None
 ) -> dict[str, int]:
     """How many lines of each source carry any free text -- the denominator.
 
     Separate from the keyword pass because it is the thing the hit count is a
     fraction OF, and a hit count served without it ("296 lines mention
     repair") is a number with no scale.
+
+    **Never reads the staged candidate copies.** Those hold only the lines
+    whose text mentions repair, so counting them would make the denominator
+    equal the numerator and every source read as 100%. When staging is on this
+    counts the normalised table directly, with the view's own scope predicate
+    written inline -- a plain set-wise scan, not a per-row function call.
     """
     totals: dict[str, int] = {}
     for name in sources:
         spec = _SOURCES.get(name)
         if spec is None:
             continue
-        totals[name] = int(db.execute(text(spec.text_total)).scalar() or 0)
+        plain = plain_text_total(name) if staged is not None else None
+        totals[name] = int(db.execute(text(plain or spec.text_total)).scalar() or 0)
     return totals
 
 
@@ -741,7 +778,7 @@ def normalise_text(value: str) -> str:
 
 
 def find_twins(
-    db: Session, materials, cfg: I8Settings | None = None
+    db: Session, materials, cfg: I8Settings | None = None, staged: Sources | None = None
 ) -> dict[str, tuple[tuple[str, str], ...]]:
     """Suspect material -> the 80-series materials sharing its exact text.
 
@@ -763,7 +800,7 @@ def find_twins(
         {
             row
             for row in db.execute(
-                text("select distinct matnr from v_ekpo where matnr is not null")
+                text(reading("select distinct matnr from v_ekpo where matnr is not null", staged))
             ).scalars()
             if is_eighty_series(row, cfg)
         }
@@ -787,7 +824,7 @@ def find_twins(
 
     # The CODED side comes from v_ekpo: the convention being applied correctly
     # is a fact about the purchase order catalogue.
-    for row in fetch_in_chunks(db, _TWIN_TEXTS_SQL, "materials", sorted(coded_set)):
+    for row in fetch_in_chunks(db, reading(_TWIN_TEXTS_SQL, staged), "materials", sorted(coded_set)):
         remember(row["matnr"], row["txz01"])
 
     # The SUSPECT side comes from the lines already in hand, whatever source
@@ -1086,6 +1123,7 @@ def screen(
     use_model: bool = True,
     sources: Sequence[str] | None = None,
     reuse_stored: bool = True,
+    staged: bool | None = None,
 ) -> tuple[list[CodingCandidate], ScreenStats]:
     """The whole screen: keyword pass, exclusions, split, then the model.
 
@@ -1109,6 +1147,12 @@ def screen(
     ``sources`` overrides ``I8_CODING_CANDIDATE_SOURCES``; see
     :func:`fetch_repair_language_lines`.
 
+    ``staged`` (default: ``I8_SNAPSHOT_STAGED``, on) reads narrowed copies of
+    the views instead of the views themselves -- the same treatment the
+    snapshot build gets, and for the same reason. Off reads the views
+    directly, as this screen did until 13-Oct-2026; the parity test builds a
+    seeded tenant both ways and compares every candidate.
+
     ``universe_materials`` is the repairable universe, passed in rather than
     rebuilt -- the caller already holds it in the cached snapshot and building
     it here would add five seconds to every screen. It is the cross-check the
@@ -1128,22 +1172,38 @@ def screen(
     cfg = cfg or get_i8_settings()
     wanted = tuple(sources) if sources is not None else cfg.coding_candidate_source_list
 
-    raw = fetch_repair_language_lines(db, cfg, sources=wanted)
-    # Counted before the exclusions, so each per-source number describes what
-    # that source actually carries rather than what survived our rules.
-    lines_by_source: dict[str, int] = {}
-    for line in raw:
-        lines_by_source[line.source] = lines_by_source.get(line.source, 0) + 1
+    # Every read this screen makes happens in here, over narrowed copies of
+    # the views -- see app/initiatives/i8/staged.py. It closes before the model
+    # loop below, which stores verdicts and therefore commits: a commit can
+    # hand the session a different connection, and the temp tables live on the
+    # one that made them.
+    enabled = get_settings().i8_snapshot_staged if staged is None else staged
+    with coding_sources(db, cfg, wanted=wanted, enabled=enabled) as src:
+        raw = fetch_repair_language_lines(db, cfg, sources=wanted, staged=src.candidates)
+        # Counted before the exclusions, so each per-source number describes
+        # what that source actually carries rather than what survived our rules.
+        lines_by_source: dict[str, int] = {}
+        for line in raw:
+            lines_by_source[line.source] = lines_by_source.get(line.source, 0) + 1
 
-    lines, deleted_dropped = drop_deleted_requisitions(raw)
-    lines, converted_dropped = drop_converted_requisitions(lines)
+        lines, deleted_dropped = drop_deleted_requisitions(raw)
+        lines, converted_dropped = drop_converted_requisitions(lines)
 
-    groups = partition(lines, cfg)
-    known_universe = universe_materials or set()
-    # Computed BEFORE the model runs, for all candidates at once. It is
-    # deterministic, so it is worth having even when no model answers: a
-    # stub-provider run still reports which suspects SAP itself contradicts.
-    twins = find_twins(db, groups.by_material, cfg)
+        groups = partition(lines, cfg)
+        known_universe = universe_materials or set()
+        # Computed BEFORE the model runs, for all candidates at once. It is
+        # deterministic, so it is worth having even when no model answers: a
+        # stub-provider run still reports which suspects SAP itself contradicts.
+        twins = find_twins(db, groups.by_material, cfg, staged=src.twins)
+
+        # Moved up from after the model loop, where it used to sit: it is a
+        # plain count and it has to be taken while the staging is open.
+        # Passing the staged sources switches it to the plain-predicate count
+        # over n_*; without staging it reads the view, as it always did.
+        text_totals = fetch_text_totals(
+            db, wanted, staged=src.candidates if src is not DIRECT_CODING else None
+        )
+        staged_kept, staged_scanned = dict(src.kept), dict(src.scanned)
 
     materials = sorted(groups.by_material)
     screened_materials = materials[:limit] if limit is not None else materials
@@ -1238,7 +1298,6 @@ def screen(
     for candidate in candidates:
         by_verdict[candidate.verdict] = by_verdict.get(candidate.verdict, 0) + 1
 
-    text_totals = fetch_text_totals(db, wanted)
     provider = next((c.provider for c in candidates if c.provider), "")
     model = next((c.model for c in candidates if c.model), "")
 
@@ -1261,6 +1320,8 @@ def screen(
         keywords=cfg.repair_language_list,
         provider=provider,
         model=model,
+        staged_rows_kept=staged_kept,
+        staged_rows_scanned=staged_scanned,
     )
 
     logger.info(
