@@ -21,6 +21,7 @@ the ORM rows.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -265,6 +266,60 @@ class SqlExceptionRepository:
             )
             for row in rows
         ]
+
+    def list_all_events(
+        self,
+        *,
+        from_ts: datetime | None = None,
+        to_ts: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[ExceptionEvent], int]:
+        """One page of the append-only event table across every exception,
+        newest first, with the size of the whole filtered population.
+
+        ``list_events`` is one exception's history, oldest first. An audit
+        screen needs this shape instead -- and cannot get it from that one
+        without a request per exception, of which there are tens of thousands.
+        ``from_ts`` is inclusive, ``to_ts`` exclusive. ``event_id`` breaks ties
+        so equal timestamps page deterministically.
+        """
+        count_stmt = select(func.count()).select_from(ActExceptionEventRecord)
+        rows_stmt = select(ActExceptionEventRecord)
+        if from_ts is not None:
+            count_stmt = count_stmt.where(ActExceptionEventRecord.timestamp >= from_ts)
+            rows_stmt = rows_stmt.where(ActExceptionEventRecord.timestamp >= from_ts)
+        if to_ts is not None:
+            count_stmt = count_stmt.where(ActExceptionEventRecord.timestamp < to_ts)
+            rows_stmt = rows_stmt.where(ActExceptionEventRecord.timestamp < to_ts)
+
+        total = int(self._session.execute(count_stmt).scalar_one())
+        rows = (
+            self._session.execute(
+                rows_stmt.order_by(
+                    ActExceptionEventRecord.timestamp.desc(), ActExceptionEventRecord.event_id.desc()
+                )
+                .limit(limit)
+                .offset(offset)
+            )
+            .scalars()
+            .all()
+        )
+        events = [
+            ExceptionEvent(
+                exception_id=row.exception_id,
+                event_type=EventType(row.event_type),
+                from_status=ExceptionStatus(row.from_status) if row.from_status else None,
+                to_status=ExceptionStatus(row.to_status) if row.to_status else None,
+                actor_id=row.actor_id,
+                actor_type=row.actor_type,
+                timestamp=row.timestamp,
+                metadata=json.loads(row.metadata_json) if row.metadata_json else {},
+                event_id=str(row.event_id),
+            )
+            for row in rows
+        ]
+        return events, total
 
     def save_confirmation(self, confirmation: RequesterConfirmation) -> None:
         self._session.add(

@@ -66,6 +66,14 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "W5.3 condition-to-repair attestation -> i8_attestation. Append-only, "
         "trigger-enforced; an amendment is a new row with supersedes set."
     ),
+    ("/api/i8/exceptions/{exception_id}/events", "post"): (
+        "FR-11 exception workflow -> i8_exception_event. Appends one entry to "
+        "an item's history (assigned, commented, status moved). The item "
+        "itself is recomputed from SAP data and is not stored, and its status "
+        "and owner are FOLDED from this log rather than held in a column -- "
+        "which is why assigning, commenting and moving are one POST and there "
+        "is no PATCH."
+    ),
     # --- Initiative 13 -----------------------------------------------------
     ("/api/i13/act/run/detect", "post"): (
         "Runs W6.6 ACT detection -> i13_act_exception. Idempotent on a "
@@ -142,6 +150,13 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "I13 FR-3 -> quantity_suggestion acceptance. FRS §8 counts avoided "
         "purchase benefit only where the requester accepted the suggestion, "
         "so this is the row that attribution is measured from."
+    ),
+    # --- Shared: monthly criticality reports ---------------------------------
+    ("/api/criticality/uploads", "post"): (
+        "Monthly criticality report for one plant -> criticality_report_upload + "
+        "criticality_report_row (append-only) and a rebuild of criticality_current, "
+        "which I07, I08 and I13 read. Also copies the file to platform storage and "
+        "writes an ingestion_run row. raw_zmm065_* is not touched."
     ),
     # --- Events ---------------------------------------------------------------
     ("/api/events/csv", "post"): (
@@ -234,7 +249,9 @@ class TestNothingWritesToSap:
         "app/api/i8",
         "app/api/i13",
         "app/api/assistant",
+        "app/api/criticality",
         "app/assistant",
+        "app/integrations/criticality",
     )
 
     def test_no_package_imports_the_sap_client(self) -> None:

@@ -71,6 +71,7 @@ from app.initiatives.i8.register import (
     open_repair_index,
     timed_step,
 )
+from app.initiatives.i8.staged import staged_sources
 from app.initiatives.i8.universe import UniverseRow, UniverseStats, load_universe
 from app.initiatives.i8.vendors import VendorTurnaround, vendor_turnaround
 from app.models import IngestionRun
@@ -79,8 +80,8 @@ from app.shared.snapshot_builds import exclusive_build
 logger = get_logger(__name__)
 
 
-# The raw tables every I08 view reads -- twelve, for the eleven views listed in
-# ``app/initiatives/i8/views.py``, because v_zmm065 is a union of two.
+# The raw tables every I08 view reads -- thirteen, for the twelve views listed
+# in ``app/initiatives/i8/views.py``, because v_zmm065 is a union of two.
 #
 # Written out rather than derived from that list: a view name does not say what
 # fills it, and guessing ``v_x -> raw_x`` would silently miss the zmm065 pair
@@ -95,10 +96,12 @@ SOURCE_TABLES: tuple[str, ...] = (
     "raw_ekpo",
     "raw_eket",
     "raw_ekbe",
+    "raw_eban",
     "raw_mseg",
     "raw_lfa1",
-    "raw_zmm065_bmm",
-    "raw_zmm065_gb",
+    # What the monthly criticality uploads add up to; an upload writes an
+    # ingestion_run row for it (app/integrations/criticality/reports.py).
+    "criticality_current",
 )
 
 
@@ -194,11 +197,20 @@ class Snapshot:
 
 
 def build_snapshot(
-    db: Session, cfg: I8Settings | None = None, *, today: date | None = None
+    db: Session,
+    cfg: I8Settings | None = None,
+    *,
+    today: date | None = None,
+    staged: bool | None = None,
 ) -> Snapshot:
     """Assemble the register, the universe and the vendor analytics.
 
     Always does the work. :func:`get_snapshot` is the cached entry point.
+
+    ``staged`` (default: ``I8_SNAPSHOT_STAGED``, on) reads narrowed copies of the
+    sources on SQL Server instead of the views over the whole extract -- see
+    ``staged.py``. Off reads the views directly, as before; the parity test
+    builds both ways.
     """
     cfg = cfg or get_i8_settings()
     reference_date = today or cfg.reference_date_value or date.today()
@@ -211,18 +223,22 @@ def build_snapshot(
     # new data, and the mixture would never be corrected.
     source = source_state(db, reference_date=reference_date)
 
-    with statement_timeout(db, get_settings().i8_snapshot_statement_timeout_seconds):
-        # One EKPO pull for both readings of it: repair lines and new purchases.
-        with timed_step("PO lines (EKPO)"):
-            candidates = fetch_candidate_lines(db)
-        lines, register_stats = load_repair_lines(
-            db, cfg, today=reference_date, candidates=candidates
-        )
-        acquisitions = find_new_acquisitions(candidates, cfg)
-        with timed_step("repairable universe"):
-            universe, universe_stats = load_universe(
-                db, cfg, open_repair_index=open_repair_index(lines)
+    settings = get_settings()
+    staged = settings.i8_snapshot_staged if staged is None else staged
+    with statement_timeout(db, settings.i8_snapshot_statement_timeout_seconds):
+        with staged_sources(db, cfg, enabled=staged) as sources:
+            # One EKPO pull for both readings of it: repair lines and new purchases.
+            with timed_step("PO lines (EKPO)"):
+                candidates = fetch_candidate_lines(db, sources=sources)
+            lines, register_stats = load_repair_lines(
+                db, cfg, today=reference_date, candidates=candidates, sources=sources
             )
+            acquisitions = find_new_acquisitions(candidates, cfg)
+            del candidates
+            with timed_step("repairable universe"):
+                universe, universe_stats = load_universe(
+                    db, cfg, open_repair_index=open_repair_index(lines), sources=sources
+                )
     vendors = vendor_turnaround(lines)
 
     elapsed = time.monotonic() - started
@@ -293,14 +309,26 @@ def _describe(exc: Exception) -> str:
     return f"{type(exc).__name__}: {first_line}"
 
 
-def _build_locked(db: Session, cfg: I8Settings | None, reason: str) -> Snapshot:
-    """Build and record the outcome. The caller holds ``_build_lock``."""
+def _build_locked(
+    db: Session, cfg: I8Settings | None, reason: str, *, rebuild: bool = False
+) -> Snapshot:
+    """Build and record the outcome. The caller holds ``_build_lock``.
+
+    With ``I8_SNAPSHOT_STORE=sql`` nothing is built here: the newest stored
+    snapshot is loaded, after a build PROCESS when ``rebuild`` or when none is
+    stored yet (``snapshot_store/lifecycle.py``). The web worker only waits.
+    """
+    from app.initiatives.i8.snapshot_store import lifecycle as store_lifecycle
+
     with _state_lock:
         _state.building_since = datetime.now(timezone.utc)
     logger.info("I08 snapshot build started (%s)", reason)
     try:
-        with exclusive_build("I08"):
-            snapshot = build_snapshot(db, cfg)
+        if store_lifecycle.enabled():
+            snapshot = store_lifecycle.load_or_build(db, reason, rebuild=rebuild)
+        else:
+            with exclusive_build("I08"):
+                snapshot = build_snapshot(db, cfg)
     except Exception as exc:
         logger.exception("I08 snapshot build failed (%s)", reason)
         message = _describe(exc)
@@ -313,6 +341,24 @@ def _build_locked(db: Session, cfg: I8Settings | None, reason: str) -> Snapshot:
         _state.snapshot = snapshot
         _state.last_error = None
         _state.building_since = None
+
+    # The two caches BUILT ON TOP of this one cannot outlive it.
+    #
+    # This used to be missing, and it is the whole of audit finding 11.2. The
+    # attestation view is rebuilt only when somebody writes an attestation or a
+    # justification, and the coding screen only on restart -- so after a SAP
+    # reload the register showed new repair lines beside declaration and
+    # justification columns computed from the data before it, and the exception
+    # list did not contain the new lines at all. That breaks acceptance
+    # criterion 5 ("raised as an exception within one refresh cycle") after
+    # every single reload.
+    #
+    # Here rather than in reset_snapshot(): THIS is the line that makes a new
+    # snapshot live, and the reload path never calls reset_snapshot() at all.
+    # Anything derived has to be dropped at the same instant, or there is a
+    # window where the two disagree.
+    reset_attestation_view()
+    reset_coding_screen()
     return snapshot
 
 
@@ -351,7 +397,7 @@ def get_snapshot(
                 return snapshot
             if last_error is not None and failed_ago < _RETRY_AFTER_FAILURE_SECONDS:
                 raise SnapshotFailed(last_error)
-        return _build_locked(db, cfg, "refresh" if refresh else "first request")
+        return _build_locked(db, cfg, "refresh" if refresh else "first request", rebuild=refresh)
     finally:
         _build_lock.release()
 
@@ -413,7 +459,7 @@ def _build_in_background(reason: str, force: bool = False) -> None:
                 return
         db = get_sessionmaker()()
         try:
-            _build_locked(db, None, reason)
+            _build_locked(db, None, reason, rebuild=force)
         except SnapshotFailed:
             pass  # already logged and recorded for the next request to report
         finally:
@@ -432,7 +478,8 @@ def reset_snapshot() -> None:
         _state.building_since = None
         _state.last_check = None
     # The attestation view and the coding screen are both derived from the
-    # snapshot, so neither can outlive it.
+    # snapshot, so neither can outlive it. _build_locked does the same thing
+    # when it swaps a NEW snapshot in; this is the drop-to-nothing case.
     reset_attestation_view()
     reset_coding_screen()
 
@@ -459,6 +506,16 @@ def check_source_fingerprint(db: Session, *, min_interval_seconds: float | None 
         if snapshot is None or (checked is not None and time.monotonic() - checked < interval):
             return False
         _state.last_check = time.monotonic()
+
+    from app.initiatives.i8.snapshot_store import lifecycle as store_lifecycle
+
+    if store_lifecycle.enabled():
+        # A version another process stored (a build run by hand, the other
+        # container during a restart) replaces this one without a build here.
+        newer = store_lifecycle.newer_stored(db, snapshot.built_at)
+        if newer is not None:
+            with _state_lock:
+                _state.snapshot = snapshot = newer
 
     cfg = get_i8_settings()
     current = source_state(db, reference_date=cfg.reference_date_value or date.today())
@@ -586,6 +643,7 @@ def build_attestation_view(
         justifications=justifications,
         justification_window_days=cfg.justification_window_days,
         justification_cutover=cfg.justification_cutover_date_value,
+        overdue_grace_days=cfg.overdue_grace_days,
     )
     by_line = justifications_by_line(snapshot.lines, justifications, exceptions)
     logger.info("I08 register justifications: %s", justification_counts(by_line))
@@ -668,9 +726,13 @@ class CodingScreen:
 
 
 _screen_lock = threading.Lock()
-#: Keyed by (use_model, limit) so a fast run and a full run do not evict each
-#: other -- a demo typically wants both.
-_screens: dict[tuple[bool, int | None], CodingScreen] = {}
+#: Keyed by (use_model, limit, sources) so a fast run and a full run do not
+#: evict each other -- a demo typically wants both -- and so a run over one set
+#: of free-text sources is never served for a request that asked for another.
+#: The sources belong in the key for correctness, not convenience: the whole
+#: point of asking for PO,PR,MOVEMENT is to compare it against PO,PR, and a
+#: cache that ignored them would answer both questions with one number.
+_screens: dict[tuple[bool, int | None, tuple[str, ...]], CodingScreen] = {}
 
 
 def build_coding_screen(
@@ -680,6 +742,7 @@ def build_coding_screen(
     *,
     use_model: bool = False,
     limit: int | None = None,
+    sources: tuple[str, ...] | None = None,
 ) -> CodingScreen:
     """Run the screen. Always does the work."""
     cfg = cfg or get_i8_settings()
@@ -692,6 +755,7 @@ def build_coding_screen(
         # hold rather than a five-second rebuild.
         universe_materials={row.material_id for row in snapshot.universe},
         use_model=use_model,
+        sources=sources,
     )
     return CodingScreen(
         candidates=tuple(candidates),
@@ -709,14 +773,21 @@ def get_coding_screen(
     *,
     use_model: bool = False,
     limit: int | None = None,
+    sources: tuple[str, ...] | None = None,
     refresh: bool = False,
 ) -> CodingScreen:
-    """The cached screen for this (use_model, limit), built on first use."""
-    key = (use_model, limit)
+    """The cached screen for this (use_model, limit, sources), built on first use."""
+    cfg = cfg or get_i8_settings()
+    # Resolved here rather than left as None, so the key names the sources the
+    # run actually read. Two requests that resolve to the same sources -- one
+    # naming them, one taking the default -- are the same run and should share
+    # one cache entry.
+    resolved = tuple(sources) if sources is not None else cfg.coding_candidate_source_list
+    key = (use_model, limit, resolved)
     with _screen_lock:
         if refresh or key not in _screens:
             _screens[key] = build_coding_screen(
-                db, snapshot, cfg, use_model=use_model, limit=limit
+                db, snapshot, cfg, use_model=use_model, limit=limit, sources=resolved
             )
         return _screens[key]
 

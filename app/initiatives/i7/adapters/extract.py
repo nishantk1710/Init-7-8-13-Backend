@@ -28,9 +28,19 @@ entry per material-plant-month or PO line.
 **Every read finishes before any write starts.** SQL Server refuses a statement
 on a connection that still has an open result ("Connection is busy with results
 for another command") unless MARS is on, which is not this driver's default. So
-a query is fetched whole (:func:`_read`) and only then upserted -- interleaving a
-streamed read with batched MERGEs worked on Postgres and failed on the first
-batch on Azure SQL. The volumes are thousands to tens of thousands of rows.
+a read is either fetched whole (:func:`_read`) or streamed to completion
+(:func:`_stream`) and only then upserted -- interleaving a streamed read with
+batched MERGEs worked on Postgres and failed on the first batch on Azure SQL.
+
+**What is streamed, and why.** The big reads -- movements (n_mseg), goods
+receipts (n_ekbe) and schedule lines (n_eket) -- are folded into small
+dictionaries by the aggregators below, one pass each, so there is no reason to
+hold the raw rows: on the full extract they are over a million rows apiece, and
+fetching them whole cost on the order of a gigabyte of Python objects inside the
+web app's own container. Each stream is consumed completely by its aggregator
+before the first write, so the rule above still holds. Reads that are written
+while they are read (the purchase-order lines) stay whole, and are narrowed in
+SQL to the plant scope instead.
 
 **Idempotency is a database property.** Each staging table has a unique natural
 key, and writes go through an atomic upsert (``MERGE`` on SQL Server, ``ON
@@ -45,7 +55,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Iterable, Iterator
 
-from sqlalchemy import bindparam, inspect, text, update
+from sqlalchemy import bindparam, inspect, select, text, update
 from sqlalchemy.orm import Session
 
 from app.core.db import get_sessionmaker
@@ -136,14 +146,85 @@ class _Rejections:
             self._rows = []
 
 
-def _read(session: Session, statement: str, params: dict[str, Any] | None = None) -> list[Any]:
+def _statement(statement: Any) -> Any:
+    """A SQL string as a ``text()`` clause; a prepared clause passes through."""
+    return text(statement) if isinstance(statement, str) else statement
+
+
+def _read(session: Session, statement: Any, params: dict[str, Any] | None = None) -> list[Any]:
     """Run a query and fetch every row, closing its result before returning.
 
     Fetched whole on purpose, not streamed: the caller upserts on the same
     connection, and SQL Server will not run a MERGE while a result is still
     open on it. See the module docstring.
     """
-    return session.execute(text(statement), params or {}).all()
+    return session.execute(_statement(statement), params or {}).all()
+
+
+#: Rows pulled from the driver per round trip by :func:`_stream`. Large enough
+#: that the round trips do not dominate, small enough that a chunk is a few MB.
+STREAM_CHUNK = 10_000
+
+
+def _stream(
+    session: Session, statement: Any, params: dict[str, Any] | None = None
+) -> Iterator[Any]:
+    """Rows of a query, a chunk at a time, closing the result when done.
+
+    For a read an aggregator folds into a small dictionary in one pass, so the
+    raw rows never have to exist all at once. The caller MUST consume it to the
+    end before it writes: the result is held open until then, and SQL Server
+    refuses a MERGE on a connection with an open result. Every use below hands
+    the stream straight to an aggregator that exhausts it, which is what makes
+    that true by construction rather than by care.
+
+    ``finally`` closes the result even when the aggregator raises part-way, so
+    a failure cannot leave the connection busy for the next statement.
+    """
+    result = session.execute(_statement(statement), params or {}).yield_per(STREAM_CHUNK)
+    try:
+        yield from result
+    finally:
+        result.close()
+
+
+def _plant_scope_clause(column: str, scope: frozenset[str], *keys: str) -> str:
+    """A SQL pre-filter that drops rows ``_out_of_scope`` would drop. Empty
+    scope gives no clause, matching ``_out_of_scope``'s "no filter".
+
+    It is a PRE-filter, not a replacement: every caller still applies
+    ``_out_of_scope`` afterwards, so this only has to be no stricter than the
+    Python test, never exactly as strict. Four details keep it so:
+
+    * The value is trimmed first, as ``clean()`` trims it in Python, so a
+      padded ``'1300 '`` still reaches the plant it names.
+    * A NULL or blank plant is let THROUGH. The callers count those as
+      ``MISSING_PLANT`` rejections, and a filter that dropped them would make
+      malformed rows vanish from the counts instead of being reported.
+    * So is a row missing any of ``keys`` -- the fields the callers reject on
+      BEFORE they look at the plant (the material of a movement; the document
+      and item of a PO line). A malformed row at an out-of-scope plant is
+      counted today, and dropping it here would quietly change the counts.
+    * Case and trailing blanks are compared the way SQL Server compares them
+      (insensitively), which can only let more rows through to Python.
+
+    ``column`` and ``keys`` are always literal column references in this module,
+    never caller-supplied, which is why they are formatted in rather than bound.
+    """
+    if not scope:
+        return ""
+    trimmed = f"LTRIM(RTRIM({column}))"
+    passthrough = " OR ".join(
+        [f"NULLIF({trimmed}, '') IS NULL"]
+        + [f"NULLIF(LTRIM(RTRIM({key})), '') IS NULL" for key in keys]
+    )
+    return f" AND ({passthrough} OR {trimmed} IN :plant_scope)"
+
+
+def _scoped(statement: Any, scope: frozenset[str]) -> Any:
+    """``statement`` with the expanding ``plant_scope`` bind declared, if the
+    scope clause was added to it."""
+    return statement.bindparams(bindparam("plant_scope", expanding=True)) if scope else statement
 
 
 def _out_of_scope(plant: str | None, scope: frozenset[str]) -> bool:
@@ -199,12 +280,21 @@ def _batched(iterator: Iterator[dict[str, Any]], size: int) -> Iterator[list[dic
 # Afrikaans and German); joining it straight would multiply MARA rows and put
 # the same key into one upsert batch twice. English first, else any.
 #
-# ZMM065 is joined from its raw tables: it is a report only the workbook loader
-# fills, always in the workbook vocabulary, with material numbers unpadded --
-# the same form the normalise views give n_mara.material. It may not be loaded
-# at all (it is not part of the SAP CSV pull): __ZMM065__ is the tables that
-# exist, or an empty stand-in, so criticality is NULL rather than the staging
-# failing -- see _material_sql.
+# Criticality is joined from ``criticality_current`` -- what the monthly ZMM065
+# reports add up to (``app.integrations.criticality.reports``) -- with material
+# numbers in the same stripped form the normalise views give n_mara.material.
+# It is per material-plant there, and this staging table holds one value per
+# material, so a material whose plants disagree takes its MOST SEVERE tier
+# (``SEVERITY_ORDER``): the stock policy errs towards protecting a part that is
+# critical anywhere. This replaces a plain MAX() over the text, which ranked the
+# tiers alphabetically -- CRITICAL < IMPACT < INSURANCE < NORMAL < OBSOLETE --
+# and so staged a part that is CRITICAL at one plant and NORMAL at the other as
+# NORMAL, and anything OBSOLETE anywhere as OBSOLETE.
+#
+# Criticality may not be loaded at all (no report imported yet, or the
+# migration has not run): __CRITICALITY__ is the real table, or an empty
+# stand-in, so criticality is NULL rather than the staging failing -- see
+# _material_sql.
 _MATERIAL_SQL = """
     SELECT a.material,
            a.material_group,
@@ -224,26 +314,36 @@ _MATERIAL_SQL = """
              GROUP BY material
       ) t ON t.material = a.material
       LEFT JOIN (
-            SELECT mat_code, MAX(criticality) AS criticality
-              FROM (__ZMM065__) u
+            SELECT material,
+                   CASE MIN(CASE criticality __RANK__ END) __UNRANK__ END AS criticality
+              FROM (__CRITICALITY__) u
              WHERE NULLIF(criticality, '') IS NOT NULL
-             GROUP BY mat_code
-      ) z ON z.mat_code = a.material
+             GROUP BY material
+      ) z ON z.material = a.material
 """
-_ZMM065_TABLES = ("raw_zmm065_bmm", "raw_zmm065_gb")
 
 
 def _material_sql(session: Session) -> str:
-    """_MATERIAL_SQL over whichever ZMM065 tables exist."""
+    """_MATERIAL_SQL over ``criticality_current``, or an empty stand-in when it
+    does not exist yet."""
+    from app.core.criticality import SEVERITY_ORDER
+    from app.models.criticality_report import CriticalityCurrent
     from app.shared.optional_tables import existing
 
-    tables = existing(session, _ZMM065_TABLES)
-    if tables:
-        source = " UNION ALL ".join(f"SELECT mat_code, criticality FROM {table}" for table in tables)
+    table = CriticalityCurrent.__tablename__
+    if existing(session, (table,)):
+        source = f"SELECT material, criticality FROM {table}"
     else:
-        logger.info("ZMM065 is not loaded; materials stage with no criticality")
-        source = "SELECT CAST(NULL AS NVARCHAR(200)) AS mat_code, CAST(NULL AS NVARCHAR(200)) AS criticality WHERE 1 = 0"
-    return _MATERIAL_SQL.replace("__ZMM065__", source)
+        logger.info("No criticality report is loaded; materials stage with no criticality")
+        source = "SELECT CAST(NULL AS NVARCHAR(200)) AS material, CAST(NULL AS NVARCHAR(200)) AS criticality WHERE 1 = 0"
+    # Tier names come from the enum, never from input.
+    rank = " ".join(f"WHEN '{tier.value}' THEN {n}" for n, tier in enumerate(SEVERITY_ORDER, start=1))
+    unrank = " ".join(f"WHEN {n} THEN '{tier.value}'" for n, tier in enumerate(SEVERITY_ORDER, start=1))
+    return (
+        _MATERIAL_SQL.replace("__CRITICALITY__", source)
+        .replace("__RANK__", rank)
+        .replace("__UNRANK__", unrank)
+    )
 
 
 # Price and currency come from wherever SAP supplied them, never assumed:
@@ -682,14 +782,54 @@ def _stage_stock(
 
 # The movement rows the policy counts, one per material document line. Totalled
 # per material-plant-month by aggregate_consumption() below.
-_CONSUMPTION_SQL = text(
-    """
+_CONSUMPTION_SELECT = """
     SELECT material, plant, posting_date, quantity, debit_credit_ind,
            movement_type, base_unit_of_measure
       FROM n_mseg
      WHERE movement_type IN :movement_types
+"""
+
+#: The unscoped statement: every plant. Kept as it was, and what an empty
+#: ``I7_PLANTS`` runs.
+_CONSUMPTION_SQL = text(_CONSUMPTION_SELECT).bindparams(
+    bindparam("movement_types", expanding=True)
+)
+
+
+def _consumption_statement(scope: frozenset[str]) -> Any:
+    """The movement query, narrowed to ``scope`` in SQL when there is one.
+
+    Measured on the full extract: 1,160,647 movement rows across all plants,
+    848,125 in the two scoped plants. The rest used to be fetched and thrown
+    away in Python.
     """
-).bindparams(bindparam("movement_types", expanding=True))
+    statement = text(_CONSUMPTION_SELECT + _plant_scope_clause("plant", scope, "material")).bindparams(
+        bindparam("movement_types", expanding=True)
+    )
+    return _scoped(statement, scope)
+
+
+def _consumption_totals(
+    session: Session, policy: ExtractIngestionPolicy, rejections: _Rejections
+) -> dict[tuple[str, str, date], dict[str, Any]]:
+    """Monthly consumption per material-plant, aggregated from a stream.
+
+    ``aggregate_consumption`` reads its rows once and keeps one entry per
+    material-plant-month, so the million-odd movements are never held -- only
+    the totals are, which is a small fraction of them. Unchanged by this: which
+    rows count, how issues and reversals net, and which rows are rejected.
+    """
+    scope = policy.plant_scope
+    params: dict[str, Any] = {"movement_types": list(policy.consumption.all_movement_types)}
+    if scope:
+        params["plant_scope"] = sorted(scope)
+    return aggregate_consumption(
+        _stream(session, _consumption_statement(scope), params),
+        frozenset(policy.consumption.issue_movement_types),
+        frozenset(policy.consumption.reversal_movement_types),
+        rejections,
+        scope,
+    )
 
 
 def aggregate_consumption(
@@ -755,16 +895,9 @@ def aggregate_consumption(
 def _stage_consumption(
     session: Session, run_id: int, policy: ExtractIngestionPolicy, rejections: _Rejections
 ) -> int:
-    movement_rows = session.execute(
-        _CONSUMPTION_SQL, {"movement_types": list(policy.consumption.all_movement_types)}
-    ).all()
-    totals = aggregate_consumption(
-        movement_rows,
-        frozenset(policy.consumption.issue_movement_types),
-        frozenset(policy.consumption.reversal_movement_types),
-        rejections,
-        policy.plant_scope,
-    )
+    # Fully consumed here, before the first upsert below: the stream is exhausted
+    # (and its result closed) when aggregate_consumption returns.
+    totals = _consumption_totals(session, policy, rejections)
 
     def rows() -> Iterator[dict[str, Any]]:
         for (material, plant, period), entry in totals.items():
@@ -810,6 +943,23 @@ _PURCHASE_ORDER_SQL = """
       LEFT JOIN n_ekko k ON k.purchasing_document = p.purchasing_document
      WHERE NULLIF(p.material, '') IS NOT NULL
 """
+
+
+def _purchase_order_statement(scope: frozenset[str]) -> Any:
+    """The PO-line query, narrowed to ``scope`` in SQL when there is one.
+
+    Measured on the full extract: 700,922 lines across all plants, 472,321 in
+    the two scoped plants. Unlike the movement read this one cannot be streamed
+    -- its rows are upserted while they are produced, and SQL Server refuses a
+    MERGE with a result open -- so narrowing it is what keeps it small.
+    """
+    return _scoped(
+        text(
+            _PURCHASE_ORDER_SQL
+            + _plant_scope_clause("p.plant", scope, "p.purchasing_document", "p.item")
+        ),
+        scope,
+    )
 
 _GOODS_RECEIPT_SQL = """
     SELECT purchasing_document, item, posting_date, quantity
@@ -863,19 +1013,23 @@ def schedule_dates_by_line(rows: Iterable[Any]) -> dict[tuple[str, str], date]:
 def _stage_purchase_orders(
     session: Session, run_id: int, policy: ExtractIngestionPolicy, rejections: _Rejections
 ) -> int:
+    # Goods receipts (1.4M rows) and schedule lines (0.7M) are streamed into the
+    # dictionaries that fold them per PO line; each is exhausted before the next
+    # statement runs, and all of it before the first upsert.
     receipts = receipts_by_line(
-        _read(
+        _stream(
             session,
             _GOODS_RECEIPT_SQL,
             {"gr_category": GOODS_RECEIPT_HISTORY_CATEGORY, "gr_movement": GOODS_RECEIPT_MOVEMENT_TYPE},
         ),
         rejections,
     )
-    schedule = schedule_dates_by_line(_read(session, _SCHEDULE_SQL))
+    schedule = schedule_dates_by_line(_stream(session, _SCHEDULE_SQL))
     scope = policy.plant_scope
+    po_params: dict[str, Any] = {"plant_scope": sorted(scope)} if scope else {}
 
     def rows() -> Iterator[dict[str, Any]]:
-        for row in _read(session, _PURCHASE_ORDER_SQL):
+        for row in _read(session, _purchase_order_statement(scope), po_params):
             document = clean(row.purchasing_document)
             item = clean(row.item)
             material = clean(row.material)
@@ -1007,16 +1161,154 @@ def deactivate_unseen(session: Session, staging_run_id: int) -> int:
 # --- Entry point -------------------------------------------------------
 
 
+#: The staging steps, in order: (label, StagingResult attribute, StagingRun
+#: column, function). Independent of each other -- each reads the raw layer on
+#: its own -- which is what lets a resumed run skip the ones already saved.
+_STEPS: tuple[tuple[str, str, str, Any], ...] = (
+    ("materials", "materials", "materials_staged", _stage_materials),
+    ("material-plants", "material_plants", "material_plants_staged", _stage_material_plants),
+    ("stock", "stock", "stock_staged", _stage_stock),
+    ("consumption", "consumption", "consumption_staged", _stage_consumption),
+    ("purchase orders", "purchase_orders", "purchase_orders_staged", _stage_purchase_orders),
+)
+
+#: Held for the life of a staging run (``sp_getapplock``, session-owned, so SQL
+#: Server lets go if the process dies). Holding it proves no other staging run
+#: is alive, which is what makes it safe to judge a ``running`` row dead.
+STAGING_LOCK = "spares_ai_i7_staging"
+
+STATUS_RUNNING = "running"
+
+ABANDONED = (
+    "abandoned: its process stopped (an App Service restart, a deploy or an OOM) "
+    "before the run finished; found by staging run {by}"
+)
+
+
+class _NoLock:
+    """Stand-in where there is no SQL Server to hold an application lock
+    (the SQLite tests). Every real deployment is Azure SQL."""
+
+    def acquire(self) -> bool:
+        return True
+
+    def release(self) -> None:
+        return None
+
+
+def _default_lock() -> Any:
+    from app.core.db import get_engine
+
+    if get_engine().dialect.name != "mssql":
+        return _NoLock()
+    from app.ingest.scheduler import _Lock
+
+    return _Lock(STAGING_LOCK)
+
+
+def _current_fingerprint(session: Session) -> str | None:
+    from app.initiatives.i7.watch import source_fingerprint
+
+    try:
+        return source_fingerprint(session) or None
+    except Exception:  # noqa: BLE001 -- lineage only; never fail staging over it
+        session.rollback()
+        return None
+
+
+def _claim_run(
+    session: Session,
+    *,
+    movement_types: str,
+    snapshot_complete: bool,
+    source_fingerprint: str | None,
+    resume: bool,
+) -> tuple[StagingRun, bool]:
+    """The run to write into, and whether it is a resumed one. The caller
+    holds the staging lock and commits.
+
+    **Resumed** when the newest run did not succeed, saved at least one step,
+    and read the same thing this run would: the same source fingerprint (both
+    known), the same consumption movement types and the same snapshot
+    completeness. Anything else starts a new run -- resuming across a reload of
+    the raw layer would mix two versions of the data in one run.
+
+    Every other run still marked ``running`` is dead (the lock proves it) and
+    is marked ``failed``, so it stops blocking the feature build, which refuses
+    to start while any staging run says ``running``.
+    """
+    newest = session.execute(select(StagingRun).order_by(StagingRun.id.desc()).limit(1)).scalars().first()
+    candidate = None
+    if (
+        resume
+        and newest is not None
+        and newest.status != STATUS_SUCCEEDED
+        and any(getattr(newest, column) for _, _, column, _ in _STEPS)
+        and source_fingerprint is not None
+        and newest.source_fingerprint == source_fingerprint
+        and (newest.consumption_movement_types or "") == movement_types
+        and bool(newest.snapshot_complete) == snapshot_complete
+    ):
+        candidate = newest
+
+    if candidate is not None:
+        run = candidate
+        run.status = STATUS_RUNNING
+        run.error = None
+        run.finished_at = None
+        session.flush()
+    else:
+        run = StagingRun(
+            source=SOURCE_NORMALISE_VIEWS,
+            status=STATUS_RUNNING,
+            consumption_movement_types=movement_types,
+            snapshot_complete=snapshot_complete,
+            source_fingerprint=source_fingerprint,
+        )
+        session.add(run)
+        session.flush()
+
+    stale = session.execute(
+        select(StagingRun).where(StagingRun.status == STATUS_RUNNING, StagingRun.id != run.id)
+    ).scalars().all()
+    now = datetime.now(timezone.utc)
+    for old in stale:
+        old.status = STATUS_FAILED
+        old.error = ABANDONED.format(by=run.id)
+        old.finished_at = now
+    if stale:
+        logger.warning(
+            "staging run %d: marked %d dead run(s) failed: %s",
+            run.id, len(stale), ", ".join(str(old.id) for old in stale),
+        )
+    return run, candidate is not None
+
+
 def stage_extract(
     policy: ExtractIngestionPolicy | None = None,
     *,
     snapshot_complete: bool = False,
     source_fingerprint: str | None = None,
+    resume: bool = True,
+    lock: Any = None,
 ) -> StagingResult:
     """Stage the SAP raw layer, through the normalise views, into canonical staging.
 
     Idempotent: running twice converges on the same state. Raw tables are only
     ever read.
+
+    **Each step is committed as it finishes**, together with its count on the
+    run row. Staging the full extract takes about an hour on the nonprod
+    database, and it used to be one transaction: every restart in that hour (a
+    deploy, a manual restart, Azure moving the app to another machine) rolled
+    the whole hour back -- nine runs in a row on 12-13 Oct 2026. Now a restart
+    costs the step in progress, and the next call **resumes** the interrupted
+    run from the first step not yet saved (``resume=False`` forces a fresh
+    run; see :func:`_claim_run` for when a run is resumable).
+
+    The run stays ``running`` until every step is saved, and the feature build
+    refuses to read a run in that state, so a partly staged run is never
+    built from.
 
     ``policy`` defaults to one carrying ``I7_PLANTS`` (app.core.config), so a
     normal run is scoped to the plants VZI named without every caller having
@@ -1029,55 +1321,83 @@ def stage_extract(
     gates the deactivation sweep and nothing else, and it **defaults False**:
     a caller that has not established the question's answer must not sweep.
     Only the daily CSV full refresh replaces ``raw_<table>`` whole
-    (``app.ingest.csv_load``), so only a run following one may pass True.
+    (``app.ingest.csv_load``), so only a run following one may pass True. The
+    sweep runs only after every step is saved, so a run that stops part-way
+    never sweeps.
 
-    ``source_fingerprint`` records which raw-layer load was read, for lineage.
+    ``source_fingerprint`` records which raw-layer load was read, for lineage;
+    when not given it is read from ``ingestion_run``, which is also what makes
+    a resume safe to judge.
     """
     if policy is None:
         from app.core.config import get_settings
 
         policy = ExtractIngestionPolicy(plants=get_settings().i7_plant_list)
+    lock = lock if lock is not None else _default_lock()
+    if not lock.acquire():
+        return StagingResult(
+            status=STATUS_FAILED,
+            error="another staging run holds the staging lock; it is already staging this data",
+        )
+
+    try:
+        return _stage_locked(policy, snapshot_complete, source_fingerprint, resume)
+    finally:
+        lock.release()
+
+
+def _stage_locked(
+    policy: ExtractIngestionPolicy,
+    snapshot_complete: bool,
+    source_fingerprint: str | None,
+    resume: bool,
+) -> StagingResult:
     session_factory = get_sessionmaker()
 
     with session_factory() as session:
-        run = StagingRun(
-            source=SOURCE_NORMALISE_VIEWS,
-            status="running",
-            consumption_movement_types=",".join(policy.consumption.all_movement_types),
+        fingerprint = source_fingerprint or _current_fingerprint(session)
+        run, resumed = _claim_run(
+            session,
+            movement_types=",".join(policy.consumption.all_movement_types),
             snapshot_complete=snapshot_complete,
-            source_fingerprint=source_fingerprint,
+            source_fingerprint=fingerprint,
+            resume=resume,
         )
-        session.add(run)
         session.commit()
         run_id = run.id
+        saved = {column: getattr(run, column) or 0 for _, _, column, _ in _STEPS}
+        rejected_before = run.rejected or 0
 
     result = StagingResult(run_id=run_id)
     rejections = _Rejections(run_id)
+    if resumed:
+        logger.info(
+            "staging run %d: resuming -- already saved: %s",
+            run_id,
+            ", ".join(f"{label} {saved[column]:,}" for label, _, column, _ in _STEPS if saved[column]),
+        )
 
     try:
         with session_factory() as session:
-            logger.info("staging run %d: materials", run_id)
-            result.materials = _stage_materials(session, run_id, policy, rejections)
+            for label, attribute, column, step in _STEPS:
+                if saved[column]:
+                    setattr(result, attribute, saved[column])
+                    logger.info("staging run %d: %s already saved (%d rows), skipped", run_id, label, saved[column])
+                    continue
+                logger.info("staging run %d: %s", run_id, label)
+                count = step(session, run_id, policy, rejections)
+                setattr(result, attribute, count)
+                rejections.flush(session)
+                stored = session.get(StagingRun, run_id)
+                setattr(stored, column, count)
+                stored.rejected = rejected_before + sum(rejections.counts.values())
+                # The step's rows and its count in one commit: a count on the
+                # run row means the step is saved, which is what resume reads.
+                session.commit()
+                logger.info("staging run %d: %s saved (%d rows)", run_id, label, count)
 
-            logger.info("staging run %d: material-plants", run_id)
-            result.material_plants = _stage_material_plants(session, run_id, policy, rejections)
-
-            logger.info("staging run %d: stock", run_id)
-            result.stock = _stage_stock(session, run_id, policy, rejections)
-
-            logger.info("staging run %d: consumption", run_id)
-            result.consumption = _stage_consumption(session, run_id, policy, rejections)
-
-            logger.info("staging run %d: purchase orders", run_id)
-            result.purchase_orders = _stage_purchase_orders(session, run_id, policy, rejections)
-
-            rejections.flush(session)
             result.rejections = dict(rejections.counts)
 
-            # After every staging write, before the run is marked succeeded, and
-            # in the same transaction as the rows it is judging: a sweep that
-            # committed separately could deactivate rows belonging to a staging
-            # pass that then failed and rolled back.
             if snapshot_complete:
                 result.deactivated = deactivate_unseen(session, run_id)
                 logger.info(
@@ -1093,18 +1413,10 @@ def stage_extract(
                     run_id,
                 )
 
-            session.commit()
-
-        with session_factory() as session:
             stored = session.get(StagingRun, run_id)
             stored.status = STATUS_SUCCEEDED
             stored.deactivated = result.deactivated
-            stored.materials_staged = result.materials
-            stored.material_plants_staged = result.material_plants
-            stored.stock_staged = result.stock
-            stored.consumption_staged = result.consumption
-            stored.purchase_orders_staged = result.purchase_orders
-            stored.rejected = result.rejected_total
+            stored.rejected = rejected_before + result.rejected_total
             stored.finished_at = datetime.now(timezone.utc)
             session.commit()
 
@@ -1117,7 +1429,7 @@ def stage_extract(
             result.stock,
             result.consumption,
             result.purchase_orders,
-            result.rejected_total,
+            rejected_before + result.rejected_total,
         )
         return result
 

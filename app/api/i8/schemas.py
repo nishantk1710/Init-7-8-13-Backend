@@ -240,6 +240,10 @@ class RepairChain(I8Model):
     # 08-Oct-2026, so what it showed per row now travels on the row itself.
     # Same values as ``DeclarationItem``, from the same attestation view.
 
+    declaration_id: str | None = None
+    """The attestation covering this line, when one does -- so a screen can
+    offer to amend it rather than only to add another."""
+
     declared_by: str | None = None
     declared_at: datetime | None = None
     condition: Literal["Repairable", "Beyond Economical Repair", "Scrap"] | None = None
@@ -541,6 +545,10 @@ class DeclarationItem(I8Model):
     """No "Pending": that would mean "submitted, awaiting sign-off", and no such
     state exists -- there is no approval workflow in SAP, here or in the FRS."""
 
+    declaration_id: str | None = None
+    """The attestation covering this line, when one does -- so the queue can
+    offer to amend it rather than only to add another."""
+
     declared_by: str | None = None
     declared_at: datetime | None = None
     condition: Literal["Repairable", "Beyond Economical Repair", "Scrap"] | None = None
@@ -566,6 +574,32 @@ class DeclarationResponse(I8Model):
     total: int
     meta: DeclarationMeta
     reference_date: date
+
+
+class ExceptionHistoryEntry(I8Model):
+    """One thing that happened to an exception: an assignment, a comment, a
+    status change, or the queue resolving the item itself."""
+
+    id: str
+    kind: Literal["ASSIGNED", "COMMENT", "STATUS", "AUTO_RESOLVED"]
+    """``AUTO_RESOLVED`` is kept apart from ``STATUS`` deliberately. "Priya
+    resolved this" and "the check stopped finding it" are different claims,
+    and rendering them identically invites the first to be read where only the
+    second happened."""
+
+    status: str | None = None
+    """The status this entry set. Null on a comment or an assignment."""
+
+    owner: str | None = None
+    """Who the item was assigned to, on an ``ASSIGNED`` entry. Null there means
+    it was unassigned -- ``kind`` tells the two nulls apart."""
+
+    actor: str
+    """``system`` on ``AUTO_RESOLVED``; otherwise whoever acted. Server-set,
+    never taken from the request body."""
+
+    text: str = ""
+    at: datetime
 
 
 class ExceptionQueueItem(I8Model):
@@ -600,6 +634,30 @@ class ExceptionQueueItem(I8Model):
     """The line predates the control it is measured against, so the gap is
     explained by when it was raised rather than by anyone failing to act.
     Always false while no cutover date is configured."""
+
+    # --- FR-11: the state people put it in ------------------------------
+    #
+    # The item above is recomputed on every read; everything below is stored
+    # against its id in i8_exception_state. An item nobody has touched has no
+    # row there and reports the defaults -- OPEN and unassigned -- which is
+    # the truth about it rather than a placeholder.
+
+    status: Literal["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"] = "OPEN"
+
+    owner: str | None = None
+    """Null means unassigned, which is a real state and the common one."""
+
+    still_detected: bool = True
+    """Whether the check still finds this item.
+
+    Always true for an item in the list -- being listed is what detection
+    means. It is served because a RESOLVED item may be listed when the caller
+    asks for one by id or by status, and then the distinction between "someone
+    resolved it" and "the data moved" is the whole story."""
+
+    history: list[ExceptionHistoryEntry] = []
+    """Oldest first, the order a history is read in. Empty for an item nobody
+    has touched."""
 
 
 class ExceptionMeta(I8Model):
@@ -650,10 +708,22 @@ class ExceptionResponse(I8Model):
 
 
 class CodingCandidateLine(I8Model):
-    """One PO line whose free text mentioned repair."""
+    """One document line whose free text mentioned repair."""
 
-    purchasing_document: str
-    item: str
+    source: str
+    """PO, PR or MOVEMENT -- which free-text field the words came from.
+
+    Served because ``document``/``documentItem`` alone are ambiguous: a
+    purchase order item and a requisition item look alike and are opened in
+    different SAP transactions."""
+
+    document: str
+    """EBELN for a PO, BANFN for a PR, MBLNR for a movement."""
+
+    document_item: str
+    """EBELP, BNFPO or ZEILE. Not called ``item``: the three number
+    differently, and a bare ``item`` reads as a PO item everywhere else."""
+
     plant: PlantReference | None = None
     short_text: str
     """**The text the verdict was reached on.** Served with every candidate so a
@@ -665,7 +735,11 @@ class CodingCandidateLine(I8Model):
     needs no explanation."""
 
     raised_at: date | None = None
+    """ERDAT on a PO line, BADAT on a requisition, BUDAT on a movement --
+    when the words were written, whichever document carries them."""
+
     item_category: str | None = None
+    """PSTYP on a PO or PR line. Always null on a movement, which has none."""
 
 
 class CodingCandidateTwin(I8Model):
@@ -728,8 +802,33 @@ class CodingCandidateItem(I8Model):
 class CodingCandidateMeta(I8Model):
     """Every count, with the thing it counts named."""
 
+    sources: list[str]
+    """Which free-text sources this run read -- PO, PR, MOVEMENT. Every count
+    below is relative to it, so two runs cannot be compared without it. Set by
+    ``I8_CODING_CANDIDATE_SOURCES``; MOVEMENT is off until measured."""
+
     lines_with_text: int
+    """Lines carrying any free text across those sources -- the denominator."""
+
+    lines_with_text_by_source: dict[str, int] = {}
     lines_with_repair_language: int
+    lines_by_source: dict[str, int] = {}
+    """Repair-language hits per source. The number to read when deciding
+    whether a source earns its keep."""
+
+    deleted_requisitions_dropped: int = 0
+    """PR lines ignored because LOEKZ is set -- a deleted requisition is not a
+    request for anything."""
+
+    converted_requisitions_dropped: int = 0
+    """PR lines ignored because the PO they became is in this same run. One
+    request, counted once; the PO is kept because it is the document that
+    exists in SAP now."""
+
+    verdicts_reused: int = 0
+    """Verdicts served from the store rather than bought from the model again,
+    because the material's text has not changed since it was judged."""
+
     lines_already_eighty_series: int
     """Repair language on a material that IS coded repairable -- the convention
     worked. Measured at 6."""
@@ -836,3 +935,31 @@ class RepairableUnitResponse(I8Model):
     caveats: list[str]
     evidence: list[RepairEvidenceItem]
     reference_date: date
+
+
+class ExceptionEventRequest(I8Model):
+    """Append one entry to an exception's history (FR-11).
+
+    One request shape for all three actions, because they are one operation on
+    one append-only table. There is no PATCH anywhere in this application: a
+    status is not a column to be edited, it is the last entry that set one.
+
+    ====================  ============================================
+    ``kind``              what else to send
+    ====================  ============================================
+    ``ASSIGNED``          ``owner`` -- or null to unassign, which is
+                          an action and gets its own entry
+    ``STATUS``            ``status``, and ideally ``text`` saying why
+    ``COMMENT``           ``text``
+    ====================  ============================================
+
+    ``AUTO_RESOLVED`` is not accepted: only the queue writes those, because
+    only a check can know it has stopped finding something.
+    """
+
+    kind: Literal["ASSIGNED", "STATUS", "COMMENT"]
+    status: Literal["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"] | None = None
+    owner: str | None = Field(default=None, max_length=128)
+    text: str = Field(default="", max_length=2000)
+    """What was said, or why the status moved. Optional on a status change and
+    worth sending: a history of bare transitions explains nothing later."""

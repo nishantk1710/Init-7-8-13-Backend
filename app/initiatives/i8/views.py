@@ -85,6 +85,7 @@ VIEWS: tuple[str, ...] = (
     "v_ekpo",
     "v_eket",
     "v_ekbe",
+    "v_eban",
     "v_mseg",
     "v_lfa1",
     "v_zmm065",
@@ -152,8 +153,6 @@ INDEXES: tuple[tuple[str, str, str], ...] = (
     ("ix_raw_mard_i8key", "raw_mard", "sap_key(ltrim(trim(material), '0'))"),
     ("ix_raw_ekpo_i8key", "raw_ekpo", "sap_key(ltrim(trim(material), '0'))"),
     ("ix_raw_mseg_i8key", "raw_mseg", "sap_key(ltrim(trim(material), '0'))"),
-    ("ix_raw_zmm065_bmm_i8key", "raw_zmm065_bmm", "sap_key(mat_code)"),
-    ("ix_raw_zmm065_gb_i8key", "raw_zmm065_gb", "sap_key(mat_code)"),
 )
 
 
@@ -184,13 +183,15 @@ def render(sql: str, mssql: bool) -> list[str]:
     return [part.strip().rstrip(";") for part in sql.split(_BATCH_MARKER) if part.strip()]
 
 
-#: Report tables that may not be loaded (not part of the SAP CSV pull), and the
-#: columns the views read from them. A missing one is replaced by an empty
-#: stand-in with these columns, so ``v_zmm065`` -- and every view after it, which
-#: the failed CREATE used to take down with it -- still builds, just with no rows.
+#: Tables a view reads that may not exist yet, and the columns the views read
+#: from them. ``criticality_current`` is created by a migration and filled by the
+#: monthly uploads; before either, a missing one is replaced by an empty stand-in
+#: with these columns, so ``v_zmm065`` -- and every view after it, which the
+#: failed CREATE used to take down with it -- still builds, just with no rows.
 OPTIONAL_REPORT_TABLES = {
-    "raw_zmm065_bmm": ("mat_code", "plant", "criticality", "material_description", "mattyp", "mrp_type"),
-    "raw_zmm065_gb": ("mat_code", "plant", "criticality", "material_description", "mattyp", "mrp_type"),
+    "criticality_current": (
+        "material", "material_raw", "plant", "criticality", "description", "mattyp", "mrp_type",
+    ),
 }
 
 

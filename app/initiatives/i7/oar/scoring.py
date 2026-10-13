@@ -14,6 +14,10 @@ target, and would rank below a worse candidate that happened to have text. It
 would also make scores incomparable between pairs, since each would be penalised
 differently by data availability.
 
+So, for the dimensions D available for a pair (each already in [0, 1])::
+
+    S = sum(W_d x S_d for d in D) / sum(W_d for d in D)
+
 Renormalising answers a well-defined question -- "how similar are these on the
 evidence available?" -- and ``score_completeness`` records how much evidence
 that was, so a 0.9 computed from one dimension is distinguishable from a 0.9
@@ -21,6 +25,20 @@ computed from three.
 
 When no dimension is available the score is ``None``, never 0.0: nothing was
 measured, which is not the same as measuring no resemblance.
+
+**Renormalising has a failure mode, and the evidence rule closes it.** If only
+one weak feature is known for a pair -- typically the unit of measure, shared by
+thousands of unrelated parts -- the renormalised score is 1.0 on that feature
+alone, and it would outrank a genuine match measured on everything.
+:func:`assess_evidence` therefore refuses admission to a pair unless:
+
+* at least ``minimum_features`` features were actually compared, and
+* at least one of them is an *identity* feature -- one that says what the part
+  is (material group, description), not merely how it is counted or priced.
+
+The score is still computed and kept for explanation; it is only refused as a
+neighbour. Both requirements are policy (``SimilarityPolicy``), and setting
+``minimum_features`` to 0 with no identity features restores the old behaviour.
 """
 
 from decimal import Decimal
@@ -33,6 +51,29 @@ weights can sum to 0.9999999998, which must not push a perfect score out of
 range -- but a genuinely out-of-bounds score is still an error."""
 
 
+def assess_evidence(
+    features_used: tuple[str, ...],
+    minimum_features: int,
+    identity_features: tuple[str, ...],
+) -> tuple[bool, str | None]:
+    """Whether a pair's compared features are enough to admit it.
+
+    Returns ``(sufficient, reason)``. With ``minimum_features`` 0 and no identity
+    features, every pair with a score is sufficient -- the pre-``-2`` behaviour.
+    """
+    if len(features_used) < minimum_features:
+        return False, (
+            f"{len(features_used)} feature(s) compared, fewer than the "
+            f"{minimum_features} required"
+        )
+    if identity_features and not any(f in features_used for f in identity_features):
+        return False, (
+            "no identity feature compared (needs one of "
+            f"{', '.join(identity_features)})"
+        )
+    return True, None
+
+
 def combine(
     structured: DimensionScore,
     text: DimensionScore,
@@ -40,8 +81,14 @@ def combine(
     structured_weight: Decimal,
     text_weight: Decimal,
     business_weight: Decimal,
+    minimum_evidence_features: int = 0,
+    identity_evidence_features: tuple[str, ...] = (),
 ) -> CombinedScore:
-    """Weighted combination over the available dimensions."""
+    """Weighted combination over the available dimensions.
+
+    The two evidence arguments default to "no requirement", so a caller that
+    does not pass a policy gets exactly the arithmetic it always got.
+    """
     contributions: list[tuple[str, Decimal, Decimal]] = []
 
     for name, dimension, weight in (
@@ -52,25 +99,22 @@ def combine(
         if dimension.is_available:
             contributions.append((name, dimension.value, weight))
 
+    features_used = structured.features + text.features + business.features
+    features_missing = structured.missing + text.missing + business.missing
     intended_total = structured_weight + text_weight + business_weight
 
-    if not contributions:
+    available_weight = sum((weight for _, _, weight in contributions), Decimal(0))
+    if not contributions or available_weight <= 0:
         return CombinedScore(
             combined=None,
             structured=structured,
             text=text,
             business=business,
             score_completeness=Decimal(0),
-        )
-
-    available_weight = sum(weight for _, _, weight in contributions)
-    if available_weight <= 0:
-        return CombinedScore(
-            combined=None,
-            structured=structured,
-            text=text,
-            business=business,
-            score_completeness=Decimal(0),
+            features_used=features_used,
+            features_missing=features_missing,
+            evidence_sufficient=False,
+            evidence_detail="no similarity dimension could be computed",
         )
 
     total = sum(
@@ -88,6 +132,9 @@ def combine(
     completeness = (
         available_weight / intended_total if intended_total > 0 else Decimal(0)
     )
+    sufficient, reason = assess_evidence(
+        features_used, minimum_evidence_features, identity_evidence_features
+    )
 
     return CombinedScore(
         combined=total,
@@ -98,4 +145,27 @@ def combine(
         applied_weights=tuple(
             (name, str(weight / available_weight)) for name, _, weight in contributions
         ),
+        features_used=features_used,
+        features_missing=features_missing,
+        evidence_sufficient=sufficient,
+        evidence_detail=reason,
     )
+
+
+def explain(score: CombinedScore, limit: int = 500) -> str:
+    """A one-line, stored explanation of a score: what entered it and how.
+
+    ``used=...;missing=...;weights=...;text=...;evidence=...`` -- enough to
+    recompute the combined value from the stored dimension scores and to see why
+    a feature did or did not count. Truncated to ``limit`` characters for the
+    column it is stored in.
+    """
+    weights = ",".join(f"{name}:{Decimal(w):.4f}" for name, w in score.applied_weights)
+    parts = [
+        f"used={','.join(score.features_used) or '-'}",
+        f"missing={','.join(score.features_missing) or '-'}",
+        f"weights={weights or '-'}",
+        f"text={score.text.status.value}",
+        "evidence=" + ("ok" if score.evidence_sufficient else f"low({score.evidence_detail})"),
+    ]
+    return ";".join(parts)[:limit]

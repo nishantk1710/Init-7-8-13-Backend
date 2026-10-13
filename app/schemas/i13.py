@@ -120,6 +120,10 @@ class ReservationLedgerEntryResponse(BaseModel):
     reservation_item: str
 
     material: str
+
+    material_description: str | None = None
+
+    """MAKT / ZMM065 name, where either has one -- see app.shared.material_names."""
     plant: str
     reservation_quantity: Decimal
     requirement_date: date | None
@@ -170,6 +174,8 @@ class UtilisationLedgerEntryResponse(BaseModel):
 
     ledger_id: str
     material: str
+    material_description: str | None = None
+    """MAKT / ZMM065 name, where either has one -- see app.shared.material_names."""
     plant: str
 
     reservation_number: str | None
@@ -231,6 +237,10 @@ class WatchMetricResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     material: str
+
+    material_description: str | None = None
+
+    """MAKT / ZMM065 name, where either has one -- see app.shared.material_names."""
     plant: str
     material_scope: MaterialScope
 
@@ -473,6 +483,8 @@ class GrniEntryResponse(BaseModel):
     reservation_number: str
     reservation_item: str
     material: str
+    material_description: str | None = None
+    """MAKT / ZMM065 name, where either has one -- see app.shared.material_names."""
     plant: str
     material_scope: str
     pr_number: str | None
@@ -507,6 +519,10 @@ class UsagePatternResponse(BaseModel):
     """
 
     material: str
+
+    material_description: str | None = None
+
+    """MAKT / ZMM065 name, where either has one -- see app.shared.material_names."""
     plant: str
     material_scope: str
     aging_band: str | None

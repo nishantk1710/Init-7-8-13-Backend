@@ -339,12 +339,18 @@ def test_business_similarity_with_everything_matching():
     assert result.value == Decimal(1)
 
 
-def test_circuit_mismatch_lowers_the_business_score():
+def test_circuit_does_not_affect_the_business_score():
+    """Circuit has no trustworthy source, so it awards no bonus and no penalty
+    (oar-similarity-2). It used to: a mismatch lowered the score."""
     same = business_similarity.score(material(), material("M2"), Decimal(10000))
     different = business_similarity.score(
         material(), material("M2", circuit="Crushing"), Decimal(10000)
     )
-    assert different.value < same.value
+    both_missing = business_similarity.score(
+        material(circuit=None), material("M2", circuit=None), Decimal(10000)
+    )
+    assert different.value == same.value == both_missing.value
+    assert "circuit" not in same.features + same.missing
 
 
 def test_manufacturer_mismatch_lowers_the_business_score():
@@ -372,8 +378,10 @@ def test_missing_price_is_excluded_not_scored():
     result = business_similarity.score(
         material(unit_price=None), material("M2", unit_price=None), Decimal(10000)
     )
-    assert result.available_features == 2  # circuit and manufacturer
+    assert result.available_features == 1  # manufacturer; circuit is not scored
     assert result.missing_features == 1
+    assert result.features == ("manufacturer",)
+    assert result.missing == ("unit_price",)
 
 
 def test_criticality_is_not_a_business_similarity_feature():
@@ -473,11 +481,14 @@ def test_ranking_is_descending_by_similarity():
     assert [n.rank for n in neighbours] == [1, 2, 3]
 
 
-def test_same_circuit_breaks_a_score_tie():
+def test_circuit_does_not_break_a_score_tie():
+    """No circuit preference (oar-similarity-2): the material number decides,
+    and the stored same_circuit is never claimed."""
     neighbours = ranking.select_top_k(
-        [scored("A", "0.80", same_circuit=False), scored("B", "0.80", same_circuit=True)], 5
+        [scored("B", "0.80", same_circuit=True), scored("A", "0.80", same_circuit=False)], 5
     )
-    assert neighbours[0].material == "B"
+    assert [n.material for n in neighbours] == ["A", "B"]
+    assert all(n.same_circuit is None for n in neighbours)
 
 
 def test_material_id_breaks_a_remaining_tie():

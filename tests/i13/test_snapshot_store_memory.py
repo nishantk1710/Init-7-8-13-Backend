@@ -422,15 +422,17 @@ ALL = Batch("0", "9999999999")
 
 # What the batch writes for the mixed tenant and the two giant shapes at 2 %,
 # recorded on the code before the memory work. A change that alters a single
-# stored byte changes a fingerprint.
+# stored byte changes a fingerprint. "mixed" re-recorded 2026-10-12 when a
+# blank DISMM became OAR: its None MARC rows moved oarkey/reclass 87 -> 124 and
+# exception 137 -> 203; every other kind kept its row count.
 EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
     "mixed": {
-        "attrib": (294, "214738b080d76802"), "chain": (286, "636c21f9a8b8679e"),
-        "exception": (137, "8bb3e45bd8f2e431"), "grni": (35, "0c7caf37f927937f"),
-        "lledger": (286, "eddc61ad0c85f7a5"), "movement": (186, "085dd35e7ee606ce"),
-        "oarkey": (87, "cafeb8032728b5cb"), "reclass": (87, "4b90da3bcd2f2450"),
-        "rledger": (294, "0b1cda10ddba7e51"), "usage": (134, "8e6f9fc7e9aee3df"),
-        "watch": (192, "c2cd8066168131f7"),
+        "attrib": (294, "8ed2d08032c19abd"), "chain": (286, "3acc54d4fa857d75"),
+        "exception": (203, "c09b29bbf9144cff"), "grni": (35, "8220e6cbe90af2a4"),
+        "lledger": (286, "63f70f31e772cd2c"), "movement": (186, "7bdd74b74aaa2066"),
+        "oarkey": (124, "2c8b298b582a7125"), "reclass": (124, "cdc9fd30044f3cd3"),
+        "rledger": (294, "525c88a5e0f53d01"), "usage": (134, "d97450f2b9ebf2be"),
+        "watch": (192, "45e850e61927cae5"),
     },
     "giant_procurement": {
         "attrib": (3, "f77f2830ef44df9f"), "chain": (1483, "17e55edc51ed3706"),

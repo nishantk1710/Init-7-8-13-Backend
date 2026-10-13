@@ -37,8 +37,12 @@ _MRP_TYPE_QUERY = """
 def fetch_material_scope_index(
     db: Session, *, material: str | None = None, plant: str | None = None
 ) -> dict[tuple[str, str], str | None]:
-    """(material, plant) -> raw DISMM string (possibly blank/None), for
-    ``classify_material_scope`` to classify. Not itself a scope decision."""
+    """(material, plant) -> raw DISMM string, for ``classify_material_scope``
+    to classify. Not itself a scope decision.
+
+    A MARC row with no MRP type maps to ``""``, never ``None``: blank DISMM is
+    OAR, while ``None`` -- what ``.get`` returns for a pair MARC does not hold --
+    is not, so the two must stay apart."""
     params: dict[str, Any] = {}
     material_filter = ""
     if material:
@@ -57,4 +61,4 @@ def fetch_material_scope_index(
         )
     )
     records = db.execute(query, params).fetchall()
-    return {(r.material.strip(), r.plant.strip()): (r.mrp_type or "").strip() or None for r in records}
+    return {(r.material.strip(), r.plant.strip()): (r.mrp_type or "").strip() for r in records}

@@ -39,6 +39,8 @@ absence** is the other half, and that is
 
 from __future__ import annotations
 
+import threading
+import time
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -148,3 +150,216 @@ class RepairAttestation(Base):
             f"<RepairAttestation {self.id} {self.material_id}@{self.plant} "
             f"{self.recommendation} by {self.attestor}>"
         )
+
+
+# --- W5.5: the coding screen's verdicts -----------------------------------
+
+
+class CodingVerdict(Base):
+    """One model verdict about one material's text, kept so it is not re-bought.
+
+    Why this table exists
+    ---------------------
+    The screen costs roughly six seconds per material, strictly sequential, and
+    it ran entirely in process memory. Three things followed from that, and all
+    three were defects rather than trade-offs:
+
+    * a restart lost every verdict, so the screen reported UNSCREENED again;
+    * a SAP reload did not clear it, so verdicts outlived the text they judged;
+    * with more than one worker, two requests could see different answers.
+
+    What it is NOT
+    --------------
+    **Not an audit record.** :class:`RepairAttestation` above is immutable
+    because it records what a person judged; this records what a model said,
+    and a later run with a better model SHOULD replace it. So a row here is
+    updated in place, and nothing chains.
+
+    It is a cache with a correctness rule, and the rule is
+    :attr:`text_fingerprint`.
+
+    The fingerprint, and why it is the key
+    --------------------------------------
+    A verdict is only about the words it was shown. Keying on the material
+    alone would serve a stale judgement after somebody re-worded the PO line --
+    the exact case the screen exists to catch. Keying on the material AND a
+    digest of its distinct texts means a reload re-screens the materials whose
+    text moved and reuses the rest, which is what makes a four-minute run
+    affordable after the first one.
+
+    UNSCREENED is never stored. A stub run, a missing credential and an
+    unreadable reply all produce it, and persisting any of them would turn "no
+    model has looked at this" into a cached answer -- the one failure this
+    module is built to avoid.
+    """
+
+    __tablename__ = "i8_coding_verdict"
+
+    id: Mapped[str] = mapped_column(
+        String(32), primary_key=True, default=lambda: uuid.uuid4().hex
+    )
+
+    material_id: Mapped[str] = mapped_column(String(40), index=True)
+    """Normalised, the same as everywhere else in I08 (ruling 5.1)."""
+
+    text_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    """SHA-256 of this material's distinct texts, normalised and ordered.
+    See :func:`app.initiatives.i8.coding_candidates.text_fingerprint`."""
+
+    # --- what the model said ---------------------------------------------
+
+    verdict: Mapped[str] = mapped_column(String(32), index=True)
+    """Never ``UNSCREENED`` -- see the class docstring."""
+
+    confidence: Mapped[str] = mapped_column(String(16), default="")
+    reason: Mapped[str] = mapped_column(Text, default="")
+
+    # --- who answered, so a verdict can be re-judged later ----------------
+
+    model: Mapped[str] = mapped_column(String(128), default="")
+    provider: Mapped[str] = mapped_column(String(32), default="")
+    """``foundry`` / ``openai``. Stored so that when the deployment changes,
+    the verdicts produced by the old one can be found and re-run."""
+
+    prompt_version: Mapped[int | None] = mapped_column(nullable=True)
+    """Which registry prompt version produced it. Same reason as ``provider``:
+    a prompt change invalidates judgements the old prompt made."""
+
+    screened_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    __table_args__ = (
+        # One verdict per (material, exact text). The upsert depends on it, and
+        # without it a race between two workers leaves two rows and the screen
+        # picks whichever the database returns first.
+        Index(
+            "uq_i8_coding_verdict_material_text",
+            "material_id",
+            "text_fingerprint",
+            unique=True,
+        ),
+    )
+
+
+# --- FR-11: working an exception, not just seeing it ----------------------
+
+
+#: Guards :func:`new_exception_event_id`'s monotonic counter. Ids are minted
+#: under whatever thread the request lands on, and two threads reading the
+#: clock at once must not be handed the same stamp.
+_event_id_lock = threading.Lock()
+
+#: The last microsecond stamp handed out by this process. See the function.
+_last_event_stamp = 0
+
+
+def new_exception_event_id() -> str:
+    """A stable, **strictly increasing** id for one entry in a history.
+
+    Deliberately unlike :func:`new_attestation_id`, which is a plain UUID.
+    That one is a lone record and its id only has to be unique; these are read
+    as a sequence, and ``ORDER BY at, id`` has to put them in the order they
+    happened. ``at`` alone cannot do it: two entries recorded in the same tick
+    share a timestamp, and the tiebreak then decides the order a person reads
+    the history in.
+
+    So the id carries the time -- microseconds since the epoch, hex, fixed
+    width so that sorting it as text sorts it as a number.
+
+    **The counter is not decoration.** ``time.time_ns()`` is backed by the
+    system clock, and on Windows that clock advances in ~15ms steps: every
+    call inside one step returns the *same* value. Two events a millisecond
+    apart therefore get identical stamps, and without the bump below the
+    tiebreak falls through to the random suffix -- which is how the history
+    came back with an assignment displayed after the comment that followed it.
+    That was caught by a test that failed roughly one run in three.
+
+    Bumping by one microsecond when the clock has not moved keeps ids strictly
+    increasing within a process. The value is an ordering key, not a reading of
+    the clock; the time anybody reads is the ``at`` column, which is set by the
+    database.
+
+    Across processes two events in the same microsecond remain possible, and
+    the random suffix keeps them distinct. Their relative order is then decided
+    by ``at``, which has microsecond precision on Postgres and Azure SQL.
+    """
+    global _last_event_stamp
+    with _event_id_lock:
+        stamp = time.time_ns() // 1_000
+        if stamp <= _last_event_stamp:
+            stamp = _last_event_stamp + 1
+        _last_event_stamp = stamp
+    return f"EXE-{stamp:014X}{uuid.uuid4().hex[:6].upper()}"
+
+
+class ExceptionEvent(Base):
+    """One thing that happened to an exception-queue item, and the ONLY thing
+    this module stores about one.
+
+    The items themselves are not stored. They are recomputed from the register
+    and the attestation table on every read, which is what keeps the queue from
+    drifting away from the data: an item exists exactly as long as its check
+    still finds it.
+
+    What a check cannot derive is who owns a finding and what state the work is
+    in -- and that is not stored either, as a value. It is **folded from this
+    log**: the last status an entry set, the owner the last ``ASSIGNED`` entry
+    named. An item nobody has touched has no rows here at all and folds to OPEN
+    and unassigned, which is the truth about it rather than a default.
+
+    Append-only, like :class:`RepairAttestation` and
+    ``assistant_session``, and for the same reason: there is no UPDATE to make,
+    so there is no edit anybody can make to a history afterwards. It is also
+    why the API exposes one POST and no PATCH -- see ``tests/test_write_paths``.
+
+    Keyed by the exception's own deterministic id
+    (``EX-MISSING_ATTESTATION-4500000677-20``), so the history re-attaches
+    whenever the check raises the same finding again. Not a foreign key: there
+    is no table of exceptions to point at, by design.
+    """
+
+    __tablename__ = "i8_exception_event"
+
+    id: Mapped[str] = mapped_column(
+        String(32), primary_key=True, default=new_exception_event_id
+    )
+    exception_id: Mapped[str] = mapped_column(String(128), index=True)
+
+    kind: Mapped[str] = mapped_column(String(16), index=True)
+    """ASSIGNED / COMMENT / STATUS / AUTO_RESOLVED.
+
+    AUTO_RESOLVED is kept distinct from STATUS on purpose. "Priya resolved
+    this" and "the check stopped finding it" are different claims, and a
+    history that renders them the same way invites the first to be read where
+    only the second happened."""
+
+    status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """The status this entry set, for STATUS and AUTO_RESOLVED. Null on a
+    comment or an assignment, which do not move the item."""
+
+    owner: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    """Who the item was assigned to, on an ``ASSIGNED`` entry.
+
+    Null on every other kind, and null on an ``ASSIGNED`` entry means the item
+    was UNASSIGNED -- handing something back is an action, and the kind is what
+    tells the two nulls apart."""
+
+    actor: Mapped[str] = mapped_column(String(128))
+    """Set by the server from the caller, never from the body -- the same rule
+    as the attestor on an attestation. ``system`` for AUTO_RESOLVED."""
+
+    text: Mapped[str] = mapped_column(Text, default="")
+    """What was said, or why the item resolved itself."""
+
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    __table_args__ = (
+        # The drawer's access pattern: one exception's history, oldest first.
+        Index("ix_i8_exception_event_exception_at", "exception_id", "at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ExceptionEvent {self.id} {self.exception_id} {self.kind} by {self.actor}>"

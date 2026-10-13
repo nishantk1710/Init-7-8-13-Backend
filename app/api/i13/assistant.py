@@ -46,7 +46,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.api.assistant.schemas import PlanModel
-from app.api.i13.deps import Actor, get_current_actor, get_data_dir, snapshot_or_live
+from app.api.i13.deps import Actor, get_current_actor, get_data_dir, snapshot_or_live, with_material_names
 from app.assistant import session as session_service
 from app.assistant.models import ConsumptionPlanRecord
 from app.assistant.session import SessionError
@@ -228,6 +228,7 @@ def post_consumption_plan(
     response_model=list[PlanModel],
     summary="Captured consumption plans (the real ones, not the CSV)",
 )
+@with_material_names()
 def list_consumption_plans(
     db: DbDep,
     session_id: Annotated[str | None, Query()] = None,

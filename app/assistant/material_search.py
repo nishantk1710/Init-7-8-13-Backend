@@ -65,7 +65,9 @@ _CANDIDATE_MATERIALS = 60
 #: part name, and every extra word is another LIKE over the description.
 _MAX_WORDS = 5
 
-_ZMM065_TABLES = ("raw_zmm065_bmm", "raw_zmm065_gb")
+#: What the monthly ZMM065 criticality reports add up to: one row per
+#: material-plant, with the description the report states.
+_REPORT_TABLE = "criticality_current"
 
 _WORD = re.compile(r"[A-Z0-9]+")
 
@@ -257,34 +259,33 @@ def _candidates(
 
     report_pairs: set[tuple[str, str]] = set()
     where, params = _description_filter(
-        "material_description", query, "mat_code", key_may_be_padded=True
+        "description", query, "material", key_may_be_padded=True
     )
-    for table in _ZMM065_TABLES:
-        try:
-            rows = db.execute(
-                text(
-                    f"""
-                    SELECT mat_code, plant, material_description
-                    FROM {table}
-                    WHERE mat_code <> '' AND {sql_predicate("plant")} AND {where}
-                    """
-                ),
-                params,
-            ).fetchall()
-        except DBAPIError as error:
-            # A report that has not been loaded. The search still works on MAKT.
-            logger.info("material search: %s not readable (%s)", table, error.__class__.__name__)
-            db.rollback()
+    try:
+        rows = db.execute(
+            text(
+                f"""
+                SELECT material, plant, description
+                FROM {_REPORT_TABLE}
+                WHERE material <> '' AND {sql_predicate("plant")} AND {where}
+                """
+            ),
+            params,
+        ).fetchall()
+    except DBAPIError as error:
+        # No criticality report loaded yet. The search still works on MAKT.
+        logger.info("material search: %s not readable (%s)", _REPORT_TABLE, error.__class__.__name__)
+        db.rollback()
+        rows = []
+    for row in rows:
+        material = normalise(row.material)
+        plant = (row.plant or "").strip()
+        if not material or not _matches_prefix(material, query):
             continue
-        for row in rows:
-            material = normalise(row.mat_code)
-            plant = (row.plant or "").strip()
-            if not material or not _matches_prefix(material, query):
-                continue
-            if descriptions.get(material) is None:
-                descriptions[material] = (row.material_description or "").strip() or None
-            if plant:
-                report_pairs.add((material, plant))
+        if descriptions.get(material) is None:
+            descriptions[material] = (row.description or "").strip() or None
+        if plant:
+            report_pairs.add((material, plant))
 
     return descriptions, report_pairs
 
@@ -326,7 +327,8 @@ def _plants(
     ).fetchall()
     for row in marc:
         key = (normalise(row.material) or "", (row.plant or "").strip())
-        mrp_types[key] = (row.mrp_type or "").strip() or None
+        # Blank stays "" -- a blank DISMM is OAR; None means no MARC row.
+        mrp_types[key] = (row.mrp_type or "").strip()
         pairs.add(key)
 
     mard = db.execute(

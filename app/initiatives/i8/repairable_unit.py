@@ -202,12 +202,12 @@ class RepairableUnitVerdict:
                 return (
                     f"No repair is open for {self.material_id} at plant "
                     f"{self.plant}, and no stock record exists for it there -- "
-                    "so we cannot tell whether a repairable unit is on the "
-                    "shelf. Worth a physical check before buying new."
+                    "so we cannot tell whether stock is available. Worth a "
+                    "physical check before buying new."
                 )
             return (
                 f"No repairable unit exists for {self.material_id} at plant "
-                f"{self.plant}: none in stock and no repair on order."
+                f"{self.plant}: no stock available and no open repair PO."
             )
 
         return ". ".join(parts) + "."

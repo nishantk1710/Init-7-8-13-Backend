@@ -29,6 +29,7 @@ directly.
 | `POST /recommendations/{id}/submit` | `recommendations.ledger.submit_for_approval` | `Recommendation`, actor_id | new `WorkflowState` + ledger row |
 | `POST /recommendations/{id}/actions` | `recommendations.ledger.apply_approval_action` (→ `workflow.apply_action`) | `Recommendation`, actor, role, action, comment | new `WorkflowState` + ledger row |
 | `GET /recommendations/{id}/approval-history` | `i7_approval_ledger` table | recommendation_id | ordered `ApprovalLedgerEntry` rows |
+| `GET /approval-events` | `i7_approval_ledger` table, all recommendations | `limit`, `offset`, `from_ts`, `to_ts` | page of `ApprovalLedgerEntry` rows newest first, plus `total` |
 | `GET /recommendations/{id}/adoption` | `recommendations.adoption.evaluate_conversion_adoption` / `evaluate_parameter_adoption` | material, plant, approved values | `AdoptionResult` |
 | `GET /runs` | `i7_feature_run` / `i7_forecast_run` / `i7_inventory_run` / `i7_oar_run` | — | recent run rows |
 | `GET /runs/{run_type}/{run_id}` | same | run_type, run_id | one run row |
@@ -54,6 +55,7 @@ unchanged); `/v1/i7` is this phase's addition, mounted once in
 | POST | `/recommendations/{id}/submit` | Enter the approval chain |
 | POST | `/recommendations/{id}/actions` | APPROVE / REJECT / SEND_BACK / ADJUST |
 | GET | `/recommendations/{id}/approval-history` | Immutable ledger |
+| GET | `/approval-events` | The same ledger across every recommendation, newest first, paged in SQL — what the audit screen reads |
 | GET | `/recommendations/{id}/adoption` | Read-only SAP reconciliation |
 | GET | `/runs` | Recent pipeline runs, all four types |
 | GET | `/runs/{run_type}/{run_id}` | One run's detail |

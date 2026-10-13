@@ -9,6 +9,14 @@ Solution Design, Stage 5::
 
     S_business = 1 - mean(business feature distances)
 
+**Circuit is not scored** (since ``oar-similarity-2``). The Solution Design lists
+it as a soft preference, but no SAP field delivered so far carries a circuit, so
+every pair would either compare two missing values or be scored from an invented
+default. Neither is evidence. Circuit therefore contributes no match bonus and
+no difference penalty, and it is reported nowhere as compared. Adding it back is
+a matter of supplying a trustworthy source and listing it in
+``BUSINESS_FEATURES`` again -- not of defaulting it.
+
 Criticality is deliberately absent from the arithmetic here. It is a *filter*,
 applied before scoring, so every candidate reaching this function already
 matches. Scoring it as well would add a constant 0 distance to every pair --
@@ -20,6 +28,8 @@ bands. No approved banding policy exists, and inventing thresholds
 
 OEM comes from the canonical manufacturer field. Nothing infers OEM-versus-
 generic from description text; absent a manufacturer, the feature is missing.
+(On the CSV extract MARA carries no MFRNR at all, so today this is normally
+missing -- reported as such, never treated as a match.)
 """
 
 from decimal import Decimal
@@ -34,39 +44,49 @@ from app.initiatives.i7.oar.types import (
     SimilarityStatus,
 )
 
+BUSINESS_CATEGORICAL_FEATURES = ("manufacturer",)
+"""Categorical business features that are scored. Circuit is excluded -- see the
+module docstring."""
+
+PRICE_FEATURE = "unit_price"
+
 
 def score(
     target: CandidateAttributes,
     candidate: CandidateAttributes,
     price_range: Decimal | None,
 ) -> DimensionScore:
-    """Business similarity over circuit, price proximity and manufacturer."""
+    """Business similarity over manufacturer and price proximity."""
     distances: list[Decimal] = []
-    missing = 0
+    used: list[str] = []
+    missing: list[str] = []
 
-    for feature in ("circuit", "manufacturer"):
+    for feature in BUSINESS_CATEGORICAL_FEATURES:
         distance = categorical_distance(
             getattr(target, feature), getattr(candidate, feature)
         )
         if distance is None:
-            missing += 1
+            missing.append(feature)
         else:
             distances.append(distance)
+            used.append(feature)
 
     price_distance = numeric_distance(
         target.unit_price, candidate.unit_price, price_range
     )
     if price_distance is None:
-        missing += 1
+        missing.append(PRICE_FEATURE)
     else:
         distances.append(price_distance)
+        used.append(PRICE_FEATURE)
 
     if not distances:
         return DimensionScore(
             value=None,
             status=SimilarityStatus.NOT_AVAILABLE_NO_FEATURES,
             available_features=0,
-            missing_features=missing,
+            missing_features=len(missing),
+            missing=tuple(missing),
         )
 
     mean_distance = sum(distances, Decimal(0)) / Decimal(len(distances))
@@ -74,5 +94,7 @@ def score(
         value=Decimal(1) - mean_distance,
         status=SimilarityStatus.AVAILABLE,
         available_features=len(distances),
-        missing_features=missing,
+        missing_features=len(missing),
+        features=tuple(used),
+        missing=tuple(missing),
     )

@@ -219,8 +219,8 @@ class QuantitySuggestion:
         held = (self.stock_on_hand or ZERO) + self.open_po_quantity
         basis = (
             f"{plain(self.average_monthly_consumption)} a month over the last "
-            f"{self.config.lookback_months} months, {plain(held)} already held "
-            f"or on order, and a {ceiling}-month cover ceiling"
+            f"{self.config.lookback_months} months, {plain(held)} already available "
+            f"or on open PO, and a {ceiling}-month cover ceiling"
         )
 
         if self.suggested_quantity == ZERO:
@@ -230,8 +230,8 @@ class QuantitySuggestion:
                 else ""
             )
             return (
-                f"No new units are suggested: {plain(held)} are already in stock "
-                f"or on order{cover}, at or above the {ceiling}-month ceiling. "
+                f"No new units are suggested: {plain(held)} are already available "
+                f"or on open PO{cover}, at or above the {ceiling}-month ceiling. "
                 f"Based on {basis}."
             )
 

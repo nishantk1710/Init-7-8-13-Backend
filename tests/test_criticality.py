@@ -34,21 +34,20 @@ from app.core.criticality import (
     parse_tier,
     reset_criticality_cache,
 )
-from app.integrations.criticality.zmm065 import TABLES, Zmm065CriticalitySource
+from app.integrations.criticality.zmm065 import Zmm065CriticalitySource
 from app.integrations.criticality.zzcritic import CONFIRMED, ZzcriticCriticalitySource
 
 
 def _zmm065_seeded() -> bool:
-    """Whether the ZMM065 raw tables exist and hold rows."""
+    """Whether ``criticality_current`` exists and holds rows -- the migration
+    has run and a report (the July delivery or an upload) has been imported."""
     if not get_settings().database_url:
         return False
     try:
         from app.core.db import get_sessionmaker
 
         with get_sessionmaker()() as session:
-            for table in TABLES:
-                session.execute(text(f"SELECT TOP 1 1 FROM {table}")).first()
-        return True
+            return session.execute(text("SELECT TOP 1 1 FROM criticality_current")).first() is not None
     except Exception:
         return False
 
@@ -353,8 +352,8 @@ class TestZmm065AgainstDeliveredData:
         with get_sessionmaker()() as session:
             row = session.execute(
                 text(
-                    "SELECT TOP 1 mat_code, plant, criticality FROM raw_zmm065_bmm "
-                    "WHERE NULLIF(criticality,'') IS NOT NULL"
+                    "SELECT TOP 1 material, plant, criticality FROM criticality_current "
+                    "WHERE plant = '1300' AND criticality IS NOT NULL"
                 )
             ).first()
 
@@ -377,9 +376,9 @@ class TestZmm065AgainstDeliveredData:
         with get_sessionmaker()() as session:
             row = session.execute(
                 text(
-                    "SELECT TOP 1 mat_code FROM raw_zmm065_bmm b WHERE NOT EXISTS ("
-                    "  SELECT 1 FROM raw_zmm065_gb g WHERE g.mat_code = b.mat_code"
-                    ")"
+                    "SELECT TOP 1 material FROM criticality_current b WHERE b.plant = '1300' "
+                    "AND NOT EXISTS (SELECT 1 FROM criticality_current g "
+                    "                WHERE g.plant = '1500' AND g.material = b.material)"
                 )
             ).first()
 
@@ -390,15 +389,11 @@ class TestZmm065AgainstDeliveredData:
         from app.core.db import get_sessionmaker
 
         with get_sessionmaker()() as session:
-            for table in TABLES:
-                values = session.execute(
-                    text(
-                        f"SELECT DISTINCT criticality FROM {table} "
-                        "WHERE NULLIF(criticality,'') IS NOT NULL"
-                    )
-                ).fetchall()
-                for (value,) in values:
-                    assert parse_tier(value) is not None, f"{table}: unknown tier {value!r}"
+            values = session.execute(
+                text("SELECT DISTINCT criticality FROM criticality_current WHERE criticality IS NOT NULL")
+            ).fetchall()
+            for (value,) in values:
+                assert parse_tier(value) is not None, f"criticality_current: unknown tier {value!r}"
 
     def test_check_connection_passes(self) -> None:
         Zmm065CriticalitySource().check_connection()
@@ -416,15 +411,15 @@ class TestZmm065AgainstDeliveredData:
         with get_sessionmaker()() as session:
             rows = session.execute(
                 text(
-                    "SELECT TOP 40 mat_code, plant FROM raw_zmm065_bmm "
-                    "WHERE NULLIF(criticality,'') IS NOT NULL"
+                    "SELECT TOP 40 material, plant FROM criticality_current "
+                    "WHERE plant = '1300' AND criticality IS NOT NULL"
                 )
             ).fetchall()
             both = session.execute(
                 text(
-                    "SELECT TOP 10 b.mat_code FROM raw_zmm065_bmm b "
-                    "WHERE EXISTS (SELECT 1 FROM raw_zmm065_gb g "
-                    "              WHERE g.mat_code = b.mat_code)"
+                    "SELECT TOP 10 b.material FROM criticality_current b WHERE b.plant = '1300' "
+                    "AND EXISTS (SELECT 1 FROM criticality_current g "
+                    "            WHERE g.plant = '1500' AND g.material = b.material)"
                 )
             ).fetchall()
 
