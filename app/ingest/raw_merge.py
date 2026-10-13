@@ -712,6 +712,15 @@ def merge_landed(
             detail=f"the fetch at {prefix} is marked unusable "
                    f"(duplicate_keys={manifest.get('duplicate_keys')}, error={manifest.get('error')!r})",
         )
+    if manifest.get("rows") == 0:
+        # An empty window. The Data Lake writes no object for an empty upload,
+        # so the data file may not exist -- and there is nothing to read from
+        # it either way. Merged, with nothing changed: the mark may advance.
+        target_spec = raw_table_for(spec)
+        return MergeResult(
+            target_spec.raw_table if target_spec else spec.raw_table, MERGED,
+            detail="the fetch carried no rows",
+        )
     rows: list[dict[str, Any]] = []
     with storage.open_read(f"{prefix}/{manifest.get('data_file', DATA_FILE)}") as source:
         for raw in source:

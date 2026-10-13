@@ -405,11 +405,14 @@ def load_set(
                     )
                 else:
                     writer.create_table(cursor, spec.raw_table, columns)
+                    # A fetch of no rows has no data file to stream: the Data
+                    # Lake writes no object for an empty upload. The table is
+                    # still created, empty, so the next increment merges.
                     rows = writer.bulk_load(
                         cursor,
                         spec.raw_table,
                         columns,
-                        _iter_rows(storage, data_key, columns),
+                        _iter_rows(storage, data_key, columns) if expected else iter(()),
                     )
                     # After the rows, never before: maintaining an index during
                     # a bulk load costs more than building it once at the end.
