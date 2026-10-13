@@ -23,6 +23,7 @@ without re-deriving the W2.4 classification.
 """
 
 from collections import defaultdict
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -30,6 +31,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.initiatives.i13.aging import classify_aging_band
 from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.models import AcquiredVsPlanStatus, AgingBand, ReservationLedgerEntry, WatchMetric
 from app.initiatives.i13.movement_metrics import compute_all_movement_metrics
@@ -259,3 +261,39 @@ def compute_watch_metrics(
             )
         )
     return metrics
+
+
+def age_watch_row(metric: WatchMetric, *, today: date, config: I13Config) -> WatchMetric:
+    """A WATCH row measured on an earlier day, brought forward to ``today``.
+
+    Only the fields that are a pure function of a stored date and the day they
+    are read move: days since last movement and last issue, the aging band
+    (classified on days since last issue, as ``movement_metrics`` does), and the
+    GR-not-issued age and flag. The quantities -- stock, open PO, the 12-month
+    consumption and the cover derived from it -- are facts of the SAP data the
+    row was built from and stay as of that build; the caller says so.
+
+    Used where a fresh row is needed now and a rebuild is not (the reservation
+    assistant): a stored row aged forward agrees with the WATCH screen's own
+    rule, and costs nothing. Returns the row unchanged when it is already as of
+    ``today``.
+    """
+
+    def days_since(when: date | None) -> int | None:
+        return (today - when).days if when is not None else None
+
+    days_since_issue = days_since(metric.last_issue_date)
+    grni_days = days_since(metric.gr_not_issued_relevant_gr_date)
+    grni_flag = (
+        grni_days is not None
+        and metric.gr_not_issued_outstanding_quantity > 0
+        and grni_days >= metric.gr_not_issued_threshold_days
+    )
+    return replace(
+        metric,
+        days_since_last_movement=days_since(metric.last_movement_date),
+        days_since_last_issue=days_since_issue,
+        aging_band=classify_aging_band(days_since_issue, config.aging),
+        gr_not_issued_days_since_gr=grni_days,
+        gr_not_issued_flag=grni_flag,
+    )

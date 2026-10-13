@@ -44,7 +44,6 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
-from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
@@ -63,13 +62,10 @@ from app.initiatives.i13.act_stock_provider import PostgresCrossPlantStockProvid
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.quantity import QuantitySuggestion, build_quantity_config, suggest
 from app.initiatives.i13.reservation_assistant import build as build_i13_assessment
-from app.initiatives.i13.watch import compute_watch_metrics
+from app.initiatives.i13.watch import age_watch_row
 from app.initiatives.i8.reservation_assistant import build as build_i08_assessment
 from app.initiatives.i8.service import get_snapshot
-from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
-from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
-from app.integrations.sap.postgres_reservation import PostgresReservationRepository
 
 logger = get_logger(__name__)
 
@@ -157,41 +153,34 @@ def _assessment_for(
         )
 
     movement_repository = PostgresMovementRepository(db)
-    # The I13 snapshot's WATCH row when there is one measured as of today: the
-    # same numbers the WATCH screen shows, and no recompute on every turn (gap
-    # G10). Otherwise the single-material live compute, as before. Never waits
-    # for, or triggers, a snapshot build.
+    # The latest built snapshot's WATCH row -- the same numbers the WATCH screen
+    # shows -- whatever day it was built, as I08 serves its own. Never waits for,
+    # triggers, or falls back to a build.
+    #
+    # It used to be served only when built *today*, falling back to computing
+    # WATCH live for the one material. On the production extract that live path
+    # scans the unindexable n_* views and runs for minutes, so from midnight
+    # until the day's rebuild landed (over an hour) every I13 session hung on
+    # "Checking..." and timed out. A stored row is aged to today instead
+    # (``age_watch_row``: days since, aging band, GRNI age), and the requester
+    # is told which day the quantities are from.
     #
     # ``serving_snapshot``, not ``peek_i13_snapshot``: with I13_SNAPSHOT_STORE=sql
-    # the served version is in SQL and the in-memory slot is always empty, so
-    # peeking sent every session to the live compute -- a full scan of the
-    # unindexable n_* views per table, minutes on the production extract.
+    # the served version is in SQL and the in-memory slot is always empty.
     from app.initiatives.i13.snapshot import serving_snapshot
 
     snapshot = serving_snapshot(db)
-    if snapshot is not None and snapshot.reference_date == today:
-        metric = snapshot.watch_row(routed.material_id, routed.plant)
-    else:
-        metrics = compute_watch_metrics(
-            movement_repository,
-            PostgresProcurementRepository(db),
-            PostgresReservationRepository(db),
-            fetch_material_scope_index(db, material=routed.material_id, plant=routed.plant),
-            i13_config,
-            Path(settings.i13_data_dir),
-            material=routed.material_id,
-            plant=routed.plant,
-            as_of=today,
-            db=db,
+    if snapshot is None:
+        # First start, nothing built yet. Said at once rather than computed live.
+        raise SessionError(
+            f"Stock and usage figures for {routed.material_id} at plant {routed.plant} "
+            "are not available yet -- the I13 data is still being prepared. Try again "
+            "in a few minutes."
         )
-        metric = next(
-            (
-                m
-                for m in metrics
-                if m.material == routed.material_id and m.plant == routed.plant
-            ),
-            None,
-        )
+    metric = snapshot.watch_row(routed.material_id, routed.plant)
+    figures_as_of = snapshot.reference_date if snapshot.reference_date != today else None
+    if metric is not None and figures_as_of is not None:
+        metric = age_watch_row(metric, today=today, config=i13_config)
     if metric is None:
         # WATCH computes over materials with movement or ledger activity. A part
         # that is OAR but has never moved has no row, and there is genuinely
@@ -213,6 +202,7 @@ def _assessment_for(
             movement_repository
         ).get_other_plant_stock(material=routed.material_id, exclude_plant=routed.plant),
         requested_quantity=requested_quantity,
+        figures_as_of=figures_as_of,
     )
 
 
