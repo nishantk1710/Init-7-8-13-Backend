@@ -89,6 +89,15 @@ class Settings(BaseSettings):
     # happens on our schedule instead of inside someone's request.
     database_pool_recycle_seconds: int = 1500
 
+    # Attempts at opening a connection when Azure SQL drops it while it is being
+    # set up -- "TCP Provider: Error code 0x68 (104)", a serverless database
+    # waking (40613), a failover. Microsoft's guidance is to retry these: they
+    # pass in seconds, and without a retry each one is an error on someone's
+    # screen. Only the connect is retried, never a statement. 1 = no retry.
+    database_connect_attempts: int = 3
+    # Seconds before the first retry; doubled for each one after.
+    database_connect_retry_seconds: float = 2.0
+
     # Object storage location. Like database_url, this is the ONLY place storage
     # is named, and the adapter is chosen from the URL scheme.
     #
@@ -462,7 +471,8 @@ class Settings(BaseSettings):
     # How often (seconds, at most) the fingerprint is re-checked for a reseed
     # or a new day. One cheap grouped query over ingestion_run -- but every
     # delta cycle writes ingestion_run, so a change it finds is a full rebuild
-    # (~78 minutes on the "sql" store over the production extract). Hourly,
+    # (~78 minutes on the "sql" store over the production extract). On the
+    # "sql" store a new day alone is a re-age, not a rebuild. Hourly,
     # to match DELTA_INTERVAL_MINUTES. A delta cycle that loaded rows asks
     # for the check itself (SNAPSHOT_REFRESH_AFTER_DELTA); this is the
     # fallback for a manual load.
@@ -499,6 +509,15 @@ class Settings(BaseSettings):
     # builds run back to back. A manual POST /api/i13/snapshot/refresh
     # ignores the gap.
     i13_rebuild_min_gap_minutes: int = 0
+    # "sql" store only: the UTC hours an automatic FULL build may start in,
+    # "HH:MM-HH:MM" (may wrap past midnight, e.g. "18:30-23:30" = 00:00-05:00
+    # IST). Outside it a data change waits, and the served version is re-aged
+    # to today instead if the day has turned -- so a full build, which loads
+    # Azure SQL for over an hour, never starts while people are using the
+    # site. Empty = any time (as before). A manual POST
+    # /api/i13/snapshot/refresh ignores it; a new day's re-age is never held
+    # back by it (it reads no SAP tables and takes minutes).
+    i13_auto_build_window_utc: str = ""
     # "sql" store only: how many calendar months of monthly usage are kept per
     # material-plant (the usage-pattern screens). Aging and 12-month
     # consumption read the full movement history regardless.

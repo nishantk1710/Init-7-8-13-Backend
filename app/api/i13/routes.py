@@ -7,7 +7,7 @@ all computation lives in ``app.initiatives.i13``.
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -125,10 +125,27 @@ def get_snapshot_status() -> SnapshotStatusResponse:
 
 
 @router.post("/snapshot/refresh", response_model=SnapshotStatusResponse, status_code=202)
-def refresh_snapshot() -> SnapshotStatusResponse:
-    """Rebuild the I13 snapshot in the background. The current one keeps
-    serving until the new one is ready; poll ``GET /i13/snapshot``."""
-    start_background_build("manual refresh")
+def refresh_snapshot(
+    mode: str = Query(
+        "build",
+        pattern="^(build|reage)$",
+        description=(
+            "build: re-read SAP and rebuild everything (about 78 min on production). "
+            "reage: bring the served version up to today without re-reading SAP "
+            "(minutes; I13_SNAPSHOT_STORE=sql only)."
+        ),
+    ),
+) -> SnapshotStatusResponse:
+    """Rebuild (or re-age) the I13 snapshot in the background. The current one
+    keeps serving until the new one is ready; poll ``GET /i13/snapshot``."""
+    if mode == "reage":
+        from app.initiatives.i13.snapshot_store import lifecycle
+
+        if not lifecycle.enabled():
+            raise HTTPException(status_code=409, detail="re-age needs I13_SNAPSHOT_STORE=sql")
+        lifecycle.start_background_build("manual re-age", manual=True, reage=True)
+    else:
+        start_background_build("manual refresh")
     return SnapshotStatusResponse(**snapshot_status())
 
 
