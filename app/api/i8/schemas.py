@@ -568,6 +568,18 @@ class DeclarationItem(I8Model):
 
     has_active_repair: bool
     related_repair_id: str
+    vendor: str | None = None
+    """The vendor the part went to, as a code. Null where the repair line has
+    no PO header."""
+
+    vendor_name: str | None = None
+    """LFA1's name for that vendor, when one was delivered. The queue shows the
+    name when it has one and the code when it does not."""
+
+    repair_status: str | None = None
+    """Where the REPAIR stands (PO Issued / At Vendor / Closed). Not the
+    declaration status, which is ``status``."""
+
     repair_po: SAPDocumentReference | None = None
     """This row's repair line, unjoined.
 

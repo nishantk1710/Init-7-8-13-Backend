@@ -106,6 +106,24 @@ class DeclarationRow:
     repair_item: str | None = None
     """EKPO.EBELP of that line."""
 
+    vendor: str | None = None
+    """The vendor the part went to, as a code. Null on a line with no PO
+    header -- not every repair line has one, and an empty string would read as
+    a vendor whose name is blank."""
+
+    vendor_name: str | None = None
+    """LFA1's name for that vendor, where one was delivered. The queue shows
+    the name when it has one and falls back to the code: a code is a fact, an
+    invented name is not."""
+
+    repair_status: str | None = None
+    """Where the repair itself stands -- PO Issued, At Vendor, Closed.
+
+    Not the declaration status, which is ``status``. The queue shows this so
+    somebody working it can see whether the part is still out: a line already
+    back is a different kind of outstanding declaration from one at a vendor
+    right now."""
+
     @property
     def is_outstanding(self) -> bool:
         return self.status in ("Required", "Flagged")
@@ -179,6 +197,9 @@ def build_queue(
                 related_repair_id=f"{line.purchasing_document}-{line.item}",
                 repair_document=line.purchasing_document,
                 repair_item=line.item,
+                vendor=line.vendor,
+                vendor_name=line.vendor_name,
+                repair_status=line.repair_status,
                 status=status,
                 declaration_id=attestation.id if attestation else None,
                 declared_by=attestation.attestor if attestation else None,

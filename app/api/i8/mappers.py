@@ -429,6 +429,9 @@ def declaration_item(row: DeclarationRow, cfg: I8Settings) -> DeclarationItem:
         requester=row.requester,
         has_active_repair=row.has_active_repair,
         related_repair_id=row.related_repair_id,
+        vendor=row.vendor,
+        vendor_name=row.vendor_name,
+        repair_status=row.repair_status,
         repair_po=(
             SAPDocumentReference(
                 type="PO", document_number=row.repair_document, line=row.repair_item

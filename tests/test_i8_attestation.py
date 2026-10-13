@@ -97,6 +97,9 @@ class FakeLine:
         overdue_status="ON_TIME",
         due_date=None,
         days_remaining=None,
+        vendor=None,
+        vendor_name=None,
+        repair_status="PO Issued",
     ):
         self.purchasing_document = document
         self.item = item
@@ -113,8 +116,11 @@ class FakeLine:
         self.overdue_status = overdue_status
         self.due_date = due_date
         self.days_remaining = days_remaining
-        self.vendor = None
-        self.vendor_name = None
+        self.vendor = vendor
+        self.vendor_name = vendor_name
+        # Read by the declaration queue, which shows where the REPAIR stands
+        # beside a declaration that is still owed.
+        self.repair_status = repair_status
 
     @property
     def is_open(self) -> bool:
@@ -416,6 +422,41 @@ class TestDeclarationQueue:
         assert rows[0].condition is None
         assert rows[0].declared_by is None
         assert rows[0].is_outstanding
+
+    def test_a_row_carries_the_vendor_and_where_the_repair_stands(self) -> None:
+        """The declarations screen shows Material, Plant, Vendor, Repair Status
+        and Raised. Three of those come from the repair line, not from the
+        attestation, so the queue has to carry them."""
+        line = FakeLine(
+            "4500",
+            "10",
+            "8000005632",
+            "1300",
+            date(2026, 5, 1),
+            vendor="400709",
+            vendor_name="Acme Repairs",
+            repair_status="At Vendor",
+        )
+        row = build_queue([line], self._coverage(uncovered={line.key}))[0]
+
+        assert row.vendor == "400709"
+        assert row.vendor_name == "Acme Repairs"
+        assert row.repair_status == "At Vendor"
+        # The repair's status is NOT the declaration's -- the screen shows both
+        # and they must not be read off the same field.
+        assert row.status == "Required"
+
+    def test_a_line_with_no_po_header_has_no_vendor_rather_than_a_blank_one(
+        self,
+    ) -> None:
+        """Not every repair line has a PO header. None means "not known from
+        this data"; an empty string would read as a vendor whose name is
+        blank, and the screen would print nothing either way."""
+        line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
+        row = build_queue([line], self._coverage(uncovered={line.key}))[0]
+
+        assert row.vendor is None
+        assert row.vendor_name is None
 
     def test_a_repairable_attestation_reads_as_completed(self, fake_attestation) -> None:
         line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
