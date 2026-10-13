@@ -133,6 +133,7 @@ class TestSeedWatermark:
             "MKPF": ("CPUDT", "Cpudt"),
             "MSEG": ("CPUDT_MKPF", "CpudtMkpf"),
             "CDHDR": ("UDATE", "Udate"),
+            "EBAN": ("BADAT", "Badat"),
         }
 
 
