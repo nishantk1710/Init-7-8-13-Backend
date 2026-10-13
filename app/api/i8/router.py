@@ -491,6 +491,8 @@ def post_attestation(
         serial_number=body.serial_number,
         evidence_reference=body.evidence_reference,
         supersedes=body.supersedes,
+        repair_document=body.repair_document,
+        repair_item=body.repair_item,
     )
     try:
         # The attestor comes from the caller, never from the body.
