@@ -74,12 +74,28 @@ class TestI08Shape:
         assert step.facts["flow"] == "i08"
         assert step.facts["openRepairLines"] == 1
 
-    def test_caveats_go_in_the_footnote_not_the_prompt(self) -> None:
-        """A sentence that hedges every clause is unreadable; a list under it
-        is not."""
+    def test_the_caveats_are_carried_but_not_repeated_under_the_question(
+        self,
+    ) -> None:
+        """They used to be listed under the question as a footnote, because
+        the card did not show them. It does now -- against the number each one
+        is about -- so a third copy below the question was the same warning
+        for the third time.
+
+        They stay on the record, which is what the trace view reads and what
+        makes this a presentation change rather than a loss.
+        """
         step = i08_step({})
-        assert step.footnote
-        assert "physically reached" in step.footnote
+        assert step.footnote is None
+        assert any("physically reached" in c for c in step.facts["caveats"])
+
+    def test_the_question_does_not_repeat_the_headline(self) -> None:
+        """The card renders `facts["headline"]`. Putting it in the prompt as
+        well printed the same paragraph twice, once above the other."""
+        step = i08_step({})
+        assert step.prompt == "Do you still want to reserve a new one?"
+        assert step.facts["headline"]
+        assert step.facts["headline"] not in step.prompt
 
     def test_taking_the_advice_ends_the_conversation(self) -> None:
         step = i08_step({script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}})
@@ -91,6 +107,9 @@ class TestI08Shape:
         assert step.id == script.I08_JUSTIFICATION
         assert step.kind is StepKind.FORM
         assert {f.name for f in step.fields} == {"reason_category", "free_text"}
+        # And it does NOT repeat the assessment card. The conversation is a
+        # transcript: the card from the question above is still on screen.
+        assert step.facts is None
 
     def test_the_justification_ends_the_conversation(self) -> None:
         step = i08_step(
