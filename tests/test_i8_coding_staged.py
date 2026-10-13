@@ -170,8 +170,8 @@ def _comparable(candidates):
             tuple(sorted(c.plants)),
             tuple(sorted((line.source, line.document, line.document_item, line.short_text)
                          for line in c.lines)),
-            tuple(sorted(c.distinct_texts)),
-            tuple(sorted((t.material_id, t.shared_text) for t in c.twins)),
+            tuple(sorted(c.texts)),
+            tuple(sorted(c.twins)),
             c.is_corroborated,
         )
         for c in sorted(candidates, key=lambda c: c.material_id)
@@ -212,8 +212,8 @@ class TestTheStagedScreenMatches:
         _, staged, _ = screened
         twinned = next(c for c in staged[0] if c.material_id == SUSPECT_TWINNED)
         assert twinned.is_corroborated
-        assert [t.material_id for t in twinned.twins] == [CODED_TWIN]
-        assert twinned.twins[0].shared_text == SHARED
+        assert [material for material, _ in twinned.twins] == [CODED_TWIN]
+        assert twinned.twins[0][1] == SHARED
 
     def test_lower_case_text_is_matched(self, screened) -> None:
         """The screen matches on upper(text); the narrowing must too, or a row
