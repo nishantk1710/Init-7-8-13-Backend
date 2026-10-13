@@ -62,6 +62,15 @@ ROUTES: dict[str, ModelRoute] = {
         tier="fast",
         why="Explains an arithmetic result. The arithmetic is not the model's job.",
     ),
+    "i13_dashboard_report": ModelRoute(
+        task="i13_dashboard_report",
+        tier="capable",
+        why=(
+            "One call per generated report, read by plant management. Low "
+            "volume, and the prose has to weigh several areas against each "
+            "other without inventing a figure."
+        ),
+    ),
     "reservation_assistant": ModelRoute(
         task="reservation_assistant",
         tier="capable",

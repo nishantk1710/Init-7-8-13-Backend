@@ -605,3 +605,42 @@ class UatStampRequest(BaseModel):
     session_id: str
     reservation_number: str
     reservation_item: str
+
+
+# --- Summary report (app/initiatives/i13/report/) ---------------------------
+
+
+class SummaryReportAction(BaseModel):
+    action: str
+    owner: str
+
+
+class SummaryReportNarrative(BaseModel):
+    headline: str
+    findings: list[str]
+    risks: list[str]
+    actions: list[SummaryReportAction]
+    #: MODEL or DETERMINISTIC -- whether an AI model wrote the words.
+    source: str
+    prompt_id: str | None = None
+    prompt_version: int | None = None
+    model: str | None = None
+    #: Why the template was used, when it was.
+    notes: list[str] = []
+
+
+class SummaryReportListItem(BaseModel):
+    id: str
+    generated_at: datetime
+    generated_by: str
+    plant: str | None
+    data_as_of: date | None
+    headline: str
+    narrative_source: str
+
+
+class SummaryReportResponse(SummaryReportListItem):
+    #: Every figure the report states -- see app/initiatives/i13/report/facts.py
+    #: for the shape. Stored as generated, never recomputed.
+    facts: dict
+    narrative: SummaryReportNarrative
