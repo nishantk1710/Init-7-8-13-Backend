@@ -19,14 +19,19 @@ cached, so a process that never touches the database never connects to one.
 """
 
 import contextlib
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from functools import lru_cache
+from typing import TypeVar
 
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 # The only backend this system runs against: Azure SQL (sqldb-aicom on
 # sql-vzi-aicom-nonprod-san). Local Postgres was a stand-in until VZI's database
@@ -97,6 +102,55 @@ def with_mars(url: str) -> URL:
     return parsed.update_query_dict({"MARS_Connection": "Yes"})
 
 
+#: SQLSTATEs that mean "the connection could not be opened right now" and can
+#: succeed a moment later: 08001 (cannot establish -- e.g. "TCP Provider: Error
+#: code 0x68 (104)", the connection reset seen on nonprod 13 Oct 2026), 08S01
+#: (link failure) and HYT00 (login timeout). Anything else -- a bad password
+#: (28000), a missing database (42000), a programming error -- is permanent and
+#: is never retried.
+TRANSIENT_CONNECT_SQLSTATES = frozenset({"08001", "08S01", "HYT00"})
+
+T = TypeVar("T")
+
+
+def is_transient_connect_error(exc: BaseException) -> bool:
+    """Whether ``exc`` (a DBAPI error raised while opening a connection) is
+    one of the transient SQLSTATEs. pyodbc puts the SQLSTATE in ``args[0]``."""
+    args = getattr(exc, "args", ())
+    return bool(args) and isinstance(args[0], str) and args[0] in TRANSIENT_CONNECT_SQLSTATES
+
+
+def connect_with_retry(
+    connect: Callable[[], T],
+    *,
+    retries: int,
+    backoff_seconds: float = 2.0,
+    sleep: Callable[[float], None] = time.sleep,
+) -> T:
+    """Open a connection, retrying a transient failure up to ``retries`` times.
+
+    **Only the act of connecting is retried.** At that point no SQL has run and
+    no transaction exists, so a retry cannot repeat a write -- unlike retrying a
+    statement or a transaction, which may already have committed. Waits
+    ``backoff_seconds`` x attempt (2 s, then 4 s). A non-transient error, or the
+    last failed attempt, re-raises the ORIGINAL exception unchanged.
+    """
+    attempt = 0
+    while True:
+        try:
+            return connect()
+        except Exception as exc:  # noqa: BLE001 -- re-raised unless transient
+            if attempt >= retries or not is_transient_connect_error(exc):
+                raise
+            attempt += 1
+            delay = backoff_seconds * attempt
+            logger.warning(
+                "database connect failed (%s); retry %d of %d in %.0fs",
+                exc.args[0], attempt, retries, delay,
+            )
+            sleep(delay)
+
+
 @lru_cache
 def get_engine() -> Engine:
     """The process-wide engine, created on first use.
@@ -126,7 +180,7 @@ def get_engine() -> Engine:
         "timeout": settings.database_connect_timeout_seconds
     }
 
-    return create_engine(
+    engine = create_engine(
         with_mars(settings.database_url),
         echo=settings.database_echo,
         # Azure SQL closes idle connections aggressively and the App Service can
@@ -139,6 +193,17 @@ def get_engine() -> Engine:
         future=True,
         connect_args=connect_args,
     )
+
+    if settings.database_connect_retries > 0:
+        retries = settings.database_connect_retries
+
+        @event.listens_for(engine, "do_connect")
+        def _retry_transient_connect(dialect, conn_rec, cargs, cparams):
+            return connect_with_retry(
+                lambda: dialect.loaded_dbapi.connect(*cargs, **cparams), retries=retries
+            )
+
+    return engine
 
 
 @lru_cache

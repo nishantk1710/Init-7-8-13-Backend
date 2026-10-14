@@ -114,7 +114,11 @@ def should_run(session: Session) -> TriggerDecision:
     return TriggerDecision(True, fingerprint, "source data changed")
 
 
-def check_and_run() -> str:
+#: What the pipeline run records as its trigger when nobody names a reason.
+DEFAULT_TRIGGER_REASON = "source data changed"
+
+
+def check_and_run(trigger_reason: str = DEFAULT_TRIGGER_REASON) -> str:
     """One tick: look, and run the pipeline only if the source has moved.
 
     Returns a one-line description of what happened, for the caller to log. Never
@@ -144,7 +148,12 @@ def check_and_run() -> str:
 
     logger.info("I07 pipeline triggered: %s", decision.reason)
     try:
-        result = run_pipeline_for_current_source()
+        # The default call is unchanged from before the nightly trigger existed;
+        # the reason is passed only when a caller names one.
+        if trigger_reason == DEFAULT_TRIGGER_REASON:
+            result = run_pipeline_for_current_source()
+        else:
+            result = run_pipeline_for_current_source(trigger_reason)
     except PipelineBusy as exc:
         logger.info("I07 pipeline already running; skipping this tick")
         return f"skipped: {exc}"

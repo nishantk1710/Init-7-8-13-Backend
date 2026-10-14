@@ -89,6 +89,12 @@ class Settings(BaseSettings):
     # happens on our schedule instead of inside someone's request.
     database_pool_recycle_seconds: int = 1500
 
+    # Extra attempts when OPENING a connection fails with a transient network
+    # error (SQLSTATE 08001 / 08S01 / HYT00 -- e.g. "TCP Provider: Error code
+    # 0x68", seen on nonprod 13 Oct 2026). Only the connect is retried, before
+    # any SQL has run, so nothing can be written twice. 0 turns it off.
+    database_connect_retries: int = 2
+
     # Object storage location. Like database_url, this is the ONLY place storage
     # is named, and the adapter is chosen from the URL scheme.
     #
@@ -590,6 +596,29 @@ class Settings(BaseSettings):
     # not begin a pipeline run while migrations may still be applying. Matches
     # the delta scheduler's reasoning and its default.
     i7_pipeline_initial_delay_seconds: int = 120
+
+    # The nightly slot, in UTC, when the watcher may START a run (it never stops
+    # one). 20 = 22:00 in South Africa, after the working day. The watcher only
+    # acts inside a slot; the rest of the day it does nothing at all. See
+    # app/initiatives/i7/pipeline_scheduler.py.
+    i7_pipeline_nightly_hour_utc: int = 20
+
+    # Extra attempts after a nightly run for the same source data did not
+    # succeed (failed, or interrupted by a restart), each in its own slot two
+    # hours after the previous one. Counted from i7_pipeline_run, so a restart
+    # does not reset it; once used up, that data version is not retried again
+    # until new data arrives or someone runs the pipeline by hand.
+    i7_pipeline_retries: int = 2
+
+    # Whether Auto-ARIMA runs as the CHALLENGER to SES for Smooth and Erratic
+    # demand. OFF by default. On nonprod (13 Oct 2026) it was the whole cost of
+    # forecasting: ~7-8 minutes per material-plant on Azure (4 s on a laptop), so
+    # the 179 smooth/erratic material-plants alone would take ~22 hours, while the
+    # other 5,896 (SBA + LightGBM) take ~0.2 s each. With it off, SES is the only
+    # model for those classes and the segment decision records "challenger not
+    # run". Intermittent and lumpy demand are unaffected. Turn it on to compare
+    # the two models offline.
+    i7_forecast_arima_enabled: bool = False
 
     # --- I07 OAR donor similarity: retrieval -------------------------------
     #
