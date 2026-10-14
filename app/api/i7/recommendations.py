@@ -17,10 +17,11 @@ from sqlalchemy.orm import Session
 from app.api.i7.deps import get_session, load_latest_recommendation
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations import routing
+from app.initiatives.i7.recommendations.consumption_history import monthly_consumption_history
 from app.models.i7_features import DecliningDemandEvaluation
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun
 from app.models.i7_recommendation import Recommendation
-from app.models.i7_staging import StagedConsumption, StagedMaterial, StagedStock
+from app.models.i7_staging import StagedMaterial, StagedStock
 from app.schemas.i7.errors import bad_request
 from app.schemas.i7.recommendations import (
     CircuitCount,
@@ -560,16 +561,11 @@ def get_recommendation(
     recommendation_id: str, session: Annotated[Session, Depends(get_session)]
 ) -> RecommendationDetail:
     row = load_latest_recommendation(session, recommendation_id)
-    consumption_rows = session.execute(
-        select(StagedConsumption.period, StagedConsumption.quantity)
-        .where(
-            StagedConsumption.sap_material_number == row.sap_material_number,
-            StagedConsumption.sap_plant_code == row.sap_plant_code,
-        )
-        .order_by(StagedConsumption.period)
-    ).all()
+    # Complete, netted and floored monthly series (see the service for the rules); the
+    # staged rows read directly gave only the months with movements.
     consumption_history = tuple(
-        ConsumptionHistoryEntry(period=period, quantity=quantity) for period, quantity in consumption_rows
+        ConsumptionHistoryEntry(period=period, quantity=quantity)
+        for period, quantity in monthly_consumption_history(session, row.sap_material_number, row.sap_plant_code)
     )
     display_fields = _display_fields_for(session, {row.sap_material_number}).get(
         row.sap_material_number, (None, None)
