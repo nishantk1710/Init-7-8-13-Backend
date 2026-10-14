@@ -121,8 +121,14 @@ def _display_fields_for(session: Session, materials: set[str]) -> dict[str, tupl
     return {material: (description, currency) for material, description, currency in rows}
 
 
-def _latest_only(statement: Select) -> Select:
+def _latest_only(statement: Select, *, only_status: str | None = None) -> Select:
     """Restrict to the newest ``Recommendation`` row per material-plant.
+
+    ``only_status`` ranks only the rows in that status, so the result is the
+    newest row *of that status* -- the newest APPROVED one, even when a later
+    regeneration has produced a newer, still-unapproved row for the same
+    material-plant. Without it, an approval would drop out of any view that
+    needs approved rows the moment recommendations were regenerated.
 
     A material-plant can have more than one row -- the pipeline regenerating
     under new upstream run ids legitimately produces a second row for the
@@ -144,7 +150,10 @@ def _latest_only(statement: Select) -> Select:
     )
     # Window functions cannot appear directly in a WHERE clause, so rank in a
     # subquery first and filter on that.
-    ranked = select(Recommendation.id, row_rank).subquery()
+    ranked_source = select(Recommendation.id, row_rank)
+    if only_status is not None:
+        ranked_source = ranked_source.where(Recommendation.status == only_status)
+    ranked = ranked_source.subquery()
     latest_ids = select(ranked.c.id).where(ranked.c.row_rank == 1)
     return statement.where(Recommendation.id.in_(latest_ids))
 

@@ -17,7 +17,8 @@ of being viewed through either endpoint below, upserted by
 one row rather than accumulating history (the ledger records the latest
 known reconciliation, not an append-only log of every request)."""
 
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -31,10 +32,22 @@ from app.initiatives.i7.recommendations.adoption import (
     evaluate_conversion_adoption,
     evaluate_parameter_adoption,
 )
+from app.initiatives.i7.recommendations.adoption_report import (
+    build_field_reports,
+    check_type_label,
+    is_pending,
+    plain_detail,
+)
 from app.initiatives.i7.recommendations.sap_change_documents import RawChangeDocumentProvider
-from app.initiatives.i7.recommendations.types import AdoptionResult
-from app.models.i7_recommendation import Recommendation, SapAdoptionResult
+from app.initiatives.i7.recommendations.types import (
+    AdoptionFieldReport,
+    AdoptionResult,
+    ApprovalAction,
+    LifecycleStatus,
+)
+from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation, SapAdoptionResult
 from app.schemas.i7.adoption import (
+    AdoptionFieldRow,
     AdoptionListItem,
     AdoptionListResponse,
     AdoptionResponse,
@@ -49,16 +62,88 @@ MAX_PAGE_SIZE = 200
 bulk export."""
 
 
-def _provider_for(session: Session, row: Recommendation, policy: PolicyDocument) -> RawChangeDocumentProvider:
+def _provider_for(
+    session: Session, anchor: date | None, policy: PolicyDocument
+) -> RawChangeDocumentProvider:
     """One provider per recommendation, windowed to FR-9's monitoring period
-    starting at that row's own ``generated_at`` -- never a single
+    starting at that recommendation's own anchor date -- never a single
     session-wide provider, since each recommendation's window starts on a
-    different date."""
+    different date. The anchor is the approval date when there is one (the
+    changes worth tracking are the ones made after someone approved), else the
+    recommendation's ``generated_at`` date."""
     return RawChangeDocumentProvider(
         session,
-        recommendation_date=row.generated_at.date() if row.generated_at else None,
+        recommendation_date=anchor,
         monitoring_window_days=policy.adoption.monitoring_window_days,
     )
+
+
+def _approval_dates(session: Session, recommendation_ids: list[str]) -> dict[str, date]:
+    """The date each recommendation reached final approval, in one query.
+
+    The newest ledger entry where the action was an approval that ended in the
+    APPROVED state -- the last step of the chain, not an earlier role's approval.
+    """
+    if not recommendation_ids:
+        return {}
+    rows = session.execute(
+        select(ApprovalLedgerEntry.recommendation_id, func.max(ApprovalLedgerEntry.timestamp))
+        .where(
+            ApprovalLedgerEntry.recommendation_id.in_(recommendation_ids),
+            ApprovalLedgerEntry.action == ApprovalAction.APPROVE.value,
+            ApprovalLedgerEntry.new_status == LifecycleStatus.APPROVED.value,
+        )
+        .group_by(ApprovalLedgerEntry.recommendation_id)
+    ).all()
+    return {rid: stamp.date() for rid, stamp in rows if stamp is not None}
+
+
+@dataclass(frozen=True)
+class _AdoptionView:
+    """One recommendation's adoption result with everything the page shows."""
+
+    result: AdoptionResult
+    is_conversion: bool
+    reports: tuple[AdoptionFieldReport, ...]
+    detail: str
+    check_type: str
+    approved_on: date | None
+    window_ends_on: date | None
+    window_open: bool
+    pending: bool
+
+
+def _build_view(
+    session: Session, row: Recommendation, policy: PolicyDocument, approved_on: date | None
+) -> _AdoptionView:
+    anchor = approved_on or (row.generated_at.date() if row.generated_at else None)
+    anchor_name = "approval" if approved_on else "recommendation"
+    provider = _provider_for(session, anchor, policy)
+    result, is_conversion = _evaluate_row(row, provider)
+    changes = provider.field_changes(row.sap_material_number, row.sap_plant_code)
+    reports = build_field_reports(result, changes, anchor)
+
+    window_days = policy.adoption.monitoring_window_days
+    window_ends_on = anchor + timedelta(days=window_days) if anchor and window_days is not None else None
+    window_open = window_ends_on is None or datetime.now(timezone.utc).date() <= window_ends_on
+
+    return _AdoptionView(
+        result=result,
+        is_conversion=is_conversion,
+        reports=reports,
+        detail=plain_detail(
+            result, reports, anchor_name=anchor_name, window_days=window_days, window_open=window_open
+        ),
+        check_type=check_type_label(reports, is_conversion),
+        approved_on=approved_on,
+        window_ends_on=window_ends_on,
+        window_open=window_open,
+        pending=is_pending(result.status, window_open),
+    )
+
+
+def _field_rows(reports: tuple[AdoptionFieldReport, ...]) -> list[AdoptionFieldRow]:
+    return [AdoptionFieldRow(**report._asdict()) for report in reports]
 
 
 def _evaluate_row(row: Recommendation, provider: RawChangeDocumentProvider) -> tuple[AdoptionResult, bool]:
@@ -106,7 +191,7 @@ def _persist_result(session: Session, recommendation_id: str, result: AdoptionRe
         observed_fields=", ".join(f"{k}={v}" for k, v in result.observed),
         matched_fields=", ".join(result.matched_fields),
         mismatched_fields=", ".join(result.mismatched_fields),
-        detail=detail,
+        detail=detail[:500],
         evaluated_at=datetime.now(timezone.utc),
     )
     if existing is None:
@@ -136,10 +221,12 @@ def get_adoption(
 ) -> AdoptionResponse:
     row: Recommendation = load_latest_recommendation(session, recommendation_id)
     policy = PolicyDocument()
-    provider = _provider_for(session, row, policy)
-    result, is_conversion_adoption = _evaluate_row(row, provider)
+    view = _build_view(
+        session, row, policy, _approval_dates(session, [recommendation_id]).get(recommendation_id)
+    )
+    result, is_conversion_adoption = view.result, view.is_conversion
 
-    detail = result.detail
+    detail = view.detail
     if is_conversion_adoption and result.status.value == "UNKNOWN":
         # The literal, business-facing phrase for this specific case: no
         # ND/PD -> VB transition has been observed for this material-plant.
@@ -158,6 +245,12 @@ def get_adoption(
         matched_fields=list(result.matched_fields),
         mismatched_fields=list(result.mismatched_fields),
         detail=detail,
+        check_type=view.check_type,
+        fields=_field_rows(view.reports),
+        approved_on=view.approved_on,
+        window_ends_on=view.window_ends_on,
+        window_open=view.window_open,
+        pending=view.pending,
         is_conversion_adoption=is_conversion_adoption,
     )
 
@@ -204,7 +297,10 @@ def list_adoption(
             criticality=criticality,
             generated_from=None,
             generated_to=None,
-        )
+        ),
+        # Adoption is about approved changes: the newest APPROVED row per
+        # material-plant, so a later regeneration cannot hide an approval.
+        only_status=LifecycleStatus.APPROVED.value,
     ).where(
         # Only list material-plants a value was actually calculated for --
         # the vast majority of the catalogue never reaches this point (see
@@ -227,19 +323,25 @@ def list_adoption(
     rows = session.execute(statement).scalars().all()
 
     policy = PolicyDocument()
+    approved_on = _approval_dates(session, [row.recommendation_id for row in rows])
     items = []
     for row in rows:
-        provider = _provider_for(session, row, policy)
-        result, is_conversion_adoption = _evaluate_row(row, provider)
-        _persist_result(session, row.recommendation_id, result, result.detail)
+        view = _build_view(session, row, policy, approved_on.get(row.recommendation_id))
+        _persist_result(session, row.recommendation_id, view.result, view.detail)
         items.append(
             AdoptionListItem(
                 recommendation_id=row.recommendation_id,
                 sap_material_number=row.sap_material_number,
                 sap_plant_code=row.sap_plant_code,
-                status=result.status.value,
-                is_conversion_adoption=is_conversion_adoption,
-                detail=result.detail,
+                status=view.result.status.value,
+                is_conversion_adoption=view.is_conversion,
+                detail=view.detail,
+                check_type=view.check_type,
+                fields=_field_rows(view.reports),
+                approved_on=view.approved_on,
+                window_ends_on=view.window_ends_on,
+                window_open=view.window_open,
+                pending=view.pending,
             )
         )
 

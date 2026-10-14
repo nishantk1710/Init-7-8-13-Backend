@@ -53,12 +53,13 @@ day a CDPOS extract that actually includes MARC changes is delivered,
 without any change to this code.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 from app.initiatives.i7.adapters.change_documents import (
     ChangeDocumentRow,
     material_marc_changes,
 )
+from app.initiatives.i7.recommendations.types import AdoptionFieldChange
 from sqlalchemy.orm import Session
 
 _TRACKED_FIELDS = ("DISMM", "EISBE", "MINBE", "MABST")
@@ -104,6 +105,40 @@ def _dedupe(rows: list[ChangeDocumentRow]) -> list[ChangeDocumentRow]:
     return deduped
 
 
+def _parse_changed(raw_date: object, raw_time: object) -> tuple[date | None, str | None]:
+    """The change's date and ``HH:MM`` from CDHDR's text columns.
+
+    The normalise view presents the date as ISO ``YYYY-MM-DD``; SAP's own forms
+    (``YYYYMMDD``, ``DD.MM.YYYY``) are accepted too. The time comes as
+    ``HHMMSS`` or ``HH:MM:SS``. Nothing here has been checked against a real
+    MARC change document -- none exists in this delivery -- so anything
+    unreadable gives ``None`` rather than a guessed value.
+    """
+    parsed_date: date | None = None
+    if isinstance(raw_date, datetime):
+        parsed_date = raw_date.date()
+    elif isinstance(raw_date, date):
+        parsed_date = raw_date
+    elif raw_date:
+        text_date = str(raw_date).strip()
+        for fmt, width in (("%Y-%m-%d", 10), ("%Y%m%d", 8), ("%d.%m.%Y", 10)):
+            try:
+                parsed_date = datetime.strptime(text_date[:width], fmt).date()
+                break
+            except ValueError:
+                continue
+
+    parsed_time: str | None = None
+    if isinstance(raw_time, time):
+        parsed_time = raw_time.strftime("%H:%M")
+    elif raw_time:
+        digits = str(raw_time).strip().replace(":", "")
+        if len(digits) >= 4 and digits[:4].isdigit() and int(digits[:2]) < 24 and int(digits[2:4]) < 60:
+            parsed_time = f"{digits[:2]}:{digits[2:4]}"
+
+    return parsed_date, parsed_time
+
+
 def _rows_for_plant(rows: list[ChangeDocumentRow], plant: str) -> list[ChangeDocumentRow]:
     """Rows whose MARC table_key names this plant.
 
@@ -135,6 +170,7 @@ class RawChangeDocumentProvider:
         monitoring_window_days: int | None = None,
     ):
         self._session = session
+        self._cache: dict[tuple[str, str], list[ChangeDocumentRow]] = {}
         # FR-9's "within a configurable window after the recommendation
         # date" -- both must be present to bound the query; either missing
         # means unbounded (matches the behaviour before the window existed).
@@ -145,17 +181,52 @@ class RawChangeDocumentProvider:
             else None
         )
 
+    def _events(self, material: str, plant: str) -> list[ChangeDocumentRow]:
+        """This material-plant's tracked MARC changes in the window, oldest first.
+
+        Read once per (material, plant) and remembered, because the evaluator
+        asks for the current state and the page then asks what changed -- two
+        views of the same rows that must not cost two queries.
+        """
+        key = (material, plant)
+        if key not in self._cache:
+            rows = material_marc_changes(
+                self._session,
+                _pad_material(material),
+                _TRACKED_FIELDS,
+                window_start=self._window_start,
+                window_end=self._window_end,
+            )
+            self._cache[key] = _rows_for_plant(_dedupe(rows), plant)
+        return self._cache[key]
+
+    def field_changes(self, material: str, plant: str) -> dict[str, AdoptionFieldChange] | None:
+        """Per tracked field: what SAP held before, what it holds now, and when
+        it last changed. ``None`` when SAP recorded no change at all."""
+        rows = self._events(material, plant)
+        if not rows:
+            return None
+
+        by_field: dict[str, list[ChangeDocumentRow]] = {}
+        for row in rows:
+            by_field.setdefault(row.field_name.lower(), []).append(row)
+
+        changes: dict[str, AdoptionFieldChange] = {}
+        for field, events in by_field.items():
+            first, last = events[0], events[-1]
+            changed_on, changed_time = _parse_changed(last.date, last.time)
+            changes[field] = AdoptionFieldChange(
+                sap_field=field,
+                before=first.old_value,
+                now=last.new_value,
+                changed_on=changed_on,
+                changed_time=changed_time,
+                changes=len(events),
+            )
+        return changes
+
     def current_state(self, material: str, plant: str) -> dict[str, str] | None:
-        padded = _pad_material(material)
-        rows = material_marc_changes(
-            self._session,
-            padded,
-            _TRACKED_FIELDS,
-            window_start=self._window_start,
-            window_end=self._window_end,
-        )
-        rows = _dedupe(rows)
-        rows = _rows_for_plant(rows, plant)
+        rows = self._events(material, plant)
 
         if not rows:
             return None

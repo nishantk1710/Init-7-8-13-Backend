@@ -9,7 +9,29 @@ still resolves to UNKNOWN, but that is a fact about this data delivery, not
 a stub in this code path.
 """
 
+from datetime import date
+
 from pydantic import BaseModel, ConfigDict
+
+
+class AdoptionFieldRow(BaseModel):
+    """One field an adoption check looked at: what was approved, what SAP held
+    before and holds now, and when it changed."""
+
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    label: str
+    expected: str | None = None
+    before: str | None = None
+    now: str | None = None
+    changed_on: date | None = None
+    changed_time: str | None = None
+    days_after: int | None = None
+    """Whole days from approval (else the recommendation date) to the change."""
+
+    matched: bool | None = None
+    """``None`` when SAP recorded nothing about this field."""
 
 
 class AdoptionResponse(BaseModel):
@@ -25,6 +47,14 @@ class AdoptionResponse(BaseModel):
     matched_fields: list[str]
     mismatched_fields: list[str]
     detail: str
+
+    check_type: str = ""
+    fields: list[AdoptionFieldRow] = []
+    approved_on: date | None = None
+    window_ends_on: date | None = None
+    window_open: bool = True
+    pending: bool = False
+    """UNKNOWN while the tracking window is still open -- waiting for SAP."""
 
     is_conversion_adoption: bool = False
     """Whether this result is FR-9's OAR-conversion check (ND/PD -> VB with
@@ -45,6 +75,12 @@ class AdoptionListItem(BaseModel):
     status: str
     is_conversion_adoption: bool
     detail: str
+    check_type: str = ""
+    fields: list[AdoptionFieldRow] = []
+    approved_on: date | None = None
+    window_ends_on: date | None = None
+    window_open: bool = True
+    pending: bool = False
 
 
 class AdoptionListResponse(BaseModel):

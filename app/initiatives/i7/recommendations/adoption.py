@@ -27,9 +27,51 @@ case where current SAP state was actually read and does not match what was
 approved.
 """
 
+from datetime import date
+from decimal import Decimal, InvalidOperation
 from typing import Protocol
 
-from app.initiatives.i7.recommendations.types import AdoptionResult, AdoptionStatus
+from app.initiatives.i7.recommendations.types import (
+    AdoptionFieldChange,
+    AdoptionFieldReport,
+    AdoptionResult,
+    AdoptionStatus,
+)
+
+
+def _as_decimal(value: str | None) -> Decimal | None:
+    """A SAP quantity as a number: ``"350.000"``, ``"1,500"`` and SAP's trailing
+    minus (``"5.000-"``) all read; anything that is not a number gives ``None``."""
+    if value is None:
+        return None
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return None
+    negative = text.endswith("-")
+    if negative:
+        text = "-" + text[:-1]
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        return None
+
+
+def _same_number(observed: str | None, expected: str | None) -> bool:
+    """Whether two quantity texts are the same number. CDPOS stores
+    ``350.000`` where the recommendation says ``350``; comparing the text would
+    call an adopted change not adopted. Non-numeric values compare as text."""
+    left, right = _as_decimal(observed), _as_decimal(expected)
+    if left is not None and right is not None:
+        return left == right
+    return observed is not None and observed == expected
+
+
+def _is_populated(value: str | None) -> bool:
+    """A planning quantity that is set to something other than zero."""
+    number = _as_decimal(value)
+    if number is not None:
+        return number != 0
+    return bool(value) and str(value).strip() != ""
 
 
 class SapStateProvider(Protocol):
@@ -84,8 +126,8 @@ def evaluate_conversion_adoption(
     minbe = observed_state.get("minbe")
     mabst = observed_state.get("mabst")
 
-    minbe_populated = bool(minbe) and minbe not in ("0", "0.00")
-    mabst_populated = bool(mabst) and mabst not in ("0", "0.00")
+    minbe_populated = _is_populated(minbe)
+    mabst_populated = _is_populated(mabst)
 
     checks = (
         ("mrp_type", observed_mrp == expected_mrp_type),
@@ -175,7 +217,7 @@ def evaluate_parameter_adoption(
         sap_field = field_map[name]
         observed_value = observed_state.get(sap_field)
         observed.append((name, observed_value or ""))
-        checks.append((name, observed_value == expected_value))
+        checks.append((name, _same_number(observed_value, expected_value)))
 
     matched = tuple(name for name, ok in checks if ok)
     mismatched = tuple(name for name, ok in checks if not ok)
