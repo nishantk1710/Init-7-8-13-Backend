@@ -22,6 +22,12 @@ are now read once, in full, on a background thread, and every request is a
 dictionary lookup. A request never waits for the load: until it finishes,
 :func:`material_names` returns nothing and the screens show numbers.
 
+Two exceptions to "never waits", both bounded. Start-up loads the list right
+after the normalise views (``app.main``), so it is usually ready before anyone
+asks. And a caller may pass ``wait_seconds`` to :func:`attach_material_names`:
+the assistant's session log does, because a page rendered in the gap after a
+deploy otherwise showed numbers only, and search by name found nothing.
+
 The list is reloaded after :data:`CACHE_SECONDS`; a load that could not read a
 source is retried after :data:`RETRY_SECONDS`. A source that is not loaded
 (``n_makt`` on a database whose normalise views were never built, a ZMM065
@@ -50,6 +56,10 @@ CACHE_SECONDS = 6 * 60 * 60
 #: How soon a load that could not read every source is tried again.
 RETRY_SECONDS = 10 * 60
 
+#: How long start-up waits for the first load before moving on to the
+#: snapshot builds, so they do not run alongside it on the one-vCore database.
+STARTUP_WAIT_SECONDS = 120
+
 ZMM065_TABLES = ("raw_zmm065_bmm", "raw_zmm065_gb")
 
 _lock = threading.Lock()
@@ -75,10 +85,18 @@ def material_names(materials: Iterable[str | None]) -> dict[str, str]:
     return found
 
 
-def attach_material_names(rows: Sequence[Any], *, field: str = "material") -> Sequence[Any]:
-    """Set ``material_description`` on each response row from its ``field``."""
+def attach_material_names(
+    rows: Sequence[Any], *, field: str = "material", wait_seconds: float = 0
+) -> Sequence[Any]:
+    """Set ``material_description`` on each response row from its ``field``.
+
+    ``wait_seconds`` > 0: while no list has loaded yet and a load is running,
+    wait up to that long for it rather than answering with numbers only.
+    """
     if not rows:
         return rows
+    if wait_seconds > 0:
+        wait_for_first_load(wait_seconds)
     names = material_names(getattr(row, field) for row in rows)
     for row in rows:
         key = normalise(getattr(row, field))
@@ -141,6 +159,29 @@ def wait_for_load(timeout: float | None = None) -> None:
         loading = _loading
     if loading is not None:
         loading.join(timeout)
+
+
+def start_loading() -> None:
+    """Start a background load now if none is loaded or running. For start-up."""
+    _ensure_loading()
+
+
+def wait_for_first_load(timeout: float) -> bool:
+    """Wait up to ``timeout`` seconds while nothing is loaded and a load runs.
+
+    Returns at once when a list is already loaded, or when no load is running
+    (one that failed is retried later, not waited for). True if names are
+    available afterwards.
+    """
+    _ensure_loading()
+    with _lock:
+        if _names:
+            return True
+        loading = _loading
+    if loading is not None:
+        loading.join(timeout)
+    with _lock:
+        return bool(_names)
 
 
 def clear_cache() -> None:

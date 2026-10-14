@@ -107,6 +107,14 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
                 from app.shared import sap_normalise
 
                 sap_normalise.rebuild_read_layers()
+            if settings.database_url:
+                # After the views (n_makt is one), before the snapshot builds:
+                # material names are then ready by the time screens ask, rather
+                # than loading on the first request after every deploy.
+                from app.shared import material_names
+
+                material_names.start_loading()
+                material_names.wait_for_load(material_names.STARTUP_WAIT_SECONDS)
             i8_warm: threading.Thread | None = None
             if settings.database_url and settings.i8_snapshot_warm_on_startup:
                 from app.initiatives.i8 import service as i8_service
