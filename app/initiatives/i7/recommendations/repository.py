@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 _NORMAL_SQL = """
     SELECT f.sap_material_number, f.sap_plant_code, f.demand_class, f.history_status,
            f.criticality, f.non_zero_periods, f.feature_run_id,
-           f.baseline_model, c.forecast_rate,
+           f.baseline_model, c.forecast_rate, c.model_name AS forecast_model,
            f.current_safety_stock, f.current_reorder_point, f.current_maximum_stock,
            f.unit_price,
            i.lead_time_method, i.valid_po_count, i.lt_avg_months,

@@ -12,6 +12,7 @@ or identity credentials present.
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -637,6 +638,25 @@ class Settings(BaseSettings):
     # run". Intermittent and lumpy demand are unaffected. Turn it on to compare
     # the two models offline.
     i7_forecast_arima_enabled: bool = False
+
+    # Declining-demand detection and the separate TSB forecasting path. Three
+    # states, default off:
+    #
+    #   off     nothing is evaluated and forecasting is exactly as it was,
+    #           including the placeholder TSB rows. The default.
+    #   shadow  the feature build evaluates every material-plant with enough
+    #           history and records the result (i7_declining_demand_evaluation),
+    #           logging how many were flagged and why the rest were not.
+    #           Forecasts do not change. This is how the rule is reviewed on
+    #           real data before it is allowed to change a number.
+    #   active  as shadow, and forecasting runs TSB directly for flagged
+    #           material-plants (no challenger comparison, no backtest) while
+    #           everything else keeps the normal routing. Refuses to run when
+    #           the run's evaluations are missing -- see docs/i07_declining_demand.md.
+    #
+    # Needs the i7_declining_demand_evaluation table (an Alembic migration that
+    # is applied on purpose, not by this setting).
+    i7_declining_demand_mode: Literal["off", "shadow", "active"] = "off"
 
     # --- I07 OAR donor similarity: retrieval -------------------------------
     #

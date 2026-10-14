@@ -173,6 +173,7 @@ def build_normal_recommendation(
     factors = explanation.build_factors(
         demand_class=row.demand_class,
         baseline_model=row.baseline_model,
+        forecast_model=getattr(row, "forecast_model", None),
         lead_time_detail=_lead_time_plain(row.lead_time_method, row.valid_po_count),
         # Part 30 -- whether *this persisted calculation* actually had a
         # configured service level, not whether the CURRENT

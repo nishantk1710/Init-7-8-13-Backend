@@ -223,3 +223,15 @@ def test_service_level_info_defaults_to_none_not_fabricated():
     info = ServiceLevelInfo()
     assert info.service_level is None
     assert info.z_factor is None
+
+
+def test_a_recommendation_whose_forecast_came_from_tsb_says_demand_is_declining():
+    result = builder.build_normal_recommendation(normal_row(forecast_model="TSB"), POLICY)
+    assert [f.label for f in result.factors].count("Declining demand") == 1
+    assert "How demand was projected" not in [f.label for f in result.factors]
+
+
+def test_a_row_without_a_forecast_model_column_still_builds():
+    # Older callers and fixtures have no forecast_model attribute at all.
+    result = builder.build_normal_recommendation(normal_row(), POLICY)
+    assert "Declining demand" not in [f.label for f in result.factors]

@@ -182,6 +182,11 @@ trigger identifies materials *approaching* obsolescence. The Formula Reference
 requires the trigger, initialisation and parameter range to be validated on
 Vedanta history.
 
+A proposed declining-demand rule and a separate TSB path now exist, **off by
+default** — see [i07_declining_demand.md](i07_declining_demand.md). Until it is
+switched on, everything on this page is unchanged, including the placeholder TSB
+row above.
+
 **Lead time missing for 21 material-plants** → `NOT_EVALUABLE_LEAD_TIME_UNAVAILABLE`.
 No 30/60/90-day substitute; the fallback policy is unresolved.
 

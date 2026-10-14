@@ -291,3 +291,67 @@ class MaterialFeature(Base):
             f"<MaterialFeature {self.sap_material_number}/{self.sap_plant_code} "
             f"class={self.demand_class} oar={self.oar_scope}>"
         )
+
+
+class DecliningDemandEvaluation(Base):
+    """One material-plant's declining-demand evaluation, for one feature run.
+
+    Written by the feature build (never by forecasting) when
+    ``I7_DECLINING_DEMAND_MODE`` is ``shadow`` or ``active``; read by
+    forecasting to route flagged material-plants to the TSB path. One row per
+    (feature run, material, plant): a new feature run writes a fresh set, so a
+    flag can never outlive the data that produced it -- if demand resumes, the
+    next run's row says so and the old row is simply history.
+
+    Only material-plants with sufficient history are evaluated (the rest go to
+    OAR). The statuses and the rule are in
+    :mod:`app.initiatives.i7.features.declining`.
+    """
+
+    __tablename__ = "i7_declining_demand_evaluation"
+    __table_args__ = (
+        UniqueConstraint(
+            "feature_run_id",
+            "sap_material_number",
+            "sap_plant_code",
+            name="uq_i7_declining_eval_key",
+        ),
+        Index("ix_i7_declining_eval_run_status", "feature_run_id", "status"),
+        Index("ix_i7_declining_eval_material_plant", "sap_material_number", "sap_plant_code"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    feature_run_id: Mapped[int] = mapped_column(Integer)
+    sap_material_number: Mapped[str] = mapped_column(String(40))
+    sap_plant_code: Mapped[str] = mapped_column(String(8))
+
+    status: Mapped[str] = mapped_column(String(32))
+    """A :class:`~app.initiatives.i7.features.declining.DecliningStatus` value."""
+
+    reason: Mapped[str] = mapped_column(String(255))
+    rule_version: Mapped[str] = mapped_column(String(32))
+
+    window_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    window_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    """First and last of the complete months evaluated. Not the extract's latest
+    staged month: that one is treated as incomplete."""
+
+    months_evaluated: Mapped[int] = mapped_column(Integer, default=0)
+    nonzero_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    early_nonzero: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    recent_nonzero: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    early_rate: Mapped[Decimal | None] = mapped_column(Numeric(8, 4), nullable=True)
+    recent_rate: Mapped[Decimal | None] = mapped_column(Numeric(8, 4), nullable=True)
+    decline_pct: Mapped[Decimal | None] = mapped_column(Numeric(8, 4), nullable=True)
+    latest_months_zero: Mapped[bool | None] = mapped_column(nullable=True)
+
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<DecliningDemandEvaluation run={self.feature_run_id} "
+            f"{self.sap_material_number}/{self.sap_plant_code} {self.status}>"
+        )

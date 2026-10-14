@@ -221,3 +221,30 @@ def test_reorder_point_change_reads_as_a_sentence_with_tidy_numbers():
         oar_neighbour_count=None, oar_confidence=None,
     )
     assert "fall from 16 to 3" in falling[-1].detail
+
+
+# --- the declining-demand path says so ---------------------------------------------
+
+
+def _normal_factors(**overrides):
+    arguments = dict(
+        demand_class="INTERMITTENT", baseline_model="SBA", lead_time_detail=None,
+        service_level_configured=True, recommended_rop=Decimal(32), current_rop=Decimal(40),
+        is_oar=False, history_status="SUFFICIENT", oar_neighbour_count=None, oar_confidence=None,
+    )
+    arguments.update(overrides)
+    return build_factors(**arguments)
+
+
+def test_a_tsb_forecast_is_explained_as_declining_demand_not_as_the_usual_method():
+    factors = _normal_factors(forecast_model="TSB")
+    labels = [factor.label for factor in factors]
+    assert "Declining demand" in labels and "How demand was projected" not in labels
+    text = " ".join(factor.detail for factor in factors)
+    assert "has been falling" in text and "TSB" not in text  # plain words, no model name
+
+
+def test_any_other_forecast_model_keeps_the_usual_explanation():
+    for model in (None, "SES", "SBA"):
+        labels = [factor.label for factor in _normal_factors(forecast_model=model)]
+        assert "How demand was projected" in labels and "Declining demand" not in labels
