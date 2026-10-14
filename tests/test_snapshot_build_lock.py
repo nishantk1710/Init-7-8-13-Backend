@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -99,10 +100,28 @@ def test_a_database_error_never_stops_a_build(caplog) -> None:
     assert any("building without it" in r.getMessage() for r in caplog.records)
 
 
-def test_with_no_database_configured_the_default_lock_is_none() -> None:
-    """The real factory, as every test and every CLI sees it: nothing to guard."""
-    assert snapshot_builds._new_database_lock.__name__ == "_new_database_lock"
-    assert acquire_database_lock("I08") is None  # no DATABASE_URL here -> proceeds unguarded
+# The two tests below exercise the REAL lock factory. They must not depend on the
+# environment: on a laptop there is no database, but CI has a real SQL Server, and
+# a factory call there takes a real application lock that nothing here releases --
+# which made every later build in the process wait out the 30-minute bound.
+
+
+def test_with_no_database_configured_nothing_is_guarded(monkeypatch) -> None:
+    from app.core import db
+
+    def refuse():
+        raise db.DatabaseNotConfiguredError("no database")
+
+    monkeypatch.setattr(db, "get_engine", refuse)
+    assert snapshot_builds._new_database_lock() is None
+    assert acquire_database_lock("I08") is None  # quiet: nothing to guard, nothing to warn about
+
+
+def test_a_database_that_is_not_sql_server_is_not_guarded(monkeypatch) -> None:
+    from app.core import db
+
+    monkeypatch.setattr(db, "get_engine", lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite")))
+    assert snapshot_builds._new_database_lock() is None
 
 
 # --- through exclusive_build ----------------------------------------------
@@ -180,9 +199,10 @@ def test_builds_in_one_process_still_queue_and_hold_the_lock_one_at_a_time(monke
     assert state["max_holders"] == 1 and state["holders"] == 0
 
 
-def test_a_build_with_no_database_runs_exactly_as_before() -> None:
+def test_a_build_with_no_lock_available_runs_exactly_as_before(monkeypatch) -> None:
+    monkeypatch.setattr(snapshot_builds, "_new_database_lock", lambda: None)
     ran = []
-    with exclusive_build("I08"):  # no fixture: the real factory, no database here
+    with exclusive_build("I08"):
         ran.append(True)
     assert ran == [True]
 
