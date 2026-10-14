@@ -392,7 +392,7 @@ def _finalise(session_factory, run_id: int, result: PipelineResult) -> None:
     )
 
 
-def run_pipeline_for_current_source() -> PipelineResult:
+def run_pipeline_for_current_source(trigger_reason: str = "source data changed") -> PipelineResult:
     """Run the pipeline against whatever is in the raw layer now, resolving
     both the fingerprint and the snapshot verdict from the database.
 
@@ -425,7 +425,7 @@ def run_pipeline_for_current_source() -> PipelineResult:
         )
 
     return run_pipeline(
-        trigger_reason="source data changed",
+        trigger_reason=trigger_reason,
         snapshot_complete=verdict.complete,
         source_fingerprint=fingerprint,
     )

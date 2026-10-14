@@ -45,14 +45,16 @@ safety stock, reorder point and maximum are Phase 5.
 """
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.initiatives.i7.adapters import consumption_series_for
 from app.initiatives.i7.contracts import DemandPattern
@@ -70,6 +72,7 @@ from app.initiatives.i7.forecasting.types import (
     ForecastResult,
     ModelName,
     ModelStatus,
+    SegmentDecision,
 )
 from app.initiatives.i7.policy import PolicyDocument
 from app.models.i7_forecast import (
@@ -80,6 +83,26 @@ from app.models.i7_forecast import (
 )
 
 logger = logging.getLogger(__name__)
+
+def log_progress(run_id: int, completed: int, total: int, started: float, *, skipped: int = 0) -> None:
+    """One line saying how far the candidate loop has got, logged at every save.
+
+    ``skipped`` is how many were already saved by an earlier attempt and so cost
+    this call nothing; the ETA is worked out from the rest. Logging only: it
+    reads nothing the forecast depends on and changes nothing it produces."""
+    elapsed = time.monotonic() - started
+    done_now = max(completed - skipped, 0)
+    eta = f"{int(elapsed / done_now * (total - completed))}" if done_now else "unknown"
+    logger.info(
+        "I07 forecasting progress: run_id=%d completed=%d total=%d elapsed_seconds=%d percent=%.1f eta_seconds=%s saved=yes",
+        run_id,
+        completed,
+        total,
+        int(elapsed),
+        100.0 * completed / total if total else 100.0,
+        eta,
+    )
+
 
 STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
@@ -220,19 +243,21 @@ def _run_models(
     pooled_detail: str,
     obsolescence_trigger_configured: bool,
     quantile: float | None,
+    arima_enabled: bool = True,
 ) -> list[tuple[ForecastResult, BacktestResult, bool]]:
     """Forecast and backtest every model applicable to one material-plant.
 
-    Returns ``(forecast, backtest, is_baseline)`` per model.
+    Returns ``(forecast, backtest, is_baseline)`` per model. ``arima_enabled``
+    adds Auto-ARIMA as SES's challenger for Smooth and Erratic demand; the run
+    passes ``I7_FORECAST_ARIMA_ENABLED`` (default off).
     """
     horizon = candidate.lead_time_months
     results: list[tuple[ForecastResult, BacktestResult, bool]] = []
 
     if candidate.baseline_model == BaselineModel.SES.value:
-        pairs = [
-            (ModelName.SES, lambda s, h: ses.forecast(s, h), True),
-            (ModelName.AUTO_ARIMA, lambda s, h: arima.forecast(s, h), False),
-        ]
+        pairs = [(ModelName.SES, lambda s, h: ses.forecast(s, h), True)]
+        if arima_enabled:
+            pairs.append((ModelName.AUTO_ARIMA, lambda s, h: arima.forecast(s, h), False))
     else:
         pairs = [
             (ModelName.SBA, lambda s, h: sba.forecast(s, h), True),
@@ -321,7 +346,249 @@ def _parameters_text(result: ForecastResult) -> str | None:
     return ";".join(f"{key}={value}" for key, value in result.parameters)[:500]
 
 
-def run_forecasting(policy: PolicyDocument | None = None) -> ForecastRunResult:
+#: Material-plants between saves. Each batch is committed on its own, with its
+#: segment decisions and champion back-test paths, so an interruption costs at
+#: most the batch in progress and the next run resumes from the saved ones.
+CHECKPOINT_EVERY = 50
+
+#: The longest a save (and so a progress line) may be put off. With a slow model
+#: 50 material-plants can take an hour; this keeps the log alive and the work
+#: saved at least this often either way.
+CHECKPOINT_SECONDS = 60
+
+#: Held for the life of a forecasting run (``sp_getapplock``). Holding it proves
+#: no other forecast run is alive, which is what makes it safe to resume the
+#: interrupted one and to mark any other ``running`` row dead.
+FORECASTING_LOCK = "spares_ai_i7_forecasting"
+
+STATUS_RUNNING = "running"
+
+ABANDONED = (
+    "abandoned: its process stopped (an App Service restart, a deploy or an OOM) "
+    "before the run finished; found by forecast run {by}"
+)
+
+
+def _same_quantile(stored: Decimal | None, quantile: float | None) -> bool:
+    if stored is None or quantile is None:
+        return stored is None and quantile is None
+    return abs(float(stored) - quantile) < 1e-9
+
+
+def _saved_keys(session: Session, run_id: int) -> set[tuple[str, str]]:
+    """Material-plants this run already has rows for -- saved in whole batches,
+    so a material-plant is either fully saved or absent."""
+    rows = session.execute(
+        select(Forecast.sap_material_number, Forecast.sap_plant_code)
+        .where(Forecast.forecast_run_id == run_id)
+        .distinct()
+    )
+    return {(material, plant) for material, plant in rows}
+
+
+def _arima_consistent(session: Session, run_id: int, arima_enabled: bool) -> bool:
+    """Whether a run's saved rows were produced under the current ARIMA setting.
+
+    Resuming across a change would leave some smooth material-plants with an
+    ARIMA challenger and some without. Read from the rows themselves, so no
+    column (and no migration) is needed."""
+    models = set(
+        session.execute(
+            select(Forecast.model_name)
+            .where(
+                Forecast.forecast_run_id == run_id,
+                Forecast.model_name.in_([ModelName.SES.value, ModelName.AUTO_ARIMA.value]),
+            )
+            .distinct()
+        ).scalars()
+    )
+    has_arima = ModelName.AUTO_ARIMA.value in models
+    has_ses = ModelName.SES.value in models
+    if arima_enabled:
+        return has_arima or not has_ses
+    return not has_arima
+
+
+def _claim_run(
+    session: Session,
+    *,
+    policy: PolicyDocument,
+    feature_run_id: int | None,
+    quantile: float | None,
+    arima_enabled: bool,
+    resume: bool,
+) -> tuple[ForecastRun, bool]:
+    """The run to write into, and whether it is a resumed one. The caller holds
+    the forecasting lock and commits.
+
+    **Resumed** when the newest run did not succeed, has saved rows, and was
+    producing the same thing this run would: the same feature run, policy,
+    target quantile and ARIMA setting. Anything else starts a new run -- rows
+    from a different input or model set must not be mixed into one run.
+
+    Every other run still marked ``running`` is dead (the lock proves it) and is
+    marked ``failed``, so nothing reads it as in flight.
+    """
+    newest = session.execute(select(ForecastRun).order_by(ForecastRun.id.desc()).limit(1)).scalars().first()
+    candidate = None
+    if (
+        resume
+        and newest is not None
+        and newest.status != STATUS_SUCCEEDED
+        and feature_run_id is not None
+        and newest.feature_run_id == feature_run_id
+        and newest.policy_id == policy.policy_id
+        and newest.policy_version == policy.policy_version
+        and _same_quantile(newest.target_quantile, quantile)
+        and session.execute(
+            select(Forecast.id).where(Forecast.forecast_run_id == newest.id).limit(1)
+        ).first()
+        is not None
+        and _arima_consistent(session, newest.id, arima_enabled)
+    ):
+        candidate = newest
+
+    if candidate is not None:
+        run = candidate
+        run.status = STATUS_RUNNING
+        run.error = None
+        run.finished_at = None
+        session.flush()
+    else:
+        run = ForecastRun(
+            status=STATUS_RUNNING,
+            policy_id=policy.policy_id,
+            policy_version=policy.policy_version,
+            feature_run_id=feature_run_id,
+            target_quantile=Decimal(str(quantile)) if quantile is not None else None,
+        )
+        session.add(run)
+        session.flush()
+
+    stale = session.execute(
+        select(ForecastRun).where(ForecastRun.status == STATUS_RUNNING, ForecastRun.id != run.id)
+    ).scalars().all()
+    now = datetime.now(timezone.utc)
+    for old in stale:
+        old.status = STATUS_FAILED
+        old.error = ABANDONED.format(by=run.id)
+        old.finished_at = now
+    if stale:
+        logger.warning(
+            "forecast run %d: marked %d dead run(s) failed: %s",
+            run.id, len(stale), ", ".join(str(old.id) for old in stale),
+        )
+    return run, candidate is not None
+
+
+def _save_chunk(
+    session: Session,
+    run_id: int,
+    rows: list[dict[str, Any]],
+    backtests: list[BacktestResult],
+    decisions: list[Any],
+) -> None:
+    """Insert one batch: its ``Forecast`` rows, the champion back-test paths and
+    the segment decisions. The caller commits, so all three land together --
+    which is what makes a material-plant either fully saved or absent."""
+    if rows:
+        session.bulk_insert_mappings(Forecast, rows)
+
+    # Champion backtest paths -- persisted after is_champion is final (decisions
+    # may have flipped it from is_baseline), one path row per rolling-origin /
+    # horizon-step pair, for the row that actually won this material-plant's
+    # comparison. See ForecastBacktestPath's docstring for why only the champion.
+    path_rows: list[dict[str, Any]] = []
+    for row, backtest_result in zip(rows, backtests):
+        if not row["is_champion"] or not backtest_result.paths:
+            continue
+        for path in backtest_result.paths:
+            path_rows.append(
+                {
+                    "forecast_run_id": run_id,
+                    "sap_material_number": row["sap_material_number"],
+                    "sap_plant_code": row["sap_plant_code"],
+                    "model_name": row["model_name"],
+                    "origin_period": path.origin_period,
+                    "horizon_step": path.horizon_step,
+                    "forecast_period": path.forecast_period,
+                    "predicted": path.predicted,
+                    "actual": path.actual,
+                }
+            )
+    if path_rows:
+        session.bulk_insert_mappings(ForecastBacktestPath, path_rows)
+
+    for decision in decisions:
+        session.add(
+            SegmentModelDecision(
+                forecast_run_id=run_id,
+                segment_key=decision.segment_key,
+                baseline_model=decision.baseline_model.value,
+                challenger_model=(
+                    decision.challenger_model.value if decision.challenger_model else None
+                ),
+                baseline_pinball=decision.baseline_pinball,
+                challenger_pinball=decision.challenger_pinball,
+                improvement=decision.improvement,
+                baseline_bias=decision.baseline_bias,
+                challenger_bias=decision.challenger_bias,
+                bias_change=decision.bias_change,
+                origins_available=decision.origins_available,
+                origins_evaluated=decision.origins_evaluated,
+                required_origins=decision.required_origins,
+                adoption_status=decision.adoption_status.value,
+                decision_reason=decision.decision_reason[:500],
+            )
+        )
+
+
+def _decisions_from_db(session: Session, run_id: int) -> list[SegmentDecision]:
+    """Every saved decision of a run, as the same value objects the loop builds."""
+    stored = session.execute(
+        select(SegmentModelDecision)
+        .where(SegmentModelDecision.forecast_run_id == run_id)
+        .order_by(SegmentModelDecision.id)
+    ).scalars()
+    return [
+        SegmentDecision(
+            segment_key=row.segment_key,
+            baseline_model=ModelName(row.baseline_model),
+            challenger_model=ModelName(row.challenger_model) if row.challenger_model else None,
+            baseline_pinball=row.baseline_pinball,
+            challenger_pinball=row.challenger_pinball,
+            improvement=row.improvement,
+            baseline_bias=row.baseline_bias,
+            challenger_bias=row.challenger_bias,
+            bias_change=row.bias_change,
+            origins_available=row.origins_available,
+            origins_evaluated=row.origins_evaluated,
+            required_origins=row.required_origins,
+            adoption_status=AdoptionStatus(row.adoption_status),
+            decision_reason=row.decision_reason,
+            generated_at=row.generated_at,
+        )
+        for row in stored
+    ]
+
+
+def _status_counts(session: Session, run_id: int) -> tuple[dict[str, int], dict[str, int]]:
+    """Model- and backtest-status counts over everything the run has saved."""
+    model_counts: dict[str, int] = {}
+    backtest_counts: dict[str, int] = {}
+    for model_status, backtest_status, n in session.execute(
+        select(Forecast.forecast_status, Forecast.backtest_status, func.count())
+        .where(Forecast.forecast_run_id == run_id)
+        .group_by(Forecast.forecast_status, Forecast.backtest_status)
+    ):
+        model_counts[model_status] = model_counts.get(model_status, 0) + n
+        backtest_counts[backtest_status] = backtest_counts.get(backtest_status, 0) + n
+    return model_counts, backtest_counts
+
+
+def run_forecasting(
+    policy: PolicyDocument | None = None, *, resume: bool = True, lock: Any = None
+) -> ForecastRunResult:
     """Forecast every routed material-plant and record the evidence.
 
     ``policy`` defaults to the dev-fixture-aware default (see
@@ -330,12 +597,38 @@ def run_forecasting(policy: PolicyDocument | None = None) -> ForecastRunResult:
     ``I7_DEV_MOCK_SERVICE_LEVEL`` env var is unset (every environment
     including production), or one carrying the development-only mock
     Criticality -> Service Level matrix when that flag is explicitly set.
+
+    **Saved as it goes.** Every :data:`CHECKPOINT_EVERY` material-plants (or
+    :data:`CHECKPOINT_SECONDS`, whichever comes first) the finished ones are
+    committed with their decisions and champion paths, and a progress line is
+    logged. The run stays ``running`` until every material-plant is done and
+    only a ``succeeded`` run is read downstream, so a partly forecast run is
+    never used. If the process dies (a deploy, a restart), the next call
+    **resumes** that run and skips what is saved -- the full forecast used to be
+    kept in memory and written once at the end, so a run lost on 13 Oct 2026
+    took 3 h 40 min of work with it. ``resume=False`` forces a fresh run.
     """
+    from app.initiatives.i7.locking import application_lock
     from app.initiatives.i7.policy.dev_fixtures import default_policy
 
     policy = policy or default_policy()
+    lock = lock if lock is not None else application_lock(FORECASTING_LOCK)
+    if not lock.acquire():
+        return ForecastRunResult(
+            status=STATUS_FAILED,
+            error="another forecasting run holds the forecasting lock; it is already forecasting",
+        )
+    try:
+        return _run_forecasting_locked(policy, resume)
+    finally:
+        lock.release()
+
+
+def _run_forecasting_locked(policy: PolicyDocument, resume: bool) -> ForecastRunResult:
+    """The body of :func:`run_forecasting`, run while the forecasting lock is held."""
     session_factory = get_sessionmaker()
     quantile = _target_quantile(policy)
+    arima_enabled = get_settings().i7_forecast_arima_enabled
 
     # No approved obsolescence-risk rule exists in policy, so TSB is never a
     # candidate on the current configuration. Read from policy rather than
@@ -346,18 +639,24 @@ def run_forecasting(policy: PolicyDocument | None = None) -> ForecastRunResult:
         feature_run_id = session.execute(
             text("select max(id) from i7_feature_run where status = 'succeeded'")
         ).scalar()
-        run = ForecastRun(
-            status="running",
-            policy_id=policy.policy_id,
-            policy_version=policy.policy_version,
+        run, resumed = _claim_run(
+            session,
+            policy=policy,
             feature_run_id=feature_run_id,
-            target_quantile=Decimal(str(quantile)) if quantile is not None else None,
+            quantile=quantile,
+            arima_enabled=arima_enabled,
+            resume=resume,
         )
-        session.add(run)
         session.commit()
         run_id = run.id
 
     result = ForecastRunResult(run_id=run_id)
+    logger.info(
+        "forecast run %d: %s; Auto-ARIMA challenger %s",
+        run_id,
+        "resuming an interrupted run" if resumed else "starting",
+        "ON" if arima_enabled else "off",
+    )
 
     try:
         with session_factory() as session:
@@ -382,21 +681,41 @@ def run_forecasting(policy: PolicyDocument | None = None) -> ForecastRunResult:
                 for candidate in candidates
                 if candidate.baseline_model == BaselineModel.SBA.value
             ]
+            logger.info("forecast run %d: training the shared LightGBM model", run_id)
             pooled, pooled_status, pooled_detail = lightgbm_model.train(corpus, quantile)
             logger.info(
                 "forecast run %d: pooled LightGBM %s (%s)", run_id, pooled_status, pooled_detail
             )
 
+            saved = _saved_keys(session, run_id) if resumed else set()
+            total_candidates = len(candidates)
+            logger.info(
+                "forecast run %d: forecasting %d material-plants (%d already saved, %d to do)",
+                run_id,
+                total_candidates,
+                len(saved),
+                total_candidates - len(saved),
+            )
+
             rows: list[dict[str, Any]] = []
             decisions: list[Any] = []
             # One entry per Forecast row, same index, holding that row's own
-            # BacktestResult -- so once is_champion is finalised below (after
+            # BacktestResult -- so once is_champion is finalised (after
             # _apply_decision_to_rows may have flipped it from is_baseline),
             # the champion's own paths can be found by row index alone,
             # without re-running or re-matching anything.
             backtest_by_row_index: list[BacktestResult] = []
 
+            completed_candidates = len(saved)
+            skipped_candidates = len(saved)
+            since_save = 0
+            loop_started = time.monotonic()
+            last_save = loop_started
+
             for candidate in candidates:
+                if (candidate.material, candidate.plant) in saved:
+                    continue
+
                 material_plant_key = f"{candidate.material}/{candidate.plant}"
                 by_model: dict[ModelName, BacktestResult] = {}
                 baseline_index: int | None = None
@@ -409,6 +728,7 @@ def run_forecasting(policy: PolicyDocument | None = None) -> ForecastRunResult:
                     pooled_detail,
                     obsolescence_trigger_configured,
                     quantile,
+                    arima_enabled=arima_enabled,
                 ):
                     result.model_status_counts[forecast_result.status.value] = (
                         result.model_status_counts.get(forecast_result.status.value, 0) + 1
@@ -461,7 +781,9 @@ def run_forecasting(policy: PolicyDocument | None = None) -> ForecastRunResult:
                             "holding_cost_status": (
                                 metrics.holding_cost_status.value if metrics else None
                             ),
-                            "detail": (forecast_result.detail or backtest_result.detail or None),
+                            "detail": (
+                                forecast_result.detail or backtest_result.detail or None
+                            ),
                         }
                     )
 
@@ -472,61 +794,40 @@ def run_forecasting(policy: PolicyDocument | None = None) -> ForecastRunResult:
                     decisions.append(decision)
                     _apply_decision_to_rows(rows, candidate_row_start, decision)
 
-            session.bulk_insert_mappings(Forecast, rows)
-            result.forecasts_written = len(rows)
-
-            # Champion backtest paths -- persisted after is_champion is final
-            # (decisions above may have flipped it from is_baseline), one
-            # path row per rolling-origin/horizon-step pair, for the row that
-            # actually won this material-plant's comparison. See
-            # ForecastBacktestPath's docstring for why only the champion.
-            path_rows: list[dict[str, Any]] = []
-            for row, backtest_result in zip(rows, backtest_by_row_index):
-                if not row["is_champion"] or not backtest_result.paths:
-                    continue
-                for path in backtest_result.paths:
-                    path_rows.append(
-                        {
-                            "forecast_run_id": run_id,
-                            "sap_material_number": row["sap_material_number"],
-                            "sap_plant_code": row["sap_plant_code"],
-                            "model_name": row["model_name"],
-                            "origin_period": path.origin_period,
-                            "horizon_step": path.horizon_step,
-                            "forecast_period": path.forecast_period,
-                            "predicted": path.predicted,
-                            "actual": path.actual,
-                        }
+                completed_candidates += 1
+                since_save += 1
+                if (
+                    since_save >= CHECKPOINT_EVERY
+                    or time.monotonic() - last_save >= CHECKPOINT_SECONDS
+                    or completed_candidates == total_candidates
+                ):
+                    _save_chunk(session, run_id, rows, backtest_by_row_index, decisions)
+                    session.commit()
+                    result.segment_decisions.extend(decisions)
+                    rows, decisions, backtest_by_row_index = [], [], []
+                    since_save = 0
+                    last_save = time.monotonic()
+                    log_progress(
+                        run_id, completed_candidates, total_candidates, loop_started,
+                        skipped=skipped_candidates,
                     )
-            if path_rows:
-                session.bulk_insert_mappings(ForecastBacktestPath, path_rows)
 
-            for decision in decisions:
-                session.add(
-                    SegmentModelDecision(
-                        forecast_run_id=run_id,
-                        segment_key=decision.segment_key,
-                        baseline_model=decision.baseline_model.value,
-                        challenger_model=(
-                            decision.challenger_model.value
-                            if decision.challenger_model
-                            else None
-                        ),
-                        baseline_pinball=decision.baseline_pinball,
-                        challenger_pinball=decision.challenger_pinball,
-                        improvement=decision.improvement,
-                        baseline_bias=decision.baseline_bias,
-                        challenger_bias=decision.challenger_bias,
-                        bias_change=decision.bias_change,
-                        origins_available=decision.origins_available,
-                        origins_evaluated=decision.origins_evaluated,
-                        required_origins=decision.required_origins,
-                        adoption_status=decision.adoption_status.value,
-                        decision_reason=decision.decision_reason[:500],
-                    )
+            # A run whose every material-plant was already saved never reaches
+            # the save above; anything left over is saved here.
+            if rows or decisions:
+                _save_chunk(session, run_id, rows, backtest_by_row_index, decisions)
+                session.commit()
+                result.segment_decisions.extend(decisions)
+
+            result.forecasts_written = session.execute(
+                select(func.count()).select_from(Forecast).where(Forecast.forecast_run_id == run_id)
+            ).scalar_one()
+            if resumed:
+                # What this call computed is only the tail of the run.
+                result.model_status_counts, result.backtest_status_counts = _status_counts(
+                    session, run_id
                 )
-            result.segment_decisions = decisions
-            session.commit()
+                result.segment_decisions = _decisions_from_db(session, run_id)
 
         with session_factory() as session:
             stored = session.get(ForecastRun, run_id)

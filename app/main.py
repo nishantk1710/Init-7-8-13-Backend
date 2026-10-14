@@ -151,6 +151,13 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             daemon=True,
         ).start()
 
+    if settings.database_url and settings.i7_pipeline_watch_enabled:
+        # Off by default. Starts only a timer thread; a run begins only inside
+        # an open nightly slot, never at start-up -- see pipeline_scheduler.
+        from app.initiatives.i7 import pipeline_scheduler
+
+        pipeline_scheduler.start(stop, settings)
+
     task = None
     try:
         task = scheduler.start(application)
