@@ -312,6 +312,10 @@ class RecommendationSummary(BaseModel):
     plant: str
     status: str
     is_oar: bool | None
+    demand_type: str = "NORMAL"
+    """OAR (sized from similar materials), DECLINING (not OAR, and flagged by the
+    declining-demand rule in the feature run this recommendation was built from) or
+    NORMAL. The three never overlap; this is the split the ``type`` filter makes."""
     demand_class: str | None
     criticality: str | None
     confidence: str | None
@@ -356,6 +360,7 @@ class RecommendationSummary(BaseModel):
         route: tuple[str, ...],
         description: str | None = None,
         currency: str | None = None,
+        demand_type: str = "NORMAL",
     ) -> "RecommendationSummary":
         return cls(
             recommendation_id=row.recommendation_id,
@@ -364,6 +369,7 @@ class RecommendationSummary(BaseModel):
             plant=row.sap_plant_code,
             status=row.status,
             is_oar=row.is_oar,
+            demand_type=demand_type,
             demand_class=row.demand_class,
             criticality=row.criticality,
             confidence=row.confidence,

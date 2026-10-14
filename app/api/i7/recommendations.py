@@ -6,17 +6,19 @@ recalculated here. Filtering and pagination happen in SQL; the full table is
 never loaded into Python to be filtered or sliced in memory.
 """
 
-from datetime import datetime
-from typing import Annotated
+from datetime import date, datetime
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import Select, case, func, select
+from sqlalchemy import Select, case, exists, func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.i7.deps import get_session, load_latest_recommendation
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations import routing
-from app.models.i7_forecast import ForecastBacktestPath
+from app.models.i7_features import DecliningDemandEvaluation
+from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun
 from app.models.i7_recommendation import Recommendation
 from app.models.i7_staging import StagedConsumption, StagedMaterial, StagedStock
 from app.schemas.i7.errors import bad_request
@@ -24,6 +26,8 @@ from app.schemas.i7.recommendations import (
     CircuitCount,
     ConsumptionHistoryEntry,
     CriticalityCount,
+    ForecastHistoryAggregatePoint,
+    ForecastHistoryAggregateResponse,
     ForecastHistoryPoint,
     ForecastHistoryResponse,
     PlantCount,
@@ -67,9 +71,17 @@ def _apply_filters(
     criticality: str | None,
     generated_from: datetime | None,
     generated_to: datetime | None,
+    demand_type: Literal["oar", "declining", "normal"] | None = None,
 ) -> Select:
-    """Every filter here maps to a real, indexed, persisted column. Nothing
-    that would require loading rows into Python to evaluate."""
+    """Every filter here maps to a real, persisted column or a keyed lookup.
+    Nothing that would require loading rows into Python to evaluate.
+
+    ``demand_type`` splits the catalogue three ways with no overlap: ``oar``
+    (sized from similar materials), ``declining`` (not OAR, and flagged by the
+    declining-demand rule in the feature run this recommendation was built
+    from) and ``normal`` (everything else). OAR is decided first, so a
+    material is never in two.
+    """
     if status is not None:
         statement = statement.where(Recommendation.status == status)
     if plant is not None:
@@ -88,7 +100,62 @@ def _apply_filters(
         statement = statement.where(Recommendation.generated_at >= generated_from)
     if generated_to is not None:
         statement = statement.where(Recommendation.generated_at < generated_to)
+    if demand_type is not None:
+        not_oar = or_(Recommendation.is_oar.is_(False), Recommendation.is_oar.is_(None))
+        if demand_type == "oar":
+            statement = statement.where(Recommendation.is_oar.is_(True))
+        elif demand_type == "declining":
+            statement = statement.where(not_oar, _flagged_declining())
+        else:
+            statement = statement.where(not_oar, ~_flagged_declining())
     return statement
+
+
+def _flagged_declining():
+    """This recommendation's material-plant was flagged DECLINING_DEMAND in the
+    feature run the recommendation was built from -- read from the evaluation the
+    feature build stored, never re-derived here."""
+    return exists().where(
+        DecliningDemandEvaluation.feature_run_id == Recommendation.feature_run_id,
+        DecliningDemandEvaluation.sap_material_number == Recommendation.sap_material_number,
+        DecliningDemandEvaluation.sap_plant_code == Recommendation.sap_plant_code,
+        DecliningDemandEvaluation.status == "DECLINING_DEMAND",
+    )
+
+
+def _declining_keys_for(session: Session, rows) -> set[tuple[str, str, int]]:
+    """``(material, plant, feature_run_id)`` of the page's rows that were flagged.
+
+    One query for the whole page. A database that does not have the evaluation
+    table yet (the migration is applied on purpose) simply has no flags, rather
+    than failing the list."""
+    if not rows:
+        return set()
+    try:
+        found = session.execute(
+            select(
+                DecliningDemandEvaluation.sap_material_number,
+                DecliningDemandEvaluation.sap_plant_code,
+                DecliningDemandEvaluation.feature_run_id,
+            ).where(
+                DecliningDemandEvaluation.status == "DECLINING_DEMAND",
+                DecliningDemandEvaluation.sap_material_number.in_({row.sap_material_number for row in rows}),
+                DecliningDemandEvaluation.feature_run_id.in_({row.feature_run_id for row in rows}),
+            )
+        ).all()
+    except SQLAlchemyError:
+        session.rollback()
+        return set()
+    return {(material, plant, run) for material, plant, run in found}
+
+
+def _demand_type(row, declining_keys: set[tuple[str, str, int]]) -> str:
+    """OAR, DECLINING or NORMAL -- the same split the ``type`` filter makes."""
+    if row.is_oar:
+        return "OAR"
+    if (row.sap_material_number, row.sap_plant_code, row.feature_run_id) in declining_keys:
+        return "DECLINING"
+    return "NORMAL"
 
 
 def _display_fields_for(session: Session, materials: set[str]) -> dict[str, tuple[str | None, str | None]]:
@@ -197,6 +264,13 @@ def list_recommendations(
         datetime | None,
         Query(description="Exclusive upper bound on generated_at -- e.g. a report period's end, plus one day."),
     ] = None,
+    demand_type: Annotated[
+        Literal["oar", "declining", "normal"] | None,
+        Query(
+            alias="type",
+            description="oar: sized from similar materials. declining: not OAR and flagged by the declining-demand rule. normal: everything else. The three never overlap.",
+        ),
+    ] = None,
 ) -> RecommendationListResponse:
     if sort not in SORT_FIELDS:
         raise bad_request(
@@ -217,6 +291,7 @@ def list_recommendations(
             criticality=criticality,
             generated_from=generated_from,
             generated_to=generated_to,
+            demand_type=demand_type,
         )
     )
 
@@ -246,6 +321,7 @@ def list_recommendations(
 
     # One batched staging lookup for the whole page -- see _display_fields_for.
     display_fields = _display_fields_for(session, {row.sap_material_number for row in rows})
+    declining_keys = _declining_keys_for(session, rows)
 
     return RecommendationListResponse(
         items=[
@@ -254,6 +330,7 @@ def list_recommendations(
                 tuple(role.value for role in routing.route_for(row.is_oar, row.criticality, policy)),
                 description=display_fields.get(row.sap_material_number, (None, None))[0],
                 currency=display_fields.get(row.sap_material_number, (None, None))[1],
+                demand_type=_demand_type(row, declining_keys),
             )
             for row in rows
         ],
@@ -581,4 +658,94 @@ def get_recommendation_forecast_history(
             )
             for r in path_rows
         ),
+    )
+
+
+@router.get(
+    "/forecast-vs-actual",
+    response_model=ForecastHistoryAggregateResponse,
+    summary="Portfolio Forecast vs Actual Demand, from the champion backtests",
+    description="For the Overview's Forecast vs Actual Demand chart: per month, the "
+    "SUM of the champion models' one-step-ahead predictions and of what was "
+    "actually used, across every material-plant that has a persisted backtest "
+    "path in the latest succeeded forecast run (optionally one plant). Real model "
+    "output, never a client-side approximation. Material-plants with no backtest "
+    "-- cold start, and those on the declining-demand TSB path, which is not "
+    "backtested by design -- are not in the sums; materials_in_scope_count against "
+    "materials_with_history_count says how many. Quantities are summed in each "
+    "material's own unit of measure.",
+)
+def get_forecast_vs_actual(
+    session: Annotated[Session, Depends(get_session)],
+    plant: Annotated[str | None, Query(description="One SAP plant code; omit for every plant.")] = None,
+    months: Annotated[int, Query(ge=1, le=60, description="How many of the latest months to return.")] = 12,
+) -> ForecastHistoryAggregateResponse:
+    run_id = session.execute(
+        select(func.max(ForecastRun.id)).where(ForecastRun.status == "succeeded")
+    ).scalar()
+    if run_id is None:
+        return ForecastHistoryAggregateResponse(
+            materials_with_history_count=0, materials_in_scope_count=0, points=()
+        )
+
+    plant_path = (ForecastBacktestPath.sap_plant_code == plant,) if plant else ()
+    plant_forecast = (Forecast.sap_plant_code == plant,) if plant else ()
+
+    # One-step-ahead only: each material-plant then has one path row per month, so
+    # a month's sum adds each material once. Later horizon steps predict the same
+    # month again and would count it several times.
+    path_filter = (
+        ForecastBacktestPath.forecast_run_id == run_id,
+        ForecastBacktestPath.horizon_step == 1,
+        *plant_path,
+    )
+
+    latest_period = session.execute(
+        select(func.max(ForecastBacktestPath.forecast_period)).where(*path_filter)
+    ).scalar()
+
+    points: tuple[ForecastHistoryAggregatePoint, ...] = ()
+    if latest_period is not None:
+        first_month = (latest_period.year * 12 + latest_period.month - 1) - (months - 1)
+        cutoff = date(first_month // 12, first_month % 12 + 1, 1)
+        rows = session.execute(
+            select(
+                ForecastBacktestPath.forecast_period,
+                func.sum(ForecastBacktestPath.predicted),
+                func.sum(ForecastBacktestPath.actual),
+                func.count(),
+            )
+            .where(*path_filter, ForecastBacktestPath.forecast_period >= cutoff)
+            .group_by(ForecastBacktestPath.forecast_period)
+            .order_by(ForecastBacktestPath.forecast_period)
+        ).all()
+        points = tuple(
+            ForecastHistoryAggregatePoint(
+                forecast_period=period, predicted=predicted, actual=actual, material_count=count
+            )
+            for period, predicted, actual, count in rows
+        )
+
+    with_history = session.execute(
+        select(func.count()).select_from(
+            select(ForecastBacktestPath.sap_material_number, ForecastBacktestPath.sap_plant_code)
+            .where(*path_filter)
+            .distinct()
+            .subquery()
+        )
+    ).scalar_one()
+
+    in_scope = session.execute(
+        select(func.count()).where(
+            Forecast.forecast_run_id == run_id,
+            Forecast.is_champion.is_(True),
+            Forecast.forecast_status == "SUCCESS",
+            *plant_forecast,
+        )
+    ).scalar_one()
+
+    return ForecastHistoryAggregateResponse(
+        materials_with_history_count=with_history,
+        materials_in_scope_count=in_scope,
+        points=points,
     )
