@@ -793,9 +793,9 @@ def get_coding_candidates(
         description=(
             "Run the LANGUAGE JUDGEMENT as well. Off by default because it is "
             "one model call per material -- 41 materials took 246 seconds "
-            "against live gpt-4o. With it off every verdict is UNSCREENED and "
-            "the keyword screen, the material split and the twin check have "
-            "still run"
+            "against live gpt-4o. With it off no model is called, but verdicts "
+            "already on record are still served: a material comes back "
+            "UNSCREENED only when nothing has ever judged its current text"
         ),
     ),
     limit: int | None = Query(
