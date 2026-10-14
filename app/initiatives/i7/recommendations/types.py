@@ -14,7 +14,7 @@ below is chosen to make *why* visible rather than collapsing every non-ready
 state into one generic "blocked".
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import NamedTuple
@@ -254,6 +254,52 @@ class AdoptionResult(NamedTuple):
     matched_fields: tuple[str, ...]
     mismatched_fields: tuple[str, ...]
     detail: str
+
+
+class AdoptionFieldChange(NamedTuple):
+    """What SAP's change history says about one tracked MARC field inside the
+    monitoring window. Read from CDHDR (when) joined to CDPOS (which field, old
+    and new value)."""
+
+    sap_field: str
+    """Lower-case SAP field name: ``dismm``, ``eisbe``, ``minbe`` or ``mabst``."""
+
+    before: str | None
+    """The old value of the earliest change in the window -- what SAP held
+    when the window opened."""
+
+    now: str | None
+    """The new value of the latest change in the window."""
+
+    changed_on: date | None
+    """Date of the latest change. ``None`` when the extract's date could not be read."""
+
+    changed_time: str | None
+    """``HH:MM`` of the latest change, ``None`` when the extract carried no usable time."""
+
+    changes: int
+    """How many separate changes the field had in the window."""
+
+
+class AdoptionFieldReport(NamedTuple):
+    """One field of an adoption check, ready to show a person."""
+
+    key: str
+    """``reorder_point``, ``safety_stock``, ``maximum_stock`` or ``mrp_type``."""
+
+    label: str
+    expected: str | None
+    """What the approval called for, as text: ``435``, ``VB`` or ``filled in``."""
+
+    before: str | None
+    now: str | None
+    changed_on: date | None
+    changed_time: str | None
+    days_after: int | None
+    """Whole days from the anchor (approval, else recommendation) to the change."""
+
+    matched: bool | None
+    """``None`` when SAP gave no evidence about this field at all."""
 
 
 class ExecutionStatus(StrEnum):
