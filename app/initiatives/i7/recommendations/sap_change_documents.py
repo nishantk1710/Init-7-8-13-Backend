@@ -58,7 +58,6 @@ from datetime import date, datetime, time, timedelta
 from app.initiatives.i7.adapters.change_documents import (
     ChangeDocumentRow,
     material_marc_changes,
-    materials_with_marc_changes,
 )
 from app.initiatives.i7.recommendations.types import AdoptionFieldChange
 from sqlalchemy.orm import Session
@@ -78,16 +77,6 @@ data-dictionary fact, the same padding every ABAP report applies."""
 def _pad_material(material: str) -> str:
     """I07's unpadded material number to SAP's 18-character MATNR."""
     return material.strip().rjust(_MATNR_WIDTH, "0")
-
-
-def pad_material(material: str) -> str:
-    """I07's unpadded material number as CDHDR holds it (18 characters)."""
-    return _pad_material(material)
-
-
-def materials_with_tracked_changes(session: Session) -> set[str]:
-    """Padded numbers of the materials with any tracked MARC change at all."""
-    return materials_with_marc_changes(session, _TRACKED_FIELDS)
 
 
 def _dedupe(rows: list[ChangeDocumentRow]) -> list[ChangeDocumentRow]:
