@@ -21,8 +21,14 @@ from typing import NamedTuple
 
 from app.initiatives.i7.contracts.enums import RecommendationStatus
 
-RECOMMENDATION_FORMULA_VERSION = "i07-recommendation-2"
-"""Bumped from ``-1``: the OAR builder previously granted READY_FOR_REVIEW on
+RECOMMENDATION_FORMULA_VERSION = "i07-recommendation-3"
+"""Bumped from ``-2``: OAR recommendations now carry the criticality tier's
+service level and Z-factor, the I13 HOD trigger is no longer part of conversion
+eligibility, and the reasons are written in plain language. Rows stored under
+``-2`` have an empty service level and the old eligibility result, so they must
+be regenerated rather than reused.
+
+Bumped from ``-1``: the OAR builder previously granted READY_FOR_REVIEW on
 similarity evidence alone, before the weighted estimate was actually
 available. Recommendations produced under the old logic must not be mistaken
 for ones produced under the corrected rule -- the version is part of the
