@@ -297,10 +297,7 @@ def list_adoption(
             criticality=criticality,
             generated_from=None,
             generated_to=None,
-        ),
-        # Adoption is about approved changes: the newest APPROVED row per
-        # material-plant, so a later regeneration cannot hide an approval.
-        only_status=LifecycleStatus.APPROVED.value,
+        )
     ).where(
         # Only list material-plants a value was actually calculated for --
         # the vast majority of the catalogue never reaches this point (see
