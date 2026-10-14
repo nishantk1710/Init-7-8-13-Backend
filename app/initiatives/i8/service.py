@@ -721,8 +721,11 @@ class CodingScreen:
     built_at: datetime
     build_seconds: float
     used_model: bool
-    """False when only the deterministic half ran. The stats say so too, via
-    every verdict being UNSCREENED."""
+    """False when no model was CALLED in this build.
+
+    Not the same as "nothing was judged": since 14-Oct-2026 a deterministic
+    build still serves verdicts already on record, so read
+    :attr:`ScreenStats.verdicts_reused` for that, not this flag."""
 
 
 _screen_lock = threading.Lock()
@@ -776,7 +779,14 @@ def get_coding_screen(
     sources: tuple[str, ...] | None = None,
     refresh: bool = False,
 ) -> CodingScreen:
-    """The cached screen for this (use_model, limit, sources), built on first use."""
+    """The cached screen for this (use_model, limit, sources), built on first use.
+
+    A run that STORES verdicts invalidates every cached fast screen, because
+    those were built when the materials it just judged had no verdict on
+    record and would go on reporting them UNSCREENED. That is what made a
+    screen look like it had been thrown away on leaving the page: the verdicts
+    were in the database and the cache in front of it was older than they were.
+    """
     cfg = cfg or get_i8_settings()
     # Resolved here rather than left as None, so the key names the sources the
     # run actually read. Two requests that resolve to the same sources -- one
@@ -786,9 +796,26 @@ def get_coding_screen(
     key = (use_model, limit, resolved)
     with _screen_lock:
         if refresh or key not in _screens:
-            _screens[key] = build_coding_screen(
+            built = build_coding_screen(
                 db, snapshot, cfg, use_model=use_model, limit=limit, sources=resolved
             )
+            if built.stats.verdicts_stored:
+                # Only the fast screens, and only the ones that are not this
+                # build: a model run's own entry is the newest thing here.
+                # Dropped rather than rebuilt -- the next page load rebuilds
+                # one in about a second, and rebuilding every variant here
+                # would make a batch pay for screens nobody asked for.
+                stale = [k for k in _screens if k[0] is False]
+                for k in stale:
+                    del _screens[k]
+                if stale:
+                    logger.info(
+                        "I08 coding screen: %d verdict(s) stored, so %d cached "
+                        "fast screen(s) were dropped as stale",
+                        built.stats.verdicts_stored,
+                        len(stale),
+                    )
+            _screens[key] = built
         return _screens[key]
 
 

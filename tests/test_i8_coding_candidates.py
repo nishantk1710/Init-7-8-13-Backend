@@ -13,7 +13,7 @@ repairable spare bought new.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -36,7 +36,12 @@ from app.initiatives.i8.coding_candidates import (
     rank_candidates,
     screen,
 )
-from app.initiatives.i8.coding_store import text_fingerprint
+from app.initiatives.i8.coding_store import (
+    StoredVerdict,
+    forget_verdicts,
+    save_verdict,
+    text_fingerprint,
+)
 from app.initiatives.i8.config import get_i8_settings
 from app.main import app
 from tests.i8_support import needs_views
@@ -665,6 +670,158 @@ class TestTheTextFingerprint:
         assert text_fingerprint(["A", "", "   "]) == text_fingerprint(["A"])
 
 
+class TestTheFastScreenServesStoredVerdicts:
+    """The page-load path, with every database call faked out.
+
+    The same rule is asserted against the real extract in
+    :class:`TestAgainstTheRealExtract`, which skips wherever the July seed is
+    absent -- that is, everywhere but a seeded environment. This covers it with
+    no database at all, because the rule is about control flow rather than
+    data: a verdict already on record must be served whether or not THIS
+    request asked for a model.
+
+    What went wrong without it (14-Oct-2026): the store was consulted only on
+    the ``use_model=True`` branch, which nothing but the "Run AI screen" button
+    takes. Every page load re-reported UNSCREENED for materials judged minutes
+    earlier, and the screen read as though it had been thrown away on leaving
+    the page. Nothing was lost -- the rows were in ``coding_verdicts`` the
+    whole time and no code path read them.
+    """
+
+    @pytest.fixture
+    def fake_screen(self, monkeypatch):
+        """Run ``screen()`` with no connection: every DB call is replaced.
+
+        Patched in the consumer's namespace, the same seam ``canned`` uses for
+        the model. ``db`` is then never touched, so None is honest.
+        """
+        import contextlib
+
+        import app.initiatives.i8.coding_candidates as mod
+
+        written: list[dict] = []
+
+        def install(*, lines, stored=(), **kwargs):
+            @contextlib.contextmanager
+            def fake_sources(*_a, **_k):
+                yield mod.DIRECT_CODING
+
+            by_material = {v.material_id: v for v in stored}
+            monkeypatch.setattr(mod, "coding_sources", fake_sources)
+            monkeypatch.setattr(
+                mod, "fetch_repair_language_lines", lambda *a, **k: list(lines)
+            )
+            monkeypatch.setattr(mod, "find_twins", lambda *a, **k: {})
+            monkeypatch.setattr(
+                mod, "fetch_text_totals", lambda *a, **k: {"PO": len(lines)}
+            )
+            # The real one's contract, not a looser stand-in: a row whose
+            # stored fingerprint no longer matches the text being judged is
+            # NOT a hit. A fake that returned it regardless would let the
+            # moved-text test below pass without the rule holding.
+            monkeypatch.setattr(
+                mod,
+                "load_verdicts",
+                lambda _db, fps: {
+                    m: v
+                    for m, v in by_material.items()
+                    if fps.get(m) == v.text_fingerprint
+                },
+            )
+            monkeypatch.setattr(mod, "save_verdict", lambda **kw: written.append(kw))
+
+            candidates, stats = screen(
+                None, sources=("PO",), staged=False, **kwargs
+            )
+            return candidates, stats, written
+
+        return install
+
+    def _stored(self, material: str, lines) -> StoredVerdict:
+        return StoredVerdict(
+            material_id=material,
+            text_fingerprint=text_fingerprint(line.short_text for line in lines),
+            verdict=Verdict.MISCODED_REPAIRABLE.value,
+            confidence="high",
+            reason="judged on a previous run",
+            model="gpt-4o",
+            provider="foundry",
+            prompt_version=1,
+            screened_at=datetime(2026, 10, 13, 15, 35, tzinfo=timezone.utc),
+        )
+
+    def test_a_stored_verdict_is_served_with_no_model_asked_for(
+        self, fake_screen
+    ) -> None:
+        """The regression. This is what a page load does."""
+        lines = [a_line()]
+        candidates, stats, _written = fake_screen(
+            lines=lines,
+            stored=[self._stored("5000094118", lines)],
+            use_model=False,
+        )
+
+        assert len(candidates) == 1
+        assert candidates[0].verdict == Verdict.MISCODED_REPAIRABLE.value
+        assert candidates[0].confidence == "high"
+        assert candidates[0].provider == "foundry"
+        assert stats.verdicts_reused == 1
+
+    def test_the_fast_path_still_buys_nothing(self, fake_screen) -> None:
+        """Serving a stored verdict must not have cost a model call -- the
+        whole reason the fast and slow halves are separate."""
+        lines = [a_line()]
+        _candidates, stats, written = fake_screen(
+            lines=lines,
+            stored=[self._stored("5000094118", lines)],
+            use_model=False,
+        )
+
+        assert written == []
+        assert stats.verdicts_stored == 0
+
+    def test_a_material_with_nothing_stored_is_still_unscreened(
+        self, fake_screen
+    ) -> None:
+        """UNSCREENED has to keep meaning something after this change, or the
+        screen starts claiming judgements it never made."""
+        candidates, stats, _written = fake_screen(lines=[a_line()], use_model=False)
+
+        assert candidates[0].verdict == Verdict.UNSCREENED.value
+        assert stats.verdicts_reused == 0
+        # And it says WHY, rather than leaving a reader to guess whether the
+        # model was asked and failed.
+        assert "no stored verdict" in candidates[0].reason
+
+    def test_reuse_stored_false_ignores_the_store(self, fake_screen) -> None:
+        """The escape hatch: the raw keyword pass with no history attached."""
+        lines = [a_line()]
+        candidates, stats, _written = fake_screen(
+            lines=lines,
+            stored=[self._stored("5000094118", lines)],
+            use_model=False,
+            reuse_stored=False,
+        )
+
+        assert candidates[0].verdict == Verdict.UNSCREENED.value
+        assert stats.verdicts_reused == 0
+
+    def test_a_stored_verdict_whose_text_moved_is_not_served(
+        self, fake_screen
+    ) -> None:
+        """The correctness rule the fingerprint exists for, now that the fast
+        path reads the store too: a re-worded PO line is new evidence, and the
+        old verdict is about something else."""
+        stored = self._stored("5000094118", [a_line(short_text="RECON PUMP")])
+        candidates, _stats, _written = fake_screen(
+            lines=[a_line(short_text="RECONDITIONED PUMP MK2")],
+            stored=[stored],
+            use_model=False,
+        )
+
+        assert candidates[0].verdict == Verdict.UNSCREENED.value
+
+
 # --- Against the seeded extract --------------------------------------------
 
 
@@ -755,6 +912,90 @@ class TestAgainstTheRealExtract:
         assert stats.materials_found == 41
         assert stats.was_truncated is True
 
+    def test_a_stored_verdict_comes_back_on_the_fast_screen(self, db) -> None:
+        """The bug this guards (found 14-Oct-2026): leaving the page looked
+        like it threw the AI screen away.
+
+        Verdicts were written to ``coding_verdicts`` correctly and then read
+        back only when ``use_model=True`` -- which nothing but the "Run AI
+        screen" button sets. A page load ran the fast screen, never asked the
+        store anything, and reported UNSCREENED for materials judged minutes
+        earlier. The results were never lost; nobody was reading them.
+
+        So this asserts the two halves that have to hold together: the stored
+        verdict IS served on the fast path, and the fast path still calls no
+        model to get it.
+        """
+        material = "5000094118"
+        groups = partition(fetch_repair_language_lines(db, sources=("PO",)))
+        fingerprint = text_fingerprint(
+            line.short_text for line in groups.by_material[material]
+        )
+
+        save_verdict(
+            db,
+            material_id=material,
+            fingerprint=fingerprint,
+            verdict=Verdict.MISCODED_REPAIRABLE.value,
+            confidence="high",
+            reason="stored by this test",
+            model="gpt-4o",
+            provider="foundry",
+            prompt_version=1,
+            screened_at=datetime(2026, 10, 13, 15, 35, tzinfo=timezone.utc),
+        )
+        try:
+            candidates, stats = screen(db, use_model=False, sources=("PO",))
+            found = next(c for c in candidates if c.material_id == material)
+
+            assert found.verdict == Verdict.MISCODED_REPAIRABLE.value
+            assert found.confidence == "high"
+            assert found.provider == "foundry"
+            assert stats.verdicts_reused == 1
+            # Nothing was bought to get it: the other 40 are still unjudged
+            # and this run wrote nothing of its own.
+            assert stats.by_verdict[Verdict.UNSCREENED.value] == 40
+            assert stats.verdicts_stored == 0
+        finally:
+            # Left behind, this would fail the sibling test that asserts all
+            # 41 come back UNSCREENED -- and only when the two happen to run
+            # in that order, which is the worst kind of flake to chase.
+            forget_verdicts(db, [material])
+
+    def test_reuse_stored_false_still_shows_the_raw_keyword_pass(self, db) -> None:
+        """The escape hatch, now that the fast screen consults the store.
+
+        ``reuse_stored=False`` with no model is how to see what the keyword
+        pass alone thinks, with no judgement history attached -- what you want
+        when checking whether the deterministic half still finds a material at
+        all.
+        """
+        material = "5000094118"
+        groups = partition(fetch_repair_language_lines(db, sources=("PO",)))
+        fingerprint = text_fingerprint(
+            line.short_text for line in groups.by_material[material]
+        )
+        save_verdict(
+            db,
+            material_id=material,
+            fingerprint=fingerprint,
+            verdict=Verdict.MISCODED_REPAIRABLE.value,
+            confidence="high",
+            reason="stored by this test",
+            model="gpt-4o",
+            provider="foundry",
+            prompt_version=1,
+            screened_at=datetime(2026, 10, 13, 15, 35, tzinfo=timezone.utc),
+        )
+        try:
+            _candidates, stats = screen(
+                db, use_model=False, reuse_stored=False, sources=("PO",)
+            )
+            assert stats.by_verdict == {Verdict.UNSCREENED.value: 41}
+            assert stats.verdicts_reused == 0
+        finally:
+            forget_verdicts(db, [material])
+
 
 # --- The API ---------------------------------------------------------------
 
@@ -826,3 +1067,108 @@ class TestTheApi:
         material, which is a bug worth failing over."""
         for item in client.get(f"{CANDIDATES}?sources=PO").json()["items"]:
             assert item["inRepairableUniverse"] is False
+
+
+# --- The cache in front of the store ---------------------------------------
+
+
+class TestTheScreenCacheDropsStaleFastScreens:
+    """The second half of the same bug, and the half that would have hidden
+    the first fix.
+
+    ``get_coding_screen`` memoises per (use_model, limit, sources). The
+    page-load entry is built once per worker and was only ever cleared on a
+    snapshot rebuild -- so even once the fast screen learned to read stored
+    verdicts, it would have gone on serving a result computed before those
+    verdicts existed, until the snapshot happened to refresh or the app
+    restarted.
+
+    No database here: what is being asserted is when the cache is dropped, and
+    that is decided entirely by ``stats.verdicts_stored``.
+    """
+
+    @pytest.fixture(autouse=True)
+    def clean_cache(self):
+        from app.initiatives.i8.service import reset_coding_screen
+
+        reset_coding_screen()
+        yield
+        reset_coding_screen()
+
+    @pytest.fixture
+    def builds(self, monkeypatch):
+        """Record every build, and let each one say how much it stored."""
+        import app.initiatives.i8.service as svc
+        from app.initiatives.i8.coding_candidates import ScreenStats
+
+        calls: list[tuple[bool, int | None]] = []
+
+        def install(stored_when_model: int):
+            def fake_build(db, snapshot, cfg, *, use_model, limit, sources):
+                calls.append((use_model, limit))
+                return svc.CodingScreen(
+                    candidates=(),
+                    stats=ScreenStats(
+                        verdicts_stored=stored_when_model if use_model else 0
+                    ),
+                    built_at=datetime(2026, 10, 14, tzinfo=timezone.utc),
+                    build_seconds=0.0,
+                    used_model=use_model,
+                )
+
+            monkeypatch.setattr(svc, "build_coding_screen", fake_build)
+            return calls
+
+        return install
+
+    def test_a_run_that_stores_verdicts_invalidates_the_page_load_screen(
+        self, builds
+    ) -> None:
+        """The sequence the user hit: screen, navigate away, come back."""
+        import app.initiatives.i8.service as svc
+
+        calls = builds(stored_when_model=3)
+        cfg = get_i8_settings()
+
+        # Two page loads -- the second is served from cache, as it should be.
+        svc.get_coding_screen(None, None, cfg, use_model=False)
+        svc.get_coding_screen(None, None, cfg, use_model=False)
+        assert calls == [(False, None)]
+
+        # "Run AI screen" judges and stores.
+        svc.get_coding_screen(None, None, cfg, use_model=True, limit=10)
+
+        # Coming back to the page must now rebuild rather than serve the
+        # screen that was computed before those verdicts existed.
+        svc.get_coding_screen(None, None, cfg, use_model=False)
+        assert calls == [(False, None), (True, 10), (False, None)]
+
+    def test_a_run_that_stores_nothing_leaves_the_cache_alone(self, builds) -> None:
+        """Every batch after the first mostly REUSES verdicts. Dropping the
+        cache on those too would rebuild the fast screen a dozen times during
+        one run, for no change in what it would say."""
+        import app.initiatives.i8.service as svc
+
+        calls = builds(stored_when_model=0)
+        cfg = get_i8_settings()
+
+        svc.get_coding_screen(None, None, cfg, use_model=False)
+        svc.get_coding_screen(None, None, cfg, use_model=True, limit=10)
+        svc.get_coding_screen(None, None, cfg, use_model=False)
+
+        assert calls == [(False, None), (True, 10)]
+
+    def test_the_model_runs_own_entry_survives_its_own_invalidation(
+        self, builds
+    ) -> None:
+        """Only the fast screens are stale. A model run that stored something
+        is the newest thing in the cache, and re-running it costs minutes."""
+        import app.initiatives.i8.service as svc
+
+        calls = builds(stored_when_model=3)
+        cfg = get_i8_settings()
+
+        svc.get_coding_screen(None, None, cfg, use_model=True, limit=10)
+        svc.get_coding_screen(None, None, cfg, use_model=True, limit=10)
+
+        assert calls == [(True, 10)]
