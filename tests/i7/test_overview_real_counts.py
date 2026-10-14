@@ -13,16 +13,17 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
+import re
 from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import MetaData, create_engine
+from sqlalchemy.dialects import mssql
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.api.i7 import adoption as adoption_api
 from app.api.i7 import recommendations as recommendations_api
-from app.initiatives.i7.recommendations.types import AdoptionResult, AdoptionStatus
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun
 from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation, SapAdoptionResult
 
@@ -67,11 +68,6 @@ def ledger(material, status, plant="1300"):
         status=status,
         evaluated_at=datetime(2026, 10, 14, tzinfo=timezone.utc),
     )
-
-
-@pytest.fixture(autouse=True)
-def no_sap_evidence(monkeypatch):
-    monkeypatch.setattr(adoption_api, "materials_with_tracked_changes", lambda session: set())
 
 
 def summary(db, plant=None):
@@ -156,32 +152,13 @@ def test_the_four_counts_always_add_up_to_the_total(db):
     assert sum(s.count for s in result.by_status) == result.total_evaluated == 6
 
 
-def test_materials_sap_has_changed_are_reconciled_on_the_way_in(db, monkeypatch):
-    db.add_all([rec("1000000001"), rec("1000000002")])
-    db.commit()
-    monkeypatch.setattr(
-        adoption_api, "materials_with_tracked_changes", lambda session: {"000000001000000001"}
-    )
-    reconciled = []
-
-    def fake_view(session, row, policy, approved_on):
-        reconciled.append(row.sap_material_number)
-        result = AdoptionResult(AdoptionStatus.ADOPTED, (), (), (), (), "matches")
-        return SimpleNamespace(result=result, detail="matches")
-
-    monkeypatch.setattr(adoption_api, "_build_view", fake_view)
-    result = summary(db)
-    assert reconciled == ["1000000001"]  # only the changed material; nothing else is read
-    assert result.adopted_count == 1 and result.unknown_count == 1
-    assert result.adoption_rate_percentage == 100.0
-
-
-def test_no_sap_evidence_means_no_per_material_work(db, monkeypatch):
+def test_the_summary_reads_no_sap_change_history(db, monkeypatch):
+    """The change-history tables are large and unindexed; the summary stays fast by not touching them."""
     db.add_all([rec("M1")])
     db.commit()
 
     def boom(*args, **kwargs):
-        raise AssertionError("nothing should be reconciled without evidence")
+        raise AssertionError("the summary must not evaluate recommendations against SAP change history")
 
     monkeypatch.setattr(adoption_api, "_build_view", boom)
     assert summary(db).total_evaluated == 1
@@ -277,3 +254,54 @@ def test_a_newer_run_that_has_not_succeeded_is_ignored(db):
 def test_with_no_forecast_run_the_answer_is_empty_not_an_error(db):
     result = fva(db)
     assert result.points == () and result.materials_with_history_count == 0 and result.materials_in_scope_count == 0
+
+
+# --- SQL Server: the production database -------------------------------------------------------
+#
+# SQLite accepts `col IS 1`; SQL Server does not. A query with that in it passes every
+# SQLite test and fails with a 500 in production (the Forecast vs Actual endpoint did).
+# So the SQL these endpoints run is also compiled for SQL Server and checked.
+
+BOOLEAN_IS = re.compile(r"\bIS\s+[01]\b", re.IGNORECASE)
+
+
+def as_sql_server(statement) -> str:
+    return str(statement.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True}))
+
+
+def test_every_statement_the_forecast_endpoint_runs_is_valid_on_sql_server(db):
+    seed_forecasts(db)
+    seen: list[str] = []
+    real_execute = db.execute
+
+    def recording_execute(statement, *args, **kwargs):
+        seen.append(as_sql_server(statement))
+        return real_execute(statement, *args, **kwargs)
+
+    db.execute = recording_execute  # type: ignore[method-assign]
+    fva(db, plant="1300")
+    assert len(seen) >= 4
+    assert not [sql for sql in seen if BOOLEAN_IS.search(sql)], seen
+
+
+@pytest.mark.parametrize("kind", ["oar", "declining", "normal"])
+def test_the_type_filter_is_valid_on_sql_server(kind):
+    from sqlalchemy import select
+
+    statement = recommendations_api._apply_filters(
+        select(Recommendation), status=None, plant=None, material=None, demand_class=None, is_oar=None,
+        confidence=None, criticality=None, generated_from=None, generated_to=None, demand_type=kind,
+    )
+    assert not BOOLEAN_IS.search(as_sql_server(statement))
+
+
+def test_the_api_modules_never_write_a_boolean_is_comparison():
+    import pathlib
+
+    offenders = [
+        f"{path.name}:{number}"
+        for path in pathlib.Path("app/api").rglob("*.py")
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if re.search(r"\.is_\((True|False)\)", line)
+    ]
+    assert offenders == [], "use the boolean column itself (renders `= 1` on SQL Server): " + ", ".join(offenders)

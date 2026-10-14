@@ -101,9 +101,10 @@ def _apply_filters(
     if generated_to is not None:
         statement = statement.where(Recommendation.generated_at < generated_to)
     if demand_type is not None:
-        not_oar = or_(Recommendation.is_oar.is_(False), Recommendation.is_oar.is_(None))
+        # The boolean column itself: SQL Server has no "IS 1" (see tests/i7/test_overview_real_counts.py).
+        not_oar = or_(~Recommendation.is_oar, Recommendation.is_oar.is_(None))
         if demand_type == "oar":
-            statement = statement.where(Recommendation.is_oar.is_(True))
+            statement = statement.where(Recommendation.is_oar)
         elif demand_type == "declining":
             statement = statement.where(not_oar, _flagged_declining())
         else:
@@ -738,7 +739,7 @@ def get_forecast_vs_actual(
     in_scope = session.execute(
         select(func.count()).where(
             Forecast.forecast_run_id == run_id,
-            Forecast.is_champion.is_(True),
+            Forecast.is_champion,  # the column itself: SQL Server has no `IS 1`
             Forecast.forecast_status == "SUCCESS",
             *plant_forecast,
         )

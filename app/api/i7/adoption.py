@@ -38,11 +38,7 @@ from app.initiatives.i7.recommendations.adoption_report import (
     is_pending,
     plain_detail,
 )
-from app.initiatives.i7.recommendations.sap_change_documents import (
-    RawChangeDocumentProvider,
-    materials_with_tracked_changes,
-    pad_material,
-)
+from app.initiatives.i7.recommendations.sap_change_documents import RawChangeDocumentProvider
 from app.initiatives.i7.recommendations.types import (
     AdoptionFieldReport,
     AdoptionResult,
@@ -358,10 +354,10 @@ def list_adoption(
     "Adoption Tracking list shows. ADOPTED / PARTIALLY_ADOPTED / NOT_ADOPTED come "
     "from the reconciliation ledger (i7_sap_adoption); everything with no SAP "
     "change evidence is counted as unknown_count, shown to people as Pending. "
-    "Material-plants SAP has changed are reconciled on the way in, so the figures "
-    "do not depend on anyone having opened the adoption page. Feeds the Inventory "
-    "Planning overview's adoption card and the quarterly report's SAP Adoption "
-    "section.",
+    "ADOPTED / PARTIALLY_ADOPTED / NOT_ADOPTED are the results already in the "
+    "ledger; this endpoint reads no SAP change history itself, so it stays fast. "
+    "Feeds the Inventory Planning overview's adoption card and the quarterly "
+    "report's SAP Adoption section.",
 )
 def get_adoption_summary(
     session: Annotated[Session, Depends(get_session)],
@@ -393,8 +389,6 @@ def get_adoption_summary(
     total_tracked = session.execute(
         select(func.count()).select_from(tracked(Recommendation.id).subquery())
     ).scalar_one()
-
-    _reconcile_changed_materials(session, tracked)
 
     counts = dict(
         session.execute(
@@ -431,38 +425,3 @@ def get_adoption_summary(
         unknown_count=pending,
         adoption_rate_percentage=adoption_rate,
     )
-
-
-RECONCILE_CAP = 1000
-"""Most material-plants reconciled by one summary call. SAP change evidence is
-rare, so this is a bound and not a limit anyone should reach; the rest are
-reconciled by the next call or by opening them on the adoption page."""
-
-
-def _reconcile_changed_materials(session: Session, tracked) -> int:
-    """Reconcile the material-plants SAP has changed, so the counts are real
-    without anyone viewing them. Returns how many were reconciled.
-
-    One query finds the materials with any tracked change; only those
-    recommendations are evaluated (and saved to the ledger). With no evidence at
-    all -- the delivered extract's state -- this does one query and nothing else.
-    """
-    changed = materials_with_tracked_changes(session)
-    if not changed:
-        return 0
-
-    pairs = session.execute(tracked(Recommendation.id, Recommendation.sap_material_number)).all()
-    ids = [rid for rid, material in pairs if pad_material(material) in changed][:RECONCILE_CAP]
-
-    policy = PolicyDocument()
-    reconciled = 0
-    for start in range(0, len(ids), 200):
-        rows = session.execute(
-            select(Recommendation).where(Recommendation.id.in_(ids[start : start + 200]))
-        ).scalars().all()
-        approved = _approval_dates(session, [row.recommendation_id for row in rows])
-        for row in rows:
-            view = _build_view(session, row, policy, approved.get(row.recommendation_id))
-            _persist_result(session, row.recommendation_id, view.result, view.detail)
-            reconciled += 1
-    return reconciled
