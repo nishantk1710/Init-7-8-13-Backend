@@ -44,8 +44,8 @@ def _universe_row(**overrides):
 
 
 def _repair_line(**overrides):
-    """An OPEN repair line -- received_at None -- with the FR-6 fields set."""
-    from app.initiatives.i8.register import RepairLine
+    """An OPEN repair line -- nothing received -- with the FR-6 fields set."""
+    from app.initiatives.i8.register import RepairLine, qty_under_repair
 
     defaults = dict(
         purchasing_document="4500001234",
@@ -80,7 +80,6 @@ def _repair_line(**overrides):
         receipt_status="Not Yet Shipped",
         overdue_status="On Time",
         lead_time_status="WITHIN_LEAD_TIME",
-        qty_under_repair=Decimal("1"),
         days_open=91,
         days_elapsed=91,
         days_over_lead_time=61,
@@ -90,6 +89,16 @@ def _repair_line(**overrides):
         aging_bucket="61+",
     )
     defaults.update(overrides)
+    # Derived with the real rule rather than hardcoded, because openness is now
+    # read off this number: a fixture carrying a flat 1 would have stayed "open"
+    # however much a test said had come back.
+    defaults.setdefault(
+        "qty_under_repair",
+        qty_under_repair(
+            ordered_qty=defaults["ordered_qty"],
+            received_qty=defaults["received_qty"],
+        ),
+    )
     return RepairLine(**defaults)
 
 
@@ -179,7 +188,11 @@ class TestOpenRepairs:
         """The unit already came back; it is stock now, not inbound."""
         verdict = _assess(
             universe_rows=[_universe_row()],
-            repair_lines=[_repair_line(received_at=date(2026, 6, 1))],
+            repair_lines=[
+                _repair_line(
+                    received_at=date(2026, 6, 1), received_qty=Decimal("1")
+                )
+            ],
         )
         assert verdict.open_repair_lines == 0
         assert UnitSource.ON_REPAIR_ORDER not in verdict.sources

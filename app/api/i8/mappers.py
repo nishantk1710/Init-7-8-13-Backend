@@ -223,8 +223,17 @@ def _at_vendor_evidence(line: RepairLine) -> str:
         if line.due_date
         else "No schedule line, so no promised return date exists."
     )
-    if line.is_open:
+    # Keyed on the receipt itself, not on is_open. Now that openness is read
+    # off the quantity, a partially received line is both open AND holds a
+    # receipt date, and a line with nothing ordered is closed with no receipt
+    # date at all -- "Returned None." is what the old two-way branch printed.
+    if line.received_at is None:
         return f"Still at the vendor. {promised}"
+    if line.is_open:
+        return (
+            f"Partly back {line.received_at}; {line.qty_under_repair} of "
+            f"{line.ordered_qty} still out. {promised}"
+        )
     return f"Returned {line.received_at}. {promised}"
 
 

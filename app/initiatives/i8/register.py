@@ -187,8 +187,16 @@ class RepairLine:
 
     @property
     def is_open(self) -> bool:
-        """No repaired unit back yet. The 781-line figure the FRS cares about."""
-        return self.received_at is None
+        """Units still out with the vendor. The figure the FRS cares about.
+
+        Read off the quantity rather than off ``received_at``, so that a
+        PARTIALLY_RECEIVED line -- one receipt in, the rest still at the vendor
+        -- stays open instead of closing on its first receipt. On the live data
+        (14-Oct) that moves the open count 824 -> 827: 4 partial lines in, and
+        one line out whose EKPO.MENGE is 0, where nothing was ordered and so
+        nothing can be out. See :func:`qty_under_repair`.
+        """
+        return self.qty_under_repair > ZERO
 
     @property
     def is_overdue(self) -> bool:
@@ -542,6 +550,21 @@ def receipt_status(
     return NOT_YET_SHIPPED
 
 
+def qty_under_repair(*, ordered_qty: Decimal, received_qty: Decimal) -> Decimal:
+    """How many units are still out with the vendor on this line.
+
+    Ordered less received, and nothing else. The earlier rule zeroed this the
+    moment the line had any receipt at all, which reported a PARTIALLY_RECEIVED
+    line as having nothing left at the vendor: on the live data (14-Oct) one
+    line ordered 2,000 against 1,000 received and the register showed 0 under
+    repair, with 4 lines in that state. ``max()`` covers the over-receipt the
+    old short-circuit was really guarding against -- see :func:`receipt_status`,
+    which has always drawn the partial/full line correctly; this is the
+    quantity catching up with it.
+    """
+    return max(ordered_qty - received_qty, ZERO)
+
+
 def _lead_time_days(plifz) -> int | None:
     """MARC.PLIFZ as whole days, or None when it is not maintained.
 
@@ -597,6 +620,16 @@ def _build_line(
         delivery_completed=row["elikz"] == "X",
     )
 
+    qty_out = qty_under_repair(ordered_qty=ordered_qty, received_qty=received_qty)
+
+    # When this line actually finished, as against when its first receipt
+    # landed. A partial receipt is not an ending, and the clocks below take
+    # this date rather than ``received_at`` so a line with units still at the
+    # vendor keeps ageing. Measured on the live data (14-Oct): the 4 partially
+    # received lines are 2020-21 POs that read 6 to 144 days open and ON_TIME,
+    # because their clocks stopped on a receipt that covered part of the order.
+    completed_at = received_at if qty_out == ZERO else None
+
     # The stage clock: time since whatever most recently happened to this line.
     stage_started = max(
         (d for d in (raised_at, dispatched_at, received_at) if d is not None),
@@ -607,7 +640,7 @@ def _build_line(
     # check alike. Stops at the receipt -- so a repair that came back inside its
     # planned time does not drift into breach months later, and a closed line
     # does not read "200 days open" just because the record is old.
-    elapsed = elapsed_days(raised_at=raised_at, received_at=received_at, today=today)
+    elapsed = elapsed_days(raised_at=raised_at, received_at=completed_at, today=today)
 
     return RepairLine(
         purchasing_document=row["ebeln"],
@@ -644,7 +677,7 @@ def _build_line(
             dispatched_at=dispatched_at,
         ),
         overdue_status=overdue_state(
-            received_at=received_at,
+            received_at=completed_at,
             due_date=due_date,
             today=today,
             grace_days=cfg.overdue_grace_days,
@@ -657,14 +690,12 @@ def _build_line(
         days_over_lead_time=days_over_lead_time(
             elapsed=elapsed, lead_time_days=lead_time
         ),
-        qty_under_repair=(
-            ZERO if received_at is not None else max(ordered_qty - received_qty, ZERO)
-        ),
+        qty_under_repair=qty_out,
         days_open=elapsed,
         # The number that matters: how long this unit has actually been away.
         # Measured to the receipt where there is one, to today where there is
         # not -- so an open repair keeps ageing instead of freezing.
-        days_at_vendor=days_between(dispatched_at, received_at or today),
+        days_at_vendor=days_between(dispatched_at, completed_at or today),
         days_in_current_stage=days_between(stage_started, today),
         days_remaining=days_remaining(due_date, today),
         # Banded on days open, so the register's aging filter agrees with the
