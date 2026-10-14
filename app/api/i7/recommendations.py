@@ -202,18 +202,14 @@ def _latest_only(statement: Select) -> Select:
     app/api/i7/deps.py::load_latest_recommendation already applies to the
     single-item endpoint.
     """
-    row_rank = (
-        func.row_number()
-        .over(
-            partition_by=(Recommendation.sap_material_number, Recommendation.sap_plant_code),
-            order_by=(Recommendation.generated_at.desc(), Recommendation.id.desc()),
-        )
-        .label("row_rank")
+    # The highest id per material-plant. ``id`` is an auto-increment, so a later run's row
+    # always has a higher id -- the same answer as ranking by ``generated_at DESC, id DESC``
+    # (what this used to do with row_number(), which the database planned badly: the
+    # unfiltered list took ~55 s and the OAR / Normal filters did not finish in 150 s on
+    # the real table). The summary endpoint below has used this form since 2026-09-22.
+    latest_ids = select(func.max(Recommendation.id)).group_by(
+        Recommendation.sap_material_number, Recommendation.sap_plant_code
     )
-    # Window functions cannot appear directly in a WHERE clause, so rank in a
-    # subquery first and filter on that.
-    ranked = select(Recommendation.id, row_rank).subquery()
-    latest_ids = select(ranked.c.id).where(ranked.c.row_rank == 1)
     return statement.where(Recommendation.id.in_(latest_ids))
 
 
@@ -280,9 +276,13 @@ def list_recommendations(
             allowed=list(SORT_FIELDS),
         )
 
+    # Narrow first: filter, count, sort and page on the id alone. A recommendation row carries
+    # long text columns (rationale, factors, trace); counting and sorting thousands of those
+    # wide rows to return one page of 50 is what made this endpoint take minutes. Only the
+    # page's own rows are loaded in full, below.
     base = _latest_only(
         _apply_filters(
-            select(Recommendation),
+            select(Recommendation.id),
             status=status,
             plant=plant,
             material=material,
@@ -308,12 +308,15 @@ def list_recommendations(
     # group differently.
     sort_column = SORT_FIELDS[sort]
     order = (sort_column.desc(), Recommendation.id.desc()) if sort_desc else (sort_column, Recommendation.id)
-    statement = (
-        base.order_by(*order)
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+    page_ids = session.execute(
+        base.order_by(*order).offset((page - 1) * page_size).limit(page_size)
+    ).scalars().all()
+    loaded = (
+        {row.id: row for row in session.execute(select(Recommendation).where(Recommendation.id.in_(page_ids))).scalars()}
+        if page_ids
+        else {}
     )
-    rows = session.execute(statement).scalars().all()
+    rows = [loaded[row_id] for row_id in page_ids if row_id in loaded]
 
     # One shared PolicyDocument for the whole page, not one per row -- the
     # policy lookup routing.route_for() does is pure/in-memory (no DB call),
