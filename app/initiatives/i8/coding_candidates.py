@@ -392,6 +392,14 @@ class ScreenStats:
     three seconds should be able to see WHY without guessing that something was
     skipped."""
 
+    verdicts_stored: int = 0
+    """How many verdicts this run WROTE -- newly judged, not reused.
+
+    The caller needs it to know its cached fast screens are now out of date:
+    they were built before these verdicts existed and would keep serving
+    UNSCREENED for materials that have since been judged. See
+    :func:`app.initiatives.i8.service.get_coding_screen`."""
+
     corroborated: int = 0
     """How many candidates have an 80-series twin -- the ones that are provable
     from the data rather than argued from language."""
@@ -1127,10 +1135,12 @@ def screen(
 ) -> tuple[list[CodingCandidate], ScreenStats]:
     """The whole screen: keyword pass, exclusions, split, then the model.
 
-    ``use_model=False`` runs everything EXCEPT the model: the keyword pass, the
-    exclusions, the split, and the twin corroboration -- all of which are
-    deterministic, need no credentials and take under a second. Every material
-    comes back UNSCREENED, which is the honest description of what happened.
+    ``use_model=False`` never CALLS the model: the keyword pass, the
+    exclusions, the split, and the twin corroboration all run -- deterministic,
+    no credentials, under a second -- and a material with no verdict on record
+    comes back UNSCREENED. It still READS what the model said last time, which
+    is the difference between "no model ran in this request" and "no model has
+    ever judged this material".
 
     That split exists because the model pass is slow enough to matter. Measured
     on 15-Sep against live gpt-4o: **41 materials, 246 seconds**, roughly six
@@ -1140,9 +1150,13 @@ def screen(
 
     ``reuse_stored`` serves a verdict already paid for when the material's text
     has not changed since (:mod:`app.initiatives.i8.coding_store`). It is what
-    makes the run after a reload cost seconds rather than four minutes. Pass
-    ``False`` to force every material back to the model -- what you want after
-    a prompt or deployment change, which no automatic rule can detect.
+    makes the run after a reload cost seconds rather than four minutes, and --
+    since 14-Oct-2026 -- what makes a verdict survive leaving the page at all:
+    the fast screen consults it too. Pass ``False`` to force every material
+    back to the model -- what you want after a prompt or deployment change,
+    which no automatic rule can detect. With ``use_model=False`` it instead
+    forces every material to UNSCREENED, which is how to see the raw keyword
+    pass with no history attached.
 
     ``sources`` overrides ``I8_CODING_CANDIDATE_SOURCES``; see
     :func:`fetch_repair_language_lines`.
@@ -1226,31 +1240,23 @@ def screen(
         )
         for material in screened_materials
     }
-    stored = load_verdicts(db, fingerprints) if (use_model and reuse_stored) else {}
+    # Read regardless of ``use_model``. A verdict already paid for is a fact
+    # about the material, not a property of the request that happens to be
+    # asking: a page load that skipped this lookup reported UNSCREENED for
+    # materials the table had judged minutes earlier, so navigating away and
+    # back looked exactly like the results had been thrown away. They had not
+    # -- nobody was reading them. One indexed IN query over ~113 materials,
+    # which is affordable on the fast path; the fingerprint check inside
+    # load_verdicts still refuses a verdict whose text has moved.
+    stored = load_verdicts(db, fingerprints) if reuse_stored else {}
 
     candidates: list[CodingCandidate] = []
     reused = 0
+    saved = 0
     for material in screened_materials:
         material_lines = tuple(groups.by_material[material])
         in_universe = material in known_universe
         material_twins = twins.get(material, ())
-
-        if not use_model:
-            candidates.append(
-                _unscreened(
-                    material,
-                    material_lines,
-                    in_universe=in_universe,
-                    twins=material_twins,
-                    reason=(
-                        "the model pass was not requested. The keyword screen, "
-                        "the exclusions, the material split and the twin check "
-                        "have all run -- only the language judgement is "
-                        "outstanding."
-                    ),
-                )
-            )
-            continue
 
         already = stored.get(material)
         if already is not None:
@@ -1262,6 +1268,28 @@ def screen(
                     already,
                     in_universe=in_universe,
                     twins=material_twins,
+                )
+            )
+            continue
+
+        # Nothing stored, and no model was asked for. This is the only path
+        # that still reports UNSCREENED on the fast screen, and now it means
+        # what it says: not "we did not look", but "nobody has ever judged
+        # this material's current text".
+        if not use_model:
+            candidates.append(
+                _unscreened(
+                    material,
+                    material_lines,
+                    in_universe=in_universe,
+                    twins=material_twins,
+                    reason=(
+                        "the model pass was not requested and no stored "
+                        "verdict covers this text. The keyword screen, the "
+                        "exclusions, the material split and the twin check "
+                        "have all run -- only the language judgement is "
+                        "outstanding."
+                    ),
                 )
             )
             continue
@@ -1291,6 +1319,7 @@ def screen(
                 prompt_version=candidate.prompt_version,
                 screened_at=candidate.screened_at or datetime.now(timezone.utc),
             )
+            saved += 1
 
     candidates = rank_candidates(candidates)
 
@@ -1315,6 +1344,7 @@ def screen(
         materials_screened=len(candidates),
         materials_found=len(materials),
         verdicts_reused=reused,
+        verdicts_stored=saved,
         corroborated=sum(1 for c in candidates if c.is_corroborated),
         by_verdict=by_verdict,
         keywords=cfg.repair_language_list,
