@@ -82,6 +82,42 @@ def expected_impact(
     )
 
 
+#: How each demand class reads to someone who has never heard of ADI or CV-squared.
+_PATTERN_PLAIN = {
+    "SMOOTH": "steady and regular",
+    "ERRATIC": "regular, but the quantities swing from one order to the next",
+    "INTERMITTENT": "occasional, with long gaps between uses",
+    "LUMPY": "occasional, and the quantities are uneven when it is used",
+}
+
+#: The forecasting method, described by what it is good at.
+_MODEL_PLAIN = {
+    "SES": "a method that follows recent usage",
+    "SBA": "a method designed for materials used only now and then",
+}
+
+_CONFIDENCE_PLAIN = {
+    "HIGH": "high, because many close matches were found",
+    "MEDIUM": "medium",
+    "LOW": "low, because only a few close matches were found",
+}
+
+
+def _units(value: Decimal) -> str:
+    """A stock quantity as a reader would write it: no trailing zeros, no 16.000."""
+    if abs(value) >= 10:
+        return f"{value:,.0f}"
+    return f"{value:,.1f}".rstrip("0").rstrip(".")
+
+
+def _history_plain(history_status: str | None) -> str:
+    if history_status == "NO_HISTORY":
+        return "has no recorded usage"
+    if history_status == "COLD_START":
+        return "has been used too few times to show a reliable pattern"
+    return "has too little usage history"
+
+
 def build_factors(
     *,
     demand_class: str | None,
@@ -107,60 +143,68 @@ def build_factors(
     if is_oar:
         factors.append(
             RecommendationFactor(
-                label="OAR cold-start",
+                label="Little usage history",
                 detail=(
-                    f"Material qualifies for the OAR cold-start path because "
-                    f"consumption history is {history_status or 'insufficient'}."
+                    f"This material {_history_plain(history_status)}, so its stock "
+                    f"levels cannot be worked out from its own past usage."
                 ),
             )
         )
-        if demand_class:
+        # An unclassified material has no usage pattern to report; saying so
+        # ("UNCLASSIFIED") would only be noise to a reader.
+        if demand_class and demand_class.upper() in _PATTERN_PLAIN:
             factors.append(
                 RecommendationFactor(
-                    label="Demand pattern (supporting signal)",
-                    detail=(
-                        f"FR-2 demand class is {demand_class} -- a regularity/"
-                        f"confidence signal only, not part of OAR eligibility."
-                    ),
+                    label="Usage pattern",
+                    detail=f"Its usage is {_PATTERN_PLAIN[demand_class.upper()]}.",
                 )
             )
         if oar_neighbour_count:
+            plural = "s" if oar_neighbour_count != 1 else ""
+            confidence = _CONFIDENCE_PLAIN.get((oar_confidence or "LOW").upper(), "low")
             factors.append(
                 RecommendationFactor(
-                    label="Similarity evidence",
+                    label="Based on similar materials",
                     detail=(
-                        f"Estimate is based on similarity to {oar_neighbour_count} "
-                        f"eligible neighbour(s), confidence {oar_confidence or 'LOW'}."
+                        f"The suggested levels come from {oar_neighbour_count} "
+                        f"similar material{plural}. Confidence in the estimate is "
+                        f"{confidence}."
                     ),
                 )
             )
         return tuple(factors)
 
     if demand_class:
+        pattern = _PATTERN_PLAIN.get(demand_class.upper())
         factors.append(
             RecommendationFactor(
-                label="Demand pattern",
-                detail=f"Demand class is {demand_class}.",
+                label="Usage pattern",
+                detail=(
+                    f"Usage is {pattern}."
+                    if pattern
+                    else f"Usage pattern: {demand_class.lower()}."
+                ),
             )
         )
     if baseline_model:
+        method = _MODEL_PLAIN.get(baseline_model.upper(), baseline_model)
         factors.append(
             RecommendationFactor(
-                label="Forecasting model",
-                detail=f"{baseline_model} was selected as the baseline model.",
+                label="How demand was projected",
+                detail=f"Expected demand is projected with {method}.",
             )
         )
     if lead_time_detail:
         factors.append(
-            RecommendationFactor(label="Lead time", detail=lead_time_detail)
+            RecommendationFactor(label="Delivery time", detail=lead_time_detail)
         )
     if not service_level_configured:
         factors.append(
             RecommendationFactor(
                 label="Blocked",
                 detail=(
-                    "Recommendation is blocked because the service-level policy "
-                    "is not configured."
+                    "No recommendation can be made yet because the service-level "
+                    "policy is not configured."
                 ),
             )
         )
@@ -170,8 +214,9 @@ def build_factors(
                 RecommendationFactor(
                     label="Reorder point",
                     detail=(
-                        f"Recommended ROP ({recommended_rop}) is above current "
-                        f"ROP ({current_rop})."
+                        f"The reorder point should rise from {_units(current_rop)} "
+                        f"to {_units(recommended_rop)}, so orders are placed earlier "
+                        f"and stock-outs become less likely."
                     ),
                 )
             )
@@ -180,8 +225,8 @@ def build_factors(
                 RecommendationFactor(
                     label="Reorder point",
                     detail=(
-                        f"Recommended ROP ({recommended_rop}) is below current "
-                        f"ROP ({current_rop})."
+                        f"The reorder point can fall from {_units(current_rop)} "
+                        f"to {_units(recommended_rop)}, so less stock is tied up."
                     ),
                 )
             )

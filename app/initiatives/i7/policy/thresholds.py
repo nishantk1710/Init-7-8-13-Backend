@@ -251,8 +251,20 @@ def current_conversion_trigger_policy() -> ConversionTriggerPolicy:
     :func:`app.initiatives.i7.policy.oar.current_oar_policy`'s pattern: the
     resolved rule lives in one function a reviewer can find, rather than a
     default silently baked into the schema.
+
+    **The I13 HOD trigger (Trigger 3) is off.** Eligibility rests on the
+    consumption count and the criticality tier. The recommendation already goes
+    through the approval chain before anything changes, and no I13 ledger exists
+    to answer the HOD question, so with the trigger on every material that fired
+    neither of the others came back UNKNOWN instead of a definite NOT_ELIGIBLE.
+    The trigger and its lookup stay in the code: turning
+    ``enable_i13_hod_trigger`` back on is the whole change if I13 ever supplies
+    a ledger and the business wants it.
     """
-    return ConversionTriggerPolicy(criticality_trigger_tiers=("NORMAL",))
+    return ConversionTriggerPolicy(
+        criticality_trigger_tiers=("NORMAL",),
+        enable_i13_hod_trigger=False,
+    )
 
 
 class ApprovalRoutingPolicy(BaseModel):

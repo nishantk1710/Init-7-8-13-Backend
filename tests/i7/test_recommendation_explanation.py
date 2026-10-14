@@ -92,10 +92,10 @@ def test_factors_for_a_normal_recommendation_are_traceable():
         oar_confidence=None,
     )
     labels = [factor.label for factor in factors]
-    assert "Demand pattern" in labels
-    assert "Forecasting model" in labels
-    assert any("INTERMITTENT" in factor.detail for factor in factors)
-    assert any("SBA" in factor.detail for factor in factors)
+    assert "Usage pattern" in labels
+    assert "How demand was projected" in labels
+    assert any("occasional" in factor.detail for factor in factors)
+    assert any("now and then" in factor.detail for factor in factors)
 
 
 def test_no_unsupported_savings_claim_without_data():
@@ -131,7 +131,8 @@ def test_blocked_recommendation_states_the_reason():
         oar_neighbour_count=None,
         oar_confidence=None,
     )
-    assert any("blocked" in factor.detail.lower() for factor in factors)
+    assert any(factor.label == "Blocked" for factor in factors)
+    assert any("no recommendation can be made" in factor.detail.lower() for factor in factors)
 
 
 def test_oar_factors_mention_neighbour_count_and_confidence():
@@ -148,8 +149,8 @@ def test_oar_factors_mention_neighbour_count_and_confidence():
         oar_confidence="MEDIUM",
     )
     text = " ".join(factor.detail for factor in factors)
-    assert "4" in text
-    assert "MEDIUM" in text
+    assert "4 similar materials" in text
+    assert "medium" in text.lower()
 
 
 def test_blocked_trace_names_the_status_and_reason():
@@ -162,3 +163,61 @@ def test_blocked_trace_names_the_status_and_reason():
 def test_build_trace_preserves_order():
     trace = build_trace([("a", "1"), ("b", "2")])
     assert trace.entries == (("a", "1"), ("b", "2"))
+
+
+# --- Wording a non-technical reader can follow ---------------------------------
+
+
+def test_an_unclassified_material_says_nothing_about_a_usage_pattern():
+    factors = build_factors(
+        demand_class="UNCLASSIFIED",
+        baseline_model=None,
+        lead_time_detail=None,
+        service_level_configured=True,
+        recommended_rop=None,
+        current_rop=None,
+        is_oar=True,
+        history_status="NO_HISTORY",
+        oar_neighbour_count=10,
+        oar_confidence="MEDIUM",
+    )
+    text = " ".join(factor.detail for factor in factors)
+    assert "UNCLASSIFIED" not in text
+    assert "no recorded usage" in text
+    assert "10 similar materials" in text
+
+
+def test_no_factor_leaks_internal_codes_or_requirement_numbers():
+    for history_status in ("NO_HISTORY", "COLD_START"):
+        factors = build_factors(
+            demand_class="UNCLASSIFIED",
+            baseline_model=None,
+            lead_time_detail=None,
+            service_level_configured=True,
+            recommended_rop=None,
+            current_rop=None,
+            is_oar=True,
+            history_status=history_status,
+            oar_neighbour_count=3,
+            oar_confidence="LOW",
+        )
+        text = " ".join(factor.detail for factor in factors)
+        for jargon in ("FR-2", "NO_HISTORY", "COLD_START", "OAR cold-start", "neighbour(s)"):
+            assert jargon not in text
+
+
+def test_reorder_point_change_reads_as_a_sentence_with_tidy_numbers():
+    rising = build_factors(
+        demand_class=None, baseline_model=None, lead_time_detail=None,
+        service_level_configured=True, recommended_rop=Decimal("1500.000"),
+        current_rop=Decimal("800"), is_oar=False, history_status="SUFFICIENT",
+        oar_neighbour_count=None, oar_confidence=None,
+    )
+    assert "rise from 800 to 1,500" in rising[-1].detail
+    falling = build_factors(
+        demand_class=None, baseline_model=None, lead_time_detail=None,
+        service_level_configured=True, recommended_rop=Decimal("3.0"),
+        current_rop=Decimal("16"), is_oar=False, history_status="SUFFICIENT",
+        oar_neighbour_count=None, oar_confidence=None,
+    )
+    assert "fall from 16 to 3" in falling[-1].detail

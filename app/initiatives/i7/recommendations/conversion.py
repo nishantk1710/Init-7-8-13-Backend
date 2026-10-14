@@ -68,6 +68,10 @@ class NoHodLedgerAvailable:
         return None
 
 
+def _times(count: int) -> str:
+    return f"{count} time" if count == 1 else f"{count} times"
+
+
 def _consumption_trigger(
     consumption_count_12m: int | None, policy: ConversionTriggerPolicy
 ) -> tuple[bool | None, str, bool]:
@@ -81,14 +85,22 @@ def _consumption_trigger(
     which genuinely cannot be answered either way.
     """
     if not policy.enable_consumption_trigger:
-        return False, "consumption trigger disabled by policy", False
+        return False, "How often it is used is not a reason to switch it to Min-Max ordering.", False
     if consumption_count_12m is None:
-        return None, "12-month consumption transaction count unavailable", True
+        return None, "The last 12 months of usage could not be counted for this material.", True
     fired = consumption_count_12m > policy.consumption_count_threshold
+    used = f"It was used {_times(consumption_count_12m)} in the last 12 months"
+    if fired:
+        return (
+            True,
+            f"{used}, more than the {policy.consumption_count_threshold} needed to "
+            f"qualify for Min-Max ordering.",
+            False,
+        )
     return (
-        fired,
-        f"consumption count (trailing 12 months) = {consumption_count_12m} "
-        f"({'>' if fired else '<='} {policy.consumption_count_threshold})",
+        False,
+        f"{used}, which does not exceed the {policy.consumption_count_threshold} "
+        f"needed to qualify for Min-Max ordering.",
         False,
     )
 
@@ -98,7 +110,7 @@ def _production_impact_trigger(
 ) -> tuple[bool | None, str, bool]:
     """Returns ``(fired, detail, is_unknown)``. See :func:`_consumption_trigger`."""
     if not policy.enable_criticality_trigger:
-        return False, "production-impact trigger disabled by policy", False
+        return False, "Criticality is not a reason to switch it to Min-Max ordering.", False
     if policy.criticality_trigger_tiers is None:
         # The unresolved tier set (Phase 1). Raising here, rather than
         # returning None silently, makes the caller's UNKNOWN traceable to a
@@ -109,11 +121,19 @@ def _production_impact_trigger(
             "trigger and neither has been confirmed",
         )
     if criticality is None:
-        return None, "material criticality unavailable", True
+        return None, "Its criticality level is not known.", True
     fired = criticality in policy.criticality_trigger_tiers
+    if fired:
+        return (
+            True,
+            f"Its criticality is {criticality.title()}, which qualifies it for Min-Max ordering.",
+            False,
+        )
+    qualifying = ", ".join(tier.title() for tier in policy.criticality_trigger_tiers)
     return (
-        fired,
-        f"criticality={criticality} vs configured tiers {policy.criticality_trigger_tiers}",
+        False,
+        f"Its criticality is {criticality.title()}, which is not one of the levels "
+        f"that qualify ({qualifying}).",
         False,
     )
 
@@ -123,11 +143,20 @@ def _hod_trigger(
 ) -> tuple[bool | None, str, bool]:
     """Returns ``(fired, detail, is_unknown)``. See :func:`_consumption_trigger`."""
     if not policy.enable_i13_hod_trigger:
-        return False, "I13 HOD trigger disabled by policy", False
+        return (
+            False,
+            "A department-head request is not a reason to switch it to Min-Max ordering.",
+            False,
+        )
     approved = lookup.hod_approved(material, plant)
     if approved is None:
-        return None, "no I13 HOD-approval ledger is available", True
-    return approved, f"I13 HOD-approved request = {approved}", False
+        return None, "No record of department-head approvals is available.", True
+    return (
+        approved,
+        "A department-head request for this material "
+        + ("has been approved." if approved else "has not been approved."),
+        False,
+    )
 
 
 def evaluate(
@@ -159,8 +188,14 @@ def evaluate(
         impact_fired, impact_detail, impact_unknown = _production_impact_trigger(
             criticality, policy
         )
-    except PolicyNotConfiguredError as exc:
-        impact_fired, impact_detail, impact_unknown = None, str(exc), True
+    except PolicyNotConfiguredError:
+        # The exception text names the policy gap for engineers; the reader of
+        # the recommendation needs only to know the question is still open.
+        impact_fired, impact_detail, impact_unknown = (
+            None,
+            "The business has not yet confirmed which criticality levels qualify.",
+            True,
+        )
 
     hod_fired, hod_detail, hod_unknown = _hod_trigger(material, plant, policy, lookup)
 
@@ -223,5 +258,5 @@ def evaluate(
         consumption_count_threshold=policy.consumption_count_threshold,
         production_impact=impact_fired,
         i13_hod_approved=hod_fired,
-        detail="no trigger condition was satisfied",
+        detail="None of the reasons for moving this material to Min-Max ordering apply.",
     )

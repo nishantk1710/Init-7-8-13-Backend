@@ -77,11 +77,11 @@ def _fmt(value: Decimal | int | None) -> str:
 
 
 def _deterministic_text(factors: tuple) -> str:
-    """The existing template-based rationale, unchanged -- one line per
-    factor, exactly what ``factors_text`` already stored before this slice."""
+    """The template-based rationale: one line per factor, so the reader sees
+    one reason per bullet instead of a single run-on paragraph."""
     if not factors:
-        return "No supporting factors were computed for this recommendation."
-    return " ".join(factor.detail for factor in factors)
+        return "No supporting reasons were worked out for this recommendation."
+    return "\n".join(factor.detail for factor in factors)
 
 
 def _normal_context(built: "BuiltRecommendation") -> dict[str, str]:
