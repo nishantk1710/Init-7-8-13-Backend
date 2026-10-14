@@ -88,6 +88,11 @@ from app.core.config import Settings, get_settings
 from app.core.db import get_db
 from app.shared.material_names import attach_material_names
 
+#: How long the session log and trace wait for material names right after a
+#: restart. Search on the session log matches names, so numbers-only rows
+#: would make it silently find nothing.
+NAME_WAIT_SECONDS = 10
+
 router = APIRouter(prefix="/assistant", tags=["assistant - reservation-time"])
 
 DbDep = Annotated[DbSession, Depends(get_db)]
@@ -420,7 +425,7 @@ def list_sessions(
             )
         )
 
-    attach_material_names(items, field="material_id")
+    attach_material_names(items, field="material_id", wait_seconds=NAME_WAIT_SECONDS)
     return SessionListResponse(
         items=items,
         total=len(items),
@@ -516,7 +521,7 @@ def get_session(session_id: str, db: DbDep) -> SessionTraceResponse:
         linked_reservations=[_linked_model(l) for l in links],
         linkage_note=LINKED_NOTE if links else LINKAGE_NOTE,
     )
-    attach_material_names([trace], field="material_id")
+    attach_material_names([trace], field="material_id", wait_seconds=NAME_WAIT_SECONDS)
     return trace
 
 

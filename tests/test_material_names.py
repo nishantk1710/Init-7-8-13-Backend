@@ -135,3 +135,25 @@ def test_the_route_decorator_keeps_the_query_parameters_and_fills_names(database
     assert client.get("/wrapped").json()[0]["exception"]["material_description"] == "IDLER BEARING"
     params = client.get("/openapi.json").json()["paths"]["/rows"]["get"]["parameters"]
     assert [p["name"] for p in params] == ["plant"]
+
+
+def test_attach_can_wait_for_the_first_load(database):
+    # The session log's case: the first request after a restart gets names,
+    # not numbers, because it waits (bounded) for the load already running.
+    rows = [SimpleNamespace(material_id="8000005632")]
+    names.attach_material_names(rows, field="material_id", wait_seconds=5)
+    assert rows[0].material_description == "SLURRY PUMP IMPELLER"
+
+
+def test_waiting_returns_at_once_when_no_load_is_running(monkeypatch):
+    names.clear_cache()
+    # A failed load is retried later, not waited for: with nothing loaded and
+    # nothing running, the wait must not block.
+    monkeypatch.setattr(names, "_ensure_loading", lambda: None)
+    assert names.wait_for_first_load(30) is False
+
+
+def test_start_loading_fills_the_list_without_a_request(database):
+    names.start_loading()
+    names.wait_for_load(5)
+    assert names.material_names(["8000000002"]) == {"8000000002": "IDLER BEARING"}
