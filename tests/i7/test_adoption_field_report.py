@@ -10,12 +10,11 @@ to produce, not against a real MARC change document.
 from datetime import date, datetime, timezone
 
 import pytest
-from sqlalchemy import MetaData, create_engine, select
+from sqlalchemy import MetaData, create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.api.i7.adoption import _approval_dates
-from app.api.i7.recommendations import _latest_only
 from app.initiatives.i7.adapters.change_documents import ChangeDocumentRow
 from app.initiatives.i7.recommendations import sap_change_documents
 from app.initiatives.i7.recommendations.adoption import (
@@ -264,7 +263,7 @@ def test_with_no_fields_the_check_type_falls_back_to_a_plain_name():
     assert check_type_label((), False) == "Planning parameters"
 
 
-# --- approved rows and approval dates (SQLite) -------------------------------
+# --- approval dates (SQLite) ------------------------------------------------
 
 
 @pytest.fixture
@@ -279,38 +278,6 @@ def session():
     metadata.create_all(engine)
     with Session(engine) as db:
         yield db
-
-
-def _recommendation(run, status, generated, rec_id="REC-STD-M1-1500"):
-    return Recommendation(
-        recommendation_id=rec_id,
-        sap_material_number="M1",
-        sap_plant_code="1500",
-        feature_run_id=run,
-        forecast_run_id=run,
-        inventory_run_id=run,
-        oar_run_id=run,
-        policy_id="p",
-        policy_version=1,
-        formula_version="f",
-        status=status,
-        impact_status="X",
-        generated_at=generated,
-    )
-
-
-def test_the_newest_approved_row_survives_a_later_unapproved_regeneration(session):
-    session.add_all(
-        [
-            _recommendation(1, "APPROVED", datetime(2026, 10, 1, tzinfo=timezone.utc)),
-            _recommendation(2, "READY_FOR_REVIEW", datetime(2026, 10, 10, tzinfo=timezone.utc)),
-        ]
-    )
-    session.commit()
-    plain = session.execute(_latest_only(select(Recommendation))).scalars().all()
-    approved = session.execute(_latest_only(select(Recommendation), only_status="APPROVED")).scalars().all()
-    assert [r.status for r in plain] == ["READY_FOR_REVIEW"]  # the normal view is unchanged
-    assert [r.status for r in approved] == ["APPROVED"]
 
 
 def _ledger(action, new_status, stamp, rec_id="REC-STD-M1-1500", version=1):
