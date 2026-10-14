@@ -33,7 +33,7 @@ from app.initiatives.i7.forecasting.types import (
 from app.initiatives.i7.locking import NoLock
 from app.initiatives.i7.policy import PolicyDocument
 from app.models.base import Base
-from app.models.i7_features import FeatureBuildRun
+from app.models.i7_features import DecliningDemandEvaluation, FeatureBuildRun
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun, SegmentModelDecision
 
 POLICY = PolicyDocument()
@@ -50,9 +50,14 @@ class Models:
 
     def __init__(self, die_at: int | None = None, exc: type[BaseException] = Killed) -> None:
         self.computed: list[str] = []
+        self.placeholder_flags: list[bool] = []
         self.die_at, self.exc = die_at, exc
 
-    def __call__(self, candidate, pooled, status, detail, trigger, quantile, arima_enabled=True):
+    def __call__(
+        self, candidate, pooled, status, detail, trigger, quantile, arima_enabled=True,
+        include_tsb_placeholder=True,
+    ):
+        self.placeholder_flags.append(include_tsb_placeholder)
         if self.die_at is not None and len(self.computed) == self.die_at:
             raise self.exc("the process died")
         self.computed.append(candidate.material)
@@ -96,20 +101,23 @@ def candidates() -> list[service._Candidate]:
     ]
 
 
-def make_env(monkeypatch, *, arima: bool = False, every: int = 3):
+def make_env(
+    monkeypatch, *, arima: bool = False, every: int = 3, declining: str = "off", evaluation_table: bool = True
+):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(
         engine,
         tables=[
             FeatureBuildRun.__table__, ForecastRun.__table__, Forecast.__table__,
             ForecastBacktestPath.__table__, SegmentModelDecision.__table__,
+            *([DecliningDemandEvaluation.__table__] if evaluation_table else []),
         ],
     )
     factory = sessionmaker(bind=engine)
     with factory() as session:
         session.add(FeatureBuildRun(status="succeeded", features_built=TOTAL, policy_id="p", policy_version=1))
         session.commit()
-    settings = SimpleNamespace(i7_forecast_arima_enabled=arima)
+    settings = SimpleNamespace(i7_forecast_arima_enabled=arima, i7_declining_demand_mode=declining)
     monkeypatch.setattr(service, "get_sessionmaker", lambda: factory)
     monkeypatch.setattr(service, "get_settings", lambda: settings)
     monkeypatch.setattr(service, "_load_candidates", lambda session: candidates())

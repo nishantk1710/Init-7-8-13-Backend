@@ -267,6 +267,56 @@ def current_conversion_trigger_policy() -> ConversionTriggerPolicy:
     )
 
 
+class DecliningDemandPolicy(BaseModel):
+    """The declining-demand rule (v1): which materials' demand has been falling.
+
+    Business thresholds, kept here so changing one is a policy edit and not a
+    code change. The rule itself lives in
+    :mod:`app.initiatives.i7.features.declining`. These values are a proposal
+    that has not been validated on Vedanta history -- ``rule_version`` is stored
+    with every evaluation so a later change can be told apart from this one.
+
+    The window is split into two equal halves, earlier and recent. A material is
+    flagged only when it had recurring demand in the earlier half, its months
+    with demand at least halved in the recent half, and the most recent months
+    are all empty.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    rule_version: str = "declining-v1"
+
+    window_months: int = Field(default=12, ge=4)
+    """Complete calendar months evaluated. Must be even: the window splits into
+    an earlier and a recent half of ``window_months / 2`` each."""
+
+    minimum_nonzero_months: int = Field(default=4, ge=1)
+    """Months with demand needed across the whole window to evaluate at all."""
+
+    minimum_early_nonzero_months: int = Field(default=3, ge=1)
+    """Months with demand needed in the earlier half: recurring demand before
+    the decline."""
+
+    minimum_decline: float = Field(default=0.50, gt=0, le=1)
+    """``1 - recent_rate / early_rate`` must reach this."""
+
+    zero_latest_months: int = Field(default=3, ge=1)
+    """The latest months that must all be empty."""
+
+    @model_validator(mode="after")
+    def _window_is_consistent(self) -> "DecliningDemandPolicy":
+        if self.window_months % 2:
+            raise ValueError("window_months must be even")
+        half = self.window_months // 2
+        if self.zero_latest_months > half:
+            raise ValueError("zero_latest_months cannot exceed half the window")
+        if self.minimum_early_nonzero_months > half:
+            raise ValueError("minimum_early_nonzero_months cannot exceed half the window")
+        if self.minimum_nonzero_months > self.window_months:
+            raise ValueError("minimum_nonzero_months cannot exceed the window")
+        return self
+
+
 class ApprovalRoutingPolicy(BaseModel):
     """Which approval chain a ROP/Max recommendation follows, by criticality
     tier.

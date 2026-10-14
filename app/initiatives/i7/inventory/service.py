@@ -146,6 +146,15 @@ _CONSUMPTION_SQL = """
 # variability_module.from_feature.
 
 
+#: The declining-demand path's forecast model (see forecasting/service.py). A string and
+#: not an import: inventory reads the forecast table and does not depend on the
+#: forecasting package.
+_TSB_MODEL_NAME = "TSB"
+
+#: The numerator of a reciprocal: interval = _RECIPROCAL_OF / probability.
+_RECIPROCAL_OF = Decimal("1")
+
+
 def _parse_parameters(text_value: str | None) -> dict[str, str]:
     """``key=value;key=value`` back into a mapping."""
     if not text_value:
@@ -425,6 +434,21 @@ def _safety_stock(
             detail="no SBA smoothed interval available from the selected forecast",
         )
     p_final = Decimal(raw_p_final)
+
+    if row.model_name == _TSB_MODEL_NAME:
+        # The formulas below take the smoothed INTERVAL between demands (SBA's
+        # p_final, 1 or more). TSB's p_final is a PROBABILITY that a month has
+        # demand (0 to 1). Fed in as it is, 0.25 would read as "demand every
+        # quarter of a month" and the safety stock would come out nonsense with
+        # no error. The expected interval is 1 / p, which makes the event rate
+        # lead-time * p -- exactly TSB's own occurrence rate.
+        if p_final <= 0:
+            return SafetyStockResult(
+                status=CalculationStatus.NOT_EVALUABLE_INSUFFICIENT_DEMAND,
+                method="compound_poisson",
+                detail="TSB's probability of demand is zero, so the interval between demands is undefined",
+            )
+        p_final = _RECIPROCAL_OF / p_final
 
     if row.mean_non_zero_demand is None or row.std_dev_non_zero_demand is None:
         return SafetyStockResult(

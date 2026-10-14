@@ -237,6 +237,35 @@ def decide_smooth(
     )
 
 
+def decide_declining(
+    segment_key: str, baseline_model: ModelName, reason: str
+) -> SegmentDecision:
+    """The decision record for a material-plant on the declining-demand path.
+
+    Not a champion/challenger comparison -- none is run. It records that TSB was
+    used directly, which baseline was stored for reference, and why, so the
+    one-row-per-material-plant audit table stays complete. Every metric is empty
+    because nothing was measured.
+    """
+    return SegmentDecision(
+        segment_key=segment_key,
+        baseline_model=baseline_model,
+        challenger_model=ModelName.TSB,
+        baseline_pinball=None,
+        challenger_pinball=None,
+        improvement=None,
+        baseline_bias=None,
+        challenger_bias=None,
+        bias_change=None,
+        origins_available=0,
+        origins_evaluated=0,
+        required_origins=0,
+        adoption_status=AdoptionStatus.TSB_DECLINING_DEMAND,
+        decision_reason=reason,
+        generated_at=datetime.now(timezone.utc),
+    )
+
+
 def aggregate_paths(results: list[BacktestResult]) -> list:
     """Every origin path across a segment's material-plants, pooled.
 

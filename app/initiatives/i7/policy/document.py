@@ -31,6 +31,7 @@ from app.initiatives.i7.policy.thresholds import (
     ClassificationPolicy,
     ConfidencePolicy,
     ConversionTriggerPolicy,
+    DecliningDemandPolicy,
     HistoryGatePolicy,
     LeadTimePolicy,
     ModelAdoptionPolicy,
@@ -62,6 +63,7 @@ class PolicyDocument(BaseModel):
     lead_time: LeadTimePolicy = Field(default_factory=LeadTimePolicy)
     conversion_triggers: ConversionTriggerPolicy = Field(default_factory=current_conversion_trigger_policy)
     adoption: AdoptionPolicy = Field(default_factory=AdoptionPolicy)
+    declining_demand: DecliningDemandPolicy = Field(default_factory=DecliningDemandPolicy)
     approval_routing: ApprovalRoutingPolicy = Field(default_factory=ApprovalRoutingPolicy)
 
     # Unresolved. Default to empty, never to a guess.

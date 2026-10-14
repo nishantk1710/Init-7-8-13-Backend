@@ -130,6 +130,7 @@ def build_factors(
     history_status: str | None,
     oar_neighbour_count: int | None,
     oar_confidence: str | None,
+    forecast_model: str | None = None,
 ) -> tuple[RecommendationFactor, ...]:
     """Human-readable drivers, each traceable to an upstream fact.
 
@@ -186,7 +187,21 @@ def build_factors(
                 ),
             )
         )
-    if baseline_model:
+    if forecast_model and forecast_model.upper() == "TSB":
+        # The declining-demand path: TSB replaced the usual method for this
+        # material-plant because its demand has been falling.
+        factors.append(
+            RecommendationFactor(
+                label="Declining demand",
+                detail=(
+                    "Demand for this material has been falling: it was used in far fewer "
+                    "months recently than before, and not at all in the latest months. The "
+                    "forecast therefore lowers while demand stays away, which lowers the "
+                    "reorder point and safety stock."
+                ),
+            )
+        )
+    elif baseline_model:
         method = _MODEL_PLAIN.get(baseline_model.upper(), baseline_model)
         factors.append(
             RecommendationFactor(

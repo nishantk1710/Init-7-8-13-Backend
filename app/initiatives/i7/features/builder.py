@@ -29,6 +29,7 @@ from typing import Any, Iterator
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.upsert import safe_batch_size, upsert
 from app.initiatives.i7.contracts import (
@@ -45,11 +46,12 @@ from app.initiatives.i7.features.classification import (
     classify_demand,
     route_models,
 )
+from app.initiatives.i7.features.declining import DecliningEvaluation, evaluate_dense_series
 from app.initiatives.i7.features.lead_time_provider import resolve_lead_time
 from app.initiatives.i7.features.oar_scope import assess_oar_scope
 from app.initiatives.i7.features.statistics import demand_statistics
 from app.initiatives.i7.policy import PolicyDocument
-from app.models.i7_features import FeatureBuildRun, MaterialFeature
+from app.models.i7_features import DecliningDemandEvaluation, FeatureBuildRun, MaterialFeature
 from app.models.i7_staging import StagedConsumption, StagingRun
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,11 @@ class FeatureBuildResult:
     demand_class_counts: dict[str, int] = field(default_factory=dict)
     oar_scope_counts: dict[str, int] = field(default_factory=dict)
     error: str | None = None
+    declining_mode: str = "off"
+    declining_status_counts: dict[str, int] = field(default_factory=dict)
+    declining_rows: list[dict[str, Any]] = field(default_factory=list, repr=False)
+    """The evaluations this build computed, written after the features. Empty
+    unless ``I7_DECLINING_DEMAND_MODE`` is shadow or active."""
 
 
 def _next_month(period: date) -> date:
@@ -381,6 +388,79 @@ _ATTRIBUTE_SQL = """
 # SQL Server for exactly this reason is the cautionary case.
 
 
+_RATE_PLACES = Decimal("0.0001")
+
+
+def _rounded(value: Decimal | None) -> Decimal | None:
+    return value.quantize(_RATE_PLACES) if value is not None else None
+
+
+def _declining_row(
+    run_id: int, material: str, plant: str, evaluation: DecliningEvaluation
+) -> dict[str, Any]:
+    """One evaluation as a row of ``i7_declining_demand_evaluation``."""
+    return {
+        "feature_run_id": run_id,
+        "sap_material_number": material,
+        "sap_plant_code": plant,
+        "status": evaluation.status.value,
+        "reason": evaluation.reason[:255],
+        "rule_version": evaluation.rule_version,
+        "window_start": evaluation.window_start,
+        "window_end": evaluation.window_end,
+        "months_evaluated": evaluation.months_evaluated,
+        "nonzero_months": evaluation.nonzero_months,
+        "early_nonzero": evaluation.early_nonzero,
+        "recent_nonzero": evaluation.recent_nonzero,
+        "early_rate": _rounded(evaluation.early_rate),
+        "recent_rate": _rounded(evaluation.recent_rate),
+        "decline_pct": _rounded(evaluation.decline_pct),
+        "latest_months_zero": evaluation.latest_months_zero,
+    }
+
+
+def _months_between(first: date, last: date) -> int:
+    """Calendar months from ``first`` to ``last``, both included."""
+    return (last.year - first.year) * 12 + (last.month - first.month) + 1
+
+
+def _write_declining_evaluations(session: Session, result: FeatureBuildResult, window, policy) -> None:
+    """Persist this build's declining-demand evaluations and say what they found."""
+    rows = result.declining_rows
+    needed = policy.declining_demand.window_months + 1
+    if window is not None and _months_between(*window) < needed:
+        logger.warning(
+            "feature run %d: the extract covers %d months; declining-demand needs %d "
+            "(%d complete months plus the latest staged month, which is treated as incomplete) "
+            "-- every evaluation will say so",
+            result.run_id,
+            _months_between(*window),
+            needed,
+            policy.declining_demand.window_months,
+        )
+    if rows:
+        batch_size = safe_batch_size(
+            DecliningDemandEvaluation, 2000, session.get_bind().dialect.name
+        )
+        for start in range(0, len(rows), batch_size):
+            upsert(
+                session,
+                DecliningDemandEvaluation,
+                rows[start : start + batch_size],
+                ["feature_run_id", "sap_material_number", "sap_plant_code"],
+            )
+    flagged = result.declining_status_counts.get("DECLINING_DEMAND", 0)
+    logger.info(
+        "feature run %d: declining-demand (%s, rule %s): %d evaluated, %d flagged, by status %s",
+        result.run_id,
+        result.declining_mode,
+        policy.declining_demand.rule_version,
+        len(rows),
+        flagged,
+        result.declining_status_counts,
+    )
+
+
 def _upsert(session: Session, rows: list[dict[str, Any]]) -> None:
     """Insert a batch, updating on the material-plant natural key.
 
@@ -496,6 +576,7 @@ def build_features(policy: PolicyDocument | None = None) -> FeatureBuildResult:
     )
 
     result = FeatureBuildResult(run_id=run_id)
+    result.declining_mode = get_settings().i7_declining_demand_mode
 
     try:
         with session_factory() as session:
@@ -532,6 +613,7 @@ def build_features(policy: PolicyDocument | None = None) -> FeatureBuildResult:
                     policy,
                     run_id,
                     result,
+                    declining_mode=result.declining_mode,
                 )
                 batch.append(feature)
                 if len(batch) >= batch_size:
@@ -544,6 +626,8 @@ def build_features(policy: PolicyDocument | None = None) -> FeatureBuildResult:
                 built += len(batch)
 
             result.features = built
+            if result.declining_mode != "off":
+                _write_declining_evaluations(session, result, window, policy)
             session.commit()
 
         with session_factory() as session:
@@ -589,6 +673,7 @@ def _build_one(
     policy: PolicyDocument,
     run_id: int,
     result: FeatureBuildResult,
+    declining_mode: str = "off",
 ) -> dict[str, Any]:
     """One material-plant's features."""
     from app.initiatives.i7.contracts import MaterialAttributes
@@ -629,6 +714,15 @@ def _build_one(
         demand_class = DemandPattern.UNCLASSIFIED
 
     routing = route_models(demand_class)
+
+    # Declining demand is only asked of material-plants with enough history --
+    # the rest go to OAR and have no demand series to judge. Off by default.
+    if declining_mode != "off" and history.status is HistoryStatus.SUFFICIENT:
+        evaluation = evaluate_dense_series(series.observations, policy.declining_demand)
+        result.declining_rows.append(_declining_row(run_id, material, plant, evaluation))
+        result.declining_status_counts[evaluation.status.value] = (
+            result.declining_status_counts.get(evaluation.status.value, 0) + 1
+        )
 
     attributes = MaterialAttributes(
         key=key,

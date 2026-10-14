@@ -49,7 +49,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, NamedTuple
 
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -59,6 +59,7 @@ from app.core.db import get_sessionmaker
 from app.initiatives.i7.adapters import consumption_series_for
 from app.initiatives.i7.contracts import DemandPattern
 from app.initiatives.i7.features import BaselineModel, HistoryStatus
+from app.initiatives.i7.features.declining import DecliningStatus
 from app.initiatives.i7.forecasting import arima, lightgbm_model, sba, ses, tsb
 from app.initiatives.i7.forecasting import backtest as backtest_engine
 from app.initiatives.i7.forecasting import metrics as metric_functions
@@ -75,6 +76,7 @@ from app.initiatives.i7.forecasting.types import (
     SegmentDecision,
 )
 from app.initiatives.i7.policy import PolicyDocument
+from app.models.i7_features import DecliningDemandEvaluation
 from app.models.i7_forecast import (
     Forecast,
     ForecastBacktestPath,
@@ -244,6 +246,7 @@ def _run_models(
     obsolescence_trigger_configured: bool,
     quantile: float | None,
     arima_enabled: bool = True,
+    include_tsb_placeholder: bool = True,
 ) -> list[tuple[ForecastResult, BacktestResult, bool]]:
     """Forecast and backtest every model applicable to one material-plant.
 
@@ -270,19 +273,24 @@ def _run_models(
             ),
         ]
 
-    # TSB is appended only when an approved obsolescence rule exists. Without
-    # one it still reports, so the gate is visible rather than silent.
-    pairs.append(
-        (
-            ModelName.TSB,
-            lambda s, h: tsb.forecast(
-                s,
-                h,
-                obsolescence_trigger_configured=obsolescence_trigger_configured,
-            ),
-            False,
+    # With the declining-demand feature OFF, TSB still reports a "not evaluable"
+    # row for every material-plant, exactly as before, so the closed gate is
+    # visible. With it on (shadow or active) that placeholder is not written:
+    # TSB rows exist only for the material-plants the rule flags (see
+    # _run_tsb_path), and why the others were not flagged is in
+    # i7_declining_demand_evaluation.
+    if include_tsb_placeholder:
+        pairs.append(
+            (
+                ModelName.TSB,
+                lambda s, h: tsb.forecast(
+                    s,
+                    h,
+                    obsolescence_trigger_configured=obsolescence_trigger_configured,
+                ),
+                False,
+            )
         )
-    )
 
     for model_name, function, is_baseline in pairs:
         if horizon is None:
@@ -344,6 +352,152 @@ def _parameters_text(result: ForecastResult) -> str | None:
     if not result.parameters:
         return None
     return ";".join(f"{key}={value}" for key, value in result.parameters)[:500]
+
+
+class DecliningEvaluationMissing(RuntimeError):
+    """Active mode was asked to route by declining-demand evaluations that are not
+    there. Raised instead of quietly forecasting everything the normal way: a run
+    that says it used the rule when it did not would be wrong without looking wrong."""
+
+
+class _Evaluation(NamedTuple):
+    status: str
+    reason: str
+    window_start: Any
+    window_end: Any
+    rule_version: str
+
+
+def _load_evaluations(session: Session, feature_run_id: int | None) -> dict[tuple[str, str], _Evaluation]:
+    """This feature run's declining-demand evaluations, keyed by material-plant."""
+    if feature_run_id is None:
+        return {}
+    rows = session.execute(
+        select(
+            DecliningDemandEvaluation.sap_material_number,
+            DecliningDemandEvaluation.sap_plant_code,
+            DecliningDemandEvaluation.status,
+            DecliningDemandEvaluation.reason,
+            DecliningDemandEvaluation.window_start,
+            DecliningDemandEvaluation.window_end,
+            DecliningDemandEvaluation.rule_version,
+        ).where(DecliningDemandEvaluation.feature_run_id == feature_run_id)
+    )
+    return {
+        (row.sap_material_number, row.sap_plant_code): _Evaluation(
+            row.status, row.reason, row.window_start, row.window_end, row.rule_version
+        )
+        for row in rows
+    }
+
+
+def _run_tsb_path(
+    candidate: _Candidate, evaluation: _Evaluation
+) -> list[tuple[ForecastResult, BacktestResult, bool, bool]]:
+    """The declining-demand path: TSB directly, no comparison, no backtest.
+
+    Returns ``(forecast, backtest, is_baseline, is_champion)``. The baseline
+    (SES or SBA, the model the demand class would have used) is forecast for the
+    reviewer to see what the rule changed; it is never the champion here and is
+    not compared with TSB. TSB is the champion only when it produced a forecast:
+    a flagged material-plant whose TSB did not succeed has NO champion, and the
+    inventory stage reports it as such -- there is no silent fallback to the
+    baseline, because the business policy defines none.
+    """
+    horizon = candidate.lead_time_months
+    baseline_name = ModelName(candidate.baseline_model)
+    baseline_function = ses.forecast if baseline_name is ModelName.SES else sba.forecast
+    no_backtest = (
+        "declining-demand path: TSB is used directly and is not backtested or compared "
+        "with another model"
+    )
+
+    results: list[tuple[ForecastResult, BacktestResult, bool, bool]] = []
+    for name, function, is_baseline in (
+        (baseline_name, baseline_function, True),
+        (
+            ModelName.TSB,
+            lambda s, h: tsb.forecast(s, h, obsolescence_trigger_configured=True),
+            False,
+        ),
+    ):
+        if horizon is None:
+            forecast_result = ForecastResult(
+                model=name,
+                model_version=MODEL_VERSIONS[name],
+                status=ModelStatus.MISSING_REQUIRED_FEATURE,
+                detail="no lead time, so the T+1..T+LT horizon is undefined",
+            )
+            backtest_result = backtest_engine.not_evaluable(
+                name,
+                MODEL_VERSIONS[name],
+                BacktestStatus.NOT_EVALUABLE_LEAD_TIME_UNAVAILABLE,
+                "no purchase-order history supplies a lead time; the fallback "
+                "policy is unresolved and no default is substituted",
+            )
+        else:
+            forecast_result = function(candidate.series, horizon)
+            backtest_result = backtest_engine.not_evaluable(
+                name, MODEL_VERSIONS[name], BacktestStatus.NOT_RUN_DECLINING_DEMAND, no_backtest
+            )
+        if name is ModelName.TSB:
+            # Rule and window first: the parameters column is capped at 500
+            # characters and TSB's own values are long.
+            window = (
+                f"{evaluation.window_start:%Y-%m}..{evaluation.window_end:%Y-%m}"
+                if evaluation.window_start and evaluation.window_end
+                else "unknown"
+            )
+            forecast_result = forecast_result._replace(
+                parameters=(
+                    ("declining_rule", evaluation.rule_version),
+                    ("evaluated_months", window),
+                )
+                + forecast_result.parameters
+            )
+        is_champion = name is ModelName.TSB and forecast_result.status is ModelStatus.SUCCESS
+        results.append((forecast_result, backtest_result, is_baseline, is_champion))
+    return results
+
+
+def _declining_consistent(
+    session: Session,
+    run_id: int,
+    mode: str,
+    flagged: frozenset[tuple[str, str]],
+) -> bool:
+    """Whether a run's saved rows were produced under the current declining-demand mode.
+
+    Resuming across a change would mix material-plants forecast one way with
+    others forecast another. Read from the rows themselves, as the ARIMA check
+    does, so no column is needed:
+
+    * off     -- every candidate has a placeholder TSB row, none is a direct TSB row.
+    * shadow  -- no placeholders and no direct TSB rows.
+    * active  -- no placeholders, and exactly the flagged saved material-plants
+                 have a direct TSB row.
+    """
+    rows = session.execute(
+        select(
+            Forecast.sap_material_number,
+            Forecast.sap_plant_code,
+            Forecast.forecast_status,
+            Forecast.adoption_status,
+        ).where(Forecast.forecast_run_id == run_id, Forecast.model_name == ModelName.TSB.value)
+    ).all()
+    placeholder = any(row.forecast_status == ModelStatus.NOT_EVALUABLE_TRIGGER_UNSET.value for row in rows)
+    direct = {
+        (row.sap_material_number, row.sap_plant_code)
+        for row in rows
+        if row.adoption_status == AdoptionStatus.TSB_DECLINING_DEMAND.value
+    }
+    if mode == "off":
+        return not direct
+    if placeholder:
+        return False
+    if mode == "shadow":
+        return not direct
+    return direct == (flagged & _saved_keys(session, run_id))
 
 
 #: Material-plants between saves. Each batch is committed on its own, with its
@@ -417,6 +571,8 @@ def _claim_run(
     quantile: float | None,
     arima_enabled: bool,
     resume: bool,
+    declining_mode: str = "off",
+    flagged_keys: frozenset[tuple[str, str]] = frozenset(),
 ) -> tuple[ForecastRun, bool]:
     """The run to write into, and whether it is a resumed one. The caller holds
     the forecasting lock and commits.
@@ -445,6 +601,7 @@ def _claim_run(
         ).first()
         is not None
         and _arima_consistent(session, newest.id, arima_enabled)
+        and _declining_consistent(session, newest.id, declining_mode, flagged_keys)
     ):
         candidate = newest
 
@@ -629,6 +786,7 @@ def _run_forecasting_locked(policy: PolicyDocument, resume: bool) -> ForecastRun
     session_factory = get_sessionmaker()
     quantile = _target_quantile(policy)
     arima_enabled = get_settings().i7_forecast_arima_enabled
+    declining_mode = get_settings().i7_declining_demand_mode
 
     # No approved obsolescence-risk rule exists in policy, so TSB is never a
     # candidate on the current configuration. Read from policy rather than
@@ -639,6 +797,13 @@ def _run_forecasting_locked(policy: PolicyDocument, resume: bool) -> ForecastRun
         feature_run_id = session.execute(
             text("select max(id) from i7_feature_run where status = 'succeeded'")
         ).scalar()
+        # Only active mode reads the evaluations: shadow and off must keep
+        # working on a database that has not had the table added yet.
+        evaluations = _load_evaluations(session, feature_run_id) if declining_mode == "active" else {}
+        flagged_keys = frozenset(
+            key for key, evaluation in evaluations.items()
+            if evaluation.status == DecliningStatus.DECLINING_DEMAND.value
+        )
         run, resumed = _claim_run(
             session,
             policy=policy,
@@ -646,23 +811,50 @@ def _run_forecasting_locked(policy: PolicyDocument, resume: bool) -> ForecastRun
             quantile=quantile,
             arima_enabled=arima_enabled,
             resume=resume,
+            declining_mode=declining_mode,
+            flagged_keys=flagged_keys,
         )
         session.commit()
         run_id = run.id
 
     result = ForecastRunResult(run_id=run_id)
     logger.info(
-        "forecast run %d: %s; Auto-ARIMA challenger %s",
+        "forecast run %d: %s; Auto-ARIMA challenger %s; declining-demand mode %s",
         run_id,
         "resuming an interrupted run" if resumed else "starting",
         "ON" if arima_enabled else "off",
+        declining_mode,
     )
+    run_started = time.monotonic()
+    tsb_path_counts = {"success": 0, "not_evaluable": 0}
 
     try:
         with session_factory() as session:
             logger.info("forecast run %d: loading routed material-plants", run_id)
             candidates = _load_candidates(session)
             result.materials_evaluated = len(candidates)
+            if declining_mode == "active":
+                # Zero flagged is a normal answer. No evaluation at all for a
+                # candidate is not: it means the feature build did not evaluate it.
+                missing = [c for c in candidates if (c.material, c.plant) not in evaluations]
+                if missing:
+                    raise DecliningEvaluationMissing(
+                        f"declining-demand mode is 'active' but {len(missing)} of {len(candidates)} "
+                        f"material-plants have no evaluation for feature run {feature_run_id}. "
+                        "Rebuild the features with I7_DECLINING_DEMAND_MODE=shadow or active first "
+                        "(it also needs the i7_declining_demand_evaluation table). "
+                        "Nothing was forecast."
+                    )
+                by_status: dict[str, int] = {}
+                for evaluation in evaluations.values():
+                    by_status[evaluation.status] = by_status.get(evaluation.status, 0) + 1
+                logger.info(
+                    "forecast run %d: declining-demand evaluations %s; %d of %d candidates flagged",
+                    run_id,
+                    by_status,
+                    sum(1 for c in candidates if (c.material, c.plant) in flagged_keys),
+                    len(candidates),
+                )
             for candidate in candidates:
                 source = candidate.lead_time_source or "NONE"
                 result.lead_time_source_counts[source] = (
@@ -721,15 +913,28 @@ def _run_forecasting_locked(policy: PolicyDocument, resume: bool) -> ForecastRun
                 baseline_index: int | None = None
                 candidate_row_start = len(rows)
 
-                for forecast_result, backtest_result, is_baseline in _run_models(
-                    candidate,
-                    pooled,
-                    pooled_status,
-                    pooled_detail,
-                    obsolescence_trigger_configured,
-                    quantile,
-                    arima_enabled=arima_enabled,
-                ):
+                declining = (
+                    evaluations.get((candidate.material, candidate.plant))
+                    if declining_mode == "active" and (candidate.material, candidate.plant) in flagged_keys
+                    else None
+                )
+                if declining is not None:
+                    model_results = _run_tsb_path(candidate, declining)
+                else:
+                    model_results = _run_models(
+                        candidate,
+                        pooled,
+                        pooled_status,
+                        pooled_detail,
+                        obsolescence_trigger_configured,
+                        quantile,
+                        arima_enabled=arima_enabled,
+                        include_tsb_placeholder=declining_mode == "off",
+                    )
+
+                for model_result in model_results:
+                    forecast_result, backtest_result, is_baseline = model_result[:3]
+                    is_champion = model_result[3] if len(model_result) > 3 else is_baseline
                     result.model_status_counts[forecast_result.status.value] = (
                         result.model_status_counts.get(forecast_result.status.value, 0) + 1
                     )
@@ -752,7 +957,7 @@ def _run_forecasting_locked(policy: PolicyDocument, resume: bool) -> ForecastRun
                             "model_name": forecast_result.model.value,
                             "model_version": forecast_result.model_version,
                             "is_baseline": is_baseline,
-                            "is_champion": is_baseline,
+                            "is_champion": is_champion,
                             "adoption_status": None,
                             "decision_reason": None,
                             "forecast_status": forecast_result.status.value,
@@ -787,9 +992,22 @@ def _run_forecasting_locked(policy: PolicyDocument, resume: bool) -> ForecastRun
                         }
                     )
 
-                decision = _material_plant_decision(
-                    candidate.demand_class, material_plant_key, by_model
-                )
+                if declining is not None:
+                    decision = selection.decide_declining(
+                        material_plant_key,
+                        ModelName(candidate.baseline_model),
+                        f"declining demand ({declining.rule_version}): {declining.reason}; TSB used "
+                        "directly, baseline stored for reference only",
+                    )
+                    tsb_ok = any(
+                        r[0].model is ModelName.TSB and r[0].status is ModelStatus.SUCCESS
+                        for r in model_results
+                    )
+                    tsb_path_counts["success" if tsb_ok else "not_evaluable"] += 1
+                else:
+                    decision = _material_plant_decision(
+                        candidate.demand_class, material_plant_key, by_model
+                    )
                 if decision is not None:
                     decisions.append(decision)
                     _apply_decision_to_rows(rows, candidate_row_start, decision)
@@ -844,6 +1062,17 @@ def _run_forecasting_locked(policy: PolicyDocument, resume: bool) -> ForecastRun
             result.forecasts_written,
             len(result.segment_decisions),
         )
+        if declining_mode != "off":
+            logger.info(
+                "forecast run %d: declining-demand %s: %d flagged, TSB used for %d, "
+                "TSB not evaluable for %d, in %.0f s",
+                run_id,
+                declining_mode,
+                len(flagged_keys),
+                tsb_path_counts["success"],
+                tsb_path_counts["not_evaluable"],
+                time.monotonic() - run_started,
+            )
         return result
 
     except Exception as exc:

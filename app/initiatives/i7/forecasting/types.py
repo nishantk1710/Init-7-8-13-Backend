@@ -98,6 +98,10 @@ class BacktestStatus(StrEnum):
 
     NOT_EVALUABLE = "NOT_EVALUABLE"
 
+    NOT_RUN_DECLINING_DEMAND = "NOT_RUN_DECLINING_DEMAND"
+    """No backtest was run on purpose: this material-plant took the declining-demand
+    path, where TSB is used directly and is not compared with another model."""
+
 
 class AdoptionStatus(StrEnum):
     """May a challenger replace its baseline in production?"""
@@ -115,6 +119,11 @@ class AdoptionStatus(StrEnum):
 
     NOT_EVALUABLE = "NOT_EVALUABLE"
     """The challenger could not run at all."""
+
+    TSB_DECLINING_DEMAND = "TSB_DECLINING_DEMAND"
+    """Not a comparison: the declining-demand rule flagged this material-plant and
+    TSB is used directly. The baseline forecast is stored for reference only and
+    was not compared with TSB."""
 
 
 class MetricStatus(StrEnum):
