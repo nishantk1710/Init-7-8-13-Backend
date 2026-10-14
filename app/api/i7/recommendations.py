@@ -60,6 +60,40 @@ SORT_FIELDS: dict[str, "object"] = {
 }
 
 
+# The backend statuses whose display reduction on the frontend (services/i7-api.ts STATUS_MAP) is
+# "Pending Review", "In Approval" or "Returned" -- the states where a recommendation still needs
+# a decision, and so where its criticality counts as a stockout risk.
+OPEN_STATUSES = ("NOT_EVALUABLE", "READY_FOR_REVIEW", "PENDING_APPROVAL", "HELD", "SENT_BACK", "ADJUSTED")
+
+# The display status the table shows -> the backend statuses behind it. Mirrors STATUS_MAP on the
+# frontend, so a filter on "In Approval" finds exactly the rows the table labels "In Approval".
+STATUS_GROUPS: dict[str, tuple[str, ...]] = {
+    "Pending Review": ("NOT_EVALUABLE", "READY_FOR_REVIEW"),
+    "In Approval": ("PENDING_APPROVAL", "HELD", "ADJUSTED"),
+    "Returned": ("SENT_BACK",),
+    "Approved": ("APPROVED", "SAP_EXECUTION_PENDING"),
+    "Rejected": ("REJECTED",),
+    "Implemented": ("SAP_EXECUTED", "ADOPTED", "PARTIALLY_ADOPTED", "NOT_ADOPTED"),
+}
+
+# The criticality tier -> the display level, mirroring CRITICALITY_MAP on the frontend. NORMAL,
+# OBSOLETE, an unrecognised tier and no tier at all are all "Low".
+CRITICALITY_TIERS: dict[str, str] = {"Critical": "CRITICAL", "High": "IMPACT", "Medium": "INSURANCE"}
+
+
+def _risk_case():
+    """Stockout risk, derived the way the frontend's deriveRisk() does: only a recommendation still
+    awaiting a decision can be at risk, and then only by its criticality tier."""
+    return case(
+        (Recommendation.status.not_in(OPEN_STATUSES), "low"),
+        (Recommendation.criticality.is_(None), "low"),
+        (Recommendation.criticality == "CRITICAL", "critical"),
+        (Recommendation.criticality == "IMPACT", "high"),
+        (Recommendation.criticality == "INSURANCE", "medium"),
+        else_="low",
+    )
+
+
 def _apply_filters(
     statement: Select,
     *,
@@ -73,6 +107,10 @@ def _apply_filters(
     generated_from: datetime | None,
     generated_to: datetime | None,
     demand_type: Literal["oar", "declining", "normal"] | None = None,
+    search: str | None = None,
+    criticality_level: str | None = None,
+    status_group: str | None = None,
+    risk: str | None = None,
 ) -> Select:
     """Every filter here maps to a real, persisted column or a keyed lookup.
     Nothing that would require loading rows into Python to evaluate.
@@ -101,6 +139,39 @@ def _apply_filters(
         statement = statement.where(Recommendation.generated_at >= generated_from)
     if generated_to is not None:
         statement = statement.where(Recommendation.generated_at < generated_to)
+    if search is not None and search.strip():
+        # Free text over the whole catalogue: part of the material number (stored with its
+        # leading zeros, so "8000005029" is found inside it) or of its description.
+        text = search.strip()
+        by_description = select(StagedMaterial.sap_material_number).where(
+            StagedMaterial.description.icontains(text, autoescape=True)
+        )
+        statement = statement.where(
+            or_(
+                Recommendation.sap_material_number.icontains(text, autoescape=True),
+                Recommendation.sap_material_number.in_(by_description),
+            )
+        )
+    if criticality_level is not None:
+        if criticality_level == "Low":
+            statement = statement.where(
+                or_(
+                    Recommendation.criticality.is_(None),
+                    Recommendation.criticality.not_in(tuple(CRITICALITY_TIERS.values())),
+                )
+            )
+        else:
+            statement = statement.where(Recommendation.criticality == CRITICALITY_TIERS[criticality_level])
+    if status_group is not None:
+        if status_group == "Pending Review":
+            # The frontend shows any status it does not recognise as Pending Review too.
+            others = tuple(raw for name, raws in STATUS_GROUPS.items() if name != status_group for raw in raws)
+            statement = statement.where(Recommendation.status.not_in(others))
+        else:
+            statement = statement.where(Recommendation.status.in_(STATUS_GROUPS[status_group]))
+    if risk is not None:
+        # A subquery value, not the CASE itself in WHERE: same expression the summary groups by.
+        statement = statement.where(_risk_case() == risk)
     if demand_type is not None:
         # The boolean column itself: SQL Server has no "IS 1" (see tests/i7/test_overview_real_counts.py).
         not_oar = or_(~Recommendation.is_oar, Recommendation.is_oar.is_(None))
@@ -262,6 +333,22 @@ def list_recommendations(
         datetime | None,
         Query(description="Exclusive upper bound on generated_at -- e.g. a report period's end, plus one day."),
     ] = None,
+    search: Annotated[
+        str | None,
+        Query(description="Part of a material number or description, matched across every recommendation."),
+    ] = None,
+    criticality_level: Annotated[
+        Literal["Critical", "High", "Medium", "Low"] | None,
+        Query(description="The display level: CRITICAL / IMPACT / INSURANCE; Low is NORMAL, OBSOLETE or no tier."),
+    ] = None,
+    status_group: Annotated[
+        Literal["Pending Review", "In Approval", "Returned", "Approved", "Rejected", "Implemented"] | None,
+        Query(description="The status as the table shows it; several backend statuses make up one."),
+    ] = None,
+    risk: Annotated[
+        Literal["critical", "high", "medium", "low"] | None,
+        Query(description="Stockout risk as the table shows it, derived from status and criticality tier."),
+    ] = None,
     demand_type: Annotated[
         Literal["oar", "declining", "normal"] | None,
         Query(
@@ -294,6 +381,10 @@ def list_recommendations(
             generated_from=generated_from,
             generated_to=generated_to,
             demand_type=demand_type,
+            search=search,
+            criticality_level=criticality_level,
+            status_group=status_group,
+            risk=risk,
         )
     )
 
@@ -431,15 +522,7 @@ def get_recommendation_summary(
     # RiskCount's docstring. OPEN_STATUSES here must stay the exact backend-
     # status set whose STATUS_MAP display reduction is "Pending Review" /
     # "In Approval" / "Returned" on the frontend.
-    open_statuses = ("NOT_EVALUABLE", "READY_FOR_REVIEW", "PENDING_APPROVAL", "HELD", "SENT_BACK", "ADJUSTED")
-    risk_case = case(
-        (Recommendation.status.not_in(open_statuses), "low"),
-        (Recommendation.criticality.is_(None), "low"),
-        (Recommendation.criticality == "CRITICAL", "critical"),
-        (Recommendation.criticality == "IMPACT", "high"),
-        (Recommendation.criticality == "INSURANCE", "medium"),
-        else_="low",
-    )
+    risk_case = _risk_case()
     # Grouped over a subquery column, not the CASE itself: SQL Server binds the
     # CASE's literals as fresh parameters in GROUP BY and then refuses to treat
     # the two copies as the same expression.

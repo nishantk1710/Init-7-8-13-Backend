@@ -112,6 +112,14 @@ Only real, persisted, indexed columns are exposed: `status`, `plant`
 `is_oar`, `confidence`, `criticality`. All applied in SQL via SQLAlchemy
 `.where()`. Nothing is filtered by loading rows into Python.
 
+The list endpoint also takes the filters the Recommendations page shows, so each one
+searches the whole catalogue and `total` follows it: `search` (part of a material number or
+description, case-insensitive), `criticality_level` (`Critical`/`High`/`Medium`/`Low`, where
+`Low` is NORMAL, OBSOLETE or no tier), `status_group` (the status as the table shows it:
+`Pending Review`, `In Approval`, `Returned`, `Approved`, `Rejected`, `Implemented`),
+`risk` (`critical`/`high`/`medium`/`low`, derived from status and criticality tier exactly as
+the summary's `by_risk` is) and `type` (`oar`/`declining`/`normal`).
+
 ## Sorting
 
 A whitelist maps an API sort name to a real ORM column
