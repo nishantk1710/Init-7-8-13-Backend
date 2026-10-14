@@ -40,6 +40,8 @@ from app.initiatives.i8.register import (
     PARTIALLY_RECEIVED,
     PO_ISSUED,
     RECEIVED_STATUS,
+    ZERO,
+    qty_under_repair,
     receipt_status,
     repair_status,
 )
@@ -318,6 +320,42 @@ class TestReceiptStatus:
             )
             == FULLY_RECEIVED
         )
+
+
+class TestQtyUnderRepair:
+    """The quantity has to agree with :class:`TestReceiptStatus` above: a line
+    the status calls PARTIALLY_RECEIVED still has units at the vendor, and the
+    register used to report 0 for it."""
+
+    def test_nothing_received_leaves_the_whole_order_out(self) -> None:
+        assert qty_under_repair(
+            ordered_qty=Decimal(5), received_qty=Decimal(0)
+        ) == Decimal(5)
+
+    def test_a_partial_receipt_leaves_the_remainder_out(self) -> None:
+        """The live case, 14-Oct: 2,000 ordered against 1,000 received read as
+        0 under repair, so a thousand units at the vendor were invisible."""
+        assert qty_under_repair(
+            ordered_qty=Decimal(2000), received_qty=Decimal(1000)
+        ) == Decimal(1000)
+
+    def test_a_full_receipt_leaves_nothing_out(self) -> None:
+        assert qty_under_repair(
+            ordered_qty=Decimal(5), received_qty=Decimal(5)
+        ) == ZERO
+
+    def test_an_over_receipt_does_not_go_negative(self) -> None:
+        """What the old ``received_at`` short-circuit was really covering."""
+        assert qty_under_repair(
+            ordered_qty=Decimal(5), received_qty=Decimal(6)
+        ) == ZERO
+
+    def test_a_zero_quantity_line_has_nothing_out(self) -> None:
+        """EKPO.MENGE is 0 on one open line in the live data (6000016330/10).
+        Nothing is ordered, so nothing is out -- not a negative, not a crash."""
+        assert qty_under_repair(
+            ordered_qty=ZERO, received_qty=ZERO
+        ) == ZERO
 
 
 # --- configuration discipline --------------------------------------------
