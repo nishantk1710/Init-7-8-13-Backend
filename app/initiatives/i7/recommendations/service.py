@@ -39,6 +39,7 @@ from app.initiatives.i7.recommendations import builder, rationale, repository
 from app.initiatives.i7.recommendations.builder import BuiltRecommendation
 from app.initiatives.i7.recommendations.conversion import HodApprovalLookup
 from app.initiatives.i7.recommendations.types import RECOMMENDATION_FORMULA_VERSION
+from app.initiatives.i7.recommendations.trend_snapshots import generation_key, record_generation_snapshots
 from app.initiatives.i7.policy import PolicyDocument
 from app.models.i7_recommendation import Recommendation
 
@@ -55,6 +56,11 @@ class RecommendationRunResult:
     reused_existing: int = 0
     status_counts: dict[str, int] = field(default_factory=dict)
     error: str | None = None
+    trend_snapshots: str = "not_attempted"
+    """``recorded`` / ``already_recorded`` / ``skipped`` (nothing was generated) / ``failed``. A
+    failed snapshot does not fail the generation -- the recommendations are already saved -- but
+    it is logged at ERROR and reported here, never swallowed."""
+    trend_snapshot_error: str | None = None
 
 
 def _recommendation_id(material: str, plant: str, is_oar: bool) -> str:
@@ -143,6 +149,49 @@ def _to_row(built: BuiltRecommendation) -> dict[str, Any]:
         "adjustment_count": 0,
         "current_version": 1,
     }
+
+
+def _record_trend_snapshots(
+    session_factory,
+    result: RecommendationRunResult,
+    *,
+    rows: list[dict[str, Any]],
+    inventory_run_id: int | None,
+    oar_run_id: int | None,
+    forecast_run_id: int | None,
+) -> None:
+    """Save this generation's KPI history, after -- and only after -- it succeeded.
+
+    Runs in its own session and transaction, so the recommendations committed above are never
+    at risk and a snapshot is never half-written. Any failure is logged and put on ``result``;
+    it does not turn a successful generation into a failed one.
+    """
+    if not rows:
+        result.trend_snapshots = "skipped"
+        return
+    try:
+        key = generation_key(
+            inventory_run_id=inventory_run_id,
+            oar_run_id=oar_run_id,
+            forecast_run_id=forecast_run_id,
+            formula_version=rows[0]["formula_version"],
+            policy_id=rows[0]["policy_id"],
+            policy_version=rows[0]["policy_version"],
+        )
+        with session_factory() as session:
+            outcome = record_generation_snapshots(
+                session,
+                key=key,
+                inventory_run_id=inventory_run_id,
+                oar_run_id=oar_run_id,
+                forecast_run_id=forecast_run_id,
+                formula_version=rows[0]["formula_version"],
+            )
+        result.trend_snapshots = "recorded" if outcome.created else "already_recorded"
+    except Exception as exc:  # noqa: BLE001 -- reported, not hidden: see the docstring
+        result.trend_snapshots = "failed"
+        result.trend_snapshot_error = f"{type(exc).__name__}: {exc}"
+        logger.error("trend snapshot recording failed: %s", result.trend_snapshot_error)
 
 
 def generate_recommendations(
@@ -243,6 +292,14 @@ def generate_recommendations(
             result.recommendations_written,
             result.reused_existing,
             result.status_counts,
+        )
+        _record_trend_snapshots(
+            session_factory,
+            result,
+            rows=rows,
+            inventory_run_id=inventory_run_id,
+            oar_run_id=oar_run_id,
+            forecast_run_id=forecast_run_id,
         )
         return result
 

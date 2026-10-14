@@ -20,6 +20,7 @@ unconfirmed business value this module refuses to guess.
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -535,6 +536,50 @@ class RecommendationSummaryStats(BaseModel):
     ``net_safety_stock_value_impact``, applied to Max Stock instead of
     Safety Stock. ``None`` when no in-scope row has all three values
     available, never defaulted to 0."""
+
+
+class TrendPoint(BaseModel):
+    """One recorded generation's headline KPIs for one plant scope."""
+
+    model_config = ConfigDict(frozen=True)
+
+    captured_at: datetime
+    """When the figures describe -- the chart's x-axis."""
+    source: Literal["captured", "reconstructed"]
+    """``captured``: recorded when the generation finished. ``reconstructed``: rebuilt later from
+    the stored recommendation rows (excess figures only; ``stockout_risk_count`` is then null)."""
+    inventory_run_id: int | None = None
+    oar_run_id: int | None = None
+    forecast_run_id: int | None = None
+    feature_run_id: int | None = None
+    total_count: int
+    stockout_risk_count: int | None
+    """Null where the on-hand stock of that day was not recorded -- never 0."""
+    excess_count: int
+    excess_opportunity: Decimal | None
+    """An estimate (unit price x the gap above the recommended max stock), not confirmed savings.
+    Null when no excess row had a price -- never 0."""
+    net_safety_stock_value_impact: Decimal | None = None
+    currency: str | None = None
+    """Null when the currency was not a single known one at that time (always null on
+    reconstructed points)."""
+
+
+class RecommendationTrendsResponse(BaseModel):
+    """The history behind the Overview's two trend cards, read from saved snapshots only."""
+
+    model_config = ConfigDict(frozen=True)
+
+    plant: Literal["ALL", "1300", "1500"]
+    points: list[TrendPoint]
+    """Oldest first. Empty -- never filled in -- when nothing has been recorded yet."""
+    has_stockout_history: bool
+    """True when at least one point carries a stockout count."""
+    has_excess_history: bool
+    captured_count: int
+    reconstructed_count: int
+    definition_note: str
+    """The KPI definitions are internal proxies (2026-09-22), not yet confirmed by Vedanta."""
 
 
 class RecommendationDetail(BaseModel):

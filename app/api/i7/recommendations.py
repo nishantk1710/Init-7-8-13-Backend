@@ -6,7 +6,7 @@ recalculated here. Filtering and pagination happen in SQL; the full table is
 never loaded into Python to be filtered or sliced in memory.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -18,10 +18,19 @@ from app.api.i7.deps import get_session, load_latest_recommendation
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations import routing
 from app.initiatives.i7.recommendations.consumption_history import monthly_consumption_history
+from app.initiatives.i7.recommendations.kpi_metrics import (
+    count_rows,
+    excess_base,
+    excess_opportunity,
+    net_safety_stock_value_impact,
+    portfolio_currency,
+)
+from app.initiatives.i7.recommendations.kpi_metrics import stockout_risk_count as stockout_risk_count_for
 from app.models.i7_features import DecliningDemandEvaluation
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun
 from app.models.i7_recommendation import Recommendation
-from app.models.i7_staging import StagedMaterial, StagedStock
+from app.models.i7_staging import StagedMaterial
+from app.models.i7_trend import RecommendationTrendSnapshot
 from app.schemas.i7.errors import bad_request
 from app.schemas.i7.recommendations import (
     CircuitCount,
@@ -37,8 +46,10 @@ from app.schemas.i7.recommendations import (
     RecommendationSummary,
     RecommendationSummaryStats,
     RecommendationTrace,
+    RecommendationTrendsResponse,
     RiskCount,
     StatusCount,
+    TrendPoint,
 )
 
 router = APIRouter(tags=["i7-recommendations"])
@@ -286,18 +297,8 @@ def _latest_only(statement: Select) -> Select:
 
 
 def _portfolio_currency(session: Session) -> str | None:
-    """The one currency every priced material is in, or ``None``.
-
-    A portfolio total in mixed currencies has no single true symbol, so it
-    reports none rather than the first one found.
-    """
-    found = session.execute(
-        select(StagedMaterial.currency)
-        .where(StagedMaterial.currency.is_not(None), StagedMaterial.unit_price.is_not(None))
-        .distinct()
-        .limit(2)
-    ).scalars().all()
-    return found[0] if len(found) == 1 else None
+    """The one currency every priced material is in, or ``None`` (see kpi_metrics)."""
+    return portfolio_currency(session)
 
 
 @router.get(
@@ -557,65 +558,14 @@ def get_recommendation_summary(
     ready_for_review_count = status_counts.get("READY_FOR_REVIEW", 0)
     not_evaluable_count = status_counts.get("NOT_EVALUABLE", 0)
 
-    net_value_row = session.execute(
-        base.with_only_columns(
-            func.sum(
-                Recommendation.unit_price
-                * (Recommendation.current_safety_stock - Recommendation.recommended_safety_stock)
-            )
-        ).where(
-            Recommendation.unit_price.isnot(None),
-            Recommendation.current_safety_stock.isnot(None),
-            Recommendation.recommended_safety_stock.isnot(None),
-        )
-    ).scalar()
-
-    # --- Critical Stockout Risk: current on-hand stock < recommended ROP ---
-    # I07-derived proxy (2026-09-22), not a Vedanta-confirmed severity tier --
-    # see RecommendationSummaryStats.critical_stockout_risk_count's docstring.
-    # i7_staged_stock is material-plant-storage-location grain; aggregate to
-    # material-plant before comparing, same as Phase 3's own assumption
-    # (unrestricted_use_stock only -- see StagedStock's class docstring).
-    on_hand_stock = (
-        select(
-            StagedStock.sap_material_number,
-            StagedStock.sap_plant_code,
-            func.sum(StagedStock.unrestricted_use_stock).label("on_hand"),
-        )
-        .group_by(StagedStock.sap_material_number, StagedStock.sap_plant_code)
-        .subquery()
-    )
-    stockout_risk_base = base.join(
-        on_hand_stock,
-        (on_hand_stock.c.sap_material_number == Recommendation.sap_material_number)
-        & (on_hand_stock.c.sap_plant_code == Recommendation.sap_plant_code),
-    ).where(
-        Recommendation.recommended_rop.isnot(None),
-        on_hand_stock.c.on_hand < Recommendation.recommended_rop,
-    )
-    stockout_risk_count = session.execute(
-        select(func.count()).select_from(stockout_risk_base.subquery())
-    ).scalar_one()
-
-    # --- Excess Inventory Candidates: current Max Stock > recommended ------
-    # I07-derived proxy (2026-09-22): any positive gap counts, no minimum
-    # margin -- see RecommendationSummaryStats.excess_inventory_candidates_count.
-    excess_base = base.where(
-        Recommendation.current_max_stock.isnot(None),
-        Recommendation.recommended_max_stock.isnot(None),
-        Recommendation.current_max_stock > Recommendation.recommended_max_stock,
-    )
-    excess_inventory_count = session.execute(
-        select(func.count()).select_from(excess_base.subquery())
-    ).scalar_one()
-    excess_opportunity_row = session.execute(
-        excess_base.with_only_columns(
-            func.sum(
-                Recommendation.unit_price
-                * (Recommendation.current_max_stock - Recommendation.recommended_max_stock)
-            )
-        ).where(Recommendation.unit_price.isnot(None))
-    ).scalar()
+    # The headline KPIs come from the same functions the trend snapshots use, so a trend point
+    # and the Overview can never disagree (initiatives/i7/recommendations/kpi_metrics.py has the
+    # definitions -- internal proxies from 2026-09-22, not yet confirmed by Vedanta).
+    net_value_row = net_safety_stock_value_impact(session, base)
+    stockout_risk_count = stockout_risk_count_for(session, base)
+    excess_base_select = excess_base(base)
+    excess_inventory_count = count_rows(session, excess_base_select)
+    excess_opportunity_row = excess_opportunity(session, base)
 
     return RecommendationSummaryStats(
         total=total,
@@ -634,6 +584,80 @@ def get_recommendation_summary(
         critical_stockout_risk_count=stockout_risk_count,
         excess_inventory_candidates_count=excess_inventory_count,
         excess_inventory_opportunity=excess_opportunity_row,
+    )
+
+
+TREND_DEFINITION_NOTE = (
+    "Stockout risk: material-plants whose on-hand stock was below the recommended reorder point. "
+    "Excess inventory: material-plants whose current max stock is above the recommended max stock; "
+    "the opportunity is unit price x that gap, an estimate and not confirmed savings. Both are "
+    "internal proxies defined on 2026-09-22 and have not yet been confirmed by the business."
+)
+
+
+@router.get(
+    "/recommendations/trends",
+    response_model=RecommendationTrendsResponse,
+    summary="History of the stockout-risk and excess-inventory KPIs",
+    description="Reads the snapshots saved at the end of each successful recommendation "
+    "generation (i7_recommendation_trend_snapshot) -- never recomputed, never filled in. "
+    "Stockout history starts at the first captured snapshot: on-hand stock of earlier days is not "
+    "stored, so earlier points carry a null stockout count. Excess points may include "
+    "reconstructed ones (source=reconstructed). Empty points means nothing has been recorded yet.",
+)
+def get_recommendation_trends(
+    session: Annotated[Session, Depends(get_session)],
+    plant: Annotated[
+        Literal["ALL", "1300", "1500"], Query(description="ALL, or one plant.")
+    ] = "ALL",
+    since: Annotated[date | None, Query(description="Earliest day to include (inclusive).")] = None,
+    until: Annotated[date | None, Query(description="Latest day to include (inclusive).")] = None,
+    limit: Annotated[int, Query(ge=1, le=500, description="The most recent N points.")] = 200,
+) -> RecommendationTrendsResponse:
+    if since is not None and until is not None and since > until:
+        raise bad_request("INVALID_DATE_RANGE", "'since' must not be after 'until'.", since=str(since), until=str(until))
+
+    statement = select(RecommendationTrendSnapshot).where(RecommendationTrendSnapshot.plant_scope == plant)
+    if since is not None:
+        statement = statement.where(
+            RecommendationTrendSnapshot.captured_at >= datetime(since.year, since.month, since.day, tzinfo=timezone.utc)
+        )
+    if until is not None:
+        statement = statement.where(
+            RecommendationTrendSnapshot.captured_at
+            < datetime(until.year, until.month, until.day, tzinfo=timezone.utc) + timedelta(days=1)
+        )
+    # The most recent N, then oldest first for the chart. One query, no per-row work.
+    newest = session.execute(
+        statement.order_by(RecommendationTrendSnapshot.captured_at.desc(), RecommendationTrendSnapshot.id.desc()).limit(limit)
+    ).scalars().all()
+    rows = list(reversed(newest))
+
+    points = [
+        TrendPoint(
+            captured_at=row.captured_at,
+            source=row.source,
+            inventory_run_id=row.inventory_run_id,
+            oar_run_id=row.oar_run_id,
+            forecast_run_id=row.forecast_run_id,
+            feature_run_id=row.feature_run_id,
+            total_count=row.total_count,
+            stockout_risk_count=row.stockout_risk_count,
+            excess_count=row.excess_count,
+            excess_opportunity=row.excess_opportunity,
+            net_safety_stock_value_impact=row.net_safety_stock_value_impact,
+            currency=row.currency,
+        )
+        for row in rows
+    ]
+    return RecommendationTrendsResponse(
+        plant=plant,
+        points=points,
+        has_stockout_history=any(point.stockout_risk_count is not None for point in points),
+        has_excess_history=bool(points),
+        captured_count=sum(1 for point in points if point.source == "captured"),
+        reconstructed_count=sum(1 for point in points if point.source == "reconstructed"),
+        definition_note=TREND_DEFINITION_NOTE,
     )
 
 
