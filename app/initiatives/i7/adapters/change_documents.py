@@ -122,3 +122,31 @@ def material_marc_changes(
         )
         for row in rows
     ]
+
+
+_EVIDENCE_SQL = """
+    SELECT DISTINCT h.object_value
+      FROM n_cdhdr h
+      JOIN n_cdpos p
+        ON p.change_doc_object = h.change_doc_object
+       AND p.object_value = h.object_value
+       AND p.document_number = h.document_number
+     WHERE h.change_doc_object = 'MATERIAL'
+       AND p.table_name = 'MARC'
+       AND p.field_name IN :tracked_fields
+"""
+
+
+def materials_with_marc_changes(session: Session, tracked_fields: tuple[str, ...]) -> set[str]:
+    """Zero-padded numbers of every material that has at least one change to a
+    tracked MARC field -- one query, no per-material lookups.
+
+    Lets a portfolio count tell "SAP has said nothing about this material" (the
+    vast majority, and all of them on the current extract) from "there is
+    something to reconcile", without reading change history material by material.
+    """
+    rows = session.execute(
+        text(_EVIDENCE_SQL).bindparams(bindparam("tracked_fields", expanding=True)),
+        {"tracked_fields": list(tracked_fields)},
+    ).all()
+    return {row.object_value for row in rows}

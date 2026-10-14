@@ -100,13 +100,13 @@ class AdoptionStatusCount(BaseModel):
 
 
 class AdoptionSummary(BaseModel):
-    """Portfolio-wide counts straight from the recommendation ledger
-    (``i7_sap_adoption``) -- FR-9's persisted evaluation results, not a
-    live re-evaluation of every recommendation on each call. Only reflects
-    recommendations someone has actually viewed through the adoption
-    endpoints so far (the ledger fills in as pages are viewed -- see
-    ``app/api/i7/adoption.py``'s module docstring), never a claim about
-    portfolio-wide adoption before any evaluation has happened."""
+    """Adoption counts over every recommendation with a value (the newest
+    one for each material-plant, optionally for one plant).
+
+    ``total_evaluated`` is that whole set, not only the ones someone has
+    opened. ``unknown_count`` is everything SAP has no change evidence for
+    -- shown to people as Pending -- so the four counts always add up to
+    ``total_evaluated``."""
 
     model_config = ConfigDict(frozen=True)
 
