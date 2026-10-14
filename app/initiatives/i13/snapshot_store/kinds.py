@@ -22,6 +22,10 @@ exception   ExceptionQueueItem           rec_key id, f1 type, f2 status, n1 type
 =========== ============================ ===================================================
 
 ``oar`` is the item's material-plant classified OAR, for every kind.
+
+Some kinds are measured against the reference date and some are not
+(``DATED_KINDS`` / ``UNDATED_KINDS``): a new day re-ages the first and copies
+the second, rather than rebuilding everything (``builder.reage``).
 """
 
 from __future__ import annotations
@@ -55,6 +59,14 @@ RECLASS = "reclass"
 USAGE = "usage"
 GRNI = "grni"
 EXCEPTION = "exception"
+
+#: Kinds measured against the reference date (days since an issue or a GR,
+#: the 12-month window, plan grace, the usage months kept). A re-age
+#: recomputes exactly these (``builder.reage``).
+DATED_KINDS = (WATCH, MOVEMENT, OAR_KEY, RECLASS, USAGE, GRNI, EXCEPTION)
+#: Kinds that depend only on the SAP rows: a re-age copies them unchanged.
+#: ``test_snapshot_store_memory`` proves they do not move with the date.
+UNDATED_KINDS = (RLEDGER, LLEDGER, CHAIN, ATTRIB)
 
 #: Every dataclass a payload can hold -- what the schema signature covers.
 STORED_TYPES = (

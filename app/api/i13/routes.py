@@ -7,7 +7,7 @@ all computation lives in ``app.initiatives.i13``.
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,7 @@ from app.api.i13 import movement_metrics as movement_metrics_routes
 from app.api.i13 import procurement_chain as procurement_chain_routes
 from app.api.i13 import quantity_suggestion as quantity_suggestion_routes
 from app.api.i13 import reclassification as reclassification_routes
+from app.api.i13 import report as report_routes
 from app.api.i13 import reservation_ledger as reservation_ledger_routes
 from app.api.i13 import validation as validation_routes
 from app.api.i13 import watch as watch_routes
@@ -77,6 +78,8 @@ router.include_router(quantity_suggestion_routes.router)
 router.include_router(usage_routes.router)
 # Session <-> reservation links via RESB.SGTXT, FR-4 compliance, UAT stand-in.
 router.include_router(session_link_routes.router)
+# The summary report over the screens above; 404 unless I13_REPORT_ENABLED.
+router.include_router(report_routes.router)
 
 # The raw extract tables I13 actually reads -- see app/seed/manifest.py for
 # the full delivery; this is the I13-relevant subset.
@@ -125,10 +128,27 @@ def get_snapshot_status() -> SnapshotStatusResponse:
 
 
 @router.post("/snapshot/refresh", response_model=SnapshotStatusResponse, status_code=202)
-def refresh_snapshot() -> SnapshotStatusResponse:
-    """Rebuild the I13 snapshot in the background. The current one keeps
-    serving until the new one is ready; poll ``GET /i13/snapshot``."""
-    start_background_build("manual refresh")
+def refresh_snapshot(
+    mode: str = Query(
+        "build",
+        pattern="^(build|reage)$",
+        description=(
+            "build: re-read SAP and rebuild everything (about 78 min on production). "
+            "reage: bring the served version up to today without re-reading SAP "
+            "(minutes; I13_SNAPSHOT_STORE=sql only)."
+        ),
+    ),
+) -> SnapshotStatusResponse:
+    """Rebuild (or re-age) the I13 snapshot in the background. The current one
+    keeps serving until the new one is ready; poll ``GET /i13/snapshot``."""
+    if mode == "reage":
+        from app.initiatives.i13.snapshot_store import lifecycle
+
+        if not lifecycle.enabled():
+            raise HTTPException(status_code=409, detail="re-age needs I13_SNAPSHOT_STORE=sql")
+        lifecycle.start_background_build("manual re-age", manual=True, reage=True)
+    else:
+        start_background_build("manual refresh")
     return SnapshotStatusResponse(**snapshot_status())
 
 

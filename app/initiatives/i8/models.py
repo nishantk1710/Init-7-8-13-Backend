@@ -126,6 +126,26 @@ class RepairAttestation(Base):
     column exists so that when it is, it is not a migration on a table that by
     then holds audit history."""
 
+    # --- what it was declared against -------------------------------------
+
+    repair_document: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    """EKPO.EBELN of the repair line this was declared against, or null.
+
+    FR-4 asks for the attestation to be linked "once raised, to the repair PR
+    or PO". This is that link, and it is the EXACT key the register is built
+    on, so a declaration recorded from a repair line needs no matching rule at
+    all -- see :func:`app.initiatives.i8.attestation.coverage`.
+
+    **Nullable, and it has to stay that way.** The control exists for the part
+    coming off a machine, which is assessed BEFORE any repair is raised; in
+    that moment there is no purchase order to point at. Those declarations are
+    stored unbound and fall back to the material + plant + date window.
+    """
+
+    repair_item: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    """EKPO.EBELP of that line. Set with ``repair_document`` or not at all --
+    half a key matches nothing and is rejected at validation."""
+
     # --- the amendment chain ---------------------------------------------
 
     supersedes: Mapped[str | None] = mapped_column(
@@ -143,6 +163,10 @@ class RepairAttestation(Base):
         # attestation for this material at this plant, and when?" runs once per
         # repair line per refresh over 1,225 lines.
         Index("ix_i8_attestation_material_plant_at", "material_id", "plant", "attested_at"),
+        # The exact-bind lookup: "what was declared against THIS repair line?"
+        # Runs once per refresh alongside the index above, which stays because
+        # the window fallback still needs it for unbound declarations.
+        Index("ix_i8_attestation_repair_line", "repair_document", "repair_item"),
     )
 
     def __repr__(self) -> str:

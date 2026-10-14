@@ -25,6 +25,12 @@ a request finding no version started one, which raced start-up's clean-up --
 the clean-up then deleted the new build's tables, and with the frontend
 retrying it happened again and again (48 failed builds overnight on 10-11 Oct).
 
+A full build runs only when the SAP data or the config changed, and an
+automatic one only inside ``I13_AUTO_BUILD_WINDOW_UTC`` when that is set. A new
+day alone is a **re-age** (``builder.reage``): the served version's dated kinds
+recomputed from its own work tables, the rest copied -- minutes, no SAP read,
+never held back by the window. See ``decide``.
+
 Automatic attempts at the same data stop after ``I13_BUILD_MAX_ATTEMPTS`` in an
 hour, so a build that fails the same way every time does not re-copy the large
 tables forever; the error stays in ``GET /api/i13/snapshot`` and a manual
@@ -186,11 +192,13 @@ def _attempts_left(db: Session) -> int:
     return max(get_settings().i13_build_max_attempts - tried, 0)
 
 
-def _command(reason: str) -> list[str]:
-    return [sys.executable, "-m", "app.initiatives.i13.snapshot_store", "build", "--reason", reason]
+def _command(reason: str, reage: bool = False) -> list[str]:
+    return [
+        sys.executable, "-m", "app.initiatives.i13.snapshot_store", "reage" if reage else "build", "--reason", reason
+    ]
 
 
-def _launch_and_wait(reason: str, after: threading.Thread | None, manual: bool) -> None:
+def _launch_and_wait(reason: str, after: threading.Thread | None, manual: bool, reage: bool = False) -> None:
     if after is not None:
         after.join()
     try:
@@ -211,9 +219,9 @@ def _launch_and_wait(reason: str, after: threading.Thread | None, manual: bool) 
                     reason,
                 )
                 return
-        logger.info("I13 store: starting a build process (%s)", reason)
+        logger.info("I13 store: starting a %s process (%s)", "re-age" if reage else "build", reason)
         process = subprocess.Popen(
-            _command(reason), cwd=_APP_ROOT, env=os.environ.copy(), stdin=subprocess.DEVNULL
+            _command(reason, reage), cwd=_APP_ROOT, env=os.environ.copy(), stdin=subprocess.DEVNULL
         )
         with _lock:
             _state.process = process
@@ -239,15 +247,18 @@ def _launch_and_wait(reason: str, after: threading.Thread | None, manual: bool) 
             _state.building_since = None
 
 
-def start_background_build(reason: str, *, after: threading.Thread | None = None, manual: bool = False) -> bool:
-    """Launch a build process from a daemon thread that waits for it. False if
-    this process already has one running. ``manual`` skips the attempt limit."""
+def start_background_build(
+    reason: str, *, after: threading.Thread | None = None, manual: bool = False, reage: bool = False
+) -> bool:
+    """Launch a build (or, with ``reage``, a re-age) process from a daemon
+    thread that waits for it. False if this process already has one running.
+    ``manual`` skips the attempt limit."""
     with _lock:
         if _building_here():
             return False
         _state.building_since = datetime.now(timezone.utc)
         thread = threading.Thread(
-            target=_launch_and_wait, args=(reason, after, manual), name="i13-store-build", daemon=True
+            target=_launch_and_wait, args=(reason, after, manual, reage), name="i13-store-build", daemon=True
         )
         _state.thread = thread
     thread.start()
@@ -272,8 +283,7 @@ def _pull_in_progress(db: Session) -> str | None:
 
 def start_up(after: threading.Thread | None = None) -> None:
     """Clear builds that died (only while no build is running anywhere), then
-    build if nothing current is stored."""
-    from app.initiatives.i13.snapshot import compute_fingerprint
+    build, re-age or do nothing (``_decide``)."""
     from app.initiatives.i13.snapshot_store import builder
     from app.initiatives.i13.snapshot_store.build_lock import BuildLock
 
@@ -291,19 +301,101 @@ def start_up(after: threading.Thread | None = None) -> None:
                 logger.info("I13 store: cleared %d build(s) that stopped before finishing", abandoned)
         finally:
             lock.release()
-        run = ready_run(db)
-        if run is not None and run.fingerprint == compute_fingerprint(db):
-            logger.info("I13 store: serving v%s (built %s); no build needed", run.version, run.built_at)
-            with _lock:
-                _state.last_check = time.monotonic()
-            return
-        waiting = _pull_in_progress(db) if run is not None else None
+        action = _decide(db, get_settings(), "start-up")
     finally:
         db.close()
-    if waiting:
-        logger.info("I13 store: data changed but a pull is running (%s); serving the stored version", waiting)
-        return
-    start_background_build("start-up")
+    with _lock:
+        _state.last_check = time.monotonic()
+    if action == BUILD:
+        start_background_build("start-up")
+    elif action == REAGE:
+        start_background_build("start-up: new day", reage=True)
+
+
+# --- what to do: nothing, re-age, or a full build --------------------------------
+#
+# Two questions, kept apart. Has the SAP data (or the config) changed? Only a
+# full build answers that, and it loads Azure SQL for over an hour, so it waits
+# for the pull to settle, the rebuild gap, and the build window. Has the day
+# turned? A re-age answers that in minutes without reading SAP, so it is never
+# held back -- the screens are measured as of today even while a data change
+# waits for the night.
+
+BUILD = "build"
+REAGE = "re-age"
+
+
+def decide(
+    *,
+    served: bool,
+    data_changed: bool,
+    day_turned: bool,
+    pull_running: bool,
+    gap_holding: bool,
+    in_window: bool,
+) -> str | None:
+    """``BUILD``, ``REAGE`` or ``None``. Pure, for the tests."""
+    if not served:
+        return BUILD  # nothing to serve and nothing to re-age: build regardless of the hour
+    if data_changed and not (pull_running or gap_holding or not in_window):
+        return BUILD
+    return REAGE if day_turned else None
+
+
+def in_window(spec: str, now: datetime) -> bool:
+    """Whether ``now`` (UTC) is inside ``"HH:MM-HH:MM"``, which may wrap past
+    midnight. An empty spec is always inside; an unreadable one too, logged --
+    a typo must not stop builds for good."""
+    spec = (spec or "").strip()
+    if not spec:
+        return True
+    try:
+        start, end = (part.strip() for part in spec.split("-"))
+        lo = int(start[:2]) * 60 + int(start[3:5])
+        hi = int(end[:2]) * 60 + int(end[3:5])
+    except ValueError:
+        logger.warning("I13 store: I13_AUTO_BUILD_WINDOW_UTC=%r is not HH:MM-HH:MM; building at any hour", spec)
+        return True
+    minute = now.hour * 60 + now.minute
+    if lo == hi:
+        return True
+    return lo <= minute < hi if lo < hi else minute >= lo or minute < hi
+
+
+def _decide(db: Session, settings, trigger: str) -> str | None:
+    from app.initiatives.i13.snapshot import compute_fingerprint, reference_date_for
+
+    run = ready_run(db)
+    now = datetime.now(timezone.utc)
+    data_changed = run is None or run.fingerprint != compute_fingerprint(db)
+    pull = _pull_in_progress(db) if run is not None and data_changed else None
+    gap = (
+        too_soon(run.built_at, now, settings.i13_rebuild_min_gap_minutes)
+        if run is not None and data_changed
+        else None
+    )
+    window_open = in_window(settings.i13_auto_build_window_utc, now)
+    day_turned = run is not None and run.reference_date < reference_date_for(settings)
+    action = decide(
+        served=run is not None,
+        data_changed=data_changed,
+        day_turned=day_turned,
+        pull_running=pull is not None,
+        gap_holding=gap is not None,
+        in_window=window_open,
+    )
+    if run is not None and data_changed and action != BUILD:
+        held = (
+            f"a pull is running ({pull})" if pull
+            else f"the rebuild gap holds ({int(gap.total_seconds() // 60) + 1} min left)" if gap
+            else f"outside the build window {settings.i13_auto_build_window_utc} UTC"
+        )
+        logger.info("I13 store (%s): data changed; full build waits -- %s; serving v%s", trigger, held, run.version)
+    elif action is None and run is not None:
+        logger.info("I13 store (%s): serving v%s as of %s; nothing to do", trigger, run.version, run.reference_date)
+    if action == REAGE:
+        logger.info("I13 store (%s): v%s is as of %s; re-ageing to today", trigger, run.version, run.reference_date)  # type: ignore[union-attr]
+    return action
 
 
 def too_soon(built_at: datetime | None, now: datetime, gap_minutes: int) -> timedelta | None:
@@ -321,8 +413,8 @@ def too_soon(built_at: datetime | None, now: datetime, gap_minutes: int) -> time
 
 
 def check_fingerprint(db: Session, *, min_interval_seconds: float | None = None) -> bool:
-    from app.initiatives.i13.snapshot import compute_fingerprint
-
+    """The periodic (and after-delta) check. Automatic only: a manual refresh
+    goes through ``start_background_build`` directly and nothing holds it back."""
     settings = get_settings()
     interval = settings.i13_snapshot_check_interval_seconds if min_interval_seconds is None else min_interval_seconds
     with _lock:
@@ -331,25 +423,12 @@ def check_fingerprint(db: Session, *, min_interval_seconds: float | None = None)
         _state.last_check = time.monotonic()
     if _lock_held():
         return False
-    run = ready_run(db)
-    if run is not None and run.fingerprint == compute_fingerprint(db):
-        return False
-    waiting = _pull_in_progress(db)
-    if waiting:
-        logger.info("I13 store: data changed; waiting for the pull to finish (%s)", waiting)
-        return False
-    remaining = too_soon(
-        run.built_at if run is not None else None, datetime.now(timezone.utc), settings.i13_rebuild_min_gap_minutes
-    )
-    if remaining is not None:
-        # Automatic builds only: a manual refresh goes through
-        # start_background_build directly and is not held back.
-        logger.info(
-            "I13 store: data changed; serving v%s until the rebuild gap passes (%d min left of %d)",
-            run.version, int(remaining.total_seconds() // 60) + 1, settings.i13_rebuild_min_gap_minutes,  # type: ignore[union-attr]
-        )
-        return False
-    return start_background_build("data changed")
+    action = _decide(db, settings, "check")
+    if action == BUILD:
+        return start_background_build("data changed")
+    if action == REAGE:
+        return start_background_build("new day", reage=True)
+    return False
 
 
 # --- what is being served ------------------------------------------------------

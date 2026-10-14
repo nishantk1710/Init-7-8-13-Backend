@@ -284,7 +284,11 @@ def _build_batch(
     stats: BuildStats,
     diagnostics: list[ProcurementChainDiagnostics],
     sgtxt_rows: list[dict],
+    dated_only: bool = False,
 ) -> None:
+    """One batch's records. ``dated_only`` writes only the kinds measured
+    against ``as_of`` (``DATED_KINDS``) -- what a re-age recomputes; the
+    others are copied from the version being re-aged (see :func:`reage`)."""
     # Each result is written as soon as it is computed and released as soon as
     # nothing later reads it, so a batch's peak is its largest stage, not the
     # sum of all of them. Kinds are numbered separately, so the order they are
@@ -353,35 +357,39 @@ def _build_batch(
     del movement_repo
     movements.drop_history()
 
-    writer.write(kinds.chain(e, is_oar(e.material, e.plant)) for e in build_procurement_chain(procurement_repo))
-    diagnostics.append(compute_chain_diagnostics(procurement_repo))
-    writer.write(
-        kinds.lledger(e, is_oar(e.material, e.plant))
-        for e in build_legacy_ledger(procurement_repo, reservation_repo, index, include_out_of_scope=True)
-    )
+    if not dated_only:
+        writer.write(kinds.chain(e, is_oar(e.material, e.plant)) for e in build_procurement_chain(procurement_repo))
+        diagnostics.append(compute_chain_diagnostics(procurement_repo))
+        writer.write(
+            kinds.lledger(e, is_oar(e.material, e.plant))
+            for e in build_legacy_ledger(procurement_repo, reservation_repo, index, include_out_of_scope=True)
+        )
 
+    # The reservation ledger is undated, but GRNI and the queue below are
+    # measured from it, so a re-age computes it too -- it just does not store it.
     ledger = build_reservation_ledger(
         reservation_repo, procurement_repo, material_scope_index=index, include_out_of_scope=True
     )
-    reservation_rows = reservation_repo.get_reservations()
-    sgtxt = {(r["Rsnum"], r["Rspos"]): r["Sgtxt"] for r in reservation_rows if r.get("Sgtxt")}
-    sgtxt_rows.extend(
-        {k: r.get(k) for k in ("Rsnum", "Rspos", "Matnr", "Werks", "Sgtxt", "UatSimulated", "UatStamped")}
-        for r in reservation_rows
-        if r.get("Sgtxt")
-    )
-    writer.write(kinds.rledger(e, sgtxt.get((e.reservation_number, e.reservation_item))) for e in ledger)
-    del sgtxt
+    if not dated_only:
+        reservation_rows = reservation_repo.get_reservations()
+        sgtxt = {(r["Rsnum"], r["Rspos"]): r["Sgtxt"] for r in reservation_rows if r.get("Sgtxt")}
+        sgtxt_rows.extend(
+            {k: r.get(k) for k in ("Rsnum", "Rspos", "Matnr", "Werks", "Sgtxt", "UatSimulated", "UatStamped")}
+            for r in reservation_rows
+            if r.get("Sgtxt")
+        )
+        writer.write(kinds.rledger(e, sgtxt.get((e.reservation_number, e.reservation_item))) for e in ledger)
+        del sgtxt
 
-    pr_by_ledger = {e.ledger_id: e.pr_number for e in ledger}
-    writer.write(
-        kinds.attrib(a, is_oar(a.material, a.plant), pr_by_ledger.get(a.ledger_id))
-        for a in ConsumptionAttributionService(
-            cost_centre_enabled=config.attribution.cost_centre_enabled
-        ).iter_attribute_entries(ledger, reservation_rows, all_plans)
-    )
-    # The SAP rows are all read now: release them with their repositories.
-    del pr_by_ledger, reservation_rows
+        pr_by_ledger = {e.ledger_id: e.pr_number for e in ledger}
+        writer.write(
+            kinds.attrib(a, is_oar(a.material, a.plant), pr_by_ledger.get(a.ledger_id))
+            for a in ConsumptionAttributionService(
+                cost_centre_enabled=config.attribution.cost_centre_enabled
+            ).iter_attribute_entries(ledger, reservation_rows, all_plans)
+        )
+        # The SAP rows are all read now: release them with their repositories.
+        del pr_by_ledger, reservation_rows
     del procurement_repo, reservation_repo, movements
 
     # GRNI per ledger entry -- snapshot.I13Snapshot.grni_entries' rule.
@@ -540,6 +548,231 @@ def build(
 
     cleanup(db, keep=version)
     return version
+
+
+# --- a new day: re-age, not rebuild --------------------------------------------
+#
+# A full build copies the SAP tables, stitches every ledger and writes every
+# kind -- about 78 minutes on the production extract. When only the date has
+# moved, almost none of that has changed: the ledgers, the procurement chain
+# and the attribution depend on the SAP rows alone (kinds.UNDATED_KINDS). A
+# re-age therefore reads the served version's own work tables (no SAP copy),
+# recomputes only the kinds measured against the date, copies the undated ones
+# inside SQL Server, and swaps -- the same all-or-nothing switch a build makes.
+# Values are exactly a full build's for that date over the same SAP rows:
+# the same builders, called the same way (``_build_batch(dated_only=True)``).
+
+#: Rows per INSERT ... SELECT when the undated kinds are copied: one statement
+#: per chunk keeps each transaction's log small on a small database.
+_COPY_CHUNK = 200_000
+
+
+def served_run(db: Session) -> I13SnapshotRun | None:
+    """The version being served, if this code can read it."""
+    run = db.execute(
+        select(I13SnapshotRun)
+        .where(I13SnapshotRun.status == STATUS_READY)
+        .order_by(I13SnapshotRun.version.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return run if run is not None and run.schema_signature == kinds.signature() else None
+
+
+def _copy_kinds(db: Session, source: int, target: int, names: Iterable[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for kind in names:
+        top = db.execute(
+            select(func.max(I13SnapshotRecord.seq)).where(
+                I13SnapshotRecord.version == source, I13SnapshotRecord.kind == kind
+            )
+        ).scalar() or 0
+        copied = 0
+        for lo in range(0, top, _COPY_CHUNK):
+            copied += db.execute(
+                text(
+                    "INSERT INTO i13_snapshot_record "
+                    "(version, kind, seq, material, plant, rec_key, oar, f1, f2, f3, n1, d1, text1, payload) "
+                    "SELECT :target, kind, seq, material, plant, rec_key, oar, f1, f2, f3, n1, d1, text1, payload "
+                    "FROM i13_snapshot_record "
+                    "WHERE version = :source AND kind = :kind AND seq > :lo AND seq <= :hi"
+                ),
+                {"target": target, "source": source, "kind": kind, "lo": lo, "hi": lo + _COPY_CHUNK},
+            ).rowcount
+            db.commit()
+        counts[kind] = copied
+    return counts
+
+
+def _rename_work_tables(db: Session, source: WorkTables, target: WorkTables) -> None:
+    """Hand the source version's work tables to the target, inside the caller's
+    transaction (``sp_rename`` is transactional): they hold the same SAP rows,
+    and the per-material refresh reads them under the served version's name."""
+    for old, new in zip(source.all, target.all):
+        db.execute(
+            text("IF OBJECT_ID(:old, 'U') IS NOT NULL EXEC sp_rename @objname = :old, @newname = :new"),
+            {"old": old, "new": new},
+        )
+
+
+def reage(
+    db: Session,
+    *,
+    reason: str,
+    settings: Settings | None = None,
+    config: I13Config | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> int:
+    """Bring the served version up to today without re-reading SAP. Returns the
+    new version, or the served one when it is already current.
+
+    Raises on failure, after marking the run ``failed`` and removing what it
+    wrote; the served version and its work tables are untouched until the
+    final swap, which is one transaction.
+    """
+    from app.initiatives.i13.plans import load_captured_plans
+    from app.initiatives.i13.snapshot import reference_date_for
+
+    settings = settings or get_settings()
+    config = config or get_i13_config()
+    log = progress or logger.info
+    data_dir = Path(settings.i13_data_dir)
+    as_of = reference_date_for(settings)
+
+    source = served_run(db)
+    if source is None:
+        raise RuntimeError("I13 store: nothing is served to re-age; a full build is needed")
+    if source.reference_date >= as_of:
+        log(f"I13 store: v{source.version} is already as of {source.reference_date}; nothing to re-age")
+        return source.version
+
+    started = time.monotonic()
+    started_at = datetime.now(timezone.utc)
+    version = next_version(db)
+    db.add(
+        I13SnapshotRun(
+            version=version,
+            status=STATUS_BUILDING,
+            reason=reason[:80],
+            # The same SAP rows as the source: its fingerprint, so a data change
+            # since the source was built is still seen as one.
+            fingerprint=source.fingerprint,
+            schema_signature=kinds.signature(),
+            reference_date=as_of,
+            started_at=started_at,
+        )
+    )
+    db.commit()
+    log(f"I13 store: re-age v{source.version} ({source.reference_date}) -> v{version} ({as_of}) started ({reason})")
+
+    work = WorkTables(source.version)
+    stats = BuildStats()
+    try:
+        batches = plan_batches(db, work, settings.i13_build_batch_materials, settings.i13_build_batch_rows)
+        stats.batches = len(batches)
+        reference_plans = load_reference_plans(data_dir)
+        all_plans = list(reference_plans) + load_captured_plans(db)
+        writer = RecordWriter(db, version)
+
+        for n, batch in enumerate(batches, start=1):
+            batch_started = time.monotonic()
+            _build_batch(
+                db, work, batch,
+                config=config, settings=settings, data_dir=data_dir, as_of=as_of,
+                reference_plans=reference_plans, all_plans=all_plans,
+                writer=writer, stats=stats, diagnostics=[], sgtxt_rows=[], dated_only=True,
+            )
+            db.commit()
+            gc.collect()
+            log(
+                f"I13 store: re-age v{version} batch {n}/{len(batches)} ({batch.lo}..{batch.hi}) "
+                f"in {time.monotonic() - batch_started:.1f}s"
+            )
+
+        orphans = [p for p in reference_plans if not any(b.holds(p.material) for b in batches)]
+        if orphans:
+            writer.write([kinds.exception(i, True) for i in exception_queue_from([], orphans, [], config, as_of=as_of)])
+        db.commit()
+
+        copied = _copy_kinds(db, source.version, version, kinds.UNDATED_KINDS)
+        log(f"I13 store: re-age v{version} copied {copied}")
+
+        meta = json.loads(source.meta) if source.meta else {}
+        meta.update(
+            {
+                "oar_positions": stats.oar_positions,
+                "band_counts": stats.band_counts,
+                "reference_plan_count": len(reference_plans),
+                "history_months": sorted(stats.months),
+                "records": {**copied, **dict(writer.counts)},
+                "reaged_from": source.version,
+            }
+        )
+        elapsed = round(time.monotonic() - started, 1)
+        db.execute(
+            update(I13SnapshotRun).where(I13SnapshotRun.status == STATUS_READY).values(status=STATUS_SUPERSEDED)
+        )
+        db.execute(
+            update(I13SnapshotRun)
+            .where(I13SnapshotRun.version == version)
+            .values(
+                status=STATUS_READY,
+                built_at=datetime.now(timezone.utc),
+                build_seconds=Decimal(str(elapsed)),
+                batches=len(batches),
+                meta=json.dumps(meta, default=str),
+            )
+        )
+        _rename_work_tables(db, work, WorkTables(version))
+        db.commit()
+        log(f"I13 store: re-age v{version} ready in {elapsed}s")
+    except Exception as exc:
+        db.rollback()
+        logger.exception("I13 store: re-age v%s failed", version)
+        db.execute(
+            update(I13SnapshotRun)
+            .where(I13SnapshotRun.version == version)
+            .values(status=STATUS_FAILED, error=f"{type(exc).__name__}: {exc}"[:4000])
+        )
+        db.commit()
+        _clear_version(db, version)
+        raise
+
+    cleanup(db, keep=version)
+    _catch_up(db, since=started_at)
+    return version
+
+
+def _catch_up(db: Session, *, since: datetime) -> None:
+    """Re-apply what changed while the re-age ran.
+
+    A plan captured or a UAT reservation simulated during the re-age refreshed
+    its material in the source version, which has just been retired. Refresh
+    those materials again in the new one -- the same per-material refresh, so
+    the result is what it would have been had they arrived a minute later.
+    """
+    from app.assistant.models import ConsumptionPlanRecord
+    from app.initiatives.i13.snapshot_store.refresh import refresh_material
+    from app.models.i13_session_link import UatReservationSgtxt
+
+    keys: set[tuple[str, str]] = set()
+    for model, stamp in ((ConsumptionPlanRecord, ConsumptionPlanRecord.captured_at),
+                         (UatReservationSgtxt, UatReservationSgtxt.created_at)):
+        try:
+            keys.update(
+                (m, p) for m, p in db.execute(select(model.material, model.plant).where(stamp >= since)).all()
+            )
+        except Exception:
+            logger.warning("I13 store: could not list %s changed during the re-age", model.__tablename__, exc_info=True)
+            db.rollback()
+    for material, plant in sorted(keys):
+        try:
+            refresh_material(db, material, plant, reservations=True)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.warning("I13 store: catch-up refresh of %s/%s failed", material, plant, exc_info=True)
+    if keys:
+        logger.info("I13 store: re-applied %d material(s) changed during the re-age", len(keys))
 
 
 def _merge_diagnostics(parts: list[ProcurementChainDiagnostics]) -> dict:
