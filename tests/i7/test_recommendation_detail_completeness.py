@@ -145,6 +145,54 @@ def test_oar_recommendation_has_no_lead_time_or_service_level():
     assert result.z_factor is None
 
 
+def _signed_policy() -> PolicyDocument:
+    from app.initiatives.i7.contracts import Criticality
+    from app.initiatives.i7.policy import ServiceLevelKey, ServiceLevelPolicy
+
+    return PolicyDocument(
+        service_level=ServiceLevelPolicy(
+            matrix=(
+                (ServiceLevelKey(criticality=Criticality.NORMAL), 0.85),
+                (ServiceLevelKey(criticality=Criticality.CRITICAL), 0.98),
+            )
+        )
+    )
+
+
+def test_oar_recommendation_takes_the_tier_service_level_and_z_from_the_signed_matrix():
+    result = builder.build_oar_recommendation(
+        oar_row(criticality="NORMAL"), _signed_policy()
+    )
+    assert result.service_level == Decimal("0.85")
+    assert abs(float(result.z_factor) - 1.036) < 0.001
+    # Lead time stays unavailable: that one really is a Phase 5 output.
+    assert result.lead_time_days is None
+
+
+def test_oar_recommendation_tier_is_read_case_and_space_insensitively():
+    result = builder.build_oar_recommendation(
+        oar_row(criticality=" critical "), _signed_policy()
+    )
+    assert result.service_level == Decimal("0.98")
+
+
+def test_oar_recommendation_without_a_tier_gets_no_service_level_not_a_default():
+    result = builder.build_oar_recommendation(oar_row(criticality=None), _signed_policy())
+    assert result.service_level is None and result.z_factor is None
+
+
+def test_oar_recommendation_with_an_unrecognised_tier_gets_no_service_level():
+    result = builder.build_oar_recommendation(
+        oar_row(criticality="PLATINUM"), _signed_policy()
+    )
+    assert result.service_level is None and result.z_factor is None
+
+
+def test_oar_recommendation_with_an_unsigned_matrix_gets_no_service_level():
+    result = builder.build_oar_recommendation(oar_row(criticality="NORMAL"), POLICY)
+    assert result.service_level is None and result.z_factor is None
+
+
 def test_oar_recommendation_still_exposes_unit_price():
     result = builder.build_oar_recommendation(oar_row(unit_price=Decimal("7.25")), POLICY)
     assert result.unit_price == Decimal("7.25")

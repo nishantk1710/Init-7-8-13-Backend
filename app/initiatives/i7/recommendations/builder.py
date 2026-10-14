@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+from app.initiatives.i7.contracts import Criticality
+from app.initiatives.i7.inventory import service_level as service_level_module
 from app.initiatives.i7.recommendations import explanation
 from app.initiatives.i7.recommendations.conversion import HodApprovalLookup, evaluate as evaluate_conversion
 from app.initiatives.i7.recommendations.types import (
@@ -171,11 +173,7 @@ def build_normal_recommendation(
     factors = explanation.build_factors(
         demand_class=row.demand_class,
         baseline_model=row.baseline_model,
-        lead_time_detail=(
-            f"{row.lead_time_method}, {row.valid_po_count} PO(s)"
-            if row.lead_time_method
-            else None
-        ),
+        lead_time_detail=_lead_time_plain(row.lead_time_method, row.valid_po_count),
         # Part 30 -- whether *this persisted calculation* actually had a
         # configured service level, not whether the CURRENT
         # generate_recommendations() call's policy does. inventory/
@@ -236,6 +234,33 @@ def build_normal_recommendation(
         policy_id=policy.policy_id,
         policy_version=policy.policy_version,
     )
+
+
+def _lead_time_plain(method: str | None, valid_po_count: int | None) -> str | None:
+    """Where the delivery time came from, in words. ``None`` when there is no
+    method to describe -- no sentence is written about a lead time nobody had."""
+    if not method:
+        return None
+    if method == "PLANNED_FALLBACK":
+        return "Delivery time is the planned delivery time kept for this material in SAP."
+    if valid_po_count:
+        plural = "s" if valid_po_count != 1 else ""
+        return f"Delivery time is taken from {valid_po_count} past purchase order{plural}."
+    return "Delivery time is taken from past purchase orders."
+
+
+def _criticality_tier(raw: str | None) -> Criticality | None:
+    """The stored tier as the policy's enum, or None when absent or unrecognised.
+
+    Unknown text is not guessed into a tier: ``resolve`` treats None as "no tier,
+    so no service level".
+    """
+    if raw is None:
+        return None
+    try:
+        return Criticality(str(raw).strip().upper())
+    except ValueError:
+        return None
 
 
 def build_oar_recommendation(
@@ -319,6 +344,10 @@ def build_oar_recommendation(
         oar_confidence=row.confidence,
     )
 
+    tier_service = service_level_module.resolve(
+        policy.service_level, _criticality_tier(row.criticality), None
+    )
+
     return BuiltRecommendation(
         sap_material_number=row.sap_material_number,
         sap_plant_code=row.sap_plant_code,
@@ -341,18 +370,22 @@ def build_oar_recommendation(
         confidence=row.confidence,
         oar_neighbour_count=row.neighbour_count,
         oar_best_similarity=row.best_similarity,
-        # circuit/lead_time/service_level/z_factor are Phase 5 outputs; an
-        # OAR/cold-start material never reaches Phase 5 (see
-        # inventory/service.py's DEFERRED_TO_OAR), so these are genuinely
-        # unavailable here -- not a gap in this builder, a fact about the
-        # material. unit_price is the one exception: it's a feature-store
+        # circuit and lead time are Phase 5 outputs; an OAR/cold-start material
+        # never reaches Phase 5 (see inventory/service.py's DEFERRED_TO_OAR), so
+        # they are genuinely unavailable here. unit_price is a feature-store
         # (Phase 3) field, available regardless of history status.
+        #
+        # The service level is different: it depends only on the criticality
+        # tier, which an OAR material does have. It is looked up through the same
+        # gate the standard path uses, so an unsigned matrix or a missing tier
+        # still yields None -- never a default. It is the tier's *target*: the
+        # OAR estimate is similarity-weighted and did not use it.
         circuit=None,
         unit_price=row.unit_price,
         lead_time_days=None,
         lead_time_variance_days=None,
-        service_level=None,
-        z_factor=None,
+        service_level=tier_service.service_level,
+        z_factor=tier_service.z_factor,
         conversion=conversion,
         blocking_reason=blocking_reason,
         factors=factors,

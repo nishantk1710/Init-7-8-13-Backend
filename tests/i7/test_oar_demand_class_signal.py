@@ -105,8 +105,9 @@ def test_existing_history_status_reason_is_still_exposed_alongside_it():
 def test_rationale_carries_the_demand_class_as_a_supporting_signal():
     row = oar_row(demand_class="INTERMITTENT")
     result = builder.build_oar_recommendation(row, UNSIGNED_POLICY)
-    assert any("INTERMITTENT" in factor.detail for factor in result.factors)
-    assert any("supporting" in factor.label.lower() for factor in result.factors)
+    # Said in words a non-technical reader follows, not as the class code.
+    assert any("occasional" in factor.detail for factor in result.factors)
+    assert any(factor.label == "Usage pattern" for factor in result.factors)
 
 
 # --- Eligibility must remain completely independent of demand_class --------

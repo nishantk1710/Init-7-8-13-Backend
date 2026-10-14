@@ -187,3 +187,68 @@ def test_identical_trigger_inputs_produce_the_same_decision_regardless_of_contex
     lumpy_like = evaluate("LUMPY_MATERIAL", "1300", 5, None, DEFAULT_POLICY, FixedHodLookup(None))
     assert smooth_like.eligibility is lumpy_like.eligibility is ConversionEligibility.ELIGIBLE
     assert smooth_like.trigger is lumpy_like.trigger is ConversionTrigger.CONSUMPTION_FREQUENCY
+
+
+# --- The policy in force: the I13 HOD trigger is off ---------------------------
+
+
+def test_the_policy_in_force_does_not_use_the_i13_hod_trigger():
+    from app.initiatives.i7.policy.thresholds import current_conversion_trigger_policy
+
+    assert current_conversion_trigger_policy().enable_i13_hod_trigger is False
+
+
+def test_with_the_hod_trigger_off_nothing_firing_is_not_eligible_not_unknown():
+    """With the trigger on and no I13 ledger, a material that fired neither
+    other trigger was UNKNOWN. Off, the answer is definite."""
+    from app.initiatives.i7.policy.thresholds import current_conversion_trigger_policy
+
+    decision = evaluate("M1", "1300", 2, "HIGH", current_conversion_trigger_policy(), None)
+    assert decision.eligibility is ConversionEligibility.NOT_ELIGIBLE
+
+
+def test_with_the_hod_trigger_off_an_hod_approval_cannot_make_a_material_eligible():
+    from app.initiatives.i7.policy.thresholds import current_conversion_trigger_policy
+
+    decision = evaluate(
+        "M1", "1300", 2, "HIGH", current_conversion_trigger_policy(), FixedHodLookup(True)
+    )
+    assert decision.eligibility is ConversionEligibility.NOT_ELIGIBLE
+
+
+def test_with_the_hod_trigger_off_consumption_and_criticality_still_make_a_material_eligible():
+    from app.initiatives.i7.policy.thresholds import current_conversion_trigger_policy
+
+    policy = current_conversion_trigger_policy()
+    assert evaluate("M1", "1300", 5, "HIGH", policy, None).trigger is ConversionTrigger.CONSUMPTION_FREQUENCY
+    assert evaluate("M1", "1300", 0, "NORMAL", policy, None).trigger is ConversionTrigger.PRODUCTION_IMPACT
+
+
+# --- The reasons read as plain sentences -----------------------------------------
+
+
+def test_the_reasons_are_plain_sentences_not_internal_notation():
+    from app.initiatives.i7.policy.thresholds import current_conversion_trigger_policy
+
+    policy = current_conversion_trigger_policy()
+    by_tier = evaluate("M1", "1300", 0, "NORMAL", policy, None)
+    assert by_tier.detail == "Its criticality is Normal, which qualifies it for Min-Max ordering."
+
+    by_usage = evaluate("M1", "1300", 7, "HIGH", policy, None)
+    assert by_usage.detail == (
+        "It was used 7 times in the last 12 months, more than the 4 needed to qualify for Min-Max ordering."
+    )
+
+    neither = evaluate("M1", "1300", 1, "HIGH", policy, None)
+    assert neither.detail == "None of the reasons for moving this material to Min-Max ordering apply."
+
+
+def test_a_single_use_is_not_pluralised():
+    from app.initiatives.i7.policy.thresholds import current_conversion_trigger_policy
+
+    decision = evaluate("M1", "1300", 1, "NORMAL", current_conversion_trigger_policy(), None)
+    # Eligible by tier; the consumption sentence is still correct when it is the unknown/other branch.
+    from app.initiatives.i7.recommendations import conversion
+
+    assert conversion._times(1) == "1 time" and conversion._times(2) == "2 times"
+    assert decision.eligibility is ConversionEligibility.ELIGIBLE
