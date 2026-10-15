@@ -51,6 +51,8 @@ from app.api.assistant.schemas import (
     AskRequest,
     AskResponse,
     ChoiceModel,
+    DepartmentListResponse,
+    DepartmentModel,
     FieldModel,
     JustificationListResponse,
     JustificationModel,
@@ -71,6 +73,7 @@ from app.api.assistant.schemas import (
     TurnModel,
 )
 from app.api.deps import Actor, get_current_actor
+from app.assistant import departments
 from app.assistant import intents
 from app.assistant import material_search
 from app.assistant import session as session_service
@@ -220,6 +223,31 @@ def search_materials(
     )
 
 
+@router.get(
+    "/departments",
+    response_model=DepartmentListResponse,
+    summary="Department codes for the assistant's opener",
+)
+def list_departments(
+    plant: Annotated[str | None, Query(max_length=8)] = None,
+) -> DepartmentListResponse:
+    """Every department code with a purchase requisition at 1300 or 1500.
+
+    The ``plant``'s own codes come first and are marked ``primary``; the rest
+    are for search. Writes nothing and never touches the database on the
+    request -- the list is held in memory (app/assistant/departments.py).
+    """
+    items = departments.for_plant(plant, wait_seconds=departments.FIRST_LOAD_WAIT_SECONDS)
+    return DepartmentListResponse(
+        plant=plant,
+        items=[
+            DepartmentModel(code=d.code, plants=list(d.plants), primary=d.primary)
+            for d in items
+        ],
+        loaded=departments.is_loaded(),
+    )
+
+
 @router.post(
     "/sessions",
     response_model=StartSessionResponse,
@@ -229,13 +257,28 @@ def start_session(
     body: StartSessionRequest,
     db: DbDep,
     actor: ActorDep,
+    settings: SettingsDep,
 ) -> StartSessionResponse:
     """Route the material and, if there is anything to say, mint a session.
 
     **A material with no flow is a 200 with a null session**, not a 404. The
     assistant genuinely has no opinion about a consumable, and the routing
     explains why -- which is what a requester who sees nothing will ask.
+
+    A department that is not a listed code is a 422 from the platform opener
+    and is stored as sent from SAP -- see app/assistant/departments.py.
     """
+    try:
+        departments.check(
+            (body.department or "").strip(),
+            from_sap=body.origin == Origin.BADI.value,
+            enabled=settings.assistant_department_check_enabled,
+        )
+    except departments.DepartmentError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)
+        ) from error
+
     try:
         started = session_service.start(
             db,

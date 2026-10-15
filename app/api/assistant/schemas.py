@@ -87,9 +87,11 @@ class StartSessionRequest(AssistantModel):
         max_length=64,
         description=(
             "Which department the part is for -- the requester's, not the "
-            "operator's. Optional: the BAdI pop-up carries a material and a "
-            "plant and cannot supply this, so a session opened from SAP "
-            "legitimately has none."
+            "operator's -- as its 5-digit code (EBAN.AFNAM, e.g. 10100); see "
+            "GET /assistant/departments. From the platform it must be on that "
+            "list. Optional: the BAdI pop-up carries a material and a plant "
+            "and may not supply this, so a session opened from SAP "
+            "legitimately has none, and is never refused over it."
         ),
     )
     requested_for: str | None = PydanticField(
@@ -137,6 +139,25 @@ class MaterialSearchResponse(AssistantModel):
 
     items: list[MaterialMatchModel]
     note: str
+
+
+class DepartmentModel(AssistantModel):
+    """One department code, and the plants it has requisitions at."""
+
+    code: str
+    plants: list[str]
+    primary: bool
+    """Show it before anything is typed. False: offer it on search only."""
+
+
+class DepartmentListResponse(AssistantModel):
+    """The opener's department codes, the asked-for plant's first."""
+
+    plant: str | None = None
+    items: list[DepartmentModel]
+    loaded: bool
+    """False while the list is still loading or could not be read: ``items``
+    is then empty and the opener accepts any 5-digit code."""
 
 
 class NarrativeModel(AssistantModel):

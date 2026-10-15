@@ -115,6 +115,13 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
                 material_names.start_loading()
                 material_names.wait_for_load(material_names.STARTUP_WAIT_SECONDS)
+
+                # The opener's department list (n_eban). Not waited for: it is
+                # one DISTINCT, and until it lands the opener checks the
+                # code's shape only.
+                from app.assistant import departments
+
+                departments.start_loading()
             i8_warm: threading.Thread | None = None
             if settings.database_url and settings.i8_snapshot_warm_on_startup:
                 from app.initiatives.i8 import service as i8_service

@@ -886,6 +886,12 @@ class Settings(BaseSettings):
     # question-answering, which is separate unagreed scope.
     assistant_free_text_intents_enabled: bool = True
 
+    # Department on a session started from the platform must be a code from
+    # the list (app/assistant/departments.py: 5-digit EBAN.AFNAM values at an
+    # in-scope plant). Off stores whatever is sent, as before. Sessions opened
+    # from SAP are never refused either way.
+    assistant_department_check_enabled: bool = True
+
     @field_validator("i13_qty_cover_ceiling_months", "i13_qty_minimum_history_count", mode="before")
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:
