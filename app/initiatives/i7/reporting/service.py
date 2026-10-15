@@ -55,6 +55,7 @@ from sqlalchemy.orm import Session
 from app.core.logging import get_logger
 from app.initiatives.i7.reporting.baseline_comparison import compare_metric
 from app.initiatives.i7.reporting.period import resolve_quarter
+from app.initiatives.i7.reporting.source_activity import build_source_activity
 from app.models.i7_features import MaterialFeature
 from app.models.i7_forecast import Forecast
 from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation
@@ -90,7 +91,7 @@ from app.schemas.i7.reports import (
 
 logger = get_logger(__name__)
 
-REPORT_VERSION = "1.0"
+REPORT_VERSION = "1.1"
 
 
 def _exclusive_end(period_end):
@@ -190,6 +191,13 @@ def generate_quarterly_report(session: Session, quarter: str) -> QuarterlyReport
 
     management_summary = _management_summary_section()
 
+    # Read by the month a movement happened in, not by when I07 generated its outputs, so a quarter
+    # whose recommendations were created later still reports its source activity. Additive: every
+    # other section above is unchanged.
+    source_activity = build_source_activity(
+        session, period_start, period_end, recommendations_in_period=total_recommendations
+    )
+
     metadata = ReportMetadata(
         quarter=quarter,
         period_start=period_start,
@@ -223,6 +231,10 @@ def generate_quarterly_report(session: Session, quarter: str) -> QuarterlyReport
             "never been staged. Reported as Unknown, never as 0% adoption.",
             "Forecast accuracy does not include MAPE: no MAPE column or "
             "computation exists anywhere in the forecasting pipeline.",
+            "Source activity (Section 17) counts staged SAP consumption by the month it "
+            "happened in; every other section counts I07 outputs by when they were generated. "
+            "Consumption quantities are not reported there until the SAP number-format "
+            "correction is applied; transaction counts are given instead.",
         ]
     )
 
@@ -243,6 +255,7 @@ def generate_quarterly_report(session: Session, quarter: str) -> QuarterlyReport
         baseline_comparison=baseline_comparison,
         sap_adoption=sap_adoption,
         limitations=limitations,
+        source_activity=source_activity,
     )
 
     logger.info(
