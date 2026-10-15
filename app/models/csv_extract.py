@@ -36,6 +36,11 @@ STATUS_TIMEOUT = "timeout"
 
 TERMINAL_STATUSES = frozenset({STATUS_COMPLETE, STATUS_FAILED, STATUS_TIMEOUT})
 
+# ``reconcile`` on a request fired by the CSV increment (app/ingest/csv_delta.py):
+# a window, not a whole extract. The whole-table loader refuses to replace a
+# table from one; the verdict treats it as a windowed (bounded) delivery.
+RECONCILE_INCREMENT = "increment"
+
 
 class CsvExtractRequest(Base):
     """A fired ``TableExtractSet`` request and what came back for it."""

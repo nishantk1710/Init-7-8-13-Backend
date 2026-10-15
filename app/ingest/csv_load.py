@@ -56,7 +56,7 @@ from app.core.storage import Storage, get_storage
 from app.ingest import sap_system
 from app.ingest.csv_tables import CsvTable, csv_table
 from app.ingest.watermarks import set_watermark
-from app.models.csv_extract import STATUS_COMPLETE, STATUS_OPEN, CsvExtractRequest
+from app.models.csv_extract import RECONCILE_INCREMENT, STATUS_COMPLETE, STATUS_OPEN, CsvExtractRequest
 from app.models.ingestion import IngestionRun
 from app.seed.sqlserver import RawTableWriter
 from app.shared import sap_normalise
@@ -251,6 +251,17 @@ def load_table(
 
     if not record.data_key:
         return failure(f"request {record.request_id} completed with no file key")
+
+    # A request the CSV increment fired (csv_delta) is a window, not a whole
+    # extract. This loader REPLACES the table, so loading one here would
+    # shrink raw_<table> to the window. The increment marks its requests
+    # loaded, but a refusal must not depend on that having happened.
+    if record.reconcile == RECONCILE_INCREMENT:
+        return failure(
+            f"request {record.request_id} is a windowed increment "
+            f"({record.from_date}..{record.to_date}), not a whole extract; loading it would "
+            f"replace {spec.raw_table} with the window. Increments merge through --csv-delta."
+        )
 
     # One SAP system per database: see app.ingest.sap_system. Before the
     # replace, so a refused load leaves the table as it was.

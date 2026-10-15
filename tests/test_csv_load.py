@@ -134,6 +134,22 @@ class TestSeedWatermark:
             "MSEG": ("CPUDT_MKPF", "CpudtMkpf"),
             "CDHDR": ("UDATE", "Udate"),
             "EBAN": ("BADAT", "Badat"),
+            # The sets SAP dated in the 2026-10 transport. A column the CSV
+            # extract does not carry (RESB's CRDAT is computed in the set,
+            # CDPOS has no UDATE of its own, MAKT no ERSDA) seeds nothing
+            # here, and the sweep seeds that set from its load day instead.
+            "MARA": ("ERSDA", "Ersda"),
+            "MAKT": ("ERSDA", "Ersda"),
+            "MARC": ("ERSDA", "Ersda"),
+            "MARD": ("ERSDA", "Ersda"),
+            "MCHB": ("ERSDA", "Ersda"),
+            "EINA": ("ERDAT", "Erdat"),
+            "EINE": ("ERDAT", "Erdat"),
+            "LFA1": ("ERDAT", "Erdat"),
+            "S031": ("SPMON", "Spmon"),
+            "S032": ("LETZTBEW", "Letztbew"),
+            "RESB": ("CRDAT", "Crdat"),
+            "CDPOS": ("UDATE", "Udate"),
         }
 
 

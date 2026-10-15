@@ -94,30 +94,27 @@ class TestShape:
         assert raw_merge.shape(Decimal("12.500"), "Edm.Decimal", raw_merge.VOCAB_SAP) == "12.500"
         assert raw_merge.shape(Decimal("2E+3"), "Edm.Decimal", raw_merge.VOCAB_SAP) == "2000"
 
-    def test_a_number_column_of_a_csv_table_takes_the_csv_extracts_german_shape(self) -> None:
-        """The n_<table> view strips every '.' and makes ',' the point for a
-        CSV-shaped number column (sap_normalise.num(german=True)), so OData's
-        12.500 written as-is reads back as 12500. Written as the CSV writes
-        it -- 12,500 and a trailing minus -- the view reads 12.5."""
-        sap = raw_merge.VOCAB_SAP
-        assert raw_merge.shape(Decimal("12.500"), "Edm.Decimal", sap, numeric=True) == "12,500"
-        assert raw_merge.shape(Decimal("-5"), "Edm.Decimal", sap, numeric=True) == "5-"
-        assert raw_merge.shape("120.00", "Edm.String", sap, numeric=True) == "120,00", "a drifted-to-string price"
-        assert raw_merge.shape(Decimal("2E+3"), "Edm.Decimal", sap, numeric=True) == "2000"
-        assert raw_merge.shape("n/a", "Edm.String", sap, numeric=True) == "n/a", "not a number: kept verbatim"
-        assert raw_merge.shape(Decimal("12.500"), "Edm.Decimal", raw_merge.VOCAB_WORKBOOK, numeric=True) == "12.500"
+    def test_a_number_column_is_written_as_odata_sent_it(self) -> None:
+        """Decimal point, no grouping, leading minus -- the shape the CSV
+        extract writes too (803.70, 2,490.00; measured 2026-10-15), so one
+        column holds one shape. Until 2026-10-15 this wrote the German shape
+        (12,500 / 5,000-) to match the view's rule for these columns, which
+        put two shapes in every column a delta touched. A string-typed amount
+        SAP pads with spaces is trimmed; a value that is not a number is
+        kept verbatim, never guessed."""
+        for vocabulary in (raw_merge.VOCAB_SAP, raw_merge.VOCAB_WORKBOOK):
+            assert raw_merge.shape(Decimal("12.500"), "Edm.Decimal", vocabulary, numeric=True) == "12.500"
+            assert raw_merge.shape(Decimal("-5"), "Edm.Decimal", vocabulary, numeric=True) == "-5"
+            assert raw_merge.shape(Decimal("0.989"), "Edm.Decimal", vocabulary, numeric=True) == "0.989"
+            assert raw_merge.shape(Decimal("2E+3"), "Edm.Decimal", vocabulary, numeric=True) == "2000"
+            assert raw_merge.shape("                 79.00", "Edm.String", vocabulary, numeric=True) == "79.00"
+            assert raw_merge.shape("n/a", "Edm.String", vocabulary, numeric=True) == "n/a"
 
-    def test_the_german_shape_round_trips_through_the_view(self, engine) -> None:
-        from sqlalchemy import text
-
-        from app.shared import sap_normalise
-
-        written = raw_merge.shape(Decimal("-1234.5"), "Edm.Decimal", raw_merge.VOCAB_SAP, numeric=True)
-        expression = sap_normalise._dialect(engine).num(f"'{written}'", german=True)
-        with engine.connect() as conn:
-            # The view's trailing-minus logic uses LEFT(), which sqlite lacks.
-            conn.connection.driver_connection.create_function("LEFT", 2, lambda s, n: s[:n])
-            assert conn.execute(text(f"SELECT {expression}")).scalar() == "-1234.5"
+    def test_what_is_written_is_the_number_that_was_sent(self) -> None:
+        """No shape is guessed from a value, and nothing is lost in writing it."""
+        for value in (Decimal("-1234.5"), Decimal("0.000"), Decimal("92710.24"), Decimal("1E+2")):
+            written = raw_merge.shape(value, "Edm.Decimal", raw_merge.VOCAB_SAP, numeric=True)
+            assert Decimal(written) == value and "," not in written and "E" not in written
 
     def test_resolve_marks_the_columns_the_view_reads_as_numbers(self) -> None:
         _, resolved, _ = raw_merge.resolve(EKPO, "ekpo", ["EBELN", "EBELP", "AEDAT", "MENGE", "NETPR"])
@@ -177,9 +174,9 @@ class TestMerge:
         assert result.status == raw_merge.MERGED
         assert (result.updated, result.inserted) == (1, 0)
         row = fetch(engine, "SELECT AEDAT, MENGE, NETPR, ZZKTWRT FROM raw_ekpo")[0]
-        # Numbers in the CSV extract's German shape: the n_ekpo view reads
-        # "7.000" as seven thousand.
-        assert tuple(row) == ("15.09.2026", "7,000", "120,00", "kept")
+        # Numbers as OData sent them, which is the CSV extract's shape too
+        # ("5.000" sits in the row the CSV wrote).
+        assert tuple(row) == ("15.09.2026", "7.000", "120.00", "kept")
         assert count(engine, "raw_ekpo") == 1
 
     def test_new_rows_are_inserted(self, engine) -> None:
@@ -256,7 +253,7 @@ class TestMerge:
         assert result.status == raw_merge.MERGED and result.updated == 1
         assert "DISMM" in result.columns_added and "PLIFZ" in result.columns_added
         row = fetch(engine, "SELECT DISMM, PLIFZ, LVORM, MINBE, ZZCRITIC FROM raw_marc")[0]
-        assert tuple(row) == ("PD", "14", "", "2,000", "A"), "MINBE is a number column: German shape"
+        assert tuple(row) == ("PD", "14", "", "2.000", "A"), "MINBE is a number column: written as sent"
         assert engine.rebuilt == ["marc"]
 
     def test_a_workbook_shaped_table_is_updated_in_its_own_vocabulary(self, engine) -> None:

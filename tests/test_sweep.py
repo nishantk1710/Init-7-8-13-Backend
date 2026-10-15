@@ -60,6 +60,12 @@ class Harness:
         monkeypatch.setattr(sweep_mod, "set_watermark", self.advance)
         monkeypatch.setattr(sweep_mod, "get_watermark", lambda name, field: self.marks.get(name))
         monkeypatch.setattr(sweep_mod, "_load_day", lambda table: self.load_days.get(table))
+        # DELTA_SEED_FLOOR, blank unless a test sets one.
+        self.seed_floor = ""
+        monkeypatch.setattr(
+            sweep_mod, "get_settings",
+            lambda: type("S", (), {"delta_seed_floor": self.seed_floor})(),
+        )
 
     def resolve_windows(self, chosen, *, since=None):
         self.log.append(("windows",))
@@ -237,6 +243,25 @@ def test_a_mark_is_seeded_only_from_a_recorded_load(h) -> None:
     assert report.seeded == {}
     assert h.fetched(ITEMS)[3] is None
     assert not any(e[0] == "advance" and e[1] == ITEMS and e[2] != ADVANCED for e in h.log)
+
+
+def test_a_table_with_no_load_record_starts_from_the_configured_floor(h) -> None:
+    """The 2026-10-09 migration left neither a mark nor an ingestion_run row.
+    DELTA_SEED_FLOOR is the operator saying when that extract was taken; with
+    it the set runs as an increment from that day instead of pulling in
+    full. A recorded load still wins over the floor."""
+    del h.marks[ITEMS]
+    h.tables = RAW_TABLES
+    h.seed_floor = "2026-10-06"
+    report = _run()
+    assert report.seeded == {ITEMS: "2026-10-06"}
+    assert h.fetched(ITEMS)[2:4] == ("delta", "2026-10-06")
+
+    h.marks = {PO: STORED, HIST: STORED}
+    h.log.clear()
+    h.load_days = {"raw_ekpo": date(2026, 10, 12)}
+    report = _run()
+    assert report.seeded == {ITEMS: "2026-10-09"}
 
 
 def test_since_overrides_seeding(h) -> None:

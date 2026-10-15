@@ -119,25 +119,72 @@ def test_a_load_of_an_uncovered_table_rebuilds_nothing(monkeypatch: pytest.Monke
 # --- Number format: declared by vocabulary -----------------------------------
 
 
-def test_a_csv_number_is_converted_from_german_and_a_workbook_one_is_not() -> None:
-    """The CSV writes "0,989" for 0.989; the workbook writes "1,000" for one
-    thousand. Which applies is decided by the column the label resolved through."""
-    csv_view = view_sql("mseg", ["MATNR", "WERKS", "MENGE"], MSSQL)
-    workbook_view = view_sql("mseg", ["material", "plant", "quantity"], MSSQL)
+def test_a_csv_number_is_converted_in_the_declared_notation_and_a_workbook_one_is_not() -> None:
+    """The CSV writes "2,490.00" (us) or "0,989" (german) depending on the
+    SAP job user's notation -- it has been both. The workbook writes plain
+    numbers. Which rule applies is decided by the column the label resolved
+    through and by CSV_NUMBER_FORMAT, never by a value."""
+    us_view = view_sql("mseg", ["MATNR", "WERKS", "MENGE"], MSSQL, csv_number_format="us")
+    german_view = view_sql("mseg", ["MATNR", "WERKS", "MENGE"], MSSQL, csv_number_format="german")
+    workbook_view = view_sql("mseg", ["material", "plant", "quantity"], MSSQL, csv_number_format="us")
 
-    assert "REPLACE(REPLACE(TRIM([MENGE]), '.', ''), ',', '.')" in csv_view
+    assert "REPLACE(TRIM([MENGE]), ',', '')" in us_view and "'.', ''" not in us_view
+    assert "REPLACE(REPLACE(TRIM([MENGE]), '.', ''), ',', '.')" in german_view
     assert "REPLACE" not in workbook_view
 
 
-def test_german_conversion_is_only_applied_to_numbers() -> None:
+def test_the_default_notation_is_the_setting_and_an_unknown_one_is_refused(monkeypatch) -> None:
+    from app.core.config import Settings
+
+    monkeypatch.setattr(sap_normalise, "get_settings", lambda: Settings(_env_file=None, csv_number_format="german"))
+    assert "REPLACE(REPLACE(TRIM([MENGE])" in view_sql("mseg", ["MATNR", "WERKS", "MENGE"], MSSQL)
+
+    with pytest.raises(ValueError, match="CSV_NUMBER_FORMAT"):
+        view_sql("mseg", ["MATNR", "WERKS", "MENGE"], MSSQL, csv_number_format="french")
+
+
+@pytest.mark.parametrize("fmt", ["us", "german"])
+def test_number_conversion_is_only_applied_to_numbers(fmt: str) -> None:
     """A material number or a date from the CSV must never have its dots or
     commas touched."""
-    sql = view_sql("mseg", ["MATNR", "WERKS", "BUDAT_MKPF", "MENGE"], POSTGRES)
+    sql = view_sql("mseg", ["MATNR", "WERKS", "BUDAT_MKPF", "MENGE"], POSTGRES, csv_number_format=fmt)
 
-    # Every REPLACE is over MENGE: the num expression names it several times,
-    # the key and date expressions never call REPLACE at all.
+    # Every REPLACE is over MENGE: the num expression names it (several
+    # times, in German notation); the key and date expressions never call
+    # REPLACE at all.
     assert "REPLACE(" in sql
-    assert all(chunk.startswith('TRIM("MENGE")') for chunk in sql.split("REPLACE(REPLACE(")[1:])
+    # Splitting on REPLACE( leaves an empty chunk between the two of a
+    # nested REPLACE(REPLACE(; every other chunk is what was being replaced.
+    inner = [chunk for chunk in sql.split("REPLACE(")[1:] if chunk]
+    assert inner and all(chunk.startswith('TRIM("MENGE")') for chunk in inner)
+
+
+@pytest.mark.parametrize(
+    ("fmt", "raw", "expected"),
+    [
+        ("us", "2,490.00", "2490.00"),      # raw_eban.PREIS, 9 October delivery
+        ("us", "9,777,083.00", "9777083.00"),
+        ("us", "1.000", "1.000"),           # raw_eket.MENGE, 9 October delivery: one
+        ("us", "803.70", "803.70"),
+        ("us", "5.000-", "-5.000"),
+        ("us", "0", "0"),
+        ("german", "0,989", "0.989"),       # raw_mseg.MENGE, September delivery
+        ("german", "1,000", "1.000"),
+        ("german", "12.345.678,9", "12345678.9"),
+        ("german", "5,000-", "-5.000"),
+        ("plain", "12.500", "12.500"),      # what the OData delta writes
+        ("plain", "-5", "-5"),
+    ],
+)
+def test_the_number_transform_on_sqlite(fmt: str, raw: str, expected: str) -> None:
+    """The Postgres branch of the expression, run on sqlite with LEFT() shimmed."""
+    from sqlalchemy import create_engine
+
+    engine = create_engine("sqlite://", future=True)
+    expression = sap_normalise._Dialect("sqlite", lambda s: f'"{s}"').num(f"'{raw}'", fmt=fmt)
+    with engine.connect() as connection:
+        connection.connection.driver_connection.create_function("LEFT", 2, lambda s, n: s[:n])
+        assert connection.execute(text(f"SELECT {expression}")).scalar() == expected
 
 
 @pytest.mark.parametrize(
@@ -218,7 +265,7 @@ def test_the_german_number_transform_on_this_engine(raw: str, expected: str) -> 
     from app.core.db import get_engine
 
     engine = get_engine()
-    expression = sap_normalise._dialect(engine).num(f"'{raw}'", german=True)
+    expression = sap_normalise._dialect(engine).num(f"'{raw}'", fmt="german")
 
     with engine.connect() as connection:
         value = connection.execute(text(f"SELECT {expression}")).scalar()

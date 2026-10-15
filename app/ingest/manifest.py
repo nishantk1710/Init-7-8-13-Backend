@@ -93,7 +93,11 @@ def table_name(entity_set_name: str) -> str:
 LITERAL_DATETIME = "datetime"  # Aedat ge datetime'2026-09-15T00:00:00'
 LITERAL_DATS = "dats"          # Cpudt ge '20260915'
 LITERAL_DOTTED = "dotted"      # CpudtMkpf ge '15.09.2026'
-LITERALS = frozenset({LITERAL_DATETIME, LITERAL_DATS, LITERAL_DOTTED})
+# A period, not a day: S031 is keyed by month (Spmon, 'yyyymm'). The mark is
+# the first day of the newest month read, so the window always re-reads that
+# month -- its row is rewritten by every movement until the month closes.
+LITERAL_MONTH = "month"        # Spmon ge '202609'
+LITERALS = frozenset({LITERAL_DATETIME, LITERAL_DATS, LITERAL_DOTTED, LITERAL_MONTH})
 
 
 @dataclass(frozen=True)
@@ -228,17 +232,68 @@ DELTAS: dict[str, Delta] = {
     # route -- the same limit EKKO lives with. A requisition SAP posts to
     # /api/events/pr is therefore in raw_eban one cycle later.
     "PurchaseRequisitionSet": Delta(field="Badat", literal=LITERAL_DATS),
-    # CDPOS deliberately has NO delta, and it is not an oversight.
+    # CDPOS by its header's change date, which SAP joined onto the item set
+    # in the 2026-10 transport (Udate/Utime from CDHDR; measured on DEV
+    # 2026-10-15: 88 of 88 rows in a window identical to their headers).
+    # Alongside the Objectclas predicate, like CDHDR. Until then the only
+    # route was `via ChangeDocHeaderSet on Changenr`, and that `or` chain
+    # inside parentheses next to the predicate is REJECTED_HTTP_400 on this
+    # set (operator_support.csv) -- which is why it reads its own date and
+    # not its parent's keys.
+    "ChangeDocItemSet": Delta(field="Udate", literal=LITERAL_DATS),
     #
-    # The obvious shape is `via ChangeDocHeaderSet on Changenr`, which builds
-    # `Changenr eq 'a' or Changenr eq 'b' or ...` inside parentheses next to
-    # the Objectclas predicate. That exact shape was measured REJECTED_HTTP_400
-    # on this set -- "or inside parentheses" in operator_support.csv. One
-    # request per change number would be thousands of requests for one run.
+    # --- The sets SAP gave a date in the 2026-10 transport -----------------
     #
-    # So CDPOS stays a full pull under its Objectclas predicate, and anything
-    # wanting only the changed documents filters after the fact. Honest and
-    # slower beats an increment SAP cannot express.
+    # Every field below was asked for because the set had no date SAP would
+    # filter on, and each is measured on DEV (2026-10-15) the same way as the
+    # rest: an impossible day answers 0, a real day its rows, a window reads
+    # complete and sorted. What each date MEANS is written next to it, because
+    # a creation date is not a change date: a set whose only date is "created
+    # on" catches new rows and nothing else, and edits to existing rows reach
+    # the table through the periodic full extract, not through this.
+    #
+    # S032: the date of the last goods movement per material/plant/location.
+    # Moves on every movement, so this is a true change window. Rows that
+    # never moved hold '00000000' and stay with the full extract.
+    "StockMovementStatisticSet": Delta(field="Letztbew", literal=LITERAL_DATS),
+    # S031: keyed by month. The newest month's row is rewritten all month, so
+    # the window re-reads from the first day of the newest month seen.
+    "MonthlyMovementStatisticSet": Delta(field="Spmon", literal=LITERAL_MONTH),
+    # MARA: created on. New materials only.
+    "MaterialSet": Delta(field="Ersda", literal=LITERAL_DATS),
+    # MAKT and MARC carry MARA's creation date (measured identical for every
+    # material sampled), so they catch new materials, not a renamed
+    # description or a changed MRP field.
+    "MaterialDescriptionSet": Delta(field="Ersda", literal=LITERAL_DATS),
+    "MaterialPlantSet": Delta(field="Ersda", literal=LITERAL_DATS),
+    # Stock. MARD's and MCHB's dates are creation dates too, and a stock
+    # quantity changes with every goods movement without touching them. So
+    # both also re-read every material MSEG's window moved: a movement line
+    # names its material, and the filter by material returns every plant,
+    # location and batch of it -- a superset, merged by key.
+    "StorageLocationStockSet": Delta(
+        field="Ersda", literal=LITERAL_DATS, via=("GoodsMovementItemSet",), via_key="Matnr"
+    ),
+    "BatchStockSet": Delta(
+        field="Ersda", literal=LITERAL_DATS, via=("GoodsMovementItemSet",), via_key="Matnr"
+    ),
+    # Info records and vendors: created on. New rows only.
+    "InfoRecordSet": Delta(field="Erdat", literal=LITERAL_DATS),
+    "InfoRecordOrgSet": Delta(field="Erdat", literal=LITERAL_DATS),
+    "VendorSet": Delta(field="Erdat", literal=LITERAL_DATS),
+    # RESB: Crdat is the reservation date (RKPF.RSDAT) or, for a component
+    # of a maintenance order, the order's creation date -- measured on DEV:
+    # 1,247 manual reservations carry Rsdat, 4,880 order reservations carry
+    # Erdat, and 961 with neither have no date at all and stay with the full
+    # extract. A goods issue against a reservation moves its withdrawn
+    # quantity and final-issue flag but not Crdat; the issue is an MSEG line
+    # naming the reservation, so every reservation MSEG's window touched is
+    # re-read as well. '0000000000' -- no reservation -- is not a key (fetch).
+    "ReservationItemSet": Delta(
+        field="Crdat", literal=LITERAL_DATS, via=("GoodsMovementItemSet",), via_key="Rsnum"
+    ),
+    # MBEW has no date and is a price table: refreshed whole, weekly, by the
+    # scheduler's OData full pull (ODATA_FULL_PULL_SETS). Not a delta.
 }
 
 
@@ -376,21 +431,24 @@ def delta_support() -> dict[tuple[str, str, str], str]:
         }
 
 
-def check_delta_filters() -> list[str]:
-    """Every declared delta whose filter is not measured HONOURED.
-
-    Called by the CLI and the scheduler before an incremental run, and by a
-    test, so a delta added on an unverified property is caught by the suite
-    rather than by a quiet full-set pull dressed up as an increment.
+def unverified_deltas() -> dict[str, list[str]]:
+    """Every declared delta this snapshot does not measure HONOURED: set -> why.
 
     Two questions per delta. Its own window: is ``field`` honoured in exactly
     the literal shape declared (delta_support.csv)? Its parents: is
     ``via_key`` honoured on this set as an `or` chain (delta_support.csv, or
     a HONOURED impossible-value verdict in filter_support.csv), and does every
     parent have a window of its own to hand keys over from?
+
+    PER SYSTEM. The snapshot is the one captured from the CPI_PATH this
+    process talks to (contract.discovery_dir), so a field SAP exposed on DEV
+    and has not yet transported to QA is unverified on QA -- and stays left
+    out there (``verified_deltas``) until the probe is run against QA and its
+    delta_support.csv says HONOURED. That is the point: a filter SAP does not
+    know answers HTTP 200 with the whole set.
     """
     measured = delta_support()
-    problems: list[str] = []
+    problems: dict[str, list[str]] = {}
     for set_name, delta in DELTAS.items():
         if delta.verified:
             # Proven by a different probe, with the citation recorded. Not a
@@ -400,7 +458,7 @@ def check_delta_filters() -> list[str]:
         if delta.direct:
             verdict = measured.get((set_name, delta.field or "", delta.literal))
             if verdict != HONOURED:
-                problems.append(
+                problems.setdefault(set_name, []).append(
                     f"{set_name}.{delta.field} as a {delta.literal} literal: "
                     f"{verdict or 'never probed'} (a delta needs {HONOURED} in "
                     f"{DELTA_SUPPORT_FILE}, or a Delta(verified=...) citation)"
@@ -409,18 +467,53 @@ def check_delta_filters() -> list[str]:
             key = delta.via_key or ""
             verdict = measured.get((set_name, key, KEY_CHAIN)) or verdict_for(set_name, key)
             if verdict != HONOURED:
-                problems.append(
+                problems.setdefault(set_name, []).append(
                     f"{set_name}.{key}: {verdict or 'never probed'} "
                     f"(a delta needs {HONOURED}, or a Delta(verified=...) citation)"
                 )
             for parent in delta.via:
                 parent_delta = DELTAS.get(parent)
                 if parent_delta is None or not parent_delta.direct:
-                    problems.append(
+                    problems.setdefault(set_name, []).append(
                         f"{set_name} reads through {parent}, which has no window "
                         "of its own to hand keys over from"
                     )
     return problems
+
+
+def check_delta_filters() -> list[str]:
+    """Every declared delta whose filter is not measured HONOURED, as one
+    line each. ``unverified_deltas`` flattened; kept for the callers and the
+    test that read it as a list."""
+    return [problem for problems in unverified_deltas().values() for problem in problems]
+
+
+def verified_deltas(chosen) -> tuple[list[IngestSpec], dict[str, str]]:
+    """Split ``chosen`` into the sets whose delta this snapshot verifies and
+    the ones it leaves out, with why.
+
+    The CLI's ``--delta --all`` and the scheduler run the first group and say
+    the second out loud, every cycle. Before 2026-10-15 one unverified
+    declaration refused the whole cycle; with eleven sets declared on DEV
+    ahead of their QA transport, that would have stopped the eight already
+    running on QA. A set reading through an unverified parent is left out
+    too: its keys would come from a window nobody measured.
+    """
+    unverified = unverified_deltas()
+    runnable: list[IngestSpec] = []
+    left_out: dict[str, str] = {}
+    for spec in chosen:
+        if spec.name in unverified:
+            left_out[spec.name] = "; ".join(unverified[spec.name])
+            continue
+        parents = [p for p in (spec.delta.via if spec.delta else ()) if p in unverified]
+        if parents:
+            left_out[spec.name] = (
+                f"reads through {', '.join(parents)}, whose delta is not verified on this system"
+            )
+            continue
+        runnable.append(spec)
+    return runnable, left_out
 
 
 def specs() -> tuple[IngestSpec, ...]:
