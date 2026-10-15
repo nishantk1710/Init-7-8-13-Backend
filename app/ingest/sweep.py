@@ -52,6 +52,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, timedelta, timezone
 
+from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.logging import get_logger
 from app.core.storage import Storage, get_storage
@@ -68,7 +69,7 @@ from app.ingest.fetch import (
 from app.ingest.load import STATUS_SUCCEEDED, LoadResult, load_set, table_has_rows
 from app.ingest.manifest import IngestSpec, spec_for
 from app.ingest.raw_merge import raw_table_for
-from app.ingest.watermarks import get_watermark, set_watermark
+from app.ingest.watermarks import as_day, get_watermark, set_watermark
 from app.integrations.sap.client import SapClient
 
 logger = get_logger(__name__)
@@ -128,6 +129,11 @@ def seed_marks_from_load_dates(chosen) -> dict[str, str]:
             if has_window(parent):
                 owners.setdefault(parent.name, parent)
 
+    # A table with rows and no load record at all starts from the configured
+    # floor, if there is one: the operator saying which day the extract
+    # behind the tables was taken. Without it, the set pulls in full.
+    floor = as_day(get_settings().delta_seed_floor or None)
+
     seeded: dict[str, str] = {}
     for name, owner in owners.items():
         field_name = owner.delta.field or ""  # type: ignore[union-attr]
@@ -137,15 +143,20 @@ def seed_marks_from_load_dates(chosen) -> dict[str, str]:
         if target is None or not table_has_rows(target.raw_table):
             continue
         day = _load_day(target.raw_table)
-        if day is None:
+        if day is not None:
+            mark = (day - timedelta(days=SEED_MARGIN_DAYS)).isoformat()
+            why = f"loaded on {day.isoformat()}; mark seeded at {mark} ({SEED_MARGIN_DAYS} days before)"
+        elif floor is not None:
+            mark = floor.isoformat()
+            why = f"no load record; mark seeded at DELTA_SEED_FLOOR {mark}"
+        else:
             continue
-        mark = (day - timedelta(days=SEED_MARGIN_DAYS)).isoformat()
         set_watermark(name, field_name, mark, 0)
         seeded[name] = mark
         logger.info(
-            "%s: no watermark, but %s holds rows loaded on %s; mark seeded at %s "
-            "(%d days before) so this runs as an increment, not a full pull",
-            name, target.raw_table, day.isoformat(), mark, SEED_MARGIN_DAYS,
+            "%s: no watermark, but %s holds rows, %s, so this runs as an "
+            "increment, not a full pull",
+            name, target.raw_table, why,
         )
     return seeded
 

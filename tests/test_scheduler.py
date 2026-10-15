@@ -157,6 +157,111 @@ def test_enrichment_never_advances_a_watermark(monkeypatch) -> None:
     assert "advance=False" in fake.log[2]
 
 
+class TestTheDeltaCycleGate:
+    """Per set, per system: an unverified declaration is left out and named,
+    and the verified sets run. Before 2026-10-15 one unverified declaration
+    refused the whole cycle, which would have stopped QA's running deltas
+    the day the new sets were declared on DEV."""
+
+    @staticmethod
+    def _cycle(monkeypatch) -> tuple[dict, list[str]]:
+        from app.ingest import sap_system
+
+        ran: list[str] = []
+
+        class _Report:
+            baselined: list = []
+
+            def summary(self):
+                return {"fetched": 0, "loaded": 0, "rows": 0, "failed": 0, "advanced": {}, "errors": []}
+
+        def sweep(chosen, **kw):
+            ran.extend(s.name for s in chosen)
+            return _Report()
+
+        monkeypatch.setattr(sap_system, "recorded", lambda: None)
+        monkeypatch.setattr("app.ingest.sweep.run_delta_sweep", sweep)
+        monkeypatch.setattr("app.integrations.sap.client.SapClient", lambda: object())
+        monkeypatch.setattr(
+            scheduler, "get_settings",
+            lambda: type("S", (), {"ingest_prefix": "odata", "csv_delta_enabled": False})(),
+        )
+        return scheduler.run_delta_cycle(), ran
+
+    def test_an_unverified_set_is_left_out_and_the_rest_run(self, monkeypatch) -> None:
+        from app.ingest import manifest
+        from app.ingest.manifest import Delta
+
+        monkeypatch.setitem(manifest.DELTAS, "VendorSet", Delta(field="NeverProbedProperty"))
+
+        summary, ran = self._cycle(monkeypatch)
+
+        assert "VendorSet" not in ran and "POHistorySet" in ran
+        assert "never probed" in summary["unverified"]["VendorSet"]
+        assert summary["failed"] == 0 and summary["errors"] == []
+
+    def test_with_everything_verified_nothing_is_left_out_for_that_reason(self, monkeypatch) -> None:
+        summary, ran = self._cycle(monkeypatch)
+
+        assert summary["unverified"] == {}
+        assert {"POHistorySet", "GoodsMovementItemSet", "ReservationItemSet"} <= set(ran)
+
+
+class TestTheWeeklyOdataFullPull:
+    @staticmethod
+    def _system_ok(monkeypatch) -> None:
+        from app.ingest import sap_system
+
+        monkeypatch.setattr(sap_system, "recorded", lambda: None)
+        monkeypatch.setattr(
+            scheduler, "get_settings",
+            lambda: type("S", (), {"ingest_prefix": "odata", "odata_full_pull_set_list": ["MaterialValuationSet"]})(),
+        )
+
+    def test_the_set_is_read_whole_and_merged_without_touching_a_mark(self, monkeypatch) -> None:
+        fake = _Fake(monkeypatch)
+        self._system_ok(monkeypatch)
+
+        summary = scheduler.run_odata_full_pull_cycle()
+
+        assert fake.log == ["fetch MaterialValuationSet full advance=False", "load MaterialValuationSet"]
+        assert summary == {"pulled": 1, "failed": 0, "errors": []}
+
+    def test_a_refused_merge_is_counted_not_raised(self, monkeypatch) -> None:
+        _Fake(monkeypatch, merge_ok=False)
+        self._system_ok(monkeypatch)
+
+        summary = scheduler.run_odata_full_pull_cycle()
+
+        assert summary["pulled"] == 0 and summary["failed"] == 1
+        assert any("MaterialValuationSet" in e and "merge refused" in e for e in summary["errors"])
+
+    def test_the_wrong_sap_system_refuses_before_calling_sap(self, monkeypatch) -> None:
+        from app.ingest import sap_system
+
+        fake = _Fake(monkeypatch)
+        self._system_ok(monkeypatch)
+        monkeypatch.setattr(sap_system, "verdict", lambda recorded, configured: "database holds DEV, CPI_PATH is QA")
+
+        summary = scheduler.run_odata_full_pull_cycle()
+
+        assert fake.log == [] and summary["failed"] == 1 and "refused" in summary["errors"][0]
+
+
+class TestSecondsUntilWeekday:
+    def test_later_this_week(self) -> None:
+        now = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)  # a Thursday
+        assert scheduler.seconds_until_weekday(6, 2, now) == (2 * 24 + 14) * 3600
+
+    def test_today_but_already_past_means_next_week(self) -> None:
+        now = datetime(2026, 10, 18, 2, 0, 1, tzinfo=timezone.utc)  # Sunday, just past
+        assert scheduler.seconds_until_weekday(6, 2, now) == pytest.approx(7 * 24 * 3600 - 1)
+
+    def test_today_and_still_to_come(self) -> None:
+        now = datetime(2026, 10, 18, 1, 30, tzinfo=timezone.utc)  # Sunday, before
+        assert scheduler.seconds_until_weekday(6, 2, now) == 30 * 60
+
+
 class TestSecondsUntil:
     def test_later_today(self) -> None:
         now = datetime(2026, 9, 28, 0, 30, tzinfo=timezone.utc)
@@ -204,3 +309,19 @@ class TestStart:
     def test_missing_database_refuses_to_start(self, monkeypatch) -> None:
         self._settings(monkeypatch, full_refresh_enabled=True, database_url="")
         assert scheduler.start(None) is None
+
+    def test_the_weekly_odata_full_pull_alone_starts_a_task(self, monkeypatch) -> None:
+        import asyncio
+
+        self._settings(monkeypatch, odata_full_pull_enabled=True)
+
+        async def run():
+            task = scheduler.start(None)
+            assert task is not None
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        asyncio.run(run())

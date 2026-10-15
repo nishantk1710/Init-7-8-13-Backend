@@ -24,6 +24,7 @@ on 2026-10-07:
                    decodes to 22:00 UTC the evening before   EKKO/EKPO Aedat
     Edm.String     '20260916'                                EKBE Cpudt, CDHDR Udate
     Edm.String     '16.09.2026'                              MSEG CpudtMkpf
+    Edm.String     '202609'  a month, read as its first day  S031 Spmon
 
 The highest value is taken as a DAY, not as text. Compared as text the third
 shape ranks by day of month -- '31.12.2018' after '01.01.2026' -- and a mark
@@ -59,9 +60,9 @@ def as_day(value: Any) -> date | None:
 
     A timezone-aware moment is SAP-local midnight seen from UTC, so the day is
     the NEAREST midnight, not the UTC date: 22:00 UTC on the 14th is the 15th.
-    A naive moment is already a calendar day. None, blanks and SAP's
-    ``00000000`` ("no date") are None, as is anything not recognisably a date
-    -- never guessed.
+    A naive moment is already a calendar day. A month (``'202609'``, S031's
+    Spmon) is its first day. None, blanks and SAP's ``00000000`` ("no date")
+    are None, as is anything not recognisably a date -- never guessed.
     """
     if value is None:
         return None
@@ -78,6 +79,8 @@ def as_day(value: Any) -> date | None:
     try:
         if len(text) == 8 and text.isdigit():
             return datetime.strptime(text, "%Y%m%d").date()
+        if len(text) == 6 and text.isdigit():
+            return datetime.strptime(text, "%Y%m").date()
         if len(text) == 10 and text[2] == "." and text[5] == ".":
             return datetime.strptime(text, "%d.%m.%Y").date()
         if len(text) == 10 and text[4] == "-" and text[7] == "-":

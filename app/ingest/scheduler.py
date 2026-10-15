@@ -21,15 +21,22 @@ crash cannot leave the schedule wedged forever. A lock in a table could.
 
 WHAT IT RUNS
 
-Deltas only, and only the ones that can RUN -- since 2026-10-07 the
-purchase-order family (EKKO, EKPO, EKET, EKBE), MKPF and MSEG by entry date,
-and CDHDR by change date. The other fourteen sets have no declared delta, so
-running them in delta mode would make each one fall back to a full pull --
-ChangeDocItemSet is 940,263 rows, and an hourly timer would have pulled all
-of them, every hour, forever. Those are covered by the CSV route instead,
-which is why they are skipped here rather than degraded.
-``IngestSpec.runnable_delta`` is the test, and the CLI's ``--delta --all``
-applies the same one.
+Deltas only, and only the ones that can RUN and are MEASURED on this system.
+Since 2026-10-07 the purchase-order family (EKKO, EKPO, EKET, EKBE), MKPF
+and MSEG by entry date, CDHDR by change date, EBAN by requisition date; since
+2026-10-15 every set SAP gave a date in the October transport is declared too
+(manifest.DELTAS), and each runs on a system once the delta probe has
+measured its filter HONOURED there (discovery_<system>/delta_support.csv).
+A set declared but not measured on this system is left out and named every
+cycle, not run and not allowed to stop the others: a filter SAP does not know
+answers HTTP 200 with the whole set, and one unverified declaration refusing
+the whole cycle would have stopped QA's eight running deltas the day the
+eleven new ones were declared on DEV. MBEW has no date and is refreshed
+whole once a week instead (the OData full pull below). A set with no delta
+at all would fall back to a full pull in delta mode -- ChangeDocItemSet was
+940,263 rows before it had a date -- so those are skipped, not degraded.
+``IngestSpec.runnable_delta`` and ``manifest.verified_deltas`` are the tests,
+and the CLI's ``--delta --all`` applies the same ones.
 
 The pass itself is ``app.ingest.sweep``, shared with the CLI: windows read
 once up front, parents before children, a missing table pulled in full to
@@ -135,14 +142,14 @@ def run_delta_cycle() -> dict:
     otherwise would block the event loop and stall the API for the length of a
     pull.
     """
-    from app.ingest.manifest import check_delta_filters, specs
+    from app.ingest.manifest import specs, verified_deltas
     from app.ingest.sweep import run_delta_sweep
     from app.integrations.sap.client import SapClient
 
     settings = get_settings()
     root = settings.ingest_prefix
     summary = {"fetched": 0, "loaded": 0, "failed": 0, "rows": 0,
-               "skipped": 0, "advanced": {}, "errors": []}
+               "skipped": 0, "unverified": {}, "advanced": {}, "errors": []}
 
     # Before any request: a timer pointed at QA over a DEV database would
     # fetch every cycle and have every load refused. Say it once, call nothing.
@@ -158,11 +165,16 @@ def run_delta_cycle() -> dict:
         logger.error("delta cycle refused: %s", mismatch)
         return summary
 
-    # The same gate the CLI applies before its first request. An unverified
-    # delta filter that SAP ignores returns HTTP 200 with the WHOLE set, so a
-    # "delta" would quietly pull everything and merge it as an increment.
+    # Runnable deltas only, and of those only the ones this system's snapshot
+    # measures HONOURED -- the same gate the CLI applies before its first
+    # request, per set. An unverified delta filter that SAP ignores returns
+    # HTTP 200 with the WHOLE set, so a "delta" would quietly pull everything
+    # and merge it as an increment: such a set is left out and named, and the
+    # verified ones run. A set with no delta at all would degrade to a full
+    # pull, which is the CSV route's job, not this timer's.
     try:
-        problems = check_delta_filters()
+        runnable = [s for s in specs() if s.runnable_delta is not None]
+        schedulable, unverified = verified_deltas(runnable)
     except Exception as exc:
         # No discovery snapshot for this CPI_PATH, most likely: the contract
         # says which one to capture.
@@ -170,23 +182,18 @@ def run_delta_cycle() -> dict:
         summary["failed"] = 1
         logger.error("delta cycle refused: %s", exc)
         return summary
-    if problems:
-        summary["errors"] = [f"delta filters unverified: {p}" for p in problems]
-        summary["failed"] = len(problems)
-        logger.error(
-            "delta cycle refused: %d filter(s) are not measured HONOURED. %s",
-            len(problems), "; ".join(problems),
-        )
-        return summary
-
-    # Runnable deltas only. See the module docstring: a set that would
-    # degrade to a full pull is the CSV route's, not this timer's.
-    schedulable = [s for s in specs() if s.runnable_delta is not None]
     left_out = [s for s in specs() if s.runnable_delta is None]
-    summary["skipped"] = len(left_out)
+    summary["skipped"] = len(left_out) + len(unverified)
+    summary["unverified"] = dict(unverified)
+    for name, why in unverified.items():
+        logger.warning(
+            "%s: delta declared but not measured HONOURED on this system; left out "
+            "until `python -m app.ingest.delta_probe --set %s` says otherwise -- %s",
+            name, name, why,
+        )
     logger.info(
-        "delta cycle: %d set(s) with a runnable delta (%s); %d left out",
-        len(schedulable), ", ".join(s.name for s in schedulable), len(left_out),
+        "delta cycle: %d set(s) with a verified, runnable delta (%s); %d left out",
+        len(schedulable), ", ".join(s.name for s in schedulable), summary["skipped"],
     )
     for spec in left_out:
         if spec.delta is not None and spec.blocked:
@@ -208,6 +215,31 @@ def run_delta_cycle() -> dict:
     summary.update(report.summary())
     for name in report.baselined:
         logger.info("%s: baseline built by this cycle; incremental from the next", name)
+
+    # The tables the OData delta cannot cover, over the CSV route, when that
+    # is switched on. After the OData sets, one table at a time, each window
+    # merged by key -- see app/ingest/csv_delta.py.
+    if settings.csv_delta_enabled:
+        from app.ingest import csv_delta
+
+        try:
+            results = csv_delta.run_csv_delta(settings=settings)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("CSV delta raised")
+            summary["errors"].append(f"CSV delta raised before completing: {exc}")
+            summary["failed"] += 1
+            return summary
+        csv_summary = csv_delta.summary(results)
+        summary["csv_delta"] = csv_summary
+        summary["loaded"] += csv_summary["merged"]
+        summary["rows"] += csv_summary["rows"]
+        summary["failed"] += csv_summary["failed"]
+        summary["errors"].extend(csv_summary["errors"])
+        logger.info(
+            "CSV delta: %d merged, %d empty, %d skipped, %d failed, %d row(s) (%d inserted)",
+            csv_summary["merged"], csv_summary["empty"], csv_summary["skipped"],
+            csv_summary["failed"], csv_summary["rows"], csv_summary["inserted"],
+        )
     return summary
 
 
@@ -416,9 +448,6 @@ def run_full_refresh_cycle() -> dict:
     a worker thread. Never raises.
     """
     from app.ingest import csv_load, csv_pull
-    from app.ingest.fetch import MODE_FULL, fetch_set
-    from app.ingest.load import STATUS_SUCCEEDED, load_set
-    from app.ingest.manifest import spec_for
 
     settings = get_settings()
     summary = {"pulled": 0, "loaded": 0, "rows": 0, "enriched": 0, "failed": 0, "errors": []}
@@ -445,21 +474,133 @@ def run_full_refresh_cycle() -> dict:
     # 3. OData sets merged into raw_<table> for the fields CSV lacks.
     for name in settings.full_refresh_odata_set_list:
         try:
-            spec = spec_for(name)
-            fetched = fetch_set(spec, root=settings.ingest_prefix, mode=MODE_FULL, advance_watermark=False)
-            if not fetched.ok:
-                raise RuntimeError(fetched.error or "fetch unstable")
-            loaded = load_set(spec, root=settings.ingest_prefix, prefix=fetched.prefix)
-            if loaded.status != STATUS_SUCCEEDED:
-                raise RuntimeError(loaded.error or loaded.status)
+            detail = _pull_whole_and_merge(name, settings.ingest_prefix)
             summary["enriched"] += 1
-            logger.info("%s: %s", name, loaded.raw or "loaded")
+            logger.info("%s: %s", name, detail)
         except Exception as exc:
             summary["failed"] += 1
             summary["errors"].append(f"{name}: {exc}")
             logger.error("%s: enrichment failed -- %s", name, exc)
 
     return summary
+
+
+def _pull_whole_and_merge(name: str, root: str) -> str:
+    """One set read whole over OData and merged into ``raw_<table>`` by key.
+
+    Returns the merge's one-line account; raises when the fetch or the load
+    did not succeed. Never advances a watermark: a full read is not a
+    measured delta position, and for a set with a date the CSV load owns
+    the mark.
+    """
+    from app.ingest.fetch import MODE_FULL, fetch_set
+    from app.ingest.load import STATUS_SUCCEEDED, load_set
+    from app.ingest.manifest import spec_for
+
+    spec = spec_for(name)
+    fetched = fetch_set(spec, root=root, mode=MODE_FULL, advance_watermark=False)
+    if not fetched.ok:
+        raise RuntimeError(fetched.error or "fetch unstable")
+    loaded = load_set(spec, root=root, prefix=fetched.prefix)
+    if loaded.status != STATUS_SUCCEEDED:
+        raise RuntimeError(loaded.error or loaded.status)
+    return loaded.raw or "loaded"
+
+
+# --- The weekly OData full pull ---------------------------------------------
+#
+# For a set with no date SAP filters on, the whole set read over OData and
+# merged into raw_<table> by key, once a week. MBEW is the case: a price table
+# with no change date, and the SAP team's answer (2026-10-15) was a weekly
+# complete extract. The same read-and-merge as the full refresh's enrichment
+# step, without the CSV sweep in front of it: these sets are small
+# (MaterialValuationSet is 2,116 rows on QA) and a whole OData read of one is
+# cheaper and better checked than a CSV delivery. A large set is refused at
+# the client's read ceiling rather than pulled.
+
+ODATA_FULL_PULL_LOCK_NAME = "spares_ai_odata_full_pull"
+
+WEEKDAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def run_odata_full_pull_cycle(names: list[str] | None = None) -> dict:
+    """Every set in ODATA_FULL_PULL_SETS, read whole and merged. Never raises.
+
+    Synchronous and blocking, like the other cycles; the caller runs it in a
+    worker thread. The same SAP-system check as the delta cycle: a merge from
+    the wrong system is worse than no merge.
+    """
+    from app.ingest import sap_system
+
+    settings = get_settings()
+    chosen = list(names) if names is not None else settings.odata_full_pull_set_list
+    summary = {"pulled": 0, "failed": 0, "errors": []}
+
+    try:
+        mismatch = sap_system.verdict(sap_system.recorded(), sap_system.configured())
+    except Exception as exc:
+        mismatch = f"could not check which SAP system the database holds: {exc}"
+    if mismatch:
+        summary["errors"] = [f"OData full pull refused: {mismatch}"]
+        summary["failed"] = len(chosen)
+        logger.error("OData full pull refused: %s", mismatch)
+        return summary
+
+    for name in chosen:
+        try:
+            detail = _pull_whole_and_merge(name, settings.ingest_prefix)
+            summary["pulled"] += 1
+            logger.info("%s: full pull merged -- %s", name, detail)
+        except Exception as exc:
+            summary["failed"] += 1
+            summary["errors"].append(f"{name}: {exc}")
+            logger.error("%s: full pull failed -- %s", name, exc)
+    return summary
+
+
+async def _odata_full_pull_tick() -> None:
+    lock = _Lock(ODATA_FULL_PULL_LOCK_NAME)
+    try:
+        if not lock.acquire():
+            logger.debug("OData full pull skipped: another worker holds the lock")
+            return
+    except Exception as exc:
+        logger.warning("OData full pull skipped: could not reach the lock (%s)", exc)
+        return
+
+    started = datetime.now(timezone.utc)
+    logger.info("OData full pull starting")
+    try:
+        summary = await asyncio.to_thread(run_odata_full_pull_cycle)
+        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        logger.info(
+            "OData full pull finished in %.0fs: %d pulled, %d failed",
+            elapsed, summary["pulled"], summary["failed"],
+        )
+        for error in summary["errors"][:10]:
+            logger.error("  %s", error)
+    except Exception:
+        logger.exception("OData full pull raised")
+    finally:
+        lock.release()
+
+
+def seconds_until_weekday(weekday: int, hour_utc: int, now: datetime) -> float:
+    """Seconds from ``now`` to the next ``weekday`` (0 = Monday) at ``hour_utc``:00 UTC."""
+    target = now.replace(hour=hour_utc % 24, minute=0, second=0, microsecond=0)
+    target += timedelta(days=(weekday % 7 - target.weekday()) % 7)
+    if target <= now:
+        target += timedelta(days=7)
+    return (target - now).total_seconds()
+
+
+async def _odata_full_pull_loop(weekday: int, hour_utc: int) -> None:
+    while True:
+        await asyncio.sleep(seconds_until_weekday(weekday, hour_utc, datetime.now(timezone.utc)))
+        await _odata_full_pull_tick()
+        # Past the top of the hour before recomputing, so a fast tick cannot
+        # fire twice in the same minute.
+        await asyncio.sleep(120)
 
 
 async def _full_refresh_tick() -> None:
@@ -549,6 +690,22 @@ def start(app) -> asyncio.Task | None:
         logger.info(
             "full refresh is off (FULL_REFRESH_ENABLED is not 'true'); run it with: "
             "python -m app.ingest --csv-pull --csv-load --all"
+        )
+
+    if settings.odata_full_pull_enabled:
+        loops.append(lambda: _odata_full_pull_loop(
+            settings.odata_full_pull_weekday, settings.odata_full_pull_hour_utc
+        ))
+        logger.info(
+            "weekly OData full pull on: %s %02d:00 UTC (%s, read whole and merged into raw_<table>)",
+            WEEKDAY_NAMES[settings.odata_full_pull_weekday % 7],
+            settings.odata_full_pull_hour_utc % 24,
+            ", ".join(settings.odata_full_pull_set_list) or "no sets configured",
+        )
+    else:
+        logger.info(
+            "weekly OData full pull is off (ODATA_FULL_PULL_ENABLED is not 'true'); run it with: "
+            "python -m app.ingest --fetch --load --full --set MaterialValuationSet"
         )
 
     if not loops:

@@ -150,6 +150,28 @@ class Settings(BaseSettings):
     # load and the I13 rebuild gap all still apply.
     snapshot_refresh_after_delta: bool = True
 
+    # --- CSV increments for the tables without an OData delta ---------------
+    #
+    # After the OData sweep, pull each table in CSV_DELTA_TABLES over the CSV
+    # route for the window [its mark, today] and merge the rows into
+    # raw_<table> by key -- appended, never replaced (app/ingest/csv_delta.py).
+    # Off by default. A table with no mark is skipped, never pulled whole.
+    csv_delta_enabled: bool = False
+
+    # Comma-separated SAP tables. A table whose OData set has a runnable delta
+    # is left out: that route already keeps it current. RESB and CDPOS are the
+    # windowed tables the OData delta cannot cover (ReservationItemSet exposes
+    # no creation date; ChangeDocItemSet rejects the only usable filter).
+    csv_delta_tables: str = "RESB,CDPOS"
+
+    # How long one windowed request may take to deliver its first chunk, and
+    # how long a pause after the last chunk means the delivery finished.
+    # Shorter than the whole-table pull's 15 and 5 minutes: a window with no
+    # changes delivers nothing, and the cycle must not wait a quarter of an
+    # hour per table to learn that.
+    csv_delta_first_chunk_timeout_seconds: int = 300
+    csv_delta_quiet_period_seconds: int = 120
+
     # --- Full refresh schedule -----------------------------------------------
     #
     # Once a day: every table over the CSV route, loaded, then the OData sets
@@ -167,6 +189,33 @@ class Settings(BaseSettings):
     # for fields the CSV extract does not carry. Comma-separated.
     full_refresh_odata_sets: str = "MaterialPlantSet"
 
+    # --- Weekly OData full pull ---------------------------------------------
+    #
+    # Sets with no date SAP filters on, refreshed whole over OData and merged
+    # into raw_<table> by key, once a week. MBEW is the case: a price table
+    # with no change date (agreed with the SAP team 2026-10-15). Small sets
+    # only -- a full OData read of a large one is refused at the read ceiling.
+    # Off by default, like the other timers.
+    odata_full_pull_enabled: bool = False
+
+    # Comma-separated entity sets.
+    odata_full_pull_sets: str = "MaterialValuationSet"
+
+    # Day of the week (0 = Monday ... 6 = Sunday) and hour, UTC. Sunday
+    # 02:00 UTC is 04:00 in South Africa, after the I13 build window.
+    odata_full_pull_weekday: int = 6
+    odata_full_pull_hour_utc: int = 2
+
+    # --- Delta marks for tables loaded another way --------------------------
+    #
+    # A set whose raw_<table> holds rows but has no watermark and no
+    # ingestion_run load record (the 2026-10-09 migration left neither)
+    # starts its first increment from this day, YYYY-MM-DD, instead of pulling
+    # the whole set over OData -- which for RESB and CDPOS is past the read
+    # ceiling, refused, every cycle. Set it to the day the extract behind the
+    # tables was taken, less a few days. Blank means: no floor, pull in full.
+    delta_seed_floor: str = ""
+
     # --- Normalise views ----------------------------------------------------
     #
     # Build the n_<table> views (app/shared/sap_normalise.py) and I08's views on
@@ -176,6 +225,19 @@ class Settings(BaseSettings):
     # regardless of this; it only governs start-up. Off for a process that
     # must not run DDL when it starts.
     normalise_views_on_startup: bool = True
+
+    # How the SAP CSV extract writes numbers, which the n_<table> views undo
+    # for every CSV-shaped number column:
+    #   us      2,490.00  803.70  1.000   -- grouping commas, decimal point
+    #   german  2.490,00  803,70  1,000   -- grouping dots, decimal comma
+    # The extract follows the SAP job user's decimal notation, and it has
+    # changed: raw_mseg.MENGE held "0,989" in September 2026 and "1.000" from
+    # the 9 October delivery. A view built for the wrong one reads every
+    # quantity a thousand times out. Declared here, per deployment, never
+    # guessed from a value ("1,000" is one in one notation and a thousand in
+    # the other); measure a delivery before changing it. The OData delta
+    # writes the plain shape, which the us rule reads unchanged.
+    csv_number_format: str = "us"
 
     # --- CSV receiver (/api/events/csv) -------------------------------------
     #
@@ -851,6 +913,14 @@ class Settings(BaseSettings):
     @property
     def full_refresh_odata_set_list(self) -> list[str]:
         return [name.strip() for name in self.full_refresh_odata_sets.split(",") if name.strip()]
+
+    @property
+    def odata_full_pull_set_list(self) -> list[str]:
+        return [name.strip() for name in self.odata_full_pull_sets.split(",") if name.strip()]
+
+    @property
+    def csv_delta_table_list(self) -> list[str]:
+        return [name.strip().upper() for name in self.csv_delta_tables.split(",") if name.strip()]
 
     @property
     def cors_origins(self) -> list[str]:

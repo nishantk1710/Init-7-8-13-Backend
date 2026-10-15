@@ -27,6 +27,7 @@ from app.ingest.manifest import (
     check_delta_filters,
     spec_for,
     specs,
+    verified_deltas,
 )
 from app.ingest.sweep import run_delta_sweep
 from app.integrations.sap.client import SapClient
@@ -72,6 +73,18 @@ def _parser() -> argparse.ArgumentParser:
         "--csv-load",
         action="store_true",
         help="file a reconciled CSV extract into raw_<table> in Azure SQL",
+    )
+    parser.add_argument(
+        "--csv-delta",
+        action="store_true",
+        help=(
+            "pull each table in CSV_DELTA_TABLES (or --table NAME) over the CSV "
+            "route for the window [its mark, today] and merge the rows into "
+            "raw_<table> by key -- appended, never replaced. A table with no "
+            "mark is skipped. --since overrides the start for this run and "
+            "--to-date bounds the end; the mark moves only when the window "
+            "started on or before it."
+        ),
     )
     parser.add_argument(
         "--table",
@@ -321,6 +334,33 @@ def _report(title: str, rows: list[tuple[str, str, int, float]]) -> None:
     print(f"{title:<30} {'STATUS':<12} {'ROWS':>10}  {'SECONDS':>8}")
     for name, status, count, seconds in rows:
         print(f"{name:<30} {status:<12} {count:>10,}  {seconds:>8.1f}")
+
+
+def _csv_delta(args) -> int:
+    """The CSV increment: each table's window pulled and merged by key."""
+    from app.ingest import csv_delta
+
+    names = [args.table.upper()] if args.table else None
+    chosen = csv_delta.tables(names=names)
+    if not chosen:
+        print("No table to run: CSV_DELTA_TABLES is empty, or every table named has an OData delta.")
+        return 2
+    print(f"CSV delta for {', '.join(t.sap_table for t in chosen)}"
+          + (f" since {args.since}" if args.since else " from each table's mark")
+          + (f" up to {args.to_date}" if args.to_date else " up to today") + "\n")
+
+    results = csv_delta.run_csv_delta(names, since=args.since, until=args.to_date)
+    print(f"{'TABLE':<12} {'STATUS':<8} {'WINDOW':<20} {'RECEIVED':>9} {'CHANGED':>8} {'INSERTED':>9} {'MARK':<11} SECONDS")
+    for r in results:
+        window = f"{r.window[0]}..{r.window[1]}" if r.window else "-"
+        changed = r.merge.updated if r.merge else 0
+        inserted = r.merge.inserted if r.merge else 0
+        print(f"{r.sap_table:<12} {r.status:<8} {window:<20} {r.received:>9,} {changed:>8,} {inserted:>9,} "
+              f"{r.mark or '-':<11} {r.seconds:>7.1f}")
+    for r in results:
+        if r.error:
+            print(f"  {r.sap_table}: {r.error}")
+    return 1 if any(r.status == csv_delta.FAILED for r in results) else 0
 
 
 def _csv(args) -> int:
@@ -642,6 +682,8 @@ def main(argv: list[str] | None = None) -> int:
         return _abandon()
     if args.csv_status:
         return _csv_status()
+    if args.csv_delta:
+        return _csv_delta(args)
     if args.csv_pull or args.csv_load or args.csv_verify or args.csv_download:
         return _csv(args)
 
@@ -663,21 +705,17 @@ def main(argv: list[str] | None = None) -> int:
     failures = 0
 
     if mode == MODE_DELTA:
-        # Refuse before the first request rather than after a "delta" has
-        # quietly pulled whole sets. See manifest.check_delta_filters.
-        problems = check_delta_filters()
-        if problems:
-            print("Delta filters are not all verified against live SAP:")
-            for problem in problems:
-                print(f"  {problem}")
-            print("\nRe-probe them, or run --full.")
-            return 1
-
+        # Refuse an unverified set before the first request rather than
+        # after a "delta" has quietly pulled it whole. Per set, the same
+        # rule the scheduler applies: the verified sets run, the others are
+        # named. See manifest.verified_deltas.
         if args.all:
-            # The same rule the scheduler applies. A set with no runnable
-            # delta is not "pulled in full as a fallback" here: CDPOS is
-            # 940,000 rows over OData, and the CSV route already covers it.
-            chosen = tuple(s for s in specs() if s.runnable_delta is not None)
+            # A set with no runnable delta is not "pulled in full as a
+            # fallback" here: CDPOS was 940,000 rows over OData before it had
+            # a date, and the CSV route covers such a set.
+            runnable = [s for s in specs() if s.runnable_delta is not None]
+            verified, unverified = verified_deltas(runnable)
+            chosen = tuple(verified)
             blocked = [s for s in specs() if s.delta is not None and s.blocked]
             left_out = [
                 s.name for s in specs()
@@ -687,9 +725,22 @@ def main(argv: list[str] | None = None) -> int:
                 f"--delta --all: {len(chosen)} set(s) have a delta that can run "
                 f"({', '.join(s.name for s in chosen)})."
             )
+            for name, why in unverified.items():
+                print(f"  {name}: delta declared but not measured HONOURED on this system -- {why}")
             for s in blocked:
                 print(f"  {s.name}: delta declared but {s.blocked}")
             print(f"Left to the CSV route: {', '.join(left_out)}.\n")
+            if not chosen:
+                print("Nothing verified to run. Re-probe (python -m app.ingest.delta_probe), or run --full.")
+                return 1
+        else:
+            _, unverified = verified_deltas(chosen)
+            if unverified:
+                print("This delta is not verified against live SAP on this system:")
+                for name, why in unverified.items():
+                    print(f"  {name}: {why}")
+                print("\nRe-probe it (python -m app.ingest.delta_probe --set NAME), or run --full.")
+                return 1
 
     loaded_by_sweep = False
 

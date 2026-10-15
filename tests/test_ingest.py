@@ -566,13 +566,74 @@ def test_eban_deltas_on_badat_as_text() -> None:
     assert spec_for("PurchaseRequisitionSet").runnable_delta is not None
 
 
-def test_cdpos_has_no_delta_because_sap_rejects_the_only_shape() -> None:
-    """`Changenr eq 'a' or ...` is REJECTED_HTTP_400 on this set.
+def test_cdpos_reads_its_own_date_not_its_parents_keys() -> None:
+    """`Changenr eq 'a' or ...` is REJECTED_HTTP_400 on this set, so until
+    SAP joined the header's Udate onto the items (2026-10 transport) CDPOS
+    had no delta at all. Now it reads its own window, like CDHDR, under the
+    same Objectclas predicate -- and never a key chain."""
+    from app.ingest.manifest import delta_support
 
-    One request per change number would be thousands per run, so it stays a
-    full pull. Slower and honest beats an increment SAP cannot express.
-    """
-    assert spec_for("ChangeDocItemSet").delta is None
+    delta = spec_for("ChangeDocItemSet").delta
+
+    assert (delta.field, delta.literal, delta.via) == ("Udate", LITERAL_DATS, ())
+    assert delta_support()[("ChangeDocItemSet", "Udate", LITERAL_DATS)] == "HONOURED"
+    assert spec_for("ChangeDocItemSet").required_filter == "Objectclas eq 'MATERIAL'"
+
+
+def test_the_sets_sap_dated_in_october_read_the_dates_they_were_given() -> None:
+    """Measured on DEV 2026-10-15 (delta_support.csv): each field answers 0
+    for an impossible day, its rows for a real one, and a complete window."""
+    from app.ingest.manifest import LITERAL_MONTH, delta_support
+
+    expected = {
+        "StockMovementStatisticSet": ("Letztbew", LITERAL_DATS),
+        "MonthlyMovementStatisticSet": ("Spmon", LITERAL_MONTH),
+        "MaterialSet": ("Ersda", LITERAL_DATS),
+        "MaterialDescriptionSet": ("Ersda", LITERAL_DATS),
+        "MaterialPlantSet": ("Ersda", LITERAL_DATS),
+        "StorageLocationStockSet": ("Ersda", LITERAL_DATS),
+        "BatchStockSet": ("Ersda", LITERAL_DATS),
+        "InfoRecordSet": ("Erdat", LITERAL_DATS),
+        "InfoRecordOrgSet": ("Erdat", LITERAL_DATS),
+        "VendorSet": ("Erdat", LITERAL_DATS),
+        "ReservationItemSet": ("Crdat", LITERAL_DATS),
+    }
+    measured = delta_support()
+    for name, (field, literal) in expected.items():
+        delta = spec_for(name).delta
+        assert (delta.field, delta.literal) == (field, literal), name
+        assert measured[(name, field, literal)] == "HONOURED", name
+        assert spec_for(name).runnable_delta is not None, name
+
+
+def test_stock_and_reservations_are_re_read_for_what_the_movements_touched() -> None:
+    """A goods movement changes MARD and MCHB quantities and a reservation's
+    withdrawn quantity without moving any of their dates, and every movement
+    line names its material and its reservation. So the three read their
+    own creation-date window AND every key MSEG's window hands over."""
+    for name, key in (("StorageLocationStockSet", "Matnr"), ("BatchStockSet", "Matnr"),
+                      ("ReservationItemSet", "Rsnum")):
+        delta = spec_for(name).delta
+        assert (delta.via, delta.via_key) == (("GoodsMovementItemSet",), key), name
+    assert spec_for("MaterialValuationSet").delta is None, "MBEW has no date: weekly full pull"
+
+
+def test_a_set_this_snapshot_does_not_verify_is_left_out_not_run(monkeypatch) -> None:
+    """The gate is per set and per system: a field SAP exposed on DEV and has
+    not yet transported to QA is left out on QA, named, and the others run.
+    A child reading through an unverified parent is left out with it."""
+    from app.ingest import manifest as manifest_mod
+    from app.ingest.manifest import verified_deltas
+
+    monkeypatch.setitem(manifest_mod.DELTAS, "VendorSet", Delta(field="NeverProbedProperty"))
+    monkeypatch.setitem(manifest_mod.DELTAS, "MaterialSet", Delta(via=("VendorSet",), via_key="Matnr"))
+    chosen = [spec_for("VendorSet"), spec_for("MaterialSet"), spec_for("POHistorySet")]
+
+    runnable, left_out = verified_deltas(chosen)
+
+    assert [s.name for s in runnable] == ["POHistorySet"]
+    assert "never probed" in left_out["VendorSet"]
+    assert "VendorSet" in left_out["MaterialSet"] and "not verified" in left_out["MaterialSet"]
 
 
 def test_a_delta_without_a_honoured_filter_or_a_citation_is_refused() -> None:
@@ -615,7 +676,7 @@ def test_a_parent_must_have_a_window_of_its_own() -> None:
 
     original = dict(manifest_mod.DELTAS)
     try:
-        manifest_mod.DELTAS["VendorSet"] = Delta(via=("MaterialSet",), via_key="Lifnr")
+        manifest_mod.DELTAS["VendorSet"] = Delta(via=("MaterialValuationSet",), via_key="Lifnr")
         assert any("no window of its own" in p for p in check_delta_filters())
     finally:
         manifest_mod.DELTAS.clear()
@@ -651,10 +712,19 @@ def test_string_literals_escape_the_quote() -> None:
         ("datetime", "datetime'2026-09-15T00:00:00'"),
         ("dats", "'20260915'"),
         ("dotted", "'15.09.2026'"),
+        ("month", "'202609'"),
     ],
 )
 def test_a_mark_is_written_in_the_shape_its_field_accepts(literal, expected) -> None:
     assert fetch_mod.delta_literal("2026-09-15", literal) == expected
+
+
+def test_a_month_mark_re_reads_the_whole_month() -> None:
+    """S031 is keyed by month and its newest row is rewritten all month. The
+    mark is the first day of the newest month seen, and the window asks for
+    that month again -- `Spmon ge '202609'` -- until a newer one appears."""
+    assert highest([{"Spmon": "202608"}, {"Spmon": "202609"}], "Spmon", today=date(2026, 10, 7)) == "2026-09-01"
+    assert fetch_mod.delta_literal("2026-09-01", "month") == "'202609'"
 
 
 def test_legacy_marks_are_read_as_the_day_they_stand_for() -> None:
@@ -821,7 +891,7 @@ def test_collecting_parent_keys_without_a_window_is_refused() -> None:
 
 def test_collecting_keys_from_a_parent_with_no_date_is_refused() -> None:
     with pytest.raises(ValueError, match="no window"):
-        fetch_mod.collect_parent_keys(StubClient(StubExtract([])), "MaterialSet", "Matnr", "2026-09-01")
+        fetch_mod.collect_parent_keys(StubClient(StubExtract([])), "MaterialValuationSet", "Matnr", "2026-09-01")
 
 
 def test_parent_keys_come_from_the_parents_own_window(no_watermark_io) -> None:
@@ -831,6 +901,18 @@ def test_parent_keys_come_from_the_parents_own_window(no_watermark_io) -> None:
 
     assert keys == ["2", "1"]
     assert client.filters == ["Cpudt ge '20260915'"]
+
+
+def test_saps_initial_value_is_not_a_key(no_watermark_io) -> None:
+    """A movement line with no reservation carries Rsnum '0000000000'. Handed
+    over, a child would ask for it in every run and get nothing."""
+    client = StubClient(StubExtract([
+        {"Rsnum": "0000000000"}, {"Rsnum": "0000000123"}, {"Rsnum": ""}, {"Rsnum": None}, {"Rsnum": "0"},
+    ]))
+
+    keys = fetch_mod.collect_parent_keys(client, "GoodsMovementItemSet", "Rsnum", "2026-09-15")
+
+    assert keys == ["0000000123"]
 
 
 def test_a_requested_full_pull_seeds_the_mark_too(storage, no_watermark_io) -> None:
@@ -877,7 +959,7 @@ def test_windows_are_resolved_once_for_a_whole_family(monkeypatch) -> None:
 
     monkeypatch.setattr(fetch_mod, "get_watermark", stored)
     chosen = (spec_for("POScheduleLineSet"), spec_for("PurchaseOrderSet"),
-              spec_for("MaterialPlantSet"))
+              spec_for("MaterialValuationSet"))
 
     windows = fetch_mod.resolve_windows(chosen)
 
@@ -904,8 +986,9 @@ def test_fetch_order_puts_parents_first() -> None:
 
 def test_only_deltas_that_can_run_are_runnable(monkeypatch) -> None:
     """Every declared delta runs today: the purchase-order family, MKPF and
-    MSEG by entry date, CDHDR by change date, EBAN by requisition date. Sets
-    with no delta do not."""
+    MSEG by entry date, CDHDR and CDPOS by change date, EBAN by requisition
+    date, and the sets SAP dated in the 2026-10 transport. MBEW, with no
+    date, does not: it is the weekly full pull."""
     from app.ingest import manifest as manifest_mod
 
     monkeypatch.setattr(manifest_mod, "READ_BROKEN_SETS", {})
@@ -914,16 +997,20 @@ def test_only_deltas_that_can_run_are_runnable(monkeypatch) -> None:
         "PurchaseOrderSet", "PurchaseOrderItemSet", "POScheduleLineSet", "POHistorySet",
         "MaterialDocumentHeaderSet", "GoodsMovementItemSet", "ChangeDocHeaderSet",
         "PurchaseRequisitionSet",
+        "ChangeDocItemSet", "StockMovementStatisticSet", "MonthlyMovementStatisticSet",
+        "MaterialSet", "MaterialDescriptionSet", "MaterialPlantSet",
+        "StorageLocationStockSet", "BatchStockSet", "InfoRecordSet", "InfoRecordOrgSet",
+        "VendorSet", "ReservationItemSet",
     }
-    assert spec_for("MaterialPlantSet").runnable_delta is None
+    assert spec_for("MaterialValuationSet").runnable_delta is None
 
 
 def test_a_declared_parent_with_no_window_makes_the_child_unrunnable(monkeypatch) -> None:
     from app.ingest import manifest as manifest_mod
 
-    monkeypatch.setitem(manifest_mod.DELTAS, "VendorSet", Delta(via=("MaterialSet",), via_key="Lifnr"))
+    monkeypatch.setitem(manifest_mod.DELTAS, "VendorSet", Delta(via=("MaterialValuationSet",), via_key="Lifnr"))
     assert spec_for("VendorSet").runnable_delta is None
-    assert spec_for("VendorSet").why_not_runnable == "via MaterialSet (no window: full)"
+    assert spec_for("VendorSet").why_not_runnable == "via MaterialValuationSet (no window: full)"
 
 
 def test_a_set_sap_cannot_serve_has_no_runnable_delta(monkeypatch) -> None:
@@ -1164,6 +1251,8 @@ def test_a_future_value_never_becomes_the_mark() -> None:
         ("2026-09-15", date(2026, 9, 15)),
         ("2026-09-14T22:00:00+00:00", date(2026, 9, 15)),
         ("2026-09-15 00:00:00", date(2026, 9, 15)),
+        ("202609", date(2026, 9, 1)),
+        ("000000", None),
         ("00000000", None),
         ("", None),
         ("not a date", None),

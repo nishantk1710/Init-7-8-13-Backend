@@ -47,12 +47,18 @@ the envelope decodes that to 22:00 UTC the evening before, so the calendar day
 is the NEAREST one, not the UTC one. A CSV-shaped table gets ``DD.MM.YYYY``, a
 workbook-shaped one ``YYYY-MM-DD``; both are what the normalise view expects.
 Booleans become SAP's ``X``/blank. Numbers are written as text, as every raw
-column is -- and in the CSV extract's German shape when the column is one the
-normalise view reads as a number: ``0,989``, ``1234,5``, ``5,000-``. The view
-strips every ``.`` and turns ``,`` into ``.`` for a CSV-shaped column, so an
-OData ``12.500`` written as-is would be read back as twelve thousand five
-hundred. Which columns are numbers is the view's own declaration
-(``sap_normalise.TABLES``), never a guess from the value.
+column is, exactly as OData sends them: a decimal point, no grouping, a leading
+minus (``12.500``, ``-5``, ``0.989``). The normalise view reads a CSV-shaped
+number column in the extract's declared notation (``CSV_NUMBER_FORMAT``: us
+drops grouping commas, german drops grouping dots and makes the comma the
+point), and the plain shape survives both rules unchanged. Until 2026-10-15
+this module wrote the German shape (``12,500``, ``5,000-``) to match the
+view's then-fixed German rule, while the 9 October delivery was US-shaped
+(``803.70``, ``2,490.00``) -- two shapes in every column a delta touched; the
+rows written that way were rewritten. A number column -- the view's own
+declaration, ``sap_normalise.TABLES`` kind ``num``, never a guess from the
+value -- is only trimmed: SAP pads a string-typed amount with spaces
+(``'      79.00'``).
 
 WHAT IS REFUSED, AND WHY
 
@@ -177,8 +183,8 @@ class Resolved:
     edm_type: str
     is_key: bool
     added: bool = False
-    # The view parses this column as a number, so it is written in the
-    # vocabulary's number shape (German, for a CSV-shaped table).
+    # The view parses this column as a number, so it is written as OData
+    # sent it, trimmed (shape()).
     numeric: bool = False
 
 
@@ -252,29 +258,17 @@ def _nearest_day(moment: datetime) -> date:
     return (moment + timedelta(hours=12)).date()
 
 
-_PLAIN_NUMBER = re.compile(r"^-?\d+(\.\d+)?$")
-
-
-def _german(text: str) -> str:
-    """``-1234.5`` -> ``1234,5-``, the CSV extract's shape; anything that is
-    not a plain number is kept verbatim, never guessed."""
-    if not _PLAIN_NUMBER.match(text):
-        return text
-    negative = text.startswith("-")
-    return text.lstrip("-").replace(".", ",") + ("-" if negative else "")
-
-
 def shape(value: Any, edm_type: str, vocabulary: str, *, numeric: bool = False) -> str | None:
     """One OData value as the raw table's text, in the table's vocabulary.
 
-    ``numeric`` says the view reads the column as a number: in the CSV
-    vocabulary that means SAP's German shape (see the module docstring).
+    ``numeric`` says the view reads the column as a number. The value is then
+    written as OData sent it -- decimal point, no grouping, leading minus --
+    and only trimmed; see the module docstring.
     """
     if value is None:
         return None
-    if numeric and vocabulary == VOCAB_SAP:
-        text = format(value, "f") if isinstance(value, Decimal) else str(value).strip()
-        return _german(text)
+    if numeric:
+        return format(value, "f") if isinstance(value, Decimal) else str(value).strip()
     if edm_type in ("Edm.DateTime", "Edm.DateTimeOffset"):
         if isinstance(value, datetime):
             day = _nearest_day(value)

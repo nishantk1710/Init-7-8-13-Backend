@@ -37,12 +37,21 @@ What each kind of column gets, identically for both sources:
     date  ISO ``YYYY-MM-DD`` text  from ``YYYY-MM-DD``, ``DD.MM.YYYY`` or ``YYYYMMDD``;
                                    SAP's zero date becomes NULL; anything else passes
                                    through unchanged
-    num   plain decimal text       from the CSV's German format: ``1.234,5`` -> ``1234.5``,
-                                   ``0,989`` -> ``0.989``; SAP's trailing minus moved
-                                   to the front (``12,000-`` -> ``-12.000``). A workbook
-                                   column is already plain and only has its minus moved.
-                                   Which format applies is declared by the vocabulary
-                                   the column resolved through, never read off a value.
+    num   plain decimal text       from the CSV extract's notation, CSV_NUMBER_FORMAT:
+                                   ``us`` drops the grouping commas (``2,490.00`` ->
+                                   ``2490.00``, ``1.000`` unchanged); ``german`` drops
+                                   the grouping dots and makes the comma the point
+                                   (``1.234,5`` -> ``1234.5``, ``0,989`` -> ``0.989``).
+                                   SAP's trailing minus moved to the front either way
+                                   (``12.000-`` -> ``-12.000``). A workbook column is
+                                   already plain and only has its minus moved. Which
+                                   rule applies is declared -- by the vocabulary the
+                                   column resolved through and by the setting -- never
+                                   read off a value: ``1,000`` is one in one notation
+                                   and a thousand in the other. The extract's notation
+                                   has changed once already (``0,989`` in September
+                                   2026, ``1.000`` from 9 October), so measure a
+                                   delivery before changing the setting.
     text  as loaded
 
 Workbook data is already in that shape, so for it every transform is a no-op.
@@ -81,8 +90,16 @@ from typing import Literal
 
 from sqlalchemy import Engine, inspect, text
 
+from app.core.config import get_settings
 from app.core.db import get_engine
 from app.core.logging import get_logger
+
+# How a CSV-shaped number column is written (CSV_NUMBER_FORMAT), and the
+# workbook's "already plain". See the module docstring, ``num``.
+FORMAT_US = "us"
+FORMAT_GERMAN = "german"
+FORMAT_PLAIN = "plain"
+CSV_NUMBER_FORMATS = frozenset({FORMAT_US, FORMAT_GERMAN})
 
 logger = get_logger(__name__)
 
@@ -448,13 +465,19 @@ class _Dialect:
             f"ELSE {t} END"
         )
 
-    def num(self, c: str, *, german: bool = False) -> str:
+    def num(self, c: str, *, fmt: str = FORMAT_PLAIN) -> str:
         t = f"TRIM({c})"
-        if german:
-            # SAP CSV: "1.234,5" -> "1234.5". Grouping dots out first, then the
-            # decimal comma becomes a point -- the order is what keeps "0,989"
-            # from turning into 989.
+        if fmt == FORMAT_GERMAN:
+            # SAP CSV in German notation: "1.234,5" -> "1234.5". Grouping dots
+            # out first, then the decimal comma becomes a point -- the order
+            # is what keeps "0,989" from turning into 989.
             t = f"REPLACE(REPLACE({t}, '.', ''), ',', '.')"
+        elif fmt == FORMAT_US:
+            # SAP CSV in US notation: "2,490.00" -> "2490.00". Only the
+            # grouping commas go; the point is already the decimal mark.
+            t = f"REPLACE({t}, ',', '')"
+        elif fmt != FORMAT_PLAIN:
+            raise ValueError(f"unknown number format {fmt!r}; one of {sorted(CSV_NUMBER_FORMATS)}")
         length = "LEN" if self.mssql else "LENGTH"
         moved = self.concat("'-'", f"LEFT({t}, {length}({t}) - 1)")
         return f"CASE WHEN {t} LIKE '%-' THEN {moved} ELSE {t} END"
@@ -464,14 +487,23 @@ def _dialect(engine: Engine) -> _Dialect:
     return _Dialect(engine.dialect.name, engine.dialect.identifier_preparer.quote)
 
 
-def view_sql(table: str, present: list[str] | None, dialect: _Dialect) -> str:
+def view_sql(
+    table: str, present: list[str] | None, dialect: _Dialect, *, csv_number_format: str | None = None
+) -> str:
     """The CREATE VIEW statement for ``n_<table>``.
 
     ``present`` is the raw table's columns, or None when the table does not
     exist -- then the view has every label, as NULL, and no rows, so a query
     over an extract SAP never delivered (EKKO, EKET) returns nothing instead of
-    failing.
+    failing. ``csv_number_format`` is the extract's notation for a CSV-shaped
+    number column (``CSV_NUMBER_FORMAT`` when not given).
     """
+    if csv_number_format is None:
+        csv_number_format = get_settings().csv_number_format
+    if csv_number_format not in CSV_NUMBER_FORMATS:
+        raise ValueError(
+            f"CSV_NUMBER_FORMAT={csv_number_format!r} is not one of {sorted(CSV_NUMBER_FORMATS)}"
+        )
     name = f"n_{table}"
     cols = TABLES[table]
     if present is None:
@@ -488,14 +520,15 @@ def view_sql(table: str, present: list[str] | None, dialect: _Dialect) -> str:
         column = dialect.quote(r.source)
         kind = kinds[r.label]
         # The vocabulary a column resolved through IS the declaration of its
-        # number format: the workbook label means the July extract ("1,000" is
-        # one thousand), a SAP field name means the CSV extract, written in SAP's
-        # German settings ("1,000" is one). Never decided by looking at values.
+        # number format: the workbook label means the July extract, already
+        # plain; a SAP field name means the CSV extract, in the notation
+        # CSV_NUMBER_FORMAT declares for this deployment. Never decided by
+        # looking at values.
         from_csv = r.source.lower() != r.label.lower()
         expression = {
             "key": dialect.key,
             "date": dialect.date,
-            "num": lambda c: dialect.num(c, german=from_csv),
+            "num": lambda c: dialect.num(c, fmt=csv_number_format if from_csv else FORMAT_PLAIN),
             "text": lambda c: c,
         }[kind](column)
         select.append(f"{expression} AS {alias}")

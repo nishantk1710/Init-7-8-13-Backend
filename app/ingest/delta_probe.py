@@ -41,7 +41,15 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from app.ingest.fetch import combine, delta_literal, odata_literal, window_filter
-from app.ingest.manifest import DELTA_SUPPORT_FILE, DELTAS, HONOURED, KEY_CHAIN, IngestSpec, spec_for
+from app.ingest.manifest import (
+    DELTA_SUPPORT_FILE,
+    DELTAS,
+    HONOURED,
+    KEY_CHAIN,
+    LITERAL_MONTH,
+    IngestSpec,
+    spec_for,
+)
 from app.ingest.watermarks import as_day
 from app.integrations.sap.client import SapClient
 from app.integrations.sap.contract import discovery_dir
@@ -100,6 +108,10 @@ def probe_window(client: SapClient, spec: IngestSpec, today: date) -> dict:
         return row
     days = [as_day(r.get(delta.field)) for r in extract.rows]
     floor = date.fromisoformat(window_from)
+    if delta.literal == LITERAL_MONTH:
+        # The filter said 'ge 202609', so every row of September is inside
+        # the window, not only those from the day the window was counted from.
+        floor = floor.replace(day=1)
     row["window_read"] = len(extract.rows)
     row["outside"] = sum(1 for d in days if d is None or d < floor)
 

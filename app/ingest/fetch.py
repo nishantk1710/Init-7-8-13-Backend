@@ -47,6 +47,7 @@ from app.ingest.manifest import (
     LITERAL_DATETIME,
     LITERAL_DATS,
     LITERAL_DOTTED,
+    LITERAL_MONTH,
     IngestSpec,
     spec_for,
 )
@@ -165,6 +166,9 @@ def delta_literal(mark: Any, literal: str) -> str:
         return f"'{day:%Y%m%d}'"
     if literal == LITERAL_DOTTED:
         return f"'{day:%d.%m.%Y}'"
+    if literal == LITERAL_MONTH:
+        # The month the day falls in: a mark of 2026-09-01 reads 'ge 202609'.
+        return f"'{day:%Y%m}'"
     raise ValueError(f"unknown literal shape {literal!r}")
 
 
@@ -383,8 +387,15 @@ def collect_parent_keys(
     seen: dict[str, None] = {}
     for row in read.rows:
         value = row.get(via_key)
-        if value not in (None, ""):
-            seen.setdefault(str(value), None)
+        if value in (None, ""):
+            continue
+        key = str(value)
+        if key.strip("0 ") == "":
+            # SAP's initial value for a numeric key: a movement line with no
+            # reservation carries Rsnum '0000000000'. Not a key -- a child
+            # asked for it answers nothing, one request per fifty, every run.
+            continue
+        seen.setdefault(key, None)
     return list(seen)
 
 
