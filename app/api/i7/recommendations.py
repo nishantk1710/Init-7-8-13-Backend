@@ -20,6 +20,7 @@ from app.initiatives.i7.recommendations import routing
 from app.initiatives.i7.recommendations.consumption_history import monthly_consumption_history
 from app.models.i7_features import DecliningDemandEvaluation
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun
+from app.models.i7_oar import OarNeighbour
 from app.models.i7_recommendation import Recommendation
 from app.models.i7_staging import StagedMaterial, StagedStock
 from app.schemas.i7.errors import bad_request
@@ -38,6 +39,8 @@ from app.schemas.i7.recommendations import (
     RecommendationSummaryStats,
     RecommendationTrace,
     RiskCount,
+    SimilarMaterial,
+    SimilarMaterialsResponse,
     StatusCount,
 )
 
@@ -740,6 +743,63 @@ def get_recommendation_forecast_history(
                 forecast_period=r.forecast_period, predicted=r.predicted, actual=r.actual
             )
             for r in path_rows
+        ),
+    )
+
+
+SIMILAR_MATERIALS_LIMIT = 10
+"""How many neighbours the detail shows -- the engine's usual top_k."""
+
+
+@router.get(
+    "/recommendations/{recommendation_id}/similar-materials",
+    response_model=SimilarMaterialsResponse,
+    summary="The most similar materials an OAR recommendation was sized from",
+    description="The neighbours the OAR similarity engine stored for this "
+    "recommendation's own run (i7_oar_neighbour), best first, up to ten -- never "
+    "re-ranked or recomputed. neighbours is empty, never fabricated, when the "
+    "recommendation has no OAR run or the run kept no neighbours.",
+    responses={404: {"description": "Recommendation not found"}},
+)
+def get_recommendation_similar_materials(
+    recommendation_id: str, session: Annotated[Session, Depends(get_session)]
+) -> SimilarMaterialsResponse:
+    row = load_latest_recommendation(session, recommendation_id)
+
+    neighbours: list[OarNeighbour] = []
+    if row.oar_run_id is not None:
+        neighbours = list(
+            session.execute(
+                select(OarNeighbour)
+                .where(
+                    OarNeighbour.oar_run_id == row.oar_run_id,
+                    OarNeighbour.sap_material_number == row.sap_material_number,
+                    OarNeighbour.sap_plant_code == row.sap_plant_code,
+                )
+                .order_by(OarNeighbour.rank)
+                .limit(SIMILAR_MATERIALS_LIMIT)
+            ).scalars()
+        )
+
+    descriptions = _display_fields_for(session, {n.neighbour_material for n in neighbours})
+    return SimilarMaterialsResponse(
+        sap_material_number=row.sap_material_number,
+        sap_plant_code=row.sap_plant_code,
+        neighbours=tuple(
+            SimilarMaterial(
+                rank=n.rank,
+                material=n.neighbour_material,
+                plant=n.neighbour_plant,
+                description=descriptions.get(n.neighbour_material, (None, None))[0],
+                similarity=n.combined_similarity,
+                criticality=n.criticality,
+                history_months=n.history_months,
+                safety_stock=n.safety_stock,
+                rop=n.rop,
+                max_stock=n.max_stock,
+                contributed=n.inventory_eligible,
+            )
+            for n in neighbours
         ),
     )
 

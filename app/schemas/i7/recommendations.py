@@ -86,6 +86,42 @@ class ForecastHistoryResponse(BaseModel):
     points: tuple[ForecastHistoryPoint, ...]
 
 
+class SimilarMaterial(BaseModel):
+    """One of the neighbours an OAR (cold-start) recommendation was sized from,
+    read from ``i7_oar_neighbour`` exactly as the similarity engine stored it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    rank: int
+    material: str
+    plant: str
+    description: str | None
+    """From ``i7_staged_material``; None when staging has no description."""
+    similarity: Decimal | None
+    """The combined similarity score (0..1) the neighbour was ranked by."""
+    criticality: str | None
+    history_months: int | None
+    safety_stock: int | None
+    rop: int | None
+    max_stock: int | None
+    contributed: bool
+    """Whether this neighbour's stock values fed the weighted estimate
+    (``inventory_eligible``) -- a neighbour can be similar yet lend nothing."""
+
+
+class SimilarMaterialsResponse(BaseModel):
+    """The most similar materials behind one OAR recommendation, best first.
+
+    ``neighbours`` is empty, never fabricated, for a recommendation that was not
+    sized from similarity (no OAR run) or whose run kept no neighbours."""
+
+    model_config = ConfigDict(frozen=True)
+
+    sap_material_number: str
+    sap_plant_code: str
+    neighbours: tuple[SimilarMaterial, ...]
+
+
 class ForecastHistoryAggregatePoint(BaseModel):
     """One period's SUMMED predicted/actual across every in-scope
     material-plant that has a persisted champion path for that period --
