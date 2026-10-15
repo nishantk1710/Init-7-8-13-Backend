@@ -294,3 +294,14 @@ Then:
 .venv\Scripts\python.exe -m pytest tests/i7/api -q   # API tests only
 .venv\Scripts\python.exe -m pytest -q                # full regression suite
 ```
+
+## Quarterly report: source activity (report version 1.1)
+
+`QuarterlyReport.source_activity` (additive, optional; absent on a report stored before 1.1) reads
+`i7_staged_consumption` by the **month the movement happened in** (`period`, first-of-month), while every
+other section still counts I07 outputs by when they were **generated**. Each month of the period is
+`AVAILABLE` (rows exist), `NO_ACTIVITY` (the staged data covers the month and holds none: a confirmed
+zero), `NOT_COVERED` (outside the months the data covers: not zero, counts are null) or `NO_SOURCE_DATA`.
+Counts are transaction and material-plant counts; consumption quantities are withheld
+(`quantity_status: NOT_AVAILABLE`) until the SAP number-format correction is applied. Regenerate a quarter
+(`POST /reports/quarterly/generate`) to give it the section.

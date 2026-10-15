@@ -51,7 +51,7 @@ def quarter_and_report():
 def test_report_metadata_matches_requested_quarter(quarter_and_report):
     quarter, report = quarter_and_report
     assert report.metadata.quarter == quarter
-    assert report.metadata.report_version == "1.0"
+    assert report.metadata.report_version == "1.1"
     assert report.metadata.period_start <= report.metadata.period_end
 
 

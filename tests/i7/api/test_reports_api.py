@@ -54,8 +54,13 @@ def test_generate_returns_200_with_a_full_report_body(clean_test_quarter):
         "forecasting", "safety_stock", "reorder_point", "max_stock", "oar", "recommendations",
         "approval", "baseline_comparison", "sap_adoption", "limitations",
         "material_criticality", "management_summary",
+        # Added in report version 1.1: consumption by the month it happened in. Additive and optional.
+        "source_activity",
     }
     assert body["metadata"]["quarter"] == quarter
+    assert body["metadata"]["report_version"] == "1.1"
+    # One entry per calendar month of the quarter, whatever the staged data holds.
+    assert [m["month"] for m in body["source_activity"]["months"]] == ["2099-01-01", "2099-02-01", "2099-03-01"]
 
 
 @needs_db

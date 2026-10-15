@@ -693,6 +693,109 @@ class LimitationsSection(BaseModel):
 # --------------------------------------------------------------------------
 
 
+# --------------------------------------------------------------------------
+# 17. Source activity -- what happened in the quarter, from the staged SAP data
+# --------------------------------------------------------------------------
+
+
+class SourceMonthStatus(StrEnum):
+    """Whether a calendar month of source data can be reported, and why not.
+
+    Three different reasons a month can have no consumption rows, never
+    collapsed into a bare zero.
+    """
+
+    AVAILABLE = "AVAILABLE"
+    """Consumption rows exist for the month; the counts are real."""
+
+    NO_ACTIVITY = "NO_ACTIVITY"
+    """The staged data covers this month (it lies between the first and the last month
+    with any consumption) and holds none in it: a confirmed zero. The counts are 0."""
+
+    NOT_COVERED = "NOT_COVERED"
+    """The month lies outside the months the staged data covers -- before the first or
+    after the last -- so it was not delivered or not yet ingested. NOT zero: the counts
+    are ``None``."""
+
+    NO_SOURCE_DATA = "NO_SOURCE_DATA"
+    """No consumption has been staged at all, so nothing can be said about any month."""
+
+
+class SourceActivityMonth(BaseModel):
+    """One calendar month of the report's period, from ``i7_staged_consumption``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    month: date
+    """First day of the month."""
+    status: SourceMonthStatus
+
+    material_plants_with_movements: int | None
+    """Material-plants with at least one issue or reversal that month. ``None`` unless
+    the month is AVAILABLE or NO_ACTIVITY (0)."""
+    material_plants_with_demand: int | None
+    """Material-plants whose issues outweighed their reversals that month (net quantity
+    above zero) -- the same "demand is not negative" rule the models apply."""
+    materials_with_movements: int | None
+    """Distinct materials behind ``material_plants_with_movements``."""
+    issue_transactions: int | None
+    """Goods-issue movement rows (types 201/261), counted by staging."""
+    reversal_transactions: int | None
+    """Reversal movement rows (types 202/262), counted by staging."""
+
+
+class SourceActivityTotals(BaseModel):
+    """The whole period, over the months that are reported."""
+
+    model_config = ConfigDict(frozen=True)
+
+    material_plants_with_movements: int
+    material_plants_with_demand_in_any_month: int
+    materials_with_movements: int
+    issue_transactions: int
+    reversal_transactions: int
+    months_available: int
+    months_no_activity: int
+    months_not_covered: int
+
+
+class SourceActivitySection(BaseModel):
+    """Consumption activity by calendar month for the report's period, read from the staged
+    SAP data -- independent of when I07 generated its outputs.
+
+    Which month a movement happened in is the **source-data period**. When I07 created a
+    recommendation is the **output-generation time**, and the other sections of this report
+    still count by that. The two are never mixed: a quarter in which nothing was generated can
+    still have a full set of source months.
+
+    Quantity totals are deliberately not reported (see ``quantity_note``).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    months: list[SourceActivityMonth]
+    totals: SourceActivityTotals
+
+    staged_data_first_month: date | None
+    staged_data_last_month: date | None
+    """The first and last month in the whole staged consumption data: the evidence behind
+    NO_ACTIVITY (inside) versus NOT_COVERED (outside). ``None`` when nothing is staged."""
+
+    quantity_status: AvailabilityStatus
+    quantity_note: str
+    """Why no consumption quantity is given. Counts are used instead: a transaction count does
+    not depend on a unit of measure or on how a quantity was read."""
+
+    latest_recommendation_generated_at: datetime | None
+    """When I07's most recent recommendations were generated, from any period. Shown beside
+    the recommendation counts so a reader can see a current-state snapshot is not a record of
+    this period. ``None`` when there are none."""
+    recommendations_generated_in_period: int
+    """How many of those were generated inside this period -- the same number as the
+    Recommendations section, repeated here so the two kinds of date sit side by side."""
+    output_note: str
+
+
 class QuarterlyReport(BaseModel):
     """The I07 Quarterly Deep-Dive Report -- the complete response of the
     report-generation API and the payload the quarterly CLI writes.
@@ -719,6 +822,9 @@ class QuarterlyReport(BaseModel):
     baseline_comparison: BaselineComparisonSection
     sap_adoption: SapAdoptionSection
     limitations: LimitationsSection
+    source_activity: SourceActivitySection | None = None
+    """Added in report version 1.1. ``None`` on a report stored before then, which still
+    validates -- so an older quarter simply has no source-activity section until regenerated."""
 
     @classmethod
     def from_report_json(cls, report_json: str) -> "QuarterlyReport":
