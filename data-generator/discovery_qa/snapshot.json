@@ -1,7 +1,7 @@
 {
   "cpi_path": "/http/SAPECCQA/OdataConsumption",
   "label": "QA",
-  "captured_at": "2026-10-13T07:14:55Z",
+  "captured_at": "2026-10-16T04:51:42Z",
   "services": [
     "ZMM_KPI02_ADD_SRV",
     "ZMM_KPI02_TAB_SRV"

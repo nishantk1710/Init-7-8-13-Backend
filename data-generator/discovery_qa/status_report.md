@@ -1,8 +1,8 @@
-# VZI CPI OData status, 2026-10-13T07:17:36Z
+# VZI CPI OData status, 2026-10-16T04:51:44Z
 
-Run mode: --out data-generator/discovery_qa --label QA --env-file .env --skip-probes --skip-profiles
+Run mode: --skip-probes --skip-profiles --skip-filter-sweep --label QA --out data-generator\discovery_qa --env-file .env
 
-Calls: 329  |  failures: 146  |  total elapsed: 324s
+Calls: 26  |  failures: 0  |  total elapsed: 169s
 
 ## Services
 - ZMM_KPI02_ADD_SRV: reachable, 14 entity sets in $metadata.
@@ -10,18 +10,16 @@ Calls: 329  |  failures: 146  |  total elapsed: 324s
 
 ## Defects
 - B1: /$count succeeded on every reachable set - the defect appears FIXED.
-- F1: 1 of 157 tested properties silently ignore $filter. Previously 85 of 230.
-- R1 (ReservationItemSet priority fix): 0 ignored propert(ies) - appears FIXED.
 
 ## Field exposure
 - 2 FRS-required field(s) absent from the projection; 7 newly exposed since the FRS; 0 regression(s).
 
 ## Slowest calls (W8.1 performance baseline)
-- 59.6s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet/$count  
-- 28.0s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count  
-- 18.1s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet/$count  $filter=Ebeln eq 'ZZ~NOPE'
-- 16.6s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet/$count  $filter=Ebelp eq 'ZZ~NOPE'
-- 16.4s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count  
+- 61.9s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet/$count  
+- 28.2s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count  
+- 18.3s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count  
+- 16.4s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count  
+- 13.3s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count  
 
 ## Confirmed defect register
 
