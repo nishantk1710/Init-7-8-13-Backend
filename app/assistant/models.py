@@ -117,6 +117,10 @@ class AssistantSession(Base):
     department: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     """Which department the requester is reserving for.
 
+    Since 15 Oct 2026 a 5-digit department code (``10100``), picked from the
+    codes VZI keys into ``EBAN.AFNAM`` -- see ``app/assistant/departments.py``.
+    Rows written before then hold whatever was typed, and stay as written.
+
     Asked at the entry point rather than derived, because there is no
     deterministic source for it: nothing the platform loads maps a person to a
     cost-bearing department, and ``consumption_plan.cost_centre`` is the plan's

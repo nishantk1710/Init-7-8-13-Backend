@@ -301,6 +301,11 @@ TABLES: dict[str, tuple[Col, ...]] = {
         _c("vendor", "LIFNR", kind="key"),
         _c("currency", "WAERS"),
         _c("planned_deliv_time", "PLIFZ", kind="num"),
+        # The department code VZI keys into Requisitioner (``10100``,
+        # ``40301``). Read by the assistant's department list
+        # (app/assistant/departments.py). Text, not a key: it is not padded,
+        # and some values are names (``BMW``, ``OAR``) the list filters out.
+        _c("requisitioner", "AFNAM"),
     ),
     "mara": (
         _c("material", "MATNR", kind="key"),
