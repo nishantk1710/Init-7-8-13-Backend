@@ -843,6 +843,34 @@ def test_own_window_and_parent_keys_are_read_and_unioned(storage, no_watermark_i
     assert result.watermark == "2026-09-15"
 
 
+def test_the_mark_comes_from_the_own_window_and_never_moves_back(storage, no_watermark_io) -> None:
+    """MARD, 2026-10-16: its own window held nothing, and the two rows MSEG's
+    keys brought in were materials created on 15 September -- a month before
+    the window. Taken over the union, the mark would have moved back; a
+    material created in 2013 that moves today would have moved it back to
+    2013, and the next cycle would read the whole set every hour."""
+    stock = spec_for("StorageLocationStockSet")
+    moved = {"Matnr": "000000000010000001", "Werks": "1300", "Lgort": "0001", "Ersda": "20260915"}
+    created = {"Matnr": "000000000010000002", "Werks": "1300", "Lgort": "0001", "Ersda": "20261012"}
+
+    def fetch(own_rows):
+        client = StubClient(answer=lambda name, kwargs: StubExtract(
+            own_rows if kwargs["filter"].startswith("Ersda") else [moved]
+        ))
+        return fetch_mod.fetch_set(
+            stock, root="odata", client=client, storage=storage, run_date=RUN_DATE,
+            mode="delta", since="2026-10-06", parent_keys=["000000000010000001"],
+            advance_watermark=False,
+        )
+
+    # Own window empty, parents handed a row over: nothing measured, no mark.
+    assert fetch([]).watermark is None
+    # Own window has a row: its day, not the older row the parents brought.
+    assert fetch([created]).watermark == "2026-10-12"
+    # Own rows no later than the window (day rounding): the window itself.
+    assert fetch([dict(created, Ersda="20261005")]).watermark == "2026-10-06"
+
+
 def test_a_window_that_lost_rows_is_refused(storage, no_watermark_io) -> None:
     """M1 and M2: a delta read 19 rows of the 20 its own $count promised used
     to land as ok. The check compared rows against a flag, not the count."""
