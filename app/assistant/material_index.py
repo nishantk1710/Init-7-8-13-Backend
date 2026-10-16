@@ -24,8 +24,13 @@ queries restrict them, so searching here gives the same answer:
 * MARC (``n_marc``) -- material, plant, MRP type at in-scope plants.
 * MARD (``n_mard``) -- material, plant at in-scope plants.
 
-Material numbers are normalised once, at load. A few tens of thousands of short
-strings: a few MB.
+Material numbers are normalised once, at load, and each is one string shared by
+every source. Held as plain tuples, plant codes and MRP types shared, and an
+upper-case copy kept only where SAP's text is not already upper case. Measured
+with tracemalloc on synthetic rows (one MAKT text, one MARC and two MARD rows
+per material, a ZMM065 row per four): ~0.6 KB per material, so ~30 MB at
+50,000 materials and ~115 MB at 200,000. A search then takes 3-60 ms at
+50,000. The log line after each load states the real counts.
 
 Loaded whole, in the background, never per request -- the same arrangement as
 :mod:`app.shared.material_names`. Until the first load lands (the minutes after
@@ -39,9 +44,11 @@ MARC itself, so routing is never this stale -- only the suggestions are.
 from __future__ import annotations
 
 import bisect
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
@@ -66,30 +73,40 @@ STARTUP_WAIT_SECONDS = 120
 _REPORT_TABLE = "criticality_current"
 
 
-@dataclass(frozen=True)
-class MaktText:
+class MaktText(NamedTuple):
     english: bool
     text: str
     upper: str
+    """The same object as ``text`` when SAP already wrote it in upper case."""
 
 
-@dataclass(frozen=True)
-class ReportRow:
+class ReportRow(NamedTuple):
     material: str
     plant: str
     description: str | None
     upper: str
 
 
+def _upper(value: str) -> str:
+    upper = value.upper()
+    return value if upper == value else upper
+
+
+def _shared(value: str) -> str:
+    """One object per distinct plant code / MRP type, however many rows name it."""
+    return sys.intern(value)
+
+
 @dataclass
 class MaterialIndex:
     """Everything the search reads, keyed by normalised material number."""
 
-    makt: dict[str, list[MaktText]] = field(default_factory=dict)
+    makt: dict[str, tuple[MaktText, ...]] = field(default_factory=dict)
     report: list[ReportRow] = field(default_factory=list)
-    marc: dict[str, dict[str, str]] = field(default_factory=dict)
-    """``{material: {plant: MRP type}}``; a blank DISMM stays ``""``."""
-    mard: dict[str, set[str]] = field(default_factory=dict)
+    marc: dict[str, tuple[tuple[str, str], ...]] = field(default_factory=dict)
+    """``{material: ((plant, MRP type), ...)}``; a blank DISMM stays ``""``."""
+    mard: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    """``{material: (plant, ...)}``."""
     held: list[str] = field(default_factory=list)
     """Sorted materials held at an in-scope plant (MARC or MARD), for prefixes."""
 
@@ -116,6 +133,12 @@ def load_all(db: Session) -> tuple[MaterialIndex, bool]:
     """Read the four sources in full. Whether every one could be read."""
     index = MaterialIndex()
     complete = True
+    # One string object per material number, shared by every source that names it.
+    numbers: dict[str, str] = {}
+
+    def number(raw: str | None) -> str | None:
+        material = normalise(raw)
+        return numbers.setdefault(material, material) if material else None
 
     def read(label: str, sql: str):  # noqa: ANN202 -- rows or None
         nonlocal complete
@@ -127,18 +150,21 @@ def load_all(db: Session) -> tuple[MaterialIndex, bool]:
             complete = False
             return None
 
+    # Built in lists and dicts, then frozen to tuples: a list keeps spare slots.
+    makt: dict[str, list[MaktText]] = {}
     rows = read(
         "n_makt",
         "SELECT material, language_key, material_description FROM n_makt "
         "WHERE material <> '' AND material_description <> ''",
     )
     for row in rows or ():
-        material = normalise(row.material)
+        material = number(row.material)
         description = row.material_description or ""
         if not material:
             continue
         english = (row.language_key or "").strip().upper() in ("E", "EN")
-        index.makt.setdefault(material, []).append(MaktText(english, description, description.upper()))
+        makt.setdefault(material, []).append(MaktText(english, description, _upper(description)))
+    index.makt = {material: tuple(texts) for material, texts in makt.items()}
 
     rows = read(
         _REPORT_TABLE,
@@ -146,33 +172,37 @@ def load_all(db: Session) -> tuple[MaterialIndex, bool]:
         f"WHERE material <> '' AND {sql_predicate('plant')}",
     )
     for row in rows or ():
-        material = normalise(row.material)
+        material = number(row.material)
         if not material:
             continue
         description = row.description
         index.report.append(
-            ReportRow(material, (row.plant or "").strip(), description, (description or "").upper())
+            ReportRow(material, _shared((row.plant or "").strip()), description, _upper(description or ""))
         )
 
     rows = read(
         "n_marc",
         f"SELECT material, plant, mrp_type FROM n_marc WHERE plant <> '' AND {sql_predicate('plant')}",
     )
+    marc: dict[str, dict[str, str]] = {}
     for row in rows or ():
-        material = normalise(row.material)
+        material = number(row.material)
         plant = (row.plant or "").strip()
         if material and plant:
-            index.marc.setdefault(material, {})[plant] = (row.mrp_type or "").strip()
+            marc.setdefault(material, {})[_shared(plant)] = _shared((row.mrp_type or "").strip())
+    index.marc = {material: tuple(plants.items()) for material, plants in marc.items()}
 
     rows = read(
         "n_mard",
         f"SELECT DISTINCT material, plant FROM n_mard WHERE plant <> '' AND {sql_predicate('plant')}",
     )
+    mard: dict[str, set[str]] = {}
     for row in rows or ():
-        material = normalise(row.material)
+        material = number(row.material)
         plant = (row.plant or "").strip()
         if material and plant:
-            index.mard.setdefault(material, set()).add(plant)
+            mard.setdefault(material, set()).add(_shared(plant))
+    index.mard = {material: tuple(sorted(plants)) for material, plants in mard.items()}
 
     return index.finish(), complete
 

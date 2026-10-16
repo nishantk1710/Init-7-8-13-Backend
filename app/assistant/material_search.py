@@ -419,7 +419,7 @@ def _plants_from_index(
     mrp_types: dict[tuple[str, str], str | None] = {}
     pairs: set[tuple[str, str]] = set()
     for material in materials:
-        for plant, mrp_type in index.marc.get(material, {}).items():
+        for plant, mrp_type in index.marc.get(material, ()):
             mrp_types[(material, plant)] = mrp_type
             pairs.add((material, plant))
         for plant in index.mard.get(material, ()):
