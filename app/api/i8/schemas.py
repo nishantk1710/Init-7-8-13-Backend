@@ -23,10 +23,11 @@ not support it:
     an empty string would read as a vendor whose name is blank.
 
 ``newUnitCost`` is absent
-    No valuation source is in I08's table set. MBEW was extracted for I07 and
-    I13. Rather than invent a number or quietly send zero -- which would make
-    every repair look infinitely worth doing -- the field is left out and the
-    gap is stated.
+    The register does not serve it yet. MBEW is now in I08's table set
+    (``v_mbew``), but only the coding screen reads it so far, as each
+    candidate's ``newItemPrices`` -- see ``app.initiatives.i8.new_item_price``.
+    Until the register does, the field is left out rather than sent as zero,
+    which would make every repair look infinitely worth doing.
 
 ``repairPR`` needed no departure: EKPO carries a requisition number on all
 1,225 repair lines, so it is served as the non-optional reference the frontend
@@ -800,6 +801,31 @@ class CodingCandidateTwin(I8Model):
     shared_text: str
 
 
+class CodingCandidatePrice(I8Model):
+    """What the material costs new at one plant: MBEW's moving average price.
+
+    One per plant the candidate's lines are from. Never a zero standing in for
+    an unknown -- a missing price is null, with ``missing`` saying why.
+    """
+
+    plant: str
+    price: Decimal | None = None
+    """VERPR / PEINH, in ZAR. Null whenever ``missing`` is set."""
+
+    valuation_type: str | None = None
+    """``NEW`` when the material is split-valuated at this plant (the NEW row
+    was read); null when it is not split and its one row was read."""
+
+    missing: str | None = None
+    """Why there is no price: ``TOKEN_VALUE`` (MBEW holds a placeholder such
+    as R1.00), ``NO_NEW_VALUATION`` (split-valuated with no NEW row) or
+    ``NOT_IN_MBEW`` (no row at this plant). Null when there is a price."""
+
+    mbew_value: Decimal | None = None
+    """The value on the MBEW row read -- on ``TOKEN_VALUE``, the placeholder,
+    so the screen can quote it."""
+
+
 class CodingCandidateItem(I8Model):
     """One material the screen judged."""
 
@@ -842,6 +868,9 @@ class CodingCandidateItem(I8Model):
 
     prompt_version: int | None = None
     screened_at: datetime | None = None
+
+    new_item_prices: list[CodingCandidatePrice] = []
+    """What the part costs new, one entry per plant in ``plants``."""
 
 
 class CodingCandidateMeta(I8Model):
@@ -892,6 +921,10 @@ class CodingCandidateMeta(I8Model):
     silent cap reads as "we checked everything" when it did not."""
 
     corroborated: int
+    new_item_price_counts: dict[str, int] = {}
+    """Material-plants by price state over the whole screen: ``PRICED``,
+    ``TOKEN_VALUE``, ``NO_NEW_VALUATION``, ``NOT_IN_MBEW``."""
+
     by_verdict: dict[str, int]
     keywords: list[str]
     provider: str

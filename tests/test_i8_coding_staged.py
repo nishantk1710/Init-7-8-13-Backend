@@ -64,6 +64,9 @@ RAW: dict[str, list[str]] = {
         "BANFN", "BNFPO", "LOEKZ", "TXZ01", "MATNR", "WERKS", "MENGE", "BADAT",
         "LFDAT", "PSTYP", "EBELN", "EBELP", "LIFNR", "LGORT",
     ],
+    # The New Item Price's source, read through its own staged copy
+    # (staged.valuation_sources), narrowed to the candidates by literal key.
+    "raw_mbew": ["MATNR", "BWKEY", "BWTAR", "VERPR", "PEINH"],
 }
 
 ROWS: dict[str, list[tuple]] = {
@@ -110,6 +113,20 @@ ROWS: dict[str, list[tuple]] = {
         # Text, no repair language.
         ("0010000005", "10", "", "SAFETY GLOVES", PLAIN, "1300", "1", "05.05.2026",
          "05.07.2026", "0", "", "", "", "0001"),
+    ],
+    # Whole numbers only: they read the same whichever CSV_NUMBER_FORMAT the
+    # run declares, and the notation is not what this test is about.
+    "raw_mbew": [
+        # The suspect, zero-padded as the CSV pads it: one row, the price.
+        ("000000001000000777", "1300", "", "4500", "1"),
+        # Out of scope: both ways must ignore it.
+        ("000000001000000777", "3000", "", "99", "1"),
+        # Split-valuated: NEW is the price, the blank aggregate is not.
+        (SUSPECT_TWINNED, "1300", "", "700", "1"),
+        (SUSPECT_TWINNED, "1300", "NEW", "900", "1"),
+        (SUSPECT_TWINNED, "1300", "REFURBISHD", "700", "1"),
+        # Not a candidate, so never asked about.
+        (PLAIN, "1300", "", "1", "1"),
     ],
 }
 
@@ -173,6 +190,7 @@ def _comparable(candidates):
             tuple(sorted(c.texts)),
             tuple(sorted(c.twins)),
             c.is_corroborated,
+            c.new_item_prices,
         )
         for c in sorted(candidates, key=lambda c: c.material_id)
     ]
@@ -214,6 +232,19 @@ class TestTheStagedScreenMatches:
         assert twinned.is_corroborated
         assert [material for material, _ in twinned.twins] == [CODED_TWIN]
         assert twinned.twins[0][1] == SHARED
+
+    def test_the_new_item_price_is_read_through_the_staged_copy(self, screened) -> None:
+        """Parity alone would pass over two empty price lists. The suspect's key
+        is zero-padded in MBEW and not in EKPO, so this also proves the
+        narrowing matches on the normalised key."""
+        from decimal import Decimal
+
+        _, staged, _ = screened
+        by_material = {c.material_id: c.new_item_prices for c in staged[0]}
+        [suspect] = by_material[SUSPECT]
+        assert (suspect.plant, suspect.price) == ("1300", Decimal("4500"))
+        [twinned] = by_material[SUSPECT_TWINNED]
+        assert (twinned.price, twinned.valuation_type) == (Decimal("900"), "NEW")
 
     def test_lower_case_text_is_matched(self, screened) -> None:
         """The screen matches on upper(text); the narrowing must too, or a row

@@ -15,6 +15,7 @@ from app.api.i8.schemas import (
     CodingCandidateItem,
     CodingCandidateLine,
     CodingCandidateMeta,
+    CodingCandidatePrice,
     CodingCandidateTwin,
     DeclarationItem,
     DeclarationMeta,
@@ -589,6 +590,16 @@ def coding_candidate_item(
         provider=candidate.provider,
         prompt_version=candidate.prompt_version,
         screened_at=candidate.screened_at,
+        new_item_prices=[
+            CodingCandidatePrice(
+                plant=price.plant,
+                price=price.price,
+                valuation_type=price.valuation_type,
+                missing=price.missing,
+                mbew_value=price.mbew_value,
+            )
+            for price in candidate.new_item_prices
+        ],
     )
 
 
@@ -609,6 +620,7 @@ def coding_candidate_meta(stats: ScreenStats) -> CodingCandidateMeta:
         materials_screened=stats.materials_screened,
         was_truncated=stats.was_truncated,
         corroborated=stats.corroborated,
+        new_item_price_counts=dict(stats.new_item_price_counts),
         by_verdict=stats.by_verdict,
         keywords=list(stats.keywords),
         provider=stats.provider,

@@ -133,6 +133,7 @@ _FILES: dict[str, str] = {
     "v_mard": "13_v_mard.sql", "v_ekko": "20_v_ekko.sql", "v_ekpo": "21_v_ekpo.sql",
     "v_eket": "22_v_eket.sql", "v_ekbe": "23_v_ekbe.sql", "v_eban": "24_v_eban.sql",
     "v_mseg": "30_v_mseg.sql", "v_lfa1": "31_v_lfa1.sql", "v_zmm065": "32_v_zmm065.sql",
+    "v_mbew": "33_v_mbew.sql",
 }
 _HEAD = re.compile(r"(?is)\bCREATE\s+OR\s+ALTER\s+VIEW\s+\w+\s+AS\s")
 
@@ -506,4 +507,44 @@ def coding_sources(
             *(f"#i8cb_{table.removeprefix('n_')}" for _, table, _ in CODING_SOURCES.values()),
         ]
         for table in staged:
+            db.execute(text(f"DROP TABLE IF EXISTS {table}"))
+
+
+# --- FR-2: the New Item Price's valuations ---------------------------------
+
+
+@contextmanager
+def valuation_sources(
+    db: Session, materials: Sequence[str], *, enabled: bool = True
+) -> Iterator[Sources]:
+    """``v_mbew`` narrowed to ``materials``, staged for the price lookup's life.
+
+    Reading ``v_mbew where matnr in (...)`` directly would call ``sap_key`` and
+    ``in_scope_plant`` on every MBEW row before discarding nearly all of them --
+    the cost that took the coding screen to 504 on 13-Oct-2026. The narrowing
+    is the same predicate written plainly, so it keeps exactly the rows the
+    lookup asks for.
+
+    The materials are written in as literals, not bound: a parameterised
+    statement runs in ``sp_executesql``, which drops a temp table it creates
+    when it returns. They are normalised keys the screen read from the views,
+    and :func:`_literal` escapes them all the same.
+
+    Opened inside :func:`coding_sources`, on the same connection and under the
+    same rule: ``db`` must not commit while it is open.
+    """
+    if not enabled or not materials or db.get_bind().dialect.name != MSSQL:
+        yield DIRECT
+        return
+    listed = ", ".join(_literal(m) for m in sorted(set(materials)))
+    narrowed = _narrow(
+        db, "mbew", "n_mbew",
+        f"{_in_scope('valuation_area')} AND {_key('material')} IN ({listed})",
+        name="#i8cb_mbew",
+    )
+    staged = _materialise(db, "v_mbew", {"n_mbew": narrowed}, name="#i8cs_v_mbew")
+    try:
+        yield Sources(views={"v_mbew": staged})
+    finally:
+        for table in (staged, narrowed):
             db.execute(text(f"DROP TABLE IF EXISTS {table}"))

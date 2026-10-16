@@ -105,7 +105,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Sequence
@@ -124,6 +124,7 @@ from app.initiatives.i8.coding_store import (
 )
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.material_number import is_eighty_series
+from app.initiatives.i8.new_item_price import NewItemPrice, fetch_new_item_prices
 from app.core.config import get_settings
 from app.initiatives.i8.staged import (
     DIRECT_CODING,
@@ -297,6 +298,12 @@ class CodingCandidate:
     """Kept when parsing failed, so an unparseable answer can be diagnosed
     rather than silently discarded."""
 
+    new_item_prices: tuple[NewItemPrice, ...] = ()
+    """What the part costs new, one entry per plant in :attr:`plants`, from
+    MBEW -- see :mod:`app.initiatives.i8.new_item_price`. Attached by
+    :func:`screen` after the verdicts, because it is a fact about the material
+    and has nothing to do with how the verdict was reached."""
+
     @property
     def plants(self) -> tuple[str, ...]:
         return tuple(sorted({line.plant for line in self.lines if line.plant}))
@@ -403,6 +410,11 @@ class ScreenStats:
     corroborated: int = 0
     """How many candidates have an 80-series twin -- the ones that are provable
     from the data rather than argued from language."""
+
+    new_item_price_counts: dict[str, int] = field(default_factory=dict)
+    """Material-plants by price state over the candidates returned: ``PRICED``,
+    or the :class:`~app.initiatives.i8.new_item_price.MissingPrice` reason
+    there is none. How much of the column is blank, and why, in one place."""
 
     by_verdict: dict[str, int] = field(default_factory=dict)
     keywords: tuple[str, ...] = ()
@@ -1209,6 +1221,18 @@ def screen(
         # deterministic, so it is worth having even when no model answers: a
         # stub-provider run still reports which suspects SAP itself contradicts.
         twins = find_twins(db, groups.by_material, cfg, staged=src.twins)
+        # What each material costs new, at each plant its lines are from. Read
+        # here, while the staging is open, for every material found -- one
+        # query, so a limit saves nothing by narrowing it.
+        new_item_prices = fetch_new_item_prices(
+            db,
+            {
+                material: {line.plant for line in material_lines}
+                for material, material_lines in groups.by_material.items()
+            },
+            cfg,
+            staged=enabled,
+        )
 
         # Moved up from after the model loop, where it used to sit: it is a
         # plain count and it has to be taken while the staging is open.
@@ -1321,11 +1345,19 @@ def screen(
             )
             saved += 1
 
-    candidates = rank_candidates(candidates)
+    # Attached once, here, rather than threaded through the three ways a
+    # candidate is built above: the price does not depend on the verdict.
+    candidates = [
+        replace(candidate, new_item_prices=new_item_prices.get(candidate.material_id, ()))
+        for candidate in rank_candidates(candidates)
+    ]
 
     by_verdict: dict[str, int] = {}
+    price_counts: dict[str, int] = {}
     for candidate in candidates:
         by_verdict[candidate.verdict] = by_verdict.get(candidate.verdict, 0) + 1
+        for price in candidate.new_item_prices:
+            price_counts[price.state] = price_counts.get(price.state, 0) + 1
 
     provider = next((c.provider for c in candidates if c.provider), "")
     model = next((c.model for c in candidates if c.model), "")
@@ -1346,6 +1378,7 @@ def screen(
         verdicts_reused=reused,
         verdicts_stored=saved,
         corroborated=sum(1 for c in candidates if c.is_corroborated),
+        new_item_price_counts=price_counts,
         by_verdict=by_verdict,
         keywords=cfg.repair_language_list,
         provider=provider,

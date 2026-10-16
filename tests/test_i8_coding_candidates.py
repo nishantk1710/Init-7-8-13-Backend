@@ -700,11 +700,18 @@ class TestTheFastScreenServesStoredVerdicts:
         import app.initiatives.i8.coding_candidates as mod
 
         written: list[dict] = []
+        price_requests: list[dict] = []
 
-        def install(*, lines, stored=(), **kwargs):
+        def install(*, lines, stored=(), prices=None, **kwargs):
             @contextlib.contextmanager
             def fake_sources(*_a, **_k):
                 yield mod.DIRECT_CODING
+
+            def fake_prices(_db, plants_by_material, *_a, **_k):
+                price_requests.append(
+                    {m: set(plants) for m, plants in plants_by_material.items()}
+                )
+                return dict(prices or {})
 
             by_material = {v.material_id: v for v in stored}
             monkeypatch.setattr(mod, "coding_sources", fake_sources)
@@ -712,6 +719,7 @@ class TestTheFastScreenServesStoredVerdicts:
                 mod, "fetch_repair_language_lines", lambda *a, **k: list(lines)
             )
             monkeypatch.setattr(mod, "find_twins", lambda *a, **k: {})
+            monkeypatch.setattr(mod, "fetch_new_item_prices", fake_prices)
             monkeypatch.setattr(
                 mod, "fetch_text_totals", lambda *a, **k: {"PO": len(lines)}
             )
@@ -733,6 +741,7 @@ class TestTheFastScreenServesStoredVerdicts:
             candidates, stats = screen(
                 None, sources=("PO",), staged=False, **kwargs
             )
+            install.price_requests = price_requests
             return candidates, stats, written
 
         return install
@@ -820,6 +829,79 @@ class TestTheFastScreenServesStoredVerdicts:
         )
 
         assert candidates[0].verdict == Verdict.UNSCREENED.value
+
+    # --- New Item Price: a fact about the material, whatever the verdict ---
+
+    def _prices(self) -> dict:
+        from decimal import Decimal
+
+        from app.initiatives.i8.new_item_price import NewItemPrice
+
+        return {
+            "5000094118": (
+                NewItemPrice("1300", Decimal("322.16"), mbew_value=Decimal("322.16")),
+                NewItemPrice("1500", None, missing="TOKEN_VALUE", mbew_value=Decimal("1.00")),
+            )
+        }
+
+    def test_prices_are_looked_up_for_each_material_s_plants(
+        self, fake_screen
+    ) -> None:
+        lines = [a_line(plant="1300"), a_line(plant="1500", document_item="20")]
+        fake_screen(lines=lines, use_model=False)
+
+        assert fake_screen.price_requests == [{"5000094118": {"1300", "1500"}}]
+
+    def test_a_stored_verdict_carries_its_prices(self, fake_screen) -> None:
+        lines = [a_line(plant="1300"), a_line(plant="1500", document_item="20")]
+        candidates, stats, _written = fake_screen(
+            lines=lines,
+            stored=[self._stored("5000094118", lines)],
+            prices=self._prices(),
+            use_model=False,
+        )
+
+        assert candidates[0].new_item_prices == self._prices()["5000094118"]
+        assert stats.new_item_price_counts == {"PRICED": 1, "TOKEN_VALUE": 1}
+
+    def test_an_unscreened_candidate_carries_its_prices_too(self, fake_screen) -> None:
+        candidates, _stats, _written = fake_screen(
+            lines=[a_line()], prices=self._prices(), use_model=False
+        )
+
+        assert candidates[0].verdict == Verdict.UNSCREENED.value
+        assert len(candidates[0].new_item_prices) == 2
+
+    def test_a_material_mbew_was_not_asked_about_has_no_prices(
+        self, fake_screen
+    ) -> None:
+        candidates, stats, _written = fake_screen(lines=[a_line()], use_model=False)
+
+        assert candidates[0].new_item_prices == ()
+        assert stats.new_item_price_counts == {}
+
+    def test_the_api_serves_prices_as_decimal_strings_and_names_the_gap(
+        self, fake_screen
+    ) -> None:
+        """The wire shape the frontend reads: camelCase, money as a string
+        (never a float), and a missing price null with its reason."""
+        from app.api.i8.mappers import coding_candidate_item, coding_candidate_meta
+
+        candidates, stats, _written = fake_screen(
+            lines=[a_line()], prices=self._prices(), use_model=False
+        )
+        item = coding_candidate_item(candidates[0], get_i8_settings()).model_dump(
+            by_alias=True, mode="json"
+        )
+        meta = coding_candidate_meta(stats).model_dump(by_alias=True, mode="json")
+
+        assert item["newItemPrices"] == [
+            {"plant": "1300", "price": "322.16", "valuationType": None, "missing": None,
+             "mbewValue": "322.16"},
+            {"plant": "1500", "price": None, "valuationType": None, "missing": "TOKEN_VALUE",
+             "mbewValue": "1.00"},
+        ]
+        assert meta["newItemPriceCounts"] == {"PRICED": 1, "TOKEN_VALUE": 1}
 
 
 # --- Against the seeded extract --------------------------------------------
