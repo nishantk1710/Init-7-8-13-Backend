@@ -80,8 +80,9 @@ from app.shared.snapshot_builds import exclusive_build
 logger = get_logger(__name__)
 
 
-# The raw tables every I08 view reads -- thirteen, for the twelve views listed
-# in ``app/initiatives/i8/views.py``, because v_zmm065 is a union of two.
+# The tables every I08 view reads -- one per view listed in
+# ``app/initiatives/i8/views.py``, except that v_zmm065 reads
+# criticality_current rather than a raw table.
 #
 # Written out rather than derived from that list: a view name does not say what
 # fills it, and guessing ``v_x -> raw_x`` would silently miss the zmm065 pair
@@ -99,6 +100,11 @@ SOURCE_TABLES: tuple[str, ...] = (
     "raw_eban",
     "raw_mseg",
     "raw_lfa1",
+    # Read only by the coding screen's New Item Price (v_mbew), not by the
+    # snapshot build. Listed so a weekly MBEW reload still moves the
+    # fingerprint: the rebuild resets the cached coding screen, which would
+    # otherwise keep serving last week's prices until a restart.
+    "raw_mbew",
     # What the monthly criticality uploads add up to; an upload writes an
     # ingestion_run row for it (app/integrations/criticality/reports.py).
     "criticality_current",
