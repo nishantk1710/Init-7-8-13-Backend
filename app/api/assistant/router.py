@@ -75,6 +75,7 @@ from app.api.assistant.schemas import (
 from app.api.deps import Actor, get_current_actor
 from app.assistant import departments
 from app.assistant import intents
+from app.assistant import material_index
 from app.assistant import material_search
 from app.assistant import session as session_service
 from app.assistant import turns as turn_service
@@ -206,7 +207,8 @@ def search_materials(
     A query too short to mean anything is an empty list, not a 422: the box
     calls this as the person types, and the first keystroke is not an error.
     """
-    matches = material_search.search(db, q, limit=limit)
+    # From memory once the copy has loaded; the database until then.
+    matches = material_search.search(db, q, limit=limit, index=material_index.current())
     return MaterialSearchResponse(
         items=[
             MaterialMatchModel(
