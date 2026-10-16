@@ -120,6 +120,27 @@ description, case-insensitive), `criticality_level` (`Critical`/`High`/`Medium`/
 `risk` (`critical`/`high`/`medium`/`low`, derived from status and criticality tier exactly as
 the summary's `by_risk` is) and `type` (`oar`/`declining`/`normal`).
 
+## Trend history
+
+`GET /api/v1/i7/recommendations/trends?plant=ALL|1300|1500[&since=&until=&limit=]` returns the
+history behind the Overview's Stockout risk trend and Excess inventory opportunity cards, oldest
+first, from `i7_recommendation_trend_snapshot`. It only reads saved rows.
+
+A snapshot is written once per recommendation-generation run per plant scope, at the end of a
+successful `generate_recommendations`, using the same functions as the summary endpoint
+(`app/initiatives/i7/recommendations/kpi_metrics.py`). `source` is `captured` (recorded at the
+time) or `reconstructed` (excess figures rebuilt later by
+`python -m app.initiatives.i7.recommendations.trend_backfill`, dry run by default). Stockout
+needs the on-hand stock of the day, which is not stored, so it is null on reconstructed points and
+the history starts at the first captured one. An empty history returns `points: []`, never zeros.
+
+To record today's point without running a pipeline or the generator, use
+`python -m app.initiatives.i7.recommendations.trend_snapshot_now` (dry run; `--apply` records). It
+writes only to the snapshot table and refuses when a newer upstream run has not yet been turned
+into recommendations.
+
+Both KPI definitions are internal proxies from 2026-09-22, not yet confirmed by the business.
+
 ## Sorting
 
 A whitelist maps an API sort name to a real ORM column
