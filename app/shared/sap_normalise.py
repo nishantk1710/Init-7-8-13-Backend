@@ -324,12 +324,18 @@ TABLES: dict[str, tuple[Col, ...]] = {
         _c("manufacturer", "MFRNR", kind="key"),
         _c("df_at_client_level", "LVORM"),
     ),
-    # Read by I07's staging (unit price). The live CSV MBEW carries no VERPR,
-    # so over CSV moving_price is NULL -- a visible gap, not a zero.
+    # Read by I07's staging (unit price) and by I08's v_mbew (the coding
+    # screen's New Item Price). The live CSV MBEW does carry VERPR -- an earlier
+    # delivery did not, and an MBEW without it still resolves moving_price to
+    # NULL, a visible gap rather than a zero. valuation_type and price_unit are
+    # I08's: 80-series materials are split-valuated, one row per BWTAR, and
+    # VERPR is quoted per PEINH units.
     "mbew": (
         _c("material", "MATNR", kind="key"),
         _c("valuation_area", "BWKEY"),
         _c("moving_price", "VERPR", kind="num"),
+        _c("valuation_type", "BWTAR"),
+        _c("price_unit", "PEINH", kind="num"),
     ),
     "makt": (
         _c("material", "MATNR", kind="key"),

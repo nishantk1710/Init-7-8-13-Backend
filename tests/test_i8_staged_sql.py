@@ -41,7 +41,18 @@ def _function_bodies() -> dict[str, str]:
     return bodies
 
 
-@pytest.mark.parametrize("view", staged.VIEWS)
+def test_every_managed_view_has_a_body_to_stage() -> None:
+    """``_FILES`` is how staging finds a view's SQL. A view missing from it is a
+    ``KeyError`` on the first staged read -- caught by CI on 13-Oct-2026 for
+    ``v_eban``, which would otherwise have been a 500 on every request."""
+    from app.initiatives.i8.views import VIEWS
+
+    assert set(staged._FILES) == set(VIEWS)
+    for view, script in staged._FILES.items():
+        assert (SQL_DIR / script).exists(), f"{view}: no {script}"
+
+
+@pytest.mark.parametrize("view", [*staged.VIEWS, "v_eban", "v_mbew"])
 def test_no_staged_view_calls_a_helper(view) -> None:
     body = staged.inline_helpers(staged._body(view))
     assert not re.search(r"(?i)\bdbo\.\w+\(", body), body
