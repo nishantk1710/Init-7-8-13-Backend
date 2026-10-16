@@ -116,6 +116,14 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
                 material_names.start_loading()
                 material_names.wait_for_load(material_names.STARTUP_WAIT_SECONDS)
 
+                # The material search's copy of MAKT, ZMM065, MARC and MARD.
+                # Waited for, like names: it scans the same views, and the
+                # snapshot builds below should not scan alongside it.
+                from app.assistant import material_index
+
+                material_index.start_loading()
+                material_index.wait_for_load(material_index.STARTUP_WAIT_SECONDS)
+
                 # The opener's department list (n_eban). Not waited for: it is
                 # one DISTINCT, and until it lands the opener checks the
                 # code's shape only.

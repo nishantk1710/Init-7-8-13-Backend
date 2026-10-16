@@ -2,7 +2,12 @@
 
 No database. Each source the search reads (MAKT, the criticality reports, MARC,
 MARD) is a list of rows on a fake session, which answers a query by the table it
-names and applies the query's own LIKE / IN parameters. That is enough to test
+names and applies the query's own LIKE / IN parameters.
+
+Every test runs twice: once asking the fake session, as the search does before
+its in-memory copy has loaded, and once over that copy
+(:mod:`app.assistant.material_index`) built from the same rows -- which must
+give the same answer and ask the session nothing. That is enough to test
 what the search does with what comes back -- precedence, normalising, ranking,
 scope -- without pretending to test SQL Server.
 
@@ -20,7 +25,10 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import ProgrammingError
 
-from app.assistant.material_search import parse_query, search
+from app.assistant import material_index
+from app.assistant.material_index import load_all
+from app.assistant.material_search import parse_query
+from app.assistant.material_search import search as _search
 from app.assistant.router import Flow
 from app.core.db import get_db
 from app.main import app
@@ -71,6 +79,9 @@ class _Result:
     def fetchmany(self, size: int) -> list:
         return self._rows[:size]
 
+    def __iter__(self):  # noqa: ANN204 -- the index iterates the result
+        return iter(self._rows)
+
 
 @dataclass
 class _FakeDb:
@@ -115,6 +126,31 @@ class _FakeDb:
                 return _Result(rows)
 
         raise AssertionError(f"unexpected query: {sql}")
+
+
+_FROM_MEMORY = {"on": False}
+
+
+@pytest.fixture(autouse=True, params=["database", "memory"])
+def path(request):  # noqa: ANN001, ANN201
+    """Run each test over the database path, then over the in-memory copy."""
+    _FROM_MEMORY["on"] = request.param == "memory"
+    yield request.param
+    _FROM_MEMORY["on"] = False
+
+
+def _index_of(db: _FakeDb) -> material_index.MaterialIndex:
+    index, _ = load_all(db)
+    db.queries.clear()
+    return index
+
+
+def search(db: _FakeDb, raw, **kwargs):  # noqa: ANN001, ANN201
+    if not _FROM_MEMORY["on"]:
+        return _search(db, raw, **kwargs)
+    found = _search(db, raw, index=_index_of(db), **kwargs)
+    assert db.queries == [], "the in-memory path asked the database"
+    return found
 
 
 class TestReadingTheQuery:
@@ -165,6 +201,18 @@ class TestByName:
         )
         [match] = search(db, "pump")
         assert match.description == "PUMP CENTRIFUGAL"
+
+    def test_a_word_only_another_language_holds_still_finds_the_part(self) -> None:
+        """Words are matched against every MAKT text, not only the English one."""
+        db = _FakeDb(
+            makt=[
+                _Makt("8000005632", "PUMPE ZENTRIFUGAL", language_key="D"),
+                _Makt("8000005632", "PUMP CENTRIFUGAL", language_key="E"),
+            ],
+            marc=[_Marc("8000005632", "1300")],
+        )
+        [match] = search(db, "zentrifugal")
+        assert match.description == "PUMPE ZENTRIFUGAL"
 
     def test_a_missing_report_table_is_skipped_not_an_error(self) -> None:
         db = _FakeDb(
@@ -253,7 +301,15 @@ class TestBounds:
 
 
 class TestTheRoute:
+    @pytest.fixture(autouse=True)
+    def _held(self, monkeypatch):  # noqa: ANN001, ANN202
+        """The route reads whatever copy is loaded; here, the one this test built."""
+        self._held_index = None
+        monkeypatch.setattr(material_index, "current", lambda: self._held_index)
+
     def _client(self, db: _FakeDb) -> TestClient:
+        if _FROM_MEMORY["on"]:
+            self._held_index = _index_of(db)
         app.dependency_overrides[get_db] = lambda: db
         return TestClient(app)
 
@@ -284,3 +340,45 @@ class TestTheRoute:
         response = self._client(_FakeDb()).get("/api/assistant/materials", params={"q": "p"})
         assert response.status_code == 200
         assert response.json()["items"] == []
+
+
+class TestTheIndex:
+    def test_prefixes_come_lowest_first_and_bounded(self, path) -> None:  # noqa: ANN001
+        db = _FakeDb(
+            marc=[_Marc(f"800000{i:04d}", "1300") for i in range(30)],
+            mard=[_Mard("8000009999", "1500"), _Mard("7000000001", "1300")],
+        )
+        index = _index_of(db)
+        assert index.with_prefix("8000", 3) == ["8000000000", "8000000001", "8000000002"]
+        assert index.with_prefix("70", 10) == ["7000000001"]
+        assert index.with_prefix("9", 10) == []
+
+    def test_out_of_scope_plants_are_not_held(self, path) -> None:  # noqa: ANN001
+        db = _FakeDb(marc=[_Marc("8000005632", "1200")], mard=[_Mard("8000005632", "2000")])
+        assert _index_of(db).held == []
+
+    def test_a_missing_report_table_is_an_incomplete_load_not_an_error(self, path) -> None:  # noqa: ANN001
+        db = _FakeDb(makt=[_Makt("8000005632", "PUMP")], zmm_bmm=None, zmm_gb=None)
+        index, complete = load_all(db)
+        assert complete is False
+        assert "8000005632" in index.makt
+
+    def test_a_failed_reload_keeps_the_index_already_held(self, monkeypatch, path) -> None:  # noqa: ANN001
+        held = _index_of(_FakeDb(marc=[_Marc("8000005632", "1300")]))
+        material_index.set_index(held)
+        try:
+            monkeypatch.setattr(material_index, "load_all", lambda db: (material_index.MaterialIndex(), False))
+
+            class _Session:
+                def __enter__(self):  # noqa: ANN204
+                    return None
+
+                def __exit__(self, *exc):  # noqa: ANN002, ANN204
+                    return False
+
+            monkeypatch.setattr("app.core.db.get_sessionmaker", lambda: _Session)
+            material_index._load()
+            assert material_index._index is held
+        finally:
+            material_index.clear_cache()
+            material_index._next_load_at = float("inf")  # no background load after the test
