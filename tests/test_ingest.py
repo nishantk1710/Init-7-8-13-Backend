@@ -482,6 +482,40 @@ def test_an_empty_increment_loads_without_a_data_file(storage, monkeypatch) -> N
     assert recorded == [(0, load_mod.STATUS_SUCCEEDED)]
 
 
+def test_with_the_archive_off_an_increment_goes_into_the_raw_table_only(storage, monkeypatch) -> None:
+    """ODATA_ARCHIVE_ENABLED=false: the increment is merged into raw_ekko and
+    odata_purchase_order is neither created nor written."""
+    po, recorded = _land_increment(storage, monkeypatch)
+    monkeypatch.setattr(load_mod, "get_settings", lambda: type("S", (), {"odata_archive_enabled": False})())
+
+    result = load_mod.load_set(po, root="odata", storage=storage)
+
+    assert result.status == load_mod.STATUS_SUCCEEDED, result.error
+    assert result.rows == 1
+    assert _FakeWriter.created == [] and _FakeWriter.loaded == []
+    assert "raw_ekko: 0 changed of 0 matched, 1 inserted" in result.raw
+    assert recorded == [(1, load_mod.STATUS_SUCCEEDED)]
+
+
+def test_with_the_archive_off_a_skipped_merge_fails_the_load(storage, monkeypatch) -> None:
+    """No raw table and no archive: the delta has nowhere to go, and the load
+    says so rather than succeeding on nothing."""
+    from app.ingest import raw_merge
+
+    po, recorded = _land_increment(storage, monkeypatch)
+    monkeypatch.setattr(load_mod, "get_settings", lambda: type("S", (), {"odata_archive_enabled": False})())
+    monkeypatch.setattr(
+        raw_merge, "merge_landed",
+        lambda *a, **k: raw_merge.MergeResult("raw_ekko", raw_merge.SKIPPED, detail="raw_ekko does not exist yet"),
+    )
+
+    result = load_mod.load_set(po, root="odata", storage=storage)
+
+    assert result.status == load_mod.STATUS_FAILED
+    assert "nowhere to go" in result.error
+    assert _FakeWriter.created == [] and recorded == []
+
+
 def test_an_increment_with_no_baseline_anywhere_is_still_refused(storage, monkeypatch) -> None:
     from app.ingest import raw_merge
 

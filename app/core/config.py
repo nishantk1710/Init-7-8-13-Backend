@@ -226,6 +226,17 @@ class Settings(BaseSettings):
     # tables was taken, less a few days. Blank means: no floor, pull in full.
     delta_seed_floor: str = ""
 
+    # Keep the odata_<table> archive beside raw_<table>. A delta increment is
+    # merged into raw_<table> (the table the pages read) and then written to
+    # odata_<table>, which accumulates what OData has delivered since the
+    # first increment. False skips that second write: the increment goes into
+    # raw_<table> only. What that costs: the odata_ tables stop moving, so
+    # anything that reads them to tell a delta row from a CSV row (the export
+    # and reset scripts in /home/live_checks) goes stale. A full OData pull
+    # (--full, the weekly MBEW pull) still replaces odata_<table>; only the
+    # delta's archive write is governed here.
+    odata_archive_enabled: bool = True
+
     # --- Normalise views ----------------------------------------------------
     #
     # Build the n_<table> views (app/shared/sap_normalise.py) and I08's views on

@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import text
 
+from app.core.config import get_settings
 from app.core.db import get_engine, get_sessionmaker
 from app.core.logging import get_logger
 from app.core.storage import Storage, get_storage
@@ -342,6 +343,29 @@ def load_set(
                 + (f", {merged.keys_repaired} blank key(s) filled" if merged.keys_repaired else "")
                 + (f", added {', '.join(merged.columns_added)}" if merged.columns_added else "")
             )
+
+    if strategy == "merge" and not get_settings().odata_archive_enabled:
+        # Raw only, by configuration (ODATA_ARCHIVE_ENABLED=false): the
+        # increment is in raw_<table>, merged above, and the odata_<table>
+        # archive is not written. A merge that did not happen -- refused, or
+        # skipped for want of a raw table -- then has nowhere to go at all,
+        # and says so instead of succeeding on nothing.
+        if refused:
+            return failure(refused)
+        if not raw_merged:
+            return failure(
+                f"nothing was merged into a raw table ({raw_note or 'merge not attempted'}) "
+                f"and the odata_ archive is switched off, so this delta has nowhere to go"
+            )
+        rows = expected or 0
+        elapsed = time.monotonic() - started
+        _record(spec, rows, STATUS_SUCCEEDED, started_at, prefix)
+        logger.info(
+            "%s: %d rows merged into the raw table only (%s); %s not written, "
+            "ODATA_ARCHIVE_ENABLED is false",
+            spec.name, rows, raw_note, spec.raw_table,
+        )
+        return LoadResult(spec.name, spec.raw_table, STATUS_SUCCEEDED, rows, elapsed, raw=raw_note)
 
     try:
         # Keys are the columns anything downstream will join on, and they are
