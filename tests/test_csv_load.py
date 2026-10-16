@@ -150,6 +150,11 @@ class TestSeedWatermark:
             "S032": ("LETZTBEW", "Letztbew"),
             "RESB": ("CRDAT", "Crdat"),
             "CDPOS": ("UDATE", "Udate"),
+            # Gate pass, back in scope 2026-10-16. ZZDELTA_DATE is computed
+            # in the set, not a CSV column: seeded from the load day instead.
+            "ZMM_GP_HDR": ("ZZDELTA_DATE", "ZzdeltaDate"),
+            "ZMM_GP_ITEM": ("ZZDELTA_DATE", "ZzdeltaDate"),
+            "ZMM_GP_IN": ("ZZDELTA_DATE", "ZzdeltaDate"),
         }
 
 

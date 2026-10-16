@@ -113,6 +113,10 @@ RENAMED_SERVICES = {
 # rather than a hunt through a thousand lines.
 ADD_SRV = RENAMED_SERVICES["ZVZI_KPI02_SHARED_SRV"]
 TAB_SRV = RENAMED_SERVICES["ZMM_KPI02_SRV"]
+# Gate pass. Live since 22-Sep, out of scope until 16-Oct-2026, when the team
+# put the three sets back in: SAP exposes ZzdeltaDate on each, measured
+# HONOURED on DEV and QA, and the hourly delta reads them like the rest.
+GP_SRV = "ZMM_KPI02_GP_SRV"
 
 SERVICES = {
     ADD_SRV: ["GoodsMovementItemSet", "InfoRecordOrgSet", "InfoRecordSet", "MaterialDescriptionSet",
@@ -121,16 +125,14 @@ SERVICES = {
               "StorageLocationStockSet", "VendorSet"],
     TAB_SRV: ["BatchStockSet", "ChangeDocHeaderSet", "ChangeDocItemSet", "MaterialValuationSet",
               "MonthlyMovementStatisticSet", "ReservationItemSet", "StockMovementStatisticSet"],
+    GP_SRV: ["GatePassHeaderSet", "GatePassItemSet", "GatePassReturnSet"],
 }
 
 # Registered, reachable, and deliberately not swept.
 #
-# ZMM_KPI02_GP_SRV went live on 22-Sep with three real sets -- GatePassHeaderSet
-# (ZzgpNo;Zzyear), GatePassItemSet (+Zzposnr) and GatePassReturnSet (+Zcount).
-# Gate pass was descoped for I08 on 15-Aug, and a service existing again does not
-# reverse that: sweeping it would quietly widen the programme by three sets. It
-# is named rather than ignored so the next sweep does not rediscover it as news,
-# and so re-scoping it later is a one-line change with the decision visible.
+# ZMM_KPI02_GP_SRV sat here from 22-Sep (gate pass was descoped for I08 on
+# 15-Aug, and a service existing again did not reverse that) until 16-Oct-2026,
+# when the team re-scoped it and it moved into SERVICES above.
 #
 # ZMM_GET_CSV_SRV is a different shape altogether. Its single set is keyed
 # RequestId;TabName;FromDate;ToDate;IsDelta;MaxRows -- a request, not a row. That
@@ -139,7 +141,6 @@ SERVICES = {
 # because this script profiles entity sets and that is not one; it warrants its
 # own investigation rather than a column in these reports.
 DESCOPED_SERVICES = {
-    "ZMM_KPI02_GP_SRV": "I08 gate pass / RGP lifecycle removed 15-Aug-2026; live again 22-Sep but still out of scope",
     "ZMM_GET_CSV_SRV": "Generic table extract (TableExtractSet); not an entity-set profile, investigate separately",
 }
 
@@ -157,6 +158,8 @@ TABLE_TO_SET = {
     "CDHDR": (TAB_SRV, "ChangeDocHeaderSet"), "CDPOS": (TAB_SRV, "ChangeDocItemSet"),
     "MCHB": (TAB_SRV, "BatchStockSet"), "S031": (TAB_SRV, "MonthlyMovementStatisticSet"),
     "S032": (TAB_SRV, "StockMovementStatisticSet"),
+    "ZMM_GP_HDR": (GP_SRV, "GatePassHeaderSet"), "ZMM_GP_ITEM": (GP_SRV, "GatePassItemSet"),
+    "ZMM_GP_IN": (GP_SRV, "GatePassReturnSet"),
 }
 
 # Tables the dictionary proposes that no registered service exposes. Reported as PROPOSED_NOT_EXPOSED
@@ -188,8 +191,8 @@ ZMM = f"sap/opu/odata/sap/{TAB_SRV}"
 
 # The service lists above are written out for readability. These stop them
 # drifting from the constants when the next rename happens.
-assert set(SERVICES) == {ADD_SRV, TAB_SRV}, "SERVICES keys and the service constants disagree"
-assert {svc for svc, _ in TABLE_TO_SET.values()} == {ADD_SRV, TAB_SRV}, (
+assert set(SERVICES) == {ADD_SRV, TAB_SRV, GP_SRV}, "SERVICES keys and the service constants disagree"
+assert {svc for svc, _ in TABLE_TO_SET.values()} == {ADD_SRV, TAB_SRV, GP_SRV}, (
     "TABLE_TO_SET names a service that SERVICES does not"
 )
 JSON = "$format=json"

@@ -1,27 +1,31 @@
 utc,sap_path,odata_query,http_status,elapsed_s,bytes
-2026-10-16T04:48:55Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/$metadata,,200,0.3,38778
-2026-10-16T04:49:08Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,,200,13.3,6
-2026-10-16T04:49:08Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,,200,0.1,7
-2026-10-16T04:49:09Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordSet/$count,,200,0.7,5
-2026-10-16T04:49:10Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet/$count,,200,1.3,6
-2026-10-16T04:49:13Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderSet/$count,,200,2.7,6
-2026-10-16T04:49:29Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,,200,16.4,6
-2026-10-16T04:49:29Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/VendorSet/$count,,200,0.2,4
-2026-10-16T04:49:30Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDescriptionSet/$count,,200,0.9,6
-2026-10-16T04:49:31Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,,200,1.2,6
-2026-10-16T04:49:34Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,,200,2.2,6
-2026-10-16T04:49:35Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet/$count,,200,1.7,6
-2026-10-16T04:50:04Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count,,200,28.2,7
-2026-10-16T04:50:04Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet/$count,,200,0.2,6
-2026-10-16T04:51:06Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet/$count,,200,61.9,7
-2026-10-16T04:51:06Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/$metadata,,200,0.2,23864
-2026-10-16T04:51:24Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count,,200,18.3,6
-2026-10-16T04:51:25Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet/$count,,200,1.0,6
-2026-10-16T04:51:25Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet/$count,,200,0.2,8
-2026-10-16T04:51:34Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,,200,8.8,9
-2026-10-16T04:51:42Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/BatchStockSet/$count,,200,7.7,7
-2026-10-16T04:51:42Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet/$count,,200,0.2,6
-2026-10-16T04:51:42Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet/$count,,200,0.2,6
-2026-10-16T04:51:43Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL',200,0.6,7
-2026-10-16T04:51:44Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC',200,0.6,7
-2026-10-16T04:51:44Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'BANF',200,0.3,7
+2026-10-16T06:26:29Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/$metadata,,200,0.2,38778
+2026-10-16T06:26:42Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count,,200,13.0,6
+2026-10-16T06:26:42Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/GoodsMovementItemSet/$count,,200,0.1,7
+2026-10-16T06:26:43Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordSet/$count,,200,0.6,5
+2026-10-16T06:26:44Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/InfoRecordOrgSet/$count,,200,1.3,6
+2026-10-16T06:26:47Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderSet/$count,,200,2.7,6
+2026-10-16T06:27:03Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count,,200,16.3,6
+2026-10-16T06:27:03Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/VendorSet/$count,,200,0.2,4
+2026-10-16T06:27:04Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDescriptionSet/$count,,200,0.9,6
+2026-10-16T06:27:05Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialSet/$count,,200,1.1,6
+2026-10-16T06:27:08Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialPlantSet/$count,,200,2.1,6
+2026-10-16T06:27:09Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/StorageLocationStockSet/$count,,200,1.8,6
+2026-10-16T06:27:38Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count,,200,28.5,7
+2026-10-16T06:27:38Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POScheduleLineSet/$count,,200,0.2,6
+2026-10-16T06:28:39Z,/sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet/$count,,200,60.7,7
+2026-10-16T06:28:39Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/$metadata,,200,0.2,23864
+2026-10-16T06:28:57Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count,,200,17.8,6
+2026-10-16T06:28:58Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MaterialValuationSet/$count,,200,1.1,6
+2026-10-16T06:28:58Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocHeaderSet/$count,,200,0.1,8
+2026-10-16T06:29:07Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,,200,8.9,9
+2026-10-16T06:29:14Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/BatchStockSet/$count,,200,7.0,7
+2026-10-16T06:29:14Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/MonthlyMovementStatisticSet/$count,,200,0.1,6
+2026-10-16T06:29:14Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/StockMovementStatisticSet/$count,,200,0.1,6
+2026-10-16T06:29:14Z,/sap/opu/odata/sap/ZMM_KPI02_GP_SRV/$metadata,,200,0.1,13113
+2026-10-16T06:29:15Z,/sap/opu/odata/sap/ZMM_KPI02_GP_SRV/GatePassHeaderSet/$count,,200,0.5,5
+2026-10-16T06:29:16Z,/sap/opu/odata/sap/ZMM_KPI02_GP_SRV/GatePassItemSet/$count,,200,1.0,5
+2026-10-16T06:29:16Z,/sap/opu/odata/sap/ZMM_KPI02_GP_SRV/GatePassReturnSet/$count,,200,0.3,5
+2026-10-16T06:29:17Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL',200,0.6,7
+2026-10-16T06:29:17Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'MATERIAL' and Tabname eq 'MARC',200,0.5,7
+2026-10-16T06:29:17Z,/sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ChangeDocItemSet/$count,$filter=Objectclas eq 'BANF',200,0.3,7

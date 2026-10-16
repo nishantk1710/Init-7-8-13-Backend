@@ -1,12 +1,13 @@
-# VZI CPI OData status, 2026-10-16T04:51:44Z
+# VZI CPI OData status, 2026-10-16T06:29:17Z
 
 Run mode: --skip-probes --skip-profiles --skip-filter-sweep --label QA --out data-generator\discovery_qa --env-file .env
 
-Calls: 26  |  failures: 0  |  total elapsed: 169s
+Calls: 30  |  failures: 0  |  total elapsed: 168s
 
 ## Services
 - ZMM_KPI02_ADD_SRV: reachable, 14 entity sets in $metadata.
 - ZMM_KPI02_TAB_SRV: reachable, 7 entity sets in $metadata.
+- ZMM_KPI02_GP_SRV: reachable, 3 entity sets in $metadata.
 
 ## Defects
 - B1: /$count succeeded on every reachable set - the defect appears FIXED.
@@ -15,11 +16,11 @@ Calls: 26  |  failures: 0  |  total elapsed: 169s
 - 2 FRS-required field(s) absent from the projection; 7 newly exposed since the FRS; 0 regression(s).
 
 ## Slowest calls (W8.1 performance baseline)
-- 61.9s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet/$count  
-- 28.2s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count  
-- 18.3s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count  
-- 16.4s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count  
-- 13.3s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count  
+- 60.7s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/POHistorySet/$count  
+- 28.5s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/MaterialDocumentHeaderSet/$count  
+- 17.8s  /sap/opu/odata/sap/ZMM_KPI02_TAB_SRV/ReservationItemSet/$count  
+- 16.3s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseOrderItemSet/$count  
+- 13.0s  /sap/opu/odata/sap/ZMM_KPI02_ADD_SRV/PurchaseRequisitionSet/$count  
 
 ## Confirmed defect register
 
