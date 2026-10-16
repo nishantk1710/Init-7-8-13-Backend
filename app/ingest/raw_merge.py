@@ -269,7 +269,10 @@ def shape(value: Any, edm_type: str, vocabulary: str, *, numeric: bool = False) 
         return None
     if numeric:
         return format(value, "f") if isinstance(value, Decimal) else str(value).strip()
-    if edm_type in ("Edm.DateTime", "Edm.DateTimeOffset"):
+    # A decoded datetime is a date whatever the contract declares: SAP re-typed
+    # several DATS fields to Edm.String in the 2026-10 transport, and a value
+    # the envelope had already decoded must not then be written as a timestamp.
+    if edm_type in ("Edm.DateTime", "Edm.DateTimeOffset") or isinstance(value, (datetime, date)):
         if isinstance(value, datetime):
             day = _nearest_day(value)
         elif isinstance(value, date):
