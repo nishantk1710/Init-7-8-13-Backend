@@ -37,10 +37,12 @@ from app.api.assistant.request_schemas import (
 from app.api.assistant.schemas import LinkedReservationModel
 from app.api.deps import Actor, get_current_actor
 from app.assistant import requests as request_service
+from app.assistant import script
 from app.assistant.models import AssistantRequest, AssistantSession
 from app.assistant.session import Origin
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
+from app.initiatives.i13.session_link import line_number_note
 from app.shared.material_names import material_names
 
 #: How long a read waits for material names right after a restart.
@@ -196,6 +198,19 @@ def get_request(request_id: str, db: DbDep, settings: SettingsDep) -> RequestRes
     return _request_response(db, request)
 
 
+def _link_note(sgtxt: str | None, request_id: str, line_no: int | None, decision: str | None) -> str | None:
+    """What a reviewer should notice about one linked reservation item."""
+    notes = []
+    typed = line_number_note(sgtxt, request_id, line_no)
+    if typed:
+        notes.append(typed)
+    if decision == script.NOT_NEEDED:
+        notes.append("Reserved although the requester said it was not needed.")
+    elif decision == script.USE_EXISTING:
+        notes.append("Reserved although the requester chose the existing unit.")
+    return " ".join(notes) or None
+
+
 def _request_response(db: DbSession, request: AssistantRequest, *, replayed: bool = False) -> RequestResponse:
     from app.models.i13_session_link import SessionReservationLink
 
@@ -255,6 +270,7 @@ def _request_response(db: DbSession, request: AssistantRequest, *, replayed: boo
                         source=l.source,
                         sgtxt=l.sgtxt,
                         first_seen_at=l.first_seen_at,
+                        note=_link_note(l.sgtxt, request.id, session.line_no, record.decision),
                     )
                     for l in links.get(session.id, [])
                 ],

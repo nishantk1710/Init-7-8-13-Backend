@@ -139,6 +139,11 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "materials, which is a body rather than a query string. Listed so its "
         "presence here is deliberate."
     ),
+    ("/api/i13/uat/requests/simulate", "post"): (
+        "UAT only (I13_UAT_SIMULATION_ENABLED, else 404) -> uat_reservation_sgtxt: "
+        "one simulated reservation for a whole multi-material request, an item "
+        "per line with SGTXT <request>/<n>. raw_resb is never modified."
+    ),
     ("/api/assistant/ask", "post"): (
         "A POST that writes NOTHING -- a question is a body, not a query "
         "string, and a long free-text question does not belong in a URL. "
