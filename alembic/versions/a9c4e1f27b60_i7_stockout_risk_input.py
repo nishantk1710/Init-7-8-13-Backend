@@ -17,7 +17,7 @@ else references it.
 Portable constructs only -- this creates identically on Postgres and Azure SQL.
 
 Revision ID: a9c4e1f27b60
-Revises: d3f8a1c47b92
+Revises: b4e7d2a91c35
 Create Date: 2026-10-17 12:00:00.000000
 
 """
@@ -29,7 +29,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'a9c4e1f27b60'
-down_revision: Union[str, Sequence[str], None] = 'd3f8a1c47b92'
+down_revision: Union[str, Sequence[str], None] = 'b4e7d2a91c35'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
