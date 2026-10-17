@@ -456,6 +456,9 @@ def list_sessions(
         items.append(
             SessionSummary(
                 session_id=row.id,
+                request_id=row.request_id,
+                line_no=row.line_no,
+                reference=row.reference,
                 flow=row.flow,
                 outcome=session_service.outcome(row, turn_rows).value,
                 material_id=row.material_id,
@@ -531,6 +534,9 @@ def get_session(session_id: str, db: DbDep) -> SessionTraceResponse:
 
     trace = SessionTraceResponse(
         session_id=session.id,
+        request_id=session.request_id,
+        line_no=session.line_no,
+        reference=session.reference,
         flow=session.flow,
         outcome=session_service.outcome(session, turn_rows).value,
         material_id=session.material_id,

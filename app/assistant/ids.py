@@ -147,12 +147,27 @@ def mint(settings: Settings | None = None) -> str:
     is already written into ``new_attestation_id`` in the I08 models.
     """
     settings = settings or get_settings()
-    prefix = settings.assistant_session_id_prefix.strip().upper()
-    payload_length = settings.assistant_session_id_length - len(prefix) - 1
+    return _mint(settings.assistant_session_id_prefix, settings.assistant_session_id_length)
+
+
+def mint_request(settings: Settings | None = None) -> str:
+    """A new multi-material request reference (``R`` + 8 + check character).
+
+    Same alphabet, length and checksum as a session ID, so everything said above
+    about typing it into SAP holds; only the prefix differs, which is what lets
+    a reader of SGTXT tell a request (quoted as ``R.../n``) from a session.
+    """
+    settings = settings or get_settings()
+    return _mint(settings.assistant_request_id_prefix, settings.assistant_session_id_length)
+
+
+def _mint(prefix: str, length: int) -> str:
+    prefix = prefix.strip().upper()
+    payload_length = length - len(prefix) - 1
 
     if payload_length < 1:
         raise SessionIdError(
-            f"assistant_session_id_length ({settings.assistant_session_id_length}) "
+            f"assistant_session_id_length ({length}) "
             f"leaves no room for a payload after the prefix {prefix!r} and one "
             "check character"
         )
@@ -188,22 +203,42 @@ def parse(candidate: str | None, settings: Settings | None = None) -> str:
     entry that cannot say *why* an ID was rejected is one nobody can action.
     """
     settings = settings or get_settings()
+    return _parse(
+        candidate,
+        prefix=settings.assistant_session_id_prefix,
+        length=settings.assistant_session_id_length,
+        noun="session ID",
+    )
+
+
+def parse_request(candidate: str | None, settings: Settings | None = None) -> str:
+    """The canonical request reference, or :class:`SessionIdError` saying why not."""
+    settings = settings or get_settings()
+    return _parse(
+        candidate,
+        prefix=settings.assistant_request_id_prefix,
+        length=settings.assistant_session_id_length,
+        noun="request reference",
+    )
+
+
+def _parse(candidate: str | None, *, prefix: str, length: int, noun: str) -> str:
     session_id = normalise(candidate)
 
     if not session_id:
-        raise SessionIdError("a session ID is required")
+        raise SessionIdError(f"a {noun} is required")
 
-    expected_length = settings.assistant_session_id_length
+    expected_length = length
     if len(session_id) != expected_length:
         raise SessionIdError(
-            f"a session ID is {expected_length} characters; {session_id!r} is "
+            f"a {noun} is {expected_length} characters; {session_id!r} is "
             f"{len(session_id)}"
         )
 
-    prefix = settings.assistant_session_id_prefix.strip().upper()
+    prefix = prefix.strip().upper()
     if not session_id.startswith(prefix):
         raise SessionIdError(
-            f"a session ID starts with {prefix!r}: {session_id!r} does not"
+            f"a {noun} starts with {prefix!r}: {session_id!r} does not"
         )
 
     unknown = sorted({character for character in session_id if character not in _VALUE})
@@ -212,8 +247,8 @@ def parse(candidate: str | None, settings: Settings | None = None) -> str:
         # typed U is not a confusable to repair -- it is a character that was
         # never issued.
         raise SessionIdError(
-            f"{session_id!r} contains {unknown}, which are not valid session-ID "
-            f"characters (the alphabet is {ALPHABET})"
+            f"{session_id!r} contains {unknown}, which are not valid "
+            f"{noun.replace(' ', '-')} characters (the alphabet is {ALPHABET})"
         )
 
     body, check = session_id[:-1], session_id[-1]
@@ -231,6 +266,15 @@ def is_valid(candidate: str | None, settings: Settings | None = None) -> bool:
     """Whether :func:`parse` would accept this. For callers that want a boolean."""
     try:
         parse(candidate, settings)
+    except SessionIdError:
+        return False
+    return True
+
+
+def is_valid_request(candidate: str | None, settings: Settings | None = None) -> bool:
+    """Whether :func:`parse_request` would accept this."""
+    try:
+        parse_request(candidate, settings)
     except SessionIdError:
         return False
     return True

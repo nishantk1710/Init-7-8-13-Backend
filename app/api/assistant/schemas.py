@@ -328,6 +328,10 @@ class SessionTraceResponse(AssistantModel):
     """
 
     session_id: str
+    request_id: str | None = None
+    line_no: int | None = None
+    reference: str
+    """``<request>/<n>`` for a request line, the session ID otherwise."""
     flow: str
     outcome: Literal["OPEN", "COMPLETED", "ABANDONED"]
     material_id: str
@@ -364,6 +368,12 @@ class SessionTraceResponse(AssistantModel):
 
 class SessionSummary(AssistantModel):
     session_id: str
+    request_id: str | None = None
+    """The multi-material request this session is a line of, if any."""
+    line_no: int | None = None
+    reference: str
+    """What the requester types into SAP: ``<request>/<n>`` for a request
+    line, the session ID otherwise."""
     flow: str
     outcome: str
     material_id: str
