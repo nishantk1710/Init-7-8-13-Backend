@@ -375,6 +375,25 @@ def test_a_database_without_the_usage_table_reads_as_not_computed_not_as_an_erro
         assert session.execute(select(Recommendation)).all() == []  # the session is still usable
 
 
+def test_no_aggregate_in_the_counts_query_contains_a_subquery(db):
+    """SQL Server rejects ``SUM(CASE WHEN ... IN (SELECT ...))`` ("Cannot perform an aggregate function
+    on an expression containing an aggregate or a subquery"); SQLite accepts it, so an in-memory test
+    passes and production returns a 500. Look at the SQL itself: the select list -- everything the
+    SUMs are built from -- must hold no SELECT."""
+    import re
+
+    from sqlalchemy import event
+
+    statements: list[str] = []
+    event.listen(db.get_bind(), "before_cursor_execute", lambda c, cur, stmt, *a: statements.append(stmt))
+    db.add_all([recommendation("M1"), usage("M1"), stock("M1", "10"), feature("S1"), usage("S1")])
+    counts(db)
+    counting = [s for s in statements if "coalesce(sum(" in s.lower()]
+    assert counting, "the counts query did not run"
+    select_list = re.split(r"\sFROM\s", counting[0], maxsplit=1, flags=re.IGNORECASE)[0]
+    assert select_list.upper().count("SELECT") == 1  # only the leading SELECT, none inside a SUM
+
+
 # --- SMOOTH material-plants: no recommendation, counted from the feature store ----------------
 
 
