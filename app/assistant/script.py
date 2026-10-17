@@ -31,6 +31,7 @@ What each flow asks
                  -> quantity suggestion (FR-3), if one can be made
                       -> accepted : done
                       -> kept     : why? (justification) -> done
+                 -> no suggestion can be made : why this quantity? -> done
 
 Both end by handing back the session ID, because that is the only thing the
 requester has to carry back into SAP.
@@ -322,15 +323,35 @@ def _i13(
     # not the one the pop-up opened with: the plan is the fresher statement of
     # intent, and it is the number the plan record will carry.
     if suggestion is None or not suggestion.available:
+        # No history to size against, so nothing supports the quantity but the
+        # requester's word -- which is therefore asked for (decided 16 Oct
+        # 2026). Recorded as QUANTITY_OVERRIDE, the reason-for-this-quantity
+        # kind; with no suggestion there is no override exception for it to
+        # answer, so it is evidence only.
+        planned = suggestion.requested_quantity if suggestion is not None else None
+        if I13_QUANTITY_JUSTIFICATION not in answers:
+            return Step(
+                id=I13_QUANTITY_JUSTIFICATION,
+                kind=StepKind.FORM,
+                prompt=(
+                    (suggestion.reason if suggestion is not None
+                     else "No quantity can be suggested for this part.")
+                    + "\n\nPlease record why "
+                    + (f"{planned} is" if planned is not None else "this quantity is")
+                    + " needed."
+                ),
+                fields=(
+                    _reason_field(reason_categories, "Why this quantity"),
+                    _FREE_TEXT,
+                ),
+                facts=facts,
+            )
         return _terminal(
             I13_DONE,
             session_id,
-            "Plan recorded. No quantity suggestion is offered for this part -- "
-            + (
-                suggestion.reason
-                if suggestion is not None
-                else "there is not enough consumption history to base one on."
-            ),
+            "Plan recorded"
+            + (f" at {planned}" if planned is not None else "")
+            + ", with your reason. No quantity suggestion could be made for this part.",
         )
 
     if not suggestion.is_override:

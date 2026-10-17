@@ -312,6 +312,7 @@ def current_step(
     *,
     today: date,
     settings: Settings,
+    assessment: Any = None,
 ) -> tuple[Step, Any, Any]:
     """Re-derive the step this session is waiting on.
 
@@ -319,20 +320,26 @@ def current_step(
     than read back from the stored JSON, because the script needs the live
     object to compose the *next* question -- while the stored copy remains the
     record of what was actually served, which is the thing that must not move.
+
+    ``assessment`` skips the rebuild with one the caller already built for this
+    session in this request -- a multi-material submit answers several steps
+    per line, and rebuilding the same assessment for each would multiply its
+    cost (the I13 cross-plant stock is a query) for an identical object.
     """
     from app.assistant.session import _assessment_for  # local: avoids a cycle
     from app.initiatives.i13.config import get_i13_config
 
     flow = Flow(session.flow)
-    routed = _routed_from(session, flow)
-    assessment = _assessment_for(
-        db,
-        routed,
-        requested_quantity=session.requested_quantity,
-        today=today,
-        settings=settings,
-        i13_config=get_i13_config(),
-    )
+    if assessment is None:
+        routed = _routed_from(session, flow)
+        assessment = _assessment_for(
+            db,
+            routed,
+            requested_quantity=session.requested_quantity,
+            today=today,
+            settings=settings,
+            i13_config=get_i13_config(),
+        )
 
     answers = session_module.answers_of(session_module.turns(db, session.id))
 
@@ -382,19 +389,45 @@ def answer(
     actor: str,
     today: date | None = None,
     settings: Settings | None = None,
+    assessment: Any = None,
+    commit: bool = True,
+    downstream: bool = True,
 ) -> tuple[Step, AssistantSession]:
     """Record an answer to the current step and return the next one.
 
     ``actor`` is passed separately from the payload by every caller. An audit
     record whose author is taken from the body it is auditing is not an audit
     record.
+
+    A multi-material submit (``app/assistant/requests.py``) passes the line's
+    ``assessment`` (built once), ``commit=False`` -- everything is flushed and
+    the caller commits the whole request at once -- and ``downstream=False``:
+    the WATCH/ACT refresh runs for every line after that commit instead.
     """
     settings = settings or get_settings()
     today = today or date.today()
 
+    def _save() -> None:
+        if commit:
+            db.commit()
+        else:
+            db.flush()
+
     session = session_module.load(db, session_id, settings)
+    existing = session_module.turns(db, session.id)
+
+    # Finished means a terminal turn was recorded -- not whatever the script
+    # would say today. A conversation that ended under an older script (one
+    # that, say, asked nothing when no quantity could be suggested) must not
+    # reopen because the script has since gained a step.
+    if any(turn.step_kind == StepKind.TERMINAL.value for turn in existing):
+        raise AnswerError(
+            f"Session {session.id} is already finished. Its conversation cannot "
+            "be reopened -- start a new session if the decision has changed."
+        )
+
     step, assessment, suggestion = current_step(
-        db, session, today=today, settings=settings
+        db, session, today=today, settings=settings, assessment=assessment
     )
 
     if step.is_terminal:
@@ -405,7 +438,6 @@ def answer(
 
     cleaned = validate(step, payload, settings)
 
-    existing = session_module.turns(db, session.id)
     turn = AssistantTurn(
         session_id=session.id,
         sequence=len(existing),
@@ -440,21 +472,24 @@ def answer(
         )
         _record_suggestion(db, session, suggestion, accepted)
 
-    db.commit()
+    _save()
 
     # Re-derive after the write, so the next step sees the turn just recorded.
     following, _, following_suggestion = current_step(
-        db, session, today=today, settings=settings
+        db, session, today=today, settings=settings, assessment=assessment
     )
 
-    # A conversation that ends without ever asking about quantity still made a
-    # suggestion, and the evidence of benefit is the suggestion plus what was
-    # kept. Recorded here rather than at plan capture, because only now is the
-    # accepted quantity final.
+    # A conversation that ends without ever asking "take the suggestion?" still
+    # made one (or tried to), and the evidence of benefit is the suggestion plus
+    # what was kept. Recorded when the conversation ends, because only then is
+    # the accepted quantity final: straight after the plan when it is at or
+    # under the suggestion, after the reason when no suggestion could be made.
+    # An I13_QUANTITY answer records its own, above.
     if (
         following.is_terminal
         and following_suggestion is not None
-        and step.id == script.I13_CAPTURE_PLAN
+        and step.id in (script.I13_CAPTURE_PLAN, script.I13_QUANTITY_JUSTIFICATION)
+        and script.I13_QUANTITY not in session_module.answers_of(session_module.turns(db, session.id))
     ):
         _record_suggestion(
             db,
@@ -478,13 +513,13 @@ def answer(
                 actor=actor,
             )
         )
-        db.commit()
+        _save()
 
         # An I13 conversation that captured a plan changes WATCH and the ACT
         # exceptions for this material -- apply that now, not at the next
         # refresh nobody triggers. Never fails the conversation (see
         # app.assistant.downstream).
-        if Flow(session.flow) is Flow.I13 and script.I13_CAPTURE_PLAN in session_module.answers_of(
+        if downstream and Flow(session.flow) is Flow.I13 and script.I13_CAPTURE_PLAN in session_module.answers_of(
             session_module.turns(db, session.id)
         ):
             from app.assistant.downstream import apply_capture

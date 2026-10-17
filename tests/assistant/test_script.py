@@ -201,11 +201,25 @@ class TestI13Quantity:
             },
         }
 
-    def test_no_suggestion_available_ends_the_conversation(self) -> None:
+    def test_no_suggestion_available_asks_why_this_quantity(self) -> None:
+        """Decided 16 Oct 2026: with no history to size against, the quantity
+        rests on the requester's word alone, so that word is recorded."""
         suggestion = suggest(watch_metric(consumption_count_12m=1), Decimal("5"), QTY_CONFIG)
         step = i13_step(self._answers(), suggestion=suggestion)
+        assert step.id == script.I13_QUANTITY_JUSTIFICATION
+        assert {f.name for f in step.fields} == {"reason_category", "free_text"}
+        assert "No quantity is suggested" in step.prompt
+        assert "why 5 is needed" in step.prompt
+
+    def test_no_suggestion_ends_once_the_reason_is_given(self) -> None:
+        suggestion = suggest(watch_metric(consumption_count_12m=1), Decimal("5"), QTY_CONFIG)
+        answers = {
+            **self._answers(),
+            script.I13_QUANTITY_JUSTIFICATION: {"reason_category": "OTHER", "free_text": "New line"},
+        }
+        step = i13_step(answers, suggestion=suggestion)
         assert step.is_terminal
-        assert "No quantity suggestion is offered" in step.prompt
+        assert "Plan recorded at 5, with your reason" in step.prompt
 
     def test_agreeing_with_the_suggestion_ends_the_conversation(self) -> None:
         """Nothing to challenge, so no question is asked."""

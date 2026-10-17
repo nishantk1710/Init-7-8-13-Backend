@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from app.api import health, ready
 from app.api.assistant.router import justifications_router
 from app.api.assistant.router import router as assistant_router
+from app.api.assistant.requests_router import router as assistant_requests_router
 from app.api.criticality.router import router as criticality_router
 from app.api.events import csv_upload, pr
 from app.api.i7.router import router as i7_router
@@ -28,6 +29,7 @@ api_router.include_router(i13_router)  # -> /api/i13/*
 # cannot know whether that material is 80-series or OAR, so it cannot pick a
 # prefix. See app/assistant/router.py.
 api_router.include_router(assistant_router)       # -> /api/assistant/*
+api_router.include_router(assistant_requests_router)  # -> /api/assistant/requests/* (flag-gated)
 api_router.include_router(justifications_router)  # -> /api/justifications
 api_router.include_router(csv_upload.router)
 

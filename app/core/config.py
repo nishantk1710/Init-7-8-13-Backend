@@ -965,6 +965,19 @@ class Settings(BaseSettings):
     # from SAP are never refused either way.
     assistant_department_check_enabled: bool = True
 
+    # Multi-material requests (app/assistant/requests.py): one request, one
+    # plant, one line per material, each line an ordinary session. Off by
+    # default -- the routes answer 404 until it is switched on.
+    assistant_requests_enabled: bool = False
+    # The request reference: same alphabet, length and check character as a
+    # session ID, a different prefix so a reader can tell the two apart. Each
+    # line is quoted as "<request>/<n>" on the SAP item text (SGTXT, 50 chars).
+    assistant_request_id_prefix: str = "R"
+    # Materials per request. Submitting re-assesses and records every line in
+    # one transaction, so this bounds how long one submit holds a worker and
+    # the database. Values above the hard maximum are clamped to it.
+    assistant_request_max_lines: int = 20
+
     @field_validator("i13_qty_cover_ceiling_months", "i13_qty_minimum_history_count", mode="before")
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:

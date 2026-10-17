@@ -127,6 +127,18 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "requester to: consumption_plan, quantity_suggestion, justification. "
         "Each written once, when its value becomes final."
     ),
+    ("/api/assistant/requests", "post"): (
+        "Mints an assistant_request and one assistant_session per material, "
+        "then answers each line's steps through the same turn path as above "
+        "(assistant_turn, consumption_plan, quantity_suggestion, justification). "
+        "One transaction: every line or nothing. Off unless "
+        "ASSISTANT_REQUESTS_ENABLED."
+    ),
+    ("/api/assistant/requests/preview", "post"): (
+        "A POST that writes NOTHING -- it routes and assesses a list of "
+        "materials, which is a body rather than a query string. Listed so its "
+        "presence here is deliberate."
+    ),
     ("/api/assistant/ask", "post"): (
         "A POST that writes NOTHING -- a question is a body, not a query "
         "string, and a long free-text question does not belong in a URL. "
@@ -288,6 +300,7 @@ class TestNothingWritesToSap:
         from app.assistant import models
 
         owned = {
+            models.AssistantRequest.__tablename__,
             models.AssistantSession.__tablename__,
             models.AssistantTurn.__tablename__,
             models.Justification.__tablename__,
@@ -295,6 +308,7 @@ class TestNothingWritesToSap:
             models.QuantitySuggestionRecord.__tablename__,
         }
         assert owned == {
+            "assistant_request",
             "assistant_session",
             "assistant_turn",
             "justification",
