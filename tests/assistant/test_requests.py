@@ -200,6 +200,10 @@ def create(db, lines, settings, key="draft-0001"):
     )
 
 
+def settings_categories() -> list[str]:
+    return get_settings().assistant_justification_reason_category_list
+
+
 def count(db, model) -> int:
     return db.execute(select(func.count()).select_from(model)).scalar_one()
 
@@ -541,6 +545,8 @@ class TestRoutes:
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["maxLines"] == 20
+        assert body["reasonCategories"][0] == {"value": "URGENT_BREAKDOWN", "label": "Urgent Breakdown"}
+        assert [c["value"] for c in body["reasonCategories"]] == settings_categories()
         oar_line, consumable = body["lines"]
         assert oar_line["kind"] == "i13" and oar_line["suggestion"]["quantity"] == "8"
         assert consumable["kind"] == "out_of_scope"

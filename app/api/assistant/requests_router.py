@@ -27,6 +27,7 @@ from app.api.assistant.request_schemas import (
     PreviewLineModel,
     PreviewRequest,
     PreviewResponse,
+    ReasonCategoryModel,
     RequestLineModel,
     RequestListResponse,
     RequestResponse,
@@ -80,6 +81,11 @@ def preview(body: PreviewRequest, db: DbDep, settings: SettingsDep) -> PreviewRe
     names = _names([line.material_id for line in lines])
     return PreviewResponse(
         max_lines=request_service.max_lines(settings),
+        # Labelled as the conversation labels them (script._reason_field).
+        reason_categories=[
+            ReasonCategoryModel(value=c, label=c.replace("_", " ").title())
+            for c in settings.assistant_justification_reason_category_list
+        ],
         lines=[
             PreviewLineModel(
                 material_id=line.material_id,
