@@ -161,8 +161,10 @@ def stockout_risk_counts(
         .subquery()
     )
 
-    # A plant "has movement data" when at least one of its material-plants has been issued.
-    plants_with_movements = select(StockoutRiskInput.sap_plant_code).distinct()
+    # A plant "has movement data" when at least one of its material-plants has been issued. Joined, not
+    # tested with NOT IN (SELECT ...): SQL Server refuses a subquery inside an aggregate, and the
+    # counts below are SUM(CASE ...).
+    plants_with_movements = select(StockoutRiskInput.sap_plant_code.label("sap_plant_code")).distinct().subquery()
 
     usage = StockoutRiskInput
     has_usage = usage.id.is_not(None)
@@ -176,7 +178,7 @@ def stockout_risk_counts(
     )
     insufficient = or_(
         and_(fast_or_slow, ~has_inputs),
-        and_(~has_usage, rows.c.sap_plant_code.not_in(plants_with_movements)),
+        and_(~has_usage, plants_with_movements.c.sap_plant_code.is_(None)),
     )
 
     counts = session.execute(
@@ -200,6 +202,7 @@ def stockout_risk_counts(
                 on_hand.c.sap_plant_code == rows.c.sap_plant_code,
             ),
         )
+        .outerjoin(plants_with_movements, plants_with_movements.c.sap_plant_code == rows.c.sap_plant_code)
     ).one()
     return StockoutRiskCounts(
         at_risk=int(counts[0]),
