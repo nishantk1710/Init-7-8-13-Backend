@@ -18,6 +18,17 @@ into the reservation's item text, SGTXT -- loaded by the extract as
    ``SESSION_WITHOUT_PLAN`` -- the FR-4 check and the sessions screen's
    "reservations with no session" count.
 
+Multi-material requests
+-----------------------
+A line of a request (``app/assistant/requests.py``) is quoted as
+``<request>/<n>`` -- ``RSA1MT7EKP/2``. :func:`request_refs_in` reads those,
+and the link is made to **the line's own session**, found by request +
+material + plant: a request holds each material once, so that pair names one
+line. The ``/n`` is read only as a cross-check (:func:`line_number_note`), so a
+wrong or missing one still links. Because the link row names the line's session,
+everything downstream -- the ledger, compliance, ACT, plan matching -- treats it
+exactly as a stand-alone session's link.
+
 Reads Postgres only. In UAT the reservation rows may include the
 ``uat_reservation_sgtxt`` overlay (see ``postgres_reservation``); the linking
 logic does not care which it is, which is the point of simulating it that way.
@@ -96,6 +107,116 @@ def session_ids_in(sgtxt: str | None) -> FoundIds:
     return FoundIds(tuple(valid), tuple(invalid))
 
 
+# --- request references: <request>/<n> ----------------------------------------
+
+
+@dataclass(frozen=True)
+class RequestRef:
+    request_id: str
+    line_no: int | None
+    """The ``/n`` typed after it, if any. A cross-check, never the key."""
+
+
+@dataclass(frozen=True)
+class FoundRefs:
+    valid: tuple[RequestRef, ...]
+    #: Request-shaped but failing the checksum -- a mistyped reference.
+    invalid: tuple[str, ...]
+
+
+def _request_pattern() -> re.Pattern[str]:
+    settings = get_settings()
+    prefix = re.escape(settings.assistant_request_id_prefix.strip().upper())
+    body = settings.assistant_session_id_length - len(settings.assistant_request_id_prefix.strip())
+    return re.compile(
+        rf"(?<![0-9A-Z])({prefix}[0-9A-Z]{{{body}}})(?![0-9A-Z])(?:\s*[/-]\s*(\d{{1,3}})(?!\d))?"
+    )
+
+
+def _scan_refs(text: str) -> tuple[list[RequestRef], list[str]]:
+    valid: list[RequestRef] = []
+    invalid: list[str] = []
+    for match in _request_pattern().finditer(text.upper()):
+        original = match.group(1)
+        request_id = ids.normalise(original)
+        line_no = int(match.group(2)) if match.group(2) else None
+        if ids.is_valid_request(request_id):
+            ref = RequestRef(request_id, line_no)
+            if ref not in valid:
+                valid.append(ref)
+        elif any(c.isdigit() for c in original) and all(c in ids.ALPHABET for c in request_id):
+            # Same rule as a session: a real reference carries a digit; a word
+            # ("REPAIRABLE") never does.
+            if request_id not in invalid:
+                invalid.append(request_id)
+    return valid, invalid
+
+
+def request_refs_in(sgtxt: str | None) -> FoundRefs:
+    """Every request reference in one SGTXT value, and every mistyped one.
+
+    Reads ``R.../2``, ``R...-2``, ``R... / 2``, a bare ``R...``, lower case, and
+    the reference among other words. A reference typed in groups
+    (``RSA1 MT7E KP/2``) is found on a second pass with the spaces removed --
+    and kept only if it passes its checksum, since gluing words together could
+    otherwise manufacture a "mistyped" one out of ordinary text.
+    """
+    if not sgtxt or not sgtxt.strip():
+        return FoundRefs((), ())
+    valid, invalid = _scan_refs(sgtxt)
+    if not valid and not invalid:
+        valid, _ = _scan_refs(re.sub(r"\s+", "", sgtxt))
+    known = {ref.request_id for ref in valid}
+    return FoundRefs(tuple(valid), tuple(i for i in invalid if i not in known))
+
+
+@dataclass(frozen=True)
+class RequestLine:
+    request_id: str
+    line_no: int
+    session_id: str
+    material: str
+    plant: str
+
+
+def load_request_lines(db: Session, request_ids: Iterable[str]) -> dict[str, list[RequestLine]]:
+    """The lines of these requests, by request -- empty for an unknown one."""
+    from app.assistant.models import AssistantSession
+
+    wanted = list(set(request_ids))
+    if not wanted:
+        return {}
+    found: dict[str, list[RequestLine]] = {}
+    for session_id, request_id, line_no, material, plant in db.execute(
+        select(
+            AssistantSession.id,
+            AssistantSession.request_id,
+            AssistantSession.line_no,
+            AssistantSession.material_id,
+            AssistantSession.plant,
+        ).where(AssistantSession.request_id.in_(wanted))
+    ).all():
+        found.setdefault(request_id, []).append(RequestLine(request_id, line_no, session_id, material, plant))
+    return found
+
+
+def line_number_note(sgtxt: str | None, request_id: str, line_no: int | None) -> str | None:
+    """Why a request line's link deserves a second look, or ``None``.
+
+    The link is made by material and plant, so a wrong or missing ``/n`` does
+    not stop it -- but somebody reading the reservation will read the ``/n``.
+    """
+    refs = [ref for ref in request_refs_in(sgtxt).valid if ref.request_id == request_id]
+    if not refs or line_no is None:
+        return None
+    typed = refs[0].line_no
+    if typed is None:
+        return f"No line number typed; matched to /{line_no} by material and plant."
+    if typed != line_no:
+        return f"Typed /{typed}; matched to /{line_no} by material and plant."
+    return None
+
+
 @dataclass(frozen=True)
 class SessionInfo:
     session_id: str
@@ -121,7 +242,11 @@ def load_sessions(db: Session, session_ids: Iterable[str] | None = None) -> dict
     }
 
 
-def _links_wanted(rows: Iterable[Row], sessions: Mapping[str, SessionInfo]) -> dict[tuple[str, str, str], Row]:
+def _links_wanted(
+    rows: Iterable[Row],
+    sessions: Mapping[str, SessionInfo],
+    request_lines: Mapping[str, list[RequestLine]] | None = None,
+) -> dict[tuple[str, str, str], Row]:
     wanted: dict[tuple[str, str, str], Row] = {}
     for row in rows:
         found = session_ids_in(row.get("Sgtxt"))
@@ -130,6 +255,20 @@ def _links_wanted(rows: Iterable[Row], sessions: Mapping[str, SessionInfo]) -> d
             if info is None or (info.material, info.plant) != (row["Matnr"], row["Werks"]):
                 continue
             wanted[(session_id, row["Rsnum"], row["Rspos"])] = row
+        if request_lines:
+            for ref in request_refs_in(row.get("Sgtxt")).valid:
+                # Request + material + plant names one line; the /n does not
+                # decide. A material the request never assessed is no link.
+                line = next(
+                    (
+                        line
+                        for line in request_lines.get(ref.request_id, ())
+                        if (line.material, line.plant) == (row["Matnr"], row["Werks"])
+                    ),
+                    None,
+                )
+                if line is not None:
+                    wanted[(line.session_id, row["Rsnum"], row["Rspos"])] = row
     return wanted
 
 
@@ -149,7 +288,10 @@ def sync_links(db: Session, rows: list[Row], *, scope: Key | None = None) -> Syn
     """
     candidate_ids = {sid for row in rows for sid in session_ids_in(row.get("Sgtxt")).valid}
     sessions = load_sessions(db, candidate_ids)
-    wanted = _links_wanted(rows, sessions)
+    request_lines = load_request_lines(
+        db, {ref.request_id for row in rows for ref in request_refs_in(row.get("Sgtxt")).valid}
+    )
+    wanted = _links_wanted(rows, sessions, request_lines)
 
     stmt = select(SessionReservationLink)
     if scope is not None:
@@ -204,13 +346,24 @@ def session_status(sgtxt: str | None, linked_session: str | None, sessions: Mapp
     * a linked session with no plan -> ``SESSION_WITHOUT_PLAN``
     * a session-shaped value, or a valid ID naming no session for this part ->
       ``INVALID_SESSION``
+    * the same for a request reference: mistyped, unknown, or naming a request
+      with no line for this material -> ``INVALID_SESSION``. The requester
+      used the assistant; what they typed does not lead back to it, which is a
+      different finding from not using it at all.
     * nothing session-like at all -> ``MISSING_SESSION``
+
+    A request line is linked through its own session, so the first two cases
+    cover it unchanged -- a line marked "not needed" that was reserved anyway
+    has no plan and reads ``SESSION_WITHOUT_PLAN``, which is what it is.
     """
     if linked_session is not None:
         info = sessions.get(linked_session)
         return COVERED if info is not None and info.has_plan else SESSION_WITHOUT_PLAN
     found = session_ids_in(sgtxt)
     if found.valid or found.invalid:
+        return INVALID_SESSION
+    refs = request_refs_in(sgtxt)
+    if refs.valid or refs.invalid:
         return INVALID_SESSION
     return MISSING_SESSION
 

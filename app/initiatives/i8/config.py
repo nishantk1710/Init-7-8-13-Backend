@@ -7,11 +7,12 @@ that way (``tests/test_i8_config.py``). The reason is specific, not stylistic:
      document type ZREP, PENDING SAP TEAM CONFIRMATION."
                                              -- VZI_AI_Dev_Plan.xlsx, W5.2
 
-The evidence is strong (item category 3 appears on ZREP documents and nowhere
-else across 62,000+ other lines, and all 1,225 of those lines are on 80-series
-materials) but it is still a proposal. If the SAP team comes back and says the
-value is 'L', that must be one line in ``.env`` -- not a code change, a review
-and a redeploy.
+The evidence was always strong (item category 3 appears on ZREP documents and
+nowhere else across 62,000+ other lines, and all 1,225 of those lines are on
+80-series materials). **SAP TEAM CONFIRMED, 15-Oct-2026: item category 3 is the
+repair-PO filter.** It is kept as configuration anyway, not promoted to a
+literal -- VZI can still redefine the convention later, and if they do that
+must be one line in ``.env``, not a code change, a review and a redeploy.
 
 Every field here is read from the environment with an ``I8_`` prefix, falling
 back to ``.env``, exactly like ``app.core.config.Settings``.
@@ -20,6 +21,7 @@ back to ``.env``, exactly like ``app.core.config.Settings``.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -51,7 +53,7 @@ class I8Settings(BaseSettings):
 
     # --- Repair-PO identification (W5.2) ---------------------------------
 
-    # PSTYP. The filter. Pending SAP team confirmation -- see the module note.
+    # PSTYP. The filter. SAP team confirmed 15-Oct-2026 -- see the module note.
     repair_item_category: str = "3"
 
     # BSART. Corroborating attribute ONLY, never a gate: 455 of the 1,225
@@ -286,6 +288,23 @@ class I8Settings(BaseSettings):
     # below-threshold candidate is still reported, only flagged, the same way
     # `actionableOnly` filters rather than silently drops.
     coding_candidate_confidence_threshold: str = "low"
+
+    # --- New Item Price (FR-2 coding screen) ------------------------------
+
+    # BWTAR of the NEW condition on a split-valuated material. Every 80-series
+    # material is split NEW / REFURBISHD / DAMAGED / SCRAP, and its blank-BWTAR
+    # row aggregates those, so for a split material the NEW row is the only
+    # new-item price. A material that is not split has one row, BWTAR blank,
+    # and that row is the price. The source -- MBEW VERPR -- was confirmed by
+    # the SAP team on 16-Oct-2026.
+    new_item_valuation_type: str = "NEW"
+
+    # A VERPR at or below this is a placeholder valuation, not a price.
+    # Measured on the 15-Oct-2026 export: R1.00 / R0.01 sits on nearly every
+    # DAMAGED and SCRAP row and on 18% of NEW rows -- deliberate token values,
+    # not data errors. Shown as a price, R1 would make every repair look not
+    # worth doing, so the screen shows none and says why.
+    new_item_price_token_max: Decimal = Decimal("1.00")
 
     # --- Presentation -----------------------------------------------------
 

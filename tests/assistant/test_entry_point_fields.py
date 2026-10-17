@@ -75,6 +75,17 @@ def in_scope_material() -> tuple[str, str]:
     return row[0], row[1]
 
 
+@pytest.fixture(scope="module")
+def department_code() -> str:
+    """A department the opener would offer: a real one where the extract has
+    any, else any 5-digit code (with no list loaded, that is what passes)."""
+    from app.assistant import departments
+
+    with get_sessionmaker()() as db:
+        loaded, _ = departments.load_all(db)
+    return min(loaded) if loaded else "10100"
+
+
 def _open(material: str, plant: str, **body) -> dict:
     """Open a session and return the response body, skipping if none was minted."""
     response = client.post(
@@ -136,27 +147,27 @@ class TestTheTwoPeopleStaySeparate:
         assert row.requester == OPERATOR["X-Actor-Id"]
         assert row.requester != "SOMEBODY ELSE ENTIRELY"
 
-    def test_the_trace_serves_both(self, in_scope_material) -> None:
+    def test_the_trace_serves_both(self, in_scope_material, department_code) -> None:
         material, plant = in_scope_material
-        body = _open(material, plant, requestedFor=REQUESTED_FOR, department="Concentrator")
+        body = _open(material, plant, requestedFor=REQUESTED_FOR, department=department_code)
 
         trace = client.get(f"/api/assistant/sessions/{body['sessionId']}", headers=OPERATOR)
         assert trace.status_code == 200, trace.text
         served = trace.json()
 
         assert served["requestedFor"] == REQUESTED_FOR
-        assert served["department"] == "Concentrator"
+        assert served["department"] == department_code
         # Served but never drawn -- the trace is the FR-8 evidence view, and an
         # audit record without its author is not one.
         assert served["requester"] == OPERATOR["X-Actor-Id"]
 
 
 class TestTheNewFieldsAreRecorded:
-    def test_department_is_stored(self, in_scope_material) -> None:
+    def test_department_is_stored(self, in_scope_material, department_code) -> None:
         material, plant = in_scope_material
-        body = _open(material, plant, department="Concentrator")
+        body = _open(material, plant, department=department_code)
 
-        assert _row(body["sessionId"]).department == "Concentrator"
+        assert _row(body["sessionId"]).department == department_code
 
     def test_both_are_optional(self, in_scope_material) -> None:
         """A session opened from SAP carries neither, and that must still work.
@@ -184,15 +195,15 @@ class TestTheNewFieldsAreRecorded:
         assert row.department is None
         assert row.requested_for is None
 
-    def test_surrounding_space_is_trimmed(self, in_scope_material) -> None:
+    def test_surrounding_space_is_trimmed(self, in_scope_material, department_code) -> None:
         material, plant = in_scope_material
         row = _row(
-            _open(material, plant, department="  Concentrator  ", requestedFor="  T. Mokoena  ")[
+            _open(material, plant, department=f"  {department_code}  ", requestedFor="  T. Mokoena  ")[
                 "sessionId"
             ]
         )
 
-        assert row.department == "Concentrator"
+        assert row.department == department_code
         assert row.requested_for == "T. Mokoena"
 
     @pytest.mark.parametrize(

@@ -106,7 +106,8 @@ def _capture_plan_through_the_chat(material: str, plant: str) -> str:
         json={
             "materialId": material,
             "plant": plant,
-            "department": "Concentrator",
+            # Any 5-digit code: this test is about the plan, not the department.
+            "department": "10100",
             "requestedFor": "T. Mokoena",
         },
     )

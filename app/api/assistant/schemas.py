@@ -87,9 +87,11 @@ class StartSessionRequest(AssistantModel):
         max_length=64,
         description=(
             "Which department the part is for -- the requester's, not the "
-            "operator's. Optional: the BAdI pop-up carries a material and a "
-            "plant and cannot supply this, so a session opened from SAP "
-            "legitimately has none."
+            "operator's -- as its 5-digit code (EBAN.AFNAM, e.g. 10100); see "
+            "GET /assistant/departments. From the platform it must be on that "
+            "list. Optional: the BAdI pop-up carries a material and a plant "
+            "and may not supply this, so a session opened from SAP "
+            "legitimately has none, and is never refused over it."
         ),
     )
     requested_for: str | None = PydanticField(
@@ -137,6 +139,25 @@ class MaterialSearchResponse(AssistantModel):
 
     items: list[MaterialMatchModel]
     note: str
+
+
+class DepartmentModel(AssistantModel):
+    """One department code, and the plants it has requisitions at."""
+
+    code: str
+    plants: list[str]
+    primary: bool
+    """Show it before anything is typed. False: offer it on search only."""
+
+
+class DepartmentListResponse(AssistantModel):
+    """The opener's department codes, the asked-for plant's first."""
+
+    plant: str | None = None
+    items: list[DepartmentModel]
+    loaded: bool
+    """False while the list is still loading or could not be read: ``items``
+    is then empty and the opener accepts any 5-digit code."""
 
 
 class NarrativeModel(AssistantModel):
@@ -249,7 +270,11 @@ class PlanModel(AssistantModel):
 
 
 class LinkedReservationModel(AssistantModel):
-    """A reservation item whose SGTXT names the session (session_reservation_link)."""
+    """A reservation item whose SGTXT names the session (session_reservation_link).
+
+    ``note`` is set only on a multi-material request's line, when what was
+    typed deserves a second look (a wrong or missing ``/n``, or a line the
+    requester declined that was reserved anyway)."""
 
     reservation_number: str
     reservation_item: str
@@ -259,6 +284,7 @@ class LinkedReservationModel(AssistantModel):
     """``SGTXT`` from the loaded extract, or ``UAT_SGTXT`` from the UAT overlay."""
     sgtxt: str | None = None
     first_seen_at: datetime
+    note: str | None = None
 
 
 class SuggestionModel(AssistantModel):
@@ -307,6 +333,10 @@ class SessionTraceResponse(AssistantModel):
     """
 
     session_id: str
+    request_id: str | None = None
+    line_no: int | None = None
+    reference: str
+    """``<request>/<n>`` for a request line, the session ID otherwise."""
     flow: str
     outcome: Literal["OPEN", "COMPLETED", "ABANDONED"]
     material_id: str
@@ -343,6 +373,12 @@ class SessionTraceResponse(AssistantModel):
 
 class SessionSummary(AssistantModel):
     session_id: str
+    request_id: str | None = None
+    """The multi-material request this session is a line of, if any."""
+    line_no: int | None = None
+    reference: str
+    """What the requester types into SAP: ``<request>/<n>`` for a request
+    line, the session ID otherwise."""
     flow: str
     outcome: str
     material_id: str

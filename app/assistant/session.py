@@ -263,8 +263,21 @@ def start(
     today: date | None = None,
     settings: Settings | None = None,
     i13_config: I13Config | None = None,
+    request_id: str | None = None,
+    line_no: int | None = None,
+    commit: bool = True,
+    narrate: bool = True,
+    prepared: tuple[RoutedFlow, object] | None = None,
 ) -> StartedSession:
     """Route a material, and mint a session if there is anything to say.
+
+    ``request_id`` / ``line_no`` mint the session as a line of a multi-material
+    request (``app/assistant/requests.py``), which also passes ``commit=False``
+    -- the whole request is one transaction, flushed here and committed by the
+    caller -- and ``narrate=False``: twenty model calls for one submit would be
+    the slowest part of it, and the narrative is optional phrasing over numbers
+    the line already shows. ``prepared`` is the routing and assessment that
+    submit already built while validating the line, so neither is built twice.
 
     Three names arrive here and they are not interchangeable.
 
@@ -299,7 +312,7 @@ def start(
             f"{', '.join(IN_SCOPE_PLANTS)}"
         )
 
-    routed = route(db, material_id, plant)
+    routed = prepared[0] if prepared is not None else route(db, material_id, plant)
     if not routed.in_scope:
         logger.info(
             "Assistant not opened for %s at %s: %s",
@@ -309,13 +322,17 @@ def start(
         )
         return StartedSession(routed=routed, session=None, step=None)
 
-    assessment = _assessment_for(
-        db,
-        routed,
-        requested_quantity=requested_quantity,
-        today=today,
-        settings=settings,
-        i13_config=i13_config,
+    assessment = (
+        prepared[1]
+        if prepared is not None
+        else _assessment_for(
+            db,
+            routed,
+            requested_quantity=requested_quantity,
+            today=today,
+            settings=settings,
+            i13_config=i13_config,
+        )
     )
 
     record = assessment.as_record(today)
@@ -325,15 +342,19 @@ def start(
     # already complete by this point, and a provider outage must not cost the
     # requester their answer. See app/assistant/narrative.py for the deviation
     # this implements and why it needs sign-off.
-    narrative = write_narrative(
-        prompt_id=(
-            narrative_module.I08_PROMPT
-            if routed.flow is Flow.I08
-            else narrative_module.I13_PROMPT
-        ),
-        headline=headline,
-        facts=_readable_facts(record),
-        settings=settings,
+    narrative = (
+        write_narrative(
+            prompt_id=(
+                narrative_module.I08_PROMPT
+                if routed.flow is Flow.I08
+                else narrative_module.I13_PROMPT
+            ),
+            headline=headline,
+            facts=_readable_facts(record),
+            settings=settings,
+        )
+        if narrate
+        else narrative_module.Narrative(text=None, reason="not written for request lines")
     )
     if not narrative.served and narrative.reason:
         logger.debug("No narrative for this session: %s", narrative.reason)
@@ -361,10 +382,15 @@ def start(
         narrative_prompt_id=narrative.prompt_id,
         narrative_prompt_version=narrative.prompt_version,
         narrative_model=narrative.model,
+        request_id=request_id,
+        line_no=line_no,
     )
     db.add(session)
-    db.commit()
-    db.refresh(session)
+    if commit:
+        db.commit()
+        db.refresh(session)
+    else:
+        db.flush()
 
     step = next_step(
         flow=routed.flow,
@@ -374,6 +400,28 @@ def start(
         today=today,
         reason_categories=settings.assistant_justification_reason_category_list,
     )
+
+    # A conversation with nothing to ask -- a repairable part with no unit in
+    # stock or on repair -- ends where it starts. Record that ending as a turn,
+    # as turns.answer does for every other ending: without it the session was
+    # derived OPEN and then ABANDONED after the TTL, and counted under "advice
+    # given, not acted on" although there was nothing to act on.
+    if step.is_terminal:
+        db.add(
+            AssistantTurn(
+                session_id=session.id,
+                sequence=0,
+                step_id=step.id,
+                step_kind=step.kind.value,
+                question=step.prompt,
+                answer=None,
+                actor=session.requester,
+            )
+        )
+        if commit:
+            db.commit()
+        else:
+            db.flush()
 
     logger.info(
         "Assistant session %s minted: %s flow for %s at %s, for %s (%s), "

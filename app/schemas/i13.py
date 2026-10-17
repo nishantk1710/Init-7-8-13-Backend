@@ -601,6 +601,12 @@ class UatSimulateRequest(BaseModel):
     session_id: str
 
 
+class UatSimulateRequestBody(BaseModel):
+    """Simulate the one SAP reservation for a whole multi-material request."""
+
+    request_id: str
+
+
 class UatStampRequest(BaseModel):
     session_id: str
     reservation_number: str

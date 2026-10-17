@@ -11,7 +11,13 @@ conversation does not exist in the loaded extract. This module fills that gap
   the session's material and plant, numbered from a range no SAP reservation
   uses (99xxxxxx), with SGTXT = the session ID;
 * :func:`stamp` -- the session ID typed into an existing reservation's SGTXT;
-* :func:`remove` -- undo either.
+* :func:`simulate_request` -- one reservation for a whole multi-material
+  request, an item per line to be reserved, each with SGTXT ``<request>/<n>``;
+* :func:`remove` -- undo any of them, one item at a time.
+
+What is "typed" is the session's **reference**: the session ID for a session
+opened on its own, ``<request>/<n>`` for a line of a request -- exactly what the
+assistant told the requester to type.
 
 After each, the material is refreshed in the I13 snapshot (ledger, WATCH,
 session links) and detection runs for it, exactly as a new extract and a
@@ -57,6 +63,8 @@ class _Session:
     material: str
     plant: str
     flow: str
+    reference: str
+    """What the requester types into SGTXT -- see the module docstring."""
 
 
 def _session(db: Session, session_id: str) -> _Session:
@@ -65,7 +73,14 @@ def _session(db: Session, session_id: str) -> _Session:
     row = db.get(AssistantSession, session_id.strip().upper())
     if row is None:
         raise UatError(f"No assistant session {session_id!r}.")
-    return _Session(row.id, row.material_id, row.plant, row.flow)
+    return _Session(row.id, row.material_id, row.plant, row.flow, row.reference)
+
+
+def _next_simulated_number(db: Session) -> int:
+    highest = db.execute(
+        select(func.max(UatReservationSgtxt.reservation_number)).where(UatReservationSgtxt.simulated)
+    ).scalar()
+    return max(SIMULATED_RANGE_START, int(highest) + 1 if highest else SIMULATED_RANGE_START)
 
 
 def _latest_plan(db: Session, session_id: str):
@@ -120,10 +135,7 @@ def simulate(db: Session, session_id: str, *, actor: str) -> UatReservationSgtxt
         )
 
     plan = _latest_plan(db, session.session_id)
-    highest = db.execute(
-        select(func.max(UatReservationSgtxt.reservation_number)).where(UatReservationSgtxt.simulated)
-    ).scalar()
-    number = max(SIMULATED_RANGE_START, int(highest) + 1 if highest else SIMULATED_RANGE_START)
+    number = _next_simulated_number(db)
     row = UatReservationSgtxt(
         reservation_number=str(number),
         reservation_item="1",
@@ -133,7 +145,7 @@ def simulate(db: Session, session_id: str, *, actor: str) -> UatReservationSgtxt
         # Required when the plan said it would be used; today if no plan.
         requirement_date=(plan.window_start if plan is not None and plan.window_start else date.today()),
         requirement_quantity=(plan.planned_quantity if plan is not None else Decimal("1")),
-        sgtxt=session.session_id,
+        sgtxt=session.reference,
         session_id=session.session_id,
         created_by=actor,
     )
@@ -143,6 +155,70 @@ def simulate(db: Session, session_id: str, *, actor: str) -> UatReservationSgtxt
     db.commit()
     logger.info("UAT: simulated reservation %s for session %s", row.reservation_number, session.session_id)
     return row
+
+
+def simulate_request(db: Session, request_id: str, *, actor: str) -> list[UatReservationSgtxt]:
+    """The one reservation a request's requester would have created in SAP.
+
+    One reservation number, an item per line that was going to be reserved --
+    an OAR line that captured a plan, a repairable line that proceeds with a
+    new unit -- each with SGTXT ``<request>/<n>``. A line declined in the
+    conversation (not needed, or the existing unit used) gets no item, as the
+    requester would not have reserved it.
+    """
+    from app.assistant import requests as request_service
+    from app.assistant import script
+
+    try:
+        request = request_service.load(db, request_id)
+    except request_service.RequestError as error:
+        raise UatError(str(error)) from error
+    records = request_service.line_records(db, request_service.lines_of(db, request.id))
+    to_reserve = [
+        r for r in records
+        if (r.session.flow == "i13" and r.plan is not None)
+        or (r.session.flow == "i08" and r.decision == script.PROCEED_NEW)
+    ]
+    if not to_reserve:
+        raise UatError(f"Request {request.id} has no line that was going to be reserved.")
+
+    already = db.execute(
+        select(UatReservationSgtxt).where(
+            UatReservationSgtxt.simulated,
+            UatReservationSgtxt.session_id.in_([r.session.id for r in to_reserve]),
+        )
+    ).scalars().first()
+    if already is not None:
+        raise UatConflict(
+            f"Request {request.id} already has simulated reservation {already.reservation_number}. "
+            "Remove its items first to simulate again."
+        )
+
+    number = str(_next_simulated_number(db))
+    rows: list[UatReservationSgtxt] = []
+    for item, record in enumerate(to_reserve, start=1):
+        plan = record.plan
+        rows.append(
+            UatReservationSgtxt(
+                reservation_number=number,
+                reservation_item=str(item),
+                material=record.session.material_id,
+                plant=record.session.plant,
+                simulated=True,
+                requirement_date=(plan.window_start if plan is not None and plan.window_start else date.today()),
+                requirement_quantity=(plan.planned_quantity if plan is not None else Decimal("1")),
+                sgtxt=record.session.reference,
+                session_id=record.session.id,
+                created_by=actor,
+            )
+        )
+    db.add_all(rows)
+    db.flush()
+    for material, plant in dict.fromkeys((r.material, r.plant) for r in rows):
+        _apply(db, material, plant)
+    db.commit()
+    logger.info("UAT: simulated reservation %s for request %s (%d items)", number, request.id, len(rows))
+    return rows
 
 
 def stamp(db: Session, session_id: str, *, reservation_number: str, reservation_item: str, actor: str) -> UatReservationSgtxt:
@@ -188,7 +264,7 @@ def stamp(db: Session, session_id: str, *, reservation_number: str, reservation_
         simulated=False,
         requirement_date=reservation.get("Bdter"),
         requirement_quantity=reservation.get("Bdmng"),
-        sgtxt=session.session_id,
+        sgtxt=session.reference,
         original_sgtxt=(raw_text or None),
         session_id=session.session_id,
         created_by=actor,
@@ -197,7 +273,7 @@ def stamp(db: Session, session_id: str, *, reservation_number: str, reservation_
     db.flush()
     _apply(db, session.material, session.plant)
     db.commit()
-    logger.info("UAT: stamped %s/%s with session %s", reservation_number, reservation_item, session.session_id)
+    logger.info("UAT: stamped %s/%s with %s", reservation_number, reservation_item, session.reference)
     return row
 
 

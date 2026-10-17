@@ -613,8 +613,22 @@ def fetch_set(
     # Where the next increment would start, for a set with a date of its own.
     # Computed before the manifest is written so the file carries it; written
     # to the watermark table further down, and only past a successful landing.
-    if result.ok and mark_field is not None and rows:
-        result.watermark = highest(rows, mark_field)
+    #
+    # From the set's OWN window only, never from the rows its parents handed
+    # over: those carry their own, older dates. On 2026-10-16 MARD's window
+    # held nothing and the two rows MSEG's keys brought in were materials
+    # created on 15 September, so the mark would have moved back a month --
+    # and a material created in 2013 that moves today would have moved it
+    # back thirteen years, to a window the next cycle reads whole every hour.
+    # And never behind the window this read started from, whatever the rows
+    # say: a mark only moves forward.
+    if result.ok and mark_field is not None:
+        own = reads[0].rows if (delta is not None and delta.direct) else rows
+        candidate = highest(own, mark_field) if own else None
+        floor = as_day(result.since)
+        if candidate is not None and floor is not None and date.fromisoformat(candidate) < floor:
+            candidate = floor.isoformat()
+        result.watermark = candidate
 
     try:
         result.bytes_written = _write_jsonl(storage, result.data_key, rows)

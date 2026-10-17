@@ -30,6 +30,15 @@ ZMM065 is a workbook report, not an extract table, and may not be loaded. A
 missing report table is skipped, not an error: the search still works on MAKT.
 
 Plants 1300 and 1500 only (``app/shared/plant_scope.py``), applied in SQL.
+
+From memory when it can
+-----------------------
+The route passes the in-memory copy of these four sources
+(:mod:`app.assistant.material_index`) once it has loaded, and the search then
+asks the database nothing: on Azure SQL the plant lookup over the normalising
+views took ~20 s per keystroke. Until the copy loads, the search reads the
+database as below. Both paths apply the same rules and give the same answer;
+``tests/assistant/test_material_search.py`` runs every case through both.
 """
 
 from __future__ import annotations
@@ -41,6 +50,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
+from app.assistant.material_index import MaterialIndex
 from app.assistant.router import Flow
 from app.core.logging import get_logger
 from app.initiatives.i8.config import I8Settings, get_i8_settings
@@ -134,17 +144,29 @@ def search(
     *,
     limit: int = DEFAULT_LIMIT,
     i8_config: I8Settings | None = None,
+    index: MaterialIndex | None = None,
 ) -> list[MaterialMatch]:
-    """The material+plant pairs a typed fragment could mean, best first."""
+    """The material+plant pairs a typed fragment could mean, best first.
+
+    With ``index`` the sources are read from memory and ``db`` is not touched.
+    """
     query = parse_query(raw_query)
     if query.empty:
         return []
     limit = max(1, min(limit, MAX_LIMIT))
     i8_config = i8_config or get_i8_settings()
 
-    descriptions, report_pairs = _candidates(db, query)
+    if index is not None:
+        descriptions, report_pairs = _candidates_from_index(index, query)
+    else:
+        descriptions, report_pairs = _candidates(db, query)
     if query.number_prefix is not None:
-        for material in _materials_by_prefix(db, query.number_prefix):
+        by_prefix = (
+            index.with_prefix(query.number_prefix, _CANDIDATE_MATERIALS)
+            if index is not None
+            else _materials_by_prefix(db, query.number_prefix)
+        )
+        for material in by_prefix:
             descriptions.setdefault(material, None)
 
     # Exact number first, then by number, so the carried-forward set is stable.
@@ -153,7 +175,9 @@ def search(
     if not materials:
         return []
 
-    mrp_types, pairs = _plants(db, materials)
+    mrp_types, pairs = (
+        _plants_from_index(index, materials) if index is not None else _plants(db, materials)
+    )
     pairs |= {pair for pair in report_pairs if pair[0] in descriptions}
 
     matches = []
@@ -345,3 +369,59 @@ def _plants(
         pairs.add((normalise(row.material) or "", (row.plant or "").strip()))
 
     return mrp_types, {pair for pair in pairs if pair[0] and pair[1]}
+
+
+# --- the same, from memory ---------------------------------------------------------
+
+
+def _candidates_from_index(
+    index: MaterialIndex, query: _Query
+) -> tuple[dict[str, str | None], set[tuple[str, str]]]:
+    """:func:`_candidates` over the loaded copy: the same filters, the same
+    precedence (MAKT English text, then any MAKT text, then ZMM065)."""
+    descriptions: dict[str, str | None] = {}
+    english: set[str] = set()
+
+    for material, texts in index.makt.items():
+        if query.number_prefix is not None:
+            if not material.startswith(query.number_prefix):
+                continue
+            matching = texts
+        else:
+            matching = [t for t in texts if all(word in t.upper for word in query.words)]
+        for t in matching:
+            if material in english:
+                break
+            if t.english or material not in descriptions:
+                descriptions[material] = t.text.strip() or None
+            if t.english:
+                english.add(material)
+
+    report_pairs: set[tuple[str, str]] = set()
+    for row in index.report:
+        if query.number_prefix is not None:
+            if not row.material.startswith(query.number_prefix):
+                continue
+        elif not all(word in row.upper for word in query.words):
+            continue
+        if descriptions.get(row.material) is None:
+            descriptions[row.material] = (row.description or "").strip() or None
+        if row.plant:
+            report_pairs.add((row.material, row.plant))
+
+    return descriptions, report_pairs
+
+
+def _plants_from_index(
+    index: MaterialIndex, materials: list[str]
+) -> tuple[dict[tuple[str, str], str | None], set[tuple[str, str]]]:
+    """:func:`_plants` over the loaded copy."""
+    mrp_types: dict[tuple[str, str], str | None] = {}
+    pairs: set[tuple[str, str]] = set()
+    for material in materials:
+        for plant, mrp_type in index.marc.get(material, ()):
+            mrp_types[(material, plant)] = mrp_type
+            pairs.add((material, plant))
+        for plant in index.mard.get(material, ()):
+            pairs.add((material, plant))
+    return mrp_types, pairs

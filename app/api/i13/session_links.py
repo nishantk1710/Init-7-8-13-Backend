@@ -7,8 +7,10 @@ and the UAT stand-in for SAP.
   session / missing session). The sessions screen's "reservations with no
   session" check, which could not be counted before SGTXT was readable.
 * ``/i13/uat/*`` -- **only while ``I13_UAT_SIMULATION_ENABLED`` is on**
-  (otherwise 404): simulate a reservation, stamp a session ID onto a real one,
-  undo either. See ``app/initiatives/i13/uat.py``.
+  (otherwise 404): simulate a reservation (for one session, or one with an
+  item per line for a whole multi-material request), stamp a session's
+  reference onto a real one, undo any of them. See
+  ``app/initiatives/i13/uat.py``.
 
 Reads and writes Postgres only; ``raw_resb`` is never modified.
 """
@@ -40,6 +42,7 @@ from app.schemas.i13 import (
     UatCandidateResponse,
     UatReservationResponse,
     UatSimulateRequest,
+    UatSimulateRequestBody,
     UatStampRequest,
     UatStatusResponse,
 )
@@ -196,6 +199,22 @@ def simulate_uat_reservation(
     session ID in its item text. Numbered 99xxxxxx; no PR/PO/GR/GI."""
     row = _uat_call(uat_service.simulate, db, payload.session_id, actor=actor.id)
     return UatReservationResponse.model_validate(row)
+
+
+@router.post(
+    "/uat/requests/simulate",
+    response_model=list[UatReservationResponse],
+    status_code=201,
+    dependencies=[Depends(_uat_enabled)],
+)
+def simulate_uat_request(
+    payload: UatSimulateRequestBody, actor: Actor = Depends(get_current_actor), db: Session = Depends(get_db)
+) -> list[UatReservationResponse]:
+    """Stand in for the requester creating one SAP reservation for a whole
+    multi-material request: an item per line to be reserved, each with its
+    ``<request>/<n>`` in the item text. Numbered 99xxxxxx; no PR/PO/GR/GI."""
+    rows = _uat_call(uat_service.simulate_request, db, payload.request_id, actor=actor.id)
+    return [UatReservationResponse.model_validate(r) for r in rows]
 
 
 @router.post(

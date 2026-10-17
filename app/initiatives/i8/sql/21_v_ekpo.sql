@@ -3,9 +3,9 @@
 -- PSTYP is deliberately exposed as a plain column and NOT filtered in this
 -- view. The repair-PO predicate belongs in Python (ruling 5.2): SAP's OData
 -- service accepts a $filter on Pstyp, answers HTTP 200 and ignores it, so the
--- rule has to live somewhere that survives cutover and can be unit-tested.
--- Baking '3' into a view would hard-code a convention that is still pending
--- SAP team confirmation.
+-- rule has to live somewhere that survives cutover and can be unit-tested --
+-- a view is not that place even now that item category 3 is SAP-confirmed
+-- (15-Oct-2026) rather than a proposal.
 --
 -- SCOPE: in-scope plants only -- see app/shared/plant_scope.py, which is the
 -- one place the codes are written down. Filtered here rather than at render

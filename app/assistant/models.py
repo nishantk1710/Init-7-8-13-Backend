@@ -56,7 +56,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -88,6 +88,53 @@ def new_suggestion_id() -> str:
     return _new_id("QSG")
 
 
+class AssistantRequest(Base):
+    """Several materials checked in one go. The parent of its lines' sessions.
+
+    Each line is an ordinary :class:`AssistantSession` carrying ``request_id``
+    and ``line_no``, so its turns, plan, suggestion and justification are the
+    same records a stand-alone session writes, and every screen that reads
+    those keeps working. This row holds only what belongs to the request as a
+    whole. Append-only, like the rest of the spine.
+    """
+
+    __tablename__ = "assistant_request"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    """``app.assistant.ids.mint_request`` -- ``R`` + 8 + check character."""
+
+    plant: Mapped[str] = mapped_column(String(8), index=True)
+    """One request is for one plant; every line is at it."""
+
+    requested_for: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    """Who the parts are for, as typed. Copied onto every line's session."""
+
+    requester: Mapped[str] = mapped_column(String(128), index=True)
+    """Who operated the assistant -- server-set from the caller."""
+
+    origin: Mapped[str] = mapped_column(String(16))
+
+    idempotency_key: Mapped[str] = mapped_column(String(64), unique=True)
+    """Sent by the client, one per draft. A resubmitted draft (a retry, a
+    double click) finds the request it already created instead of writing the
+    whole request twice into tables that cannot be cleaned up."""
+
+    line_count: Mapped[int] = mapped_column(Integer)
+    """Lines that opened a session."""
+
+    skipped: Mapped[str] = mapped_column(Text)
+    """JSON list of the materials that opened no session -- out of scope, no
+    data, not found -- and why. Kept so the request shows everything that was
+    asked, not only what the assistant could answer."""
+
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<AssistantRequest {self.id} {self.line_count} lines at {self.plant}>"
+
+
 class AssistantSession(Base):
     """One invocation of the assistant. The spine of I08 FR-8 and I13 FR-4.
 
@@ -116,6 +163,10 @@ class AssistantSession(Base):
 
     department: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     """Which department the requester is reserving for.
+
+    Since 15 Oct 2026 a 5-digit department code (``10100``), picked from the
+    codes VZI keys into ``EBAN.AFNAM`` -- see ``app/assistant/departments.py``.
+    Rows written before then hold whatever was typed, and stay as written.
 
     Asked at the entry point rather than derived, because there is no
     deterministic source for it: nothing the platform loads maps a person to a
@@ -231,10 +282,52 @@ class AssistantSession(Base):
     traced to the exact prompt version behind it. The provenance rule from
     ``app/core/prompts.py``: "the model said so" is not acceptable provenance."""
 
+    # --- a line of a multi-material request ------------------------------
+
+    request_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("assistant_request.id"), nullable=True, index=True
+    )
+    """The request this session is a line of, or null for a session opened on
+    its own. Set when the row is minted and never afterwards."""
+
+    line_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """1-based, in the order the lines were added. Quoted as ``<request>/<n>``."""
+
     __table_args__ = (
         # The FR-8 access pattern: every session for this part at this plant.
         Index("ix_assistant_session_material_plant", "material_id", "plant"),
+        # One /n per line, and one line per material+plant: linking from SAP
+        # resolves request + material + plant to exactly one line. Filtered,
+        # because SQL Server treats NULLs as equal in a unique index and every
+        # stand-alone session has a NULL request_id.
+        Index(
+            "uq_assistant_session_request_line",
+            "request_id",
+            "line_no",
+            unique=True,
+            postgresql_where=text("request_id IS NOT NULL"),
+            mssql_where=text("request_id IS NOT NULL"),
+            sqlite_where=text("request_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_assistant_session_request_material",
+            "request_id",
+            "material_id",
+            "plant",
+            unique=True,
+            postgresql_where=text("request_id IS NOT NULL"),
+            mssql_where=text("request_id IS NOT NULL"),
+            sqlite_where=text("request_id IS NOT NULL"),
+        ),
     )
+
+    @property
+    def reference(self) -> str:
+        """What the requester types into SAP: ``R.../n`` for a request line,
+        the session ID otherwise."""
+        if self.request_id and self.line_no:
+            return f"{self.request_id}/{self.line_no}"
+        return self.id
 
     def __repr__(self) -> str:
         return (

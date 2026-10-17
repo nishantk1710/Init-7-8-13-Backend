@@ -258,12 +258,21 @@ def suggest(
     metric: WatchMetric,
     requested_quantity: Decimal,
     config: QuantitySuggestionConfig | None = None,
+    *,
+    cap_at_requested: bool = True,
 ) -> QuantitySuggestion:
     """The FR-3 suggestion for one material+plant and one requested quantity.
 
     Pure: every input is already on the ``WatchMetric`` the caller loaded, so
     this computes and never reads. That is what lets the assistant, the
     standalone endpoint and the unit tests share one implementation.
+
+    ``cap_at_requested=False`` is the multi-material request's preview, which
+    suggests **before** anyone has named a quantity, so there is nothing to cap
+    at: it returns the raw headroom. Whether a quantity then needs a reason is
+    the same either way -- ``requested > min(headroom, requested)`` exactly when
+    ``requested > headroom`` -- so the conversation's capped suggestion and the
+    preview's uncapped one never disagree about an override.
     """
     config = config or build_quantity_config()
 
@@ -311,7 +320,8 @@ def suggest(
         suggested = headroom.to_integral_value(rounding=ROUND_FLOOR)
         # Never suggest more than was asked for. This advises a reservation; it
         # is not a reorder proposal, and Initiative 07 owns those.
-        suggested = min(suggested, requested_quantity)
+        if cap_at_requested:
+            suggested = min(suggested, requested_quantity)
 
     return QuantitySuggestion(
         material=metric.material,

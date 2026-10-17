@@ -195,8 +195,13 @@ def test_the_number_transform_on_sqlite(fmt: str, raw: str, expected: str) -> No
         ("marc", ["MATNR", "WERKS", "MABST", "LVORM"], "maximum_stock_level", "MABST"),
         ("mard", ["MATNR", "WERKS", "LGORT", "UMLME", "EINME"], "restricted_use_stock", "EINME"),
         ("mbew", ["MATNR", "BWKEY", "VERPR"], "moving_price", "VERPR"),
-        # The live CSV MBEW has no VERPR: a gap, never a guess.
+        # An MBEW without VERPR (an earlier delivery): a gap, never a guess.
         ("mbew", ["MANDT", "MATNR", "BWKEY", "BWTAR", "LVORM"], "moving_price", None),
+        # I08's New Item Price: the condition row and the price unit, as the
+        # live CSV MBEW names them (16-Oct-2026).
+        ("mbew", ["MATNR", "BWKEY", "BWTAR", "VERPR", "PEINH"], "valuation_type", "BWTAR"),
+        ("mbew", ["MATNR", "BWKEY", "BWTAR", "VERPR", "PEINH"], "price_unit", "PEINH"),
+        ("mbew", ["material", "valuation_area", "moving_price"], "price_unit", None),
         # CDHDR/CDPOS as the live CSV names them (27 Sep): I07's adoption check.
         ("cdhdr", ["MANDANT", "OBJECTCLAS", "OBJECTID", "CHANGENR", "UDATE", "UTIME"], "date", "UDATE"),
         ("cdhdr", ["change_doc_object", "object_value", "document_number", "date"], "date", "date"),
