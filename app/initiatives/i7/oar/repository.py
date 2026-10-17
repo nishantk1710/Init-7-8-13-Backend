@@ -18,6 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.initiatives.i7.oar.types import CandidateAttributes
+from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
 
 _TARGET_SQL = """
     SELECT f.sap_material_number, f.sap_plant_code, f.criticality,
@@ -50,6 +51,20 @@ _INVENTORY_SQL = """
       FROM i7_inventory_calculation
      WHERE inventory_run_id = :inventory_run_id
 """
+
+
+_SMOOTH_SAP_VALUES_SQL = """
+    SELECT sap_material_number, sap_plant_code,
+           current_safety_stock, current_reorder_point, current_maximum_stock
+      FROM i7_material_feature
+     WHERE history_status = 'SUFFICIENT'
+       AND demand_class = :smooth
+       AND current_safety_stock IS NOT NULL
+       AND current_reorder_point IS NOT NULL
+       AND current_maximum_stock IS NOT NULL
+"""
+# A SMOOTH material-plant is not forecast and has no calculated value, so as a neighbour it lends the
+# ROP, safety stock and max stock SAP holds for it -- all three, or none (see smooth_demand.py).
 
 
 def _to_attributes(row) -> CandidateAttributes:
@@ -103,27 +118,37 @@ def price_range(candidates: list[CandidateAttributes]) -> Decimal | None:
 def load_inventory_values(
     session: Session, inventory_run_id: int | None
 ) -> dict[tuple[str, str], dict]:
-    """Phase 5 SUCCESS values, keyed by material-plant.
+    """The ROP, safety stock and max stock each neighbour can lend, keyed by material-plant.
 
-    Only materials whose own calculation succeeded appear here. A neighbour
-    absent from this map is a valid neighbour with nothing to lend -- similarity
+    * Calculated materials: Phase 5 SUCCESS values, from the given inventory run. Only a
+      material-plant whose own calculation succeeded appears here.
+    * SMOOTH materials: their current SAP values (MARC), when all three are set. They are not
+      forecast and have no calculation, so SAP's figures are what they lend -- never a forecast.
+
+    A neighbour absent from this map is a valid neighbour with nothing to lend -- similarity
     eligibility and inventory eligibility are answered separately.
     """
-    if inventory_run_id is None:
-        return {}
-
     values: dict[tuple[str, str], dict] = {}
-    for row in session.execute(
-        text(_INVENTORY_SQL), {"inventory_run_id": inventory_run_id}
-    ):
-        if (
-            row.safety_stock_status == "SUCCESS"
-            and row.rop_status == "SUCCESS"
-            and row.max_stock_status == "SUCCESS"
+
+    if inventory_run_id is not None:
+        for row in session.execute(
+            text(_INVENTORY_SQL), {"inventory_run_id": inventory_run_id}
         ):
-            values[(row.sap_material_number, row.sap_plant_code)] = {
-                "safety_stock": row.safety_stock,
-                "rop": row.rop,
-                "max_stock": row.max_stock,
-            }
+            if (
+                row.safety_stock_status == "SUCCESS"
+                and row.rop_status == "SUCCESS"
+                and row.max_stock_status == "SUCCESS"
+            ):
+                values[(row.sap_material_number, row.sap_plant_code)] = {
+                    "safety_stock": row.safety_stock,
+                    "rop": row.rop,
+                    "max_stock": row.max_stock,
+                }
+
+    for row in session.execute(text(_SMOOTH_SAP_VALUES_SQL), {"smooth": SMOOTH_DEMAND_CLASS}):
+        values[(row.sap_material_number, row.sap_plant_code)] = {
+            "safety_stock": int(row.current_safety_stock),
+            "rop": int(row.current_reorder_point),
+            "max_stock": int(row.current_maximum_stock),
+        }
     return values

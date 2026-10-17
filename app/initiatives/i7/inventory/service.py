@@ -48,6 +48,7 @@ from app.initiatives.i7.inventory.types import (
     ServiceLevelResult,
 )
 from app.initiatives.i7.policy import PolicyDocument
+from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
 from app.models.i7_inventory import InventoryCalculation, InventoryRun
 
 logger = logging.getLogger(__name__)
@@ -106,8 +107,11 @@ _INPUT_SQL = """
       LEFT JOIN i7_staged_material_plant p
              ON p.sap_material_number = f.sap_material_number
             AND p.sap_plant_code = f.sap_plant_code
+     WHERE f.demand_class <> :smooth
      ORDER BY f.sap_material_number, f.sap_plant_code
 """
+# :smooth -- no ROP, safety stock or max stock is calculated for a SMOOTH material-plant: its
+# current SAP values stand (app.initiatives.i7.smooth_demand).
 # current_safety_stock/current_reorder_point/current_maximum_stock: I11's
 # SAP-native planning baseline (current MARC values), joined in for the
 # smooth/erratic per-field override below -- see calculate_one's "I11 baseline
@@ -630,7 +634,8 @@ def run_inventory_calculations(
             logger.info("inventory run %d: calculating", run_id)
             rows: list[dict[str, Any]] = []
             for row in session.execute(
-                text(_INPUT_SQL), {"forecast_run_id": forecast_run_id, "champion": True}
+                text(_INPUT_SQL),
+                {"forecast_run_id": forecast_run_id, "champion": True, "smooth": SMOOTH_DEMAND_CLASS},
             ).yield_per(5000):
                 key = (row.sap_material_number, row.sap_plant_code)
                 calculation = calculate_one(

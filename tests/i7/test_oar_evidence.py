@@ -295,8 +295,14 @@ def test_a_donor_lends_only_when_all_three_phase_5_statuses_succeeded():
     ]
 
     class FakeSession:
+        """The first query is the Phase 5 results; the second is the SMOOTH materials' SAP values,
+        of which this test has none."""
+
+        calls = 0
+
         def execute(self, *_args, **_kwargs):
-            return rows
+            self.calls += 1
+            return rows if self.calls == 1 else []
 
     values = repository.load_inventory_values(FakeSession(), inventory_run_id=1)
     assert set(values) == {("OK", "1300")}

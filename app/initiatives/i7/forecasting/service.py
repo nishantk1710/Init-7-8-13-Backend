@@ -76,6 +76,7 @@ from app.initiatives.i7.forecasting.types import (
     SegmentDecision,
 )
 from app.initiatives.i7.policy import PolicyDocument
+from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
 from app.models.i7_features import DecliningDemandEvaluation
 from app.models.i7_forecast import (
     Forecast,
@@ -160,8 +161,11 @@ _ROUTED_SQL = """
       FROM i7_material_feature f
      WHERE f.history_status = :sufficient
        AND f.baseline_model IS NOT NULL
+       AND f.demand_class <> :smooth
      ORDER BY f.sap_material_number, f.sap_plant_code
 """
+# :smooth -- a SMOOTH material-plant is not forecast (app.initiatives.i7.smooth_demand): its current
+# SAP values stand, so no SES / Auto-ARIMA run is spent on it and no forecast exists to be used.
 # Lead time is f.lead_time_days -- the feature store's own resolved value
 # (Initiative 11 Z-program output when available, MARC-PLIFZ otherwise; see
 # app.initiatives.i7.features.lead_time_provider.resolve_lead_time), not an
@@ -190,7 +194,8 @@ def _load_candidates(session: Session) -> list[_Candidate]:
     """
     candidates: list[_Candidate] = []
     rows = session.execute(
-        text(_ROUTED_SQL), {"sufficient": HistoryStatus.SUFFICIENT.value}
+        text(_ROUTED_SQL),
+        {"sufficient": HistoryStatus.SUFFICIENT.value, "smooth": SMOOTH_DEMAND_CLASS},
     ).all()
 
     for row in rows:

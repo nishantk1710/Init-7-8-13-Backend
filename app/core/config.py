@@ -9,6 +9,7 @@ to empty so the app -- and the health endpoint -- come up with no SAP, database
 or identity credentials present.
 """
 
+from datetime import date
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
@@ -667,6 +668,25 @@ class Settings(BaseSettings):
     # Codes are strings, not integers: PDWB is a real plant in this extract.
     i7_plants: str = "1500,1300"
 
+    # --- I07 High Stockout Risk: the date its history is read as of ----------
+    #
+    # The card counts a material-plant at risk when its stock on hand is below
+    # (average daily consumption over the 90 days ending on this date) x (lead
+    # time), and takes its Fast / Slow / Non-moving band from the days between
+    # this date and the last issue. The date is fixed rather than "today" because the movement
+    # history is not current: 2026-05 has ~2,400 issue lines, 2026-06 has 358 and
+    # July has 10, so a 90-day window ending today (or on the stray newest line,
+    # 2026-09-08) is nearly empty and would read as "nothing is at risk".
+    # 2026-05-31 is the last month with normal volume. The card shows this date
+    # as "As of ...".
+    #
+    # Change it here (I7_STOCKOUT_RISK_AS_OF=YYYY-MM-DD), then rebuild the table
+    # it reads: python -m app.initiatives.i7.stockout_risk. Set it BLANK to use
+    # the newest issue date in the movement data instead. The card always shows
+    # the date the table was last built with, so a changed setting that has not
+    # been rebuilt yet never mislabels the figures.
+    i7_stockout_risk_as_of: date | None = date(2026, 5, 31)
+
     # --- I07 pipeline watcher -----------------------------------------------
     #
     # OFF by default, and deliberately so. The watcher runs the whole I07
@@ -970,6 +990,15 @@ class Settings(BaseSettings):
         as absent (the engine declines with NOT_CONFIGURED), not a startup
         crash that takes the whole application, and its health endpoint, down
         with it."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("i7_stockout_risk_as_of", mode="before")
+    @classmethod
+    def _blank_stockout_as_of_is_unset(cls, value: object) -> object:
+        """A blank I7_STOCKOUT_RISK_AS_OF means "use the newest issue date", not a
+        startup crash: clearing the setting is the documented way to switch."""
         if isinstance(value, str) and not value.strip():
             return None
         return value

@@ -7,6 +7,7 @@ never loaded into Python to be filtered or sliced in memory.
 """
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -17,12 +18,14 @@ from sqlalchemy.orm import Session
 from app.api.i7.deps import get_session, load_latest_recommendation
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations import routing
+from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
+from app.initiatives.i7.stockout_risk.counts import stockout_risk_counts
 from app.initiatives.i7.recommendations.consumption_history import monthly_consumption_history
 from app.models.i7_features import DecliningDemandEvaluation
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun
 from app.models.i7_oar import OarNeighbour
 from app.models.i7_recommendation import Recommendation
-from app.models.i7_staging import StagedMaterial, StagedStock
+from app.models.i7_staging import StagedMaterial, StagedMaterialPlant
 from app.schemas.i7.errors import bad_request
 from app.schemas.i7.recommendations import (
     CircuitCount,
@@ -97,6 +100,14 @@ def _risk_case():
     )
 
 
+def _not_smooth():
+    """A SMOOTH material-plant is not recommended -- its current SAP values stand (see
+    app.initiatives.i7.smooth_demand) -- so a SMOOTH row written before that rule is not listed
+    or counted. Kept out of ``_apply_filters``, which adoption tracking shares: a SMOOTH
+    recommendation already approved or adopted stays visible there."""
+    return or_(Recommendation.demand_class.is_(None), Recommendation.demand_class != SMOOTH_DEMAND_CLASS)
+
+
 def _apply_filters(
     statement: Select,
     *,
@@ -109,7 +120,7 @@ def _apply_filters(
     criticality: str | None,
     generated_from: datetime | None,
     generated_to: datetime | None,
-    demand_type: Literal["oar", "declining", "normal"] | None = None,
+    demand_type: Literal["oar", "declining", "normal", "stock_item"] | None = None,
     search: str | None = None,
     criticality_level: str | None = None,
     status_group: str | None = None,
@@ -123,6 +134,8 @@ def _apply_filters(
     declining-demand rule in the feature run this recommendation was built
     from) and ``normal`` (everything else). OAR is decided first, so a
     material is never in two.
+
+    ``stock_item`` is ``declining`` and ``normal`` together: everything that is not OAR.
     """
     if status is not None:
         statement = statement.where(Recommendation.status == status)
@@ -173,13 +186,18 @@ def _apply_filters(
         else:
             statement = statement.where(Recommendation.status.in_(STATUS_GROUPS[status_group]))
     if risk is not None:
-        # A subquery value, not the CASE itself in WHERE: same expression the summary groups by.
-        statement = statement.where(_risk_case() == risk)
+        # The same CASE the summary groups by. "high" is the merged tier the pages show --
+        # critical and high together -- so a High filter agrees with the High badge on every row;
+        # "critical" still asks for the CRITICAL tier alone.
+        risk_case = _risk_case()
+        statement = statement.where(risk_case.in_(("critical", "high")) if risk == "high" else risk_case == risk)
     if demand_type is not None:
         # The boolean column itself: SQL Server has no "IS 1" (see tests/i7/test_overview_real_counts.py).
         not_oar = or_(~Recommendation.is_oar, Recommendation.is_oar.is_(None))
         if demand_type == "oar":
             statement = statement.where(Recommendation.is_oar)
+        elif demand_type == "stock_item":
+            statement = statement.where(not_oar)
         elif demand_type == "declining":
             statement = statement.where(not_oar, _flagged_declining())
         else:
@@ -262,6 +280,33 @@ def _display_fields_for(session: Session, materials: set[str]) -> dict[str, tupl
         ).where(StagedMaterial.sap_material_number.in_(materials))
     ).all()
     return {material: (description, currency) for material, description, currency in rows}
+
+
+def _current_sap_stock_for(
+    session: Session, keys: set[tuple[str, str]]
+) -> dict[tuple[str, str], tuple[Decimal | None, Decimal | None, Decimal | None]]:
+    """``(material, plant) -> (reorder point, safety stock, max stock)`` as SAP holds them now.
+
+    Read from ``i7_staged_material_plant`` (MARC), not from the neighbour's own I07
+    calculation: the similar-materials list shows what is set in SAP today. A neighbour with
+    no staged row, or with a value SAP leaves blank, maps to ``None`` -- never to 0.
+    """
+    if not keys:
+        return {}
+    rows = session.execute(
+        select(
+            StagedMaterialPlant.sap_material_number,
+            StagedMaterialPlant.sap_plant_code,
+            StagedMaterialPlant.current_reorder_point,
+            StagedMaterialPlant.current_safety_stock,
+            StagedMaterialPlant.current_maximum_stock,
+        ).where(StagedMaterialPlant.sap_material_number.in_({material for material, _ in keys}))
+    ).all()
+    return {
+        (material, plant): (rop, safety, maximum)
+        for material, plant, rop, safety, maximum in rows
+        if (material, plant) in keys
+    }
 
 
 def _latest_only(statement: Select) -> Select:
@@ -350,13 +395,17 @@ def list_recommendations(
     ] = None,
     risk: Annotated[
         Literal["critical", "high", "medium", "low"] | None,
-        Query(description="Stockout risk as the table shows it, derived from status and criticality tier."),
+        Query(
+            description="Stockout risk as the table shows it, derived from status and criticality tier. "
+            "'high' includes the critical tier (the pages show them as one High tier); "
+            "'critical' selects the critical tier alone."
+        ),
     ] = None,
     demand_type: Annotated[
-        Literal["oar", "declining", "normal"] | None,
+        Literal["oar", "declining", "normal", "stock_item"] | None,
         Query(
             alias="type",
-            description="oar: sized from similar materials. declining: not OAR and flagged by the declining-demand rule. normal: everything else. The three never overlap.",
+            description="oar: sized from similar materials. declining: not OAR and flagged by the declining-demand rule. normal: everything else. The three never overlap. stock_item: declining and normal together, i.e. everything that is not OAR.",
         ),
     ] = None,
 ) -> RecommendationListResponse:
@@ -388,7 +437,7 @@ def list_recommendations(
             criticality_level=criticality_level,
             status_group=status_group,
             risk=risk,
-        )
+        ).where(_not_smooth())
     )
 
     total = session.execute(
@@ -499,7 +548,7 @@ def get_recommendation_summary(
             criticality=criticality,
             generated_from=None,
             generated_to=None,
-        )
+        ).where(_not_smooth())
 
     base = _scope(select(Recommendation))
 
@@ -573,32 +622,21 @@ def get_recommendation_summary(
         )
     ).scalar()
 
-    # --- Critical Stockout Risk: current on-hand stock < recommended ROP ---
-    # I07-derived proxy (2026-09-22), not a Vedanta-confirmed severity tier --
-    # see RecommendationSummaryStats.critical_stockout_risk_count's docstring.
-    # i7_staged_stock is material-plant-storage-location grain; aggregate to
-    # material-plant before comparing, same as Phase 3's own assumption
-    # (unrestricted_use_stock only -- see StagedStock's class docstring).
-    on_hand_stock = (
-        select(
-            StagedStock.sap_material_number,
-            StagedStock.sap_plant_code,
-            func.sum(StagedStock.unrestricted_use_stock).label("on_hand"),
-        )
-        .group_by(StagedStock.sap_material_number, StagedStock.sap_plant_code)
-        .subquery()
+    # --- High Stockout Risk: stock on hand < average daily consumption x lead time --
+    # Fast and Slow moving material-plants only, with the usage read as of the
+    # configured anchor date -- see app.initiatives.i7.stockout_risk for the rule and
+    # for how a missing lead time or stock on hand is Insufficient Data, not safe.
+    stockout_risk = stockout_risk_counts(
+        session,
+        base,
+        plant=plant,
+        material=material,
+        demand_class=demand_class,
+        criticality=criticality,
+        status=status,
+        is_oar=is_oar,
+        confidence=confidence,
     )
-    stockout_risk_base = base.join(
-        on_hand_stock,
-        (on_hand_stock.c.sap_material_number == Recommendation.sap_material_number)
-        & (on_hand_stock.c.sap_plant_code == Recommendation.sap_plant_code),
-    ).where(
-        Recommendation.recommended_rop.isnot(None),
-        on_hand_stock.c.on_hand < Recommendation.recommended_rop,
-    )
-    stockout_risk_count = session.execute(
-        select(func.count()).select_from(stockout_risk_base.subquery())
-    ).scalar_one()
 
     # --- Excess Inventory Candidates: current Max Stock > recommended ------
     # I07-derived proxy (2026-09-22): any positive gap counts, no minimum
@@ -634,7 +672,10 @@ def get_recommendation_summary(
         not_evaluable_count=not_evaluable_count,
         currency=_portfolio_currency(session),
         net_safety_stock_value_impact=net_value_row,
-        critical_stockout_risk_count=stockout_risk_count,
+        critical_stockout_risk_count=stockout_risk.at_risk,
+        stockout_risk_evaluated_count=stockout_risk.evaluated,
+        stockout_risk_insufficient_data_count=stockout_risk.insufficient_data,
+        stockout_risk_as_of=stockout_risk.as_of,
         excess_inventory_candidates_count=excess_inventory_count,
         excess_inventory_opportunity=excess_opportunity_row,
     )
@@ -782,6 +823,8 @@ def get_recommendation_similar_materials(
         )
 
     descriptions = _display_fields_for(session, {n.neighbour_material for n in neighbours})
+    current_stock = _current_sap_stock_for(session, {(n.neighbour_material, n.neighbour_plant) for n in neighbours})
+    no_stock = (None, None, None)
     return SimilarMaterialsResponse(
         sap_material_number=row.sap_material_number,
         sap_plant_code=row.sap_plant_code,
@@ -797,6 +840,9 @@ def get_recommendation_similar_materials(
                 safety_stock=n.safety_stock,
                 rop=n.rop,
                 max_stock=n.max_stock,
+                current_rop=current_stock.get((n.neighbour_material, n.neighbour_plant), no_stock)[0],
+                current_safety_stock=current_stock.get((n.neighbour_material, n.neighbour_plant), no_stock)[1],
+                current_max_stock=current_stock.get((n.neighbour_material, n.neighbour_plant), no_stock)[2],
                 contributed=n.inventory_eligible,
             )
             for n in neighbours
