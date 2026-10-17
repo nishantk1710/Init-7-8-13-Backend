@@ -105,6 +105,9 @@ def test_summary_returns_200_with_expected_shape():
         "currency",
         "net_safety_stock_value_impact",
         "critical_stockout_risk_count",
+        "stockout_risk_evaluated_count",
+        "stockout_risk_insufficient_data_count",
+        "stockout_risk_as_of",
         "excess_inventory_candidates_count",
         "excess_inventory_opportunity",
     }
@@ -227,19 +230,19 @@ def test_summary_by_risk_escalates_impact_and_insurance_not_just_critical():
 
 
 @needs_db
-def test_summary_critical_stockout_risk_count_is_bounded_by_populated_rop():
-    """The stockout-risk count can never exceed how many latest-generation
-    recommendations even have a recommended_rop -- a material with no ROP is
-    excluded from the count entirely (never counted as either at-risk or
-    safe), so the count is always a subset of the ROP-populated rows."""
-    listing = client.get(
-        "/api/v1/i7/recommendations?page=1&page_size=1"
-    ).json()
-    total = listing["total"]
+def test_summary_critical_stockout_risk_count_is_part_of_the_evaluated_ones():
+    """At risk is a subset of evaluated, which is a subset of the recommendations -- and
+    Insufficient Data is counted separately, never as at risk or as safe. (See
+    app.initiatives.i7.stockout_risk; the exact rule is tested in test_stockout_risk.py.)"""
+    total = client.get("/api/v1/i7/recommendations?page=1&page_size=1").json()["total"]
 
     summary = client.get("/api/v1/i7/recommendations/summary").json()
     assert isinstance(summary["critical_stockout_risk_count"], int)
-    assert 0 <= summary["critical_stockout_risk_count"] <= total
+    assert 0 <= summary["critical_stockout_risk_count"] <= summary["stockout_risk_evaluated_count"] <= total
+    assert 0 <= summary["stockout_risk_insufficient_data_count"] <= total
+    if summary["stockout_risk_as_of"] is None:
+        # The usage table has not been built: "not computed", never a figure.
+        assert summary["stockout_risk_evaluated_count"] == 0
 
 
 @needs_db

@@ -8,6 +8,8 @@ against the latest successful run of each upstream phase.
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
+
 _NORMAL_SQL = """
     SELECT f.sap_material_number, f.sap_plant_code, f.demand_class, f.history_status,
            f.criticality, f.non_zero_periods, f.feature_run_id,
@@ -34,7 +36,10 @@ _NORMAL_SQL = """
        AND c.is_champion = :champion
        AND c.forecast_status = 'SUCCESS'
      WHERE f.history_status = 'SUFFICIENT'
+       AND f.demand_class <> :smooth
 """
+# :smooth -- no recommendation is built for a SMOOTH material-plant: its current SAP values stand
+# (app.initiatives.i7.smooth_demand).
 
 _OAR_SQL = """
     SELECT f.sap_material_number, f.sap_plant_code, f.history_status, f.criticality,
@@ -147,7 +152,12 @@ def load_normal_inputs(session: Session, inventory_run_id: int, forecast_run_id:
     return list(
         session.execute(
             text(_NORMAL_SQL),
-            {"inventory_run_id": inventory_run_id, "forecast_run_id": forecast_run_id, "champion": True},
+            {
+                "inventory_run_id": inventory_run_id,
+                "forecast_run_id": forecast_run_id,
+                "champion": True,
+                "smooth": SMOOTH_DEMAND_CLASS,
+            },
         )
     )
 

@@ -174,7 +174,8 @@ def test_risk_is_only_ever_raised_by_a_recommendation_still_awaiting_a_decision(
     ])
     db.commit()
     assert materials(listing(db, risk="critical")) == ["OPEN-CRIT"]
-    assert materials(listing(db, risk="high")) == ["OPEN-IMPACT"]
+    # "high" is the merged tier the pages show: IMPACT and CRITICAL together.
+    assert materials(listing(db, risk="high")) == ["OPEN-CRIT", "OPEN-IMPACT"]
     assert materials(listing(db, risk="medium")) == ["OPEN-INS"]
     assert materials(listing(db, risk="low")) == ["DONE-CRIT", "OPEN-NORMAL", "OPEN-NOTIER"]
 

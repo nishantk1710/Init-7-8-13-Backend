@@ -17,14 +17,14 @@ from sqlalchemy.pool import StaticPool
 from app.api.i7 import recommendations as api
 from app.models.i7_features import DecliningDemandEvaluation
 from app.models.i7_recommendation import Recommendation
-from app.models.i7_staging import StagedMaterial
+from app.models.i7_staging import StagedMaterial, StagedMaterialPlant
 
 
 @pytest.fixture
 def db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     metadata = MetaData()
-    for model in (Recommendation, DecliningDemandEvaluation, StagedMaterial):
+    for model in (Recommendation, DecliningDemandEvaluation, StagedMaterial, StagedMaterialPlant):
         copy = model.__table__.to_metadata(metadata)
         copy.indexes.clear()
     metadata.create_all(engine)
@@ -112,6 +112,47 @@ def test_the_three_groups_never_overlap_and_together_are_everything(db):
     groups = [set(materials(listing(db, kind))) for kind in ("oar", "declining", "normal")]
     assert groups[0].isdisjoint(groups[1]) and groups[0].isdisjoint(groups[2]) and groups[1].isdisjoint(groups[2])
     assert groups[0] | groups[1] | groups[2] == set(materials(listing(db)))
+
+
+def test_stock_item_is_declining_and_normal_together_and_never_oar(db):
+    seed(db)
+    stock_item = materials(listing(db, "stock_item"))
+    assert stock_item == sorted(materials(listing(db, "declining")) + materials(listing(db, "normal")))
+    assert not set(stock_item) & set(materials(listing(db, "oar")))
+    assert listing(db, "stock_item").total == 5
+
+
+def test_a_list_row_carries_the_min_max_conversion_eligibility(db):
+    row = rec("H-OAR", is_oar=True)
+    row.conversion_eligibility = "ELIGIBLE"
+    db.add_all([row, rec("I-NORMAL")])
+    db.commit()
+    by_material = {item.material: item for item in listing(db).items}
+    assert by_material["H-OAR"].conversion_eligibility == "ELIGIBLE"
+    assert by_material["I-NORMAL"].conversion_eligibility is None
+
+
+def test_similar_materials_show_the_stock_parameters_sap_holds_now(db):
+    db.add_all([
+        StagedMaterialPlant(
+            sap_material_number="N-1", sap_plant_code="1300", source_table="MARC", staging_run_id=1,
+            current_reorder_point=12, current_safety_stock=5, current_maximum_stock=40,
+        ),
+        # Same material, another plant: must not leak into the 1300 neighbour.
+        StagedMaterialPlant(
+            sap_material_number="N-1", sap_plant_code="1200", source_table="MARC", staging_run_id=1,
+            current_reorder_point=99, current_safety_stock=99, current_maximum_stock=99,
+        ),
+        # SAP leaves the fields blank: None, never 0.
+        StagedMaterialPlant(sap_material_number="N-2", sap_plant_code="1300", source_table="MARC", staging_run_id=1),
+    ])
+    db.commit()
+    found = api._current_sap_stock_for(db, {("N-1", "1300"), ("N-2", "1300"), ("N-3", "1300")})
+    assert found[("N-1", "1300")] == (12, 5, 40)
+    assert found[("N-2", "1300")] == (None, None, None)
+    assert ("N-3", "1300") not in found  # no staged row at all
+    assert ("N-1", "1200") not in found
+    assert api._current_sap_stock_for(db, set()) == {}
 
 
 def test_totals_follow_the_filter(db):

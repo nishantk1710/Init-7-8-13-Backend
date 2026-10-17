@@ -104,6 +104,14 @@ class SimilarMaterial(BaseModel):
     safety_stock: int | None
     rop: int | None
     max_stock: int | None
+    current_rop: Decimal | None = None
+    current_safety_stock: Decimal | None = None
+    current_max_stock: Decimal | None = None
+    """The reorder point, safety stock and max stock SAP holds for this neighbour now
+    (``i7_staged_material_plant``, from MARC). ``None`` when staging has no row for it or SAP
+    leaves the field blank. ``rop``/``safety_stock``/``max_stock`` above are I07's own
+    calculation for the neighbour -- a different thing, kept because they are what fed the
+    estimate."""
     contributed: bool
     """Whether this neighbour's stock values fed the weighted estimate
     (``inventory_eligible``) -- a neighbour can be similar yet lend nothing."""
@@ -355,6 +363,10 @@ class RecommendationSummary(BaseModel):
     demand_class: str | None
     criticality: str | None
     confidence: str | None
+    conversion_eligibility: str | None = None
+    """ELIGIBLE / NOT_ELIGIBLE / UNKNOWN for an OAR row -- whether it could move to Min-Max
+    ordering; ``None`` for a row that has no conversion decision. Read verbatim from the
+    recommendation row, so the table can show it without a detail request per row."""
     generated_at: datetime
     updated_at: datetime
     """When this row last changed -- a submit/hold/approve/reject action
@@ -409,6 +421,7 @@ class RecommendationSummary(BaseModel):
             demand_class=row.demand_class,
             criticality=row.criticality,
             confidence=row.confidence,
+            conversion_eligibility=row.conversion_eligibility,
             generated_at=row.generated_at,
             updated_at=row.updated_at,
             chain_index=row.chain_index,
@@ -551,13 +564,26 @@ class RecommendationSummaryStats(BaseModel):
     computable yet\"."""
 
     critical_stockout_risk_count: int
-    """COUNT of material-plants where current on-hand stock
-    (SUM(i7_staged_stock.unrestricted_use_stock) across storage locations)
-    is below ``recommended_rop`` -- both values present and ``recommended_rop``
-    not NULL. An I07-derived proxy, not a Vedanta-confirmed KPI definition:
-    "current stock has already fallen below the newly-calculated reorder
-    point." Rows with no staged stock record or no recommended ROP are
-    excluded from the count, never counted as either at-risk or safe."""
+    """High Stockout Risk: COUNT of Fast and Slow moving material-plants whose stock
+    on hand (SUM(i7_staged_stock.unrestricted_use_stock) across storage locations) is
+    below average daily consumption x lead time. Average daily consumption is the net
+    quantity issued in the 90 days ending on ``stockout_risk_as_of``, divided by 90;
+    lead time is the recommendation's ``lead_time_days``. Non-moving material-plants
+    (last issue over 730 days before ``stockout_risk_as_of``, or never) are not part
+    of it. 0 with a null ``stockout_risk_as_of`` means "not computed", not "none"."""
+
+    stockout_risk_evaluated_count: int = 0
+    """Material-plants that could be judged: the at-risk ones plus the Fast / Slow ones
+    that are not. The percentage on the card is ``critical_stockout_risk_count`` over
+    this."""
+
+    stockout_risk_insufficient_data_count: int = 0
+    """Fast or Slow material-plants with no lead time or no stock on hand, plus those
+    in a plant with no movement data. Never counted as at risk or as safe."""
+
+    stockout_risk_as_of: date | None = None
+    """The date the consumption and the Fast / Slow bands were read as of -- the card
+    shows it as "As of ...". ``None`` when the usage table has not been built."""
 
     excess_inventory_candidates_count: int
     """COUNT of material-plants where ``current_max_stock >

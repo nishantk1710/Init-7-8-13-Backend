@@ -1,0 +1,273 @@
+"""Smooth demand is sized by SAP, not by I07 (app.initiatives.i7.smooth_demand).
+
+A SMOOTH material-plant is not forecast, gets no calculated ROP / safety stock / max stock, gets
+no recommendation, and is not listed on the Recommendations page. Every other class is untouched.
+Its current SAP values stand, and the two places that still need its figures -- OAR donors and
+the High Stockout Risk card -- take them from SAP, never from a forecast.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from decimal import Decimal
+
+import pytest
+from sqlalchemy import MetaData, create_engine, text
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
+
+from app.api.i7 import recommendations as api
+from app.initiatives.i7.forecasting.service import _ROUTED_SQL
+from app.initiatives.i7.inventory.service import _INPUT_SQL
+from app.initiatives.i7.oar import repository as oar_repository
+from app.initiatives.i7.recommendations.repository import _NORMAL_SQL
+from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
+from app.models.i7_features import DecliningDemandEvaluation, MaterialFeature
+from app.models.i7_forecast import Forecast
+from app.models.i7_inventory import InventoryCalculation
+from app.models.i7_recommendation import Recommendation
+from app.models.i7_staging import StagedMaterial, StagedMaterialPlant, StagedStock
+from app.models.i7_stockout_risk import StockoutRiskInput
+
+CLASSES = ("SMOOTH", "ERRATIC", "INTERMITTENT", "LUMPY")
+
+
+@pytest.fixture
+def db():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    metadata = MetaData()
+    for model in (
+        MaterialFeature,
+        Forecast,
+        InventoryCalculation,
+        StagedMaterialPlant,
+        StagedMaterial,
+        StagedStock,
+        Recommendation,
+        DecliningDemandEvaluation,
+        StockoutRiskInput,
+    ):
+        copy = model.__table__.to_metadata(metadata)
+        copy.indexes.clear()
+    metadata.create_all(engine)
+    with Session(engine) as session:
+        yield session
+
+
+def feature(material, demand_class, *, history="SUFFICIENT", sap=(None, None, None), baseline="SES"):
+    safety, rop, maximum = sap
+    return MaterialFeature(
+        sap_material_number=material,
+        sap_plant_code="1300",
+        history_status=history,
+        data_sufficiency="LIMITED",
+        adi_status="OK",
+        cv_squared_status="OK",
+        oar_scope="OUT_OF_SCOPE",
+        feature_run_id=1,
+        demand_class=demand_class,
+        baseline_model=baseline,
+        current_safety_stock=safety,
+        current_reorder_point=rop,
+        current_maximum_stock=maximum,
+    )
+
+
+def calculation(material, demand_class, status="SUCCESS"):
+    return InventoryCalculation(
+        inventory_run_id=1,
+        sap_material_number=material,
+        sap_plant_code="1300",
+        demand_class=demand_class,
+        lead_time_status="SUCCESS",
+        variability_status="SUCCESS",
+        service_level_status="SUCCESS",
+        safety_stock_status=status,
+        rop_status=status,
+        max_stock_status=status,
+        safety_stock=5,
+        rop=9,
+        max_stock=20,
+    )
+
+
+def seed_features(db):
+    db.add_all([feature(f"M-{name}", name) for name in CLASSES])
+    db.commit()
+
+
+# --- the pipeline leaves SMOOTH out -------------------------------------------------------------
+
+
+def test_forecasting_routes_every_class_but_smooth(db):
+    seed_features(db)
+    rows = db.execute(text(_ROUTED_SQL), {"sufficient": "SUFFICIENT", "smooth": SMOOTH_DEMAND_CLASS}).all()
+    assert sorted(row.demand_class for row in rows) == ["ERRATIC", "INTERMITTENT", "LUMPY"]
+
+
+def test_inventory_calculates_for_every_class_but_smooth(db):
+    seed_features(db)
+    rows = db.execute(text(_INPUT_SQL), {"forecast_run_id": 1, "champion": True, "smooth": SMOOTH_DEMAND_CLASS}).all()
+    assert sorted(row.demand_class for row in rows) == ["ERRATIC", "INTERMITTENT", "LUMPY"]
+
+
+def test_recommendations_are_built_for_every_class_but_smooth(db):
+    seed_features(db)
+    db.add_all([calculation(f"M-{name}", name) for name in CLASSES])
+    db.commit()
+    rows = db.execute(
+        text(_NORMAL_SQL),
+        {"inventory_run_id": 1, "forecast_run_id": 1, "champion": True, "smooth": SMOOTH_DEMAND_CLASS},
+    ).all()
+    assert sorted(row.demand_class for row in rows) == ["ERRATIC", "INTERMITTENT", "LUMPY"]
+
+
+def test_erratic_keeps_its_existing_handling(db):
+    """Only SMOOTH changed: ERRATIC is still routed, calculated and recommended."""
+    db.add_all([feature("E", "ERRATIC"), calculation("E", "ERRATIC")])
+    db.commit()
+    assert len(db.execute(text(_ROUTED_SQL), {"sufficient": "SUFFICIENT", "smooth": "SMOOTH"}).all()) == 1
+    assert len(db.execute(text(_INPUT_SQL), {"forecast_run_id": 1, "champion": True, "smooth": "SMOOTH"}).all()) == 1
+
+
+# --- OAR neighbours lend SAP's values, never a forecast ----------------------------------------
+
+
+def test_a_smooth_neighbour_lends_its_current_sap_values(db):
+    db.add_all([feature("S", "SMOOTH", sap=(Decimal(7), Decimal(12), Decimal(30)))])
+    db.commit()
+    values = oar_repository.load_inventory_values(db, inventory_run_id=1)
+    assert values == {("S", "1300"): {"safety_stock": 7, "rop": 12, "max_stock": 30}}
+
+
+def test_a_smooth_neighbour_lends_all_three_or_nothing(db):
+    db.add_all(
+        [
+            feature("NO_MAX", "SMOOTH", sap=(Decimal(7), Decimal(12), None)),
+            feature("NONE", "SMOOTH"),
+        ]
+    )
+    db.commit()
+    assert oar_repository.load_inventory_values(db, inventory_run_id=1) == {}
+
+
+def test_a_smooth_neighbour_never_lends_a_calculated_value(db):
+    """A calculation row left from before the rule is ignored for it: SAP's figure, or nothing."""
+    db.add_all([feature("S", "SMOOTH", sap=(Decimal(1), Decimal(2), Decimal(3))), calculation("S", "SMOOTH")])
+    db.commit()
+    values = oar_repository.load_inventory_values(db, inventory_run_id=1)
+    assert values[("S", "1300")] == {"safety_stock": 1, "rop": 2, "max_stock": 3}  # not 5 / 9 / 20
+
+
+def test_other_neighbours_still_lend_their_calculated_values(db):
+    db.add_all([feature("L", "LUMPY"), calculation("L", "LUMPY")])
+    db.commit()
+    assert oar_repository.load_inventory_values(db, inventory_run_id=1) == {
+        ("L", "1300"): {"safety_stock": 5, "rop": 9, "max_stock": 20}
+    }
+
+
+def test_smooth_values_do_not_wait_for_an_inventory_run(db):
+    db.add_all([feature("S", "SMOOTH", sap=(Decimal(1), Decimal(2), Decimal(3)))])
+    db.commit()
+    assert ("S", "1300") in oar_repository.load_inventory_values(db, inventory_run_id=None)
+
+
+def test_a_cold_start_smooth_row_is_not_a_donor(db):
+    db.add_all([feature("S", "SMOOTH", history="COLD_START", sap=(Decimal(1), Decimal(2), Decimal(3)))])
+    db.commit()
+    assert oar_repository.load_inventory_values(db, inventory_run_id=1) == {}
+
+
+# --- the Recommendations page and its summary do not show SMOOTH --------------------------------
+
+
+def recommendation(material, demand_class):
+    return Recommendation(
+        recommendation_id=f"REC-{material}",
+        sap_material_number=material,
+        sap_plant_code="1300",
+        feature_run_id=1,
+        forecast_run_id=1,
+        inventory_run_id=1,
+        oar_run_id=1,
+        policy_id="p",
+        policy_version=1,
+        formula_version="f",
+        status="READY_FOR_REVIEW",
+        impact_status="X",
+        is_oar=False,
+        demand_class=demand_class,
+        generated_at=datetime(2026, 10, 14, tzinfo=timezone.utc),
+    )
+
+
+def seed_recommendations(db):
+    db.add_all([recommendation("S", "SMOOTH"), recommendation("E", "ERRATIC"), recommendation("U", None)])
+    db.commit()
+
+
+def listing(db, **overrides):
+    arguments = dict(
+        session=db, page=1, page_size=100, sort="generated_at", sort_desc=False, status=None, plant=None,
+        material=None, demand_class=None, is_oar=None, confidence=None, criticality=None,
+        generated_from=None, generated_to=None, demand_type=None,
+    )
+    arguments.update(overrides)
+    return api.list_recommendations(**arguments)
+
+
+def summary(db, **overrides):
+    arguments = dict(
+        session=db, status=None, plant=None, material=None, demand_class=None, is_oar=None,
+        confidence=None, criticality=None,
+    )
+    arguments.update(overrides)
+    return api.get_recommendation_summary(**arguments)
+
+
+def test_the_list_leaves_out_smooth_recommendations_but_keeps_the_rest(db):
+    seed_recommendations(db)
+    shown = sorted(item.material for item in listing(db).items)
+    assert shown == ["E", "U"]  # a row with no demand class is not SMOOTH
+    assert listing(db).total == 2
+
+
+def test_asking_the_list_for_smooth_by_name_returns_nothing(db):
+    seed_recommendations(db)
+    assert listing(db, demand_class="SMOOTH").items == []
+
+
+def test_the_summary_does_not_count_smooth_recommendations(db):
+    seed_recommendations(db)
+    assert summary(db).total == 2
+    assert summary(db, plant="1300").total == 2
+
+
+def test_the_summary_still_counts_smooth_material_plants_for_stockout_risk(db):
+    # Usage built as of 31 May: a Smooth material-plant with 99 on hand against a need of 100.
+    from datetime import date
+
+    db.add_all(
+        [
+            feature("S", "SMOOTH"),
+            StockoutRiskInput(
+                sap_material_number="S", sap_plant_code="1300", as_of_date=date(2026, 5, 31),
+                last_issue_date=date(2026, 5, 1), consumption_90d=Decimal(900), window_days=90,
+            ),
+            StagedStock(
+                sap_material_number="S", sap_plant_code="1300", storage_location="0001",
+                unrestricted_use_stock=Decimal(99), source_table="n_mard", staging_run_id=1,
+            ),
+        ]
+    )
+    seed_features_lead_time(db, "S", "10")
+    result = summary(db)
+    assert result.total == 0  # no recommendation for it
+    assert (result.critical_stockout_risk_count, result.stockout_risk_evaluated_count) == (1, 1)
+
+
+def seed_features_lead_time(db, material, lead_time):
+    row = db.query(MaterialFeature).filter_by(sap_material_number=material).one()
+    row.lead_time_days = Decimal(lead_time)
+    db.commit()
