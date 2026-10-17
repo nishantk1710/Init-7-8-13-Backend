@@ -47,9 +47,17 @@ class PreviewLineModel(AssistantModel):
     also_matched: str | None = None
 
 
+class ReasonCategoryModel(AssistantModel):
+    value: str
+    label: str
+
+
 class PreviewResponse(AssistantModel):
     lines: list[PreviewLineModel]
     max_lines: int
+    reason_categories: list[ReasonCategoryModel]
+    """The justification categories submit accepts -- the configured list, so
+    the screen offers exactly what the conversation would."""
 
 
 # --- create ----------------------------------------------------------------------
