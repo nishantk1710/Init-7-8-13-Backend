@@ -270,7 +270,11 @@ class PlanModel(AssistantModel):
 
 
 class LinkedReservationModel(AssistantModel):
-    """A reservation item whose SGTXT names the session (session_reservation_link)."""
+    """A reservation item whose SGTXT names the session (session_reservation_link).
+
+    ``note`` is set only on a multi-material request's line, when what was
+    typed deserves a second look (a wrong or missing ``/n``, or a line the
+    requester declined that was reserved anyway)."""
 
     reservation_number: str
     reservation_item: str
@@ -280,6 +284,7 @@ class LinkedReservationModel(AssistantModel):
     """``SGTXT`` from the loaded extract, or ``UAT_SGTXT`` from the UAT overlay."""
     sgtxt: str | None = None
     first_seen_at: datetime
+    note: str | None = None
 
 
 class SuggestionModel(AssistantModel):
