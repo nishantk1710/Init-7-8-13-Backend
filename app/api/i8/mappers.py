@@ -17,8 +17,10 @@ from app.api.i8.schemas import (
     CodingCandidateMeta,
     CodingCandidatePrice,
     CodingCandidateTwin,
+    DeclarationFacets,
     DeclarationItem,
     DeclarationMeta,
+    ExceptionFacets,
     ExceptionHistoryEntry,
     ExceptionMeta,
     ExceptionQueueItem,
@@ -34,6 +36,7 @@ from app.api.i8.schemas import (
     UniverseMeta,
     UniverseSources,
     UnjustifiedPurchase,
+    VendorOption,
     VendorTurnaroundItem,
 )
 from app.initiatives.i8.aging import days_between
@@ -471,6 +474,33 @@ def declaration_meta(rows, window_days: int) -> DeclarationMeta:
     )
 
 
+def declaration_facets(rows: Sequence[DeclarationRow], cfg: I8Settings) -> DeclarationFacets:
+    """The plants, vendors and repair statuses present among ``rows``.
+
+    A vendor is keyed by its code, and a code seen once without a name and once
+    with one keeps the name. Sorted by what a dropdown shows -- the name, else
+    the code -- so the list reads alphabetically rather than by code.
+    """
+    names: dict[str, str | None] = {}
+    for row in rows:
+        if row.vendor:
+            names[row.vendor] = names.get(row.vendor) or row.vendor_name
+    return DeclarationFacets(
+        plants=[
+            reference
+            for plant in sorted({r.plant for r in rows if r.plant})
+            if (reference := plant_reference(plant, cfg)) is not None
+        ],
+        vendors=[
+            VendorOption(vendor=code, name=name)
+            for code, name in sorted(
+                names.items(), key=lambda entry: ((entry[1] or entry[0]).lower(), entry[0])
+            )
+        ],
+        repair_statuses=sorted({r.repair_status for r in rows if r.repair_status}),
+    )
+
+
 def exception_item(
     item: ExceptionItem,
     cfg: I8Settings,
@@ -530,23 +560,53 @@ def exception_history_entry(event: ExceptionEvent) -> ExceptionHistoryEntry:
     )
 
 
-def exception_meta(stats: ExceptionStats) -> ExceptionMeta:
+def exception_meta(
+    stats: ExceptionStats,
+    excluded_types: frozenset[str] = frozenset(),
+    excluded: Sequence[ExceptionItem] = (),
+) -> ExceptionMeta:
+    """The counts, less whatever the caller's queue does not carry.
+
+    ``excluded_types`` are the checks taken out with ``excludeType`` and
+    ``excluded`` the items they raised. Their items come off ``total``,
+    ``byType``, ``bySeverity``, ``preAutomation`` and ``actionable`` and their
+    types off ``typesRaised``, so the meta describes the queue as it is listed.
+    Subtracted rather than recounted: the lines checked and covered and the
+    windows are facts about the run that no count of items reproduces.
+    """
+    pre_automation = sum(1 for item in excluded if item.pre_automation)
+    by_severity = dict(stats.by_severity)
+    for item in excluded:
+        if item.severity in by_severity:
+            by_severity[item.severity] = max(0, by_severity[item.severity] - 1)
     return ExceptionMeta(
-        total=stats.total,
-        by_type=stats.by_type,
-        by_severity=stats.by_severity,
+        total=max(0, stats.total - len(excluded)),
+        by_type={t: n for t, n in stats.by_type.items() if t not in excluded_types},
+        by_severity=by_severity,
         lines_checked=stats.lines_checked,
         lines_covered=stats.lines_covered,
         attestation_window_days=stats.attestation_window_days,
-        pre_automation=stats.pre_automation,
-        actionable=stats.actionable,
+        pre_automation=max(0, stats.pre_automation - pre_automation),
+        actionable=max(0, stats.actionable - (len(excluded) - pre_automation)),
         attestation_cutover_date=stats.attestation_cutover_date,
         # Which types are actually implemented, so an empty count is
         # distinguishable from an unimplemented check.
-        types_raised=sorted(t.value for t in RAISED_BY_I8),
+        types_raised=sorted(t.value for t in RAISED_BY_I8 if t.value not in excluded_types),
         acquisitions_checked=stats.acquisitions_checked,
         justification_window_days=stats.justification_window_days,
         justification_cutover_date=stats.justification_cutover_date,
+    )
+
+
+def exception_facets(items: Sequence[ExceptionItem], cfg: I8Settings) -> ExceptionFacets:
+    """The plants and types present among ``items``."""
+    return ExceptionFacets(
+        plants=[
+            reference
+            for plant in sorted({i.plant for i in items if i.plant})
+            if (reference := plant_reference(plant, cfg)) is not None
+        ],
+        types=sorted({i.type for i in items}),
     )
 
 

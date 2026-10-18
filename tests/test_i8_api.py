@@ -51,6 +51,8 @@ class TestRoutesAreMounted:
             "/api/i8/attestations",
             "/api/i8/declarations",
             "/api/i8/exceptions",
+            # A paged queue opens a linked item by id, not from its rows.
+            "/api/i8/exceptions/{exception_id}",
         } <= paths
 
     # --- The read-only guarantee, as it stands after FR-11 ----------------

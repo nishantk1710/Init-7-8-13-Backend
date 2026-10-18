@@ -34,8 +34,10 @@ from app.api.i8.mappers import (
     attestation_item,
     coding_candidate_item,
     coding_candidate_meta,
+    declaration_facets,
     declaration_item,
     declaration_meta,
+    exception_facets,
     exception_history_entry,
     exception_item,
     exception_meta,
@@ -85,6 +87,7 @@ from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.exception_state import (
     UNTOUCHED,
     ExceptionStateError,
+    ExceptionWorkState,
     add_comment,
     assign,
     auto_resolve,
@@ -190,6 +193,23 @@ def _paginate(
     """
     start = (page - 1) * page_size
     return list(items[start : start + page_size]), len(items)
+
+
+def _matches(needle: str, *fields: str | None) -> bool:
+    """Whether any of ``fields`` contains ``needle``, ignoring case.
+
+    ``needle`` arrives trimmed and lower-cased. This is a queue screen's search
+    box moved to the server, so it searches every row rather than the page the
+    browser holds.
+    """
+    return any(needle in field.lower() for field in fields if field)
+
+
+def _type_set(raw: str | None) -> frozenset[str]:
+    """``A,B`` -> {"A", "B"}, upper-cased; blanks are dropped."""
+    return frozenset(
+        part.strip().upper() for part in (raw or "").split(",") if part.strip()
+    )
 
 
 def _stock_lookup(snapshot: Snapshot) -> dict[tuple[str, str | None], UniverseRow]:
@@ -578,6 +598,17 @@ def get_declarations(
     snapshot: SnapshotDep,
     cfg: SettingsDep,
     plant: str | None = Query(None, description="Plant code, e.g. 1300"),
+    vendor: str | None = Query(None, description="Vendor code, as `facets.vendors` lists it"),
+    repair_status: str | None = Query(
+        None,
+        alias="repairStatus",
+        description="Where the repair stands -- PO Issued, At Vendor, Closed",
+    ),
+    q: str | None = Query(
+        None,
+        max_length=200,
+        description="Material number or description, repair line or requisition",
+    ),
     status_filter: str | None = Query(
         None,
         alias="status",
@@ -596,16 +627,37 @@ def get_declarations(
     The meta counts are over everything matching the filters, not over the page
     -- a queue that says "12" when it means "12 on this page" is worse than no
     number at all.
+
+    ``facets`` are not: they are taken after ``status`` and ``outstandingOnly``,
+    which choose what kind of row is listed, and before the filters a screen's
+    dropdowns and search box set. A screen showing one page of thousands
+    cannot build its dropdowns from the rows it holds.
     """
     rows = view.declarations
 
-    if plant:
-        rows = tuple(r for r in rows if r.plant == plant)
     if status_filter:
         wanted = status_filter.strip().lower()
         rows = tuple(r for r in rows if r.status.lower() == wanted)
     if outstanding_only:
         rows = tuple(r for r in rows if r.is_outstanding)
+
+    facets = declaration_facets(rows, cfg)
+
+    if plant:
+        rows = tuple(r for r in rows if r.plant == plant)
+    if vendor:
+        wanted_vendor = vendor.strip()
+        rows = tuple(r for r in rows if r.vendor == wanted_vendor)
+    if repair_status:
+        wanted_repair = repair_status.strip().lower()
+        rows = tuple(r for r in rows if (r.repair_status or "").lower() == wanted_repair)
+    if q and q.strip():
+        needle = q.strip().lower()
+        rows = tuple(
+            r
+            for r in rows
+            if _matches(needle, r.material_id, r.description, r.related_repair_id, r.pr_number)
+        )
 
     size = min(page_size or cfg.default_page_size, cfg.max_page_size)
     items, total = _paginate(rows, page, size)
@@ -616,6 +668,7 @@ def get_declarations(
         page_size=size,
         total=total,
         meta=declaration_meta(rows, view.coverage.window_days),
+        facets=facets,
         reference_date=snapshot.reference_date,
     )
 
@@ -661,6 +714,24 @@ def get_exceptions(
             "somebody can still act on"
         ),
     ),
+    actionable_only: bool = Query(
+        False,
+        alias="actionableOnly",
+        description="Leave out items raised before the control existed (preAutomation)",
+    ),
+    exclude_type: str | None = Query(
+        None,
+        alias="excludeType",
+        description=(
+            "Comma-separated types this queue does not carry. Left out of the "
+            "items, the facets and the meta counts alike."
+        ),
+    ),
+    q: str | None = Query(
+        None,
+        max_length=200,
+        description="Exception id, material number or description, or repair line",
+    ),
     page: int = Query(1, ge=1),
     page_size: int | None = Query(None, alias="pageSize", ge=1),
 ) -> ExceptionResponse:
@@ -674,6 +745,11 @@ def get_exceptions(
     come from ``i8_exception_state`` and are merged on here. An item nobody has
     touched reports OPEN and unassigned, which is the truth about it rather
     than a placeholder.
+
+    ``excludeType`` is not a filter: it takes a check out of the queue, so its
+    items leave the meta counts as well as the list. ``facets`` are taken after
+    it and before every filter, so a screen showing one page of thousands can
+    still offer every plant and type in its dropdowns.
     """
     items = view.exceptions
 
@@ -682,7 +758,18 @@ def get_exceptions(
     # away -- somebody recorded the declaration, or the goods receipt landed.
     # Resolving it here means the person who owned it sees why, instead of
     # watching it vanish from their queue.
+    #
+    # Before excludeType too. An item this caller's queue does not carry is
+    # still raised, and resolving it because the caller looked away would
+    # close somebody else's work.
     auto_resolve(db, (i.id for i in items))
+
+    excluded_types = _type_set(exclude_type)
+    excluded = tuple(i for i in items if i.type in excluded_types)
+    if excluded:
+        items = tuple(i for i in items if i.type not in excluded_types)
+
+    facets = exception_facets(items, cfg)
 
     if type_filter:
         wanted = type_filter.strip().upper()
@@ -699,6 +786,21 @@ def get_exceptions(
         )
     if open_only:
         items = tuple(i for i in items if i.is_open_repair)
+    if actionable_only:
+        items = tuple(i for i in items if not i.pre_automation)
+    if q and q.strip():
+        needle = q.strip().lower()
+        items = tuple(
+            i
+            for i in items
+            if _matches(
+                needle,
+                i.id,
+                i.material_id,
+                i.description,
+                f"{i.purchasing_document}-{i.item}",
+            )
+        )
 
     # Folded once for the whole filtered set, because status and owner filter
     # on it -- paging first would filter a page rather than the queue. Only
@@ -740,10 +842,43 @@ def get_exceptions(
         total=total,
         # Meta describes the whole check, not the filtered view: "how many of
         # the register is uncovered" is the number that matters and it must not
-        # change because somebody filtered to one plant.
-        meta=exception_meta(view.exception_stats),
+        # change because somebody filtered to one plant. Only a check taken out
+        # of the queue altogether comes off it.
+        meta=exception_meta(view.exception_stats, excluded_types, excluded),
+        facets=facets,
         reference_date=snapshot.reference_date,
     )
+
+
+@router.get(
+    "/exceptions/{exception_id}",
+    response_model=ExceptionQueueItem,
+    summary="One exception, with its status, owner and history",
+)
+def get_exception(
+    exception_id: str,
+    view: AttestationViewDep,
+    cfg: SettingsDep,
+    db: DbDep,
+) -> ExceptionQueueItem:
+    """The item a link names, wherever it sits in the queue.
+
+    A paged screen holds one page, so it cannot open a linked item by finding
+    it among its rows: the item may be on any page, or filtered off them all.
+
+    An item the checks no longer raise still answers while it has a history,
+    with ``stillDetected`` false -- somebody followed a link to work they
+    remember, and the answer is that the data moved. An id with neither is
+    404: nothing raised it and nobody touched it.
+    """
+    found = next((i for i in view.exceptions if i.id == exception_id), None)
+    work = state_of(db, exception_id)
+    if found is None and not work.history:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No exception {exception_id!r} is raised or has a history.",
+        )
+    return _exception_response(cfg, exception_id, found, work)
 
 
 # --- W5.5: coding candidates -----------------------------------------------
@@ -1054,16 +1189,16 @@ def post_exception_event(
         # 422, not 400: well-formed JSON that broke a rule of the queue.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return _exception_response(db, cfg, exception_id, found)
+    return _exception_response(cfg, exception_id, found, state_of(db, exception_id))
 
 
 def _exception_response(
-    db: DbDep,
     cfg: I8Settings,
     exception_id: str,
     found: ExceptionItem | None,
+    work: ExceptionWorkState,
 ) -> ExceptionQueueItem:
-    """The item as it now stands, for a write to return.
+    """The item as it now stands, for a write or a lookup by id to return.
 
     ``found`` is None when the checks are no longer raising this id. The row
     still answers -- with ``stillDetected`` false, and a placeholder body that
@@ -1071,8 +1206,6 @@ def _exception_response(
     is the honest answer to "I just commented on something that resolved
     underneath me".
     """
-    work = state_of(db, exception_id)
-
     if found is not None:
         return exception_item(found, cfg, state=work, still_detected=True)
 

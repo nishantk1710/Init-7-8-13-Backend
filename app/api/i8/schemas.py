@@ -613,12 +613,39 @@ class DeclarationMeta(I8Model):
     without its source."""
 
 
+class VendorOption(I8Model):
+    """One vendor a queue can be narrowed to."""
+
+    vendor: str
+    """The code, which is what the ``vendor`` filter takes."""
+
+    name: str | None = None
+    """LFA1's name, when one was delivered. A dropdown shows it and falls back
+    to the code -- the rule the queue's Vendor column follows."""
+
+
+class DeclarationFacets(I8Model):
+    """The values the queue's filters can take, for a paged screen's dropdowns.
+
+    A paged screen holds one page of rows, so it cannot build its dropdowns
+    from them. These are taken over the rows being listed -- after ``status``
+    and ``outstandingOnly``, which choose what kind of row that is -- and before
+    ``plant``, ``vendor``, ``repairStatus`` and ``q``, so choosing one plant does
+    not take the other out of the list.
+    """
+
+    plants: list[PlantReference]
+    vendors: list[VendorOption]
+    repair_statuses: list[str]
+
+
 class DeclarationResponse(I8Model):
     items: list[DeclarationItem]
     page: int
     page_size: int
     total: int
     meta: DeclarationMeta
+    facets: DeclarationFacets
     reference_date: date
 
 
@@ -741,12 +768,27 @@ class ExceptionMeta(I8Model):
     none is configured."""
 
 
+class ExceptionFacets(I8Model):
+    """The values the queue's filters can take, for a paged screen's dropdowns.
+
+    Taken over every item the queue carries -- after ``excludeType``, which
+    takes a check out of the queue altogether -- and before any filter, so a
+    dropdown always offers every value it can be switched to.
+    """
+
+    plants: list[PlantReference]
+    types: list[str]
+    """The types present among the items. ``meta.typesRaised`` says which checks
+    run; this says which of them found something."""
+
+
 class ExceptionResponse(I8Model):
     items: list[ExceptionQueueItem]
     page: int
     page_size: int
     total: int
     meta: ExceptionMeta
+    facets: ExceptionFacets
     reference_date: date
 
 
