@@ -19,7 +19,7 @@ from typing import Any
 from app.initiatives.i7.contracts import Criticality
 from app.initiatives.i7.inventory import service_level as service_level_module
 from app.initiatives.i7.recommendations import explanation
-from app.initiatives.i7.recommendations.conversion import HodApprovalLookup, evaluate as evaluate_conversion
+from app.initiatives.i7.recommendations.conversion import evaluate as evaluate_conversion
 from app.initiatives.i7.recommendations.types import (
     RECOMMENDATION_FORMULA_VERSION,
     ConversionDecision,
@@ -121,9 +121,7 @@ def _trace_from_row(row: Any, fields: tuple[tuple[str, str], ...]) -> list[tuple
     return entries
 
 
-def build_normal_recommendation(
-    row: Any, policy: PolicyDocument, hod_lookup: HodApprovalLookup | None = None
-) -> BuiltRecommendation:
+def build_normal_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommendation:
     """A material-plant Phase 3 classified and routed through Phase 4/5.
 
     ``row`` is the joined Phase 3/5 record the repository provides -- see
@@ -264,9 +262,7 @@ def _criticality_tier(raw: str | None) -> Criticality | None:
         return None
 
 
-def build_oar_recommendation(
-    row: Any, policy: PolicyDocument, hod_lookup: HodApprovalLookup | None = None
-) -> BuiltRecommendation:
+def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommendation:
     """A cold-start material with Phase 6 similarity evidence.
 
     ``row`` is the joined Phase 3/6 record from
@@ -290,7 +286,14 @@ def build_oar_recommendation(
         blocking_reason = None
     elif has_neighbours:
         status = LifecycleStatus.NOT_EVALUABLE
-        blocking_reason = "SERVICE_LEVEL_UNSET" if not policy.service_level.is_configured else row.estimate_status
+        # Name the estimate's own blocker. An unsigned service level is only the
+        # reason when the estimate says so -- neighbours lend SAP values, so a
+        # too-few-neighbours block must not be reported as a service-level one.
+        blocking_reason = (
+            "SERVICE_LEVEL_UNSET"
+            if row.estimate_status == "NOT_EVALUABLE_SERVICE_LEVEL_UNSET"
+            else row.estimate_status
+        )
     else:
         status = LifecycleStatus.NOT_EVALUABLE
         blocking_reason = row.status or "NO_ELIGIBLE_NEIGHBORS"
@@ -312,13 +315,14 @@ def build_oar_recommendation(
             ]
         )
 
+    # This path is chosen by cold-start history, not by MRP type, so a row here
+    # is not necessarily OAR. Stage 1's own verdict decides whether conversion
+    # applies; it is read, never re-derived.
     conversion = evaluate_conversion(
-        material=row.sap_material_number,
-        plant=row.sap_plant_code,
         consumption_count_12m=row.consumption_count_12m,
         criticality=row.criticality,
         policy=policy.conversion_triggers,
-        hod_lookup=hod_lookup,
+        oar_scope=row.oar_scope,
     )
 
     impact = explanation.expected_impact(

@@ -147,38 +147,44 @@ no neighbour anywhere in the catalogue currently has a value to lend.
 
 ## OAR → Min-Max conversion
 
-Separate from OAR identification, per the Formula Reference:
+Separate from OAR identification. The rule in force (formula version
+`i07-recommendation-4`, rule change of 2026-10-19):
 
 ```
-ConversionEligible = (ConsumptionCount12M > 4)
-                   OR (CriticalOrSignificantProductionImpact = TRUE)
-                   OR (I13_HOD_Approved = TRUE)
+ConversionEligible = OarMaterialPlant                 -- Stage 1: MARC.DISMM in {ND, PD} or blank
+                 AND (ConsumptionCount12M > 4)
+                 AND (Criticality in {CRITICAL, IMPACT})
+
+OBSOLETE is never eligible.
 ```
 
-**What is actually counted for trigger 1**: Phase 3's `non_zero_periods` —
-the count of non-zero-demand months over the observed window, the same
-population the ADI derivation itself uses. No separate transaction count
-exists upstream.
+**Only Stage 1 OAR material-plants are evaluated.** The OAR recommendation
+path is chosen by cold-start *history*, not MRP type, so the builder passes
+Stage 1's stored verdict (`i7_material_feature.oar_scope`) into
+`conversion.evaluate`. `OUT_OF_SCOPE` is `NOT_ELIGIBLE`; `UNKNOWN` or a missing
+scope is `UNKNOWN`. The DISMM rule itself is not re-derived here.
 
-**Trigger 2 (production impact) is unresolved** — the FRS's own two
-statements name different criticality tier sets, and Phase 1's
-`ConversionTriggerPolicy.criticality_trigger_tiers` is `None` for exactly
-that reason. Evaluating it raises `PolicyNotConfiguredError`, caught and
-reported as part of the UNKNOWN reason rather than resolved here.
+**What is counted**: `consumption_count_12m` — MSEG issue transactions
+(201/261) minus reversals (202/262), trailing 12 months. Not
+`non_zero_periods`.
 
-**Trigger 3 (I13 HOD approval)** is read through a `HodApprovalLookup`
-interface with one implementation today: `NoHodLedgerAvailable`, since
-`app/initiatives/i13/` is an empty stub. Returns `None` — never assumes no
-request exists.
+**Criticality**: `ConversionTriggerPolicy.criticality_trigger_tiers =
+("CRITICAL", "IMPACT")` and `excluded_criticality_tiers = ("OBSOLETE",)`, set in
+`current_conversion_trigger_policy()`. An excluded tier can never also qualify
+(validator), and an unrecognised tier name is refused at load.
 
-A fired trigger wins regardless of what the others report. Only when nothing
-fires does an unresolved trigger make the verdict `UNKNOWN` rather than a
-confident `NOT_ELIGIBLE`; a *disabled* trigger, by contrast, definitely does
-not fire and never contributes to `UNKNOWN`.
+**Three-valued AND.** Any condition that definitely fails makes the verdict
+`NOT_ELIGIBLE` (an OBSOLETE material with no usage count is still not
+eligible). Only when nothing failed and something could not be determined —
+missing count, missing or unrecognised criticality, unresolved tier set,
+unknown scope — is the verdict `UNKNOWN`. `conversion_trigger` is
+`CONSUMPTION_AND_CRITICALITY` when eligible, `NONE` when not, `UNKNOWN` when
+undetermined.
 
-**Today: 44,938 of 44,938 OAR recommendations report `UNKNOWN`** — every one
-hits the unresolved criticality-tier policy and the missing I13 ledger, and
-none has a trigger that fires on its own first.
+**The I13 HOD trigger is removed**, not merely disabled. The
+`i13_hod_approved` column and API field remain for older rows and are `NULL`
+on new ones. Rows from earlier formula versions carry the retired OR rule
+(`CONSUMPTION_FREQUENCY` / `PRODUCTION_IMPACT` / `I13_HOD_APPROVED_REQUEST`).
 
 ## Explanation
 

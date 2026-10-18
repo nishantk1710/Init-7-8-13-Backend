@@ -8,14 +8,14 @@ How Phase 6 finds donor materials for a cold-start target, what changed in
 
 A cold-start target is a material-plant that Phase 3 routed to `NO_HISTORY` or
 `COLD_START`, so it cannot be forecast from its own history. Phase 6 finds the
-materials it most resembles. If enough of them qualify and carry successful
-Phase 5 numbers, it borrows a similarity-weighted Safety Stock, ROP and Max
-Stock from them.
+materials it most resembles. If enough of them qualify, it borrows a
+similarity-weighted Safety Stock, ROP and Max Stock from their current SAP
+values.
 
 ```
 target --> hard eligibility gates --> Stage A shortlist --> Stage B exact score
-       --> admission (0.60 floor + evidence rule) --> Top-10 --> confidence
-       --> estimate (>= 5 qualifying neighbours, donors with SS+ROP+Max SUCCESS)
+       --> admission (0.60 floor + evidence rule) --> Top-5 --> confidence
+       --> estimate (>= 3 qualifying neighbours; every donor has SAP SS+ROP+Max > 0)
 ```
 
 ## Business rules (unchanged unless stated)
@@ -28,9 +28,9 @@ target --> hard eligibility gates --> Stage A shortlist --> Stage B exact score
 | Not the target itself | hard gate | `eligibility.py` |
 | Admission floor | combined >= **0.60** | `SimilarityPolicy.minimum_similarity` |
 | Minimum evidence | **new**, see below | `SimilarityPolicy.minimum_evidence_features`, `identity_evidence_features` |
-| Neighbours kept | top **10** | `SimilarityPolicy.maximum_neighbours` |
-| Estimate needs | >= **5** qualifying neighbours | `SimilarityPolicy.minimum_neighbours` |
-| Donor gate | SS, ROP **and** Max all `SUCCESS` | `repository.load_inventory_values` |
+| Neighbours kept | top **5** (was 10, changed 2026-10-19) | `SimilarityPolicy.maximum_neighbours` |
+| Estimate needs | >= **3** qualifying neighbours (was 5) | `SimilarityPolicy.minimum_neighbours` |
+| Donor gate | current SAP SS, ROP **and** Max all > 0; those SAP values are lent (was: Phase 5 SS, ROP and Max all `SUCCESS`) | `repository.load_candidate_population`, `load_inventory_values` |
 | Estimate | `sum(s_i * v_i) / sum(s_i)`, rounded up once | `estimate.py` |
 
 A missing criticality, an unknown active status or unknown history is a

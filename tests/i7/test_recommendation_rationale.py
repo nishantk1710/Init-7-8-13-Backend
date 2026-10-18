@@ -83,12 +83,11 @@ def _oar_built(**overrides) -> BuiltRecommendation:
         oar_best_similarity=Decimal("0.72"),
         conversion=ConversionDecision(
             eligibility=ConversionEligibility.ELIGIBLE,
-            trigger=ConversionTrigger.CONSUMPTION_FREQUENCY,
+            trigger=ConversionTrigger.CONSUMPTION_AND_CRITICALITY,
             consumption_count_12m=7,
             consumption_count_threshold=4,
-            production_impact=None,
-            i13_hod_approved=None,
-            detail="consumption count 7 > 4",
+            production_impact=True,
+            detail="consumption count 7 > 4 and criticality CRITICAL",
         ),
         factors=(
             RecommendationFactor(

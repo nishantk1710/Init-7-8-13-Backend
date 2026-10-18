@@ -11,23 +11,18 @@ neighbour's raw value enters the average, because rounding first would compound
 several ceilings into a systematic overstatement.
 
 **Nothing is borrowed from a neighbour that has nothing to lend.** A neighbour
-contributes only when its own Phase 5 calculation succeeded. Today none has,
-because the service-level matrix is unsigned and every safety stock is blocked
-on it -- so this returns ``NOT_EVALUABLE_SERVICE_LEVEL_UNSET`` rather than an
-estimate. Inventing a service level here to unblock the chain would be the same
-mistake Phase 5 refuses to make, one layer further from where anyone would look
-for it.
-
-Similarity eligibility and inventory eligibility are separate: a material can be
-an excellent match whose own parameters are blocked. It stays a neighbour -- the
-resemblance is real evidence for Phase 7 -- and simply contributes no number.
+contributes only when it carries values (``inventory_eligible``). The OAR run
+admits only donors whose current SAP ROP, safety stock and max stock are all
+above zero, and those are what they lend (see ``oar.repository``), so in a
+real run every neighbour contributes. The function still guards the case for
+callers that pass their own values.
 
 **A minimum-neighbour count is a hard gate, not a confidence input.**
 ``neighbours`` arriving here has already been filtered to
 ``SimilarityPolicy.minimum_similarity`` (>= 0.60) and capped at Top-K by
 ``ranking.select_top_k`` -- this module only checks the resulting *count*
-against ``minimum_neighbours`` (5). Below it, no partial SS/ROP/Max is
-computed from the 1-4 neighbours that do qualify:
+against ``minimum_neighbours`` (3). Below it, no partial SS/ROP/Max is
+computed from the neighbours that do qualify:
 ``NOT_EVALUABLE_INSUFFICIENT_NEIGHBOURS`` reports exactly how many qualified
 and how many were required, distinct from ``NOT_EVALUABLE_NO_NEIGHBORS``
 (zero candidates at all).

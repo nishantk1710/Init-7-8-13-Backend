@@ -537,7 +537,7 @@ def run_oar_similarity(
             targets = repository.load_targets(session)
             candidates = repository.load_candidate_population(session)
             price_span = repository.price_range(candidates)
-            inventory_values = repository.load_inventory_values(session, inventory_run_id)
+            inventory_values = repository.load_inventory_values(session)
 
         logger.info(
             "OAR run %d: %d targets, %d candidates in the donor population (%s)",

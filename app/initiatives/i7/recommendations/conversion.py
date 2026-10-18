@@ -1,48 +1,41 @@
 """OAR -> Min-Max conversion eligibility.
 
-Formula Reference::
+The rule in force::
 
     ConversionEligible =
-        (ConsumptionCount12M > 4)
-     OR (CriticalOrSignificantProductionImpact = TRUE)
-     OR (I13_HOD_Approved = TRUE)
+        OarMaterialPlant                      -- Stage 1: MARC.DISMM in {ND, PD} or blank
+    AND (ConsumptionCount12M > 4)
+    AND (Criticality in {CRITICAL, IMPACT})
 
-    If none is true, no OAR -> Min-Max conversion recommendation is generated.
+    OBSOLETE is never eligible.
 
-Identification and conversion are separate decisions. A material already
-routed to OAR by Phase 3 does not automatically get a conversion
-recommendation -- it needs one of these three triggers to fire, independently
-evaluated here.
+Identification and conversion are separate decisions. This module never
+re-derives OAR status: it reads the Stage 1 verdict (``MaterialFeature.oar_scope``)
+and only evaluates a material-plant that verdict put IN_SCOPE. The DISMM rule
+itself lives in :func:`app.initiatives.i7.policy.oar.current_oar_policy`.
 
-**What is actually counted for trigger 1.** ``ConsumptionCount12M`` is a
-transaction-level count -- MSEG issue movements (201/261) minus reversal
-movements (202/262), trailing 12 months ending at the extract's own last
-staged month -- computed and stored on
+**Three-valued AND.** Each condition answers True, False or ``None`` (cannot be
+determined). Any definite False makes the verdict NOT_ELIGIBLE -- an OBSOLETE
+material with no usage count is still definitely not eligible. Only when
+nothing failed and something is undetermined is the verdict UNKNOWN; missing
+data is never read as "does not qualify".
+
+**What is counted.** ``ConsumptionCount12M`` is a transaction-level count --
+MSEG issue movements (201/261) minus reversal movements (202/262), trailing 12
+months ending at the extract's own last staged month -- computed and stored on
 ``MaterialFeature.consumption_count_12m`` by Phase 3 (see
-``features/builder.py::consumption_count_12m``). It is NOT
-``non_zero_periods`` (a count of months with non-zero demand, which continues
-to feed ADI/CV-squared only): a material with 2 issues in January, 1 in
-February, 3 in March and 1 in April has ``consumption_count_12m = 7`` and
-``non_zero_periods = 4`` -- the SOP 3.1.1 trigger must see 7, not 4.
+``features/builder.py::consumption_count_12m``). It is NOT ``non_zero_periods``
+(a count of months with non-zero demand, which feeds ADI/CV-squared only): a
+material with 2 issues in January, 1 in February, 3 in March and 1 in April
+has ``consumption_count_12m = 7`` and ``non_zero_periods = 4`` -- the rule must
+see 7, not 4.
 
-**Trigger 2's tier set is business-confirmed as NORMAL.** The FRS's own two
-statements disagree on wording ("Critical classification" vs "Critical or of
-significant production impact"), but the business decision confirmed for this
-system is that the NORMAL tier is what should trigger conversion review here
--- not CRITICAL/IMPACT, despite the FRS wording. See
-:func:`app.initiatives.i7.policy.thresholds.current_conversion_trigger_policy`,
-which is where this resolved rule lives (mirroring
-:func:`app.initiatives.i7.policy.oar.current_oar_policy`'s pattern).
-
-**Trigger 3 needs an I13 ledger that does not exist.** `app/initiatives/i13/` is
-an empty extension point. The trigger is evaluated through an injected lookup
-so the interface exists now and Phase 7 does not block on I13's absence --
-absent a lookup, it reports UNKNOWN rather than assuming no request exists.
+The tier set and the exclusions are policy, not code -- see
+:func:`app.initiatives.i7.policy.thresholds.current_conversion_trigger_policy`.
 """
 
-from typing import Protocol
-
-from app.initiatives.i7.errors import PolicyNotConfiguredError
+from app.core.criticality import CriticalityTier
+from app.initiatives.i7.contracts.enums import ScopeDecision
 from app.initiatives.i7.policy import ConversionTriggerPolicy
 from app.initiatives.i7.recommendations.types import (
     ConversionDecision,
@@ -50,213 +43,130 @@ from app.initiatives.i7.recommendations.types import (
     ConversionTrigger,
 )
 
-
-class HodApprovalLookup(Protocol):
-    """Where a signed I13 HOD-approved request would come from.
-
-    No implementation exists yet -- I13 is an empty stub. Returns ``None`` when
-    no ledger is available at all, which is the only case reachable today.
-    """
-
-    def hod_approved(self, material: str, plant: str) -> bool | None: ...
-
-
-class NoHodLedgerAvailable:
-    """The only implementation that exists today: there is no I13 ledger."""
-
-    def hod_approved(self, material: str, plant: str) -> bool | None:
-        return None
+_KNOWN_TIERS = frozenset(tier.value for tier in CriticalityTier)
 
 
 def _times(count: int) -> str:
     return f"{count} time" if count == 1 else f"{count} times"
 
 
-def _consumption_trigger(
+def _scope_condition(oar_scope: str | None) -> tuple[bool | None, str]:
+    """Is this material-plant OAR according to Stage 1? Returns ``(met, detail)``."""
+    if oar_scope == ScopeDecision.IN_SCOPE:
+        return True, ""
+    if oar_scope == ScopeDecision.OUT_OF_SCOPE:
+        return (
+            False,
+            "It is not ordered on demand (OAR) at this plant, so it is not "
+            "considered for Min-Max ordering.",
+        )
+    return None, "Whether it is ordered on demand (OAR) at this plant could not be determined."
+
+
+def _consumption_condition(
     consumption_count_12m: int | None, policy: ConversionTriggerPolicy
-) -> tuple[bool | None, str, bool]:
-    """Returns ``(fired, detail, is_unknown)``.
+) -> tuple[bool | None, str]:
+    """More than the threshold net issue transactions in 12 months? ``(met, detail)``.
 
     ``consumption_count_12m`` is the MSEG issue-transaction count (reversals
     netted), NOT ``non_zero_periods`` -- see the module docstring.
-
-    A *disabled* trigger definitely does not fire -- ``fired=False`` -- and
-    must not be conflated with an *enabled* trigger whose input is missing,
-    which genuinely cannot be answered either way.
     """
-    if not policy.enable_consumption_trigger:
-        return False, "How often it is used is not a reason to switch it to Min-Max ordering.", False
     if consumption_count_12m is None:
-        return None, "The last 12 months of usage could not be counted for this material.", True
-    fired = consumption_count_12m > policy.consumption_count_threshold
+        return None, "The last 12 months of usage could not be counted for this material."
     used = f"It was used {_times(consumption_count_12m)} in the last 12 months"
-    if fired:
+    if consumption_count_12m > policy.consumption_count_threshold:
         return (
             True,
             f"{used}, more than the {policy.consumption_count_threshold} needed to "
             f"qualify for Min-Max ordering.",
-            False,
         )
     return (
         False,
         f"{used}, which does not exceed the {policy.consumption_count_threshold} "
         f"needed to qualify for Min-Max ordering.",
-        False,
     )
 
 
-def _production_impact_trigger(
+def _criticality_condition(
     criticality: str | None, policy: ConversionTriggerPolicy
-) -> tuple[bool | None, str, bool]:
-    """Returns ``(fired, detail, is_unknown)``. See :func:`_consumption_trigger`."""
-    if not policy.enable_criticality_trigger:
-        return False, "Criticality is not a reason to switch it to Min-Max ordering.", False
+) -> tuple[bool | None, str]:
+    """Is the tier one that qualifies? ``(met, detail)``.
+
+    An excluded tier (OBSOLETE) is checked first and is a definite False even
+    while the qualifying tier set is unresolved -- "never eligible" must not
+    depend on another decision having been made.
+    """
+    tier = criticality.strip().upper() if criticality else ""
+    if not tier:
+        return None, "Its criticality level is not known."
+    if tier in policy.excluded_criticality_tiers:
+        return (
+            False,
+            f"It is classified {tier.title()}, and such materials are never moved "
+            f"to Min-Max ordering.",
+        )
+    if tier not in _KNOWN_TIERS:
+        # Not guessed into a tier: text we cannot interpret is not evidence
+        # that the material fails the condition.
+        return None, "Its criticality level is not one the system recognises."
     if policy.criticality_trigger_tiers is None:
-        # The unresolved tier set (Phase 1). Raising here, rather than
-        # returning None silently, makes the caller's UNKNOWN traceable to a
-        # named business decision instead of an unexplained gap.
-        raise PolicyNotConfiguredError(
-            "conversion_criticality_tiers",
-            "the FRS gives two different tier sets for the production-impact "
-            "trigger and neither has been confirmed",
-        )
-    if criticality is None:
-        return None, "Its criticality level is not known.", True
-    fired = criticality in policy.criticality_trigger_tiers
-    if fired:
-        return (
-            True,
-            f"Its criticality is {criticality.title()}, which qualifies it for Min-Max ordering.",
-            False,
-        )
-    qualifying = ", ".join(tier.title() for tier in policy.criticality_trigger_tiers)
+        return None, "The business has not yet confirmed which criticality levels qualify."
+    if tier in policy.criticality_trigger_tiers:
+        return True, f"Its criticality is {tier.title()}, which qualifies it for Min-Max ordering."
+    qualifying = ", ".join(t.title() for t in policy.criticality_trigger_tiers)
     return (
         False,
-        f"Its criticality is {criticality.title()}, which is not one of the levels "
+        f"Its criticality is {tier.title()}, which is not one of the levels "
         f"that qualify ({qualifying}).",
-        False,
-    )
-
-
-def _hod_trigger(
-    material: str, plant: str, policy: ConversionTriggerPolicy, lookup: HodApprovalLookup
-) -> tuple[bool | None, str, bool]:
-    """Returns ``(fired, detail, is_unknown)``. See :func:`_consumption_trigger`."""
-    if not policy.enable_i13_hod_trigger:
-        return (
-            False,
-            "A department-head request is not a reason to switch it to Min-Max ordering.",
-            False,
-        )
-    approved = lookup.hod_approved(material, plant)
-    if approved is None:
-        return None, "No record of department-head approvals is available.", True
-    return (
-        approved,
-        "A department-head request for this material "
-        + ("has been approved." if approved else "has not been approved."),
-        False,
     )
 
 
 def evaluate(
-    material: str,
-    plant: str,
     consumption_count_12m: int | None,
     criticality: str | None,
     policy: ConversionTriggerPolicy,
-    hod_lookup: HodApprovalLookup | None = None,
+    oar_scope: str | None,
 ) -> ConversionDecision:
-    """The OR of the three triggers, each evaluated independently.
+    """The three-valued AND of OAR scope, usage count and criticality.
 
-    A single ``TRUE`` is sufficient regardless of what the others report --
-    ``ELIGIBLE`` never waits on an unresolved trigger once one has already
-    fired. Only when nothing fires does the state of the unresolved ones
-    matter: any of them still unknown makes the overall verdict UNKNOWN rather
-    than a confident NOT_ELIGIBLE.
-
+    ``oar_scope`` is Stage 1's stored verdict (a ``ScopeDecision`` value).
     ``consumption_count_12m`` must be the MSEG transaction count (see the
     module docstring), not ``non_zero_periods``.
     """
-    lookup = hod_lookup or NoHodLedgerAvailable()
+    scope_met, scope_detail = _scope_condition(oar_scope)
+    count_met, count_detail = _consumption_condition(consumption_count_12m, policy)
+    tier_met, tier_detail = _criticality_condition(criticality, policy)
 
-    consumption_fired, consumption_detail, consumption_unknown = _consumption_trigger(
-        consumption_count_12m, policy
+    conditions = (
+        (scope_met, scope_detail),
+        (tier_met, tier_detail),
+        (count_met, count_detail),
     )
 
-    try:
-        impact_fired, impact_detail, impact_unknown = _production_impact_trigger(
-            criticality, policy
-        )
-    except PolicyNotConfiguredError:
-        # The exception text names the policy gap for engineers; the reader of
-        # the recommendation needs only to know the question is still open.
-        impact_fired, impact_detail, impact_unknown = (
-            None,
-            "The business has not yet confirmed which criticality levels qualify.",
-            True,
-        )
-
-    hod_fired, hod_detail, hod_unknown = _hod_trigger(material, plant, policy, lookup)
-
-    if consumption_fired:
+    def decision(
+        eligibility: ConversionEligibility, trigger: ConversionTrigger, detail: str
+    ) -> ConversionDecision:
         return ConversionDecision(
-            eligibility=ConversionEligibility.ELIGIBLE,
-            trigger=ConversionTrigger.CONSUMPTION_FREQUENCY,
+            eligibility=eligibility,
+            trigger=trigger,
             consumption_count_12m=consumption_count_12m,
             consumption_count_threshold=policy.consumption_count_threshold,
-            production_impact=impact_fired,
-            i13_hod_approved=hod_fired,
-            detail=consumption_detail,
-        )
-    if impact_fired:
-        return ConversionDecision(
-            eligibility=ConversionEligibility.ELIGIBLE,
-            trigger=ConversionTrigger.PRODUCTION_IMPACT,
-            consumption_count_12m=consumption_count_12m,
-            consumption_count_threshold=policy.consumption_count_threshold,
-            production_impact=impact_fired,
-            i13_hod_approved=hod_fired,
-            detail=impact_detail,
-        )
-    if hod_fired:
-        return ConversionDecision(
-            eligibility=ConversionEligibility.ELIGIBLE,
-            trigger=ConversionTrigger.I13_HOD_APPROVED_REQUEST,
-            consumption_count_12m=consumption_count_12m,
-            consumption_count_threshold=policy.consumption_count_threshold,
-            production_impact=impact_fired,
-            i13_hod_approved=hod_fired,
-            detail=hod_detail,
+            production_impact=tier_met,
+            detail=detail,
         )
 
-    any_unknown = consumption_unknown or impact_unknown or hod_unknown
-    if any_unknown:
-        reasons = [
-            detail
-            for unknown, detail in (
-                (consumption_unknown, consumption_detail),
-                (impact_unknown, impact_detail),
-                (hod_unknown, hod_detail),
-            )
-            if unknown
-        ]
-        return ConversionDecision(
-            eligibility=ConversionEligibility.UNKNOWN,
-            trigger=ConversionTrigger.UNKNOWN,
-            consumption_count_12m=consumption_count_12m,
-            consumption_count_threshold=policy.consumption_count_threshold,
-            production_impact=impact_fired,
-            i13_hod_approved=hod_fired,
-            detail="; ".join(reasons),
+    failed = [detail for met, detail in conditions if met is False]
+    if failed:
+        return decision(ConversionEligibility.NOT_ELIGIBLE, ConversionTrigger.NONE, " ".join(failed))
+
+    undetermined = [detail for met, detail in conditions if met is None]
+    if undetermined:
+        return decision(
+            ConversionEligibility.UNKNOWN, ConversionTrigger.UNKNOWN, " ".join(undetermined)
         )
 
-    return ConversionDecision(
-        eligibility=ConversionEligibility.NOT_ELIGIBLE,
-        trigger=ConversionTrigger.NONE,
-        consumption_count_12m=consumption_count_12m,
-        consumption_count_threshold=policy.consumption_count_threshold,
-        production_impact=impact_fired,
-        i13_hod_approved=hod_fired,
-        detail="None of the reasons for moving this material to Min-Max ordering apply.",
+    return decision(
+        ConversionEligibility.ELIGIBLE,
+        ConversionTrigger.CONSUMPTION_AND_CRITICALITY,
+        f"{count_detail} {tier_detail}",
     )

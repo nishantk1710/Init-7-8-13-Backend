@@ -7,7 +7,7 @@ Max Stock value is invented, and repeated generation is idempotent.
 """
 
 import pytest
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
@@ -183,21 +183,31 @@ def test_ready_for_review_only_when_the_path_actually_computed(session):
 
 
 @needs_db
-def test_conversion_eligibility_is_unknown_given_the_unresolved_policies(session):
-    """Criticality tiers for the production-impact trigger are unresolved and
-    no I13 ledger exists, so every OAR recommendation's conversion decision
-    must be UNKNOWN rather than a confident yes/no."""
+def test_every_eligible_conversion_meets_both_conditions(session):
+    """Under the current rule an ELIGIBLE OAR recommendation must be CRITICAL
+    or IMPACT *and* have more than its threshold of issues -- never OBSOLETE,
+    never one condition alone. Rows from older formula versions carry the
+    retired OR rule and are not checked."""
+    from app.initiatives.i7.recommendations.types import RECOMMENDATION_FORMULA_VERSION
+
     if not _generated(session):
         pytest.skip("no recommendations generated")
-    non_unknown = session.execute(
+    violations = session.execute(
         select(func.count())
         .select_from(Recommendation)
         .where(
             Recommendation.is_oar,
-            Recommendation.conversion_eligibility != "UNKNOWN",
+            Recommendation.formula_version == RECOMMENDATION_FORMULA_VERSION,
+            Recommendation.conversion_eligibility == "ELIGIBLE",
+            or_(
+                Recommendation.criticality.is_(None),
+                Recommendation.criticality.notin_(("CRITICAL", "IMPACT")),
+                Recommendation.consumption_count_12m.is_(None),
+                Recommendation.consumption_count_12m <= Recommendation.consumption_count_threshold,
+            ),
         )
     ).scalar()
-    assert non_unknown == 0
+    assert violations == 0
 
 
 @needs_db
@@ -451,6 +461,11 @@ def test_demand_class_does_not_affect_conversion_eligibility_or_trigger(session)
     it is not one of evaluate()'s inputs (see
     test_evaluate_has_no_demand_class_parameter), so grouping by trigger alone
     must never split by demand_class in a way that implies causation."""
+    from app.initiatives.i7.recommendations.types import (
+        RECOMMENDATION_FORMULA_VERSION,
+        ConversionTrigger,
+    )
+
     if not _generated(session):
         pytest.skip("no recommendations generated")
     rows = session.execute(
@@ -458,6 +473,8 @@ def test_demand_class_does_not_affect_conversion_eligibility_or_trigger(session)
         .where(
             Recommendation.is_oar,
             Recommendation.conversion_trigger.isnot(None),
+            # Older rows carry the retired OR-rule trigger values.
+            Recommendation.formula_version == RECOMMENDATION_FORMULA_VERSION,
         )
         .limit(50)
     ).all()
@@ -465,7 +482,6 @@ def test_demand_class_does_not_affect_conversion_eligibility_or_trigger(session)
         pytest.skip("no OAR recommendation has a conversion_trigger")
     # Sanity: conversion_trigger values are drawn from the known enum, not
     # something demand_class leaked into.
-    from app.initiatives.i7.recommendations.types import ConversionTrigger
 
     valid_triggers = {member.value for member in ConversionTrigger}
     for _, trigger in rows:
@@ -534,15 +550,16 @@ def test_oar_info_schema_exposes_structured_conversion_evidence():
     from app.schemas.i7.recommendations import OarInfo
 
     info = OarInfo(
-        conversion_trigger="CONSUMPTION_FREQUENCY",
+        conversion_trigger="CONSUMPTION_AND_CRITICALITY",
         consumption_count_12m=7,
         consumption_count_threshold=4,
-        production_impact=False,
+        production_impact=True,
         i13_hod_approved=None,
     )
     assert info.consumption_count_12m == 7
     assert info.consumption_count_threshold == 4
-    assert info.production_impact is False
+    assert info.production_impact is True
+    # Retired (the HOD trigger is gone); kept on the schema so older rows serialise.
     assert info.i13_hod_approved is None
     for field in (
         "consumption_count_12m",

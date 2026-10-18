@@ -113,10 +113,7 @@ class PolicyDocument(BaseModel):
             unresolved.append("max_stock_strategy")
         if self.adoption.monitoring_window_days is None:
             unresolved.append("adoption_monitoring_window")
-        if (
-            self.conversion_triggers.enable_criticality_trigger
-            and self.conversion_triggers.criticality_trigger_tiers is None
-        ):
+        if self.conversion_triggers.criticality_trigger_tiers is None:
             unresolved.append("conversion_criticality_tiers")
         if not self.oar.confirmed:
             unresolved.append("oar_rule_confirmation")

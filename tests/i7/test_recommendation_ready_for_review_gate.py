@@ -25,6 +25,7 @@ def oar_row(**overrides) -> SimpleNamespace:
         non_zero_periods=None,
         consumption_count_12m=None,
         demand_class="UNCLASSIFIED",
+        oar_scope="IN_SCOPE",
         feature_run_id=1,
         status="SUCCESS",
         confidence="LOW",

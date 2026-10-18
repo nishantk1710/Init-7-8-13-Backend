@@ -17,6 +17,8 @@ means to an approver, which is a business decision and not ours.
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.criticality import CriticalityTier
+
 
 class HistoryGatePolicy(BaseModel):
     """Stage 2b -- is there enough history to classify?"""
@@ -94,14 +96,20 @@ class SimilarityPolicy(BaseModel):
     text_weight: float = Field(default=0.30, ge=0, le=1)
     business_weight: float = Field(default=0.35, ge=0, le=1)
 
-    minimum_neighbours: int = Field(default=5, ge=1)
+    minimum_neighbours: int = Field(default=3, ge=1)
     """Hard admission gate: fewer than this many *qualifying* (>= minimum_similarity)
     neighbours blocks the estimate entirely -- see oar/estimate.py's
     NOT_EVALUABLE_INSUFFICIENT_NEIGHBOURS. Never relaxed by padding with
-    low-similarity candidates."""
+    low-similarity candidates.
 
-    maximum_neighbours: int = Field(default=10, ge=1)
-    """Documented K range is 5-10."""
+    3, set 2026-10-19 (was 5). The Solution Design and Formula Reference say
+    K = 5-10; this is a deliberate business override, not a reading of them.
+    Every neighbour now carries SAP values to lend (see
+    ``oar.repository.load_candidate_population``), so the minimum counts
+    materials that actually contribute to the estimate."""
+
+    maximum_neighbours: int = Field(default=5, ge=1)
+    """Top-K cap. 5, set 2026-10-19 (was 10; the documents say 5-10)."""
 
     minimum_similarity: float = Field(default=0.60, ge=0, le=1)
     """Hard admission gate: a candidate with combined similarity below this
@@ -215,55 +223,82 @@ class LeadTimePolicy(BaseModel):
         return self
 
 
+_KNOWN_CRITICALITY_TIERS = frozenset(tier.value for tier in CriticalityTier)
+
+
 class ConversionTriggerPolicy(BaseModel):
     """Stage 5A -- when an OAR material may be recommended for Min-Max.
 
-    Triggers are OR-ed: any one suffices. Each is independently switchable
-    because their wording is not fully settled -- the FRS says "Critical
-    classification" in FR-5 but "Critical or of significant production impact"
-    in section 3.1, which are different tier sets.
+    Both conditions must hold (AND), and only for a material-plant Stage 1
+    already classified as OAR:
+
+    * more than ``consumption_count_threshold`` net issue transactions in the
+      trailing 12 months, **and**
+    * a criticality tier in ``criticality_trigger_tiers``.
+
+    A tier in ``excluded_criticality_tiers`` is never eligible, whatever the
+    other condition says. There is no third trigger: the I13 HOD-approved
+    request was removed from the rule, not merely switched off.
     """
 
     model_config = ConfigDict(frozen=True)
 
     consumption_count_months: int = Field(default=12, ge=1)
     consumption_count_threshold: int = Field(default=4, ge=0)
-    """Trigger 1: more than 4 consumptions in a trailing 12 months."""
-
-    enable_consumption_trigger: bool = True
-    enable_criticality_trigger: bool = True
-    enable_i13_hod_trigger: bool = True
+    """More than 4 net issue transactions in a trailing 12 months."""
 
     criticality_trigger_tiers: tuple[str, ...] | None = None
-    """Trigger 2's tier set. **Unset**: the two FRS statements disagree on
-    whether IMPACT counts alongside CRITICAL, and picking one would be inventing
-    the answer. Phase 6 must raise
-    :class:`~app.initiatives.i7.errors.PolicyNotConfiguredError` while this is
-    ``None`` and the trigger is enabled."""
+    """The tiers that satisfy the criticality condition. **Unset** on the bare
+    model, so a policy built without a decision cannot quietly pick one; while
+    this is ``None`` the criticality condition evaluates UNKNOWN and
+    ``PolicyDocument.unresolved_policies`` reports
+    ``conversion_criticality_tiers``. The confirmed set lives in
+    :func:`current_conversion_trigger_policy`."""
+
+    excluded_criticality_tiers: tuple[str, ...] = (CriticalityTier.OBSOLETE.value,)
+    """Tiers that are never eligible. OBSOLETE: a material being run down is
+    not one to start stocking on Min-Max, however often it moved."""
+
+    @field_validator("criticality_trigger_tiers", "excluded_criticality_tiers")
+    @classmethod
+    def _known_tiers(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        # A misspelt tier would match nothing and make every material
+        # NOT_ELIGIBLE with no error anywhere, so refuse it at load.
+        if value is None:
+            return value
+        unknown = [tier for tier in value if tier not in _KNOWN_CRITICALITY_TIERS]
+        if unknown:
+            raise ValueError(
+                f"unknown criticality tier(s) {unknown}; expected some of "
+                f"{sorted(_KNOWN_CRITICALITY_TIERS)}"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _excluded_tiers_never_qualify(self) -> "ConversionTriggerPolicy":
+        overlap = set(self.criticality_trigger_tiers or ()) & set(self.excluded_criticality_tiers)
+        if overlap:
+            raise ValueError(
+                f"criticality tier(s) {sorted(overlap)} cannot both qualify for and be "
+                "excluded from Min-Max conversion"
+            )
+        return self
 
 
 def current_conversion_trigger_policy() -> ConversionTriggerPolicy:
-    """The trigger set in force: ``criticality_trigger_tiers=("NORMAL",)``.
+    """The rule in force: ``criticality_trigger_tiers=("CRITICAL", "IMPACT")``.
 
-    Business-confirmed (Part 30 audit follow-up): NORMAL is the tier that
-    triggers the OAR -> Min-Max conversion's Trigger 2, not CRITICAL/IMPACT --
-    a deliberate call, not the FRS's ambiguity being guessed at. Matches
-    :func:`app.initiatives.i7.policy.oar.current_oar_policy`'s pattern: the
-    resolved rule lives in one function a reviewer can find, rather than a
+    Business-confirmed: an OAR material-plant is eligible for Min-Max only when
+    it had more than 4 net issue transactions in the trailing 12 months **and**
+    is CRITICAL or IMPACT. OBSOLETE is never eligible. This replaces the
+    earlier rule (consumption OR a NORMAL tier OR an I13 HOD approval).
+
+    Matches :func:`app.initiatives.i7.policy.oar.current_oar_policy`'s pattern:
+    the resolved rule lives in one function a reviewer can find, rather than a
     default silently baked into the schema.
-
-    **The I13 HOD trigger (Trigger 3) is off.** Eligibility rests on the
-    consumption count and the criticality tier. The recommendation already goes
-    through the approval chain before anything changes, and no I13 ledger exists
-    to answer the HOD question, so with the trigger on every material that fired
-    neither of the others came back UNKNOWN instead of a definite NOT_ELIGIBLE.
-    The trigger and its lookup stay in the code: turning
-    ``enable_i13_hod_trigger`` back on is the whole change if I13 ever supplies
-    a ledger and the business wants it.
     """
     return ConversionTriggerPolicy(
-        criticality_trigger_tiers=("NORMAL",),
-        enable_i13_hod_trigger=False,
+        criticality_trigger_tiers=(CriticalityTier.CRITICAL.value, CriticalityTier.IMPACT.value),
     )
 
 
