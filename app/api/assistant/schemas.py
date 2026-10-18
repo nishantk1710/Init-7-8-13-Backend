@@ -392,6 +392,10 @@ class SessionSummary(AssistantModel):
     issued_at: datetime
     expires_at: datetime
     turns: int
+    linked_reservations: list[LinkedReservationModel] = []
+    """Reservation items whose SGTXT names this session (as on the trace).
+    Empty until the item text has been read -- from the RESB extract, or from
+    the UAT overlay -- so empty means "not linked yet", not "never"."""
 
 
 class SessionListResponse(AssistantModel):

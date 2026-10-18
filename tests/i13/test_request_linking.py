@@ -290,3 +290,54 @@ class TestTheReadBackNote:
         by_line = {l["lineNo"]: l for l in body["lines"]}
         assert by_line[1]["linkedReservations"][0]["note"] == "Typed /4; matched to /1 by material and plant."
         assert "not needed" in by_line[3]["linkedReservations"][0]["note"]
+
+
+class TestTheSessionLog:
+    """The session log's Reservation column: each row carries its links, and
+    ``linked`` filters in SQL."""
+
+    @pytest.fixture
+    def client(self, factory, settings, recorded, monkeypatch):  # noqa: F811
+        from app.api.assistant import router as assistant_router
+        from app.assistant import requests as request_service
+        from app.main import create_app
+
+        with factory() as db:
+            first = request_service.lines_of(db, recorded)[0]
+            db.add(
+                SessionReservationLink(session_id=first.id, reservation_number="8100001", reservation_item="1",
+                                       material=first.material_id, plant=PLANT, source="UAT_SGTXT",
+                                       sgtxt=f"{recorded}/1")
+            )
+            db.commit()
+            linked_id = first.id
+
+        monkeypatch.setattr(assistant_router, "attach_material_names", lambda *a, **k: None)
+        app = create_app()
+
+        def _db():
+            with factory() as session:
+                yield session
+
+        app.dependency_overrides[get_db] = _db
+        app.dependency_overrides[get_settings] = lambda: settings
+        yield TestClient(app), linked_id
+        app.dependency_overrides.clear()
+
+    def test_each_row_carries_its_linked_reservations(self, client) -> None:
+        http, linked_id = client
+        items = http.get("/api/assistant/sessions").json()["items"]
+        by_id = {i["sessionId"]: i for i in items}
+        assert [(r["reservationNumber"], r["reservationItem"], r["source"])
+                for r in by_id[linked_id]["linkedReservations"]] == [("8100001", "1", "UAT_SGTXT")]
+        others = [i for i in items if i["sessionId"] != linked_id]
+        assert others and all(i["linkedReservations"] == [] for i in others)
+
+    def test_the_linked_filter_works_both_ways(self, client) -> None:
+        http, linked_id = client
+        only_linked = http.get("/api/assistant/sessions", params={"linked": "true"}).json()["items"]
+        not_linked = http.get("/api/assistant/sessions", params={"linked": "false"}).json()["items"]
+        everything = http.get("/api/assistant/sessions").json()["items"]
+        assert [i["sessionId"] for i in only_linked] == [linked_id]
+        assert linked_id not in {i["sessionId"] for i in not_linked}
+        assert len(only_linked) + len(not_linked) == len(everything)
