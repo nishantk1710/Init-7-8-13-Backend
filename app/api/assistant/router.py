@@ -44,7 +44,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session as DbSession
 
-from app.initiatives.i13.session_link import links_by_session
+from app.initiatives.i13.session_link import links_by_session, links_for_sessions
+from app.models.i13_session_link import SessionReservationLink
 from app.api.assistant.schemas import (
     AnswerRequest,
     AnswerResponse,
@@ -432,6 +433,10 @@ def list_sessions(
     flow: Annotated[str | None, Query()] = None,
     material: Annotated[str | None, Query()] = None,
     plant: Annotated[str | None, Query()] = None,
+    linked: Annotated[
+        bool | None,
+        Query(description="true: only sessions a reservation's SGTXT names; false: only those none does yet."),
+    ] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> SessionListResponse:
     """Every session, newest first.
@@ -439,8 +444,19 @@ def list_sessions(
     The outcome on each row is derived from its turns rather than stored, so an
     abandoned session is visible here without anything having had to write
     "abandoned" to it -- which, on an append-only table, nothing could.
+
+    Each row carries the reservations linked to it (``linked_reservations``),
+    read for the page in one query. ``linked`` filters in SQL, so "not linked"
+    reaches past the rows one page would load.
     """
     statement = select(AssistantSession).order_by(AssistantSession.issued_at.desc())
+    if linked is not None:
+        has_link = (
+            select(SessionReservationLink.id)
+            .where(SessionReservationLink.session_id == AssistantSession.id)
+            .exists()
+        )
+        statement = statement.where(has_link if linked else ~has_link)
     if flow:
         statement = statement.where(AssistantSession.flow == flow.lower())
     if material:
@@ -451,6 +467,7 @@ def list_sessions(
         statement = statement.where(AssistantSession.plant == plant.strip())
 
     rows = list(db.execute(statement.limit(limit)).scalars())
+    links = links_for_sessions(db, (row.id for row in rows))
     items = []
     for row in rows:
         turn_rows = session_service.turns(db, row.id)
@@ -471,6 +488,7 @@ def list_sessions(
                 issued_at=row.issued_at,
                 expires_at=row.expires_at,
                 turns=len(turn_rows),
+                linked_reservations=[_linked_model(link) for link in links.get(row.id, [])],
             )
         )
 

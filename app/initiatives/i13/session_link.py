@@ -331,6 +331,22 @@ def links_by_session(db: Session) -> dict[str, list[SessionReservationLink]]:
     return by_session
 
 
+def links_for_sessions(db: Session, session_ids: Iterable[str]) -> dict[str, list[SessionReservationLink]]:
+    """``links_by_session`` for the given sessions only -- one query, for a page
+    of the session log rather than the whole link table."""
+    wanted = sorted(set(session_ids))
+    by_session: dict[str, list[SessionReservationLink]] = {}
+    # Well under SQL Server's 2,100 parameters per statement.
+    for start in range(0, len(wanted), 1000):
+        for link in db.execute(
+            select(SessionReservationLink)
+            .where(SessionReservationLink.session_id.in_(wanted[start : start + 1000]))
+            .order_by(SessionReservationLink.reservation_number, SessionReservationLink.reservation_item)
+        ).scalars():
+            by_session.setdefault(link.session_id, []).append(link)
+    return by_session
+
+
 def session_by_reservation(db: Session) -> dict[Key, str]:
     """(reservation number, item) -> the session its SGTXT names."""
     return {
