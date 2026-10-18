@@ -211,6 +211,26 @@ class RepairLine:
         return (self.purchasing_document, self.item)
 
 
+def is_held(line: RepairLine) -> bool:
+    """A PO-issued line blocked in SAP, or already partly back.
+
+    The Repair Register screen does not list these (since 14-Oct-2026): it is
+    read for the lines a PO has gone out on and nothing has happened to yet,
+    and a line held up in SAP or half-returned is a different conversation
+    with a different owner. Scoped to PO Issued because that is the stage the
+    request named: a partly received line At Vendor, or a blocked line already
+    Closed, stays listed and keeps its flag.
+
+    Nothing is deleted. The line stays in every count here and at its own
+    detail page; only that one listing leaves it out (``excludeHeld``), and
+    says how many. The frontend's ``isListedInRegister`` applies the same rule
+    to the Overview, which still reads the whole register: the two must agree.
+    """
+    return line.repair_status == PO_ISSUED and (
+        line.po_blocked or line.receipt_status == PARTIALLY_RECEIVED
+    )
+
+
 # --- Layer 1: identify the repair PO lines --------------------------------
 
 # The candidate pull. Note what is NOT here: any predicate on pstyp.
