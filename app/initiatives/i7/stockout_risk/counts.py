@@ -1,18 +1,29 @@
-"""The High Stockout Risk counts, in SQL, over whichever recommendations the page is
-looking at.
+"""The High Stockout Risk counts, in SQL, from the material-plants' own usage, stock and lead time.
 
-For every material-plant in ``base`` (the latest recommendation per material-plant,
-narrowed by the caller's filters):
+The population is every **Fast or Slow moving material-plant in the usage table**
+(``i7_stockout_risk_input``), whether or not a recommendation exists for it: the KPI is a statement
+about consumption against stock, and which materials the pipeline happened to recommend is not part
+of it. Each one is judged on three figures, all read from their own source:
 
-* **Not part of this KPI** -- Non-moving: its last issue is more than 730 days before
-  the anchor, or it has never been issued in a plant whose movements were loaded.
-* **Insufficient Data** -- it is Fast or Slow moving but has no lead time or no stock
-  on hand, or it sits in a plant with no movement data at all (so "never issued"
-  would be a guess).
-* **Evaluated** -- Fast or Slow moving, with a lead time and a stock on hand.
-* **At risk** -- evaluated, and stock on hand is below average daily consumption x lead
-  time. Compared as ``SOH x window_days < consumption x lead time``, which is the same
-  test without dividing.
+* consumption -- the usage table (net 90-day issues, on the anchor date's window);
+* stock on hand -- ``i7_staged_stock`` summed over storage locations;
+* lead time -- ``i7_material_feature.lead_time_days``, the resolved value (the Initiative 11 program,
+  else MARC planned delivery time), never the recommendation's.
+
+A material-plant is then one of:
+
+* **At risk** -- all three are valid and stock on hand is below average daily consumption x lead time.
+  Compared as ``SOH x window_days < consumption x lead time``, the same test without dividing.
+* **Evaluated, not at risk** -- all three are valid and stock covers the lead time.
+* **Insufficient Data** -- Fast or Slow, but one of the three is missing or invalid: no feature-store
+  row or no lead time, a lead time of zero or less (SAP's "not maintained" is 0, and taking it as a real
+  lead time would make the requirement 0 and the material safe), no stock row, a negative stock, a
+  storage location with no quantity (the sum would silently leave it out), or unusable consumption. It
+  is never counted as safe, and no missing value is read as zero.
+* **Not part of this KPI** -- Non-moving: its last issue is more than 730 days before the anchor.
+
+One more case is Insufficient Data: a *recommended* material-plant in a plant with no movement data at
+all, because "never issued" is only a fact where the movements were loaded.
 
 See :mod:`app.initiatives.i7.stockout_risk` for the definitions.
 """
@@ -22,11 +33,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from sqlalchemy import Select, and_, case, exists, func, or_, select, union_all
+from sqlalchemy import Select, and_, case, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
 from app.initiatives.i7.stockout_risk import SLOW_MAX_DAYS
 from app.models.i7_features import MaterialFeature
 from app.models.i7_recommendation import Recommendation
@@ -43,61 +53,12 @@ class StockoutRiskCounts:
     """At risk plus not at risk: the material-plants that could be judged."""
 
     insufficient_data: int
-    """Fast or Slow material-plants that could not be judged for want of a lead time or
-    stock on hand, plus those in a plant with no movement data."""
+    """Fast or Slow material-plants that could not be judged for want of a valid consumption, stock on
+    hand or lead time, plus recommended ones in a plant with no movement data."""
 
     as_of: date | None
     """The date the usage was read as of. ``None`` when the usage table has not been
     built -- then every count is 0 and means "not computed", not "nothing at risk"."""
-
-
-def _smooth_rows(
-    recommendation_keys,
-    *,
-    plant: str | None,
-    material: str | None,
-    demand_class: str | None,
-    criticality: str | None,
-    status: str | None,
-    is_oar: bool | None,
-    confidence: str | None,
-) -> Select | None:
-    """The SMOOTH material-plants, read from the feature store, or ``None`` when the caller's
-    filters rule them out.
-
-    A SMOOTH material-plant has no recommendation (see ``app.initiatives.i7.smooth_demand``), so
-    the recommendations cannot supply it. Its lead time is the feature store's resolved one --
-    the figure forecasting and inventory use for every other material. The filters that mean
-    something for it -- plant, material, demand class, criticality tier -- apply to the feature
-    row; a filter that only a recommendation has (status, a confidence, being OAR) leaves no
-    SMOOTH material-plant to count.
-    """
-    if status is not None or confidence is not None or is_oar is True:
-        return None
-    if demand_class is not None and demand_class != SMOOTH_DEMAND_CLASS:
-        return None
-
-    statement = select(
-        MaterialFeature.sap_material_number.label("sap_material_number"),
-        MaterialFeature.sap_plant_code.label("sap_plant_code"),
-        MaterialFeature.lead_time_days.label("lead_time_days"),
-    ).where(
-        MaterialFeature.demand_class == SMOOTH_DEMAND_CLASS,
-        MaterialFeature.history_status == "SUFFICIENT",
-        # One row per material-plant: if its latest recommendation is still in the list (it was
-        # written before the material was classified SMOOTH), that row already counts it.
-        ~exists().where(
-            recommendation_keys.c.sap_material_number == MaterialFeature.sap_material_number,
-            recommendation_keys.c.sap_plant_code == MaterialFeature.sap_plant_code,
-        ),
-    )
-    if plant is not None:
-        statement = statement.where(MaterialFeature.sap_plant_code == plant)
-    if material is not None:
-        statement = statement.where(MaterialFeature.sap_material_number == material)
-    if criticality is not None:
-        statement = statement.where(MaterialFeature.criticality == criticality)
-    return statement
 
 
 def stockout_risk_counts(
@@ -112,12 +73,13 @@ def stockout_risk_counts(
     is_oar: bool | None = None,
     confidence: str | None = None,
 ) -> StockoutRiskCounts:
-    """The counts for the recommendations ``base`` selects, plus the SMOOTH material-plants.
+    """The counts for the Fast and Slow material-plants the caller's filters leave in.
 
     ``base`` must select from ``Recommendation`` (it is re-projected here), the way the summary
-    endpoint's own ``base`` does, and must already leave SMOOTH recommendations out. The keyword
-    arguments are the filters ``base`` was built with, so the SMOOTH material-plants -- which
-    come from the feature store, not from ``base`` -- are narrowed the same way.
+    endpoint's own ``base`` does. The keyword arguments are the filters ``base`` was built with. Plant,
+    material, demand class and criticality narrow the usage population directly; a filter only a
+    recommendation has (status, a confidence, OAR or not) restricts it to the material-plants ``base``
+    selects, since only they have those properties.
     """
     try:
         as_of = session.execute(select(func.max(StockoutRiskInput.as_of_date))).scalar()
@@ -130,83 +92,96 @@ def stockout_risk_counts(
     if as_of is None:
         return StockoutRiskCounts(at_risk=0, evaluated=0, insufficient_data=0, as_of=None)
 
-    recommendation_rows = base.with_only_columns(
-        Recommendation.sap_material_number.label("sap_material_number"),
-        Recommendation.sap_plant_code.label("sap_plant_code"),
-        Recommendation.lead_time_days.label("lead_time_days"),
-    )
-    smooth_rows = _smooth_rows(
-        recommendation_rows.subquery(),
-        plant=plant,
-        material=material,
-        demand_class=demand_class,
-        criticality=criticality,
-        status=status,
-        is_oar=is_oar,
-        confidence=confidence,
-    )
-    rows = (
-        union_all(recommendation_rows, smooth_rows) if smooth_rows is not None else recommendation_rows
-    ).subquery()
+    usage = StockoutRiskInput
+    feature = MaterialFeature
 
-    # Summed over storage locations: a material-plant's stock on hand is its unrestricted-use
-    # stock everywhere it is held (NULL when it has no staged stock row, never 0).
+    # Summed over storage locations: a material-plant's stock on hand is its unrestricted-use stock
+    # everywhere it is held. ``blank_locations`` counts the locations with no quantity, which SUM would
+    # skip without a word -- a partly blank total is not a stock figure.
     on_hand = (
         select(
-            StagedStock.sap_material_number,
-            StagedStock.sap_plant_code,
+            StagedStock.sap_material_number.label("sap_material_number"),
+            StagedStock.sap_plant_code.label("sap_plant_code"),
             func.sum(StagedStock.unrestricted_use_stock).label("on_hand"),
+            func.sum(case((StagedStock.unrestricted_use_stock.is_(None), 1), else_=0)).label("blank_locations"),
         )
         .group_by(StagedStock.sap_material_number, StagedStock.sap_plant_code)
         .subquery()
     )
+    recommended = base.with_only_columns(
+        Recommendation.sap_material_number.label("sap_material_number"),
+        Recommendation.sap_plant_code.label("sap_plant_code"),
+    ).distinct().subquery()  # one row per material-plant, however many recommendations it has
 
-    # A plant "has movement data" when at least one of its material-plants has been issued. Joined, not
-    # tested with NOT IN (SELECT ...): SQL Server refuses a subquery inside an aggregate, and the
-    # counts below are SUM(CASE ...).
-    plants_with_movements = select(StockoutRiskInput.sap_plant_code.label("sap_plant_code")).distinct().subquery()
-
-    usage = StockoutRiskInput
-    has_usage = usage.id.is_not(None)
-    fast_or_slow = and_(has_usage, usage.last_issue_date >= as_of - timedelta(days=SLOW_MAX_DAYS))
-    has_inputs = and_(rows.c.lead_time_days.is_not(None), on_hand.c.on_hand.is_not(None))
-
-    evaluated = and_(fast_or_slow, has_inputs)
-    at_risk = and_(
-        evaluated,
-        on_hand.c.on_hand * usage.window_days < usage.consumption_90d * rows.c.lead_time_days,
+    # Every figure a judgement needs must be present and usable. A missing one makes the whole
+    # expression NULL, which the CASEs below count as "not evaluated" -- never as safe.
+    valid_usage = and_(usage.window_days > 0, usage.consumption_90d >= 0)
+    valid_lead_time = feature.lead_time_days > 0
+    valid_stock = and_(
+        on_hand.c.on_hand.is_not(None),
+        on_hand.c.on_hand >= 0,
+        on_hand.c.blank_locations == 0,
     )
-    insufficient = or_(
-        and_(fast_or_slow, ~has_inputs),
-        and_(~has_usage, plants_with_movements.c.sap_plant_code.is_(None)),
-    )
+    evaluated = and_(valid_usage, valid_lead_time, valid_stock)
+    at_risk = and_(evaluated, on_hand.c.on_hand * usage.window_days < usage.consumption_90d * feature.lead_time_days)
 
-    counts = session.execute(
+    source = (
         select(
+            func.count(),
             func.coalesce(func.sum(case((at_risk, 1), else_=0)), 0),
             func.coalesce(func.sum(case((evaluated, 1), else_=0)), 0),
-            func.coalesce(func.sum(case((insufficient, 1), else_=0)), 0),
         )
-        .select_from(rows)
+        .select_from(usage)
         .outerjoin(
-            usage,
+            feature,
             and_(
-                usage.sap_material_number == rows.c.sap_material_number,
-                usage.sap_plant_code == rows.c.sap_plant_code,
+                feature.sap_material_number == usage.sap_material_number,
+                feature.sap_plant_code == usage.sap_plant_code,
             ),
         )
         .outerjoin(
             on_hand,
             and_(
-                on_hand.c.sap_material_number == rows.c.sap_material_number,
-                on_hand.c.sap_plant_code == rows.c.sap_plant_code,
+                on_hand.c.sap_material_number == usage.sap_material_number,
+                on_hand.c.sap_plant_code == usage.sap_plant_code,
             ),
         )
-        .outerjoin(plants_with_movements, plants_with_movements.c.sap_plant_code == rows.c.sap_plant_code)
-    ).one()
+    )
+    if status is not None or confidence is not None or is_oar is not None:
+        source = source.join(
+            recommended,
+            and_(
+                recommended.c.sap_material_number == usage.sap_material_number,
+                recommended.c.sap_plant_code == usage.sap_plant_code,
+            ),
+        )
+    # Fast (last issue 0-365 days before the anchor) and Slow (366-730): measured from the anchor the
+    # table was built with, so a changed setting that has not been rebuilt never mislabels the figures.
+    source = source.where(usage.last_issue_date >= as_of - timedelta(days=SLOW_MAX_DAYS))
+    if plant is not None:
+        source = source.where(usage.sap_plant_code == plant)
+    if material is not None:
+        source = source.where(usage.sap_material_number == material)
+    if demand_class is not None:
+        source = source.where(feature.demand_class == demand_class)
+    if criticality is not None:
+        source = source.where(feature.criticality == criticality)
+
+    eligible, at_risk_count, evaluated_count = session.execute(source).one()
+
+    # A plant "has movement data" when at least one of its material-plants has been issued. Joined, not
+    # tested with NOT IN (SELECT ...): SQL Server refuses a subquery inside an aggregate.
+    plants_with_movements = select(usage.sap_plant_code.label("sap_plant_code")).distinct().subquery()
+    unjudgeable_plant = session.execute(
+        select(func.count())
+        .select_from(recommended)
+        .outerjoin(plants_with_movements, plants_with_movements.c.sap_plant_code == recommended.c.sap_plant_code)
+        .where(plants_with_movements.c.sap_plant_code.is_(None))
+    ).scalar_one()
+
     return StockoutRiskCounts(
-        at_risk=int(counts[0]),
-        evaluated=int(counts[1]),
-        insufficient_data=int(counts[2]),
+        at_risk=int(at_risk_count),
+        evaluated=int(evaluated_count),
+        insufficient_data=int(eligible) - int(evaluated_count) + int(unjudgeable_plant),
         as_of=as_of,
     )

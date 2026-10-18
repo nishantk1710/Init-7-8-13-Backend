@@ -5,20 +5,27 @@ to cover its supplier lead time::
 
     SOH               = unrestricted-use stock summed over storage locations (i7_staged_stock)
     ADC               = net quantity issued in the 90 days ending on the anchor date / 90
-    required stock    = ADC x lead time in days (the recommendation's lead_time_days)
+    lead time         = the resolved lead time in days in the feature store
+                        (i7_material_feature.lead_time_days: the Initiative 11 program,
+                        else MARC planned delivery time) -- not the recommendation's
+    required stock    = ADC x lead time
     at risk           = SOH < required stock
 
 Only **Fast** and **Slow** moving material-plants are judged, by the days between
-the anchor date and the last goods issue::
+the anchor date and the last goods issue, and every one of them is judged whether or
+not a recommendation exists for it::
 
     0-365 days        Fast moving
     366-730 days      Slow moving
     over 730 / never  Non-moving    -- not part of this KPI
 
-A Fast or Slow material-plant whose lead time or stock on hand is missing is
-**Insufficient Data**, never "safe": the figure it would have been judged on does
-not exist. So is a material-plant in a plant whose movements were not loaded at
-all, because "never issued" is only a fact where movements were loaded.
+A Fast or Slow material-plant whose consumption, stock on hand or lead time is
+missing or invalid is **Insufficient Data**, never "safe": the figure it would have
+been judged on does not exist, and no missing value is read as zero. Invalid means a
+lead time of zero or less (SAP's "not maintained"), a negative stock, a storage
+location with no quantity, or a window or consumption that cannot be used. So is a
+recommended material-plant in a plant whose movements were not loaded at all, because
+"never issued" is only a fact where movements were loaded.
 
 The percentage on the card is at-risk / evaluated, where evaluated is the
 material-plants that could be judged (at risk plus not at risk).

@@ -623,9 +623,9 @@ def get_recommendation_summary(
     ).scalar()
 
     # --- High Stockout Risk: stock on hand < average daily consumption x lead time --
-    # Fast and Slow moving material-plants only, with the usage read as of the
-    # configured anchor date -- see app.initiatives.i7.stockout_risk for the rule and
-    # for how a missing lead time or stock on hand is Insufficient Data, not safe.
+    # Every Fast and Slow moving material-plant in the usage table, recommended or not, with the
+    # usage read as of the configured anchor date -- see app.initiatives.i7.stockout_risk for the
+    # rule and for how a missing or invalid figure is Insufficient Data, not safe.
     stockout_risk = stockout_risk_counts(
         session,
         base,
