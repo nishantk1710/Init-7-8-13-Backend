@@ -197,6 +197,15 @@ class RepairJustification(I8Model):
     unjustified_purchases: list[UnjustifiedPurchase]
 
 
+class LineException(I8Model):
+    """One exception raised against a register line: enough for the register's
+    Exceptions column to name it and link to it in the queue."""
+
+    id: str
+    type: str
+    severity: Literal["info", "warning", "critical"]
+
+
 class RepairChain(I8Model):
     """One repair PO line. Mirrors the frontend's RepairChain."""
 
@@ -261,6 +270,13 @@ class RepairChain(I8Model):
     """FR-7 on this line: a NEW_ACQUISITION reason recorded while it was out,
     or a new purchase that overlapped it with none. None when neither --
     see ``app.initiatives.i8.line_justifications``."""
+
+    exceptions: list[LineException] | None = None
+    """What the checks raise against this line, for the register's Exceptions
+    column. Served by the register listing, so the screen need not load the
+    whole exception queue to fill one column of one page. An empty list means
+    the checks ran and raised nothing; null means not computed here -- the
+    line's detail endpoint, which links to the queue instead."""
 
     days_open: int | None = None
     """Raised to received, or raised to today while still out -- the same
@@ -355,6 +371,42 @@ class RegisterMeta(I8Model):
     blocked_lines: int = 0
     """Repair lines blocked in SAP -- counted above, and flagged per row."""
 
+    held_lines: int = 0
+    """PO-issued lines blocked in SAP or partly received, left out by
+    ``excludeHeld`` -- the lines the Repair Register screen does not list. With
+    it, ``totalLines``, ``openLines``, ``blockedLines`` and
+    ``partiallyReceivedLines`` describe the lines listed. Zero without it."""
+
+
+class VendorOption(I8Model):
+    """One vendor a register or queue can be narrowed to."""
+
+    vendor: str
+    """The code, which is what the ``vendor`` filter takes."""
+
+    name: str | None = None
+    """LFA1's name, when one was delivered. A dropdown shows it and falls back
+    to the code -- the rule the Vendor columns follow."""
+
+
+class RegisterFacets(I8Model):
+    """The values the register's filters can take, for a paged screen's dropdowns.
+
+    Taken after ``excludeHeld`` and before every filter, so a dropdown always
+    offers every value it can be switched to, rather than those on one page.
+    """
+
+    plants: list[PlantReference]
+    vendors: list[VendorOption]
+    has_unknown_vendor: bool
+    """Some lines carry no vendor (no PO header). ``vendor=none`` finds them."""
+
+    repair_statuses: list[str]
+    criticalities: list[str]
+    has_unrated: bool
+    """Some lines' material has no criticality at their plant.
+    ``criticality=none`` finds them."""
+
 
 class RegisterResponse(I8Model):
     items: list[RepairChain]
@@ -362,6 +414,7 @@ class RegisterResponse(I8Model):
     page_size: int
     total: int
     meta: RegisterMeta
+    facets: RegisterFacets
     reference_date: date
 
 
@@ -611,17 +664,6 @@ class DeclarationMeta(I8Model):
     attestation_window_days: int
     """The matching rule that produced these statuses. Never quote a count
     without its source."""
-
-
-class VendorOption(I8Model):
-    """One vendor a queue can be narrowed to."""
-
-    vendor: str
-    """The code, which is what the ``vendor`` filter takes."""
-
-    name: str | None = None
-    """LFA1's name, when one was delivered. A dropdown shows it and falls back
-    to the code -- the rule the queue's Vendor column follows."""
 
 
 class DeclarationFacets(I8Model):

@@ -41,6 +41,7 @@ from app.api.i8.mappers import (
     exception_history_entry,
     exception_item,
     exception_meta,
+    register_facets,
     register_meta,
     repair_chain,
     timeline,
@@ -98,7 +99,7 @@ from app.initiatives.i8.exception_state import (
 )
 from app.initiatives.i8.exceptions import ExceptionItem
 from app.initiatives.i8.material_number import is_eighty_series, normalise
-from app.initiatives.i8.register import RepairLine
+from app.initiatives.i8.register import RepairLine, is_held
 from app.initiatives.i8.repairable_unit import assess as assess_repairable_unit
 from app.initiatives.i8.service import (
     AttestationView,
@@ -226,6 +227,7 @@ def _chain(
     cfg: I8Settings,
     lookup: dict[tuple[str, str | None], UniverseRow],
     view: AttestationView | None = None,
+    exceptions: Sequence[ExceptionItem] | None = None,
 ) -> RepairChain:
     """A register row enriched with its material's stock position.
 
@@ -245,7 +247,40 @@ def _chain(
         criticality=row.criticality if row else None,
         declaration=view.declaration_by_line.get(line.key) if view else None,
         justification=view.justifications.get(line.key) if view else None,
+        exceptions=exceptions,
     )
+
+
+def _criticality_of(
+    line: RepairLine, lookup: dict[tuple[str, str | None], UniverseRow]
+) -> str | None:
+    """The rating a register row shows: its material's, at its plant."""
+    row = lookup.get((line.material_id, line.plant))
+    return row.criticality if row else None
+
+
+def _declaration_status_of(line: RepairLine, view: AttestationView) -> str:
+    """What a register row's Declaration Status cell says: the queue row's
+    status, or "Required" for a line the queue has no row for -- the default
+    ``repair_chain`` applies."""
+    row = view.declaration_by_line.get(line.key)
+    return row.status if row is not None else "Required"
+
+
+def _raised_by_line(
+    view: AttestationView, excluded_types: frozenset[str]
+) -> dict[tuple[str, str], list[ExceptionItem]]:
+    """Each repair line's exception items, less the excluded types.
+
+    One pass over the queue per request, so the register can fill its
+    Exceptions column -- and filter on it -- for any page without the screen
+    loading the whole queue to join it in the browser.
+    """
+    by_line: dict[tuple[str, str], list[ExceptionItem]] = {}
+    for item in view.exceptions:
+        if item.type not in excluded_types:
+            by_line.setdefault((item.purchasing_document, item.item), []).append(item)
+    return by_line
 
 
 # --- W5.1: the repairable universe ----------------------------------------
@@ -370,23 +405,86 @@ def get_register(
     cfg: SettingsDep,
     view: AttestationViewDep,
     plant: str | None = Query(None),
-    vendor: str | None = Query(None),
+    vendor: str | None = Query(
+        None, description="Vendor code. The literal `none` returns the lines with no vendor."
+    ),
     material: str | None = Query(None),
     repair_status: str | None = Query(None, alias="status"),
     overdue_only: bool = Query(False, alias="overdueOnly"),
+    overdue_status: str | None = Query(
+        None, alias="overdueStatus", description="OVERDUE, ON_TIME, NO_DUE_DATE or RECEIVED"
+    ),
     open_only: bool = Query(False, alias="openOnly"),
-    criticality: str | None = Query(None),
+    criticality: str | None = Query(
+        None,
+        description=(
+            "The rating the line shows -- its material's, at its plant. The "
+            "literal `none` returns the unrated lines."
+        ),
+    ),
+    declaration_status: str | None = Query(
+        None, alias="declarationStatus", description="Required, Completed or Flagged"
+    ),
     aging_bucket: str | None = Query(None, alias="agingBucket"),
+    with_exceptions: bool = Query(
+        False,
+        alias="withExceptions",
+        description="Only lines a check has raised something against",
+    ),
+    exclude_exception_type: str | None = Query(
+        None,
+        alias="excludeExceptionType",
+        description=(
+            "Comma-separated exception types the caller does not carry: left "
+            "out of each line's `exceptions` and of `withExceptions`"
+        ),
+    ),
+    exclude_held: bool = Query(
+        False,
+        alias="excludeHeld",
+        description=(
+            "Leave out PO-issued lines blocked in SAP or partly received, as "
+            "the Repair Register screen does. `meta` then describes the lines "
+            "listed, and counts the rest in `heldLines`."
+        ),
+    ),
+    q: str | None = Query(
+        None,
+        max_length=200,
+        description="Material number or description, repair line, or the PO or PR number",
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(None, alias="pageSize", ge=1),
 ) -> RegisterResponse:
+    """Repair lines, one page at a time, each with what the checks raise
+    against it.
+
+    ``meta`` describes the register whatever the filters -- restated over the
+    listed lines when ``excludeHeld`` leaves some out. ``facets`` are taken
+    after ``excludeHeld`` and before every filter, so a screen showing one page
+    of thousands can still offer every value in its dropdowns.
+    """
     page_size = min(page_size or cfg.default_page_size, cfg.max_page_size)
+    lookup = _stock_lookup(snapshot)
+    raised = _raised_by_line(view, _type_set(exclude_exception_type))
 
     lines = snapshot.lines
+    held: tuple[RepairLine, ...] | None = None
+    if exclude_held:
+        held = tuple(line for line in lines if is_held(line))
+        lines = tuple(line for line in lines if not is_held(line))
+    listed = lines
+
+    facets = register_facets(listed, cfg, lambda line: _criticality_of(line, lookup))
+
     if plant:
         lines = tuple(line for line in lines if line.plant == plant)
     if vendor:
-        lines = tuple(line for line in lines if line.vendor == vendor)
+        wanted_vendor = vendor.strip()
+        if wanted_vendor.lower() == "none":
+            lines = tuple(line for line in lines if not line.vendor)
+        else:
+            lines = tuple(line for line in lines if line.vendor == wanted_vendor)
     if material:
         key = normalise(material)
         lines = tuple(line for line in lines if line.material_id == key)
@@ -396,28 +494,59 @@ def get_register(
         lines = tuple(line for line in lines if line.aging_bucket == aging_bucket)
     if overdue_only:
         lines = tuple(line for line in lines if line.is_overdue)
+    if overdue_status:
+        wanted_overdue = overdue_status.strip().upper()
+        lines = tuple(line for line in lines if line.overdue_status == wanted_overdue)
     if open_only:
         lines = tuple(line for line in lines if line.is_open)
     if criticality:
-        wanted = criticality.strip().upper()
-        by_material = {
-            row.material_id
-            for row in snapshot.universe
-            if row.criticality == wanted
-        }
-        lines = tuple(line for line in lines if line.material_id in by_material)
+        # The rating the row shows, at the line's own plant. This used to
+        # match any plant's rating for the material, so a filter could return
+        # rows whose Criticality cell said something else.
+        wanted_rating = criticality.strip().upper()
+        if wanted_rating == "NONE":
+            lines = tuple(line for line in lines if not _criticality_of(line, lookup))
+        else:
+            lines = tuple(
+                line
+                for line in lines
+                if (_criticality_of(line, lookup) or "").upper() == wanted_rating
+            )
+    if declaration_status:
+        wanted_declaration = declaration_status.strip().lower()
+        lines = tuple(
+            line
+            for line in lines
+            if _declaration_status_of(line, view).lower() == wanted_declaration
+        )
+    if with_exceptions:
+        lines = tuple(line for line in lines if raised.get(line.key))
+    if q and q.strip():
+        needle = q.strip().lower()
+        lines = tuple(
+            line
+            for line in lines
+            if _matches(
+                needle,
+                line.material_id,
+                line.description,
+                f"{line.purchasing_document}-{line.item}",
+                f"{line.purchasing_document}/{line.item}",
+                (f"{line.pr_number}/{line.pr_item}" if line.pr_item else line.pr_number),
+            )
+        )
 
     page_lines, total = _paginate(lines, page, page_size)
-    lookup = _stock_lookup(snapshot)
     return RegisterResponse(
         items=[
-            _chain(line, cfg, lookup, view)
+            _chain(line, cfg, lookup, view, exceptions=raised.get(line.key, []))
             for line in page_lines
         ],
         page=page,
         page_size=page_size,
         total=total,
-        meta=register_meta(snapshot.register_stats),
+        meta=register_meta(snapshot.register_stats, held, listed),
+        facets=facets,
         reference_date=snapshot.reference_date,
     )
 

@@ -8,7 +8,7 @@ changing underneath it.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Iterable, Sequence
 
 from app.api.i8.schemas import (
     Attestation,
@@ -25,8 +25,10 @@ from app.api.i8.schemas import (
     ExceptionMeta,
     ExceptionQueueItem,
     LifecycleStage,
+    LineException,
     MaterialReference,
     PlantReference,
+    RegisterFacets,
     RegisterMeta,
     RepairChain,
     RepairJustification,
@@ -52,7 +54,7 @@ from app.initiatives.i8.exceptions import RAISED_BY_I8, ExceptionItem, Exception
 from app.initiatives.i8.line_justifications import LineJustification
 from app.initiatives.i8.exception_state import UNTOUCHED, ExceptionWorkState
 from app.initiatives.i8.models import ExceptionEvent, RepairAttestation
-from app.initiatives.i8.register import RegisterStats, RepairLine
+from app.initiatives.i8.register import PARTIALLY_RECEIVED, RegisterStats, RepairLine
 from app.initiatives.i8.universe import UniverseRow, UniverseStats
 from app.initiatives.i8.vendors import VendorTurnaround
 
@@ -102,6 +104,7 @@ def repair_chain(
     criticality: str | None = None,
     declaration: DeclarationRow | None = None,
     justification: LineJustification | None = None,
+    exceptions: Sequence[ExceptionItem] | None = None,
 ) -> RepairChain:
     """One register row.
 
@@ -118,6 +121,9 @@ def repair_chain(
     ``declaration`` is the line's queue row, when the caller has the view: its
     status overrides ``declaration_status``, and it brings who declared, when,
     the condition and the next action with it.
+
+    ``exceptions`` are the items raised against the line, when the caller
+    computed them -- the register listing does, the detail endpoint does not.
     """
     if declaration is not None:
         declaration_status = declaration.status
@@ -179,6 +185,9 @@ def repair_chain(
         next_action=declaration.next_action if declaration else None,
         requester=line.requisitioner,
         justification=repair_justification(justification) if justification else None,
+        exceptions=(
+            [line_exception(item) for item in exceptions] if exceptions is not None else None
+        ),
     )
 
 
@@ -372,8 +381,57 @@ def universe_meta(stats: UniverseStats) -> UniverseMeta:
     )
 
 
-def register_meta(stats: RegisterStats) -> RegisterMeta:
-    return RegisterMeta(**vars(stats))
+def register_meta(
+    stats: RegisterStats,
+    held: Sequence[RepairLine] | None = None,
+    listed: Sequence[RepairLine] = (),
+) -> RegisterMeta:
+    """The register's counts -- restated over ``listed`` when ``excludeHeld``
+    took ``held`` out (``held`` is None when it did not).
+
+    Without the restatement the caption would describe a register nobody can
+    see: "5,155 repair lines, 827 still open" over a listing of 5,063. Only the
+    four figures the caption reads change; the rest still count every line.
+    """
+    meta = RegisterMeta(**vars(stats))
+    if held is None:
+        return meta
+    return meta.model_copy(
+        update={
+            "total_lines": max(0, stats.total_lines - len(held)),
+            "open_lines": max(0, stats.open_lines - sum(1 for line in held if line.is_open)),
+            "blocked_lines": sum(1 for line in listed if line.po_blocked),
+            "partially_received_lines": sum(
+                1 for line in listed if line.receipt_status == PARTIALLY_RECEIVED
+            ),
+            "held_lines": len(held),
+        }
+    )
+
+
+def register_facets(
+    lines: Sequence[RepairLine],
+    cfg: I8Settings,
+    criticality_of: Callable[[RepairLine], str | None],
+) -> RegisterFacets:
+    """The plants, vendors, repair statuses and criticalities among ``lines``.
+
+    ``criticality_of`` is the rating the line shows -- its material's at its
+    plant -- so the dropdown offers exactly what the column displays.
+    """
+    criticalities = [criticality_of(line) for line in lines]
+    return RegisterFacets(
+        plants=_plant_options((line.plant for line in lines), cfg),
+        vendors=_vendor_options((line.vendor, line.vendor_name) for line in lines),
+        has_unknown_vendor=any(not line.vendor for line in lines),
+        repair_statuses=sorted({line.repair_status for line in lines}),
+        criticalities=sorted({c for c in criticalities if c}),
+        has_unrated=any(not c for c in criticalities),
+    )
+
+
+def line_exception(item: ExceptionItem) -> LineException:
+    return LineException(id=item.id, type=item.type, severity=item.severity)
 
 
 # --- W5.3: attestation, declarations, exceptions --------------------------
@@ -475,30 +533,40 @@ def declaration_meta(rows, window_days: int) -> DeclarationMeta:
 
 
 def declaration_facets(rows: Sequence[DeclarationRow], cfg: I8Settings) -> DeclarationFacets:
-    """The plants, vendors and repair statuses present among ``rows``.
-
-    A vendor is keyed by its code, and a code seen once without a name and once
-    with one keeps the name. Sorted by what a dropdown shows -- the name, else
-    the code -- so the list reads alphabetically rather than by code.
-    """
-    names: dict[str, str | None] = {}
-    for row in rows:
-        if row.vendor:
-            names[row.vendor] = names.get(row.vendor) or row.vendor_name
+    """The plants, vendors and repair statuses present among ``rows``."""
     return DeclarationFacets(
-        plants=[
-            reference
-            for plant in sorted({r.plant for r in rows if r.plant})
-            if (reference := plant_reference(plant, cfg)) is not None
-        ],
-        vendors=[
-            VendorOption(vendor=code, name=name)
-            for code, name in sorted(
-                names.items(), key=lambda entry: ((entry[1] or entry[0]).lower(), entry[0])
-            )
-        ],
+        plants=_plant_options((r.plant for r in rows), cfg),
+        vendors=_vendor_options((r.vendor, r.vendor_name) for r in rows),
         repair_statuses=sorted({r.repair_status for r in rows if r.repair_status}),
     )
+
+
+def _plant_options(plants: Iterable[str | None], cfg: I8Settings) -> list[PlantReference]:
+    """Each plant once, by code, with its name."""
+    return [
+        reference
+        for plant in sorted({p for p in plants if p})
+        if (reference := plant_reference(plant, cfg)) is not None
+    ]
+
+
+def _vendor_options(vendors: Iterable[tuple[str | None, str | None]]) -> list[VendorOption]:
+    """Each vendor once, from (code, name) pairs; pairs with no code are skipped.
+
+    Keyed by the code, and a code seen once without a name and once with one
+    keeps the name. Sorted by what a dropdown shows -- the name, else the code
+    -- so the list reads alphabetically rather than by code.
+    """
+    names: dict[str, str | None] = {}
+    for code, name in vendors:
+        if code:
+            names[code] = names.get(code) or name
+    return [
+        VendorOption(vendor=code, name=name)
+        for code, name in sorted(
+            names.items(), key=lambda entry: ((entry[1] or entry[0]).lower(), entry[0])
+        )
+    ]
 
 
 def exception_item(
@@ -601,11 +669,7 @@ def exception_meta(
 def exception_facets(items: Sequence[ExceptionItem], cfg: I8Settings) -> ExceptionFacets:
     """The plants and types present among ``items``."""
     return ExceptionFacets(
-        plants=[
-            reference
-            for plant in sorted({i.plant for i in items if i.plant})
-            if (reference := plant_reference(plant, cfg)) is not None
-        ],
+        plants=_plant_options((i.plant for i in items), cfg),
         types=sorted({i.type for i in items}),
     )
 

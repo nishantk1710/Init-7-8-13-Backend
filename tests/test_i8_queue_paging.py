@@ -1,14 +1,18 @@
-"""The declaration and exception queues, paged on the server.
+"""The register and the two queues, paged on the server.
 
-Both screens fetched every row -- 5,153 and 5,978 of them -- and filtered in the
-browser, so each page weighed 17 MB. They now ask for one page, which moves
-three things here that the browser used to do over the rows it held:
+The three screens fetched every row -- 5,063, 5,153 and 5,978 of them -- and
+filtered in the browser, so each page weighed 17 to 35 MB. They now ask for one
+page, which moves here what the browser used to do over the rows it held:
 
 * the search box (``q``), and the filters that had no server side yet
-  (``vendor``, ``repairStatus``, ``actionableOnly``);
+  (``vendor``, ``repairStatus``, ``actionableOnly``, the register's
+  ``overdueStatus``, ``declarationStatus`` and ``withExceptions``);
 * the dropdown values (``facets``), which one page cannot supply;
-* dropping a check the exception screen does not show (``excludeType``), which
-  has to come off the counts as well as the rows.
+* dropping a check the exception screen does not show (``excludeType``), and
+  the lines the register screen does not list (``excludeHeld``), both of which
+  have to come off the counts as well as the rows;
+* the register's Exceptions column, which joined the whole queue in the
+  browser.
 
 ``GET /exceptions/{id}`` is new for the same reason: a link to one item can no
 longer be opened by finding it among the rows on screen.
@@ -21,6 +25,7 @@ in-memory SQLite, so this runs without the Azure database or the extracts.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -35,9 +40,85 @@ from app.initiatives.i8.declarations import DeclarationRow
 from app.initiatives.i8.exception_state import assign, set_status
 from app.initiatives.i8.exceptions import ExceptionItem, ExceptionStats
 from app.initiatives.i8.models import ExceptionEvent
+from app.initiatives.i8.register import RegisterStats, RepairLine
 
 DECLARATIONS = "/api/i8/declarations"
 EXCEPTIONS = "/api/i8/exceptions"
+REGISTER = "/api/i8/register"
+
+
+def repair_line(n: int, **overrides) -> RepairLine:
+    """Repair line ``45000000{n}-10`` of material ``80000000{n}`` at 1300, out at
+    the vendor and on time."""
+    fields = dict(
+        purchasing_document=f"45000000{n:02d}",
+        item="10",
+        material_id=f"80000000{n:02d}",
+        plant="1300",
+        description=f"Pump seal {n}",
+        ordered_qty=Decimal(1),
+        unit="EA",
+        net_price=None,
+        item_category="3",
+        delivery_completed=False,
+        pr_number=f"100000{n:02d}",
+        pr_item="10",
+        requisitioner="10316",
+        doc_type="ZREP",
+        corroborated_by_doc_type=True,
+        has_po_header=True,
+        vendor="100234",
+        vendor_name="Acme Rewinds",
+        raised_at=date(2026, 9, 1),
+        po_date=date(2026, 9, 1),
+        due_date=date(2026, 11, 1),
+        schedule_lines=1,
+        dispatched_at=None,
+        dispatched_qty=Decimal(0),
+        received_at=None,
+        received_qty=Decimal(0),
+        reversals=0,
+        lead_time_days=None,
+        repair_status="At Vendor",
+        receipt_status="Awaiting Receipt",
+        overdue_status="ON_TIME",
+        lead_time_status="NO_LEAD_TIME",
+        qty_under_repair=Decimal(1),
+        days_open=47,
+        days_elapsed=47,
+        days_over_lead_time=None,
+        days_at_vendor=None,
+        days_in_current_stage=47,
+        days_remaining=14,
+        aging_bucket="31-60",
+    )
+    fields.update(overrides)
+    return RepairLine(**fields)
+
+
+def register_stats(lines: tuple[RepairLine, ...]) -> RegisterStats:
+    """The four counts the register's caption reads, over ``lines``; the rest
+    stay zero, as an empty register's would."""
+    return RegisterStats(
+        total_lines=len(lines),
+        open_lines=sum(1 for line in lines if line.is_open),
+        blocked_lines=sum(1 for line in lines if line.po_blocked),
+        partially_received_lines=sum(
+            1 for line in lines if line.receipt_status == "Partially Received"
+        ),
+    )
+
+
+def rating(material_id: str, plant: str, criticality: str | None) -> SimpleNamespace:
+    """A universe row: the material's position at one plant."""
+    return SimpleNamespace(
+        material_id=material_id,
+        plant=plant,
+        criticality=criticality,
+        stock_on_hand=None,
+        reorder_point=None,
+        planned_delivery_days=None,
+    )
 
 
 def declaration(n: int, **overrides) -> DeclarationRow:
@@ -126,7 +207,7 @@ def queues(factory):
     from app.main import create_app
 
     app = create_app()
-    state = SimpleNamespace(declarations=(), exceptions=())
+    state = SimpleNamespace(declarations=(), exceptions=(), lines=(), universe=())
 
     def _db():
         with factory() as session:
@@ -138,12 +219,24 @@ def queues(factory):
             exceptions=state.exceptions,
             exception_stats=stats_of(state.exceptions),
             coverage=SimpleNamespace(window_days=30),
+            # What the register reads off the view: each line's queue row by
+            # its key, and its justification (none here).
+            declaration_by_line={
+                tuple(row.related_repair_id.split("-", 1)): row for row in state.declarations
+            },
+            justifications={},
+        )
+
+    def _snapshot():
+        return SimpleNamespace(
+            reference_date=date(2026, 10, 18),
+            lines=state.lines,
+            universe=state.universe,
+            register_stats=register_stats(state.lines),
         )
 
     app.dependency_overrides[get_db] = _db
-    app.dependency_overrides[snapshot_dependency] = lambda: SimpleNamespace(
-        reference_date=date(2026, 10, 18)
-    )
+    app.dependency_overrides[snapshot_dependency] = _snapshot
     app.dependency_overrides[attestation_view_dependency] = _view
     # No `with`: entering the context runs the lifespan against the real database.
     state.client = TestClient(app)
@@ -464,3 +557,209 @@ class TestOneException:
                 select(ExceptionEvent.kind).where(ExceptionEvent.exception_id == gone)
             ).scalars()
             assert list(kinds) == ["ASSIGNED"]
+
+
+# --- The register ------------------------------------------------------------
+
+
+def listing(queues, **params) -> dict:
+    return queues.client.get(REGISTER, params=params).json()
+
+
+class TestRegisterSearch:
+    @pytest.fixture(autouse=True)
+    def rows(self, queues):
+        queues.lines = (
+            repair_line(1),
+            repair_line(2, description="GATE VALVE 4IN"),
+            repair_line(3, pr_number="20000099", pr_item="20"),
+        )
+
+    @pytest.mark.parametrize(
+        ("q", "expected"),
+        [
+            ("8000000001", ["4500000001-10"]),  # material number
+            ("gate valve", ["4500000002-10"]),  # description, any case
+            ("4500000003-10", ["4500000003-10"]),  # the line, as its detail page names it
+            ("4500000003/10", ["4500000003-10"]),  # the PO, as the register shows it
+            ("20000099/20", ["4500000003-10"]),  # the PR, as the register shows it
+        ],
+    )
+    def test_searches_what_the_screen_shows(self, queues, q, expected) -> None:
+        body = listing(queues, q=q)
+
+        assert ids(body) == expected
+        assert body["total"] == len(expected)
+
+
+class TestRegisterFilters:
+    def test_vendor_is_a_code_and_none_finds_the_lines_with_no_vendor(self, queues) -> None:
+        queues.lines = (
+            repair_line(1),
+            repair_line(2, vendor="100999", vendor_name=None),
+            repair_line(3, vendor=None, vendor_name=None, has_po_header=False),
+        )
+
+        assert ids(listing(queues, vendor="100999")) == ["4500000002-10"]
+        assert ids(listing(queues, vendor="none")) == ["4500000003-10"]
+
+    def test_overdue_status_matches_whatever_the_case(self, queues) -> None:
+        queues.lines = (
+            repair_line(1),
+            repair_line(2, overdue_status="OVERDUE"),
+            repair_line(3, overdue_status="NO_DUE_DATE"),
+        )
+
+        assert ids(listing(queues, overdueStatus="overdue")) == ["4500000002-10"]
+        assert ids(listing(queues, overdueStatus="NO_DUE_DATE")) == ["4500000003-10"]
+
+    def test_criticality_is_the_rating_the_row_shows_at_its_own_plant(self, queues) -> None:
+        """The material is CRITICAL at 1500 only. Its 1300 line shows no rating,
+        so it must not come back for CRITICAL -- it did while this filter
+        matched any plant's rating for the material."""
+        queues.lines = (repair_line(1), repair_line(2, material_id="8000000001", plant="1500"))
+        queues.universe = (rating("8000000001", "1500", "CRITICAL"),)
+
+        assert ids(listing(queues, criticality="critical")) == ["4500000002-10"]
+        assert ids(listing(queues, criticality="none")) == ["4500000001-10"]
+
+    def test_declaration_status_reads_like_the_cell(self, queues) -> None:
+        queues.lines = (repair_line(1), repair_line(2), repair_line(3))
+        # Line 3 has no queue row, so its cell reads Required.
+        queues.declarations = (
+            declaration(1, status="Completed"),
+            declaration(2, status="Flagged"),
+        )
+
+        assert ids(listing(queues, declarationStatus="Completed")) == ["4500000001-10"]
+        assert ids(listing(queues, declarationStatus="required")) == ["4500000003-10"]
+
+    def test_with_exceptions_does_not_count_an_excluded_type(self, queues) -> None:
+        queues.lines = (repair_line(1), repair_line(2), repair_line(3))
+        queues.exceptions = (exception(1), exception(2, type="UNJUSTIFIED_ACQUISITION"))
+
+        assert ids(
+            listing(queues, withExceptions=True, excludeExceptionType="UNJUSTIFIED_ACQUISITION")
+        ) == ["4500000001-10"]
+        assert ids(listing(queues, withExceptions=True)) == ["4500000001-10", "4500000002-10"]
+
+    def test_pages_count_every_match_not_the_page(self, queues) -> None:
+        queues.lines = tuple(repair_line(n) for n in range(1, 8))
+
+        body = listing(queues, q="pump seal", page=2, pageSize=3)
+
+        assert ids(body) == ["4500000004-10", "4500000005-10", "4500000006-10"]
+        assert body["total"] == 7
+
+
+class TestLineExceptions:
+    def test_each_row_carries_its_own_less_the_excluded_types(self, queues) -> None:
+        queues.lines = (repair_line(1), repair_line(2))
+        queues.exceptions = (
+            exception(1),
+            exception(1, type="OVERDUE_REPAIR", severity="critical"),
+            exception(1, type="UNJUSTIFIED_ACQUISITION"),
+        )
+
+        rows = {
+            item["id"]: item
+            for item in listing(queues, excludeExceptionType="UNJUSTIFIED_ACQUISITION")["items"]
+        }
+
+        assert rows["4500000001-10"]["exceptions"] == [
+            {
+                "id": "EX-MISSING_ATTESTATION-4500000001-10",
+                "type": "MISSING_ATTESTATION",
+                "severity": "warning",
+            },
+            {
+                "id": "EX-OVERDUE_REPAIR-4500000001-10",
+                "type": "OVERDUE_REPAIR",
+                "severity": "critical",
+            },
+        ]
+        # Checked and clean is an empty list. Null would mean "not computed",
+        # which the screen shows as "Not checked" -- a different claim.
+        assert rows["4500000002-10"]["exceptions"] == []
+
+
+class TestExcludeHeld:
+    @pytest.fixture(autouse=True)
+    def rows(self, queues):
+        queues.lines = (
+            repair_line(1),
+            # Held: PO issued and blocked, or PO issued and partly back.
+            repair_line(
+                2,
+                repair_status="PO Issued",
+                po_blocked=True,
+                vendor="100555",
+                vendor_name="Held Works",
+            ),
+            repair_line(3, repair_status="PO Issued", receipt_status="Partially Received"),
+            # Listed: PO issued and neither; partly back but At Vendor; blocked
+            # but already Closed.
+            repair_line(4, repair_status="PO Issued"),
+            repair_line(5, receipt_status="Partially Received"),
+            repair_line(6, repair_status="Closed", po_blocked=True, qty_under_repair=Decimal(0)),
+        )
+
+    def test_leaves_out_po_issued_lines_blocked_in_sap_or_partly_back(self, queues) -> None:
+        assert ids(listing(queues, excludeHeld=True)) == [
+            "4500000001-10",
+            "4500000004-10",
+            "4500000005-10",
+            "4500000006-10",
+        ]
+
+    def test_restates_the_counts_the_caption_reads(self, queues) -> None:
+        meta = listing(queues, excludeHeld=True)["meta"]
+
+        assert meta["heldLines"] == 2
+        assert meta["totalLines"] == 4
+        # Five lines are open (line 6 is back), and both held lines were among them.
+        assert meta["openLines"] == 3
+        # The flags as they stand in what is listed: line 6, and line 5.
+        assert meta["blockedLines"] == 1
+        assert meta["partiallyReceivedLines"] == 1
+
+    def test_without_it_nothing_changes(self, queues) -> None:
+        body = listing(queues)
+
+        assert body["total"] == 6
+        assert body["meta"]["totalLines"] == 6
+        assert body["meta"]["heldLines"] == 0
+        assert body["meta"]["blockedLines"] == 2
+
+    def test_a_vendor_only_on_held_lines_is_not_offered(self, queues) -> None:
+        def vendors(**params) -> list[str]:
+            return [v["vendor"] for v in listing(queues, **params)["facets"]["vendors"]]
+
+        assert "100555" not in vendors(excludeHeld=True)
+        assert "100555" in vendors()
+
+
+class TestRegisterFacets:
+    def test_list_every_value_whatever_the_filters(self, queues) -> None:
+        queues.lines = (
+            repair_line(1),
+            repair_line(2, plant="1500", vendor="100999", vendor_name=None, repair_status="Closed"),
+            repair_line(3, vendor=None, vendor_name=None),
+        )
+        queues.universe = (rating("8000000001", "1300", "CRITICAL"),)
+
+        body = listing(queues, plant="1300", vendor="100234", q="seal 1")
+
+        assert body["total"] == 1
+        facets = body["facets"]
+        assert [p["plantId"] for p in facets["plants"]] == ["1300", "1500"]
+        assert facets["plants"][1]["name"] == "Gamsberg"
+        # Sorted by what the dropdown shows: the name, else the code.
+        assert facets["vendors"] == [
+            {"vendor": "100999", "name": None},
+            {"vendor": "100234", "name": "Acme Rewinds"},
+        ]
+        assert facets["hasUnknownVendor"] is True
+        assert facets["repairStatuses"] == ["At Vendor", "Closed"]
+        assert facets["criticalities"] == ["CRITICAL"]
+        assert facets["hasUnrated"] is True
