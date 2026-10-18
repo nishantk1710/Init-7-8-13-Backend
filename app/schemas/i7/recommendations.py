@@ -568,7 +568,9 @@ class RecommendationSummaryStats(BaseModel):
     on hand (SUM(i7_staged_stock.unrestricted_use_stock) across storage locations) is
     below average daily consumption x lead time. Average daily consumption is the net
     quantity issued in the 90 days ending on ``stockout_risk_as_of``, divided by 90;
-    lead time is the recommendation's ``lead_time_days``. Non-moving material-plants
+    lead time is the feature store's resolved ``lead_time_days`` (planned delivery time
+    until Initiative 11 supplies one), so a material-plant needs no recommendation to be
+    counted. Non-moving material-plants
     (last issue over 730 days before ``stockout_risk_as_of``, or never) are not part
     of it. 0 with a null ``stockout_risk_as_of`` means "not computed", not "none"."""
 
@@ -578,8 +580,10 @@ class RecommendationSummaryStats(BaseModel):
     this."""
 
     stockout_risk_insufficient_data_count: int = 0
-    """Fast or Slow material-plants with no lead time or no stock on hand, plus those
-    in a plant with no movement data. Never counted as at risk or as safe."""
+    """Fast or Slow material-plants whose consumption, stock on hand or lead time is missing
+    or invalid (no lead time or a lead time of zero or less, no stock or a negative or partly
+    blank one), plus recommended ones in a plant with no movement data. Never counted as
+    at risk or as safe."""
 
     stockout_risk_as_of: date | None = None
     """The date the consumption and the Fast / Slow bands were read as of -- the card
