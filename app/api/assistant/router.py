@@ -41,7 +41,7 @@ from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session as DbSession
 
 from app.initiatives.i13.session_link import links_by_session
@@ -54,6 +54,7 @@ from app.api.assistant.schemas import (
     DepartmentListResponse,
     DepartmentModel,
     FieldModel,
+    JustificationFacets,
     JustificationListResponse,
     JustificationModel,
     JustificationRequest,
@@ -691,28 +692,83 @@ def list_justifications(
     kind: Annotated[str | None, Query()] = None,
     material: Annotated[str | None, Query()] = None,
     plant: Annotated[str | None, Query()] = None,
+    reason_category: Annotated[str | None, Query()] = None,
+    q: Annotated[str | None, Query(max_length=200)] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> JustificationListResponse:
-    statement = select(Justification).order_by(Justification.recorded_at.desc())
+    """One page of justifications, newest first, with the count and the filter
+    values over every match.
+
+    ``total`` used to be the length of the page, so a screen showing it stopped
+    at whatever ``limit`` it asked for. It is now a count over the filters, so a
+    paged screen knows how many pages there are. ``offset`` and ``limit`` page
+    through the rest.
+
+    ``q`` is a case-insensitive substring search over the fields a reader sees
+    on a card: material, free text, author, session and reason. A space in it
+    also matches the underscore in a reason, so "urgent breakdown" finds
+    ``URGENT_BREAKDOWN`` the way the card prints it.
+    """
+    conditions = []
     if session_id:
         from app.assistant import ids
 
-        statement = statement.where(Justification.session_id == ids.normalise(session_id))
+        conditions.append(Justification.session_id == ids.normalise(session_id))
     if exception_id:
-        statement = statement.where(Justification.exception_id == exception_id)
+        conditions.append(Justification.exception_id == exception_id)
     if kind:
-        statement = statement.where(Justification.kind == kind.strip().upper())
+        conditions.append(Justification.kind == kind.strip().upper())
     if material:
         from app.initiatives.i8.material_number import normalise
 
-        statement = statement.where(Justification.material_id == normalise(material))
+        conditions.append(Justification.material_id == normalise(material))
     if plant:
-        statement = statement.where(Justification.plant == plant.strip())
+        conditions.append(Justification.plant == plant.strip())
+    if reason_category:
+        conditions.append(Justification.reason_category == reason_category.strip())
+    needle = (q or "").strip()
+    if needle:
+        conditions.append(
+            or_(
+                Justification.material_id.icontains(needle, autoescape=True),
+                Justification.free_text.icontains(needle, autoescape=True),
+                Justification.author.icontains(needle, autoescape=True),
+                Justification.session_id.icontains(needle, autoescape=True),
+                Justification.reason_category.icontains(
+                    needle.replace(" ", "_"), autoescape=True
+                ),
+            )
+        )
 
-    rows = list(db.execute(statement.limit(limit)).scalars())
+    # The id breaks ties. Two records with the same timestamp could otherwise
+    # come back in either order, and one would show on two pages while the
+    # other showed on none.
+    statement = (
+        select(Justification)
+        .where(*conditions)
+        .order_by(Justification.recorded_at.desc(), Justification.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = list(db.execute(statement).scalars())
+    total = db.execute(
+        select(func.count()).select_from(Justification).where(*conditions)
+    ).scalar_one()
+    facets = JustificationFacets(
+        plants=sorted(
+            db.execute(select(Justification.plant).where(*conditions).distinct()).scalars()
+        ),
+        reason_categories=sorted(
+            db.execute(
+                select(Justification.reason_category).where(*conditions).distinct()
+            ).scalars()
+        ),
+    )
     return JustificationListResponse(
         items=[_justification_model(row) for row in rows],
-        total=len(rows),
+        total=total,
+        facets=facets,
         reason_categories=settings.assistant_justification_reason_category_list,
         note=(
             "Reason categories are configuration, not an enum -- both FRSs ask "

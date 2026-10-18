@@ -415,9 +415,24 @@ class JustificationRequest(AssistantModel):
     exception_id: str | None = PydanticField(default=None, max_length=120)
 
 
+class JustificationFacets(AssistantModel):
+    """The values present among the matching justifications, for filter lists.
+
+    A paged list cannot build its dropdowns from the rows it holds -- those are
+    one page -- so the server says which plants and reasons exist. Read from
+    the records, not from configuration: the reason vocabulary is VZI's to
+    change, and a record keeps the category it was written with.
+    """
+
+    plants: list[str]
+    reason_categories: list[str]
+
+
 class JustificationListResponse(AssistantModel):
     items: list[JustificationModel]
     total: int
+    """Every justification matching the filters, not only the page returned."""
+    facets: JustificationFacets
     reason_categories: list[str]
     note: str
 
