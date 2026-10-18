@@ -21,8 +21,13 @@ from typing import NamedTuple
 
 from app.initiatives.i7.contracts.enums import RecommendationStatus
 
-RECOMMENDATION_FORMULA_VERSION = "i07-recommendation-3"
-"""Bumped from ``-2``: OAR recommendations now carry the criticality tier's
+RECOMMENDATION_FORMULA_VERSION = "i07-recommendation-4"
+"""Bumped from ``-3``: OAR -> Min-Max conversion eligibility is now an AND of
+"more than 4 net issues in 12 months" and a CRITICAL/IMPACT tier, evaluated
+only for Stage 1 OAR material-plants; OBSOLETE is never eligible and the I13
+HOD trigger is gone. Rows stored under ``-3`` carry the old OR-rule verdict.
+
+Bumped from ``-2``: OAR recommendations now carry the criticality tier's
 service level and Z-factor, the I13 HOD trigger is no longer part of conversion
 eligibility, and the reasons are written in plain language. Rows stored under
 ``-2`` have an empty service level and the old eligibility result, so they must
@@ -173,16 +178,22 @@ class ApprovalAction(StrEnum):
 
 
 class ConversionTrigger(StrEnum):
-    """Which of the three OR-ed conditions produced the eligibility verdict."""
+    """What the eligibility verdict rests on.
 
-    CONSUMPTION_FREQUENCY = "CONSUMPTION_FREQUENCY"
-    PRODUCTION_IMPACT = "PRODUCTION_IMPACT"
-    I13_HOD_APPROVED_REQUEST = "I13_HOD_APPROVED_REQUEST"
+    Rows written before ``i07-recommendation-4`` may still carry the retired
+    OR-rule values ``CONSUMPTION_FREQUENCY``, ``PRODUCTION_IMPACT`` and
+    ``I13_HOD_APPROVED_REQUEST``; nothing produces them any more.
+    """
+
+    CONSUMPTION_AND_CRITICALITY = "CONSUMPTION_AND_CRITICALITY"
+    """Eligible: the usage count and the criticality tier both qualified."""
+
     NONE = "NONE"
+    """Not eligible: at least one condition definitively failed."""
+
     UNKNOWN = "UNKNOWN"
-    """At least one enabled trigger could not be evaluated (its policy input is
-    unresolved) and none of the others fired. Distinct from NONE -- NONE means
-    every trigger was checked and definitively did not fire."""
+    """No condition definitively failed, but at least one could not be
+    determined (missing data or an unresolved policy). Distinct from NONE."""
 
 
 class ConversionEligibility(StrEnum):
@@ -204,7 +215,8 @@ class ConversionDecision(NamedTuple):
     consumption_count_12m: int | None
     consumption_count_threshold: int | None
     production_impact: bool | None
-    i13_hod_approved: bool | None
+    """Whether the criticality condition held (CRITICAL/IMPACT). ``None`` when
+    the tier is missing, unrecognised or the tier set is unresolved."""
     detail: str
 
 

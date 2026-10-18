@@ -118,7 +118,7 @@ def world(monkeypatch):
     monkeypatch.setattr(service, "get_sessionmaker", lambda: factory)
     monkeypatch.setattr(repository, "load_targets", lambda session: targets)
     monkeypatch.setattr(repository, "load_candidate_population", lambda session: donors)
-    monkeypatch.setattr(repository, "load_inventory_values", lambda session, run_id: inventory)
+    monkeypatch.setattr(repository, "load_inventory_values", lambda session: inventory)
     settings = Settings(
         i7_oar_write_batch_size=2,  # 9 targets -> several partial batches
         i7_oar_structured_pool=5,
@@ -173,7 +173,7 @@ def test_a_run_writes_every_target_and_explains_every_neighbour(world):
     with factory() as session:
         run = session.get(OarRun, result.run_id)
         assert run.retrieval_config.startswith("mode=two_stage")
-        assert run.algorithm_version == "oar-similarity-2"
+        assert run.algorithm_version == "oar-similarity-3"
         shortlisted = session.execute(
             select(OarTargetResult.shortlisted_candidates).where(OarTargetResult.oar_run_id == result.run_id)
         ).scalars().all()

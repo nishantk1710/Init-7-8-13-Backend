@@ -174,18 +174,23 @@ Max_oar = sum(s_i x Max_i) / sum(s_i) -> 27
 
 Rounded up once, at the end. Label: `SIMILARITY-BASED ESTIMATE`.
 
-## Gates are unchanged
+## Gates
 
 | Gate | Value | Behaviour |
 |---|---|---|
 | `minimum_similarity` | 0.60 | hard admission floor, applied with `>=` before the Top-K cut |
-| `minimum_neighbours` | 5 | 1–4 qualifying neighbours produce **no** partial estimate |
-| `maximum_neighbours` | 10 | Top-K cap |
+| `minimum_neighbours` | 3 (was 5 until 2026-10-19) | 1–2 qualifying neighbours produce **no** partial estimate |
+| `maximum_neighbours` | 5 (was 10 until 2026-10-19) | Top-K cap |
 | `minimum_neighbour_history_months` | 12 | hard eligibility constraint |
 
-A candidate scoring 0.5999 with a perfectly good Phase 5 calculation
-contributes nothing. Four neighbours at 0.98 produce nothing. Both are pinned
-by test.
+A candidate scoring 0.5999 with perfectly good values contributes nothing. Two
+neighbours at 0.98 produce nothing. Both are pinned by test. With Top-5 the
+six-donor scenario above keeps its five most similar donors (D000004 is cut)
+and gives SS 5 / ROP 15 / Max 25.
+
+Since `oar-similarity-3` a real OAR run lends each donor's **current SAP**
+values rather than its Phase 5 calculation (see `docs/i07_oar_similarity.md`);
+this document's chain feeds Phase 5 results in directly.
 
 ## API
 

@@ -22,9 +22,17 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import NamedTuple
 
-ALGORITHM_VERSION = "oar-similarity-2"
+ALGORITHM_VERSION = "oar-similarity-3"
 """Identifies the similarity implementation behind a stored result. Not a
 semantic version -- nothing here maintains a release contract.
+
+``oar-similarity-3`` changed the donors against ``-2``:
+
+* A neighbour must have its current SAP ROP, safety stock and max stock all
+  above zero, and lends those SAP values (rounded up to whole units) -- never
+  I07's Phase 5 calculation.
+* Minimum neighbours 3 (was 5), Top-K 5 (was 10). Top-K is not part of the
+  run-reuse key, so this bump is what stops an old run being reused.
 
 ``oar-similarity-2`` changed three things against ``-1``, all recorded so a
 stored result is never compared with one built under different rules:

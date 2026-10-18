@@ -61,7 +61,7 @@ def test_similarity_weights_match_the_documents():
         0.30,
         0.35,
     )
-    assert (policy.minimum_neighbours, policy.maximum_neighbours) == (5, 10)
+    assert (policy.minimum_neighbours, policy.maximum_neighbours) == (3, 5)
 
 
 def test_confidence_thresholds_kept_despite_data_not_reaching_them():
@@ -180,23 +180,23 @@ def test_max_stock_eoq_inputs_absent_by_default():
     assert strategy.review_period_months == ()
 
 
-def test_conversion_criticality_tiers_unset_because_the_frs_contradicts_itself():
-    """FR-5 says "Critical"; section 3.1 says "Critical or significant production
-    impact". Different tier sets -- not ours to choose. This describes
-    ConversionTriggerPolicy's own bare default; PolicyDocument's default now
-    resolves this via current_conversion_trigger_policy() instead (see the
-    test immediately below)."""
-    assert ConversionTriggerPolicy().criticality_trigger_tiers is None
+def test_conversion_criticality_tiers_unset_on_the_bare_policy():
+    """ConversionTriggerPolicy built bare carries no tier decision of its own;
+    PolicyDocument's default resolves it via current_conversion_trigger_policy()
+    (see the test immediately below). OBSOLETE is excluded either way."""
+    bare = ConversionTriggerPolicy()
+    assert bare.criticality_trigger_tiers is None
+    assert bare.excluded_criticality_tiers == ("OBSOLETE",)
 
 
-def test_policy_document_default_resolves_conversion_criticality_tiers_to_normal():
-    """Business-confirmed: NORMAL is the tier that fires the OAR -> Min-Max
-    conversion's Trigger 2 in this system, not CRITICAL/IMPACT despite the FRS
-    wording (see policy/thresholds.py::current_conversion_trigger_policy).
-    PolicyDocument's own default now carries this resolved value -- a fresh
-    PolicyDocument() is no longer blocked on this specific gap."""
+def test_policy_document_default_resolves_conversion_criticality_tiers_to_critical_and_impact():
+    """Business-confirmed: an OAR material-plant converts to Min-Max only when
+    it is CRITICAL or IMPACT *and* had more than 4 net issues in 12 months
+    (see policy/thresholds.py::current_conversion_trigger_policy). A fresh
+    PolicyDocument() is not blocked on this gap."""
     policy = PolicyDocument()
-    assert policy.conversion_triggers.criticality_trigger_tiers == ("NORMAL",)
+    assert policy.conversion_triggers.criticality_trigger_tiers == ("CRITICAL", "IMPACT")
+    assert policy.conversion_triggers.excluded_criticality_tiers == ("OBSOLETE",)
     assert "conversion_criticality_tiers" not in policy.unresolved_policies()
 
 
@@ -210,12 +210,12 @@ def test_document_defaults_to_draft():
 def test_document_lists_every_unresolved_policy():
     # conversion_criticality_tiers is no longer here: PolicyDocument's own
     # default now resolves it via current_conversion_trigger_policy()
-    # (criticality_trigger_tiers=("NORMAL",), a confirmed business decision --
-    # see policy/thresholds.py). ConversionTriggerPolicy() built bare (with no
-    # PolicyDocument around it) still defaults criticality_trigger_tiers to
-    # None on its own, which is what test_conversion_criticality_tiers_unset_
-    # because_the_frs_contradicts_itself asserts -- the two tests are not in
-    # tension; they check different construction paths.
+    # (criticality_trigger_tiers=("CRITICAL", "IMPACT"), a confirmed business
+    # decision -- see policy/thresholds.py). ConversionTriggerPolicy() built
+    # bare (with no PolicyDocument around it) still defaults
+    # criticality_trigger_tiers to None on its own, which is what
+    # test_conversion_criticality_tiers_unset_on_the_bare_policy asserts --
+    # the two tests are not in tension; they check different construction paths.
     # adoption_monitoring_window is no longer here: AdoptionPolicy's default
     # monitoring_window_days is now 15 (a confirmed decision -- see
     # policy/thresholds.py), so it resolves automatically.

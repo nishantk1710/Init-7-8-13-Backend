@@ -14,7 +14,6 @@ from types import SimpleNamespace
 
 from app.initiatives.i7.contracts.enums import Criticality
 from app.initiatives.i7.policy import (
-    ConversionTriggerPolicy,
     PolicyDocument,
     ServiceLevelKey,
     ServiceLevelPolicy,
@@ -31,6 +30,7 @@ def oar_row(**overrides) -> SimpleNamespace:
         non_zero_periods=None,
         consumption_count_12m=0,
         demand_class="UNCLASSIFIED",
+        oar_scope="IN_SCOPE",
         feature_run_id=1,
         status="SUCCESS",
         confidence="LOW",
@@ -54,14 +54,9 @@ def oar_row(**overrides) -> SimpleNamespace:
 
 UNSIGNED_POLICY = PolicyDocument()
 
-SIGNED_NO_TRIGGERS = PolicyDocument(
+SIGNED_POLICY = PolicyDocument(
     service_level=ServiceLevelPolicy(
         matrix=tuple((ServiceLevelKey(criticality=tier), 0.95) for tier in Criticality)
-    ),
-    conversion_triggers=ConversionTriggerPolicy(
-        enable_consumption_trigger=True,
-        enable_criticality_trigger=False,
-        enable_i13_hod_trigger=False,
     ),
 )
 
@@ -113,51 +108,44 @@ def test_rationale_carries_the_demand_class_as_a_supporting_signal():
 # --- Eligibility must remain completely independent of demand_class --------
 
 
-def test_consumption_trigger_fires_regardless_of_demand_class():
-    """consumption_count_12m > 4 + demand_class = INTERMITTENT -> eligible via
-    consumption, not demand class."""
+def test_eligibility_holds_regardless_of_demand_class():
+    """consumption_count_12m > 4 + Critical + demand_class = INTERMITTENT ->
+    eligible on usage and criticality, not demand class."""
     row = oar_row(
         demand_class="INTERMITTENT",
         consumption_count_12m=7,
-        criticality=None,
+        criticality=Criticality.CRITICAL.value,
     )
     result = builder.build_oar_recommendation(row, UNSIGNED_POLICY)
     assert result.conversion.eligibility.value == "ELIGIBLE"
-    assert result.conversion.trigger.value == "CONSUMPTION_FREQUENCY"
+    assert result.conversion.trigger.value == "CONSUMPTION_AND_CRITICALITY"
     assert result.demand_class == "INTERMITTENT"
 
 
-def test_critical_trigger_fires_with_unclassified_demand_class():
+def test_critical_alone_is_not_eligible_with_unclassified_demand_class():
     """consumption_count_12m <= 4 + Critical + demand_class = UNCLASSIFIED ->
-    eligible via Critical, not demand class."""
-    policy = PolicyDocument(
-        conversion_triggers=ConversionTriggerPolicy(
-            enable_consumption_trigger=True,
-            enable_criticality_trigger=True,
-            enable_i13_hod_trigger=False,
-            criticality_trigger_tiers=(Criticality.CRITICAL.value,),
-        )
-    )
+    not eligible: both conditions are required, and demand class supplies
+    neither."""
     row = oar_row(
         demand_class="UNCLASSIFIED",
         consumption_count_12m=2,
         criticality=Criticality.CRITICAL.value,
     )
-    result = builder.build_oar_recommendation(row, policy)
-    assert result.conversion.eligibility.value == "ELIGIBLE"
-    assert result.conversion.trigger.value == "PRODUCTION_IMPACT"
+    result = builder.build_oar_recommendation(row, UNSIGNED_POLICY)
+    assert result.conversion.eligibility.value == "NOT_ELIGIBLE"
+    assert result.conversion.production_impact is True
     assert result.demand_class == "UNCLASSIFIED"
 
 
-def test_no_trigger_fires_not_eligible_regardless_of_demand_class():
-    """consumption_count_12m <= 4, Critical=false, HOD=false -> not eligible,
-    whatever demand_class says."""
+def test_no_condition_holds_not_eligible_regardless_of_demand_class():
+    """consumption_count_12m <= 4, Normal -> not eligible, whatever
+    demand_class says."""
     row = oar_row(
         demand_class="LUMPY",
         consumption_count_12m=2,
         criticality=Criticality.NORMAL.value,
     )
-    result = builder.build_oar_recommendation(row, SIGNED_NO_TRIGGERS)
+    result = builder.build_oar_recommendation(row, SIGNED_POLICY)
     assert result.conversion.eligibility.value == "NOT_ELIGIBLE"
     assert result.demand_class == "LUMPY"
 
@@ -170,35 +158,46 @@ def test_smooth_demand_class_does_not_create_eligibility_on_its_own():
         consumption_count_12m=1,
         criticality=Criticality.NORMAL.value,
     )
-    result = builder.build_oar_recommendation(row, SIGNED_NO_TRIGGERS)
+    result = builder.build_oar_recommendation(row, SIGNED_POLICY)
     assert result.conversion.eligibility.value == "NOT_ELIGIBLE"
 
 
 def test_unclassified_demand_class_does_not_block_an_otherwise_eligible_oar():
     """demand_class = UNCLASSIFIED must not make an otherwise eligible OAR
     ineligible."""
-    row = oar_row(demand_class="UNCLASSIFIED", consumption_count_12m=10)
+    row = oar_row(
+        demand_class="UNCLASSIFIED",
+        consumption_count_12m=10,
+        criticality=Criticality.IMPACT.value,
+    )
     result = builder.build_oar_recommendation(row, UNSIGNED_POLICY)
     assert result.conversion.eligibility.value == "ELIGIBLE"
-    assert result.conversion.trigger.value == "CONSUMPTION_FREQUENCY"
+    assert result.conversion.trigger.value == "CONSUMPTION_AND_CRITICALITY"
 
 
-def test_hod_approval_still_independently_triggers_conversion():
-    class FixedHodLookup:
-        def hod_approved(self, material, plant):
-            return True
-
-    row = oar_row(demand_class="UNCLASSIFIED", consumption_count_12m=1, criticality=None)
-    policy = PolicyDocument(
-        conversion_triggers=ConversionTriggerPolicy(
-            enable_consumption_trigger=True,
-            enable_criticality_trigger=False,
-            enable_i13_hod_trigger=True,
-        )
+def test_a_cold_start_material_stage_1_did_not_call_oar_is_not_eligible():
+    """The OAR recommendation path is chosen by history, not MRP type. A
+    material-plant Stage 1 put OUT_OF_SCOPE (e.g. a VB material with thin
+    history) is not offered a conversion, however it otherwise scores."""
+    row = oar_row(
+        oar_scope="OUT_OF_SCOPE",
+        consumption_count_12m=10,
+        criticality=Criticality.CRITICAL.value,
     )
-    result = builder.build_oar_recommendation(row, policy, hod_lookup=FixedHodLookup())
-    assert result.conversion.eligibility.value == "ELIGIBLE"
-    assert result.conversion.trigger.value == "I13_HOD_APPROVED_REQUEST"
+    result = builder.build_oar_recommendation(row, UNSIGNED_POLICY)
+    assert result.conversion.eligibility.value == "NOT_ELIGIBLE"
+
+
+def test_obsolete_is_never_eligible_through_the_builder():
+    row = oar_row(consumption_count_12m=25, criticality=Criticality.OBSOLETE.value)
+    result = builder.build_oar_recommendation(row, UNSIGNED_POLICY)
+    assert result.conversion.eligibility.value == "NOT_ELIGIBLE"
+
+
+def test_the_builder_takes_no_hod_lookup():
+    import inspect
+
+    assert "hod_lookup" not in inspect.signature(builder.build_oar_recommendation).parameters
 
 
 # --- FR-2 classification methodology itself must be untouched --------------

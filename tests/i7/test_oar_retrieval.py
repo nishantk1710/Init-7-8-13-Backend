@@ -157,7 +157,7 @@ LOW_FLOOR_POLICY = PolicyDocument(
     similarity=SimilarityPolicy(minimum_similarity=0.30),
 )
 """A lower admission floor admits many more neighbours, so the comparison
-covers full Top-10 lists and weighted estimates, not mostly empty ones."""
+covers full Top-5 lists and weighted estimates, not mostly empty ones."""
 
 TIGHT = RetrievalConfig(
     structured_pool=10, semantic_pool=10, fused_pool=25, exhaustive_below=0
@@ -218,7 +218,7 @@ def test_the_low_floor_comparison_is_not_vacuous() -> None:
     two_stage, _, _ = _compare(1, LOW_FLOOR_POLICY, EMBEDDINGS)
     assert sum(len(r.neighbours) for r in two_stage) > 100
     assert any(r.estimate.status.value == "SUCCESS" for r in two_stage)
-    assert any(len(r.neighbours) == 10 for r in two_stage)  # the Top-10 cap is reached
+    assert any(len(r.neighbours) == 5 for r in two_stage)  # the Top-5 cap is reached
 
 
 def test_default_pools_also_match() -> None:

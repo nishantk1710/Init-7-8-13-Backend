@@ -10,15 +10,18 @@ catalogue.** A neighbour must itself have usable history (Solution Design:
 (SMOOTH/ERRATIC/INTERMITTENT/LUMPY) are candidates. The other 44,938
 material-plants are cold-start targets, not donors, and querying against them
 would be work spent on rows that can never pass eligibility.
+
+**And only those with something to lend.** A donor must also have its current
+SAP ROP, safety stock and max stock all above zero, and those SAP values are
+what it lends -- not I07's own Phase 5 calculation.
 """
 
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.initiatives.i7.oar.types import CandidateAttributes
-from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
 
 _TARGET_SQL = """
     SELECT f.sap_material_number, f.sap_plant_code, f.criticality,
@@ -30,41 +33,40 @@ _TARGET_SQL = """
      WHERE f.history_status <> 'SUFFICIENT'
 """
 
-_CANDIDATE_SQL = """
+_DONOR_WHERE = """
+     WHERE f.history_status = 'SUFFICIENT'
+       AND f.current_safety_stock > 0
+       AND f.current_reorder_point > 0
+       AND f.current_maximum_stock > 0
+"""
+# A neighbour must have all three current SAP values (MARC EISBE / MINBE / MABST) set and above
+# zero: they are what it lends. A 0 in SAP usually means "never set up", and averaging it in would
+# drag every estimate down. The candidate population and the values it lends share this one
+# condition, so no candidate can exist that has nothing to lend.
+
+_CANDIDATE_SQL = (
+    """
     SELECT f.sap_material_number, f.sap_plant_code, f.criticality,
            m.deletion_flag, f.total_periods,
            m.material_group, NULL AS equipment_type, m.base_unit_of_measure,
            NULL AS circuit, m.manufacturer, f.unit_price, m.description
       FROM i7_material_feature f
       LEFT JOIN i7_staged_material m ON m.sap_material_number = f.sap_material_number
-     WHERE f.history_status = 'SUFFICIENT'
 """
+    + _DONOR_WHERE
+)
 # unit_price reads from the feature store (f.), not re-joined from
 # i7_staged_material (m.): the Phase 3 builder already carried it through from
 # staging, so this was a second, independent read of the same value.
 
-_INVENTORY_SQL = """
-    SELECT sap_material_number, sap_plant_code,
-           safety_stock_status, safety_stock,
-           rop_status, rop,
-           max_stock_status, max_stock
-      FROM i7_inventory_calculation
-     WHERE inventory_run_id = :inventory_run_id
+_DONOR_VALUES_SQL = (
+    """
+    SELECT f.sap_material_number, f.sap_plant_code,
+           f.current_safety_stock, f.current_reorder_point, f.current_maximum_stock
+      FROM i7_material_feature f
 """
-
-
-_SMOOTH_SAP_VALUES_SQL = """
-    SELECT sap_material_number, sap_plant_code,
-           current_safety_stock, current_reorder_point, current_maximum_stock
-      FROM i7_material_feature
-     WHERE history_status = 'SUFFICIENT'
-       AND demand_class = :smooth
-       AND current_safety_stock IS NOT NULL
-       AND current_reorder_point IS NOT NULL
-       AND current_maximum_stock IS NOT NULL
-"""
-# A SMOOTH material-plant is not forecast and has no calculated value, so as a neighbour it lends the
-# ROP, safety stock and max stock SAP holds for it -- all three, or none (see smooth_demand.py).
+    + _DONOR_WHERE
+)
 
 
 def _to_attributes(row) -> CandidateAttributes:
@@ -97,8 +99,10 @@ def load_targets(session: Session) -> list[CandidateAttributes]:
 
 
 def load_candidate_population(session: Session) -> list[CandidateAttributes]:
-    """Every classified material-plant -- the only population eligible to be a
-    neighbour (Phase 3's SUFFICIENT history status)."""
+    """Every classified material-plant (Phase 3's SUFFICIENT history status)
+    whose current SAP ROP, safety stock and max stock are all above zero -- the
+    only population eligible to be a neighbour. Similarity, history, criticality
+    and active-status gates are applied later, per target."""
     return [_to_attributes(row) for row in session.execute(text(_CANDIDATE_SQL))]
 
 
@@ -115,40 +119,25 @@ def price_range(candidates: list[CandidateAttributes]) -> Decimal | None:
     return span if span > 0 else None
 
 
-def load_inventory_values(
-    session: Session, inventory_run_id: int | None
-) -> dict[tuple[str, str], dict]:
-    """The ROP, safety stock and max stock each neighbour can lend, keyed by material-plant.
+def _whole_units(value) -> int:
+    """SAP quantity to the whole units a neighbour value is stored in, rounded
+    up so a fractional value above zero never lends 0."""
+    return int(Decimal(str(value)).to_integral_value(rounding=ROUND_CEILING))
 
-    * Calculated materials: Phase 5 SUCCESS values, from the given inventory run. Only a
-      material-plant whose own calculation succeeded appears here.
-    * SMOOTH materials: their current SAP values (MARC), when all three are set. They are not
-      forecast and have no calculation, so SAP's figures are what they lend -- never a forecast.
 
-    A neighbour absent from this map is a valid neighbour with nothing to lend -- similarity
-    eligibility and inventory eligibility are answered separately.
+def load_inventory_values(session: Session) -> dict[tuple[str, str], dict]:
+    """The ROP, safety stock and max stock each neighbour lends, keyed by material-plant.
+
+    Always the neighbour's **current SAP values** (MARC), whatever its demand
+    class -- never I07's own Phase 5 calculation, even where one succeeded.
+    Covers exactly the candidate population (same condition), so every
+    neighbour has something to lend.
     """
-    values: dict[tuple[str, str], dict] = {}
-
-    if inventory_run_id is not None:
-        for row in session.execute(
-            text(_INVENTORY_SQL), {"inventory_run_id": inventory_run_id}
-        ):
-            if (
-                row.safety_stock_status == "SUCCESS"
-                and row.rop_status == "SUCCESS"
-                and row.max_stock_status == "SUCCESS"
-            ):
-                values[(row.sap_material_number, row.sap_plant_code)] = {
-                    "safety_stock": row.safety_stock,
-                    "rop": row.rop,
-                    "max_stock": row.max_stock,
-                }
-
-    for row in session.execute(text(_SMOOTH_SAP_VALUES_SQL), {"smooth": SMOOTH_DEMAND_CLASS}):
-        values[(row.sap_material_number, row.sap_plant_code)] = {
-            "safety_stock": int(row.current_safety_stock),
-            "rop": int(row.current_reorder_point),
-            "max_stock": int(row.current_maximum_stock),
+    return {
+        (row.sap_material_number, row.sap_plant_code): {
+            "safety_stock": _whole_units(row.current_safety_stock),
+            "rop": _whole_units(row.current_reorder_point),
+            "max_stock": _whole_units(row.current_maximum_stock),
         }
-    return values
+        for row in session.execute(text(_DONOR_VALUES_SQL))
+    }

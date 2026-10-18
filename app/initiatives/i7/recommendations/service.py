@@ -37,7 +37,6 @@ from sqlalchemy.orm import Session
 from app.core.db import get_sessionmaker
 from app.initiatives.i7.recommendations import builder, rationale, repository
 from app.initiatives.i7.recommendations.builder import BuiltRecommendation
-from app.initiatives.i7.recommendations.conversion import HodApprovalLookup
 from app.initiatives.i7.recommendations.types import RECOMMENDATION_FORMULA_VERSION
 from app.initiatives.i7.policy import PolicyDocument
 from app.models.i7_recommendation import Recommendation
@@ -128,7 +127,6 @@ def _to_row(built: BuiltRecommendation) -> dict[str, Any]:
             conversion.consumption_count_threshold if conversion else None
         ),
         "production_impact": conversion.production_impact if conversion else None,
-        "i13_hod_approved": conversion.i13_hod_approved if conversion else None,
         "blocking_reason": (built.blocking_reason or "")[:500] or None,
         "factors_text": _factors_text(built.factors),
         "calculation_trace": _trace_text(built.calculation_trace),
@@ -145,11 +143,7 @@ def _to_row(built: BuiltRecommendation) -> dict[str, Any]:
     }
 
 
-def generate_recommendations(
-    policy: PolicyDocument | None = None,
-    *,
-    hod_lookup: HodApprovalLookup | None = None,
-) -> RecommendationRunResult:
+def generate_recommendations(policy: PolicyDocument | None = None) -> RecommendationRunResult:
     """Build recommendations for every material-plant from the latest
     successful upstream runs.
 
@@ -196,11 +190,11 @@ def generate_recommendations(
                 for row in repository.load_normal_inputs(
                     session, inventory_run_id, forecast_run_id
                 ):
-                    built.append(builder.build_normal_recommendation(row, policy, hod_lookup))
+                    built.append(builder.build_normal_recommendation(row, policy))
 
             if oar_run_id is not None:
                 for row in repository.load_oar_inputs(session, oar_run_id):
-                    built.append(builder.build_oar_recommendation(row, policy, hod_lookup))
+                    built.append(builder.build_oar_recommendation(row, policy))
                 for row in repository.load_uncovered_oar_targets(session, oar_run_id):
                     built.append(builder.deferred_recommendation(row, policy))
 

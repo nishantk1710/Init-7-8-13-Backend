@@ -1,164 +1,266 @@
 """OAR -> Min-Max conversion eligibility.
 
-The FRS's own OR of three triggers, each independently evaluated. Missing
-inputs are UNKNOWN, never assumed false.
+An AND of three conditions -- Stage 1 OAR scope, more than 4 net issues in
+12 months, and a CRITICAL/IMPACT tier -- with OBSOLETE never eligible. Missing
+inputs are UNKNOWN, never assumed false; a definite failure is NOT_ELIGIBLE
+even when another input is missing.
 """
 
-from app.initiatives.i7.contracts.enums import Criticality
-from app.initiatives.i7.policy import ConversionTriggerPolicy
+import inspect
+
+import pytest
+from pydantic import ValidationError
+
+from app.initiatives.i7.contracts.enums import Criticality, ScopeDecision
+from app.initiatives.i7.policy import ConversionTriggerPolicy, PolicyDocument
+from app.initiatives.i7.policy.thresholds import current_conversion_trigger_policy
+from app.initiatives.i7.recommendations import conversion
 from app.initiatives.i7.recommendations.conversion import evaluate
 from app.initiatives.i7.recommendations.types import ConversionEligibility, ConversionTrigger
 
-DEFAULT_POLICY = ConversionTriggerPolicy(
-    enable_consumption_trigger=True,
-    enable_criticality_trigger=False,  # avoid the unresolved-tiers raise by default
-    enable_i13_hod_trigger=True,
-)
+POLICY = current_conversion_trigger_policy()
+IN_SCOPE = ScopeDecision.IN_SCOPE.value
+CRITICAL = Criticality.CRITICAL.value
+IMPACT = Criticality.IMPACT.value
+NORMAL = Criticality.NORMAL.value
+OBSOLETE = Criticality.OBSOLETE.value
 
 
-class FixedHodLookup:
-    def __init__(self, approved: bool | None):
-        self._approved = approved
-
-    def hod_approved(self, material, plant):
-        return self._approved
+def decide(count, criticality, scope=IN_SCOPE, policy=POLICY):
+    return evaluate(count, criticality, policy, scope)
 
 
-def test_consumption_count_above_four_is_eligible():
-    decision = evaluate("M1", "1300", 5, None, DEFAULT_POLICY, FixedHodLookup(None))
+# --- The policy in force ------------------------------------------------------
+
+
+def test_the_policy_in_force_qualifies_critical_and_impact_only():
+    assert POLICY.criticality_trigger_tiers == (CRITICAL, IMPACT)
+    assert POLICY.consumption_count_threshold == 4
+
+
+def test_the_policy_in_force_excludes_obsolete():
+    assert POLICY.excluded_criticality_tiers == (OBSOLETE,)
+
+
+def test_the_hod_trigger_is_gone_from_the_policy():
+    assert not any("hod" in field for field in ConversionTriggerPolicy.model_fields)
+
+
+def test_the_hod_trigger_is_gone_from_the_evaluator():
+    parameters = inspect.signature(evaluate).parameters
+    assert not any("hod" in name for name in parameters)
+    assert not hasattr(conversion, "HodApprovalLookup")
+    assert "I13_HOD_APPROVED_REQUEST" not in {member.value for member in ConversionTrigger}
+
+
+def test_the_conditions_cannot_be_switched_off_individually():
+    """Both conditions are required; a per-condition switch would quietly turn
+    the AND back into a single condition."""
+    for name in ("enable_consumption_trigger", "enable_criticality_trigger"):
+        assert name not in ConversionTriggerPolicy.model_fields
+
+
+# --- Rule 2: both conditions must hold ----------------------------------------
+
+
+@pytest.mark.parametrize("tier", [CRITICAL, IMPACT])
+def test_more_than_four_issues_and_a_qualifying_tier_is_eligible(tier):
+    decision = decide(5, tier)
     assert decision.eligibility is ConversionEligibility.ELIGIBLE
-    assert decision.trigger is ConversionTrigger.CONSUMPTION_FREQUENCY
+    assert decision.trigger is ConversionTrigger.CONSUMPTION_AND_CRITICALITY
+    assert decision.production_impact is True
 
 
-def test_consumption_count_and_threshold_are_structured_on_the_decision():
-    """Part 7: the count must be readable as a typed field, not only
-    recoverable by parsing detail text."""
-    decision = evaluate("M1", "1300", 7, None, DEFAULT_POLICY, FixedHodLookup(None))
-    assert decision.consumption_count_12m == 7
-    assert decision.consumption_count_threshold == 4
-
-
-def test_rationale_detail_includes_the_actual_count():
-    decision = evaluate("M1", "1300", 7, None, DEFAULT_POLICY, FixedHodLookup(None))
-    assert "7" in decision.detail
-
-
-def test_consumption_count_exactly_four_is_not_eligible():
-    """The FRS says "> 4", so 4 itself does not fire."""
-    decision = evaluate("M1", "1300", 4, None, DEFAULT_POLICY, FixedHodLookup(False))
+@pytest.mark.parametrize("tier", [CRITICAL, IMPACT])
+def test_a_qualifying_tier_alone_is_not_eligible(tier):
+    decision = decide(2, tier)
     assert decision.eligibility is ConversionEligibility.NOT_ELIGIBLE
     assert decision.trigger is ConversionTrigger.NONE
+    assert decision.production_impact is True
 
 
-def test_i13_hod_approved_is_eligible():
-    decision = evaluate("M1", "1300", 1, None, DEFAULT_POLICY, FixedHodLookup(True))
-    assert decision.eligibility is ConversionEligibility.ELIGIBLE
-    assert decision.trigger is ConversionTrigger.I13_HOD_APPROVED_REQUEST
-
-
-def test_no_trigger_fires_is_not_eligible():
-    decision = evaluate("M1", "1300", 2, None, DEFAULT_POLICY, FixedHodLookup(False))
+@pytest.mark.parametrize("tier", [NORMAL, Criticality.INSURANCE.value])
+def test_frequent_use_alone_is_not_eligible(tier):
+    decision = decide(10, tier)
     assert decision.eligibility is ConversionEligibility.NOT_ELIGIBLE
     assert decision.trigger is ConversionTrigger.NONE
+    assert decision.production_impact is False
 
 
-def test_missing_consumption_count_is_unknown_not_false():
-    """Absent data must not read as "definitely does not qualify"."""
-    decision = evaluate("M1", "1300", None, None, DEFAULT_POLICY, FixedHodLookup(False))
+def test_exactly_four_issues_does_not_qualify():
+    """The rule is "more than 4", so 4 itself does not fire."""
+    assert decide(4, CRITICAL).eligibility is ConversionEligibility.NOT_ELIGIBLE
+    assert decide(5, CRITICAL).eligibility is ConversionEligibility.ELIGIBLE
+
+
+def test_neither_condition_is_not_eligible():
+    assert decide(1, NORMAL).eligibility is ConversionEligibility.NOT_ELIGIBLE
+
+
+def test_criticality_is_matched_case_and_whitespace_insensitively():
+    assert decide(5, " critical ").eligibility is ConversionEligibility.ELIGIBLE
+
+
+def test_the_threshold_is_read_from_policy_not_hardcoded():
+    policy = ConversionTriggerPolicy(
+        consumption_count_threshold=10, criticality_trigger_tiers=(CRITICAL,)
+    )
+    assert decide(5, CRITICAL, policy=policy).eligibility is ConversionEligibility.NOT_ELIGIBLE
+    assert decide(11, CRITICAL, policy=policy).eligibility is ConversionEligibility.ELIGIBLE
+
+
+# --- Rule 3: OBSOLETE is never eligible ---------------------------------------
+
+
+def test_obsolete_with_heavy_use_is_not_eligible():
+    decision = decide(50, OBSOLETE)
+    assert decision.eligibility is ConversionEligibility.NOT_ELIGIBLE
+    assert decision.production_impact is False
+    assert "never" in decision.detail
+
+
+def test_obsolete_is_not_eligible_even_with_a_missing_count():
+    """A definite failure decides the verdict; a missing count cannot make an
+    OBSOLETE material UNKNOWN."""
+    assert decide(None, OBSOLETE).eligibility is ConversionEligibility.NOT_ELIGIBLE
+
+
+def test_obsolete_is_not_eligible_even_while_tiers_are_unresolved():
+    policy = ConversionTriggerPolicy()
+    assert policy.criticality_trigger_tiers is None
+    assert decide(9, OBSOLETE, policy=policy).eligibility is ConversionEligibility.NOT_ELIGIBLE
+
+
+def test_obsolete_cannot_be_configured_as_a_qualifying_tier():
+    with pytest.raises(ValidationError):
+        ConversionTriggerPolicy(criticality_trigger_tiers=(CRITICAL, OBSOLETE))
+
+
+def test_a_misspelt_tier_is_refused_at_load():
+    with pytest.raises(ValidationError):
+        ConversionTriggerPolicy(criticality_trigger_tiers=("CRTICAL",))
+
+
+# --- Rule 1: only Stage 1 OAR material-plants are evaluated --------------------
+
+
+def test_an_out_of_scope_material_plant_is_never_eligible():
+    """A cold-start VB material reaches the OAR recommendation path by its
+    history, not its MRP type -- it must not be offered a conversion."""
+    decision = decide(10, CRITICAL, scope=ScopeDecision.OUT_OF_SCOPE.value)
+    assert decision.eligibility is ConversionEligibility.NOT_ELIGIBLE
+    assert decision.trigger is ConversionTrigger.NONE
+    assert "OAR" in decision.detail
+
+
+@pytest.mark.parametrize("scope", [ScopeDecision.UNKNOWN.value, None, "garbage"])
+def test_an_undetermined_scope_is_unknown(scope):
+    decision = decide(10, CRITICAL, scope=scope)
     assert decision.eligibility is ConversionEligibility.UNKNOWN
     assert decision.trigger is ConversionTrigger.UNKNOWN
 
 
-def test_no_hod_ledger_is_unknown_when_nothing_else_fires():
-    decision = evaluate("M1", "1300", 2, None, DEFAULT_POLICY, None)
+def test_the_scope_enum_and_its_stored_string_are_equivalent():
+    assert decide(10, CRITICAL, scope=ScopeDecision.IN_SCOPE).eligibility is (
+        ConversionEligibility.ELIGIBLE
+    )
+
+
+# --- Rule 4: undetermined inputs are UNKNOWN, never assumed false -------------
+
+
+def test_missing_consumption_count_with_a_qualifying_tier_is_unknown():
+    decision = decide(None, CRITICAL)
     assert decision.eligibility is ConversionEligibility.UNKNOWN
+    assert decision.trigger is ConversionTrigger.UNKNOWN
+    assert "could not be counted" in decision.detail
 
 
-def test_a_fired_trigger_wins_even_if_others_are_unknown():
-    """ELIGIBLE never waits on an unresolved trigger once one has fired."""
-    decision = evaluate("M1", "1300", 10, None, DEFAULT_POLICY, None)
-    assert decision.eligibility is ConversionEligibility.ELIGIBLE
-    assert decision.trigger is ConversionTrigger.CONSUMPTION_FREQUENCY
-
-
-def test_criticality_trigger_raises_when_tiers_are_unresolved():
-    """The unresolved tier set from Phase 1 -- reported as UNKNOWN, not
-    silently skipped and not resolved by picking a tier set here."""
-    policy = ConversionTriggerPolicy(
-        enable_consumption_trigger=False,
-        enable_criticality_trigger=True,
-        enable_i13_hod_trigger=False,
-        criticality_trigger_tiers=None,
-    )
-    decision = evaluate("M1", "1300", None, Criticality.CRITICAL.value, policy, None)
+@pytest.mark.parametrize("criticality", [None, "", "   "])
+def test_missing_criticality_with_enough_use_is_unknown(criticality):
+    decision = decide(10, criticality)
     assert decision.eligibility is ConversionEligibility.UNKNOWN
-    assert "criticality" in decision.detail.lower() or "tier" in decision.detail.lower()
+    assert decision.production_impact is None
+    assert decision.detail == "Its criticality level is not known."
 
 
-def test_criticality_trigger_fires_once_tiers_are_configured():
-    policy = ConversionTriggerPolicy(
-        enable_consumption_trigger=False,
-        enable_criticality_trigger=True,
-        enable_i13_hod_trigger=False,
-        criticality_trigger_tiers=(Criticality.CRITICAL.value,),
+def test_unrecognised_criticality_is_unknown_not_a_failure():
+    decision = decide(10, "HIGH")
+    assert decision.eligibility is ConversionEligibility.UNKNOWN
+    assert decision.production_impact is None
+
+
+def test_unresolved_tier_set_is_unknown():
+    policy = ConversionTriggerPolicy()
+    decision = decide(10, CRITICAL, policy=policy)
+    assert decision.eligibility is ConversionEligibility.UNKNOWN
+    assert "criticality levels" in decision.detail
+
+
+def test_unresolved_tier_set_is_reported_as_an_unresolved_policy():
+    document = PolicyDocument(conversion_triggers=ConversionTriggerPolicy())
+    assert "conversion_criticality_tiers" in document.unresolved_policies()
+
+
+def test_a_definite_failure_wins_over_missing_data():
+    """One condition already false makes the AND false, whatever is missing."""
+    assert decide(2, None).eligibility is ConversionEligibility.NOT_ELIGIBLE
+    assert decide(None, NORMAL).eligibility is ConversionEligibility.NOT_ELIGIBLE
+
+
+def test_unknown_lists_every_undetermined_reason():
+    decision = decide(None, None, scope=None)
+    assert decision.eligibility is ConversionEligibility.UNKNOWN
+    assert "on demand" in decision.detail
+    assert "could not be counted" in decision.detail
+    assert "not known" in decision.detail
+
+
+# --- Structured evidence and reason labels -------------------------------------
+
+
+def test_consumption_count_and_threshold_are_structured_on_the_decision():
+    decision = decide(7, NORMAL)
+    assert decision.consumption_count_12m == 7
+    assert decision.consumption_count_threshold == 4
+
+
+def test_the_decision_has_no_hod_field():
+    assert "i13_hod_approved" not in decide(7, CRITICAL)._fields
+
+
+def test_the_eligible_reason_names_both_conditions():
+    decision = decide(7, CRITICAL)
+    assert decision.detail == (
+        "It was used 7 times in the last 12 months, more than the 4 needed to qualify "
+        "for Min-Max ordering. Its criticality is Critical, which qualifies it for "
+        "Min-Max ordering."
     )
-    decision = evaluate("M1", "1300", None, Criticality.CRITICAL.value, policy, None)
-    assert decision.eligibility is ConversionEligibility.ELIGIBLE
-    assert decision.trigger is ConversionTrigger.PRODUCTION_IMPACT
 
 
-def test_criticality_trigger_does_not_fire_for_a_different_tier():
-    policy = ConversionTriggerPolicy(
-        enable_consumption_trigger=False,
-        enable_criticality_trigger=True,
-        enable_i13_hod_trigger=False,
-        criticality_trigger_tiers=(Criticality.CRITICAL.value,),
+def test_a_not_eligible_reason_names_only_what_failed():
+    assert decide(7, NORMAL).detail == (
+        "Its criticality is Normal, which is not one of the levels that qualify "
+        "(Critical, Impact)."
     )
-    decision = evaluate("M1", "1300", 0, Criticality.NORMAL.value, policy, FixedHodLookup(False))
-    assert decision.eligibility is ConversionEligibility.NOT_ELIGIBLE
-
-
-def test_disabled_trigger_never_fires():
-    policy = ConversionTriggerPolicy(
-        enable_consumption_trigger=False,
-        enable_criticality_trigger=False,
-        enable_i13_hod_trigger=False,
+    assert decide(2, IMPACT).detail == (
+        "It was used 2 times in the last 12 months, which does not exceed the 4 needed "
+        "to qualify for Min-Max ordering."
     )
-    decision = evaluate("M1", "1300", 100, Criticality.CRITICAL.value, policy, FixedHodLookup(True))
-    assert decision.eligibility is ConversionEligibility.NOT_ELIGIBLE
-    assert decision.trigger is ConversionTrigger.NONE
 
 
-def test_the_threshold_is_read_from_policy_not_hardcoded():
-    """5 clears the default threshold of 4 but not a configured 10."""
-    policy = ConversionTriggerPolicy(
-        enable_consumption_trigger=True,
-        enable_criticality_trigger=False,
-        enable_i13_hod_trigger=False,
-        consumption_count_threshold=10,
+def test_the_obsolete_reason_reads_as_a_plain_sentence():
+    assert decide(9, OBSOLETE).detail == (
+        "It is classified Obsolete, and such materials are never moved to Min-Max ordering."
     )
-    below_new_threshold = evaluate("M1", "1300", 5, None, policy, None)
-    assert below_new_threshold.eligibility is ConversionEligibility.NOT_ELIGIBLE
-
-    above_default_only = evaluate("M1", "1300", 5, None, DEFAULT_POLICY, FixedHodLookup(False))
-    assert above_default_only.eligibility is ConversionEligibility.ELIGIBLE
 
 
-def test_disabled_trigger_is_not_the_same_as_unknown_trigger():
-    """Regression: a disabled trigger definitely does not fire (False), which
-    is a different fact from an enabled trigger whose input is missing (None).
-    Conflating the two turned every all-disabled decision into UNKNOWN even
-    though nothing was actually unresolved."""
-    policy = ConversionTriggerPolicy(
-        enable_consumption_trigger=False,
-        enable_criticality_trigger=False,
-        enable_i13_hod_trigger=False,
-    )
-    decision = evaluate("M1", "1300", None, None, policy, None)
-    assert decision.eligibility is ConversionEligibility.NOT_ELIGIBLE
+def test_a_single_use_is_not_pluralised():
+    assert conversion._times(1) == "1 time" and conversion._times(2) == "2 times"
+    assert "used 1 time in" in decide(1, CRITICAL).detail
 
 
-# --- FR-2 demand class is a display signal, never a trigger input -----------
+# --- FR-2 demand class is a display signal, never an input ---------------------
 #
 # The FRS: "the FR-2 demand class as a confidence signal" and "the ADI / CV
 # squared class is shown as a supporting regularity and confidence signal,
@@ -166,89 +268,7 @@ def test_disabled_trigger_is_not_the_same_as_unknown_trigger():
 
 
 def test_evaluate_has_no_demand_class_parameter():
-    """The eligibility function cannot be influenced by demand_class because
-    it is not part of its signature at all -- there is no argument to pass.
-    """
-    import inspect
-
     parameters = inspect.signature(evaluate).parameters
     assert "demand_class" not in parameters
     assert "adi" not in parameters
     assert "cv_squared" not in parameters
-
-
-def test_identical_trigger_inputs_produce_the_same_decision_regardless_of_context():
-    """Two materials with the same trigger inputs but (conceptually) different
-    demand classes must reach the identical eligibility/trigger -- proving no
-    hidden coupling exists between classification and conversion eligibility.
-    Demand class is not even passed in, so this is really pinning that fact.
-    """
-    smooth_like = evaluate("SMOOTH_MATERIAL", "1300", 5, None, DEFAULT_POLICY, FixedHodLookup(None))
-    lumpy_like = evaluate("LUMPY_MATERIAL", "1300", 5, None, DEFAULT_POLICY, FixedHodLookup(None))
-    assert smooth_like.eligibility is lumpy_like.eligibility is ConversionEligibility.ELIGIBLE
-    assert smooth_like.trigger is lumpy_like.trigger is ConversionTrigger.CONSUMPTION_FREQUENCY
-
-
-# --- The policy in force: the I13 HOD trigger is off ---------------------------
-
-
-def test_the_policy_in_force_does_not_use_the_i13_hod_trigger():
-    from app.initiatives.i7.policy.thresholds import current_conversion_trigger_policy
-
-    assert current_conversion_trigger_policy().enable_i13_hod_trigger is False
-
-
-def test_with_the_hod_trigger_off_nothing_firing_is_not_eligible_not_unknown():
-    """With the trigger on and no I13 ledger, a material that fired neither
-    other trigger was UNKNOWN. Off, the answer is definite."""
-    from app.initiatives.i7.policy.thresholds import current_conversion_trigger_policy
-
-    decision = evaluate("M1", "1300", 2, "HIGH", current_conversion_trigger_policy(), None)
-    assert decision.eligibility is ConversionEligibility.NOT_ELIGIBLE
-
-
-def test_with_the_hod_trigger_off_an_hod_approval_cannot_make_a_material_eligible():
-    from app.initiatives.i7.policy.thresholds import current_conversion_trigger_policy
-
-    decision = evaluate(
-        "M1", "1300", 2, "HIGH", current_conversion_trigger_policy(), FixedHodLookup(True)
-    )
-    assert decision.eligibility is ConversionEligibility.NOT_ELIGIBLE
-
-
-def test_with_the_hod_trigger_off_consumption_and_criticality_still_make_a_material_eligible():
-    from app.initiatives.i7.policy.thresholds import current_conversion_trigger_policy
-
-    policy = current_conversion_trigger_policy()
-    assert evaluate("M1", "1300", 5, "HIGH", policy, None).trigger is ConversionTrigger.CONSUMPTION_FREQUENCY
-    assert evaluate("M1", "1300", 0, "NORMAL", policy, None).trigger is ConversionTrigger.PRODUCTION_IMPACT
-
-
-# --- The reasons read as plain sentences -----------------------------------------
-
-
-def test_the_reasons_are_plain_sentences_not_internal_notation():
-    from app.initiatives.i7.policy.thresholds import current_conversion_trigger_policy
-
-    policy = current_conversion_trigger_policy()
-    by_tier = evaluate("M1", "1300", 0, "NORMAL", policy, None)
-    assert by_tier.detail == "Its criticality is Normal, which qualifies it for Min-Max ordering."
-
-    by_usage = evaluate("M1", "1300", 7, "HIGH", policy, None)
-    assert by_usage.detail == (
-        "It was used 7 times in the last 12 months, more than the 4 needed to qualify for Min-Max ordering."
-    )
-
-    neither = evaluate("M1", "1300", 1, "HIGH", policy, None)
-    assert neither.detail == "None of the reasons for moving this material to Min-Max ordering apply."
-
-
-def test_a_single_use_is_not_pluralised():
-    from app.initiatives.i7.policy.thresholds import current_conversion_trigger_policy
-
-    decision = evaluate("M1", "1300", 1, "NORMAL", current_conversion_trigger_policy(), None)
-    # Eligible by tier; the consumption sentence is still correct when it is the unknown/other branch.
-    from app.initiatives.i7.recommendations import conversion
-
-    assert conversion._times(1) == "1 time" and conversion._times(2) == "2 times"
-    assert decision.eligibility is ConversionEligibility.ELIGIBLE

@@ -44,6 +44,7 @@ _NORMAL_SQL = """
 _OAR_SQL = """
     SELECT f.sap_material_number, f.sap_plant_code, f.history_status, f.criticality,
            f.non_zero_periods, f.consumption_count_12m, f.demand_class, f.feature_run_id,
+           f.oar_scope,
            t.status, t.confidence, t.candidates_considered, t.eligible_candidates,
            t.neighbour_count, t.best_similarity,
            t.estimate_status, t.safety_stock AS oar_safety_stock,

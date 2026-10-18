@@ -130,53 +130,85 @@ def test_erratic_keeps_its_existing_handling(db):
     assert len(db.execute(text(_INPUT_SQL), {"forecast_run_id": 1, "champion": True, "smooth": "SMOOTH"}).all()) == 1
 
 
-# --- OAR neighbours lend SAP's values, never a forecast ----------------------------------------
+# --- OAR neighbours lend their current SAP values, whatever their class -----------------------
 
 
 def test_a_smooth_neighbour_lends_its_current_sap_values(db):
     db.add_all([feature("S", "SMOOTH", sap=(Decimal(7), Decimal(12), Decimal(30)))])
     db.commit()
-    values = oar_repository.load_inventory_values(db, inventory_run_id=1)
+    values = oar_repository.load_inventory_values(db)
     assert values == {("S", "1300"): {"safety_stock": 7, "rop": 12, "max_stock": 30}}
 
 
-def test_a_smooth_neighbour_lends_all_three_or_nothing(db):
-    db.add_all(
-        [
-            feature("NO_MAX", "SMOOTH", sap=(Decimal(7), Decimal(12), None)),
-            feature("NONE", "SMOOTH"),
-        ]
-    )
+@pytest.mark.parametrize("demand_class", ["ERRATIC", "INTERMITTENT", "LUMPY"])
+def test_every_class_lends_its_current_sap_values(db, demand_class):
+    db.add_all([feature("L", demand_class, sap=(Decimal(2), Decimal(4), Decimal(9)))])
     db.commit()
-    assert oar_repository.load_inventory_values(db, inventory_run_id=1) == {}
-
-
-def test_a_smooth_neighbour_never_lends_a_calculated_value(db):
-    """A calculation row left from before the rule is ignored for it: SAP's figure, or nothing."""
-    db.add_all([feature("S", "SMOOTH", sap=(Decimal(1), Decimal(2), Decimal(3))), calculation("S", "SMOOTH")])
-    db.commit()
-    values = oar_repository.load_inventory_values(db, inventory_run_id=1)
-    assert values[("S", "1300")] == {"safety_stock": 1, "rop": 2, "max_stock": 3}  # not 5 / 9 / 20
-
-
-def test_other_neighbours_still_lend_their_calculated_values(db):
-    db.add_all([feature("L", "LUMPY"), calculation("L", "LUMPY")])
-    db.commit()
-    assert oar_repository.load_inventory_values(db, inventory_run_id=1) == {
-        ("L", "1300"): {"safety_stock": 5, "rop": 9, "max_stock": 20}
+    assert oar_repository.load_inventory_values(db) == {
+        ("L", "1300"): {"safety_stock": 2, "rop": 4, "max_stock": 9}
     }
 
 
-def test_smooth_values_do_not_wait_for_an_inventory_run(db):
-    db.add_all([feature("S", "SMOOTH", sap=(Decimal(1), Decimal(2), Decimal(3)))])
+def test_a_neighbour_never_lends_a_calculated_value(db):
+    """A successful Phase 5 calculation is ignored: SAP's figure, or nothing."""
+    db.add_all([feature("L", "LUMPY", sap=(Decimal(1), Decimal(2), Decimal(3))), calculation("L", "LUMPY")])
     db.commit()
-    assert ("S", "1300") in oar_repository.load_inventory_values(db, inventory_run_id=None)
+    assert oar_repository.load_inventory_values(db)[("L", "1300")] == {
+        "safety_stock": 1, "rop": 2, "max_stock": 3,
+    }  # not 5 / 9 / 20
 
 
-def test_a_cold_start_smooth_row_is_not_a_donor(db):
+def test_a_calculation_alone_does_not_make_a_donor(db):
+    db.add_all([feature("L", "LUMPY"), calculation("L", "LUMPY")])
+    db.commit()
+    assert oar_repository.load_inventory_values(db) == {}
+
+
+@pytest.mark.parametrize(
+    "sap",
+    [
+        (Decimal(7), Decimal(12), None),
+        (None, None, None),
+        (Decimal(0), Decimal(12), Decimal(30)),
+        (Decimal(7), Decimal(0), Decimal(30)),
+        (Decimal(7), Decimal(12), Decimal(0)),
+    ],
+)
+def test_a_neighbour_needs_all_three_values_above_zero(db, sap):
+    db.add_all([feature("X", "LUMPY", sap=sap)])
+    db.commit()
+    assert oar_repository.load_inventory_values(db) == {}
+
+
+def test_a_fractional_value_is_rounded_up_never_down_to_zero(db):
+    db.add_all([feature("F", "LUMPY", sap=(Decimal("0.5"), Decimal("2.1"), Decimal("4")))])
+    db.commit()
+    assert oar_repository.load_inventory_values(db)[("F", "1300")] == {
+        "safety_stock": 1, "rop": 3, "max_stock": 4,
+    }
+
+
+def test_a_cold_start_row_is_not_a_donor(db):
     db.add_all([feature("S", "SMOOTH", history="COLD_START", sap=(Decimal(1), Decimal(2), Decimal(3)))])
     db.commit()
-    assert oar_repository.load_inventory_values(db, inventory_run_id=1) == {}
+    assert oar_repository.load_inventory_values(db) == {}
+
+
+def test_the_candidate_population_is_exactly_the_materials_with_values(db):
+    """Candidates and lent values share one condition, so no neighbour can be
+    found that has nothing to lend."""
+    db.add_all(
+        [
+            feature("YES", "LUMPY", sap=(Decimal(1), Decimal(2), Decimal(3))),
+            feature("ZERO", "LUMPY", sap=(Decimal(0), Decimal(2), Decimal(3))),
+            feature("BLANK", "ERRATIC"),
+            feature("COLD", "SMOOTH", history="COLD_START", sap=(Decimal(1), Decimal(2), Decimal(3))),
+        ]
+    )
+    db.commit()
+    candidates = {(c.sap_material_number, c.sap_plant_code) for c in oar_repository.load_candidate_population(db)}
+    assert candidates == {("YES", "1300")}
+    assert candidates == set(oar_repository.load_inventory_values(db))
 
 
 # --- the Recommendations page and its summary do not show SMOOTH --------------------------------

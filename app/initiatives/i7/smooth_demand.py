@@ -9,7 +9,8 @@ Two places still need a SMOOTH material-plant's figures, and take them from SAP 
 from a forecast:
 
 * the OAR similar-materials engine, where a SMOOTH neighbour lends its current SAP ROP,
-  safety stock and max stock (see ``oar.repository.load_inventory_values``); and
+  safety stock and max stock -- as every neighbour now does, whatever its demand class
+  (see ``oar.repository.load_inventory_values``); and
 * the High Stockout Risk card, which counts SMOOTH material-plants from the feature store and
   its own usage table, never from a recommendation (see ``stockout_risk.counts``).
 

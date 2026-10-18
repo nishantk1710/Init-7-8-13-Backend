@@ -122,8 +122,10 @@ score in practice is `0.35/0.65·S_struct + 0.35/0.65·S_business`.
 ## Ranking and Top-K
 
 Deterministic: similarity descending, then same-circuit, then material number,
-then plant. Top-K comes from the existing `SimilarityPolicy` (5–10, unchanged).
-Fewer eligible candidates than K yields fewer neighbours — nothing is padded.
+then plant. Top-K comes from `SimilarityPolicy`: at most **5** neighbours, and an
+estimate needs at least **3** (changed 2026-10-19 from 5–10, a business override
+of the documented K = 5–10). Fewer eligible candidates than K yields fewer
+neighbours — nothing is padded.
 
 ## Confidence
 
@@ -145,14 +147,18 @@ SS_oar = sum(s_i x SS_i) / sum(s_i)      (same form for ROP, Max)
 Rounded **once**, after the weighted average — rounding each neighbour first
 would compound several ceilings.
 
-**A neighbour lends its parameters only if its own Phase 5 calculation
-succeeded.** Similarity eligibility and inventory eligibility are answered
-separately: a material can be an excellent match and still have nothing to
-lend. On this extract the service-level matrix is unsigned, so **zero**
-material-plants have a successful Phase 5 safety stock — every neighbour is
-`inventory_eligible = False`, and every estimate that finds neighbours reports
-`NOT_EVALUABLE_SERVICE_LEVEL_UNSET`. No service level, Z factor or neighbour
-value is invented to unblock this.
+**A neighbour lends its current SAP values** (`oar-similarity-3`, 2026-10-19).
+Only a SUFFICIENT-history material-plant whose current SAP safety stock, ROP
+and max stock (MARC EISBE / MINBE / MABST) are **all above zero** is a
+candidate at all, and those SAP values — rounded up to whole units — are what
+it lends. I07's own Phase 5 calculation is never lent, even where it
+succeeded. Because the candidate pool and the lent values share one
+condition, every neighbour contributes to the estimate, and the 3-neighbour
+minimum counts real contributors.
+
+Previously a neighbour lent only a successful Phase 5 calculation; with the
+service-level matrix unsigned that was none of them, so every estimate that
+found neighbours reported `NOT_EVALUABLE_SERVICE_LEVEL_UNSET`.
 
 Where an estimate does succeed, it is labelled `SIMILARITY-BASED ESTIMATE` —
 never `FORECAST` or `ML PREDICTION`.

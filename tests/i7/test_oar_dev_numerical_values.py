@@ -13,9 +13,15 @@ the two development fixtures loaded, and then walk it again under the plain
 ``PolicyDocument()`` production default to show every leg still blocks there.
 
 Nothing here weakens a gate: minimum_similarity stays 0.60, minimum_neighbours
-stays 5, the weighted-average formulas are checked against hand arithmetic
-rather than against themselves, and no material's real criticality is read,
-written or defaulted anywhere in the path.
+is the policy's 3 and Top-K its 5, the weighted-average formulas are checked
+against hand arithmetic rather than against themselves, and no material's real
+criticality is read, written or defaulted anywhere in the path.
+
+Since ``oar-similarity-3`` a real OAR run no longer borrows Phase 5 values:
+donors lend their current SAP ROP / safety stock / max stock (see
+``oar/repository.load_inventory_values``). The Phase 5 results here are simply
+the donor values handed to ``evaluate_target``, so the similarity, gate and
+weighted-average checks hold whichever source supplied them.
 """
 
 import math
@@ -126,8 +132,7 @@ def phase_five(policy: PolicyDocument) -> dict[str, dict]:
 
 
 def inventory_values(calculations: dict[str, dict]) -> dict[tuple[str, str], dict]:
-    """The donor values OAR may borrow, applying
-    ``oar/repository.load_inventory_values``'s all-three-SUCCESS rule."""
+    """Phase 5 results as donor values, all three SUCCESS or nothing."""
     return {
         (material, "BMM"): {
             "safety_stock": row["safety_stock"],
@@ -329,42 +334,48 @@ def test_a_donor_with_no_criticality_still_blocks_rather_than_defaulting():
     assert result["safety_stock"] is None
 
 
-# --- 3. At least five qualifying neighbours are required --------------------
+# --- 3. At least three qualifying neighbours are required -------------------
 
 
-def test_minimum_neighbours_is_five_and_is_a_hard_gate(dev_donors):
-    assert PolicyDocument().similarity.minimum_neighbours == 5
+def test_minimum_neighbours_is_three_and_is_a_hard_gate(dev_donors):
+    assert PolicyDocument().similarity.minimum_neighbours == 3
 
     donor_values = inventory_values(dev_donors)
     target = attributes("T000001", 101)
-    four = [attributes(material, price) for material, _, _, price in DONORS[:4]]
+    two = [attributes(material, price) for material, _, _, price in DONORS[:2]]
 
     result = evaluate_target(
-        target, four, NoEmbeddingModel(), Decimal("20"), donor_values, DEV_POLICY
+        target, two, NoEmbeddingModel(), Decimal("20"), donor_values, DEV_POLICY
     )
 
-    assert len(result.neighbours) == 4
+    assert len(result.neighbours) == 2
     assert result.estimate.status is EstimateStatus.NOT_EVALUABLE_INSUFFICIENT_NEIGHBOURS
-    # Four perfectly good neighbours, all with Phase 5 values, and still no
-    # partial estimate.
+    # Two perfectly good neighbours, both with values, and still no partial
+    # estimate.
     assert result.estimate.safety_stock is None
     assert result.estimate.rop is None
     assert result.estimate.max_stock is None
-    assert result.estimate.qualifying_neighbours == 4
-    assert result.estimate.minimum_neighbours == 5
+    assert result.estimate.qualifying_neighbours == 2
+    assert result.estimate.minimum_neighbours == 3
 
 
-def test_five_qualifying_neighbours_is_enough(dev_donors):
+def test_three_qualifying_neighbours_is_enough(dev_donors):
     donor_values = inventory_values(dev_donors)
     target = attributes("T000001", 101)
-    five = [attributes(material, price) for material, _, _, price in DONORS[:5]]
+    three = [attributes(material, price) for material, _, _, price in DONORS[:3]]
 
     result = evaluate_target(
-        target, five, NoEmbeddingModel(), Decimal("20"), donor_values, DEV_POLICY
+        target, three, NoEmbeddingModel(), Decimal("20"), donor_values, DEV_POLICY
     )
 
-    assert len(result.neighbours) == 5
+    assert len(result.neighbours) == 3
     assert result.estimate.status is EstimateStatus.SUCCESS
+
+
+def test_only_the_five_most_similar_are_kept(dev_donors, dev_result):
+    """Six qualifying donors, Top-K 5: the least similar (D000004) is cut."""
+    assert len(dev_result.neighbours) == 5
+    assert "D000004" not in {n.material for n in dev_result.neighbours}
 
 
 # --- 4. Similarity below 0.60 does not contribute ---------------------------
@@ -449,20 +460,19 @@ def test_dev_chain_produces_a_numerical_oar_estimate(dev_donors, dev_result):
     assert isinstance(dev_result.estimate.rop, int)
     assert isinstance(dev_result.estimate.max_stock, int)
     assert dev_result.estimate.label == "SIMILARITY-BASED ESTIMATE"
-    assert dev_result.estimate.inventory_eligible_neighbours == len(DONORS)
+    assert dev_result.estimate.inventory_eligible_neighbours == 5  # Top-K
     assert dev_result.estimate.inventory_ineligible_neighbours == 0
 
 
-def test_a_neighbour_missing_any_one_phase_five_value_lends_nothing(dev_donors):
-    """``load_inventory_values`` requires all three statuses SUCCESS -- which
-    is why an unconfigured Max Stock strategy alone was enough to block every
-    OAR estimate, even with safety stock and ROP available."""
+def test_a_neighbour_without_values_stays_a_neighbour_and_lends_nothing(dev_donors):
+    """A neighbour absent from the donor values still ranks, but contributes
+    no number."""
     donor_values = inventory_values(dev_donors)
     donor_values.pop(("D000001", "BMM"))
 
     result = run_oar(DEV_POLICY, donor_values)
 
-    assert result.estimate.inventory_eligible_neighbours == len(DONORS) - 1
+    assert result.estimate.inventory_eligible_neighbours == 4
     assert result.estimate.inventory_ineligible_neighbours == 1
     contributed = {n.material for n in result.neighbours if n.inventory_eligible}
     assert "D000001" not in contributed
@@ -554,6 +564,7 @@ def oar_recommendation_row(result) -> SimpleNamespace:
         non_zero_periods=None,
         consumption_count_12m=None,
         demand_class="UNCLASSIFIED",
+        oar_scope="IN_SCOPE",
         feature_run_id=1,
         status=result.status.value,
         confidence=result.confidence.value,
@@ -606,16 +617,19 @@ def test_the_api_detail_schema_exposes_the_recommended_values(dev_result):
 
 
 EXPECTED_DONORS = {
-    # material -> (similarity, SS, ROP, Max)
+    # material -> (similarity, SS, ROP, Max). D000004 ("0.8875", 7, 22, 37)
+    # qualifies too but is sixth, so the Top-5 cap leaves it out.
     "D000001": ("0.9875", 5, 15, 25),
     "D000006": ("0.9875", 4, 13, 22),
     "D000005": ("0.9625", 5, 16, 27),
     "D000002": ("0.95", 6, 18, 30),
     "D000003": ("0.925", 4, 12, 20),
-    "D000004": ("0.8875", 7, 22, 37),
 }
 
-EXPECTED_ESTIMATE = {"safety_stock": 6, "rop": 16, "max_stock": 27}
+EXPECTED_ESTIMATE = {"safety_stock": 5, "rop": 15, "max_stock": 25}
+"""By hand over the table above, sum(s) = 4.8125: SS 23.1 / 4.8125 = 4.8 -> 5,
+ROP 71.25 / 4.8125 = 14.805 -> 15, Max 119.4 / 4.8125 = 24.810 -> 25
+(CEILING)."""
 
 
 def test_verified_scenario_donor_table(dev_donors, dev_result):
@@ -637,8 +651,8 @@ def test_verified_scenario_donor_table(dev_donors, dev_result):
     assert actual == EXPECTED_DONORS
 
 
-def test_verified_scenario_produces_six_sixteen_twentyseven(dev_result):
-    """SS = 6, ROP = 16, Max = 27 -- from the existing weighted average over
+def test_verified_scenario_produces_five_fifteen_twentyfive(dev_result):
+    """SS = 5, ROP = 15, Max = 25 -- from the existing weighted average over
     the donor table above, with nothing in this file adjusting the formulas to
     reach them (``weighted()`` recomputes them independently, and the two
     agree)."""
@@ -655,9 +669,9 @@ def test_verified_scenario_reaches_the_recommendation_unchanged(dev_result):
     """The same three numbers, at the end of the recommendation chain."""
     built = builder.build_oar_recommendation(oar_recommendation_row(dev_result), DEV_POLICY)
 
-    assert built.recommended_safety_stock == 6
-    assert built.recommended_rop == 16
-    assert built.recommended_max_stock == 27
+    assert built.recommended_safety_stock == 5
+    assert built.recommended_rop == 15
+    assert built.recommended_max_stock == 25
 
 
 # --- No dev fixture is reachable from calculation logic ---------------------
@@ -760,7 +774,7 @@ def test_production_policy_blocks_the_oar_estimate():
     # The similarity work still happens and is still recorded -- only the
     # borrowing is blocked.
     assert result.status is OarStatus.SUCCESS
-    assert len(result.neighbours) == len(DONORS)
+    assert len(result.neighbours) == 5  # Top-K
     assert result.estimate.status is EstimateStatus.NOT_EVALUABLE_SERVICE_LEVEL_UNSET
     assert result.estimate.safety_stock is None
     assert result.estimate.rop is None
@@ -779,10 +793,11 @@ def test_production_policy_recommendation_stays_not_evaluable():
     assert built.recommended_max_stock is None
 
 
-def test_the_gates_themselves_are_unchanged():
-    """The four policy constants this task was forbidden to weaken."""
+def test_the_gates_are_the_confirmed_values():
+    """The four policy constants. Similarity and history are unchanged;
+    neighbours became 3-5 (was 5-10) on 2026-10-19."""
     similarity = PolicyDocument().similarity
     assert similarity.minimum_similarity == 0.60
-    assert similarity.minimum_neighbours == 5
-    assert similarity.maximum_neighbours == 10
+    assert similarity.minimum_neighbours == 3
+    assert similarity.maximum_neighbours == 5
     assert similarity.minimum_neighbour_history_months == 12

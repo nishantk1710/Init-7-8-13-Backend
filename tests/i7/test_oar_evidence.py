@@ -265,7 +265,7 @@ def test_duplicate_descriptions_and_duplicate_candidates():
             config=RetrievalConfig(structured_pool=3, semantic_pool=3, fused_pool=10, exhaustive_below=0),
         )
     )
-    assert [n.material for n in results[0].neighbours] == [f"D{i:02d}" for i in range(10)]
+    assert [n.material for n in results[0].neighbours] == [f"D{i:02d}" for i in range(5)]  # Top-K 5
 
 
 def test_without_a_model_the_text_dimension_is_reported_unavailable():
@@ -278,35 +278,23 @@ def test_without_a_model_the_text_dimension_is_reported_unavailable():
 # --- Donor gate -----------------------------------------------------------------------
 
 
-def test_a_donor_lends_only_when_all_three_phase_5_statuses_succeeded():
-    """Unchanged by this work, and pinned here because the engine relies on it:
-    a donor with any of SS, ROP or Max not SUCCESS lends nothing at all -- no
-    partial borrowing."""
+def test_a_donor_lends_its_current_sap_values_not_a_phase_5_result():
+    """The engine relies on this: what a donor lends is SAP's current ROP,
+    safety stock and max stock, whatever any Phase 5 calculation said. The
+    zero / missing / cold-start exclusions are pinned against the real query
+    in tests/i7/test_smooth_demand.py."""
     rows = [
         SimpleNamespace(sap_material_number="OK", sap_plant_code="1300",
-                        safety_stock_status="SUCCESS", safety_stock=5,
-                        rop_status="SUCCESS", rop=9, max_stock_status="SUCCESS", max_stock=20),
-        SimpleNamespace(sap_material_number="NO_MAX", sap_plant_code="1300",
-                        safety_stock_status="SUCCESS", safety_stock=5,
-                        rop_status="SUCCESS", rop=9, max_stock_status="NOT_CONFIGURED", max_stock=None),
-        SimpleNamespace(sap_material_number="NO_SS", sap_plant_code="1300",
-                        safety_stock_status="NOT_EVALUABLE_SERVICE_LEVEL_UNSET", safety_stock=None,
-                        rop_status="SUCCESS", rop=9, max_stock_status="SUCCESS", max_stock=20),
+                        current_safety_stock=Decimal(5), current_reorder_point=Decimal(9),
+                        current_maximum_stock=Decimal(20)),
     ]
 
     class FakeSession:
-        """The first query is the Phase 5 results; the second is the SMOOTH materials' SAP values,
-        of which this test has none."""
-
-        calls = 0
-
         def execute(self, *_args, **_kwargs):
-            self.calls += 1
-            return rows if self.calls == 1 else []
+            return rows
 
-    values = repository.load_inventory_values(FakeSession(), inventory_run_id=1)
-    assert set(values) == {("OK", "1300")}
-    assert values[("OK", "1300")] == {"safety_stock": 5, "rop": 9, "max_stock": 20}
+    values = repository.load_inventory_values(FakeSession())
+    assert values == {("OK", "1300"): {"safety_stock": 5, "rop": 9, "max_stock": 20}}
 
 
 def test_a_neighbour_without_donor_values_stays_a_neighbour_and_lends_nothing():

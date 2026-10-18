@@ -147,12 +147,14 @@ class Recommendation(Base):
     not hardcoded -- see ``ConversionTriggerPolicy.consumption_count_threshold``)."""
 
     production_impact: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    """SOP 3.1.1 indicator 2's own boolean. ``NULL`` means unresolved (tier set
-    not configured, or criticality unavailable), never a silent ``False``."""
+    """Whether the criticality condition held (CRITICAL/IMPACT). ``NULL`` means
+    undetermined (tier set not configured, or criticality missing or
+    unrecognised), never a silent ``False``."""
 
     i13_hod_approved: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    """SOP 3.1.1 indicator 3's own boolean. ``NULL`` means no I13 ledger is
-    available to answer the question, never a silent ``False``."""
+    """Retired: the I13 HOD trigger is no longer part of conversion eligibility,
+    so rows from ``i07-recommendation-4`` onward leave this ``NULL``. Kept so
+    older rows still read back; dropping it needs a migration."""
 
     # --- Blocking / quality -------------------------------------------------
     blocking_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)

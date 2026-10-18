@@ -259,12 +259,14 @@ class OarInfo(BaseModel):
     or to a real demand pattern.
 
     ``consumption_count_12m`` / ``consumption_count_threshold`` /
-    ``production_impact`` / ``i13_hod_approved`` are the SOP 3.1.1 indicators'
-    own structured evidence -- the same values ``conversion_detail`` already
-    describes in prose, exposed as fields a client can read/filter/sort on
-    without parsing free text. ``production_impact``/``i13_hod_approved`` are
-    ``None`` when that indicator is unresolved (unconfigured tier set, no I13
-    ledger), never a silent ``False``.
+    ``production_impact`` are the conversion conditions' own structured
+    evidence -- the same values ``conversion_detail`` already describes in
+    prose, exposed as fields a client can read/filter/sort on without parsing
+    free text. ``production_impact`` is whether the criticality condition
+    (CRITICAL/IMPACT) held, ``None`` when it could not be determined, never a
+    silent ``False``. ``i13_hod_approved`` is retired -- the HOD trigger is no
+    longer part of the rule -- and is ``None`` on every current recommendation;
+    it is kept only so older rows still serialise.
     """
 
     model_config = ConfigDict(frozen=True)
