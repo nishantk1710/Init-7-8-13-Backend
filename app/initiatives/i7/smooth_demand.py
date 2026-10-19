@@ -15,6 +15,11 @@ from a forecast:
   its own usage table, never from a recommendation (see ``stockout_risk.counts``).
 
 Every other demand class -- ERRATIC included -- is unchanged.
+
+**An OAR material is the exception.** A material-plant ordered on demand (MRP
+type ND / PD / blank) is sized from similar materials whatever its demand
+class, so a SMOOTH OAR material *does* get an (OAR) recommendation. The rule
+above applies to VB / other materials only.
 """
 
 from app.initiatives.i7.contracts import DemandPattern

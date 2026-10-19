@@ -21,8 +21,19 @@ from typing import NamedTuple
 
 from app.initiatives.i7.contracts.enums import RecommendationStatus
 
-RECOMMENDATION_FORMULA_VERSION = "i07-recommendation-4"
-"""Bumped from ``-3``: OAR -> Min-Max conversion eligibility is now an AND of
+RECOMMENDATION_FORMULA_VERSION = "i07-recommendation-5"
+"""Bumped from ``-4``: OAR -> Min-Max conversion eligibility is now usage > 4
+OR a CRITICAL / IMPACT / INSURANCE tier (was usage AND CRITICAL/IMPACT), and it
+is evaluated for every Stage 1 OAR material-plant -- standard-path
+recommendations included, not only cold-start ones. A material Stage 1 put
+OUT_OF_SCOPE gets no conversion decision at all (was NOT_ELIGIBLE).
+
+Also routing by MRP type: every OAR material-plant (ND / PD / blank) takes the
+OAR path whatever its history, so ``is_oar`` now means "ordered on demand" --
+SMOOTH ones included. VB / other materials are forecast, or not evaluable when
+they have too little history (no similar-materials fallback).
+
+Bumped from ``-3``: OAR -> Min-Max conversion eligibility is now an AND of
 "more than 4 net issues in 12 months" and a CRITICAL/IMPACT tier, evaluated
 only for Stage 1 OAR material-plants; OBSOLETE is never eligible and the I13
 HOD trigger is gone. Rows stored under ``-3`` carry the old OR-rule verdict.
@@ -181,15 +192,20 @@ class ConversionTrigger(StrEnum):
     """What the eligibility verdict rests on.
 
     Rows written before ``i07-recommendation-4`` may still carry the retired
-    OR-rule values ``CONSUMPTION_FREQUENCY``, ``PRODUCTION_IMPACT`` and
-    ``I13_HOD_APPROVED_REQUEST``; nothing produces them any more.
+    ``I13_HOD_APPROVED_REQUEST``; nothing produces it any more.
     """
 
+    CONSUMPTION_FREQUENCY = "CONSUMPTION_FREQUENCY"
+    """Eligible on usage alone: more than the threshold net issues in 12 months."""
+
+    PRODUCTION_IMPACT = "PRODUCTION_IMPACT"
+    """Eligible on criticality alone: a qualifying tier (CRITICAL / IMPACT / INSURANCE)."""
+
     CONSUMPTION_AND_CRITICALITY = "CONSUMPTION_AND_CRITICALITY"
-    """Eligible: the usage count and the criticality tier both qualified."""
+    """Eligible on both: the usage count and the criticality tier each qualified."""
 
     NONE = "NONE"
-    """Not eligible: at least one condition definitively failed."""
+    """Not eligible: a gate failed (not OAR, or OBSOLETE), or neither trigger held."""
 
     UNKNOWN = "UNKNOWN"
     """No condition definitively failed, but at least one could not be

@@ -76,9 +76,27 @@ A recommendation is **never** promoted to `READY_FOR_REVIEW` unless its own
 path's mandatory inputs actually computed. A blocked calculation stays
 `NOT_EVALUABLE`; there is no approval of an incomplete recommendation.
 
+## Which path a material takes: MRP type (2026-10-19)
+
+The path is decided by **MRP type** (Stage 1's `oar_scope`), not by history:
+
+| MRP type | History | Path |
+| --- | --- | --- |
+| ND / PD / blank (OAR) | any, SMOOTH included | **OAR**: similar materials' current SAP values; not forecast |
+| VB / other | enough | **Normal**: own forecast -> safety stock / ROP / max |
+| VB / other | too little | **Normal**, `NOT_EVALUABLE` (`NOT_EVALUABLE_NO_HISTORY`) -- no similar-materials fallback |
+| VB / other | SMOOTH | no recommendation (SAP's values stand) |
+
+So `is_oar` on a recommendation means "ordered on demand", and the OAR / Stock
+item filters, counts and approval route follow MRP type. Before this, history
+decided the path: an ND/PD material with history was forecast, and a VB
+cold-start one was sized from similar materials. Measured on the 2026-10-18
+extract: 14,263 OAR material-plants (76%), of which 3,925 moved off forecasting;
+2,394 VB/other cold-start lost their similar-materials estimate.
+
 ## Normal path
 
-Material-plants Phase 3 classified as `SUFFICIENT`. `READY_FOR_REVIEW` when
+Non-OAR (VB / other) material-plants. `READY_FOR_REVIEW` when
 Phase 5's `safety_stock_status` and `rop_status` are each either `SUCCESS`
 (I07's own SES/Auto-ARIMA-derived calculation) or, since the 2026-09-22 I11
 baseline decision below, `SUCCESS_FROM_CURRENT_SAP_VALUE` (I11's current MARC
@@ -103,9 +121,9 @@ was chosen over a literal I11 system read (none is staged anywhere), lives in
 `docs/i07_inventory_calculations.md`'s "I11 baseline override" section —
 this file only records the consequence for recommendation gating.
 
-## OAR / cold-start path
+## OAR path
 
-Material-plants Phase 3 routed to `NO_HISTORY` or `COLD_START`. Phase 6's
+Every OAR material-plant (MRP type ND / PD / blank), whatever its history. Phase 6's
 similarity result is consumed as-is — nothing here recomputes similarity.
 
 **Similarity availability and recommendation reviewability are different
@@ -148,43 +166,55 @@ no neighbour anywhere in the catalogue currently has a value to lend.
 ## OAR → Min-Max conversion
 
 Separate from OAR identification. The rule in force (formula version
-`i07-recommendation-4`, rule change of 2026-10-19):
+`i07-recommendation-5`, rule change of 2026-10-19):
 
 ```
 ConversionEligible = OarMaterialPlant                 -- Stage 1: MARC.DISMM in {ND, PD} or blank
-                 AND (ConsumptionCount12M > 4)
-                 AND (Criticality in {CRITICAL, IMPACT})
-
-OBSOLETE is never eligible.
+                 AND NOT Obsolete                     -- OBSOLETE is never eligible
+                 AND (    ConsumptionCount12M > 4
+                       OR Criticality in {CRITICAL, IMPACT, INSURANCE} )
 ```
 
-**Only Stage 1 OAR material-plants are evaluated.** The OAR recommendation
-path is chosen by cold-start *history*, not MRP type, so the builder passes
-Stage 1's stored verdict (`i7_material_feature.oar_scope`) into
-`conversion.evaluate`. `OUT_OF_SCOPE` is `NOT_ELIGIBLE`; `UNKNOWN` or a missing
-scope is `UNKNOWN`. The DISMM rule itself is not re-derived here.
+Either trigger on its own is enough. (`i07-recommendation-4`, the day before,
+required usage **and** CRITICAL/IMPACT; that produced zero eligible OAR
+materials on the October extract.)
+
+**Every Stage 1 OAR material-plant is evaluated, on both paths.** History
+decides the recommendation path (cold-start/OAR estimate vs standard ROP/Max);
+MRP type decides OAR. Frequently used ND/PD parts have history, so they are on
+the standard path -- and they are the most likely conversion candidates. The
+builder (`builder.conversion_for`) reads Stage 1's stored verdict
+(`i7_material_feature.oar_scope`) for both paths. `OUT_OF_SCOPE` gets **no**
+decision at all (`conversion = None`); `UNKNOWN` or a missing scope is
+`UNKNOWN`. The DISMM rule itself is not re-derived here.
 
 **What is counted**: `consumption_count_12m` — MSEG issue transactions
 (201/261) minus reversals (202/262), trailing 12 months. Not
 `non_zero_periods`.
 
 **Criticality**: `ConversionTriggerPolicy.criticality_trigger_tiers =
-("CRITICAL", "IMPACT")` and `excluded_criticality_tiers = ("OBSOLETE",)`, set in
-`current_conversion_trigger_policy()`. An excluded tier can never also qualify
-(validator), and an unrecognised tier name is refused at load.
+("CRITICAL", "IMPACT", "INSURANCE")` and `excluded_criticality_tiers =
+("OBSOLETE",)`, set in `current_conversion_trigger_policy()`. An excluded tier
+can never also qualify (validator), and an unrecognised tier name is refused
+at load.
 
-**Three-valued AND.** Any condition that definitely fails makes the verdict
-`NOT_ELIGIBLE` (an OBSOLETE material with no usage count is still not
-eligible). Only when nothing failed and something could not be determined —
-missing count, missing or unrecognised criticality, unresolved tier set,
-unknown scope — is the verdict `UNKNOWN`. `conversion_trigger` is
-`CONSUMPTION_AND_CRITICALITY` when eligible, `NONE` when not, `UNKNOWN` when
-undetermined.
+**Three-valued logic.** A gate (scope, OBSOLETE) that definitely fails makes
+the verdict `NOT_ELIGIBLE`, as does neither trigger holding. One trigger that
+definitely holds is enough. Otherwise -- missing count, missing or
+unrecognised criticality, unresolved tier set, unknown scope -- the verdict is
+`UNKNOWN`. `conversion_trigger` names what qualified:
+`CONSUMPTION_FREQUENCY`, `PRODUCTION_IMPACT` (criticality), or
+`CONSUMPTION_AND_CRITICALITY` when both did; `NONE` when not eligible;
+`UNKNOWN` when undetermined.
+
+**Approval route is unchanged**: a standard-path recommendation that is also
+conversion-eligible still follows the ROP/Max route by criticality
+(`routing.route_for` keys on `is_oar`, the path). Whether conversion should
+take the SOP 3.1.1 chain on that path is an open business question.
 
 **The I13 HOD trigger is removed**, not merely disabled. The
 `i13_hod_approved` column and API field remain for older rows and are `NULL`
-on new ones. Rows from earlier formula versions carry the retired OR rule
-(`CONSUMPTION_FREQUENCY` / `PRODUCTION_IMPACT` / `I13_HOD_APPROVED_REQUEST`).
+on new ones.
 
 ## Explanation
 

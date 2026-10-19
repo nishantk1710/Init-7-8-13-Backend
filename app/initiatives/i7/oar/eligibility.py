@@ -25,6 +25,11 @@ no eligible neighbour is a real and reportable outcome.
 from app.initiatives.i7.oar.types import CandidateAttributes, EligibilityRejection
 
 
+def material_types_conflict(target_type: str | None, candidate_type: str | None) -> bool:
+    """Both material types known and different. Blank on either side never conflicts."""
+    return bool(target_type) and bool(candidate_type) and target_type != candidate_type
+
+
 def reject_reason(
     target: CandidateAttributes,
     candidate: CandidateAttributes,
@@ -47,6 +52,9 @@ def reject_reason(
         return EligibilityRejection.CRITICALITY_MISSING_CANDIDATE
     if candidate.criticality != target.criticality:
         return EligibilityRejection.CRITICALITY_MISMATCH
+
+    if material_types_conflict(target.material_type, candidate.material_type):
+        return EligibilityRejection.MATERIAL_TYPE_MISMATCH
 
     if candidate.is_active is None:
         return EligibilityRejection.ACTIVE_STATUS_UNKNOWN

@@ -56,6 +56,7 @@ def row(
     current_safety_stock: Decimal | None = None,
     current_reorder_point: Decimal | None = None,
     current_maximum_stock: Decimal | None = None,
+    oar_scope: str = "OUT_OF_SCOPE",
 ) -> SimpleNamespace:
     """``current_safety_stock``/``current_reorder_point``/``current_maximum_stock``
     default to ``None`` -- no current MARC value -- so every existing test in
@@ -69,6 +70,7 @@ def row(
         sap_plant_code="1300",
         demand_class=demand_class,
         history_status="SUFFICIENT",
+        oar_scope=oar_scope,
         criticality=criticality,
         total_periods=total_periods,
         non_zero_periods=non_zero_periods,
@@ -214,14 +216,30 @@ def test_case_5_planned_delivery_time_rescues_it():
 # --- Case 6: no history ---------------------------------------------------------
 
 
-def test_case_6_unclassified_defers_to_the_oar_engine():
-    """Phase 6's problem. No neighbour is invented and no average substituted."""
+def test_case_6_an_oar_material_defers_to_the_oar_engine_whatever_its_history():
+    """MRP type ND / PD / blank is Phase 6's, even with a full, classified
+    history. No neighbour is invented and no average substituted."""
+    for demand_class in ("UNCLASSIFIED", "INTERMITTENT", "SMOOTH"):
+        result = calculate_one(
+            row(demand_class, oar_scope="IN_SCOPE"), FIVE_ORDERS, signed_policy(), []
+        )
+        deferred = CalculationStatus.DEFERRED_TO_OAR.value
+        assert result["safety_stock_status"] == deferred
+        assert result["rop_status"] == deferred
+        assert result["max_stock_status"] == deferred
+        assert result["safety_stock"] is None
+
+
+def test_case_6_a_non_oar_cold_start_material_is_not_evaluable_not_deferred():
+    """A VB / other material with too little history has no similar-materials
+    fallback: it is not evaluable, and says why."""
     result = calculate_one(row("UNCLASSIFIED"), FIVE_ORDERS, signed_policy(), [])
-    deferred = CalculationStatus.DEFERRED_TO_OAR.value
-    assert result["safety_stock_status"] == deferred
-    assert result["rop_status"] == deferred
-    assert result["max_stock_status"] == deferred
+    no_history = CalculationStatus.NOT_EVALUABLE_NO_HISTORY.value
+    assert result["safety_stock_status"] == no_history
+    assert result["rop_status"] == no_history
+    assert result["max_stock_status"] == no_history
     assert result["safety_stock"] is None
+    assert "too little usage history" in result["detail"]
 
 
 # --- Case 7: obsolete -------------------------------------------------------------

@@ -57,7 +57,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.initiatives.i7.adapters import consumption_series_for
-from app.initiatives.i7.contracts import DemandPattern
+from app.initiatives.i7.contracts import DemandPattern, ScopeDecision
 from app.initiatives.i7.features import BaselineModel, HistoryStatus
 from app.initiatives.i7.features.declining import DecliningStatus
 from app.initiatives.i7.forecasting import arima, lightgbm_model, sba, ses, tsb
@@ -162,8 +162,12 @@ _ROUTED_SQL = """
      WHERE f.history_status = :sufficient
        AND f.baseline_model IS NOT NULL
        AND f.demand_class <> :smooth
+       AND f.oar_scope <> :oar
      ORDER BY f.sap_material_number, f.sap_plant_code
 """
+# :oar -- an OAR material-plant (MRP type ND / PD / blank, Stage 1's oar_scope) is not forecast
+# whatever its history: its ROP, safety stock and max stock come from similar materials' current
+# SAP values (Phase 6). Only VB and the other MRP types are forecast.
 # :smooth -- a SMOOTH material-plant is not forecast (app.initiatives.i7.smooth_demand): its current
 # SAP values stand, so no SES / Auto-ARIMA run is spent on it and no forecast exists to be used.
 # Lead time is f.lead_time_days -- the feature store's own resolved value
@@ -195,7 +199,11 @@ def _load_candidates(session: Session) -> list[_Candidate]:
     candidates: list[_Candidate] = []
     rows = session.execute(
         text(_ROUTED_SQL),
-        {"sufficient": HistoryStatus.SUFFICIENT.value, "smooth": SMOOTH_DEMAND_CLASS},
+        {
+            "sufficient": HistoryStatus.SUFFICIENT.value,
+            "smooth": SMOOTH_DEMAND_CLASS,
+            "oar": ScopeDecision.IN_SCOPE.value,
+        },
     ).all()
 
     for row in rows:

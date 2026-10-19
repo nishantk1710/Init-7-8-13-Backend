@@ -183,31 +183,39 @@ def test_ready_for_review_only_when_the_path_actually_computed(session):
 
 
 @needs_db
-def test_every_eligible_conversion_meets_both_conditions(session):
-    """Under the current rule an ELIGIBLE OAR recommendation must be CRITICAL
-    or IMPACT *and* have more than its threshold of issues -- never OBSOLETE,
-    never one condition alone. Rows from older formula versions carry the
-    retired OR rule and are not checked."""
+def test_every_eligible_conversion_has_a_reason_and_is_never_obsolete(session):
+    """Under the current rule an ELIGIBLE recommendation (either path) must have
+    more than its threshold of issues OR a CRITICAL / IMPACT / INSURANCE tier,
+    and is never OBSOLETE. Rows from older formula versions carry retired rules
+    and are not checked."""
     from app.initiatives.i7.recommendations.types import RECOMMENDATION_FORMULA_VERSION
 
     if not _generated(session):
         pytest.skip("no recommendations generated")
-    violations = session.execute(
-        select(func.count())
-        .select_from(Recommendation)
-        .where(
-            Recommendation.is_oar,
-            Recommendation.formula_version == RECOMMENDATION_FORMULA_VERSION,
-            Recommendation.conversion_eligibility == "ELIGIBLE",
+    current = (
+        Recommendation.formula_version == RECOMMENDATION_FORMULA_VERSION,
+        Recommendation.conversion_eligibility == "ELIGIBLE",
+    )
+    obsolete = session.execute(
+        select(func.count()).select_from(Recommendation).where(
+            *current, Recommendation.criticality == "OBSOLETE"
+        )
+    ).scalar()
+    no_reason = session.execute(
+        select(func.count()).select_from(Recommendation).where(
+            *current,
             or_(
-                Recommendation.criticality.is_(None),
-                Recommendation.criticality.notin_(("CRITICAL", "IMPACT")),
                 Recommendation.consumption_count_12m.is_(None),
                 Recommendation.consumption_count_12m <= Recommendation.consumption_count_threshold,
             ),
+            or_(
+                Recommendation.criticality.is_(None),
+                Recommendation.criticality.notin_(("CRITICAL", "IMPACT", "INSURANCE")),
+            ),
         )
     ).scalar()
-    assert violations == 0
+    assert obsolete == 0
+    assert no_reason == 0
 
 
 @needs_db

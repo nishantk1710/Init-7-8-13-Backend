@@ -189,13 +189,13 @@ def test_conversion_criticality_tiers_unset_on_the_bare_policy():
     assert bare.excluded_criticality_tiers == ("OBSOLETE",)
 
 
-def test_policy_document_default_resolves_conversion_criticality_tiers_to_critical_and_impact():
-    """Business-confirmed: an OAR material-plant converts to Min-Max only when
-    it is CRITICAL or IMPACT *and* had more than 4 net issues in 12 months
-    (see policy/thresholds.py::current_conversion_trigger_policy). A fresh
-    PolicyDocument() is not blocked on this gap."""
+def test_policy_document_default_resolves_conversion_criticality_tiers():
+    """Business-confirmed 2026-10-19: an OAR material-plant converts to
+    Min-Max when it had more than 4 net issues in 12 months *or* is CRITICAL,
+    IMPACT or INSURANCE (see policy/thresholds.py::current_conversion_trigger_policy).
+    A fresh PolicyDocument() is not blocked on this gap."""
     policy = PolicyDocument()
-    assert policy.conversion_triggers.criticality_trigger_tiers == ("CRITICAL", "IMPACT")
+    assert policy.conversion_triggers.criticality_trigger_tiers == ("CRITICAL", "IMPACT", "INSURANCE")
     assert policy.conversion_triggers.excluded_criticality_tiers == ("OBSOLETE",)
     assert "conversion_criticality_tiers" not in policy.unresolved_policies()
 
@@ -210,7 +210,7 @@ def test_document_defaults_to_draft():
 def test_document_lists_every_unresolved_policy():
     # conversion_criticality_tiers is no longer here: PolicyDocument's own
     # default now resolves it via current_conversion_trigger_policy()
-    # (criticality_trigger_tiers=("CRITICAL", "IMPACT"), a confirmed business
+    # (criticality_trigger_tiers=("CRITICAL", "IMPACT", "INSURANCE"), a confirmed business
     # decision -- see policy/thresholds.py). ConversionTriggerPolicy() built
     # bare (with no PolicyDocument around it) still defaults
     # criticality_trigger_tiers to None on its own, which is what

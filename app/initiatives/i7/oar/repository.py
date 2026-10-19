@@ -27,11 +27,14 @@ _TARGET_SQL = """
     SELECT f.sap_material_number, f.sap_plant_code, f.criticality,
            m.deletion_flag, f.total_periods,
            m.material_group, NULL AS equipment_type, m.base_unit_of_measure,
-           NULL AS circuit, m.manufacturer, f.unit_price, m.description
+           NULL AS circuit, m.manufacturer, f.unit_price, m.description,
+           m.material_type
       FROM i7_material_feature f
       LEFT JOIN i7_staged_material m ON m.sap_material_number = f.sap_material_number
-     WHERE f.history_status <> 'SUFFICIENT'
+     WHERE f.oar_scope = 'IN_SCOPE'
 """
+# Every OAR material-plant (MRP type ND / PD / blank, Stage 1's verdict), whatever its history and
+# demand class. A VB / other material is never a target: it is forecast or not evaluable.
 
 _DONOR_WHERE = """
      WHERE f.history_status = 'SUFFICIENT'
@@ -49,7 +52,8 @@ _CANDIDATE_SQL = (
     SELECT f.sap_material_number, f.sap_plant_code, f.criticality,
            m.deletion_flag, f.total_periods,
            m.material_group, NULL AS equipment_type, m.base_unit_of_measure,
-           NULL AS circuit, m.manufacturer, f.unit_price, m.description
+           NULL AS circuit, m.manufacturer, f.unit_price, m.description,
+           m.material_type
       FROM i7_material_feature f
       LEFT JOIN i7_staged_material m ON m.sap_material_number = f.sap_material_number
 """
@@ -90,11 +94,12 @@ def _to_attributes(row) -> CandidateAttributes:
         manufacturer=row.manufacturer,
         unit_price=Decimal(str(row.unit_price)) if row.unit_price is not None else None,
         description=row.description,
+        material_type=row.material_type,
     )
 
 
 def load_targets(session: Session) -> list[CandidateAttributes]:
-    """Every cold-start material-plant (NO_HISTORY or COLD_START)."""
+    """Every OAR material-plant (MRP type ND / PD / blank), whatever its history."""
     return [_to_attributes(row) for row in session.execute(text(_TARGET_SQL))]
 
 

@@ -105,7 +105,13 @@ def _not_smooth():
     app.initiatives.i7.smooth_demand) -- so a SMOOTH row written before that rule is not listed
     or counted. Kept out of ``_apply_filters``, which adoption tracking shares: a SMOOTH
     recommendation already approved or adopted stays visible there."""
-    return or_(Recommendation.demand_class.is_(None), Recommendation.demand_class != SMOOTH_DEMAND_CLASS)
+    # An OAR recommendation is never one of those: OAR materials are sized from similar
+    # materials whatever their demand class, so a SMOOTH OAR row is a real recommendation.
+    return or_(
+        Recommendation.is_oar,
+        Recommendation.demand_class.is_(None),
+        Recommendation.demand_class != SMOOTH_DEMAND_CLASS,
+    )
 
 
 def _apply_filters(
@@ -125,6 +131,7 @@ def _apply_filters(
     criticality_level: str | None = None,
     status_group: str | None = None,
     risk: str | None = None,
+    conversion_eligibility: str | None = None,
 ) -> Select:
     """Every filter here maps to a real, persisted column or a keyed lookup.
     Nothing that would require loading rows into Python to evaluate.
@@ -149,6 +156,8 @@ def _apply_filters(
         statement = statement.where(Recommendation.is_oar == is_oar)
     if confidence is not None:
         statement = statement.where(Recommendation.confidence == confidence)
+    if conversion_eligibility is not None:
+        statement = statement.where(Recommendation.conversion_eligibility == conversion_eligibility)
     if criticality is not None:
         statement = statement.where(Recommendation.criticality == criticality)
     if generated_from is not None:
@@ -408,6 +417,10 @@ def list_recommendations(
             description="oar: sized from similar materials. declining: not OAR and flagged by the declining-demand rule. normal: everything else. The three never overlap. stock_item: declining and normal together, i.e. everything that is not OAR.",
         ),
     ] = None,
+    conversion_eligibility: Annotated[
+        Literal["ELIGIBLE", "NOT_ELIGIBLE", "UNKNOWN"] | None,
+        Query(description="The OAR -> Min-Max conversion decision. A recommendation with no decision (not OAR) matches none."),
+    ] = None,
 ) -> RecommendationListResponse:
     if sort not in SORT_FIELDS:
         raise bad_request(
@@ -437,6 +450,7 @@ def list_recommendations(
             criticality_level=criticality_level,
             status_group=status_group,
             risk=risk,
+            conversion_eligibility=conversion_eligibility,
         ).where(_not_smooth())
     )
 

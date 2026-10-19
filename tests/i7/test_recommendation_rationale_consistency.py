@@ -45,6 +45,8 @@ def normal_row(**overrides) -> SimpleNamespace:
         history_status="SUFFICIENT",
         criticality="NORMAL",
         non_zero_periods=6,
+        consumption_count_12m=None,
+        oar_scope="OUT_OF_SCOPE",  # not OAR: no conversion decision
         feature_run_id=67,
         baseline_model="SBA",
         forecast_rate=Decimal("1.149129"),

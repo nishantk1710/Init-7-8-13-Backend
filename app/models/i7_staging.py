@@ -141,6 +141,10 @@ class StagedMaterial(Base):
     external_material_group: Mapped[str | None] = mapped_column(String(32), nullable=True)
     """EXTWG. Retired as an OAR identifier; staged for provenance only."""
 
+    material_type: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    """MTART (e.g. ERSA spare part, HIBE consumable). An OAR neighbour must share
+    the target's material type when both are known -- see oar.eligibility."""
+
     manufacturer: Mapped[str | None] = mapped_column(String(64), nullable=True)
     deletion_flag: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 

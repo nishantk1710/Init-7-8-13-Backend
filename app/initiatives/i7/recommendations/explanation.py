@@ -141,7 +141,17 @@ def build_factors(
     """
     factors: list[RecommendationFactor] = []
 
-    if is_oar:
+    if is_oar and history_status == "SUFFICIENT":
+        factors.append(
+            RecommendationFactor(
+                label="Ordered on demand",
+                detail=(
+                    "This material is ordered on demand (OAR), so its stock levels "
+                    "are worked out from similar materials, not from its own forecast."
+                ),
+            )
+        )
+    elif is_oar:
         factors.append(
             RecommendationFactor(
                 label="Little usage history",

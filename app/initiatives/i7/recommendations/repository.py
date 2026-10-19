@@ -13,6 +13,7 @@ from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
 _NORMAL_SQL = """
     SELECT f.sap_material_number, f.sap_plant_code, f.demand_class, f.history_status,
            f.criticality, f.non_zero_periods, f.feature_run_id,
+           f.consumption_count_12m, f.oar_scope,
            f.baseline_model, c.forecast_rate, c.model_name AS forecast_model,
            f.current_safety_stock, f.current_reorder_point, f.current_maximum_stock,
            f.unit_price,
@@ -35,9 +36,12 @@ _NORMAL_SQL = """
        AND c.forecast_run_id = :forecast_run_id
        AND c.is_champion = :champion
        AND c.forecast_status = 'SUCCESS'
-     WHERE f.history_status = 'SUFFICIENT'
+     WHERE f.oar_scope <> 'IN_SCOPE'
        AND f.demand_class <> :smooth
 """
+# Every non-OAR material-plant (VB / other) the inventory stage saw: forecast-based ones, and
+# cold-start ones it recorded as NOT_EVALUABLE_NO_HISTORY, so they are listed as not evaluable
+# instead of silently missing. OAR ones take the OAR path below whatever their history.
 # :smooth -- no recommendation is built for a SMOOTH material-plant: its current SAP values stand
 # (app.initiatives.i7.smooth_demand).
 
@@ -57,7 +61,7 @@ _OAR_SQL = """
         ON t.sap_material_number = f.sap_material_number
        AND t.sap_plant_code = f.sap_plant_code
        AND t.oar_run_id = :oar_run_id
-     WHERE f.history_status <> 'SUFFICIENT'
+     WHERE f.oar_scope = 'IN_SCOPE'
 """
 # current_safety_stock / current_reorder_point / current_maximum_stock /
 # unit_price all read from the feature store (f.), not re-joined from
@@ -70,7 +74,7 @@ _UNCOVERED_OAR_SQL = """
     SELECT f.sap_material_number, f.sap_plant_code, f.history_status, f.criticality,
            f.feature_run_id, f.unit_price
       FROM i7_material_feature f
-     WHERE f.history_status <> 'SUFFICIENT'
+     WHERE f.oar_scope = 'IN_SCOPE'
        AND NOT EXISTS (
              SELECT 1 FROM i7_oar_target t
               WHERE t.sap_material_number = f.sap_material_number
@@ -149,7 +153,7 @@ def latest_oar_run(session: Session) -> int | None:
 
 
 def load_normal_inputs(session: Session, inventory_run_id: int, forecast_run_id: int | None):
-    """Every SUFFICIENT material-plant joined to its latest Phase 4/5 result."""
+    """Every non-OAR (VB / other) material-plant joined to its latest Phase 4/5 result."""
     return list(
         session.execute(
             text(_NORMAL_SQL),
@@ -164,12 +168,12 @@ def load_normal_inputs(session: Session, inventory_run_id: int, forecast_run_id:
 
 
 def load_oar_inputs(session: Session, oar_run_id: int):
-    """Every cold-start material-plant joined to its Phase 6 result."""
+    """Every OAR (ND / PD / blank) material-plant joined to its Phase 6 result."""
     return list(session.execute(text(_OAR_SQL), {"oar_run_id": oar_run_id}))
 
 
 def load_uncovered_oar_targets(session: Session, oar_run_id: int):
-    """Cold-start material-plants with no Phase 6 result at all -- the feature
+    """OAR material-plants with no Phase 6 result at all -- the feature
     store and OAR runs can drift apart if OAR has not been re-run since the
     last feature build."""
     return list(session.execute(text(_UNCOVERED_OAR_SQL), {"oar_run_id": oar_run_id}))

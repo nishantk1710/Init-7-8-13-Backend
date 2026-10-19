@@ -1,7 +1,12 @@
 # I07 OAR Similarity Engine (Phase 6)
 
-Finds comparable materials for a cold-start target and, where evidence permits,
+Finds comparable materials for an OAR target and, where evidence permits,
 derives a similarity-weighted inventory estimate.
+
+**Targets (since `oar-similarity-4`, 2026-10-19):** every OAR material-plant --
+MRP type ND / PD / blank -- whatever its history. A VB / other material is never
+a target: it is forecast, or not evaluable. Earlier sections below describe the
+cold-start-only target set and its measured results; read them as history.
 
 ```
 OAR / Cold Start (Phase 3: NO_HISTORY or COLD_START)

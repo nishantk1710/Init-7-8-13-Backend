@@ -108,7 +108,7 @@ def test_get_many_answers_exactly_as_get_does(session, source) -> None:
 def i07_session(session, monkeypatch):
     """The staging query's other inputs: n_mara and n_makt, as plain tables."""
     session.execute(text(
-        "CREATE TABLE n_mara (material TEXT, material_group TEXT, base_unit_of_measure TEXT, "
+        "CREATE TABLE n_mara (material TEXT, material_group TEXT, material_type TEXT, base_unit_of_measure TEXT, "
         "x_plant_matl_status TEXT, ext_material_group TEXT, manufacturer TEXT, df_at_client_level TEXT, "
         "material_description TEXT)"
     ))
@@ -141,7 +141,7 @@ def test_i07_reads_the_current_values_not_the_history(i07_session) -> None:
 
 def test_i07_stages_with_no_criticality_when_the_table_does_not_exist(session, monkeypatch) -> None:
     session.execute(text(
-        "CREATE TABLE n_mara (material TEXT, material_group TEXT, base_unit_of_measure TEXT, "
+        "CREATE TABLE n_mara (material TEXT, material_group TEXT, material_type TEXT, base_unit_of_measure TEXT, "
         "x_plant_matl_status TEXT, ext_material_group TEXT, manufacturer TEXT, df_at_client_level TEXT, "
         "material_description TEXT)"
     ))

@@ -23,6 +23,7 @@ target --> hard eligibility gates --> Stage A shortlist --> Stage B exact score
 | Rule | Value | Where |
 |---|---|---|
 | Same, known criticality | hard gate | `eligibility.py` |
+| Same material type (MTART) when both are known; blank on either side does not block (`oar-similarity-5`, 2026-10-19) | hard gate | `eligibility.material_types_conflict`, mirrored in `retrieval.py` |
 | Known active | hard gate | `eligibility.py` |
 | Known history >= 12 months | hard gate | `SimilarityPolicy.minimum_neighbour_history_months` |
 | Not the target itself | hard gate | `eligibility.py` |

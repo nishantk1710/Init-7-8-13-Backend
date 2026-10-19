@@ -54,7 +54,9 @@ def db():
         yield session
 
 
-def feature(material, demand_class, *, history="SUFFICIENT", sap=(None, None, None), baseline="SES"):
+def feature(
+    material, demand_class, *, history="SUFFICIENT", sap=(None, None, None), baseline="SES", oar_scope="OUT_OF_SCOPE"
+):
     safety, rop, maximum = sap
     return MaterialFeature(
         sap_material_number=material,
@@ -63,7 +65,7 @@ def feature(material, demand_class, *, history="SUFFICIENT", sap=(None, None, No
         data_sufficiency="LIMITED",
         adi_status="OK",
         cv_squared_status="OK",
-        oar_scope="OUT_OF_SCOPE",
+        oar_scope=oar_scope,
         feature_run_id=1,
         demand_class=demand_class,
         baseline_model=baseline,
@@ -101,7 +103,7 @@ def seed_features(db):
 
 def test_forecasting_routes_every_class_but_smooth(db):
     seed_features(db)
-    rows = db.execute(text(_ROUTED_SQL), {"sufficient": "SUFFICIENT", "smooth": SMOOTH_DEMAND_CLASS}).all()
+    rows = db.execute(text(_ROUTED_SQL), {"sufficient": "SUFFICIENT", "smooth": SMOOTH_DEMAND_CLASS, "oar": "IN_SCOPE"}).all()
     assert sorted(row.demand_class for row in rows) == ["ERRATIC", "INTERMITTENT", "LUMPY"]
 
 
@@ -126,7 +128,7 @@ def test_erratic_keeps_its_existing_handling(db):
     """Only SMOOTH changed: ERRATIC is still routed, calculated and recommended."""
     db.add_all([feature("E", "ERRATIC"), calculation("E", "ERRATIC")])
     db.commit()
-    assert len(db.execute(text(_ROUTED_SQL), {"sufficient": "SUFFICIENT", "smooth": "SMOOTH"}).all()) == 1
+    assert len(db.execute(text(_ROUTED_SQL), {"sufficient": "SUFFICIENT", "smooth": "SMOOTH", "oar": "IN_SCOPE"}).all()) == 1
     assert len(db.execute(text(_INPUT_SQL), {"forecast_run_id": 1, "champion": True, "smooth": "SMOOTH"}).all()) == 1
 
 
@@ -303,3 +305,84 @@ def seed_features_lead_time(db, material, lead_time):
     row = db.query(MaterialFeature).filter_by(sap_material_number=material).one()
     row.lead_time_days = Decimal(lead_time)
     db.commit()
+
+
+# --- Routing by MRP type: OAR (ND / PD / blank) is sized from similar materials -------------------
+#
+# Stage 1's oar_scope decides the path, not history: an OAR material with a full history is not
+# forecast and takes the OAR path; a VB / other one is forecast, or not evaluable when it has too
+# little history -- there is no similar-materials fallback for it.
+
+
+def test_forecasting_skips_an_oar_material_even_with_full_history(db):
+    db.add_all([feature("OAR", "INTERMITTENT", oar_scope="IN_SCOPE"), feature("VB", "INTERMITTENT")])
+    db.commit()
+    rows = db.execute(text(_ROUTED_SQL), {"sufficient": "SUFFICIENT", "smooth": SMOOTH_DEMAND_CLASS, "oar": "IN_SCOPE"}).all()
+    assert [row.sap_material_number for row in rows] == ["VB"]
+
+
+def test_every_oar_material_is_an_oar_target_and_no_vb_one_is(db):
+    db.add_all(
+        [
+            feature("OAR-HISTORY", "INTERMITTENT", oar_scope="IN_SCOPE"),
+            feature("OAR-SMOOTH", "SMOOTH", oar_scope="IN_SCOPE"),
+            feature("OAR-COLD", "UNCLASSIFIED", history="COLD_START", oar_scope="IN_SCOPE"),
+            feature("VB-COLD", "UNCLASSIFIED", history="COLD_START"),
+            feature("VB-HISTORY", "INTERMITTENT"),
+        ]
+    )
+    db.commit()
+    targets = sorted(t.sap_material_number for t in oar_repository.load_targets(db))
+    assert targets == ["OAR-COLD", "OAR-HISTORY", "OAR-SMOOTH"]
+
+
+def test_the_standard_path_takes_vb_materials_only_cold_start_ones_included(db):
+    """An OAR material never reaches the forecast-based recommendation, however much
+    history it has; a VB cold-start one does, to be listed as not evaluable."""
+    db.add_all(
+        [
+            feature("OAR", "INTERMITTENT", oar_scope="IN_SCOPE"),
+            calculation("OAR", "INTERMITTENT"),
+            feature("VB", "INTERMITTENT"),
+            calculation("VB", "INTERMITTENT"),
+            feature("VB-COLD", "UNCLASSIFIED", history="COLD_START"),
+            calculation("VB-COLD", "UNCLASSIFIED", status="NOT_EVALUABLE_NO_HISTORY"),
+        ]
+    )
+    db.commit()
+    rows = db.execute(
+        text(_NORMAL_SQL),
+        {"inventory_run_id": 1, "forecast_run_id": 1, "champion": True, "smooth": SMOOTH_DEMAND_CLASS},
+    ).all()
+    assert sorted(row.sap_material_number for row in rows) == ["VB", "VB-COLD"]
+
+
+def test_a_smooth_oar_recommendation_is_listed(db):
+    """SAP's values stand for a SMOOTH VB material, so its stale row stays hidden -- but
+    a SMOOTH OAR material is sized from similar materials, and that is a real row."""
+    oar_smooth = recommendation("OS", "SMOOTH")
+    oar_smooth.is_oar = True
+    db.add_all([oar_smooth, recommendation("VS", "SMOOTH"), recommendation("E", "ERRATIC")])
+    db.commit()
+    assert sorted(item.material for item in listing(db).items) == ["E", "OS"]
+
+
+# --- The OAR list can be filtered by Min-Max conversion decision ------------------------------------
+
+
+def test_the_list_filters_by_min_max_conversion_decision(db):
+    rows = []
+    for material, decision in (("ELIG", "ELIGIBLE"), ("NOT", "NOT_ELIGIBLE"), ("NONE", None)):
+        rec = recommendation(material, "INTERMITTENT")
+        rec.is_oar = decision is not None
+        rec.conversion_eligibility = decision
+        rows.append(rec)
+    db.add_all(rows)
+    db.commit()
+
+    def shown(**filters):
+        return sorted(item.material for item in listing(db, **filters).items)
+
+    assert shown(conversion_eligibility="ELIGIBLE") == ["ELIG"]
+    assert shown(conversion_eligibility="NOT_ELIGIBLE") == ["NOT"]
+    assert shown() == ["ELIG", "NONE", "NOT"]  # no filter: everything
