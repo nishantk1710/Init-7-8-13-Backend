@@ -27,11 +27,10 @@ from app.initiatives.i8.register import RepairLine
 
 CFG = I8Settings(_env_file=None)
 RAISED = date(2026, 5, 1)
-BACK = date(2026, 6, 15)
 
 
 def repair(**overrides) -> RepairLine:
-    """A repair of 8000005632 at 1300, out from RAISED until it comes back."""
+    """A repair of 8000005632 at 1300, out since RAISED and still open in SAP."""
     defaults = dict(
         purchasing_document="4500001234",
         item="10",
@@ -42,7 +41,6 @@ def repair(**overrides) -> RepairLine:
         unit="EA",
         net_price=None,
         item_category="3",
-        delivery_completed=False,
         pr_number="10012345",
         pr_item="10",
         requisitioner="TMOKOENA",
@@ -57,12 +55,8 @@ def repair(**overrides) -> RepairLine:
         schedule_lines=1,
         dispatched_at=None,
         dispatched_qty=Decimal(0),
-        received_at=None,
-        received_qty=Decimal(0),
-        reversals=0,
         lead_time_days=None,
         repair_status="PO Issued",
-        receipt_status="Not Yet Shipped",
         overdue_status="ON_TIME",
         lead_time_status="NO_LEAD_TIME",
         qty_under_repair=Decimal(1),
@@ -116,12 +110,8 @@ class TestWasOutOn:
     def test_not_before_it_was_raised(self) -> None:
         assert not was_out_on(repair(), date(2026, 4, 30))
 
-    def test_until_the_day_before_it_came_back(self) -> None:
-        line = repair(received_at=BACK)
-        assert was_out_on(line, date(2026, 6, 14))
-        assert not was_out_on(line, BACK)
-
     def test_an_open_line_is_out_on_any_later_day(self) -> None:
+        """Every register line is open in SAP, so it has been out ever since."""
         assert was_out_on(repair(), date(2026, 10, 8))
 
     def test_an_undated_line_is_never_out(self) -> None:
@@ -138,9 +128,8 @@ class TestRecorded:
         assert index[line.key].status == RECORDED
         assert [r.id for r in index[line.key].recorded] == ["J-1"]
 
-    def test_a_reason_recorded_after_the_unit_came_back_is_not_this_lines(self) -> None:
-        line = repair(received_at=BACK)
-        assert by_line([line], [reason(date(2026, 7, 1))], []) == {}
+    def test_a_reason_recorded_before_the_line_was_raised_is_not_this_lines(self) -> None:
+        assert by_line([repair()], [reason(date(2026, 4, 20))], []) == {}
 
     def test_another_plant_is_another_shelf(self) -> None:
         assert by_line([repair()], [reason(date(2026, 5, 20), plant="1500")], []) == {}
@@ -214,7 +203,6 @@ class TestMissing:
             title="",
             detail="",
             raised_at=RAISED,
-            is_open_repair=True,
         )
         assert by_line([line], [], [missing_attestation]) == {}
 
@@ -231,7 +219,6 @@ def declaration(**overrides) -> DeclarationRow:
         pr_number="10012345",
         pr_item="10",
         requester="TMOKOENA",
-        has_active_repair=True,
         related_repair_id="4500001234-10",
         status="Flagged",
         declared_by="R. Kruger",

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import ast
 import pathlib
-from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
@@ -50,7 +49,6 @@ def repair(**overrides) -> RepairLine:
         unit="EA",
         net_price=None,
         item_category="3",
-        delivery_completed=False,
         pr_number=None,
         pr_item=None,
         requisitioner=None,
@@ -65,12 +63,8 @@ def repair(**overrides) -> RepairLine:
         schedule_lines=1,
         dispatched_at=None,
         dispatched_qty=Decimal(0),
-        received_at=None,
-        received_qty=Decimal(0),
-        reversals=0,
         lead_time_days=None,
         repair_status="PO Issued",
-        receipt_status="Not Yet Shipped",
         overdue_status="ON_TIME",
         lead_time_status="NO_LEAD_TIME",
         qty_under_repair=Decimal(1),
@@ -171,13 +165,17 @@ class TestDeletedAndBlockedLines:
                     for n in [node.left, *node.comparators]
                     if isinstance(n, ast.Constant) and isinstance(n.value, str)
                 }
-                assert not literals & {"L", "S", "0"}, f"{name}: {literals} compared literally"
+                assert not literals & {"L", "S", "0", "X"}, f"{name}: {literals} compared literally"
 
 
 # --- was a repair open when the purchase was raised ----------------------
 
 
 class TestOpenRepairAtThePurchase:
+    """Every register line is open in SAP, so a repair raised by the day of
+    the purchase has been out ever since. One SAP has closed is not in the
+    register to match at all."""
+
     def index(self, *lines):
         return repairs_by_material_plant(lines)
 
@@ -192,13 +190,8 @@ class TestOpenRepairAtThePurchase:
     def test_a_repair_raised_after_the_purchase_does_not(self) -> None:
         assert open_repair_at(purchase(), self.index(repair(raised_at=date(2026, 5, 11)))) is None
 
-    def test_a_repair_already_back_does_not(self) -> None:
-        back = repair(received_at=date(2026, 5, 9))
-        assert open_repair_at(purchase(), self.index(back)) is None
-
-    def test_a_repair_that_came_back_later_was_still_out_at_the_time(self) -> None:
-        later = repair(received_at=date(2026, 5, 20))
-        assert open_repair_at(purchase(), self.index(later)) is later
+    def test_an_undated_repair_cannot_be_placed_in_time(self) -> None:
+        assert open_repair_at(purchase(), self.index(repair(raised_at=None))) is None
 
     def test_another_plant_is_another_shelf(self) -> None:
         assert open_repair_at(purchase(), self.index(repair(plant="1500"))) is None
@@ -226,12 +219,13 @@ class TestUnjustifiedAcquisition:
         assert (item.purchasing_document, item.item) == ("4500001234", "10")
         assert item.severity == "warning"
         assert item.raised_at == BOUGHT
-        assert item.is_open_repair is True
+        assert "SAP still has it open" in item.detail
         assert "within 30 days" in item.detail
 
     def test_not_raised_when_no_repair_was_open(self) -> None:
         """Buying a part nobody is repairing is ordinary procurement."""
-        assert raised([purchase()], [repair(received_at=date(2026, 5, 2))]) == []
+        assert raised([purchase()], []) == []
+        assert raised([purchase()], [repair(raised_at=date(2026, 5, 11))]) == []
 
     @pytest.mark.parametrize("recorded", [date(2026, 4, 10), BOUGHT, date(2026, 6, 9)])
     def test_a_justification_inside_the_window_answers_it(self, recorded) -> None:
@@ -297,17 +291,13 @@ class TestUnjustifiedAcquisition:
         assert stats.justification_cutover_date == date(2026, 5, 5)
         assert {i.type for i in items} == {"MISSING_ATTESTATION", "UNJUSTIFIED_ACQUISITION"}
 
-    def test_a_blocked_repair_still_counts_as_open(self) -> None:
-        """Blocked is not cancelled -- the unit is still away."""
-        [item] = raised([purchase()], [replace(repair(), po_blocked=True)])
-        assert item.is_open_repair is True
-
 
 class TestConfigurationDefaults:
     def test_new_settings_have_working_defaults(self) -> None:
         cfg = I8Settings(_env_file=None)
         assert cfg.po_deleted_indicator == "L"
         assert cfg.po_blocked_indicator == "S"
+        assert cfg.delivery_completed_indicator == "X"
         assert cfg.new_purchase_item_category == "0"
         assert cfg.justification_window_days == 30
         assert cfg.justification_cutover_date_value is None

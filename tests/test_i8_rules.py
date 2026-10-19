@@ -2,8 +2,8 @@
 
 No database. Every case here is a decision the register makes about one line,
 and each one is stated in the task plan as something that must be got right:
-reversals, partial receipts, missing due dates, the grace period, and the exact
-aging bands the frontend already renders.
+which lines SAP still has open, missing due dates, the grace period, and the
+exact aging bands the frontend already renders.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.initiatives.i8 import register
 from app.initiatives.i8.aging import (
     AGING_BUCKETS,
     BEYOND_LEAD_TIME,
@@ -20,7 +21,6 @@ from app.initiatives.i8.aging import (
     NO_LEAD_TIME,
     ON_TIME,
     OVERDUE,
-    RECEIVED,
     WITHIN_LEAD_TIME,
     aging_bucket,
     days_between,
@@ -33,20 +33,38 @@ from app.initiatives.i8.aging import (
 from app.initiatives.i8.config import I8Settings
 from app.initiatives.i8.register import (
     AT_VENDOR,
-    AWAITING_RECEIPT,
-    CLOSED,
-    FULLY_RECEIVED,
-    NOT_YET_SHIPPED,
-    PARTIALLY_RECEIVED,
     PO_ISSUED,
-    RECEIVED_STATUS,
-    ZERO,
-    qty_under_repair,
-    receipt_status,
+    is_blocked_line,
+    is_deleted_line,
+    is_delivery_completed,
+    load_repair_lines,
     repair_status,
 )
 
 TODAY = date(2026, 9, 11)
+
+
+def _row(**overrides):
+    """One EKPO candidate row, as the view serves it: an open repair line."""
+    row = {
+        "ebeln": "4500000001",
+        "ebelp": "00010",
+        "matnr": "8000005632",
+        "werks": "1300",
+        "pstyp": "3",
+        "txz01": "REPAIR OF PUMP",
+        "menge": Decimal(1),
+        "meins": "EA",
+        "netpr": Decimal(100),
+        "elikz": "",
+        "banfn": None,
+        "bnfpo": None,
+        "erdat": date(2026, 6, 1),
+        "loekz": None,
+        "afnam": "10316",
+    }
+    row.update(overrides)
+    return row
 
 
 # --- aging buckets --------------------------------------------------------
@@ -105,73 +123,36 @@ class TestAgingBuckets:
 
 
 class TestOverdueState:
-    def test_received_wins_over_everything(self) -> None:
-        assert (
-            overdue_state(
-                received_at=date(2026, 5, 1),
-                due_date=date(2025, 1, 1),
-                today=TODAY,
-                grace_days=7,
-            )
-            == RECEIVED
-        )
-
     def test_missing_due_date_is_its_own_state(self) -> None:
-        """63 lines. They are NOT "not overdue" -- they are the lines nobody
-        agreed a date for, and they need to be chaseable."""
-        assert (
-            overdue_state(
-                received_at=None, due_date=None, today=TODAY, grace_days=7
-            )
-            == NO_DUE_DATE
-        )
+        """They are NOT "not overdue" -- they are the lines nobody agreed a date
+        for, and they need to be chaseable."""
+        assert overdue_state(due_date=None, today=TODAY, grace_days=7) == NO_DUE_DATE
 
     def test_grace_period_is_applied(self) -> None:
         due = date(2026, 9, 1)
         # 10 days past due, 7 days grace -> overdue.
-        assert (
-            overdue_state(received_at=None, due_date=due, today=TODAY, grace_days=7)
-            == OVERDUE
-        )
+        assert overdue_state(due_date=due, today=TODAY, grace_days=7) == OVERDUE
         # Same line, 30 days grace -> not yet.
-        assert (
-            overdue_state(received_at=None, due_date=due, today=TODAY, grace_days=30)
-            == ON_TIME
-        )
+        assert overdue_state(due_date=due, today=TODAY, grace_days=30) == ON_TIME
 
     def test_the_grace_boundary_is_exclusive(self) -> None:
         """Due + grace is the last good day, not the first bad one."""
         due = date(2026, 9, 4)  # + 7 days grace == 2026-09-11 == TODAY
+        assert overdue_state(due_date=due, today=TODAY, grace_days=7) == ON_TIME
         assert (
-            overdue_state(received_at=None, due_date=due, today=TODAY, grace_days=7)
-            == ON_TIME
-        )
-        assert (
-            overdue_state(
-                received_at=None, due_date=due, today=date(2026, 9, 12), grace_days=7
-            )
+            overdue_state(due_date=due, today=date(2026, 9, 12), grace_days=7)
             == OVERDUE
         )
 
     def test_zero_grace_is_honoured(self) -> None:
         assert (
-            overdue_state(
-                received_at=None,
-                due_date=date(2026, 9, 10),
-                today=TODAY,
-                grace_days=0,
-            )
+            overdue_state(due_date=date(2026, 9, 10), today=TODAY, grace_days=0)
             == OVERDUE
         )
 
     def test_future_due_date_is_on_time(self) -> None:
         assert (
-            overdue_state(
-                received_at=None,
-                due_date=date(2028, 4, 30),
-                today=TODAY,
-                grace_days=7,
-            )
+            overdue_state(due_date=date(2028, 4, 30), today=TODAY, grace_days=7)
             == ON_TIME
         )
 
@@ -196,166 +177,82 @@ class TestDaysArithmetic:
 
 
 class TestRepairStatus:
+    """Every register line is open in SAP, so it is one of two things."""
+
     def test_po_raised_but_nothing_moved(self) -> None:
-        assert (
-            repair_status(
-                received_qty=Decimal(0),
-                ordered_qty=Decimal(1),
-                dispatched_at=None,
-                delivery_completed=False,
-            )
-            == PO_ISSUED
-        )
+        assert repair_status(dispatched_at=None) == PO_ISSUED
 
-    def test_dispatched_and_not_back(self) -> None:
-        assert (
-            repair_status(
-                received_qty=Decimal(0),
-                ordered_qty=Decimal(1),
-                dispatched_at=date(2026, 1, 1),
-                delivery_completed=False,
-            )
-            == AT_VENDOR
-        )
-
-    def test_fully_received(self) -> None:
-        assert (
-            repair_status(
-                received_qty=Decimal(1),
-                ordered_qty=Decimal(1),
-                dispatched_at=date(2026, 1, 1),
-                delivery_completed=False,
-            )
-            == RECEIVED_STATUS
-        )
-
-    def test_received_and_signed_off_is_closed(self) -> None:
-        assert (
-            repair_status(
-                received_qty=Decimal(1),
-                ordered_qty=Decimal(1),
-                dispatched_at=date(2026, 1, 1),
-                delivery_completed=True,
-            )
-            == CLOSED
-        )
-
-    def test_delivery_complete_alone_does_not_close_a_line(self) -> None:
-        """The measurement behind this: 1,025 of the 1,225 repair lines carry
-        ELIKZ='X' and only 436 have any goods receipt. Treating the flag as
-        closure would report 589 units back in stock that never came back."""
-        assert (
-            repair_status(
-                received_qty=Decimal(0),
-                ordered_qty=Decimal(1),
-                dispatched_at=None,
-                delivery_completed=True,
-            )
-            == PO_ISSUED
-        )
-
-    def test_a_fully_reversed_receipt_is_not_a_receipt(self) -> None:
-        """A 101 followed by its 102 nets to zero. The line is still open."""
-        assert (
-            repair_status(
-                received_qty=Decimal(0),
-                ordered_qty=Decimal(1),
-                dispatched_at=date(2026, 1, 1),
-                delivery_completed=True,
-            )
-            == AT_VENDOR
-        )
+    def test_a_dispatch_puts_it_at_the_vendor(self) -> None:
+        assert repair_status(dispatched_at=date(2026, 1, 1)) == AT_VENDOR
 
 
-class TestReceiptStatus:
-    def test_not_yet_shipped(self) -> None:
-        assert (
-            receipt_status(
-                received_qty=Decimal(0), ordered_qty=Decimal(5), dispatched_at=None
-            )
-            == NOT_YET_SHIPPED
-        )
+class TestOpenIsSapsCall:
+    """The 19-Oct-2026 ruling: a repair line is open while SAP has it open.
 
-    def test_awaiting_receipt_once_dispatched(self) -> None:
-        assert (
-            receipt_status(
-                received_qty=Decimal(0),
-                ordered_qty=Decimal(5),
-                dispatched_at=date(2026, 1, 1),
-            )
-            == AWAITING_RECEIPT
-        )
+    "Delivery completed" (EKPO.ELIKZ) closes a line whatever was received
+    against it, and a deleted or blocked line is not open either -- SAP's own
+    open-PO count reads it that way. Measured on the 15-Oct data, the register
+    called ~732 lines open where SAP counted ~106; this rule gives 104.
+    """
 
-    def test_partial_receipt_is_not_received(self) -> None:
-        """No line in the July extract is partially received, so this rule is
-        only exercised here. It is implemented because a partial receipt is
-        ordinary in a live client, and finding out at cutover that the register
-        rounds it up to "Received" would mean reporting units back that are
-        still at the vendor."""
-        assert (
-            receipt_status(
-                received_qty=Decimal(2),
-                ordered_qty=Decimal(5),
-                dispatched_at=date(2026, 1, 1),
-            )
-            == PARTIALLY_RECEIVED
-        )
+    CFG = I8Settings(_env_file=None)
 
-    def test_fully_received(self) -> None:
-        assert (
-            receipt_status(
-                received_qty=Decimal(5),
-                ordered_qty=Decimal(5),
-                dispatched_at=date(2026, 1, 1),
-            )
-            == FULLY_RECEIVED
-        )
+    def test_delivery_completed_closes_a_line(self) -> None:
+        assert is_delivery_completed({"elikz": "X"}, self.CFG) is True
 
-    def test_over_receipt_counts_as_received(self) -> None:
-        assert (
-            receipt_status(
-                received_qty=Decimal(6),
-                ordered_qty=Decimal(5),
-                dispatched_at=date(2026, 1, 1),
-            )
-            == FULLY_RECEIVED
-        )
+    @pytest.mark.parametrize("flag", ["", None])
+    def test_a_line_without_the_flag_is_open(self, flag) -> None:
+        assert is_delivery_completed({"elikz": flag}, self.CFG) is False
 
+    def test_the_flag_value_is_configuration(self) -> None:
+        cfg = I8Settings(_env_file=None, delivery_completed_indicator="Y")
+        assert is_delivery_completed({"elikz": "Y"}, cfg) is True
+        assert is_delivery_completed({"elikz": "X"}, cfg) is False
 
-class TestQtyUnderRepair:
-    """The quantity has to agree with :class:`TestReceiptStatus` above: a line
-    the status calls PARTIALLY_RECEIVED still has units at the vendor, and the
-    register used to report 0 for it."""
+    def test_blocked_and_deleted_are_told_apart(self) -> None:
+        assert is_blocked_line({"loekz": "S"}, self.CFG) is True
+        assert is_deleted_line({"loekz": "S"}, self.CFG) is False
+        assert is_deleted_line({"loekz": "L"}, self.CFG) is True
+        assert is_blocked_line({"loekz": "L"}, self.CFG) is False
+        assert is_blocked_line({"loekz": None}, self.CFG) is False
 
-    def test_nothing_received_leaves_the_whole_order_out(self) -> None:
-        assert qty_under_repair(
-            ordered_qty=Decimal(5), received_qty=Decimal(0)
-        ) == Decimal(5)
+    def test_closed_lines_are_counted_and_never_built(self) -> None:
+        """Each left-out line is counted under the first reason that applies:
+        deleted, then delivery completed, then blocked. Nothing here reaches
+        the database -- with no open line there is nothing to look up."""
+        candidates = [
+            _row(ebelp="10", loekz="L", elikz="X"),  # deleted, and closed
+            _row(ebelp="20", elikz="X"),  # closed, nothing received
+            _row(ebelp="30", loekz="S", elikz="X"),  # blocked, and closed
+            _row(ebelp="40", loekz="S"),  # blocked
+            _row(ebelp="50", pstyp="0"),  # not a repair line at all
+        ]
+        lines, stats = load_repair_lines(None, self.CFG, today=TODAY, candidates=candidates)
+        assert lines == []
+        assert stats.total_lines == stats.open_lines == 0
+        assert stats.excluded_deleted_lines == 1
+        assert stats.excluded_delivery_completed_lines == 2
+        assert stats.excluded_blocked_lines == 1
+        assert stats.candidates_scanned == 5
 
-    def test_a_partial_receipt_leaves_the_remainder_out(self) -> None:
-        """The live case, 14-Oct: 2,000 ordered against 1,000 received read as
-        0 under repair, so a thousand units at the vendor were invisible."""
-        assert qty_under_repair(
-            ordered_qty=Decimal(2000), received_qty=Decimal(1000)
-        ) == Decimal(1000)
-
-    def test_a_full_receipt_leaves_nothing_out(self) -> None:
-        assert qty_under_repair(
-            ordered_qty=Decimal(5), received_qty=Decimal(5)
-        ) == ZERO
-
-    def test_an_over_receipt_does_not_go_negative(self) -> None:
-        """What the old ``received_at`` short-circuit was really covering."""
-        assert qty_under_repair(
-            ordered_qty=Decimal(5), received_qty=Decimal(6)
-        ) == ZERO
-
-    def test_a_zero_quantity_line_has_nothing_out(self) -> None:
-        """EKPO.MENGE is 0 on one open line in the live data (6000016330/10).
-        Nothing is ordered, so nothing is out -- not a negative, not a crash."""
-        assert qty_under_repair(
-            ordered_qty=ZERO, received_qty=ZERO
-        ) == ZERO
+    def test_only_the_open_line_is_built(self, monkeypatch) -> None:
+        """The whole ordered quantity is out, the clock runs to today, and the
+        line has no receipt to stop it -- goods receipts are not read."""
+        monkeypatch.setattr(register, "_evidence", lambda *args, **kwargs: ({}, {}, {}, {}, {}))
+        candidates = [
+            _row(ebelp="10", elikz="X"),
+            _row(ebelp="20", menge=Decimal(2)),
+            _row(ebelp="30", loekz="S"),
+        ]
+        lines, stats = load_repair_lines(None, self.CFG, today=TODAY, candidates=candidates)
+        [line] = lines
+        assert line.item == "20"
+        assert line.repair_status == PO_ISSUED
+        assert line.qty_under_repair == Decimal(2)
+        assert line.days_open == days_between(date(2026, 6, 1), TODAY)
+        assert stats.total_lines == stats.open_lines == 1
+        assert stats.excluded_delivery_completed_lines == 1
+        assert stats.excluded_blocked_lines == 1
 
 
 # --- configuration discipline --------------------------------------------
@@ -397,23 +294,12 @@ class TestLeadTime:
         assert lead_time_state(elapsed=22, lead_time_days=21) == BEYOND_LEAD_TIME
         assert days_over_lead_time(elapsed=22, lead_time_days=21) == 1
 
-    def test_the_clock_stops_at_the_receipt(self) -> None:
-        """A repair that came back inside its planned time stays inside it.
-
-        Raised-to-today keeps counting for every line, which is right for "how
-        old is this record" and wrong for "did this repair overrun". A closed
-        line must not drift into breach months later.
-        """
-        raised, received = date(2026, 1, 1), date(2026, 1, 15)
-        elapsed = elapsed_days(raised_at=raised, received_at=received, today=TODAY)
-        assert elapsed == 14
-        assert lead_time_state(elapsed=elapsed, lead_time_days=21) == WITHIN_LEAD_TIME
-        # ... whereas raised-to-today for the same line is enormous.
-        assert days_between(raised, TODAY) > 200
-
     def test_an_open_line_keeps_ageing(self) -> None:
+        """Raised to today: every register line is open in SAP, and goods
+        receipts are not read, so nothing stops the clock but SAP closing the
+        line -- at which point it leaves the register."""
         raised = date(2026, 1, 1)
-        elapsed = elapsed_days(raised_at=raised, received_at=None, today=TODAY)
+        elapsed = elapsed_days(raised_at=raised, today=TODAY)
         assert elapsed == days_between(raised, TODAY)
         assert lead_time_state(elapsed=elapsed, lead_time_days=21) == BEYOND_LEAD_TIME
 
@@ -426,16 +312,9 @@ class TestLeadTime:
         lead-time check applies to all lines rather than only the 63 with no
         date at all.
         """
-        state = overdue_state(
-            received_at=None,
-            due_date=date(2026, 12, 31),
-            today=TODAY,
-            grace_days=7,
-        )
+        state = overdue_state(due_date=date(2026, 12, 31), today=TODAY, grace_days=7)
         assert state == ON_TIME
-        elapsed = elapsed_days(
-            raised_at=date(2026, 1, 1), received_at=None, today=TODAY
-        )
+        elapsed = elapsed_days(raised_at=date(2026, 1, 1), today=TODAY)
         assert lead_time_state(elapsed=elapsed, lead_time_days=21) == BEYOND_LEAD_TIME
 
     def test_it_covers_the_63_lines_with_no_due_date(self) -> None:
@@ -445,15 +324,8 @@ class TestLeadTime:
         the 788 lines that were never dispatched -- which is what makes it a
         real answer rather than the same blind spot renamed.
         """
-        assert (
-            overdue_state(
-                received_at=None, due_date=None, today=TODAY, grace_days=7
-            )
-            == NO_DUE_DATE
-        )
-        elapsed = elapsed_days(
-            raised_at=date(2026, 6, 1), received_at=None, today=TODAY
-        )
+        assert overdue_state(due_date=None, today=TODAY, grace_days=7) == NO_DUE_DATE
+        elapsed = elapsed_days(raised_at=date(2026, 6, 1), today=TODAY)
         assert lead_time_state(elapsed=elapsed, lead_time_days=21) == BEYOND_LEAD_TIME
 
     def test_days_over_is_signed(self) -> None:
@@ -474,39 +346,12 @@ class TestTheLeadTimeReachesTheLine:
     somewhere nothing reads.
     """
 
-    @staticmethod
-    def _row(**overrides):
-        row = {
-            "ebeln": "4500000001",
-            "ebelp": "00010",
-            "matnr": "8000005632",
-            "werks": "1300",
-            "pstyp": "3",
-            "txz01": "REPAIR OF PUMP",
-            "menge": Decimal(1),
-            "meins": "EA",
-            "netpr": Decimal(100),
-            "elikz": "",
-            "banfn": None,
-            "bnfpo": None,
-            "erdat": date(2026, 6, 1),
-            "loekz": None,
-            "afnam": "10316",
-        }
-        row.update(overrides)
-        return row
-
-    def _line(self, *, lead_time, received_at=None, **row_overrides):
+    def _line(self, *, lead_time, **row_overrides):
         from app.initiatives.i8.register import _build_line
 
         return _build_line(
-            self._row(**row_overrides),
+            _row(**row_overrides),
             schedule=None,
-            receipt=(
-                {"net_qty": Decimal(1), "reversals": 0, "first_receipt": received_at}
-                if received_at
-                else None
-            ),
             dispatch=None,
             header=None,
             vendor_names={},
@@ -530,16 +375,10 @@ class TestTheLeadTimeReachesTheLine:
         assert line.lead_time_status == "NO_LEAD_TIME"
         assert line.days_over_lead_time is None
 
-    def test_a_received_line_is_judged_on_its_actual_turnaround(self) -> None:
-        line = self._line(lead_time=21, received_at=date(2026, 6, 10))
-        assert line.days_elapsed == 9
+    def test_a_recent_line_is_within_its_lead_time(self) -> None:
+        line = self._line(lead_time=21, erdat=date(2026, 9, 1))
+        assert line.days_elapsed == 10
         assert line.lead_time_status == "WITHIN_LEAD_TIME"
-
-    def test_days_open_stops_at_the_receipt(self) -> None:
-        """A closed line reads its turnaround, not how old the record is -- and
-        its aging band follows, so the register's filter agrees with the column."""
-        line = self._line(lead_time=21, received_at=date(2026, 6, 10))
-        assert line.days_open == 9
         assert line.aging_bucket == "0-15"
 
     def test_days_open_keeps_ageing_while_the_unit_is_out(self) -> None:
@@ -562,9 +401,8 @@ class TestTheLeadTimeReachesTheLine:
         from app.initiatives.i8.register import _build_line
 
         line = _build_line(
-            self._row(erdat=None),
+            _row(erdat=None),
             schedule=None,
-            receipt=None,
             dispatch=None,
             header={"bsart": "ZREP", "lifnr": "V1", "aedat": date(2026, 5, 20)},
             vendor_names={},
@@ -597,7 +435,7 @@ class TestNothingIsHardCoded:
         assert is_repair_line({"pstyp": "3"}, cfg) is False
 
     def test_no_repair_convention_literal_outside_config(self) -> None:
-        """No bare '3' or 'ZREP' in the modules that read them.
+        """No bare '3', 'ZREP' or 'X' in the modules that read them.
 
         Deliberately scoped to the modules that apply the rule. config.py holds
         the defaults, and a docstring may quote the value as evidence -- what
@@ -607,7 +445,7 @@ class TestNothingIsHardCoded:
         import pathlib
 
         checked = 0
-        for name in ("register.py", "universe.py", "service.py", "vendors.py"):
+        for name in ("register.py", "universe.py", "service.py"):
             path = pathlib.Path("app/initiatives/i8") / name
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
@@ -620,8 +458,9 @@ class TestNothingIsHardCoded:
                 ]
                 assert "ZREP" not in literals, f"{name}: 'ZREP' compared literally"
                 assert "3" not in literals, f"{name}: item category compared literally"
+                assert "X" not in literals, f"{name}: delivery-completed flag compared literally"
             checked += 1
-        assert checked == 4
+        assert checked == 3
 
     def test_grace_period_is_configuration(self) -> None:
         assert I8Settings(_env_file=None, overdue_grace_days=0).overdue_grace_days == 0

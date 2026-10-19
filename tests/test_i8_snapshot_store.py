@@ -21,7 +21,6 @@ from app.initiatives.i8.acquisitions import NewAcquisition
 from app.initiatives.i8.register import RegisterStats
 from app.initiatives.i8.snapshot_store import codec, lifecycle, store
 from app.initiatives.i8.universe import UniverseStats
-from app.initiatives.i8.vendors import VendorTurnaround
 from tests.assistant.conftest import repair_line, universe_row
 
 
@@ -30,17 +29,18 @@ def _snapshot(**overrides) -> service.Snapshot:
         reference_date=date(2026, 10, 1),
         built_at=datetime(2026, 10, 1, 6, 0, tzinfo=timezone.utc),
         build_seconds=12.5,
-        lines=(repair_line(), repair_line(item="00020", net_price=Decimal("1.000"), received_at=date(2026, 9, 1))),
-        register_stats=RegisterStats(total_lines=2, open_lines=1, candidates_scanned=805336),
+        lines=(
+            repair_line(),
+            repair_line(item="00020", net_price=Decimal("1.000"), dispatched_at=date(2026, 9, 1)),
+        ),
+        register_stats=RegisterStats(
+            total_lines=2,
+            open_lines=2,
+            candidates_scanned=805336,
+            excluded_delivery_completed_lines=644,
+        ),
         universe=(universe_row(), universe_row(plant="1500", reorder_point=Decimal("2.5"), criticality=None)),
         universe_stats=UniverseStats(rows=2, materials=1, plants=2, by_source={"mara": 1, "ekpo": 1}),
-        vendors=(
-            VendorTurnaround(
-                vendor="0000100234", vendor_name="Acme Rotating", total_lines=2, open_count=1, overdue_count=0,
-                received_count=1, avg_turnaround_days=31.5, min_turnaround_days=30, max_turnaround_days=33,
-                turnaround_sample=2, on_time_rate=None, avg_days_open=91.0,
-            ),
-        ),
         acquisitions=(
             NewAcquisition("4500000010", "10", "8000000003", "1300", "NEW VALVE", Decimal("1"), date(2026, 9, 1)),
         ),

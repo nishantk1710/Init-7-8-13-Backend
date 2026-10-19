@@ -306,11 +306,11 @@ def assess(
     stock_on_hand = sum(known_stock, Decimal(0)) if known_stock else None
     stock_locations = sum(row.storage_locations for row in rows)
 
+    # Every register line is open in SAP -- closed ones are never built.
     open_lines = [
         line
         for line in repair_lines
         if line.material_id == material_key
-        and line.is_open
         and (plant_key is None or line.plant == plant_key)
     ]
 

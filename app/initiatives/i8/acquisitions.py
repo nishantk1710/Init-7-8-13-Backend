@@ -23,16 +23,18 @@ What "a repairable unit existed" means here
 --------------------------------------------
 FR-6 has two limbs. Only one can be judged for a purchase in the past:
 
-* **An open repair** is reconstructable -- the repair line's raised date and its
-  receipt say whether it was out on the day the purchase was raised.
+* **An open repair** is -- for the repairs SAP still has open. Since
+  19-Oct-2026 those are the only ones in the register, and each has been out
+  since the day it was raised. A repair that was out when the purchase was
+  made and has since been closed in SAP is no longer there to match.
 * **Stock on hand** is not. MARD is a snapshot of today, so it cannot say what
   was on the shelf the day a 2024 purchase was raised, and reading today's
   stock into that date would accuse purchases on evidence that did not exist
   when they were made.
 
-So a purchase is flagged only when a repair of the same material was open at
-the same plant when it was raised. That is narrower than FR-6, deliberately,
-and it is the case that is unambiguously duplicate spend.
+So a purchase is flagged only when a repair of the same material at the same
+plant was raised on or before it and is still open. That is narrower than
+FR-6, deliberately, and it is the case that is unambiguously duplicate spend.
 """
 
 from __future__ import annotations
@@ -147,10 +149,11 @@ def open_repair_at(
     """The repair of the same part at the same plant that was out when this
     purchase was raised, or None.
 
-    "Out" means raised on or before the purchase and not yet received back by
-    then. Where several overlap, the one due back soonest is returned -- the
-    unit the buyer could most plausibly have waited for. A repair with no due
-    date sorts last, and the register key breaks ties so the answer is stable.
+    "Out" means raised on or before the purchase. Every register line is still
+    open in SAP, so one raised by then has been out ever since. Where several
+    overlap, the one due back soonest is returned -- the unit the buyer could
+    most plausibly have waited for. A repair with no due date sorts last, and
+    the register key breaks ties so the answer is stable.
     """
     if acquisition.raised_at is None or acquisition.plant is None:
         return None
@@ -158,9 +161,7 @@ def open_repair_at(
     overlapping = [
         line
         for line in repairs.get((acquisition.material_id, acquisition.plant), ())
-        if line.raised_at is not None
-        and line.raised_at <= bought
-        and (line.received_at is None or line.received_at > bought)
+        if line.raised_at is not None and line.raised_at <= bought
     ]
     if not overlapping:
         return None

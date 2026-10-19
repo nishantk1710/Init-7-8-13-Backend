@@ -259,7 +259,7 @@ def auto_resolve(db: Session, detected_ids: Iterable[str]) -> int:
     Called from the listing, over the ids the checks raised on this read. A
     history that folds to OPEN or IN_PROGRESS, for an id not among them,
     describes a finding that no longer exists -- somebody recorded the
-    declaration, or the goods receipt landed, or a justification named the
+    declaration, or SAP closed the repair line, or a justification named the
     purchase.
 
     Only active items move. One already RESOLVED or CLOSED is left alone, so

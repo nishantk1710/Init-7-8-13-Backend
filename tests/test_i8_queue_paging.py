@@ -8,11 +8,14 @@ page, which moves here what the browser used to do over the rows it held:
   (``vendor``, ``repairStatus``, ``actionableOnly``, the register's
   ``overdueStatus``, ``declarationStatus`` and ``withExceptions``);
 * the dropdown values (``facets``), which one page cannot supply;
-* dropping a check the exception screen does not show (``excludeType``), and
-  the lines the register screen does not list (``excludeHeld``), both of which
-  have to come off the counts as well as the rows;
+* dropping a check the exception screen does not show (``excludeType``), which
+  has to come off the counts as well as the rows;
 * the register's Exceptions column, which joined the whole queue in the
   browser.
+
+Since 19-Oct-2026 every register line is open in SAP, so the register no
+longer holds lines back from its own listing (``excludeHeld`` is gone): what
+SAP has closed, deleted or blocked is counted in ``meta`` and never served.
 
 ``GET /exceptions/{id}`` is new for the same reason: a link to one item can no
 longer be opened by finding it among the rows on screen.
@@ -60,7 +63,6 @@ def repair_line(n: int, **overrides) -> RepairLine:
         unit="EA",
         net_price=None,
         item_category="3",
-        delivery_completed=False,
         pr_number=f"100000{n:02d}",
         pr_item="10",
         requisitioner="10316",
@@ -75,12 +77,8 @@ def repair_line(n: int, **overrides) -> RepairLine:
         schedule_lines=1,
         dispatched_at=None,
         dispatched_qty=Decimal(0),
-        received_at=None,
-        received_qty=Decimal(0),
-        reversals=0,
         lead_time_days=None,
         repair_status="At Vendor",
-        receipt_status="Awaiting Receipt",
         overdue_status="ON_TIME",
         lead_time_status="NO_LEAD_TIME",
         qty_under_repair=Decimal(1),
@@ -97,16 +95,9 @@ def repair_line(n: int, **overrides) -> RepairLine:
 
 
 def register_stats(lines: tuple[RepairLine, ...]) -> RegisterStats:
-    """The four counts the register's caption reads, over ``lines``; the rest
-    stay zero, as an empty register's would."""
-    return RegisterStats(
-        total_lines=len(lines),
-        open_lines=sum(1 for line in lines if line.is_open),
-        blocked_lines=sum(1 for line in lines if line.po_blocked),
-        partially_received_lines=sum(
-            1 for line in lines if line.receipt_status == "Partially Received"
-        ),
-    )
+    """The counts the register's caption reads, over ``lines`` -- every one of
+    them open; the rest stay zero, as an empty register's would."""
+    return RegisterStats(total_lines=len(lines), open_lines=len(lines))
 
 
 def rating(material_id: str, plant: str, criticality: str | None) -> SimpleNamespace:
@@ -131,7 +122,6 @@ def declaration(n: int, **overrides) -> DeclarationRow:
         pr_number=f"100000{n:02d}",
         pr_item="10",
         requester="10316",
-        has_active_repair=True,
         related_repair_id=f"45000000{n:02d}-10",
         status="Required",
         declared_by=None,
@@ -162,7 +152,6 @@ def exception(n: int, type: str = "MISSING_ATTESTATION", **overrides) -> Excepti
         title="No condition declaration",
         detail="No attestation for this material and plant within 30 days.",
         raised_at=date(2026, 9, 1),
-        is_open_repair=True,
     )
     fields.update(overrides)
     return ExceptionItem(**fields)
@@ -207,7 +196,7 @@ def queues(factory):
     from app.main import create_app
 
     app = create_app()
-    state = SimpleNamespace(declarations=(), exceptions=(), lines=(), universe=())
+    state = SimpleNamespace(declarations=(), exceptions=(), lines=(), universe=(), stats=None)
 
     def _db():
         with factory() as session:
@@ -232,7 +221,7 @@ def queues(factory):
             reference_date=date(2026, 10, 18),
             lines=state.lines,
             universe=state.universe,
-            register_stats=register_stats(state.lines),
+            register_stats=state.stats or register_stats(state.lines),
         )
 
     app.dependency_overrides[get_db] = _db
@@ -293,9 +282,9 @@ class TestDeclarationFilters:
         assert ids(body) == ["DQ-2"]
 
     def test_repair_status_matches_whatever_the_case(self, queues) -> None:
-        queues.declarations = (declaration(1), declaration(2, repair_status="Closed"))
+        queues.declarations = (declaration(1), declaration(2, repair_status="PO Issued"))
 
-        body = queues.client.get(DECLARATIONS, params={"repairStatus": "closed"}).json()
+        body = queues.client.get(DECLARATIONS, params={"repairStatus": "po issued"}).json()
 
         assert ids(body) == ["DQ-2"]
 
@@ -314,7 +303,7 @@ class TestDeclarationFacets:
     def test_are_not_narrowed_by_the_filters_the_dropdowns_set(self, queues) -> None:
         queues.declarations = (
             declaration(1),
-            declaration(2, plant="1500", vendor="100999", vendor_name=None, repair_status="Closed"),
+            declaration(2, plant="1500", vendor="100999", vendor_name=None, repair_status="PO Issued"),
         )
 
         body = queues.client.get(
@@ -330,7 +319,7 @@ class TestDeclarationFacets:
             {"vendor": "100999", "name": None},
             {"vendor": "100234", "name": "Acme Rewinds"},
         ]
-        assert facets["repairStatuses"] == ["At Vendor", "Closed"]
+        assert facets["repairStatuses"] == ["At Vendor", "PO Issued"]
 
     def test_follow_outstanding_only(self, queues) -> None:
         """The queue screen lists outstanding rows only; a vendor whose every
@@ -683,67 +672,43 @@ class TestLineExceptions:
         assert rows["4500000002-10"]["exceptions"] == []
 
 
-class TestExcludeHeld:
+class TestOpenLinesOnly:
+    """Every register line is open in SAP. What SAP has closed ("Delivery
+    completed"), deleted or blocked is counted in the meta and never listed."""
+
     @pytest.fixture(autouse=True)
     def rows(self, queues):
-        queues.lines = (
-            repair_line(1),
-            # Held: PO issued and blocked, or PO issued and partly back.
-            repair_line(
-                2,
-                repair_status="PO Issued",
-                po_blocked=True,
-                vendor="100555",
-                vendor_name="Held Works",
-            ),
-            repair_line(3, repair_status="PO Issued", receipt_status="Partially Received"),
-            # Listed: PO issued and neither; partly back but At Vendor; blocked
-            # but already Closed.
-            repair_line(4, repair_status="PO Issued"),
-            repair_line(5, receipt_status="Partially Received"),
-            repair_line(6, repair_status="Closed", po_blocked=True, qty_under_repair=Decimal(0)),
+        queues.lines = (repair_line(1), repair_line(2, repair_status="PO Issued"))
+        queues.stats = RegisterStats(
+            total_lines=2,
+            open_lines=2,
+            excluded_deleted_lines=5,
+            excluded_delivery_completed_lines=644,
+            excluded_blocked_lines=68,
         )
 
-    def test_leaves_out_po_issued_lines_blocked_in_sap_or_partly_back(self, queues) -> None:
-        assert ids(listing(queues, excludeHeld=True)) == [
-            "4500000001-10",
-            "4500000004-10",
-            "4500000005-10",
-            "4500000006-10",
-        ]
+    def test_the_meta_counts_what_sap_closed(self, queues) -> None:
+        meta = listing(queues)["meta"]
 
-    def test_restates_the_counts_the_caption_reads(self, queues) -> None:
-        meta = listing(queues, excludeHeld=True)["meta"]
+        assert meta["totalLines"] == meta["openLines"] == 2
+        assert meta["excludedDeletedLines"] == 5
+        assert meta["excludedDeliveryCompletedLines"] == 644
+        assert meta["excludedBlockedLines"] == 68
+        # Nothing is held back from the listing any more, so neither count
+        # that described doing so is served.
+        assert "heldLines" not in meta
+        assert "blockedLines" not in meta
 
-        assert meta["heldLines"] == 2
-        assert meta["totalLines"] == 4
-        # Five lines are open (line 6 is back), and both held lines were among them.
-        assert meta["openLines"] == 3
-        # The flags as they stand in what is listed: line 6, and line 5.
-        assert meta["blockedLines"] == 1
-        assert meta["partiallyReceivedLines"] == 1
-
-    def test_without_it_nothing_changes(self, queues) -> None:
-        body = listing(queues)
-
-        assert body["total"] == 6
-        assert body["meta"]["totalLines"] == 6
-        assert body["meta"]["heldLines"] == 0
-        assert body["meta"]["blockedLines"] == 2
-
-    def test_a_vendor_only_on_held_lines_is_not_offered(self, queues) -> None:
-        def vendors(**params) -> list[str]:
-            return [v["vendor"] for v in listing(queues, **params)["facets"]["vendors"]]
-
-        assert "100555" not in vendors(excludeHeld=True)
-        assert "100555" in vendors()
+    def test_an_old_excludeheld_request_lists_the_same_lines(self, queues) -> None:
+        """A screen built before 19-Oct-2026 still sends it, until it deploys."""
+        assert ids(listing(queues, excludeHeld=True)) == ids(listing(queues))
 
 
 class TestRegisterFacets:
     def test_list_every_value_whatever_the_filters(self, queues) -> None:
         queues.lines = (
             repair_line(1),
-            repair_line(2, plant="1500", vendor="100999", vendor_name=None, repair_status="Closed"),
+            repair_line(2, plant="1500", vendor="100999", vendor_name=None, repair_status="PO Issued"),
             repair_line(3, vendor=None, vendor_name=None),
         )
         queues.universe = (rating("8000000001", "1300", "CRITICAL"),)
@@ -760,6 +725,6 @@ class TestRegisterFacets:
             {"vendor": "100234", "name": "Acme Rewinds"},
         ]
         assert facets["hasUnknownVendor"] is True
-        assert facets["repairStatuses"] == ["At Vendor", "Closed"]
+        assert facets["repairStatuses"] == ["At Vendor", "PO Issued"]
         assert facets["criticalities"] == ["CRITICAL"]
         assert facets["hasUnrated"] is True

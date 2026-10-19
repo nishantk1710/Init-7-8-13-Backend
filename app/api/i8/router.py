@@ -47,7 +47,6 @@ from app.api.i8.mappers import (
     timeline,
     universe_item,
     universe_meta,
-    vendor_item,
 )
 from app.api.i8.schemas import (
     Attestation,
@@ -68,7 +67,6 @@ from app.api.i8.schemas import (
     SnapshotInfo,
     UniverseDetail,
     UniverseResponse,
-    VendorResponse,
 )
 from app.core.config import get_settings
 from app.core.db import get_db
@@ -99,7 +97,7 @@ from app.initiatives.i8.exception_state import (
 )
 from app.initiatives.i8.exceptions import ExceptionItem
 from app.initiatives.i8.material_number import is_eighty_series, normalise
-from app.initiatives.i8.register import RepairLine, is_held
+from app.initiatives.i8.register import RepairLine
 from app.initiatives.i8.repairable_unit import assess as assess_repairable_unit
 from app.initiatives.i8.service import (
     AttestationView,
@@ -398,7 +396,7 @@ def get_universe_material(
 @router.get(
     "/register",
     response_model=RegisterResponse,
-    summary="Repair lines, at material + repair-PO-line grain",
+    summary="Open repair lines, at material + repair-PO-line grain",
 )
 def get_register(
     snapshot: SnapshotDep,
@@ -412,9 +410,8 @@ def get_register(
     repair_status: str | None = Query(None, alias="status"),
     overdue_only: bool = Query(False, alias="overdueOnly"),
     overdue_status: str | None = Query(
-        None, alias="overdueStatus", description="OVERDUE, ON_TIME, NO_DUE_DATE or RECEIVED"
+        None, alias="overdueStatus", description="OVERDUE, ON_TIME or NO_DUE_DATE"
     ),
-    open_only: bool = Query(False, alias="openOnly"),
     criticality: str | None = Query(
         None,
         description=(
@@ -439,15 +436,6 @@ def get_register(
             "out of each line's `exceptions` and of `withExceptions`"
         ),
     ),
-    exclude_held: bool = Query(
-        False,
-        alias="excludeHeld",
-        description=(
-            "Leave out PO-issued lines blocked in SAP or partly received, as "
-            "the Repair Register screen does. `meta` then describes the lines "
-            "listed, and counts the rest in `heldLines`."
-        ),
-    ),
     q: str | None = Query(
         None,
         max_length=200,
@@ -456,26 +444,22 @@ def get_register(
     page: int = Query(1, ge=1),
     page_size: int = Query(None, alias="pageSize", ge=1),
 ) -> RegisterResponse:
-    """Repair lines, one page at a time, each with what the checks raise
-    against it.
+    """Repair lines SAP still has open, one page at a time, each with what the
+    checks raise against it.
 
-    ``meta`` describes the register whatever the filters -- restated over the
-    listed lines when ``excludeHeld`` leaves some out. ``facets`` are taken
-    after ``excludeHeld`` and before every filter, so a screen showing one page
-    of thousands can still offer every value in its dropdowns.
+    Open is SAP's "Delivery completed" flag, since 19-Oct-2026: a line SAP has
+    closed, deleted or blocked is not listed, and ``meta`` counts each kind.
+
+    ``meta`` describes the register whatever the filters. ``facets`` are taken
+    before every filter, so a screen showing one page can still offer every
+    value in its dropdowns.
     """
     page_size = min(page_size or cfg.default_page_size, cfg.max_page_size)
     lookup = _stock_lookup(snapshot)
     raised = _raised_by_line(view, _type_set(exclude_exception_type))
 
     lines = snapshot.lines
-    held: tuple[RepairLine, ...] | None = None
-    if exclude_held:
-        held = tuple(line for line in lines if is_held(line))
-        lines = tuple(line for line in lines if not is_held(line))
-    listed = lines
-
-    facets = register_facets(listed, cfg, lambda line: _criticality_of(line, lookup))
+    facets = register_facets(lines, cfg, lambda line: _criticality_of(line, lookup))
 
     if plant:
         lines = tuple(line for line in lines if line.plant == plant)
@@ -497,8 +481,6 @@ def get_register(
     if overdue_status:
         wanted_overdue = overdue_status.strip().upper()
         lines = tuple(line for line in lines if line.overdue_status == wanted_overdue)
-    if open_only:
-        lines = tuple(line for line in lines if line.is_open)
     if criticality:
         # The rating the row shows, at the line's own plant. This used to
         # match any plant's rating for the material, so a filter could return
@@ -545,7 +527,7 @@ def get_register(
         page=page,
         page_size=page_size,
         total=total,
-        meta=register_meta(snapshot.register_stats, held, listed),
+        meta=register_meta(snapshot.register_stats),
         facets=facets,
         reference_date=snapshot.reference_date,
     )
@@ -577,32 +559,10 @@ def get_repair_line(
     )
 
 
-# --- W5.2 Layer 4: vendor analytics ---------------------------------------
-
-
-@router.get(
-    "/vendors/turnaround",
-    response_model=VendorResponse,
-    summary="Vendor turnaround analytics over completed repairs",
-)
-def get_vendor_turnaround(snapshot: SnapshotDep) -> VendorResponse:
-    stats = snapshot.register_stats
-    # Computed rather than quoted: excluding deleted PO lines moved every one of
-    # these, and a note that states last month's figures is worse than none.
-    headerless = stats.total_lines - stats.lines_with_po_header
-    return VendorResponse(
-        items=[vendor_item(v) for v in snapshot.vendors],
-        total=len(snapshot.vendors),
-        reference_date=snapshot.reference_date,
-        note=(
-            "Averages are over COMPLETED repairs only -- including open ones "
-            "would make the slowest vendor look fastest. Vendors come from the "
-            f"PO header, so the {headerless:,} repair lines with no header are "
-            "grouped under UNKNOWN rather than dropped. LFA1 resolves only "
-            f"{stats.vendors_resolved_to_a_name} of the {stats.distinct_vendors} "
-            "repair vendors to a name; the rest show their code."
-        ),
-    )
+# No vendor turnaround route since 19-Oct-2026. It was dispatch to goods
+# receipt over completed repairs; the register no longer lists closed lines or
+# reads goods receipts, and the figure measured posting practice anyway -- stores
+# post the 541 on the day of the receipt on about 90% of repairs.
 
 
 # --- W5.3: attestation, declarations and exceptions ------------------------
@@ -731,7 +691,7 @@ def get_declarations(
     repair_status: str | None = Query(
         None,
         alias="repairStatus",
-        description="Where the repair stands -- PO Issued, At Vendor, Closed",
+        description="Where the repair stands -- PO Issued or At Vendor",
     ),
     q: str | None = Query(
         None,
@@ -835,14 +795,6 @@ def get_exceptions(
             "the ones nobody has taken."
         ),
     ),
-    open_only: bool = Query(
-        False,
-        alias="openOnly",
-        description=(
-            "Only exceptions on repairs still out at a vendor -- the ones "
-            "somebody can still act on"
-        ),
-    ),
     actionable_only: bool = Query(
         False,
         alias="actionableOnly",
@@ -884,7 +836,7 @@ def get_exceptions(
 
     # Before any filtering, and over every computed id: a state row still
     # OPEN whose item is no longer raised describes a finding that has gone
-    # away -- somebody recorded the declaration, or the goods receipt landed.
+    # away -- somebody recorded the declaration, or SAP closed the repair line.
     # Resolving it here means the person who owned it sees why, instead of
     # watching it vanish from their queue.
     #
@@ -913,8 +865,6 @@ def get_exceptions(
             if f"{i.purchasing_document}-{i.item}" == wanted_line
             or i.purchasing_document == wanted_line
         )
-    if open_only:
-        items = tuple(i for i in items if i.is_open_repair)
     if actionable_only:
         items = tuple(i for i in items if not i.pre_automation)
     if q and q.strip():
@@ -1179,6 +1129,12 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
             "materialNumberLength": cfg.material_number_length,
             "repairItemCategory": cfg.repair_item_category,
             "repairDocType": cfg.repair_doc_type,
+            # What "open" means since 19-Oct-2026 -- SAP's rule, not ours.
+            "openLineRule": (
+                f"EKPO.ELIKZ not '{cfg.delivery_completed_indicator}' (delivery "
+                f"completed), EKPO.LOEKZ not '{cfg.po_deleted_indicator}' "
+                f"(deleted) or '{cfg.po_blocked_indicator}' (blocked)"
+            ),
             "overdueGraceDays": cfg.overdue_grace_days,
             # The shared W3.4 source that actually answered, not an I08
             # setting -- I08 has not owned this since 15-Sep. A fallback chain
@@ -1351,7 +1307,6 @@ def _exception_response(
             "has changed since it was listed."
         ),
         raised_at=None,
-        is_open_repair=False,
         pre_automation=False,
         status=work.status,
         owner=work.owner,

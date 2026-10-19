@@ -177,7 +177,8 @@ def _repair(db: DbSession) -> IntentAnswer:
     from app.initiatives.i8.service import get_snapshot
 
     snapshot = get_snapshot(db)
-    open_lines = [line for line in snapshot.lines if line.is_open]
+    # Every register line is open in SAP -- closed ones are never built.
+    open_lines = list(snapshot.lines)
     overdue = [line for line in open_lines if line.is_overdue]
 
     if not open_lines:
@@ -205,10 +206,12 @@ def _repair(db: DbSession) -> IntentAnswer:
     )
     if listed:
         text += f"\n\nThe longest outstanding:\n{listed}"
+    dispatched = sum(1 for line in open_lines if line.dispatched_at is not None)
     text += (
-        "\n\nNote that a repair being open means the purchase order exists -- no "
-        "dispatch movement is recorded against any open line in this extract, so "
-        "none of these can be confirmed as physically with the vendor."
+        "\n\nNote that a repair being open means SAP has not marked its purchase "
+        f"order line delivery completed. Only {dispatched} of them "
+        f"{'has' if dispatched == 1 else 'have'} a dispatch movement on record, so "
+        "the rest cannot be confirmed as physically with the vendor."
     )
 
     return IntentAnswer(

@@ -39,7 +39,6 @@ from app.api.i8.schemas import (
     UniverseSources,
     UnjustifiedPurchase,
     VendorOption,
-    VendorTurnaroundItem,
 )
 from app.initiatives.i8.aging import days_between
 from app.initiatives.i8.attestation import CONDITION_LABELS, Recommendation
@@ -54,9 +53,8 @@ from app.initiatives.i8.exceptions import RAISED_BY_I8, ExceptionItem, Exception
 from app.initiatives.i8.line_justifications import LineJustification
 from app.initiatives.i8.exception_state import UNTOUCHED, ExceptionWorkState
 from app.initiatives.i8.models import ExceptionEvent, RepairAttestation
-from app.initiatives.i8.register import PARTIALLY_RECEIVED, RegisterStats, RepairLine
+from app.initiatives.i8.register import RegisterStats, RepairLine
 from app.initiatives.i8.universe import UniverseRow, UniverseStats
-from app.initiatives.i8.vendors import VendorTurnaround
 
 
 def plant_reference(plant: str | None, cfg: I8Settings) -> PlantReference | None:
@@ -148,7 +146,6 @@ def repair_chain(
         vendor_name=line.vendor_name,
         repair_status=line.repair_status,
         declaration_status=declaration_status,
-        receipt_status=line.receipt_status,
         overdue_status=line.overdue_status,
         lead_time_status=line.lead_time_status,
         days_open=line.days_open,
@@ -156,16 +153,13 @@ def repair_chain(
         lead_time_days=line.lead_time_days,
         days_elapsed=line.days_elapsed,
         days_over_lead_time=line.days_over_lead_time,
-        days_at_vendor=line.days_at_vendor,
         days_in_current_stage=line.days_in_current_stage,
         days_remaining_in_repair=line.days_remaining,
         raised_at=line.raised_at,
         po_issued_at=line.po_date,
         sent_to_vendor_at=line.dispatched_at,
         expected_return=line.due_date,
-        received_at=line.received_at,
         ordered_qty=line.ordered_qty,
-        received_qty=line.received_qty,
         unit=line.unit,
         repair_cost=line.net_price,
         new_unit_lead_time_days=new_unit_lead_time_days,
@@ -173,11 +167,8 @@ def repair_chain(
         doc_type=line.doc_type,
         corroborated_by_doc_type=line.corroborated_by_doc_type,
         has_po_header=line.has_po_header,
-        delivery_completed=line.delivery_completed,
-        reversals=line.reversals,
         schedule_lines=line.schedule_lines,
         criticality=criticality,
-        po_blocked=line.po_blocked,
         declaration_id=declaration.declaration_id if declaration else None,
         declared_by=declaration.declared_by if declaration else None,
         declared_at=declaration.declared_at if declaration else None,
@@ -227,27 +218,15 @@ def _at_vendor_evidence(line: RepairLine) -> str:
     if line.dispatched_at is None:
         return (
             "No dispatch movement attributable to this line, so time at the "
-            "vendor cannot be measured. Measured across the extract, NO open "
-            "repair line has an attachable 541 -- dispatch movements exist only "
-            "for repairs that have already come back."
+            "vendor cannot be measured. Stores post most 541s on the day of "
+            "the goods receipt, so few open lines have one."
         )
     promised = (
         f"Promised back {line.due_date}."
         if line.due_date
         else "No schedule line, so no promised return date exists."
     )
-    # Keyed on the receipt itself, not on is_open. Now that openness is read
-    # off the quantity, a partially received line is both open AND holds a
-    # receipt date, and a line with nothing ordered is closed with no receipt
-    # date at all -- "Returned None." is what the old two-way branch printed.
-    if line.received_at is None:
-        return f"Still at the vendor. {promised}"
-    if line.is_open:
-        return (
-            f"Partly back {line.received_at}; {line.qty_under_repair} of "
-            f"{line.ordered_qty} still out. {promised}"
-        )
-    return f"Returned {line.received_at}. {promised}"
+    return f"At the vendor since {line.dispatched_at}, and SAP still has the line open. {promised}"
 
 
 def timeline(
@@ -258,6 +237,10 @@ def timeline(
     Stage 1 -- removal from the machine -- is present as explicitly unavailable
     rather than omitted. A reader should be able to see that it was considered
     and why it cannot be shown, instead of wondering whether it was forgotten.
+
+    There is no "received" stage since 19-Oct-2026: every line served here is
+    open in SAP, and goods receipts are not read. The line leaves the register
+    when SAP marks it "Delivery completed".
 
     **Stage 2 is no longer a hook.** It read "W5.3 owns this. Hook only." until
     W5.3 landed; it now carries the real attestation where one covers this line,
@@ -327,43 +310,14 @@ def timeline(
         LifecycleStage(
             stage="at_vendor",
             label="At vendor",
-            # The stage began when the unit was dispatched, whether or not it
-            # has since come back. days_since is the DURATION at the vendor --
-            # to the receipt where there is one, to today where there is not.
+            # The stage began when the unit was dispatched. days_since is the
+            # DURATION at the vendor so far: dispatch to today.
             occurred_at=line.dispatched_at,
             evidence=_at_vendor_evidence(line),
             days_since=line.days_at_vendor,
         ),
-        LifecycleStage(
-            stage="received",
-            label="Returned and received",
-            occurred_at=line.received_at,
-            evidence=(
-                f"EKBE category E movement 101, net of {line.reversals} reversal(s)"
-                if line.received_at
-                else "No goods receipt yet."
-            ),
-            days_since=days_between(line.received_at, today),
-        ),
     ]
     return stages
-
-
-def vendor_item(vendor: VendorTurnaround) -> VendorTurnaroundItem:
-    return VendorTurnaroundItem(
-        vendor=vendor.vendor,
-        vendor_name=vendor.vendor_name,
-        total_lines=vendor.total_lines,
-        open_count=vendor.open_count,
-        overdue_count=vendor.overdue_count,
-        received_count=vendor.received_count,
-        avg_turnaround_days=vendor.avg_turnaround_days,
-        min_turnaround_days=vendor.min_turnaround_days,
-        max_turnaround_days=vendor.max_turnaround_days,
-        turnaround_sample=vendor.turnaround_sample,
-        on_time_rate=vendor.on_time_rate,
-        avg_days_open=vendor.avg_days_open,
-    )
 
 
 def universe_meta(stats: UniverseStats) -> UniverseMeta:
@@ -381,32 +335,9 @@ def universe_meta(stats: UniverseStats) -> UniverseMeta:
     )
 
 
-def register_meta(
-    stats: RegisterStats,
-    held: Sequence[RepairLine] | None = None,
-    listed: Sequence[RepairLine] = (),
-) -> RegisterMeta:
-    """The register's counts -- restated over ``listed`` when ``excludeHeld``
-    took ``held`` out (``held`` is None when it did not).
-
-    Without the restatement the caption would describe a register nobody can
-    see: "5,155 repair lines, 827 still open" over a listing of 5,063. Only the
-    four figures the caption reads change; the rest still count every line.
-    """
-    meta = RegisterMeta(**vars(stats))
-    if held is None:
-        return meta
-    return meta.model_copy(
-        update={
-            "total_lines": max(0, stats.total_lines - len(held)),
-            "open_lines": max(0, stats.open_lines - sum(1 for line in held if line.is_open)),
-            "blocked_lines": sum(1 for line in listed if line.po_blocked),
-            "partially_received_lines": sum(
-                1 for line in listed if line.receipt_status == PARTIALLY_RECEIVED
-            ),
-            "held_lines": len(held),
-        }
-    )
+def register_meta(stats: RegisterStats) -> RegisterMeta:
+    """The register's counts, whatever the filters."""
+    return RegisterMeta(**vars(stats))
 
 
 def register_facets(
@@ -498,7 +429,6 @@ def declaration_item(row: DeclarationRow, cfg: I8Settings) -> DeclarationItem:
         ),
         plant=plant_reference(row.plant, cfg),
         requester=row.requester,
-        has_active_repair=row.has_active_repair,
         related_repair_id=row.related_repair_id,
         vendor=row.vendor,
         vendor_name=row.vendor_name,
@@ -607,7 +537,6 @@ def exception_item(
         title=item.title,
         detail=item.detail,
         raised_at=item.raised_at,
-        is_open_repair=item.is_open_repair,
         pre_automation=item.pre_automation,
         status=work.status,
         owner=work.owner,

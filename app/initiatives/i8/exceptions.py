@@ -10,14 +10,19 @@ For every repair line in the register: if no attestation matches its material
 and plant inside the configured window, raise ``MISSING_ATTESTATION``.
 
 It is a **batch check that runs once per refresh cycle**, not per request. The
-register is 1,225 lines, the snapshot is already cached for exactly this reason,
-and a per-request version would put a query per line onto the page W5.4 renders.
+snapshot is already cached for exactly this reason, and a per-request version
+would put a query per line onto the page W5.4 renders.
+
+Every line it checks is open in SAP: since 19-Oct-2026 the register holds no
+other kind (see ``register.py``), so neither does this queue. A repair SAP has
+closed leaves the queue with it, and a finding somebody was working on is
+auto-resolved with a note rather than vanishing (``exception_state``).
 
 The number this produces is the business case
 ----------------------------------------------
-At UAT this fires on essentially every historical repair line, because no
-attestation has ever existed for any of them -- the control did not exist before
-this platform. That is correct behaviour and a terrible demo.
+At UAT this fires on essentially every repair line, because no attestation has
+ever existed for any of them -- the control did not exist before this
+platform. That is correct behaviour and a terrible demo.
 
 The answer is not to soften the check. It is to seed a handful of attestations
 against real open repair lines, clearly marked as demo-entered, let the
@@ -154,10 +159,6 @@ class ExceptionItem:
     is as old as the thing it is about -- dating it 'today' would make every
     historical gap look like it appeared this morning."""
 
-    is_open_repair: bool
-    """Whether the unit is still out. An exception on an open line is
-    actionable; one on a closed line can only be counted."""
-
     pre_automation: bool = False
     """Raised on a line that predates the attestation control itself.
 
@@ -227,18 +228,12 @@ def missing_attestations(
             ExceptionItem(
                 id=f"EX-{ExceptionType.MISSING_ATTESTATION.value}-{line.purchasing_document}-{line.item}",
                 type=ExceptionType.MISSING_ATTESTATION.value,
-                # An open line is a part that is out there now with no assessment
-                # on record, which someone can still do something about. A closed
-                # one is history: worth counting, not worth paging anybody over.
-                #
-                # A pre-automation line is INFO whether it is open or not: there
-                # was no form to fill in when it was raised, so nothing about it
-                # is anybody's to action now.
-                severity=(
-                    Severity.INFO
-                    if historical or not line.is_open
-                    else Severity.WARNING
-                ).value,
+                # Every line is open in SAP: a part out there now with no
+                # assessment on record, which someone can still do something
+                # about. A pre-automation line is INFO all the same: there was
+                # no form to fill in when it was raised, so nothing about it is
+                # anybody's to action now.
+                severity=(Severity.INFO if historical else Severity.WARNING).value,
                 material_id=line.material_id,
                 description=line.description,
                 plant=line.plant,
@@ -268,25 +263,22 @@ def missing_attestations(
                     )
                 ),
                 raised_at=line.raised_at,
-                is_open_repair=line.is_open,
                 pre_automation=historical,
             )
         )
 
     logger.info(
         "I08 exceptions: %d MISSING_ATTESTATION of %d repair lines checked "
-        "(%d open, %d closed, %d pre-automation)",
+        "(%d pre-automation)",
         len(items),
         coverage.checked,
-        sum(1 for i in items if i.is_open_repair),
-        sum(1 for i in items if not i.is_open_repair),
         sum(1 for i in items if i.pre_automation),
     )
     return items
 
 
 def overdue_repairs(lines, *, grace_days: int) -> list[ExceptionItem]:
-    """Raise OVERDUE_REPAIR for every open line past its due date plus grace.
+    """Raise OVERDUE_REPAIR for every line past its due date plus grace.
 
     The register already decides this per line -- ``overdue_status`` is
     computed once, against ``EKET.EINDT`` plus ``I8_OVERDUE_GRACE_DAYS`` -- so
@@ -294,9 +286,8 @@ def overdue_repairs(lines, *, grace_days: int) -> list[ExceptionItem]:
     what "overdue" means is how a column and a queue end up disagreeing about
     the same line.
 
-    **Open lines only.** A line that came back late is history: the delay
-    happened, and nobody can now chase a unit that is already on the shelf. It
-    is counted in the register's own figures and is not an item of work.
+    **Open lines only**, because the register holds nothing else: once SAP
+    closes a line ("Delivery completed") it leaves the register and this queue.
 
     No pre-automation concept here, unlike MISSING_ATTESTATION. A repair being
     late is not a control somebody failed to follow before we built it -- it
@@ -305,7 +296,7 @@ def overdue_repairs(lines, *, grace_days: int) -> list[ExceptionItem]:
     items: list[ExceptionItem] = []
 
     for line in sorted(lines, key=lambda line: (line.purchasing_document, line.item)):
-        if not line.is_open or not line.is_overdue:
+        if not line.is_overdue:
             continue
 
         days_late = None
@@ -334,10 +325,9 @@ def overdue_repairs(lines, *, grace_days: int) -> list[ExceptionItem]:
                     f"Promised back on {due}{where}, past the "
                     f"{grace_days}-day grace period"
                     + (f" by {days_late} days" if days_late is not None else "")
-                    + ". The unit is still at the vendor."
+                    + ". SAP still has the repair line open."
                 ),
                 raised_at=line.raised_at,
-                is_open_repair=True,
             )
         )
 
@@ -415,11 +405,6 @@ def unjustified_acquisitions(
         bought = (
             acquisition.raised_at.isoformat() if acquisition.raised_at else "an unknown date"
         )
-        repair_state = (
-            "it is still out"
-            if repair.is_open
-            else f"it came back {repair.received_at.isoformat()}"
-        )
 
         items.append(
             ExceptionItem(
@@ -454,13 +439,12 @@ def unjustified_acquisitions(
                         f"{acquisition.plant} on {bought}, while repair "
                         f"{repair.purchasing_document}/{repair.item}, raised "
                         f"{repair.raised_at.isoformat() if repair.raised_at else 'on an unknown date'}, "
-                        f"was open ({repair_state}). No NEW_ACQUISITION justification "
-                        f"was recorded for this material and plant within "
-                        f"{window_days} days of the purchase."
+                        f"was open -- and SAP still has it open. No NEW_ACQUISITION "
+                        f"justification was recorded for this material and plant "
+                        f"within {window_days} days of the purchase."
                     )
                 ),
                 raised_at=acquisition.raised_at,
-                is_open_repair=repair.is_open,
                 pre_automation=historical,
                 acquisition_document=acquisition.purchasing_document,
                 acquisition_item=acquisition.item,

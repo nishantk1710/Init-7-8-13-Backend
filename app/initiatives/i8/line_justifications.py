@@ -13,7 +13,8 @@ line is given a justification by rule, not by key:
 
 * **Recorded** -- a NEW_ACQUISITION justification for the same material and
   plant was recorded while this line was out: on or after the day it was
-  raised, and before the unit came back. The same reading of "out" as
+  raised. Every register line is still open in SAP, so it has been out ever
+  since. The same reading of "out" as
   :func:`app.initiatives.i8.acquisitions.open_repair_at`.
 * **Missing** -- an ``UNJUSTIFIED_ACQUISITION`` exception names this line: a new
   unit was bought while it was out and no reason was recorded. Taken from the
@@ -64,12 +65,11 @@ class LineJustification:
 def was_out_on(line: RepairLine, day: date) -> bool:
     """Whether the unit on this line was away for repair on ``day``.
 
-    Raised on or before the day, and not yet received back by then. A line with
-    no raised date cannot be placed in time, so it is never "out".
+    Raised on or before the day: the line is still open in SAP, so it has been
+    out ever since. A line with no raised date cannot be placed in time, so it
+    is never "out".
     """
-    if line.raised_at is None or line.raised_at > day:
-        return False
-    return line.received_at is None or line.received_at > day
+    return line.raised_at is not None and line.raised_at <= day
 
 
 def _newest_first(record: JustificationRecord) -> tuple:
