@@ -43,6 +43,7 @@ from typing import Any
 from app.initiatives.i13.models import (
     GiLinkStatus,
     GrLinkStatus,
+    LifecycleStatus,
     PartialLedgerEntry,
     ReservationLedgerEntry,
     ReservationPrLinkStatus,
@@ -61,6 +62,22 @@ Row = dict[str, Any]
 _PROCUREMENT_UNKNOWN = frozenset(
     {ReservationPrLinkStatus.PR_REFERENCE_UNRESOLVED, ReservationPrLinkStatus.CONSOLIDATION_UNRESOLVED}
 )
+
+
+#: A reservation with no PO and nothing issued: what its PR reference says.
+#: ``derive_lifecycle_status`` answers PR_CREATED for "no PO", which is right
+#: on a procurement line (it starts from a PR) and wrong here, where most
+#: reservations name no PR at all (RESB.BANFN on 1.2% of rows, FRS 7.5).
+_WITHOUT_PO = {
+    ReservationPrLinkStatus.NO_PR_REFERENCE: LifecycleStatus.RESERVED,
+    ReservationPrLinkStatus.PR_REFERENCE_UNRESOLVED: LifecycleStatus.PR_NOT_FOUND,
+    ReservationPrLinkStatus.CONSOLIDATION_UNRESOLVED: LifecycleStatus.PR_SHARED,
+}
+
+
+def _without_po(link: ReservationPrLinkStatus) -> LifecycleStatus:
+    """``LINKED`` (a PR in the extract, no PO on it yet) stays PR_CREATED."""
+    return _WITHOUT_PO.get(link, LifecycleStatus.PR_CREATED)
 
 
 def _attach_reservation(
@@ -129,6 +146,8 @@ def _attach_reservation(
             gi_link_status=gi_link_status,
             requested_quantity=reservation_quantity,
         )
+        if proc is None and lifecycle_status is LifecycleStatus.PR_CREATED:
+            lifecycle_status = _without_po(reservation_pr_link_status)
 
         entries.append(
             ReservationLedgerEntry(

@@ -5,6 +5,8 @@ OAR-scoped by default (W2.4). Reads real Postgres data only -- routes stay
 thin; all stitching lives in ``app.initiatives.i13.reservation_ledger``.
 """
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
@@ -32,10 +34,22 @@ def _sgtxt_of(rows) -> dict[tuple[str, str], str]:
     return {(r["Rsnum"], r["Rspos"]): r["Sgtxt"] for r in rows if r.get("Sgtxt")}
 
 
+def issued_before_history(entry: ReservationLedgerEntry, history_start: date | None) -> bool:
+    """Nothing issued, and required before the earliest movement held: an issue
+    could predate the history, so 0 is not a known zero. Pure, for the tests."""
+    return bool(
+        history_start
+        and entry.requirement_date
+        and entry.issued_quantity == 0
+        and entry.requirement_date < history_start
+    )
+
+
 def _to_response(
     entry: ReservationLedgerEntry,
     sessions: dict[tuple[str, str], str] | None = None,
     sgtxt: Mapping[tuple[str, str], str] | None = None,
+    history_start: date | None = None,
 ) -> ReservationLedgerEntryResponse:
     attribution = attribute_consumption(entry)
     response = ReservationLedgerEntryResponse.model_validate(entry)
@@ -49,6 +63,8 @@ def _to_response(
             "uat_simulated": int(entry.reservation_number) >= SIMULATED_RANGE_START
             if entry.reservation_number.isdigit()
             else False,
+            "issued_before_history": issued_before_history(entry, history_start),
+            "movement_history_start": history_start,
         }
     )
 
@@ -87,7 +103,7 @@ def list_reservation_ledger(
         )
         response.headers["X-Total-Count"] = str(total)
         texts = {(e.reservation_number, e.reservation_item): s for e, s in rows if s}
-        return [_to_response(entry, sessions, texts) for entry, _ in rows]
+        return [_to_response(entry, sessions, texts, snapshot.recorded_history_start) for entry, _ in rows]
     if snapshot is not None:
         sgtxt = snapshot.sgtxt_by_reservation
         source = snapshot.reservation_ledger if include_out_of_scope else snapshot.reservation_ledger_oar
@@ -129,7 +145,12 @@ def list_reservation_ledger(
         wanted = session_id.strip().upper()
         linked = {key for key, sid in sessions.items() if sid == wanted}
         entries = [e for e in entries if (e.reservation_number, e.reservation_item) in linked]
-    return [_to_response(entry, sessions, sgtxt) for entry in page(entries, response, limit=limit, offset=offset)]
+    # The in-memory snapshot holds the same history start; the live path does not know it.
+    history_start = snapshot.movement_history_start if snapshot is not None else None
+    return [
+        _to_response(entry, sessions, sgtxt, history_start)
+        for entry in page(entries, response, limit=limit, offset=offset)
+    ]
 
 
 @router.get("/utilisation-ledger/{reservation_number}/{reservation_item}", response_model=ReservationLedgerEntryResponse)
@@ -148,7 +169,9 @@ def get_reservation_ledger_entry(
             raise HTTPException(status_code=404, detail="Reservation ledger entry not found")
         entry, text = found[0]
         key = (entry.reservation_number, entry.reservation_item)
-        return _to_response(entry, session_by_reservation(db), {key: text} if text else {})
+        return _to_response(
+            entry, session_by_reservation(db), {key: text} if text else {}, snapshot.recorded_history_start
+        )
     if snapshot is not None:
         matching = [
             e
@@ -176,4 +199,6 @@ def get_reservation_ledger_entry(
         if snapshot is not None
         else _sgtxt_of(PostgresReservationRepository(db).get_reservations(reservation_number=reservation_number))
     )
-    return _to_response(matching[0], session_by_reservation(db), sgtxt)
+    return _to_response(
+        matching[0], session_by_reservation(db), sgtxt, snapshot.movement_history_start if snapshot is not None else None
+    )

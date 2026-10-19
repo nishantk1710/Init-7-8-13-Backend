@@ -163,6 +163,12 @@ class ReservationLedgerEntryResponse(BaseModel):
     sgtxt: str | None = None
     #: A reservation that exists only in the UAT overlay (simulated).
     uat_simulated: bool = False
+    #: True when nothing is issued and the reservation was required before
+    #: ``movement_history_start``: it may have been issued before the movement
+    #: history the platform holds, so "issued 0" is not known, not zero.
+    issued_before_history: bool = False
+    #: The earliest goods movement held; null when the snapshot did not record it.
+    movement_history_start: date | None = None
 
 
 class UtilisationLedgerEntryResponse(BaseModel):
