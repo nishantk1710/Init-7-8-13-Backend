@@ -306,6 +306,12 @@ class I8Settings(BaseSettings):
     # worth doing, so the screen shows none and says why.
     new_item_price_token_max: Decimal = Decimal("1.00")
 
+    # Per statement of the MBEW lookup, until its first row. Past it the screen
+    # is served without prices (LOOKUP_FAILED) rather than not at all: the
+    # frontend gives the whole screen 60 s, and staging plus twins can take 45
+    # of them on a busy database. 0 = no limit.
+    new_item_price_timeout_seconds: int = 20
+
     # --- Presentation -----------------------------------------------------
 
     # Plant code -> display name, comma separated.

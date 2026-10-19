@@ -195,3 +195,28 @@ class TestTheLookup:
     def test_nothing_asked_reads_nothing(self) -> None:
         """No session at all: an empty request must not touch the database."""
         assert fetch_new_item_prices(None, {}, CFG) == {}
+
+
+class TestAFailedLookup:
+    """16-19 Oct 2026: the MBEW read ran for 12-16 minutes and took the whole
+    coding screen down with it. A read that fails -- on SQL Server, one that
+    runs past I8_NEW_ITEM_PRICE_TIMEOUT_SECONDS -- must cost the column, not
+    the screen."""
+
+    def test_every_plant_reads_lookup_failed_and_nothing_is_raised(self) -> None:
+        # No v_mbew at all: the read fails the way a cancelled one does, as a
+        # DBAPIError out of the driver.
+        with Session(create_engine("sqlite://", future=True)) as db:
+            prices = fetch_new_item_prices(db, {"5000024401": {"1500", "1300"}, "43253306": {"1500"}}, CFG)
+
+        assert {material: [(p.plant, p.price, p.missing) for p in found] for material, found in prices.items()} == {
+            "5000024401": [("1300", None, "LOOKUP_FAILED"), ("1500", None, "LOOKUP_FAILED")],
+            "43253306": [("1500", None, "LOOKUP_FAILED")],
+        }
+
+    def test_it_is_not_reported_as_a_missing_valuation(self) -> None:
+        """NOT_IN_MBEW is a fact about the material; a failed read is not."""
+        with Session(create_engine("sqlite://", future=True)) as db:
+            [price] = fetch_new_item_prices(db, {"5000024401": {"1300"}}, CFG)["5000024401"]
+
+        assert price.state == MissingPrice.LOOKUP_FAILED.value != MissingPrice.NOT_IN_MBEW.value

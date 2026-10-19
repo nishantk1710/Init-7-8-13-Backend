@@ -39,6 +39,10 @@ sent as zero:
 * ``NO_NEW_VALUATION`` -- split-valuated, but no NEW row.
 * ``NOT_IN_MBEW`` -- no row for that material at that plant.
 
+A fourth, ``LOOKUP_FAILED``, says nothing about the material: the MBEW read
+failed or ran past ``I8_NEW_ITEM_PRICE_TIMEOUT_SECONDS``, and the screen is
+served without its prices rather than not at all.
+
 An unreadable VERPR or PEINH counts as no row (blank or zero PEINH is refused,
 not assumed to be 1 -- the same rule as I07's MBEW reader).
 
@@ -50,13 +54,16 @@ from __future__ import annotations
 
 import time
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
+from app.core.db import MSSQL, statement_timeout
 from app.core.logging import get_logger
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.staged import reading, valuation_sources
@@ -76,6 +83,11 @@ class MissingPrice(str, Enum):
 
     NOT_IN_MBEW = "NOT_IN_MBEW"
     """No MBEW row for the material at the plant."""
+
+    LOOKUP_FAILED = "LOOKUP_FAILED"
+    """The MBEW read itself failed or ran past
+    ``I8_NEW_ITEM_PRICE_TIMEOUT_SECONDS``, so nothing is known about the price
+    -- not that there is none. The screen is served without prices."""
 
 
 #: The count key for a material-plant that has a price.
@@ -180,6 +192,37 @@ def choose_price(
 _VALUATIONS_SQL = "select matnr, bwkey, bwtar, verpr, peinh from v_mbew where matnr in :materials"
 
 
+@contextmanager
+def _guarded(db: Session, seconds: int) -> Iterator[None]:
+    """A savepoint with a per-statement limit around the lookup, on SQL Server.
+
+    On a failure the savepoint rolls back the lookup's temp tables and leaves
+    the coding screen's own staging -- made before it, on the same
+    transaction -- in place for the steps after it.
+    """
+    if db.get_bind().dialect.name != MSSQL:
+        yield
+        return
+    with db.begin_nested(), statement_timeout(db, seconds):
+        yield
+
+
+def _read_valuations(
+    db: Session, materials: Sequence[str], *, staged: bool
+) -> tuple[dict[tuple[str, str], list[Valuation]], int]:
+    """(material, plant) -> its MBEW rows, and how many had no readable price."""
+    rows: dict[tuple[str, str], list[Valuation]] = {}
+    unreadable = 0
+    with valuation_sources(db, materials, enabled=staged) as src:
+        for row in fetch_in_chunks(db, reading(_VALUATIONS_SQL, src), "materials", materials):
+            price = unit_price(row["verpr"], row["peinh"])
+            if price is None:
+                unreadable += 1
+            bwtar = (row["bwtar"] or "").strip().upper() or None
+            rows.setdefault((row["matnr"], (row["bwkey"] or "").strip()), []).append(Valuation(bwtar, price))
+    return rows, unreadable
+
+
 def fetch_new_item_prices(
     db: Session,
     plants_by_material: Mapping[str, Iterable[str | None]],
@@ -205,16 +248,27 @@ def fetch_new_item_prices(
         return {}
 
     started = time.monotonic()
-    materials = sorted(wanted)
-    rows: dict[tuple[str, str], list[Valuation]] = {}
-    unreadable = 0
-    with valuation_sources(db, materials, enabled=staged) as src:
-        for row in fetch_in_chunks(db, reading(_VALUATIONS_SQL, src), "materials", materials):
-            price = unit_price(row["verpr"], row["peinh"])
-            if price is None:
-                unreadable += 1
-            bwtar = (row["bwtar"] or "").strip().upper() or None
-            rows.setdefault((row["matnr"], (row["bwkey"] or "").strip()), []).append(Valuation(bwtar, price))
+    try:
+        with _guarded(db, cfg.new_item_price_timeout_seconds):
+            rows, unreadable = _read_valuations(db, sorted(wanted), staged=staged)
+    except DBAPIError as exc:
+        # The price is one column of the screen; it must never take the rest
+        # down with it, as it did from 16 to 19-Oct-2026. HYT00 in the message
+        # is the statement limit; 1222 would be a lock timeout.
+        logger.warning(
+            "I08 new item price: MBEW lookup failed after %.1fs; serving the screen "
+            "without prices (%s on every material-plant): %s",
+            time.monotonic() - started,
+            MissingPrice.LOOKUP_FAILED.value,
+            exc.orig if exc.orig is not None else exc,
+        )
+        return {
+            material: tuple(
+                NewItemPrice(plant=plant, price=None, missing=MissingPrice.LOOKUP_FAILED.value)
+                for plant in plants
+            )
+            for material, plants in wanted.items()
+        }
 
     prices = {
         material: tuple(choose_price(rows.get((material, plant), ()), plant, cfg) for plant in plants)

@@ -63,6 +63,7 @@ from app.initiatives.i8.exceptions import ExceptionItem, ExceptionStats, build_e
 from app.initiatives.i8.line_justifications import LineJustification
 from app.initiatives.i8.line_justifications import by_line as justifications_by_line
 from app.initiatives.i8.line_justifications import index_size as justification_counts
+from app.initiatives.i8.new_item_price import MissingPrice
 from app.initiatives.i8.register import (
     RegisterStats,
     RepairLine,
@@ -821,6 +822,11 @@ def get_coding_screen(
                         built.stats.verdicts_stored,
                         len(stale),
                     )
+            if built.stats.new_item_price_counts.get(MissingPrice.LOOKUP_FAILED.value):
+                # Served but not kept: cached, a screen without its prices
+                # would stay that way until the next snapshot. Uncached, the
+                # next page load asks MBEW again.
+                return built
             _screens[key] = built
         return _screens[key]
 

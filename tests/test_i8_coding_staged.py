@@ -65,7 +65,8 @@ RAW: dict[str, list[str]] = {
         "LFDAT", "PSTYP", "EBELN", "EBELP", "LIFNR", "LGORT",
     ],
     # The New Item Price's source, read through its own staged copy
-    # (staged.valuation_sources), narrowed to the candidates by literal key.
+    # (staged.valuation_sources), narrowed by a semi-join to a temp table of
+    # the candidates' keys.
     "raw_mbew": ["MATNR", "BWKEY", "BWTAR", "VERPR", "PEINH"],
 }
 

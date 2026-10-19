@@ -525,6 +525,12 @@ def valuation_sources(
     is the same predicate written plainly, so it keeps exactly the rows the
     lookup asks for.
 
+    The materials go into an indexed temp table and the narrowing semi-joins
+    to it, as the snapshot build narrows MSEG to ``#i8s_docs``. Until
+    19-Oct-2026 they were an ``IN`` list of ~113 literals instead, and SQL
+    Server re-evaluated the key expression once per literal per row: the
+    lookup took 698-966 s on nonprod, and the screen 504'd at the gateway.
+
     The materials are written in as literals, not bound: a parameterised
     statement runs in ``sp_executesql``, which drops a temp table it creates
     when it returns. They are normalised keys the screen read from the views,
@@ -536,15 +542,24 @@ def valuation_sources(
     if not enabled or not materials or db.get_bind().dialect.name != MSSQL:
         yield DIRECT
         return
-    listed = ", ".join(_literal(m) for m in sorted(set(materials)))
+    wanted = "#i8cm_mats"
+    db.execute(text(f"DROP TABLE IF EXISTS {wanted}"))
+    # DATABASE_DEFAULT: a temp table otherwise takes tempdb's collation, and
+    # comparing it with n_mbew's could fail on a collation conflict.
+    db.execute(text(f"CREATE TABLE {wanted} (matnr NVARCHAR(100) COLLATE DATABASE_DEFAULT NOT NULL)"))
+    listed = sorted(set(materials))
+    for start in range(0, len(listed), 1000):  # SQL Server's limit on one VALUES list
+        rows = ", ".join(f"({_literal(m)})" for m in listed[start:start + 1000])
+        db.execute(text(f"INSERT INTO {wanted} (matnr) VALUES {rows}"))
+    db.execute(text(f"CREATE CLUSTERED INDEX ix_i8cm_mats ON {wanted} (matnr)"))
     narrowed = _narrow(
         db, "mbew", "n_mbew",
-        f"{_in_scope('valuation_area')} AND {_key('material')} IN ({listed})",
+        f"{_in_scope('valuation_area')} AND {_key('material')} IN (SELECT matnr FROM {wanted})",
         name="#i8cb_mbew",
     )
     staged = _materialise(db, "v_mbew", {"n_mbew": narrowed}, name="#i8cs_v_mbew")
     try:
         yield Sources(views={"v_mbew": staged})
     finally:
-        for table in (staged, narrowed):
+        for table in (staged, narrowed, wanted):
             db.execute(text(f"DROP TABLE IF EXISTS {table}"))
