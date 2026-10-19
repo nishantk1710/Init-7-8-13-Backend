@@ -67,10 +67,19 @@ class I8Settings(BaseSettings):
     # them as overdue -- a repair that was cancelled in SAP being chased here.
     po_deleted_indicator: str = "L"
 
-    # EKPO.LOEKZ, the blocked value. Blocked is not cancelled: the line can be
-    # released again, so it STAYS in the register and is flagged (72 lines in
-    # the July extract) rather than dropped on a guess about what happens next.
+    # EKPO.LOEKZ, the blocked value. Left out of the register since
+    # 19-Oct-2026, as SAP's own open-PO count leaves it out: on the 15-Oct data
+    # SAP's ~106 open repair lines matched ours (104) only without the 68
+    # blocked ones. A blocked line can be released again, and it comes back in
+    # on the next snapshot when it is.
     po_blocked_indicator: str = "S"
+
+    # EKPO.ELIKZ, the "Delivery completed" flag. A line carrying it is closed,
+    # whether or not anything was received against it -- SAP's own rule, and
+    # the register's since 19-Oct-2026. Before that the register decided from
+    # goods receipts and called 644 lines open that SAP had closed: 640 with
+    # nothing received, ticked to close them off on paper.
+    delivery_completed_indicator: str = "X"
 
     # PSTYP of a standard purchase line -- a new unit bought outright. On an
     # 80-series material this is the population the reservation assistant
@@ -88,15 +97,10 @@ class I8Settings(BaseSettings):
     #
     # Every one is confirmed present in the extract -- this is the flow the data
     # actually shows, not a theoretical one.
-    gr_movement_type: str = "101"
-    """Goods receipt. The repaired unit coming back."""
-
-    gr_reversal_movement_type: str = "102"
-    """Reversal of a goods receipt. Netted off, never counted as a return."""
-
-    gr_history_category: str = "E"
-    """EKBE history category for goods receipts. 'Q' is invoices -- not a return."""
-
+    #
+    # No goods-receipt movements here since 19-Oct-2026: whether a line is
+    # still open is SAP's "Delivery completed" flag, not a receipt, and the
+    # register no longer reads EKBE.
     dispatch_movement_type: str = "541"
     """Transfer to vendor stock. The unit physically leaving for repair."""
 

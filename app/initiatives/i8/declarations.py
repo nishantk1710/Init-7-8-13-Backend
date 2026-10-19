@@ -71,7 +71,6 @@ class DeclarationRow:
     """EKPO.AFNAM, a code. None only if the line has no requisitioner, which no
     repair line in the July extract does."""
 
-    has_active_repair: bool
     related_repair_id: str
 
     status: str
@@ -117,12 +116,12 @@ class DeclarationRow:
     invented name is not."""
 
     repair_status: str | None = None
-    """Where the repair itself stands -- PO Issued, At Vendor, Closed.
+    """Where the repair itself stands -- PO Issued or At Vendor.
 
     Not the declaration status, which is ``status``. The queue shows this so
-    somebody working it can see whether the part is still out: a line already
-    back is a different kind of outstanding declaration from one at a vendor
-    right now."""
+    somebody working it can see whether the part has gone to the vendor yet.
+    Every row is a repair SAP still has open: a closed one leaves the register,
+    and this queue with it."""
 
     @property
     def is_outstanding(self) -> bool:
@@ -130,27 +129,24 @@ class DeclarationRow:
 
 
 def _next_action(status: str, line: RepairLine, attestation: RepairAttestation | None) -> str:
-    """What a person should do about this row, in a sentence they can act on."""
+    """What a person should do about this row, in a sentence they can act on.
+
+    Every row is on a repair SAP still has open, so the part is out for repair
+    and a declaration can still be made or reconsidered.
+    """
     if status == "Required":
-        if line.is_open:
-            return (
-                "Declare the condition of this part. It is out for repair now "
-                "and no assessment is on record."
-            )
         return (
-            "No assessment was ever recorded for this repair. It is closed, so "
-            "this cannot be corrected -- it is counted to size the gap."
+            "Declare the condition of this part. It is out for repair now "
+            "and no assessment is on record."
         )
 
     if status == "Flagged":
         assert attestation is not None
         verdict = CONDITION_LABELS[Recommendation(attestation.recommendation)]
-        if line.is_open:
-            return (
-                f"Assessed as {verdict} but sent for repair anyway -- confirm "
-                f"with {attestation.attestor} before the unit comes back."
-            )
-        return f"Assessed as {verdict} and repaired anyway. Review the decision."
+        return (
+            f"Assessed as {verdict} but sent for repair anyway -- confirm "
+            f"with {attestation.attestor} before the unit comes back."
+        )
 
     return "None. The condition was declared and the part was found repairable."
 
@@ -191,9 +187,6 @@ def build_queue(
                 pr_number=line.pr_number,
                 pr_item=line.pr_item,
                 requester=line.requisitioner,
-                # Null on every row. See the field docstring -- both available
-                # labels are false for every repair line we can see.
-                has_active_repair=line.is_open,
                 related_repair_id=f"{line.purchasing_document}-{line.item}",
                 repair_document=line.purchasing_document,
                 repair_item=line.item,

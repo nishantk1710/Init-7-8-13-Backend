@@ -1,8 +1,8 @@
 """One assembled view of I08, built once and reused.
 
-This is where W5.1 and W5.2 meet. The register is built first, its open lines
-are indexed by material and plant, and that index gives every universe row its
-``hasOpenRepair`` flag. Building it in that order is what keeps the repair-PO
+This is where W5.1 and W5.2 meet. The register is built first -- the repair
+lines SAP still has open -- its lines are indexed by material and plant, and
+that index gives every universe row its ``hasOpenRepair`` flag. Building it in that order is what keeps the repair-PO
 rule in exactly one module: the universe never needs to know what an item
 category is.
 
@@ -74,7 +74,6 @@ from app.initiatives.i8.register import (
 )
 from app.initiatives.i8.staged import staged_sources
 from app.initiatives.i8.universe import UniverseRow, UniverseStats, load_universe
-from app.initiatives.i8.vendors import VendorTurnaround, vendor_turnaround
 from app.models import IngestionRun
 from app.shared.snapshot_builds import exclusive_build
 
@@ -83,7 +82,10 @@ logger = get_logger(__name__)
 
 # The tables every I08 view reads -- one per view listed in
 # ``app/initiatives/i8/views.py``, except that v_zmm065 reads
-# criticality_current rather than a raw table.
+# criticality_current rather than a raw table, and that v_ekbe's raw_ekbe is
+# left out: I08 has not read goods receipts since 19-Oct-2026 (the register
+# follows SAP's "Delivery completed" flag), so an EKBE reload changes nothing
+# here. I13 still reads it, through its own snapshot.
 #
 # Written out rather than derived from that list: a view name does not say what
 # fills it, and guessing ``v_x -> raw_x`` would silently miss the zmm065 pair
@@ -97,7 +99,6 @@ SOURCE_TABLES: tuple[str, ...] = (
     "raw_ekko",
     "raw_ekpo",
     "raw_eket",
-    "raw_ekbe",
     "raw_eban",
     "raw_mseg",
     "raw_lfa1",
@@ -168,8 +169,6 @@ class Snapshot:
     universe: tuple[UniverseRow, ...]
     universe_stats: UniverseStats
 
-    vendors: tuple[VendorTurnaround, ...]
-
     acquisitions: tuple[NewAcquisition, ...] = ()
     """New 80-series purchase lines, for the UNJUSTIFIED_ACQUISITION check.
     From the same EKPO pull as the register, so it shares its lifetime."""
@@ -210,9 +209,12 @@ def build_snapshot(
     today: date | None = None,
     staged: bool | None = None,
 ) -> Snapshot:
-    """Assemble the register, the universe and the vendor analytics.
+    """Assemble the register, the universe and the new purchases.
 
     Always does the work. :func:`get_snapshot` is the cached entry point.
+
+    No vendor turnaround since 19-Oct-2026: it was dispatch to goods receipt,
+    and the register no longer reads goods receipts or lists closed lines.
 
     ``staged`` (default: ``I8_SNAPSHOT_STAGED``, on) reads narrowed copies of the
     sources on SQL Server instead of the views over the whole extract -- see
@@ -246,15 +248,13 @@ def build_snapshot(
                 universe, universe_stats = load_universe(
                     db, cfg, open_repair_index=open_repair_index(lines), sources=sources
                 )
-    vendors = vendor_turnaround(lines)
 
     elapsed = time.monotonic() - started
     logger.info(
-        "I08 snapshot built in %.2fs: %d repair lines, %d universe rows, %d vendors",
+        "I08 snapshot built in %.2fs: %d open repair lines, %d universe rows",
         elapsed,
         len(lines),
         len(universe),
-        len(vendors),
     )
     return Snapshot(
         reference_date=reference_date,
@@ -264,7 +264,6 @@ def build_snapshot(
         register_stats=register_stats,
         universe=tuple(universe),
         universe_stats=universe_stats,
-        vendors=tuple(vendors),
         acquisitions=tuple(acquisitions),
         source_fingerprint=source.fingerprint,
         source_loaded_at=source.loaded_at,

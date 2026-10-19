@@ -44,8 +44,9 @@ def _universe_row(**overrides):
 
 
 def _repair_line(**overrides):
-    """An OPEN repair line -- nothing received -- with the FR-6 fields set."""
-    from app.initiatives.i8.register import RepairLine, qty_under_repair
+    """A repair line SAP still has open -- the only kind the register holds --
+    with the FR-6 fields set."""
+    from app.initiatives.i8.register import RepairLine
 
     defaults = dict(
         purchasing_document="4500001234",
@@ -57,7 +58,6 @@ def _repair_line(**overrides):
         unit="EA",
         net_price=Decimal("1000"),
         item_category="3",
-        delivery_completed=False,
         pr_number=None,
         pr_item=None,
         requisitioner="MILLERJ",
@@ -72,12 +72,8 @@ def _repair_line(**overrides):
         schedule_lines=1,
         dispatched_at=None,
         dispatched_qty=Decimal("0"),
-        received_at=None,
-        received_qty=Decimal("0"),
-        reversals=0,
         lead_time_days=30,
         repair_status="PO Issued",
-        receipt_status="Not Yet Shipped",
         overdue_status="On Time",
         lead_time_status="WITHIN_LEAD_TIME",
         days_open=91,
@@ -89,16 +85,9 @@ def _repair_line(**overrides):
         aging_bucket="61+",
     )
     defaults.update(overrides)
-    # Derived with the real rule rather than hardcoded, because openness is now
-    # read off this number: a fixture carrying a flat 1 would have stayed "open"
-    # however much a test said had come back.
-    defaults.setdefault(
-        "qty_under_repair",
-        qty_under_repair(
-            ordered_qty=defaults["ordered_qty"],
-            received_qty=defaults["received_qty"],
-        ),
-    )
+    # The register's own rule: the whole ordered quantity is out until SAP
+    # closes the line.
+    defaults.setdefault("qty_under_repair", defaults["ordered_qty"])
     return RepairLine(**defaults)
 
 
@@ -183,19 +172,6 @@ class TestOpenRepairs:
         assert verdict.exists is True
         assert UnitSource.ON_REPAIR_ORDER in verdict.sources
         assert verdict.open_repair_lines == 1
-
-    def test_a_closed_repair_does_not_count(self) -> None:
-        """The unit already came back; it is stock now, not inbound."""
-        verdict = _assess(
-            universe_rows=[_universe_row()],
-            repair_lines=[
-                _repair_line(
-                    received_at=date(2026, 6, 1), received_qty=Decimal("1")
-                )
-            ],
-        )
-        assert verdict.open_repair_lines == 0
-        assert UnitSource.ON_REPAIR_ORDER not in verdict.sources
 
     def test_the_soonest_due_date_is_what_a_requester_decides_against(self) -> None:
         verdict = _assess(

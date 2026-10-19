@@ -4,15 +4,16 @@ Seeds a small SAP tenant into raw_* tables (SAP field names, as the CSV route
 loads them; ZMM065 in its workbook labels), builds the normalise and I08 views,
 then builds the snapshot twice -- ``staged=False`` reading the views over the
 whole extract, ``staged=True`` reading the narrowed copies ``staged.py`` makes
--- and compares every repair line, universe row, vendor, acquisition and
-statistic.
+-- and compares every repair line, universe row, acquisition and statistic.
 
 The tenant is shaped to cross every staging filter: a repair line on a non-80
 material (its lead time only reachable through the staged PO materials), keys
-zero-padded differently in EKPO, EKBE and MSEG, a deleted and a blocked line, a
-reversed receipt, a 541 with its plant-side twin and one with item '0', lines
-and stock at an out-of-scope plant, and ordinary lines the staging leaves out
-but the register still counts as scanned.
+zero-padded differently in EKPO and MSEG, a deleted, a blocked and a
+delivery-completed line (the three SAP-closed kinds the register leaves out), a
+541 with its plant-side twin and one with item '0', lines and stock at an
+out-of-scope plant, and ordinary lines the staging leaves out but the register
+still counts as scanned. EKBE is seeded because the views over it still exist
+(I13 reads them); I08 has not read it since 19-Oct-2026.
 
 Needs a database (skipped without DATABASE_URL); creates and drops its own raw
 tables, so it runs on the empty CI database.
@@ -78,8 +79,11 @@ ROWS: dict[str, list[tuple]] = {
     "raw_ekpo": [
         # Repair lines.
         ("4100000001", "10", "", "06.06.2026", "PUMP REPAIR", "000000008000000001", "1300", "1", "1.200,50",
-         "X", "3", "EA", "0010000001", "10", "ZREP", "MILLERJ", "05.06.2026"),
+         "", "3", "EA", "0010000001", "10", "ZREP", "MILLERJ", "05.06.2026"),
         ("4100000001", "20", "", "06.06.2026", "VALVE REPAIR", B, "1300", "2", "300", "", "3", "EA", "", "",
+         "ZREP", "MILLERJ", "05.06.2026"),
+        # Closed in SAP ("Delivery completed") with nothing received: not open.
+        ("4100000001", "30", "", "06.06.2026", "SEAL REPAIR", A, "1300", "1", "50", "X", "3", "EA", "", "",
          "ZREP", "MILLERJ", "05.06.2026"),
         ("4100000002", "10", "", "07.06.2026", "GEARBOX REPAIR", X, "1500", "1", "900", "", "3", "EA", "", "",
          "ERSA", "SMITHK", "07.06.2026"),
@@ -206,14 +210,17 @@ def test_the_tenant_crosses_every_filter(built) -> None:
     """Guards the comparison below against passing on an empty build."""
     direct, _, _ = built
     keys = {line.key for line in direct.lines}
-    assert keys == {("4100000001", "10"), ("4100000001", "20"), ("4100000002", "10"), ("4100000004", "10")}
+    # Open in SAP only: not the deleted (3/10), blocked (4/10) or delivery-completed (1/30) lines.
+    assert keys == {("4100000001", "10"), ("4100000001", "20"), ("4100000002", "10")}
     by_key = {line.key: line for line in direct.lines}
     assert by_key[("4100000002", "10")].lead_time_days == 45  # non-80 repair, MARC via staged materials
     assert by_key[("4100000001", "10")].dispatched_qty == 2  # vendor side only, twin excluded
+    assert by_key[("4100000001", "10")].repair_status == "At Vendor"
     assert by_key[("4100000001", "10")].vendor_name == "ACME ROTATING"
-    assert by_key[("4100000004", "10")].reversals == 1 and by_key[("4100000004", "10")].po_blocked
     assert direct.register_stats.excluded_deleted_lines == 1
-    assert direct.register_stats.candidates_scanned == 7  # every in-scope line with a PO and an item
+    assert direct.register_stats.excluded_delivery_completed_lines == 1
+    assert direct.register_stats.excluded_blocked_lines == 1
+    assert direct.register_stats.candidates_scanned == 8  # every in-scope line with a PO and an item
     assert {(a.purchasing_document, a.item) for a in direct.acquisitions} == {("4500000010", "10")}
     assert {(r.material_id, r.plant) for r in direct.universe} >= {(A, "1300"), (B, "1500"), (C, "1500")}
 
@@ -235,9 +242,8 @@ def test_universe_is_identical(built) -> None:
     assert dataclasses.asdict(staged.universe_stats) == dataclasses.asdict(direct.universe_stats)
 
 
-def test_vendors_and_acquisitions_are_identical(built) -> None:
+def test_acquisitions_are_identical(built) -> None:
     direct, staged, _ = built
-    assert _plain(staged.vendors) == _plain(direct.vendors)
     assert _plain(staged.acquisitions) == _plain(direct.acquisitions)
 
 

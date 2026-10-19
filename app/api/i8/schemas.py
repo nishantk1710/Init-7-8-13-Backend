@@ -207,7 +207,12 @@ class LineException(I8Model):
 
 
 class RepairChain(I8Model):
-    """One repair PO line. Mirrors the frontend's RepairChain."""
+    """One repair PO line SAP still has open. Mirrors the frontend's RepairChain.
+
+    Since 19-Oct-2026 the register serves no other kind: a line SAP has closed
+    ("Delivery completed"), deleted or blocked is not in it, and goods receipts
+    are not read -- so there is no receipt status, receipt date or received
+    quantity here."""
 
     id: str
     """``{EBELN}-{EBELP}``. The register key, as one string."""
@@ -226,10 +231,11 @@ class RepairChain(I8Model):
     vendor_name: str | None = None
 
     repair_status: str
-    receipt_status: str
+    """PO Issued, or At Vendor once a dispatch (the 541) is attributable."""
+
     overdue_status: str
-    """RECEIVED, NO_DUE_DATE, OVERDUE or ON_TIME. Not in the frontend type yet:
-    it is the state the 63 no-due-date lines need to be visible at all."""
+    """NO_DUE_DATE, OVERDUE or ON_TIME. NO_DUE_DATE is the state the lines with
+    no schedule line need to be visible at all."""
 
     lead_time_status: str = "NO_LEAD_TIME"
     """WITHIN_LEAD_TIME, BEYOND_LEAD_TIME or NO_LEAD_TIME.
@@ -279,9 +285,8 @@ class RepairChain(I8Model):
     line's detail endpoint, which links to the queue instead."""
 
     days_open: int | None = None
-    """Raised to received, or raised to today while still out -- the same
-    number as ``daysElapsed``. A closed line shows its turnaround, not the age
-    of the record."""
+    """Raised to today -- the same number as ``daysElapsed``. The line is open
+    in SAP, so it keeps ageing until SAP closes it."""
     aging_bucket: str | None = None
     """The band ``daysOpen`` falls in."""
 
@@ -292,15 +297,13 @@ class RepairChain(I8Model):
     this is null on every Gamsberg line."""
 
     days_elapsed: int | None = None
-    """Raised to received, or raised to today while still out. What
-    ``leadTimeStatus`` is measured on -- it stops when the unit comes back."""
+    """Raised to today. What ``leadTimeStatus`` is measured on."""
 
     days_over_lead_time: int | None = None
     """Positive once past the planned time, negative while inside it, null when
     there is no lead time to measure against. Null rather than 0: "nobody told
     us how long this takes" must not average in as "finished exactly on time"."""
 
-    days_at_vendor: int | None = None
     days_in_current_stage: int | None = None
     days_remaining_in_repair: int | None = None
     """Negative once the promised date has passed, as the frontend documents."""
@@ -309,10 +312,8 @@ class RepairChain(I8Model):
     po_issued_at: date | None = None
     sent_to_vendor_at: date | None = None
     expected_return: date | None = None
-    received_at: date | None = None
 
     ordered_qty: Decimal = Decimal(0)
-    received_qty: Decimal = Decimal(0)
     unit: str | None = None
     repair_cost: Decimal | None = None
     """Net order price of the repair line -- what this repair costs."""
@@ -327,11 +328,6 @@ class RepairChain(I8Model):
     header is simply absent -- which is not evidence against them."""
 
     has_po_header: bool = False
-    delivery_completed: bool = False
-    """SAP's delivery-complete flag. Reported, not trusted: 1,025 lines carry it
-    and only 436 have any goods receipt."""
-
-    reversals: int = 0
     schedule_lines: int = 0
 
     criticality: str | None = None
@@ -339,43 +335,37 @@ class RepairChain(I8Model):
     via the universe. Null where no source has a tier for the pair -- unknown,
     not NORMAL."""
 
-    po_blocked: bool = False
-    """The PO line is blocked in SAP (EKPO.LOEKZ). Still a live repair, so it
-    stays in the register; deleted lines do not appear at all."""
-
 
 class RegisterMeta(I8Model):
+    """The register's counts. Every line counted is open in SAP; the
+    ``excluded*`` figures say how many repair lines SAP has deleted, closed or
+    blocked, each counted under the first of the three that applies."""
+
     total_lines: int
     open_lines: int
-    received_lines: int
+    """The same number as ``totalLines``: every listed line is open in SAP."""
+
     overdue_lines: int
     no_due_date_lines: int
-    lines_without_due_date: int
     lines_with_lead_time: int
     lines_beyond_lead_time: int
-    open_lines_beyond_lead_time: int
-    partially_received_lines: int
-    lines_with_reversals: int
     lines_on_eighty_series: int
     lines_with_po_header: int
     lines_corroborated_by_doc_type: int
     lines_with_dispatch: int
-    open_lines_with_dispatch: int
     distinct_materials: int
     distinct_vendors: int
     vendors_resolved_to_a_name: int
     candidates_scanned: int
     excluded_deleted_lines: int = 0
-    """Repair lines deleted in SAP, left out of every figure above."""
+    """Repair lines deleted in SAP (EKPO.LOEKZ)."""
 
-    blocked_lines: int = 0
-    """Repair lines blocked in SAP -- counted above, and flagged per row."""
+    excluded_delivery_completed_lines: int = 0
+    """Repair lines SAP has closed -- "Delivery completed", EKPO.ELIKZ --
+    whatever was received against them."""
 
-    held_lines: int = 0
-    """PO-issued lines blocked in SAP or partly received, left out by
-    ``excludeHeld`` -- the lines the Repair Register screen does not list. With
-    it, ``totalLines``, ``openLines``, ``blockedLines`` and
-    ``partiallyReceivedLines`` describe the lines listed. Zero without it."""
+    excluded_blocked_lines: int = 0
+    """Repair lines blocked in SAP (EKPO.LOEKZ)."""
 
 
 class VendorOption(I8Model):
@@ -392,8 +382,8 @@ class VendorOption(I8Model):
 class RegisterFacets(I8Model):
     """The values the register's filters can take, for a paged screen's dropdowns.
 
-    Taken after ``excludeHeld`` and before every filter, so a dropdown always
-    offers every value it can be switched to, rather than those on one page.
+    Taken before every filter, so a dropdown always offers every value it can
+    be switched to, rather than those on one page.
     """
 
     plants: list[PlantReference]
@@ -433,37 +423,6 @@ class LifecycleStage(I8Model):
 class RepairDetail(I8Model):
     line: RepairChain
     timeline: list[LifecycleStage]
-
-
-# --- Vendors (W5.2 Layer 4) -----------------------------------------------
-
-
-class VendorTurnaroundItem(I8Model):
-    vendor: str
-    vendor_name: str | None = None
-    total_lines: int
-    open_count: int
-    overdue_count: int
-    received_count: int
-
-    avg_turnaround_days: float | None = None
-    """Completed repairs only. Including open ones makes the slowest vendor
-    look fastest, because its repairs have not come back to be counted."""
-
-    min_turnaround_days: int | None = None
-    max_turnaround_days: int | None = None
-    turnaround_sample: int = 0
-    """How many repairs the average came from. A mean of one is not a record."""
-
-    on_time_rate: float | None = None
-    avg_days_open: float | None = None
-
-
-class VendorResponse(I8Model):
-    items: list[VendorTurnaroundItem]
-    total: int
-    reference_date: date
-    note: str
 
 
 # --- Attestation, declarations and exceptions (W5.3) ----------------------
@@ -620,7 +579,6 @@ class DeclarationItem(I8Model):
     """EKPO.AFNAM, and a CODE rather than a name -- no person directory was
     delivered. Displayed as a code, the same way an unnamed vendor is."""
 
-    has_active_repair: bool
     related_repair_id: str
     vendor: str | None = None
     """The vendor the part went to, as a code. Null where the repair line has
@@ -631,8 +589,8 @@ class DeclarationItem(I8Model):
     name when it has one and the code when it does not."""
 
     repair_status: str | None = None
-    """Where the REPAIR stands (PO Issued / At Vendor / Closed). Not the
-    declaration status, which is ``status``."""
+    """Where the REPAIR stands (PO Issued / At Vendor). Not the declaration
+    status, which is ``status``."""
 
     repair_po: SAPDocumentReference | None = None
     """This row's repair line, unjoined.
@@ -742,8 +700,6 @@ class ExceptionQueueItem(I8Model):
     raised_at: date | None = None
     """The date of the line the exception is about -- the repair line, or for
     an acquisition the purchase line -- not the moment the check ran."""
-
-    is_open_repair: bool
 
     pre_automation: bool = False
     """The line predates the control it is measured against, so the gap is

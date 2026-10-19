@@ -5,13 +5,12 @@ One row per material + purchase-order line, keyed on ``(EBELN, EBELP)``.
 Not one row per material, and not one per purchase order. A single repair PO
 carries several lines -- different materials, or the same material in separate
 batches sent at different times -- and each line has its own schedule-line
-delivery date, its own goods receipt and its own quantity. They go out and come
-back independently. Aggregate to the material and you can no longer say "this
-one is 60 days late while that one came back last week", which is the entire
-point of the line.
+delivery date and its own quantity. They go out and come back independently.
+Aggregate to the material and you can no longer say "this one is 60 days late
+while that one is not due for a month", which is the entire point of the line.
 
-The two rulings this module exists to honour
---------------------------------------------
+The three rulings this module exists to honour
+----------------------------------------------
 
 **Pstyp is applied in Python, never in the query** (:func:`is_repair_line`).
 SAP's OData service accepts a ``$filter`` on ``Pstyp``, answers HTTP 200, and
@@ -30,13 +29,27 @@ inner join to pick up the document type silently drops 455 genuine repair lines,
 37% of the register. So the header is LEFT JOINed and displayed, and the gate is
 item category alone.
 
+**Open is SAP's call: the "Delivery completed" flag** (:func:`is_delivery_completed`).
+Ruled 19-Oct-2026. The register lists only the repair lines SAP still has
+open -- EKPO.ELIKZ not set, and the line neither deleted nor blocked -- and
+nothing else. Until then it decided from goods receipts, so it called 644 lines
+open that SAP had closed (ticked "Delivery completed", nothing received against
+640 of them) and showed ~732 open lines where SAP's own count was ~106; on the
+15-Oct data the new rule gives 104. Goods receipts are not read at all now: a
+line SAP has closed is not in the register whatever came back against it, and
+a line SAP still has open is in it whatever did. The flag is tested in Python
+beside the Pstyp test, not in the query: the OData probe never tested a filter
+on Elikz (NOT_TESTED in ``filter_support.csv``), and a filter SAP has not been
+shown to honour is not one to rely on.
+
 What the data will and will not support
 ---------------------------------------
-Stages 3 to 6 of the lifecycle (PO raised, dispatched, at vendor, received) can
-be assembled per PO line. Stages 1 and 2 -- removal from the machine (MSEG 261 /
-201) and the condition attestation -- cannot: those movements carry no PO
-reference whatsoever, and W5.3 owns the attestation. They are deliberately left
-out of v1 rather than linked by a guess.
+Stages 3 to 5 of the lifecycle (PO raised, dispatched, at vendor) can be
+assembled per PO line. Stage 6, received, is not shown: a line in the register
+has not been closed, and a closed one is not in it. Stages 1 and 2 -- removal
+from the machine (MSEG 261 / 201) and the condition attestation -- cannot: those
+movements carry no PO reference whatsoever, and W5.3 owns the attestation. They
+are deliberately left out of v1 rather than linked by a guess.
 """
 
 from __future__ import annotations
@@ -73,33 +86,29 @@ logger = get_logger(__name__)
 
 ZERO = Decimal(0)
 
-# Repair status, matching the frontend's RepairStatus union exactly.
+# Repair status, two members of the frontend's RepairStatus union.
 #
-# One member of that union is never emitted, because the data does not support
-# it and inventing it would be a lie the UI renders confidently:
+# Every line in the register is open in SAP, so it is one of these two. The
+# union's other members are never emitted:
 #
-#   "PR Raised"        the register is built from PO lines, so a PO always
-#                      exists by construction. A requisition with no PO yet is
-#                      W5.3/W5.5 territory, not this read model.
+#   "PR Raised"           the register is built from PO lines, so a PO always
+#                         exists by construction. A requisition with no PO yet
+#                         is W5.3/W5.5 territory, not this read model.
+#   "Received", "Closed"  not since 19-Oct-2026: a line SAP has closed is not
+#                         in the register, and goods receipts are not read.
 #
 # "In Transit Return" was removed from the union on 07-Oct-2026: it is not an
 # FRS stage, and nothing in MSEG or EKBE distinguishes "the vendor has shipped
 # it back" from "still at the vendor".
 PO_ISSUED = "PO Issued"
 AT_VENDOR = "At Vendor"
-RECEIVED_STATUS = "Received"
-CLOSED = "Closed"
-
-# Receipt status, matching the frontend's ReceiptStatus union exactly.
-NOT_YET_SHIPPED = "Not Yet Shipped"
-AWAITING_RECEIPT = "Awaiting Receipt"
-PARTIALLY_RECEIVED = "Partially Received"
-FULLY_RECEIVED = "Received"
 
 
 @dataclass(frozen=True)
 class RepairLine:
-    """One repair purchase-order line, with its assembled lifecycle."""
+    """One repair purchase-order line SAP still has open, with its assembled
+    lifecycle. Lines SAP has closed, deleted or blocked are never built -- see
+    :func:`load_repair_lines`."""
 
     # --- identity -------------------------------------------------------
     purchasing_document: str
@@ -113,8 +122,6 @@ class RepairLine:
     unit: str | None
     net_price: Decimal | None
     item_category: str | None
-    delivery_completed: bool
-    """EKPO.ELIKZ. Reported, never trusted as closure -- see :func:`repair_status`."""
 
     pr_number: str | None
     pr_item: str | None
@@ -140,11 +147,6 @@ class RepairLine:
     schedule_lines: int
     dispatched_at: date | None
     dispatched_qty: Decimal
-    received_at: date | None
-    received_qty: Decimal
-    """Net of reversals. A 101 followed by its 102 nets to zero, not to a return."""
-
-    reversals: int
 
     # --- the planned standard, from MARC ---------------------------------
     lead_time_days: int | None
@@ -154,7 +156,6 @@ class RepairLine:
 
     # --- derived --------------------------------------------------------
     repair_status: str
-    receipt_status: str
     overdue_status: str
     lead_time_status: str
     """WITHIN_LEAD_TIME, BEYOND_LEAD_TIME or NO_LEAD_TIME. Independent of
@@ -163,40 +164,24 @@ class RepairLine:
     BEYOND_LEAD_TIME, and that disagreement is a finding, not an error."""
 
     qty_under_repair: Decimal
+    """EKPO.MENGE, the whole ordered quantity. The line is out until SAP
+    closes it, and goods receipts are not read, so nothing is netted off."""
+
     days_open: int | None
-    """The same clock as ``days_elapsed``: raised to received, or raised to
-    today while still out. A returned repair stops ageing at its receipt, so a
-    closed line reads its turnaround rather than how old the record is."""
+    """The same clock as ``days_elapsed``: raised to today. The line is open in
+    SAP, so it keeps ageing until SAP closes it and it leaves the register."""
     days_elapsed: int | None
-    """Raised to received, or raised to today while still out. What the
-    lead-time check measures, and stops when the unit comes back."""
+    """Raised to today. What the lead-time check measures."""
 
     days_over_lead_time: int | None
     """Positive once past the planned time, negative while inside it, None when
     there is no lead time to measure against."""
 
     days_at_vendor: int | None
+    """Dispatch (the 541) to today. None when no dispatch is attributable."""
     days_in_current_stage: int | None
     days_remaining: int | None
     aging_bucket: str | None
-
-    po_blocked: bool = False
-    """EKPO.LOEKZ carries the blocked value. Kept in the register and flagged:
-    a blocked line can be released again, unlike a deleted one, which is not
-    in the register at all -- see :func:`is_deleted_line`."""
-
-    @property
-    def is_open(self) -> bool:
-        """Units still out with the vendor. The figure the FRS cares about.
-
-        Read off the quantity rather than off ``received_at``, so that a
-        PARTIALLY_RECEIVED line -- one receipt in, the rest still at the vendor
-        -- stays open instead of closing on its first receipt. On the live data
-        (14-Oct) that moves the open count 824 -> 827: 4 partial lines in, and
-        one line out whose EKPO.MENGE is 0, where nothing was ordered and so
-        nothing can be out. See :func:`qty_under_repair`.
-        """
-        return self.qty_under_repair > ZERO
 
     @property
     def is_overdue(self) -> bool:
@@ -209,26 +194,6 @@ class RepairLine:
     @property
     def key(self) -> tuple[str, str]:
         return (self.purchasing_document, self.item)
-
-
-def is_held(line: RepairLine) -> bool:
-    """A PO-issued line blocked in SAP, or already partly back.
-
-    The Repair Register screen does not list these (since 14-Oct-2026): it is
-    read for the lines a PO has gone out on and nothing has happened to yet,
-    and a line held up in SAP or half-returned is a different conversation
-    with a different owner. Scoped to PO Issued because that is the stage the
-    request named: a partly received line At Vendor, or a blocked line already
-    Closed, stays listed and keeps its flag.
-
-    Nothing is deleted. The line stays in every count here and at its own
-    detail page; only that one listing leaves it out (``excludeHeld``), and
-    says how many. The frontend's ``isListedInRegister`` applies the same rule
-    to the Overview, which still reads the whole register: the two must agree.
-    """
-    return line.repair_status == PO_ISSUED and (
-        line.po_blocked or line.receipt_status == PARTIALLY_RECEIVED
-    )
 
 
 # --- Layer 1: identify the repair PO lines --------------------------------
@@ -303,6 +268,27 @@ def is_deleted_line(row: Mapping, cfg: I8Settings) -> bool:
     return row["loekz"] == cfg.po_deleted_indicator
 
 
+def is_delivery_completed(row: Mapping, cfg: I8Settings) -> bool:
+    """Whether SAP has closed this PO line: "Delivery completed" (EKPO.ELIKZ).
+
+    THE open/closed ruling of 19-Oct-2026, in one place. A ticked line is
+    closed whatever was received against it, as SAP's own open-PO count reads
+    it -- see the module docstring. In Python rather than the query for the
+    same reason :func:`is_repair_line` is.
+    """
+    return row["elikz"] == cfg.delivery_completed_indicator
+
+
+def is_blocked_line(row: Mapping, cfg: I8Settings) -> bool:
+    """Whether SAP has blocked this PO line (EKPO.LOEKZ, the blocked value).
+
+    Left out of the register since 19-Oct-2026, as SAP's open-PO count leaves
+    it out. Blocked is not cancelled: a line released again comes back in on
+    the next snapshot.
+    """
+    return row["loekz"] == cfg.po_blocked_indicator
+
+
 # --- Layer 2: assemble the lifecycle per line -----------------------------
 
 _SCHEDULE_SQL = """
@@ -313,30 +299,6 @@ _SCHEDULE_SQL = """
 select ebeln, ebelp, min(eindt) as due_date, count(*) as schedule_lines
 from v_eket
 where ebeln in :documents
-group by ebeln, ebelp
-"""
-
-_RECEIPTS_SQL = """
--- Goods receipts NET OF REVERSALS.
---
--- SHKZG carries the sign: every 101 on these lines is 'S' (debit, a receipt)
--- and every 102 is 'H' (credit, its reversal). Summing quantity without the
--- sign reports a reversed receipt as a returned unit -- which is exactly the
--- mistake that puts a unit back in stock that is not there.
---
--- 19 of the 1,225 repair lines carry a reversal, and 7 of those net to zero:
--- counting raw 101s gives 444 received lines, netting gives 437.
-select
-    ebeln,
-    ebelp,
-    sum(case when shkzg = :credit then -menge else menge end) as net_qty,
-    min(case when bwart = :receipt then budat end)      as first_receipt,
-    max(case when bwart = :receipt then budat end)      as last_receipt,
-    sum(case when bwart = :reversal then 1 else 0 end)  as reversals
-from v_ekbe
-where ebeln in :documents
-  and bewtp = :category
-  and bwart in (:receipt, :reversal)
 group by ebeln, ebelp
 """
 
@@ -457,11 +419,15 @@ def _evidence(
     materials: Sequence[str],
     cfg: I8Settings,
     sources: Sources | None = None,
-) -> tuple[dict, dict, dict, dict, dict, dict]:
+) -> tuple[dict, dict, dict, dict, dict]:
     """Fetch every lifecycle source for the identified repair documents.
 
-    Keyed lookups built once, rather than a query per line: 1,225 lines times
-    six sources is 7,350 round trips, and the register is served on request.
+    Keyed lookups built once, rather than a query per line: a query per line
+    per source is thousands of round trips, and the register is served on
+    request.
+
+    No goods receipts (EKBE) since 19-Oct-2026: whether a line is open is
+    SAP's "Delivery completed" flag, read off the EKPO row itself.
 
     ``materials`` is separate from ``documents`` because the lead time belongs
     to the material + plant, not to the purchase order -- MARC knows nothing
@@ -479,22 +445,6 @@ def _evidence(
         schedules = {
             (r["ebeln"], r["ebelp"]): r
             for r in fetch_in_chunks(db, reading(_SCHEDULE_SQL, sources), "documents", documents)
-        }
-    with timed_step("goods receipts (EKBE)"):
-        receipts = {
-            (r["ebeln"], r["ebelp"]): r
-            for r in fetch_in_chunks(
-                db,
-                reading(_RECEIPTS_SQL, sources),
-                "documents",
-                documents,
-                {
-                    "category": cfg.gr_history_category,
-                    "receipt": cfg.gr_movement_type,
-                    "reversal": cfg.gr_reversal_movement_type,
-                    "credit": "H",
-                },
-            )
         }
     with timed_step("dispatches (MSEG 541)"):
         dispatches = {
@@ -518,7 +468,7 @@ def _evidence(
             (r["matnr"], r["werks"]): r["plifz"]
             for r in fetch_in_chunks(db, reading(_LEAD_TIME_SQL, sources), "materials", materials)
         }
-    return schedules, receipts, dispatches, headers, vendors, lead_times
+    return schedules, dispatches, headers, vendors, lead_times
 
 
 @contextmanager
@@ -529,60 +479,15 @@ def timed_step(step: str) -> Iterator[None]:
     logger.info("I08 snapshot: %s in %.1fs", step, time.monotonic() - started)
 
 
-def repair_status(
-    *,
-    received_qty: Decimal,
-    ordered_qty: Decimal,
-    dispatched_at: date | None,
-    delivery_completed: bool,
-) -> str:
-    """Where this line sits in its lifecycle.
+def repair_status(*, dispatched_at: date | None) -> str:
+    """Where this open line sits in its lifecycle: At Vendor once a dispatch
+    (the 541) is attributable to it, PO Issued until then.
 
-    ELIKZ is deliberately NOT the closure test. 1,025 of the 1,225 repair lines
-    carry the delivery-complete flag but only 436 of them have any goods
-    receipt at all: driving status from the flag would report 589 units as back
-    in stock when nothing has come back. Receipts decide; the flag only
-    separates "back" from "back and signed off", and is served as its own field
-    so the UI can show the discrepancy rather than inherit it.
+    Nothing later. The line is open in SAP or it would not be here -- see
+    :func:`is_delivery_completed`, which replaced reading goods receipts on
+    19-Oct-2026.
     """
-    fully_received = received_qty > ZERO and received_qty >= ordered_qty
-    if fully_received:
-        return CLOSED if delivery_completed else RECEIVED_STATUS
-    if dispatched_at is not None:
-        return AT_VENDOR
-    return PO_ISSUED
-
-
-def receipt_status(
-    *, received_qty: Decimal, ordered_qty: Decimal, dispatched_at: date | None
-) -> str:
-    """Physical receipt state of the repaired unit(s) back into stores."""
-    if received_qty > ZERO and received_qty >= ordered_qty:
-        return FULLY_RECEIVED
-    if received_qty > ZERO:
-        # No line in the July extract is in this state, and it is implemented
-        # anyway: a partial receipt is ordinary in a live client, and finding
-        # out at cutover that the register rounds it to "Received" would mean
-        # reporting units back that are still at the vendor.
-        return PARTIALLY_RECEIVED
-    if dispatched_at is not None:
-        return AWAITING_RECEIPT
-    return NOT_YET_SHIPPED
-
-
-def qty_under_repair(*, ordered_qty: Decimal, received_qty: Decimal) -> Decimal:
-    """How many units are still out with the vendor on this line.
-
-    Ordered less received, and nothing else. The earlier rule zeroed this the
-    moment the line had any receipt at all, which reported a PARTIALLY_RECEIVED
-    line as having nothing left at the vendor: on the live data (14-Oct) one
-    line ordered 2,000 against 1,000 received and the register showed 0 under
-    repair, with 4 lines in that state. ``max()`` covers the over-receipt the
-    old short-circuit was really guarding against -- see :func:`receipt_status`,
-    which has always drawn the partial/full line correctly; this is the
-    quantity catching up with it.
-    """
-    return max(ordered_qty - received_qty, ZERO)
+    return AT_VENDOR if dispatched_at is not None else PO_ISSUED
 
 
 def _lead_time_days(plifz) -> int | None:
@@ -603,7 +508,6 @@ def _build_line(
     row: Mapping,
     *,
     schedule: Mapping | None,
-    receipt: Mapping | None,
     dispatch: Mapping | None,
     header: Mapping | None,
     vendor_names: Mapping[str, str],
@@ -612,12 +516,6 @@ def _build_line(
     cfg: I8Settings,
 ) -> RepairLine:
     ordered_qty = row["menge"] if row["menge"] is not None else ZERO
-
-    received_qty = receipt["net_qty"] if receipt and receipt["net_qty"] else ZERO
-    reversals = int(receipt["reversals"]) if receipt else 0
-    # A receipt that has been fully reversed is not a receipt. Dropping the
-    # date too is what stops the line reading as RECEIVED with nothing back.
-    received_at = receipt["first_receipt"] if receipt and received_qty > ZERO else None
 
     dispatched_at = dispatch["first_dispatch"] if dispatch else None
     dispatched_qty = dispatch["qty"] if dispatch and dispatch["qty"] else ZERO
@@ -633,34 +531,16 @@ def _build_line(
     # line; the header date is a fallback for a shape where it is not.
     raised_at = row["erdat"] or po_date
 
-    status = repair_status(
-        received_qty=received_qty,
-        ordered_qty=ordered_qty,
-        dispatched_at=dispatched_at,
-        delivery_completed=row["elikz"] == "X",
-    )
-
-    qty_out = qty_under_repair(ordered_qty=ordered_qty, received_qty=received_qty)
-
-    # When this line actually finished, as against when its first receipt
-    # landed. A partial receipt is not an ending, and the clocks below take
-    # this date rather than ``received_at`` so a line with units still at the
-    # vendor keeps ageing. Measured on the live data (14-Oct): the 4 partially
-    # received lines are 2020-21 POs that read 6 to 144 days open and ON_TIME,
-    # because their clocks stopped on a receipt that covered part of the order.
-    completed_at = received_at if qty_out == ZERO else None
-
     # The stage clock: time since whatever most recently happened to this line.
     stage_started = max(
-        (d for d in (raised_at, dispatched_at, received_at) if d is not None),
+        (d for d in (raised_at, dispatched_at) if d is not None),
         default=None,
     )
 
     # The repair clock, behind days open, the aging band and the lead-time
-    # check alike. Stops at the receipt -- so a repair that came back inside its
-    # planned time does not drift into breach months later, and a closed line
-    # does not read "200 days open" just because the record is old.
-    elapsed = elapsed_days(raised_at=raised_at, received_at=completed_at, today=today)
+    # check alike. Raised to today: the line is open in SAP until it leaves
+    # the register.
+    elapsed = elapsed_days(raised_at=raised_at, today=today)
 
     return RepairLine(
         purchasing_document=row["ebeln"],
@@ -672,7 +552,6 @@ def _build_line(
         unit=row["meins"],
         net_price=row["netpr"],
         item_category=row["pstyp"],
-        delivery_completed=row["elikz"] == "X",
         pr_number=row["banfn"],
         pr_item=row["bnfpo"],
         requisitioner=row["afnam"],
@@ -687,17 +566,8 @@ def _build_line(
         schedule_lines=schedule_lines,
         dispatched_at=dispatched_at,
         dispatched_qty=dispatched_qty,
-        received_at=received_at,
-        received_qty=received_qty,
-        reversals=reversals,
-        repair_status=status,
-        receipt_status=receipt_status(
-            received_qty=received_qty,
-            ordered_qty=ordered_qty,
-            dispatched_at=dispatched_at,
-        ),
+        repair_status=repair_status(dispatched_at=dispatched_at),
         overdue_status=overdue_state(
-            received_at=completed_at,
             due_date=due_date,
             today=today,
             grace_days=cfg.overdue_grace_days,
@@ -710,19 +580,15 @@ def _build_line(
         days_over_lead_time=days_over_lead_time(
             elapsed=elapsed, lead_time_days=lead_time
         ),
-        qty_under_repair=qty_out,
+        # The whole line: it is out until SAP closes it.
+        qty_under_repair=ordered_qty,
         days_open=elapsed,
-        # The number that matters: how long this unit has actually been away.
-        # Measured to the receipt where there is one, to today where there is
-        # not -- so an open repair keeps ageing instead of freezing.
-        days_at_vendor=days_between(dispatched_at, completed_at or today),
+        days_at_vendor=days_between(dispatched_at, today),
         days_in_current_stage=days_between(stage_started, today),
         days_remaining=days_remaining(due_date, today),
         # Banded on days open, so the register's aging filter agrees with the
-        # column beside it. Open lines are unaffected: until the receipt the
-        # repair clock and raised-to-today are the same number.
+        # column beside it.
         aging_bucket=aging_bucket(elapsed, cfg.aging_band_boundaries_list),
-        po_blocked=row["loekz"] == cfg.po_blocked_indicator,
     )
 
 
@@ -735,23 +601,21 @@ class RegisterStats:
 
     Every field defaults to zero so the empty register is a valid value rather
     than a special case with a positional argument list to keep in step.
+
+    Every line counted here is open in SAP. The three ``excluded_*`` figures
+    say how many repair lines SAP has deleted, closed or blocked, so the total
+    reconciles with a raw EKPO count and with SAP's own open-PO list.
     """
 
     total_lines: int = 0
     open_lines: int = 0
-    received_lines: int = 0
+    """The same number as ``total_lines``: every line in the register is open in
+    SAP. Kept under its own name because it is the figure the screens quote."""
+
     overdue_lines: int = 0
 
     no_due_date_lines: int = 0
-    """Open lines with no promised date -- the NO_DUE_DATE queue."""
-
-    lines_without_due_date: int = 0
-    """All lines with no promised date, received ones included.
-
-    Both figures are reported because they answer different questions and
-    differ: 63 repair lines have no EKET schedule line at all, and 2 of them
-    have already come back, so 61 are actually chaseable.
-    """
+    """Lines with no promised date -- the NO_DUE_DATE queue."""
 
     lines_with_lead_time: int = 0
     """Lines whose material+plant has a usable MARC.PLIFZ.
@@ -763,27 +627,15 @@ class RegisterStats:
     """
 
     lines_beyond_lead_time: int = 0
-    open_lines_beyond_lead_time: int = 0
-    """The actionable half: still out, and already past the planned time."""
-
-    partially_received_lines: int = 0
-    lines_with_reversals: int = 0
     lines_on_eighty_series: int = 0
     lines_with_po_header: int = 0
     lines_corroborated_by_doc_type: int = 0
+
     lines_with_dispatch: int = 0
-
-    open_lines_with_dispatch: int = 0
-    """Open lines that have a dispatch movement -- measured at ZERO.
-
-    A finding, not a bug in this code. Every 541 in the extract that can be
-    attached to a repair line belongs to a line that has already come back, so
-    no currently-open repair has a recorded dispatch date. The consequence:
-    "At Vendor" is never the status of an open line, and daysAtVendor can only
-    be computed for completed repairs. The register still shows the open work
-    -- which is what the FRS asks for -- but the per-stage vendor clock is
-    unavailable for it until dispatch movements are extracted for open lines.
-    """
+    """Lines a dispatch (the 541) is attributable to -- the At Vendor ones. Few:
+    2 of the 104 open lines on the 15-Oct data. Stores post most 541s on the
+    day of the goods receipt, so a dispatch usually appears only as SAP is
+    about to close the line."""
 
     distinct_materials: int = 0
     distinct_vendors: int = 0
@@ -791,11 +643,18 @@ class RegisterStats:
     candidates_scanned: int = 0
 
     excluded_deleted_lines: int = 0
-    """Repair lines SAP has deleted, left out of every figure above. Reported so
-    the register total can be reconciled against a raw EKPO count."""
+    """Repair lines SAP has deleted (EKPO.LOEKZ), left out of every figure above."""
 
-    blocked_lines: int = 0
-    """Repair lines blocked in SAP -- still in the register, flagged."""
+    excluded_delivery_completed_lines: int = 0
+    """Repair lines SAP has closed -- "Delivery completed", EKPO.ELIKZ -- left
+    out of every figure above, whatever was received against them. Every repair
+    ever finished is here: 4,965 on the 15-Oct data, 640 of them closed with
+    nothing received. A line both deleted and closed counts as deleted."""
+
+    excluded_blocked_lines: int = 0
+    """Repair lines SAP has blocked (EKPO.LOEKZ), left out of every figure
+    above. Counted only when not already deleted or closed: 68 on the 15-Oct
+    data."""
 
 
 def load_repair_lines(
@@ -810,9 +669,10 @@ def load_repair_lines(
 ) -> tuple[list[RepairLine], RegisterStats]:
     """Build the register. Layers 1 and 2, then the Layer 3 arithmetic.
 
-    Returns every repair line, open or closed -- filtering to the open ones is
-    a presentation concern and the closed ones are what vendor turnaround is
-    computed from.
+    Returns the repair lines SAP still has open, and only those: a line SAP has
+    deleted, closed ("Delivery completed") or blocked is counted in the stats
+    and never built. Every screen that reads the register -- declarations,
+    exceptions, the assistant -- therefore sees open lines only.
 
     ``candidates`` lets a caller that already holds the EKPO pull pass it in,
     so the snapshot reads the 82,718 rows once for both the register and the
@@ -833,19 +693,27 @@ def load_repair_lines(
         else len(candidates)
     )
 
-    # Layer 1. The Pstyp ruling: in Python, over rows already fetched.
+    # Layer 1. The Pstyp ruling: in Python, over rows already fetched. Then
+    # what SAP still has open, in the same place and for the same reason:
+    # not deleted, not "Delivery completed", not blocked. In that order, so a
+    # line is counted under the first of the three that applies to it.
     repair_candidates = [row for row in candidates if is_repair_line(row, cfg)]
-    repair_rows = [row for row in repair_candidates if not is_deleted_line(row, cfg)]
-    excluded_deleted = len(repair_candidates) - len(repair_rows)
+    live = [row for row in repair_candidates if not is_deleted_line(row, cfg)]
+    undelivered = [row for row in live if not is_delivery_completed(row, cfg)]
+    repair_rows = [row for row in undelivered if not is_blocked_line(row, cfg)]
+    excluded = {
+        "candidates_scanned": scanned,
+        "excluded_deleted_lines": len(repair_candidates) - len(live),
+        "excluded_delivery_completed_lines": len(live) - len(undelivered),
+        "excluded_blocked_lines": len(undelivered) - len(repair_rows),
+    }
 
     if not repair_rows:
-        return [], RegisterStats(
-            candidates_scanned=scanned, excluded_deleted_lines=excluded_deleted
-        )
+        return [], RegisterStats(**excluded)
 
     documents = sorted({row["ebeln"] for row in repair_rows})
     materials = sorted({row["matnr"] for row in repair_rows if row["matnr"]})
-    schedules, receipts, dispatches, headers, vendor_names, lead_times = _evidence(
+    schedules, dispatches, headers, vendor_names, lead_times = _evidence(
         db, documents, materials, cfg, sources
     )
 
@@ -853,7 +721,6 @@ def load_repair_lines(
         _build_line(
             row,
             schedule=schedules.get((row["ebeln"], row["ebelp"])),
-            receipt=receipts.get((row["ebeln"], row["ebelp"])),
             dispatch=dispatches.get((row["ebeln"], row["ebelp"])),
             header=headers.get(row["ebeln"]),
             vendor_names=vendor_names,
@@ -867,22 +734,13 @@ def load_repair_lines(
     vendors = {line.vendor for line in lines if line.vendor}
     stats = RegisterStats(
         total_lines=len(lines),
-        open_lines=sum(1 for line in lines if line.is_open),
-        received_lines=sum(1 for line in lines if not line.is_open),
+        open_lines=len(lines),
         overdue_lines=sum(1 for line in lines if line.is_overdue),
         no_due_date_lines=sum(
             1 for line in lines if line.overdue_status == "NO_DUE_DATE"
         ),
-        lines_without_due_date=sum(1 for line in lines if line.due_date is None),
         lines_with_lead_time=sum(1 for line in lines if line.lead_time_days),
         lines_beyond_lead_time=sum(1 for line in lines if line.is_beyond_lead_time),
-        open_lines_beyond_lead_time=sum(
-            1 for line in lines if line.is_open and line.is_beyond_lead_time
-        ),
-        partially_received_lines=sum(
-            1 for line in lines if line.receipt_status == PARTIALLY_RECEIVED
-        ),
-        lines_with_reversals=sum(1 for line in lines if line.reversals),
         # Measured, not assumed: this is how the register proves the two
         # signals agree rather than taking it on trust.
         lines_on_eighty_series=sum(
@@ -893,25 +751,21 @@ def load_repair_lines(
             1 for line in lines if line.corroborated_by_doc_type
         ),
         lines_with_dispatch=sum(1 for line in lines if line.dispatched_at),
-        open_lines_with_dispatch=sum(
-            1 for line in lines if line.is_open and line.dispatched_at
-        ),
         distinct_materials=len({line.material_id for line in lines}),
         distinct_vendors=len(vendors),
         vendors_resolved_to_a_name=len(
             {line.vendor for line in lines if line.vendor and line.vendor_name}
         ),
-        candidates_scanned=scanned,
-        excluded_deleted_lines=excluded_deleted,
-        blocked_lines=sum(1 for line in lines if line.po_blocked),
+        **excluded,
     )
     logger.info(
-        "I08 register: %d repair lines of %d candidates (%d open, %d overdue, "
-        "%d deleted in SAP and excluded)",
+        "I08 register: %d open repair lines of %d candidates (%d overdue; "
+        "left out: %d delivery completed, %d blocked, %d deleted in SAP)",
         stats.total_lines,
         stats.candidates_scanned,
-        stats.open_lines,
         stats.overdue_lines,
+        stats.excluded_delivery_completed_lines,
+        stats.excluded_blocked_lines,
         stats.excluded_deleted_lines,
     )
     return lines, stats
@@ -924,12 +778,11 @@ def open_repair_index(
 
     The join point between W5.2 and W5.1: this is what gives every universe row
     its ``hasOpenRepair`` flag without the universe model needing to know
-    anything about item categories or purchase orders.
+    anything about item categories or purchase orders. Every register line is
+    open in SAP, so every one counts.
     """
     index: dict[tuple[str, str | None], tuple[int, Decimal]] = {}
     for line in lines:
-        if not line.is_open:
-            continue
         key = (line.material_id, line.plant)
         count, qty = index.get(key, (0, ZERO))
         index[key] = (count + 1, qty + line.qty_under_repair)

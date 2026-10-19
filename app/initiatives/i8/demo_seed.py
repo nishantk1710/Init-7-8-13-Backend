@@ -140,10 +140,9 @@ def seed(
     cfg = cfg or get_i8_settings()
 
     lines, _stats = load_repair_lines(db, cfg)
+    # Every register line is open in SAP, which is what a demo should be about.
     candidates = [
-        line
-        for line in lines
-        if line.is_open and line.plant is not None and line.raised_at is not None
+        line for line in lines if line.plant is not None and line.raised_at is not None
     ]
     # Deterministic: the same lines every run, so a demo is reproducible and two
     # people comparing screens are looking at the same rows.

@@ -308,10 +308,12 @@ class TestWhatTheFingerprintCovers:
         """A table missing from SOURCE_TABLES is a reload I08 never notices, so
         the list is checked against the views rather than trusted. v_zmm065 reads
         criticality_current, not a raw table, which is what makes this a mapping
-        and not a rename."""
+        and not a rename. raw_ekbe is the one view source left out on purpose:
+        I08 has not read goods receipts since 19-Oct-2026, so an EKBE reload
+        must not rebuild its snapshot (I13 still reads v_ekbe)."""
         from app.initiatives.i8.views import VIEWS
 
-        expected = {f"raw_{view.removeprefix('v_')}" for view in VIEWS} - {"raw_zmm065"}
+        expected = {f"raw_{view.removeprefix('v_')}" for view in VIEWS} - {"raw_zmm065", "raw_ekbe"}
         expected |= {"criticality_current"}
         assert set(service.SOURCE_TABLES) == expected
 

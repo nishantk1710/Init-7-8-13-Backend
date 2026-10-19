@@ -30,7 +30,10 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 
-CODEC_VERSION = 1
+# 2 since 19-Oct-2026: RepairLine lost its receipt, delivery-flag and blocked
+# fields and the Snapshot its vendor turnaround, so a version-1 payload no
+# longer constructs. Raise it whenever a stored dataclass changes shape.
+CODEC_VERSION = 2
 _ALLOWED = "app.initiatives.i8."
 
 

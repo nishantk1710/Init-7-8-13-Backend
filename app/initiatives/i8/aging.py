@@ -78,13 +78,16 @@ def bucket_labels(boundaries: tuple[int, ...]) -> tuple[str, ...]:
 # frontend side, to actually render a different band count.
 AGING_BUCKETS: Final[tuple[str, ...]] = bucket_labels(DEFAULT_AGING_BOUNDARIES)
 
-# Overdue states. RECEIVED and NO_DUE_DATE are outcomes, not failures to decide.
-RECEIVED: Final = "RECEIVED"
+# Overdue states. NO_DUE_DATE is an outcome, not a failure to decide.
+#
+# There is no RECEIVED state since 19-Oct-2026: the register holds only the
+# lines SAP still has open, and it does not read goods receipts at all, so no
+# line it serves has come back.
 NO_DUE_DATE: Final = "NO_DUE_DATE"
 OVERDUE: Final = "OVERDUE"
 ON_TIME: Final = "ON_TIME"
 
-OVERDUE_STATES: Final[tuple[str, ...]] = (RECEIVED, NO_DUE_DATE, OVERDUE, ON_TIME)
+OVERDUE_STATES: Final[tuple[str, ...]] = (NO_DUE_DATE, OVERDUE, ON_TIME)
 
 # Lead-time states. Parallel to the overdue ones and deliberately named apart:
 # nothing here means "late", it means "longer than this material usually takes".
@@ -146,7 +149,6 @@ def days_between(start: date | None, end: date | None) -> int | None:
 
 def overdue_state(
     *,
-    received_at: date | None,
     due_date: date | None,
     today: date,
     grace_days: int,
@@ -154,23 +156,16 @@ def overdue_state(
     """Where this line stands against its promised delivery date.
 
     Overdue is measured against the schedule-line delivery date plus a
-    configurable grace period, and only for lines that have not come back yet.
+    configurable grace period. Every line the register serves is still open in
+    SAP, so there is no "came back" outcome to check for first.
 
-    >>> overdue_state(received_at=date(2026, 2, 1), due_date=date(2026, 1, 1),
-    ...               today=date(2026, 3, 1), grace_days=7)
-    'RECEIVED'
-    >>> overdue_state(received_at=None, due_date=None,
-    ...               today=date(2026, 3, 1), grace_days=7)
+    >>> overdue_state(due_date=None, today=date(2026, 3, 1), grace_days=7)
     'NO_DUE_DATE'
-    >>> overdue_state(received_at=None, due_date=date(2026, 1, 1),
-    ...               today=date(2026, 3, 1), grace_days=7)
+    >>> overdue_state(due_date=date(2026, 1, 1), today=date(2026, 3, 1), grace_days=7)
     'OVERDUE'
-    >>> overdue_state(received_at=None, due_date=date(2026, 3, 5),
-    ...               today=date(2026, 3, 1), grace_days=7)
+    >>> overdue_state(due_date=date(2026, 3, 5), today=date(2026, 3, 1), grace_days=7)
     'ON_TIME'
     """
-    if received_at is not None:
-        return RECEIVED
     if due_date is None:
         # 63 lines. A finding to chase, not a silent pass.
         return NO_DUE_DATE
@@ -195,28 +190,19 @@ def days_remaining(due_date: date | None, today: date) -> int | None:
     return (due_date - today).days
 
 
-def elapsed_days(
-    *, raised_at: date | None, received_at: date | None, today: date
-) -> int | None:
-    """How long this repair has actually taken, so far or in total.
+def elapsed_days(*, raised_at: date | None, today: date) -> int | None:
+    """How long this repair has been out so far: raised to today.
 
-    To the receipt where there is one, to today where there is not -- the same
-    shape as ``daysAtVendor``, and the reason a closed repair stops ageing the
-    moment the unit comes back. The register serves this as ``days_open`` too:
-    raised-to-today answers "how old is this record", which nobody reading a
-    closed line asks, and is the wrong answer for "did this repair overrun",
-    which is what the lead-time check asks.
+    The register serves this as ``days_open`` too, and the lead-time check and
+    the aging band are measured on it. It never stops at a receipt: every line
+    the register serves is still open in SAP, and goods receipts are not read.
 
-    >>> elapsed_days(raised_at=date(2026, 1, 1), received_at=date(2026, 2, 1),
-    ...              today=date(2026, 9, 1))
-    31
-    >>> elapsed_days(raised_at=date(2026, 1, 1), received_at=None,
-    ...              today=date(2026, 3, 2))
+    >>> elapsed_days(raised_at=date(2026, 1, 1), today=date(2026, 3, 2))
     60
-    >>> elapsed_days(raised_at=None, received_at=None, today=date(2026, 3, 2)) is None
+    >>> elapsed_days(raised_at=None, today=date(2026, 3, 2)) is None
     True
     """
-    return days_between(raised_at, received_at or today)
+    return days_between(raised_at, today)
 
 
 def lead_time_state(

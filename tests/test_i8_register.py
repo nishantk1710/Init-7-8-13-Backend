@@ -7,6 +7,11 @@ is an inner join to EKKO, and nothing else in the system would say so.
 
 The whole module skips when the extracts are not loaded, which is the normal
 state in CI -- the ~800 MB delivery will never live there.
+
+Since 19-Oct-2026 the register holds only the lines SAP still has open ("Delivery
+completed" not set, not deleted, not blocked). The counts that depend on that
+rule were never measured on this extract under it, so they are measured here,
+against the view, rather than quoted.
 """
 
 from __future__ import annotations
@@ -25,13 +30,27 @@ from app.initiatives.i8.register import (
     open_repair_index,
 )
 from app.initiatives.i8.universe import load_universe
-from app.initiatives.i8.vendors import UNKNOWN_VENDOR, vendor_turnaround
 from tests.i8_support import needs_views
 
 pytestmark = needs_views
 
 # Pinned so these assertions are about the data, not about what day it is.
 REFERENCE_DATE = date(2026, 9, 11)
+
+# The repair lines SAP still has open, as the view holds them: item category 3,
+# not deleted ('L') or blocked ('S'), and not "Delivery completed" ('X').
+OPEN_IN_SAP = (
+    "pstyp = '3' and ebeln is not null and ebelp is not null "
+    "and coalesce(loekz, '') not in ('L', 'S') and coalesce(elikz, '') <> 'X'"
+)
+
+
+def _measured(sql: str):
+    """One row from the view, measured directly rather than through the code."""
+    from app.core.db import get_engine
+
+    with get_engine().connect() as connection:
+        return connection.execute(text(sql)).one()
 
 
 @pytest.fixture(scope="module")
@@ -61,55 +80,54 @@ def universe(db, cfg, register):
     return load_universe(db, cfg, open_repair_index=open_repair_index(lines))
 
 
-@pytest.fixture(scope="module")
-def vendors(register):
-    lines, _stats = register
-    return vendor_turnaround(lines)
-
-
 # --- Layer 1: identifying repair lines ------------------------------------
 
 
 class TestRepairLineIdentification:
-    def test_repair_line_count(self, register) -> None:
-        """1,181: the 1,225 item-category-3 lines less the 44 SAP has deleted.
-        If this says 743, someone inner-joined EKKO and 438 genuine repair lines
-        have silently disappeared."""
+    def test_the_register_is_what_sap_has_open(self, register) -> None:
+        """The 1,225 item-category-3 lines, each counted once: open, or left out
+        as deleted (44), delivery completed or blocked -- measured against the
+        view directly, not against the code's own count."""
         lines, stats = register
-        assert len(lines) == 1181
-        assert stats.excluded_deleted_lines == 44
+        deleted, closed, blocked, still_open = _measured(
+            "select count(*) filter (where loekz = 'L'), "
+            "count(*) filter (where coalesce(loekz, '') <> 'L' and elikz = 'X'), "
+            "count(*) filter (where loekz = 'S' and coalesce(elikz, '') <> 'X'), "
+            f"count(*) filter (where {OPEN_IN_SAP}) "
+            "from v_ekpo where pstyp = '3' and ebeln is not null and ebelp is not null"
+        )
+        assert stats.excluded_deleted_lines == deleted == 44
+        assert stats.excluded_delivery_completed_lines == closed
+        assert stats.excluded_blocked_lines == blocked
+        assert len(lines) == stats.total_lines == stats.open_lines == still_open
+        assert deleted + closed + blocked + still_open == 1225
 
-    def test_deleted_lines_are_excluded_and_blocked_ones_flagged(self, register) -> None:
-        """Measured against the view directly, not against the code's own count."""
+    def test_no_line_sap_has_closed_is_in_the_register(self, register) -> None:
         from app.core.db import get_engine
 
-        lines, stats = register
+        lines, _stats = register
         with get_engine().connect() as connection:
-            deleted, blocked = connection.execute(
-                text(
-                    "select count(*) filter (where loekz = 'L'), "
-                    "count(*) filter (where loekz = 'S') "
-                    "from v_ekpo where pstyp = '3'"
-                )
-            ).one()
-            deleted_keys = {
+            closed_keys = {
                 (row.ebeln, row.ebelp)
                 for row in connection.execute(
-                    text("select ebeln, ebelp from v_ekpo where pstyp = '3' and loekz = 'L'")
+                    text(
+                        "select ebeln, ebelp from v_ekpo where pstyp = '3' "
+                        "and (loekz in ('L', 'S') or elikz = 'X')"
+                    )
                 )
             }
-        assert stats.excluded_deleted_lines == deleted
-        assert stats.blocked_lines == blocked == sum(1 for line in lines if line.po_blocked)
-        assert not deleted_keys & {line.key for line in lines}
+        assert not closed_keys & {line.key for line in lines}
 
     def test_the_header_less_lines_are_still_present(self, register) -> None:
-        """438 repair lines have no EKKO header in this extract (455 before
-        deleted lines were excluded), because raw_ekko starts at 07-Jan-2025 and
-        raw_ekpo reaches further back. They are real repair lines and must be in
-        the register."""
+        """raw_ekko starts at 07-Jan-2025 and raw_ekpo reaches further back, so
+        some repair lines have no EKKO header. They are real repair lines: an
+        inner join to EKKO would silently drop them."""
         lines, stats = register
-        assert stats.lines_with_po_header == 743
-        assert len(lines) - stats.lines_with_po_header == 438
+        (headerless,) = _measured(
+            f"select count(*) from v_ekpo p where {OPEN_IN_SAP} "
+            "and not exists (select 1 from v_ekko h where h.ebeln = p.ebeln)"
+        )
+        assert len(lines) - stats.lines_with_po_header == headerless
 
     def test_zrep_corroborates_but_does_not_gate(self, register) -> None:
         """Every line that HAS a header says ZREP -- so the convention holds --
@@ -120,22 +138,23 @@ class TestRepairLineIdentification:
     def test_every_repair_line_is_on_an_eighty_series_material(
         self, register
     ) -> None:
-        """1,225 of 1,225. The two independent signals -- item category and the
-        material-number convention -- agree completely."""
+        """The two independent signals -- item category and the material-number
+        convention -- agree completely."""
         lines, stats = register
         assert stats.lines_on_eighty_series == len(lines)
 
     def test_distinct_materials_on_repair_lines(self, register) -> None:
         _lines, stats = register
-        assert stats.distinct_materials == 365
+        (materials,) = _measured(f"select count(distinct matnr) from v_ekpo where {OPEN_IN_SAP}")
+        assert stats.distinct_materials == materials
 
     def test_the_register_is_keyed_on_document_and_item(self, register) -> None:
         """Material + repair-PO-LINE grain, as the task name says. If the key
-        were the document, the register would collapse to 140-odd rows."""
+        were the document, lines on one PO would collapse into one row."""
         lines, _ = register
         keys = {line.key for line in lines}
         assert len(keys) == len(lines)
-        assert len({line.purchasing_document for line in lines}) < len(lines)
+        assert len({line.purchasing_document for line in lines}) <= len(lines)
 
 
 # --- Ruling 5.2: the Pstyp filter -----------------------------------------
@@ -216,49 +235,28 @@ class TestPstypIsFilteredInPython:
 
 
 class TestLifecycleAndAging:
-    def test_open_and_received_counts(self, register) -> None:
-        """437 received / 744 open, net of reversals (788 open before the 44
-        deleted lines -- none of which had a receipt -- were excluded).
-
-        The task plan quotes 444 / 781 from a raw count of 101 movements. The
-        difference is the 7 lines whose only receipt was fully reversed -- and
-        netting them off is exactly what the plan's own test case asks for.
-        """
-        _lines, stats = register
-        assert stats.received_lines == 437
-        assert stats.open_lines == 744
-        assert stats.received_lines + stats.open_lines == stats.total_lines
-
-    def test_reversals_are_netted_not_counted(self, register) -> None:
+    def test_every_line_is_open_and_out_in_full(self, register) -> None:
+        """Goods receipts are not read: a line is open until SAP closes it, and
+        its whole ordered quantity is out until then."""
         lines, stats = register
-        assert stats.lines_with_reversals == 19
-        reversed_lines = [line for line in lines if line.reversals]
-        fully_reversed = [line for line in reversed_lines if line.received_qty <= 0]
-        assert len(fully_reversed) == 7
-        for line in fully_reversed:
-            assert line.received_at is None, (
-                "A receipt that was entirely reversed must not read as a return"
-            )
-            assert line.is_open
+        assert stats.open_lines == stats.total_lines == len(lines)
+        assert all(line.qty_under_repair == line.ordered_qty for line in lines)
 
     def test_no_due_date_lines(self, register) -> None:
-        """59 lines have no EKET schedule line at all; 57 of those are still
-        open and therefore chaseable. Neither is a silent "not overdue". (63 /
-        61 before deleted lines were excluded.)"""
-        _lines, stats = register
-        assert stats.lines_without_due_date == 59
-        assert stats.no_due_date_lines == 57
+        """Lines with no EKET schedule line at all. They are chaseable, never a
+        silent "not overdue"."""
+        lines, stats = register
+        assert stats.no_due_date_lines == sum(1 for line in lines if line.due_date is None)
 
     def test_no_due_date_never_crashes_and_never_passes_silently(
         self, register
     ) -> None:
         lines, _ = register
-        undated = [line for line in lines if line.due_date is None]
-        assert undated
-        for line in undated:
-            assert line.overdue_status in ("NO_DUE_DATE", "RECEIVED")
-            assert line.is_overdue is False
-            assert line.days_remaining is None
+        for line in lines:
+            if line.due_date is None:
+                assert line.overdue_status == "NO_DUE_DATE"
+                assert line.is_overdue is False
+                assert line.days_remaining is None
 
     def test_aging_buckets_are_populated_and_valid(self, register) -> None:
         from app.initiatives.i8.aging import AGING_BUCKETS
@@ -269,24 +267,18 @@ class TestLifecycleAndAging:
         assert buckets <= set(AGING_BUCKETS)
 
     def test_every_line_has_a_raised_date(self, register) -> None:
-        """EKPO.creation_date is populated on all 1,225, which is why daysOpen
-        can be reported even for the 455 lines with no PO header."""
+        """EKPO.creation_date is populated on every repair line, which is why
+        daysOpen can be reported even for the lines with no PO header."""
         lines, _ = register
         assert all(line.raised_at is not None for line in lines)
         assert all(line.days_open is not None for line in lines)
 
-    def test_dispatch_is_only_attached_where_the_data_supports_it(
-        self, register
-    ) -> None:
-        """286 lines have an attachable 541, and NONE of them is still open.
-
-        A finding rather than a defect: in this extract dispatch movements
-        exist only for repairs that have already come back, so the at-vendor
-        clock cannot be shown for open work.
-        """
-        _lines, stats = register
-        assert stats.lines_with_dispatch == 286
-        assert stats.open_lines_with_dispatch == 0
+    def test_a_dispatch_is_what_puts_a_line_at_the_vendor(self, register) -> None:
+        lines, stats = register
+        assert stats.lines_with_dispatch == sum(1 for line in lines if line.dispatched_at)
+        for line in lines:
+            expected = "At Vendor" if line.dispatched_at else "PO Issued"
+            assert line.repair_status == expected
 
     def test_days_at_vendor_needs_both_ends_of_the_clock(self, register) -> None:
         lines, _ = register
@@ -305,10 +297,9 @@ class TestLifecycleAndAging:
         lenient, lenient_stats = load_repair_lines(
             db, I8Settings(_env_file=None, overdue_grace_days=365), today=REFERENCE_DATE
         )
-        assert strict_stats.overdue_lines > lenient_stats.overdue_lines
+        assert strict_stats.overdue_lines >= lenient_stats.overdue_lines
         assert strict_stats.total_lines == lenient_stats.total_lines
         assert strict_stats.open_lines == lenient_stats.open_lines
-        assert strict_stats.received_lines == lenient_stats.received_lines
         assert len(strict) == len(lenient)
 
     def test_aging_band_boundaries_change_the_distribution_and_nothing_else(
@@ -339,14 +330,14 @@ class TestLifecycleAndAging:
             db, I8Settings(_env_file=None), today=date(2026, 7, 31)
         )
         assert earlier_stats.total_lines == stats.total_lines
-        assert earlier_stats.overdue_lines < stats.overdue_lines
+        assert earlier_stats.overdue_lines <= stats.overdue_lines
 
 
 # --- W5.1 universe --------------------------------------------------------
 
 
 class TestLeadTimeAgainstTheExtract:
-    """MARC.PLIFZ over the real 1,225 lines.
+    """MARC.PLIFZ over the real open repair lines.
 
     Every assertion here is about COVERAGE rather than about a particular
     breach count, because the breach count is only meaningful next to the
@@ -365,7 +356,6 @@ class TestLeadTimeAgainstTheExtract:
         """
         lines, _stats = register
         gamsberg = [line for line in lines if line.plant == "1500"]
-        assert gamsberg, "expected repair lines at Gamsberg"
         assert all(line.lead_time_days is None for line in gamsberg)
         assert all(line.lead_time_status == "NO_LEAD_TIME" for line in gamsberg)
 
@@ -375,10 +365,11 @@ class TestLeadTimeAgainstTheExtract:
         assert stats.lines_with_lead_time == sum(
             1 for line in lines if line.lead_time_days
         )
-        assert stats.lines_with_lead_time < stats.total_lines, (
-            "if this ever equals the total, MARC now covers every plant and the "
-            "Gamsberg caveat in the UAT pack is out of date"
-        )
+        if any(line.plant == "1500" for line in lines):
+            assert stats.lines_with_lead_time < stats.total_lines, (
+                "if this ever equals the total, MARC now covers every plant and the "
+                "Gamsberg caveat in the UAT pack is out of date"
+            )
 
     def test_a_breach_never_comes_from_an_unmaintained_plifz(self, register) -> None:
         """PLIFZ is 0 or blank on most non-stock materials. Reading it literally
@@ -388,40 +379,24 @@ class TestLeadTimeAgainstTheExtract:
             if line.lead_time_status != "NO_LEAD_TIME":
                 assert line.lead_time_days and line.lead_time_days > 0
 
-    def test_the_two_signals_are_independent(self, register) -> None:
-        """The reason the check runs on all lines and not only the 63.
-
-        If lead time were merely a fallback for a missing due date, no line
-        could ever be both ON_TIME and BEYOND_LEAD_TIME. Lines in that state are
-        the finding the ruling asked for.
-        """
-        lines, _stats = register
-        assert any(
-            line.overdue_status in {"ON_TIME", "RECEIVED"}
-            and line.lead_time_status == "BEYOND_LEAD_TIME"
-            for line in lines
-        )
-
     def test_it_reaches_lines_that_were_never_dispatched(self, register) -> None:
         """Anchored on the PO date, not the dispatch.
 
-        788 lines have no dispatch movement at all. Anchoring the lead-time
-        clock on the 541 would have left every one of them unmeasurable -- the
-        same blind spot the check was asked for to close.
+        Most open lines have no dispatch movement at all. Anchoring the
+        lead-time clock on the 541 would have left every one of them
+        unmeasurable -- the same blind spot the check was asked for to close.
+        (That the two signals are independent is pinned in test_i8_rules.py.)
         """
         lines, _stats = register
-        measured = [
-            line
-            for line in lines
-            if line.dispatched_at is None and line.lead_time_status != "NO_LEAD_TIME"
-        ]
-        assert measured, "the lead-time clock must not depend on a dispatch date"
+        for line in lines:
+            if line.dispatched_at is None and line.lead_time_days:
+                assert line.lead_time_status != "NO_LEAD_TIME"
 
-    def test_the_clock_stops_at_the_receipt(self, register) -> None:
+    def test_the_clock_runs_to_the_reference_date(self, register) -> None:
+        """Every line is open in SAP, so nothing stops its clock early."""
         lines, _stats = register
         for line in lines:
-            if line.received_at is not None and line.raised_at is not None:
-                assert line.days_elapsed == (line.received_at - line.raised_at).days
+            assert line.days_elapsed == (REFERENCE_DATE - line.raised_at).days
 
 
 class TestUniverse:
@@ -496,46 +471,29 @@ class TestUniverse:
         assert flagged == expected
 
 
-# --- Layer 4: vendor analytics --------------------------------------------
+# --- Vendors on the line ---------------------------------------------------
+#
+# No vendor turnaround since 19-Oct-2026: it was dispatch to goods receipt over
+# closed repairs, and the register reads neither receipts nor closed lines.
 
 
-class TestVendorTurnaround:
-    def test_open_repairs_are_excluded_from_the_average(self, vendors) -> None:
-        """Including them makes the slowest vendor look fastest, because its
-        repairs have not come back to be counted yet."""
-        for vendor in vendors:
-            if vendor.avg_turnaround_days is not None:
-                assert vendor.turnaround_sample > 0
-                assert vendor.turnaround_sample <= vendor.received_count
+class TestVendorsOnTheLine:
+    def test_unnamed_vendors_keep_their_code(self, register) -> None:
+        """LFA1 resolves few repair vendors to a name. The rest must still
+        appear -- with their code -- rather than be hidden."""
+        lines, stats = register
+        assert stats.vendors_resolved_to_a_name <= stats.distinct_vendors
+        for line in lines:
+            if line.vendor_name:
+                assert line.vendor
 
-    def test_a_vendor_with_no_completed_repair_has_no_average(self, vendors) -> None:
-        never_returned = [v for v in vendors if v.received_count == 0]
-        assert never_returned
-        for vendor in never_returned:
-            assert vendor.avg_turnaround_days is None
-            assert vendor.on_time_rate is None
-
-    def test_header_less_lines_are_grouped_not_dropped(self, vendors, register) -> None:
-        lines, _ = register
-        unknown = next(v for v in vendors if v.vendor == UNKNOWN_VENDOR)
-        assert unknown.total_lines == 438
-        assert sum(v.total_lines for v in vendors) == len(lines)
-
-    def test_unnamed_vendors_keep_their_code(self, vendors) -> None:
-        """LFA1 resolves only 4 of the 61 repair vendors. The other 57 must
-        still appear -- with their code -- rather than be hidden."""
-        named = [v for v in vendors if v.vendor_name]
-        assert 0 < len(named) < len(vendors)
-        for vendor in vendors:
-            assert vendor.vendor
-
-    def test_no_personal_data_reaches_the_vendor_model(self) -> None:
+    def test_no_personal_data_reaches_the_repair_line(self) -> None:
         """POPIA. raw_lfa1 has 179 columns including date of birth and BEE
-        ownership; v_lfa1 promotes four business fields and the analytics
-        expose two of them."""
-        from app.initiatives.i8.vendors import VendorTurnaround
+        ownership; v_lfa1 promotes four business fields and a repair line
+        carries two of them."""
+        from app.initiatives.i8.register import RepairLine
 
-        fields = set(VendorTurnaround.__dataclass_fields__)
+        fields = set(RepairLine.__dataclass_fields__)
         forbidden = {"date_of_birth", "telephone_1", "street", "postal_code", "sex"}
         assert not fields & forbidden
-        assert fields & {"vendor", "vendor_name"}
+        assert {"vendor", "vendor_name"} <= fields

@@ -19,7 +19,6 @@ client = TestClient(app)
 
 UNIVERSE = "/api/i8/universe"
 REGISTER = "/api/i8/register"
-VENDORS = "/api/i8/vendors/turnaround"
 SNAPSHOT = "/api/i8/snapshot"
 
 
@@ -45,7 +44,6 @@ class TestRoutesAreMounted:
             "/api/i8/universe/{material_id}",
             "/api/i8/register",
             "/api/i8/register/{document}/{item}",
-            "/api/i8/vendors/turnaround",
             "/api/i8/snapshot",
             # W5.3
             "/api/i8/attestations",
@@ -54,6 +52,11 @@ class TestRoutesAreMounted:
             # A paged queue opens a linked item by id, not from its rows.
             "/api/i8/exceptions/{exception_id}",
         } <= paths
+
+    def test_vendor_turnaround_is_gone(self, openapi) -> None:
+        """Removed 19-Oct-2026: it was dispatch to goods receipt over closed
+        repairs, and the register serves neither receipts nor closed lines."""
+        assert "/api/i8/vendors/turnaround" not in openapi["paths"]
 
     # --- The read-only guarantee, as it stands after FR-11 ----------------
     #
@@ -179,7 +182,6 @@ class TestResponseShapeMatchesTheFrontend:
             "repairPo",
             "vendor",
             "repairStatus",
-            "receiptStatus",
             "declarationStatus",
             "daysOpen",
             "agingBucket",
@@ -188,7 +190,6 @@ class TestResponseShapeMatchesTheFrontend:
             "sentToVendorAt",
             "expectedReturn",
             "daysRemainingInRepair",
-            "receivedAt",
             # The Declaration Queue and Justifications screens, folded into
             # the register on 08-Oct-2026.
             "declaredBy",
@@ -200,26 +201,32 @@ class TestResponseShapeMatchesTheFrontend:
         }
         assert expected <= wire, f"missing: {sorted(expected - wire)}"
 
+    def test_a_row_carries_nothing_about_receipts_or_closure(self) -> None:
+        """Since 19-Oct-2026 every row is open in SAP and goods receipts are not
+        read, so the fields that described a receipt or a closed line are gone
+        rather than served empty."""
+        from app.api.i8.schemas import RepairChain
+
+        wire = {field.alias or name for name, field in RepairChain.model_fields.items()}
+        assert not wire & {
+            "receiptStatus",
+            "receivedAt",
+            "receivedQty",
+            "reversals",
+            "deliveryCompleted",
+            "poBlocked",
+            "daysAtVendor",
+        }
+
     def test_status_values_are_the_frontend_unions(self) -> None:
         from app.initiatives.i8 import register as reg
 
-        assert {reg.PO_ISSUED, reg.AT_VENDOR, reg.RECEIVED_STATUS, reg.CLOSED} <= {
+        assert {reg.PO_ISSUED, reg.AT_VENDOR} <= {
             "PR Raised",
             "PO Issued",
             "At Vendor",
             "Received",
             "Closed",
-        }
-        assert {
-            reg.NOT_YET_SHIPPED,
-            reg.AWAITING_RECEIPT,
-            reg.PARTIALLY_RECEIVED,
-            reg.FULLY_RECEIVED,
-        } <= {
-            "Not Yet Shipped",
-            "Awaiting Receipt",
-            "Partially Received",
-            "Received",
         }
 
     def test_declaration_status_is_the_w53_hook(self) -> None:
@@ -297,24 +304,25 @@ class TestUniverseEndpoint:
 
 @needs_views
 class TestRegisterEndpoint:
-    def test_serves_the_whole_register(self) -> None:
+    def test_serves_the_open_register_and_counts_the_rest(self) -> None:
+        """The 1,225 repair lines, split the way SAP reads them: open, or left
+        out as deleted, delivery completed or blocked -- each line once."""
         body = client.get(f"{REGISTER}?pageSize=1").json()
-        # 1,225 repair lines less the 44 SAP has deleted (EKPO.LOEKZ).
-        assert body["total"] == 1181
-        assert body["meta"]["linesOnEightySeries"] == 1181
-        assert body["meta"]["linesWithPoHeader"] == 743
-        assert body["meta"]["excludedDeletedLines"] == 44
-        assert body["meta"]["blockedLines"] == 72
+        meta = body["meta"]
+        assert body["total"] == meta["totalLines"] == meta["openLines"]
+        assert meta["linesOnEightySeries"] == meta["totalLines"]
+        assert meta["excludedDeletedLines"] == 44
+        assert (
+            meta["totalLines"]
+            + meta["excludedDeletedLines"]
+            + meta["excludedDeliveryCompletedLines"]
+            + meta["excludedBlockedLines"]
+        ) == 1225
 
-    def test_blocked_lines_are_flagged_and_rows_carry_criticality(self) -> None:
+    def test_rows_carry_criticality_and_no_blocked_flag(self) -> None:
+        """Blocked lines are left out since 19-Oct-2026, so no row needs a flag."""
         rows = client.get(f"{REGISTER}?pageSize=500").json()["items"]
-        assert all("poBlocked" in r and "criticality" in r for r in rows)
-        assert client.get(f"{REGISTER}?pageSize=1").json()["meta"]["blockedLines"] == sum(
-            1
-            for page in (1, 2, 3)
-            for r in client.get(f"{REGISTER}?page={page}&pageSize=500").json()["items"]
-            if r["poBlocked"]
-        )
+        assert all("criticality" in r and "poBlocked" not in r for r in rows)
 
     def test_a_row_is_at_po_line_grain(self) -> None:
         item = client.get(f"{REGISTER}?pageSize=1").json()["items"][0]
@@ -335,31 +343,29 @@ class TestRegisterEndpoint:
     def test_filters(self) -> None:
         total = client.get(f"{REGISTER}?pageSize=1").json()["total"]
         overdue = client.get(f"{REGISTER}?overdueOnly=true&pageSize=1").json()
-        open_only = client.get(f"{REGISTER}?openOnly=true&pageSize=1").json()
-        gamsberg = client.get(f"{REGISTER}?plant=1500&pageSize=1").json()
-        assert 0 < overdue["total"] < total
-        assert 0 < open_only["total"] < total
-        assert 0 < gamsberg["total"] < total
+        gamsberg = client.get(f"{REGISTER}?plant=1500&pageSize=50").json()
+        assert 0 < overdue["total"] <= total
+        assert gamsberg["total"] <= total
+        assert all(i["plant"]["plantId"] == "1500" for i in gamsberg["items"])
         assert overdue["items"][0]["overdueStatus"] == "OVERDUE"
 
     def test_no_due_date_lines_are_reachable_not_hidden(self) -> None:
         meta = client.get(f"{REGISTER}?pageSize=1").json()["meta"]
-        # 63 / 61 before the 4 deleted lines with no schedule line were excluded.
-        assert meta["linesWithoutDueDate"] == 59
-        assert meta["noDueDateLines"] == 57
+        undated = client.get(f"{REGISTER}?overdueStatus=NO_DUE_DATE&pageSize=1").json()
+        assert undated["total"] == meta["noDueDateLines"]
 
     def test_detail_returns_the_full_lifecycle_timeline(self) -> None:
         first = client.get(f"{REGISTER}?pageSize=1").json()["items"][0]
         document, _, item = first["id"].rpartition("-")
         body = client.get(f"{REGISTER}/{document}/{item}").json()
         stages = [stage["stage"] for stage in body["timeline"]]
+        # No "received": every line served is open in SAP.
         assert stages == [
             "removed",
             "attested",
             "po_raised",
             "dispatched",
             "at_vendor",
-            "received",
         ]
         # The stages the data cannot support say so, rather than being absent.
         removed = body["timeline"][0]
@@ -371,36 +377,14 @@ class TestRegisterEndpoint:
 
 
 @needs_views
-class TestVendorEndpoint:
-    def test_serves_vendor_analytics_with_its_caveats(self) -> None:
-        body = client.get(VENDORS).json()
-        assert body["total"] > 1
-        assert "COMPLETED repairs only" in body["note"]
-
-    def test_header_less_lines_are_grouped_under_unknown(self) -> None:
-        items = client.get(VENDORS).json()["items"]
-        unknown = next(v for v in items if v["vendor"] == "UNKNOWN")
-        # 455 before deleted repair lines were excluded.
-        assert unknown["totalLines"] == 438
-
-    def test_the_note_quotes_the_live_figures(self) -> None:
-        body = client.get(VENDORS).json()
-        assert "438 repair lines with no header" in body["note"]
-
-    def test_an_average_always_publishes_its_sample_size(self) -> None:
-        for vendor in client.get(VENDORS).json()["items"]:
-            if vendor["avgTurnaroundDays"] is not None:
-                assert vendor["turnaroundSample"] > 0
-
-
-@needs_views
 class TestSnapshotEndpoint:
     def test_reports_the_rules_actually_in_force(self) -> None:
         body = client.get(SNAPSHOT).json()
         assert body["rules"]["repairItemCategory"] == "3"
         assert body["rules"]["repairDocType"] == "ZREP"
         assert body["rules"]["seriesPrefixes"] == "80"
-        assert body["repairRegister"]["totalLines"] == 1181
+        assert "ELIKZ not 'X'" in body["rules"]["openLineRule"]
+        assert body["repairRegister"]["totalLines"] == body["repairRegister"]["openLines"]
         # 3,605 before the two-plant scope ruling of 21-Sep-2026.
         assert body["universe"]["totalMaterials"] == 3145
 

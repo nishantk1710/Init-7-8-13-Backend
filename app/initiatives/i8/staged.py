@@ -76,9 +76,10 @@ from app.shared.sql_lists import LIKE_ESCAPE, like_literal
 
 logger = get_logger(__name__)
 
-#: The views a snapshot build reads.
+#: The views a snapshot build reads. Not v_ekbe since 19-Oct-2026: the
+#: register follows SAP's "Delivery completed" flag, not goods receipts.
 VIEWS: tuple[str, ...] = (
-    "v_ekpo", "v_ekko", "v_eket", "v_ekbe", "v_mseg", "v_lfa1",
+    "v_ekpo", "v_ekko", "v_eket", "v_mseg", "v_lfa1",
     "v_mara", "v_makt", "v_marc", "v_mard", "v_zmm065",
 )
 
@@ -262,9 +263,6 @@ def _stage(db: Session, cfg: I8Settings) -> Sources:
     on_staged_po = "IN (SELECT ebeln FROM #i8s_docs)"
     stage("v_ekko", {"n_ekko": _narrow(db, "ekko", "n_ekko", f"{_key('purchasing_document')} {on_staged_po}")})
     stage("v_eket", {"n_eket": _narrow(db, "eket", "n_eket", f"{_key('purchasing_document')} {on_staged_po}")})
-    stage("v_ekbe", {"n_ekbe": _narrow(
-        db, "ekbe", "n_ekbe", f"{_in_scope()} AND {_key('purchasing_document')} {on_staged_po}"
-    )})
     stage("v_mseg", {"n_mseg": _narrow(
         db, "mseg", "n_mseg", f"{_in_scope()} AND {_key('purchase_order')} {on_staged_po}"
     )})
@@ -324,7 +322,7 @@ def staged_sources(db: Session, cfg: I8Settings, *, enabled: bool = True) -> Ite
     finally:
         for table in [*sources.views.values(), "#i8s_docs", "#i8s_mats"]:
             db.execute(text(f"DROP TABLE IF EXISTS {table}"))
-        for name in ("ekpo", "ekko", "eket", "ekbe", "mseg", "lfa1", "mara", "makt", "mard", "marc",
+        for name in ("ekpo", "ekko", "eket", "mseg", "lfa1", "mara", "makt", "mard", "marc",
                      "criticality_current"):
             db.execute(text(f"DROP TABLE IF EXISTS #i8b_{name}"))
 

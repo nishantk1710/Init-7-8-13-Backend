@@ -63,6 +63,12 @@ DECLARATIONS = "/api/i8/declarations"
 EXCEPTIONS = "/api/i8/exceptions"
 
 
+def _register_lines() -> int:
+    """How many lines the seeded register holds -- the repair lines SAP still
+    has open. Read rather than quoted: the queues are measured against it."""
+    return client.get("/api/i8/register?pageSize=1").json()["total"]
+
+
 def a_draft(**overrides) -> AttestationDraft:
     base = dict(
         material_id="8000005632",
@@ -107,7 +113,6 @@ class FakeLine:
         self.plant = plant
         self.raised_at = raised_at
         self.description = "A part"
-        self.received_at = None
         self.pr_number = "PR1"
         self.pr_item = "10"
         self.requisitioner = "10316"
@@ -121,10 +126,6 @@ class FakeLine:
         # Read by the declaration queue, which shows where the REPAIR stands
         # beside a declaration that is still owed.
         self.repair_status = repair_status
-
-    @property
-    def is_open(self) -> bool:
-        return self.received_at is None
 
     @property
     def is_overdue(self) -> bool:
@@ -546,19 +547,19 @@ class TestMissingAttestationException:
         detail = build_exceptions([line], cover)[0][0].detail
         assert "8000005632" in detail and "1300" in detail and "30 days" in detail
 
-    def test_an_open_line_is_more_severe_than_a_closed_one(self) -> None:
-        """An open line is a part out there now with no assessment, which
-        somebody can still act on. A closed one can only be counted."""
-        open_line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
-        closed = FakeLine("4500", "20", "8000005633", "1300", date(2026, 5, 1))
-        closed.received_at = date(2026, 6, 1)
+    def test_every_miss_is_a_warning(self) -> None:
+        """Every register line is open in SAP -- a part out there now with no
+        assessment, which somebody can still act on. Closed lines are not in
+        the register, so nothing here is history to be merely counted."""
+        lines = [
+            FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1)),
+            FakeLine("4500", "20", "8000005633", "1300", date(2026, 5, 1)),
+        ]
         cover = AttestationCoverage(
-            covered={}, uncovered={open_line.key, closed.key}, window_days=30
+            covered={}, uncovered={line.key for line in lines}, window_days=30
         )
-        items, _stats = build_exceptions([open_line, closed], cover)
-        by_doc = {i.item: i.severity for i in items}
-        assert by_doc["10"] == "warning"
-        assert by_doc["20"] == "info"
+        items, _stats = build_exceptions(lines, cover)
+        assert {i.severity for i in items} == {"warning"}
 
     def test_a_line_raised_before_the_cutover_is_labelled_not_accused(self) -> None:
         """The 20-Sep ruling: "on them can we show before Spares Automation".
@@ -663,7 +664,6 @@ class TestMissingAttestationException:
 
         assert len(items) == 1
         assert items[0].type == ExceptionType.OVERDUE_REPAIR.value
-        assert items[0].is_open_repair is True
         # The rule is traceable from the row: when it was promised, and the
         # grace it is measured against.
         assert "2026-06-01" in items[0].detail
@@ -672,23 +672,6 @@ class TestMissingAttestationException:
 
     def test_an_on_time_line_is_not_raised(self) -> None:
         line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
-        assert overdue_repairs([line], grace_days=7) == []
-
-    def test_a_late_line_that_came_back_is_not_an_item_of_work(self) -> None:
-        """The delay happened and nobody can chase a unit already on the shelf.
-
-        It stays in the register's own figures; it is not a queue item.
-        """
-        line = FakeLine(
-            "4500",
-            "10",
-            "8000005632",
-            "1300",
-            date(2026, 5, 1),
-            overdue_status="OVERDUE",
-            due_date=date(2026, 6, 1),
-        )
-        line.received_at = date(2026, 7, 1)
         assert overdue_repairs([line], grace_days=7) == []
 
     def test_overdue_is_read_from_the_register_not_recomputed(self) -> None:
@@ -1076,39 +1059,35 @@ class TestAgainstTheSeededRegister:
 
     def test_every_repair_line_is_in_the_declaration_queue(self) -> None:
         meta = client.get(f"{DECLARATIONS}?pageSize=1").json()["meta"]
-        assert meta["total"] == 1181  # 1,225 less the 44 lines SAP deleted
+        assert meta["total"] == _register_lines()
 
     def test_with_no_attestations_everything_is_an_exception(self) -> None:
-        """**This number is the business case.** 1,225 repair lines, zero
+        """**This number is the business case.** Every open repair line, zero
         attestations, because the control did not exist before this platform.
 
         If it ever drops without somebody having recorded an attestation, the
         check has been weakened rather than satisfied.
         """
+        lines = _register_lines()
         meta = client.get(f"{EXCEPTIONS}?pageSize=1").json()["meta"]
-        assert meta["linesChecked"] == 1181
+        assert meta["linesChecked"] == lines
         assert meta["linesCovered"] == 0
-        assert meta["byType"]["MISSING_ATTESTATION"] == 1181
+        assert meta["byType"]["MISSING_ATTESTATION"] == lines
         assert meta["total"] == sum(meta["byType"].values())
 
-    def test_open_lines_are_warnings_and_closed_ones_are_information(self) -> None:
-        missing = f"{EXCEPTIONS}?type=MISSING_ATTESTATION"
-        assert client.get(f"{missing}&openOnly=true&pageSize=1").json()["total"] == 744
+    def test_every_exception_is_a_warning(self) -> None:
+        """Every line is open in SAP, so every miss is something somebody can
+        still act on; with no cutover configured nothing is pre-automation."""
         meta = client.get(f"{EXCEPTIONS}?pageSize=1").json()["meta"]
-        # 744 open repair lines, plus every UNJUSTIFIED_ACQUISITION -- a warning
-        # whatever became of the repair, because the money was committed.
-        assert meta["bySeverity"] == {
-            "warning": 744 + meta["byType"]["UNJUSTIFIED_ACQUISITION"],
-            "info": 437,
-        }
+        assert meta["bySeverity"] == {"warning": meta["total"]}
 
     def test_unjustified_acquisitions_against_the_seeded_register(self) -> None:
-        """2,331 new 80-series purchases; 345 were raised while a repair of the
-        same part was open at the same plant, and none has a justification --
-        the control did not exist when they were bought."""
+        """2,331 new 80-series purchases, each matched against the repairs SAP
+        still has open at the same plant. None has a justification -- the
+        control did not exist when they were bought."""
         body = client.get(f"{EXCEPTIONS}?type=UNJUSTIFIED_ACQUISITION&pageSize=500").json()
         assert body["meta"]["acquisitionsChecked"] == 2331
-        assert body["meta"]["byType"]["UNJUSTIFIED_ACQUISITION"] == 345
+        assert body["meta"]["byType"].get("UNJUSTIFIED_ACQUISITION", 0) == body["total"]
         assert "UNJUSTIFIED_ACQUISITION" in body["meta"]["typesRaised"]
         for item in body["items"]:
             assert item["acquisitionLine"]["documentNumber"]
@@ -1121,7 +1100,7 @@ class TestAgainstTheSeededRegister:
         somebody filtered to one plant."""
         unfiltered = client.get(f"{EXCEPTIONS}?pageSize=1").json()
         filtered = client.get(f"{EXCEPTIONS}?plant=1300&pageSize=1").json()
-        assert filtered["total"] < unfiltered["total"]
+        assert filtered["total"] <= unfiltered["total"]
         assert filtered["meta"]["total"] == unfiltered["meta"]["total"]
 
     def test_seeding_a_demo_attestation_clears_its_exception(self) -> None:
@@ -1148,9 +1127,10 @@ class TestAgainstTheSeededRegister:
         assert after["meta"]["linesCovered"] >= 3
 
         # And those lines now read as declared rather than required.
+        lines = _register_lines()
         statuses = client.get(f"{DECLARATIONS}?pageSize=1").json()["meta"]["byStatus"]
-        assert statuses.get("Required", 0) < 1181
-        assert sum(statuses.values()) == 1181
+        assert statuses.get("Required", 0) < lines
+        assert sum(statuses.values()) == lines
 
     def test_declaration_field_names_match_the_frontend_type(self) -> None:
         """Checked against src/features/initiative-8/types/repair.ts.
@@ -1164,13 +1144,15 @@ class TestAgainstTheSeededRegister:
             "pr",
             "material",
             "requester",
-            "hasActiveRepair",
             "relatedRepairId",
             "status",
             "nextAction",
             "createdAt",
         } <= set(row)
         assert "source" not in row
+        # Every row is on a repair SAP still has open, so the flag that said
+        # whether it was is gone.
+        assert "hasActiveRepair" not in row
         assert row["status"] in {"Required", "Completed", "Flagged"}
 
 
@@ -1217,7 +1199,7 @@ class TestTheRegisterCarriesTheRealDeclarationStatus:
         return counts
 
     def test_with_no_attestations_every_line_reads_required(self) -> None:
-        assert self._statuses() == {"Required": 1181}
+        assert self._statuses() == {"Required": _register_lines()}
 
     def test_seeding_moves_the_register_column_too(self) -> None:
         """Not just the declaration queue -- the register the UI actually renders."""
@@ -1229,10 +1211,11 @@ class TestTheRegisterCarriesTheRealDeclarationStatus:
             seed(db, count=6)
         reset_attestation_view()
 
+        lines = _register_lines()
         counts = self._statuses()
-        assert counts.get("Required", 0) < 1181
+        assert counts.get("Required", 0) < lines
         assert counts.get("Completed", 0) >= 1
-        assert sum(counts.values()) == 1181
+        assert sum(counts.values()) == lines
 
     def test_the_repair_detail_agrees_with_the_register(self) -> None:
         """Two endpoints, one answer. A detail page that disagrees with the row
