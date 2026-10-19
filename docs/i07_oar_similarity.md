@@ -147,7 +147,20 @@ LOW confidence, because one donor is not a basis for a stocking parameter.
 
 ```
 SS_oar = sum(s_i x SS_i) / sum(s_i)      (same form for ROP, Max)
+Max_final = max(Max_oar, ROP_oar + SS_oar)
 ```
+
+**Max stock consistency floor** (`oar-similarity-6`, approved deviation from the plain weighted
+average, 2026-10-19). The three averages are independent, so Max could land at or below ROP. After all
+three are calculated and rounded up, `Max_final` is raised to `ROP + safety stock` when the weighted Max
+is below it. It applies only when ROP, safety stock and the weighted Max are all present -- a missing
+value is never filled in. ROP and safety stock are never changed. Stock items are not affected: their
+Max comes from the Max Stock strategy (`inventory/max_stock.py`). The estimate's trace keeps the original
+beside the result (`max_stock_weighted`, `max_stock_floor`, `max_stock_final`, `max_stock_floor_applied`,
+`max_stock_floor_reason` = `MAX_RAISED_TO_ROP_PLUS_SAFETY_STOCK`), and the recommendation's
+`calculation_trace` carries the same entries. Example: ROP 2, safety stock 1, weighted Max 2 -> Max 3.
+On the 2026-10-19 run 4,824 of 10,093 OAR estimates were below the floor. No schema change: the entries
+ride in the existing trace text.
 
 Rounded **once**, after the weighted average — rounding each neighbour first
 would compound several ceilings.

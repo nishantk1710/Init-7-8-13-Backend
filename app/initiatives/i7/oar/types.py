@@ -22,9 +22,14 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import NamedTuple
 
-ALGORITHM_VERSION = "oar-similarity-5"
+ALGORITHM_VERSION = "oar-similarity-6"
 """Identifies the similarity implementation behind a stored result. Not a
 semantic version -- nothing here maintains a release contract.
+
+``oar-similarity-6`` added a consistency floor against ``-5`` (approved deviation):
+the OAR Max stock is raised to ROP + safety stock when the similarity-weighted Max
+is below it. ROP, safety stock, donor selection, scoring and rounding are unchanged.
+A run stored under ``-5`` has the plain weighted Max, so it is not reused.
 
 ``oar-similarity-5`` added a hard constraint against ``-4``: a neighbour must
 share the target's material type (MTART) when both are known. A blank type on

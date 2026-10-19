@@ -123,6 +123,13 @@ this file only records the consequence for recommendation gating.
 
 ## OAR path
 
+**Max floor (2026-10-19).** An OAR recommendation's Max is the similarity-weighted Max, raised to ROP +
+safety stock when it is below that (`oar-similarity-6`; see `docs/i07_oar_similarity.md`). The
+recommendation's `calculation_trace` lists `max_stock_weighted`, `max_stock_floor`, `max_stock_final`,
+`max_stock_floor_applied` and `max_stock_floor_reason`, so the original estimate and the adjusted one can
+be told apart. Rows built from an OAR run stored before this carry no such entries.
+
+
 Every OAR material-plant (MRP type ND / PD / blank), whatever its history. Phase 6's
 similarity result is consumed as-is — nothing here recomputes similarity.
 
