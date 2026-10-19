@@ -43,6 +43,10 @@ from app.models.i7_staging import StagedMaterial, StagedMaterialPlant, StagingRu
 from app.initiatives.i7.recommendations.types import RECOMMENDATION_FORMULA_VERSION
 
 DEFAULT_LOG = "/home/i7_pipeline_run.log"
+
+# _FLAGGED: ``column == True``, not ``column.is_(True)``. SQL Server has no ``IS TRUE`` and
+# rejects the ``IS 1`` that ``.is_(True)`` renders for a bit column; ``== True`` renders
+# ``= 1`` there and is just as correct elsewhere.
 STAGING_STEPS = ("materials_staged", "material_plants_staged", "stock_staged", "consumption_staged", "purchase_orders_staged")
 
 
@@ -146,10 +150,10 @@ def collect(session: Session, log_path: str = DEFAULT_LOG) -> dict:
                 StagedMaterialPlant,
                 (StagedMaterialPlant.sap_material_number == MaterialFeature.sap_material_number)
                 & (StagedMaterialPlant.sap_plant_code == MaterialFeature.sap_plant_code),
-            ).where(StagedMaterialPlant.deletion_flag.is_(True))),
+            ).where(StagedMaterialPlant.deletion_flag == True)),  # noqa: E712 -- see _FLAGGED
             "material": _count(session, select(func.count()).select_from(MaterialFeature).join(
                 StagedMaterial, StagedMaterial.sap_material_number == MaterialFeature.sap_material_number,
-            ).where(StagedMaterial.deletion_flag.is_(True))),
+            ).where(StagedMaterial.deletion_flag == True)),  # noqa: E712 -- see _FLAGGED
         }
     return {"rows": rows, "deleted": deleted, "alive": _process_running()}
 
