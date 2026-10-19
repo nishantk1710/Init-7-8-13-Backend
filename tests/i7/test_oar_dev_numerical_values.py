@@ -90,6 +90,7 @@ def donor_feature_row(material: str, mean: float, std: float) -> SimpleNamespace
         sap_plant_code="BMM",
         demand_class="SMOOTH",
         history_status="SUFFICIENT",
+        oar_scope="OUT_OF_SCOPE",
         criticality="NORMAL",
         total_periods=24,
         non_zero_periods=24,

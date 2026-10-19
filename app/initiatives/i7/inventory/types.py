@@ -19,8 +19,12 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import NamedTuple
 
-FORMULA_VERSION = "i07-formula-1"
+FORMULA_VERSION = "i07-formula-2"
 """Identifies the formula implementations behind a stored result.
+
+``-2``: routing by MRP type. An OAR material-plant (ND / PD / blank) is
+DEFERRED_TO_OAR whatever its history; a non-OAR one with too little history is
+NOT_EVALUABLE_NO_HISTORY rather than deferred to the similarity engine.
 
 Incremented when a formula changes. Not a semantic version -- nothing here
 maintains a release contract -- but a stored result must be attributable to the

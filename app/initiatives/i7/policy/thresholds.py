@@ -229,16 +229,16 @@ _KNOWN_CRITICALITY_TIERS = frozenset(tier.value for tier in CriticalityTier)
 class ConversionTriggerPolicy(BaseModel):
     """Stage 5A -- when an OAR material may be recommended for Min-Max.
 
-    Both conditions must hold (AND), and only for a material-plant Stage 1
-    already classified as OAR:
+    Only for a material-plant Stage 1 already classified as OAR. Either
+    trigger on its own is enough (OR):
 
     * more than ``consumption_count_threshold`` net issue transactions in the
-      trailing 12 months, **and**
+      trailing 12 months, **or**
     * a criticality tier in ``criticality_trigger_tiers``.
 
     A tier in ``excluded_criticality_tiers`` is never eligible, whatever the
-    other condition says. There is no third trigger: the I13 HOD-approved
-    request was removed from the rule, not merely switched off.
+    triggers say. There is no third trigger: the I13 HOD-approved request was
+    removed from the rule, not merely switched off.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -286,19 +286,24 @@ class ConversionTriggerPolicy(BaseModel):
 
 
 def current_conversion_trigger_policy() -> ConversionTriggerPolicy:
-    """The rule in force: ``criticality_trigger_tiers=("CRITICAL", "IMPACT")``.
+    """The rule in force: ``criticality_trigger_tiers=("CRITICAL", "IMPACT", "INSURANCE")``.
 
-    Business-confirmed: an OAR material-plant is eligible for Min-Max only when
-    it had more than 4 net issue transactions in the trailing 12 months **and**
-    is CRITICAL or IMPACT. OBSOLETE is never eligible. This replaces the
-    earlier rule (consumption OR a NORMAL tier OR an I13 HOD approval).
+    Business-confirmed 2026-10-19: an OAR material-plant is eligible for
+    Min-Max when it had more than 4 net issue transactions in the trailing 12
+    months **or** is CRITICAL, IMPACT or INSURANCE. OBSOLETE is never eligible.
+    Replaces the 2026-10-18 rule (usage AND CRITICAL/IMPACT), which itself
+    replaced usage OR NORMAL OR an I13 HOD approval.
 
     Matches :func:`app.initiatives.i7.policy.oar.current_oar_policy`'s pattern:
     the resolved rule lives in one function a reviewer can find, rather than a
     default silently baked into the schema.
     """
     return ConversionTriggerPolicy(
-        criticality_trigger_tiers=(CriticalityTier.CRITICAL.value, CriticalityTier.IMPACT.value),
+        criticality_trigger_tiers=(
+            CriticalityTier.CRITICAL.value,
+            CriticalityTier.IMPACT.value,
+            CriticalityTier.INSURANCE.value,
+        ),
     )
 
 

@@ -72,6 +72,7 @@ import numpy as np
 
 from app.initiatives.i7.oar import text_similarity
 from app.initiatives.i7.oar.business_similarity import BUSINESS_CATEGORICAL_FEATURES
+from app.initiatives.i7.oar.eligibility import material_types_conflict
 from app.initiatives.i7.oar.structured_similarity import CATEGORICAL_FEATURES
 from app.initiatives.i7.oar.types import CandidateAttributes, EligibilityRejection
 
@@ -146,9 +147,10 @@ class PopulationProfile:
 
     ``eligibility.reject_reason`` depends on the target only through its key
     (SELF) and its criticality; everything else is a property of the candidate.
-    So the counts for any target follow from counts per criticality, computed
-    once. The result equals ``eligibility.filter_candidates`` exactly -- same
-    reasons, same precedence, same numbers -- which the tests check against it.
+    So the counts for any target follow from counts per criticality -- split by
+    material type, for the MTART constraint -- computed once. The result equals
+    ``eligibility.filter_candidates`` exactly -- same reasons, same precedence,
+    same numbers -- which the tests check against it.
     """
 
     def __init__(
@@ -157,7 +159,7 @@ class PopulationProfile:
         self.minimum_history_months = minimum_history_months
         self.total = len(population)
         self.missing_criticality = 0
-        self.by_criticality: dict[str, Counter] = {}
+        self.by_criticality: dict[str, dict[str | None, Counter]] = {}
         self.records_by_key: dict[tuple[str, str], list[CandidateAttributes]] = {}
 
         for candidate in population:
@@ -166,7 +168,8 @@ class PopulationProfile:
             if candidate.criticality is None:
                 self.missing_criticality += 1
                 continue
-            counter = self.by_criticality.setdefault(candidate.criticality, Counter())
+            by_type = self.by_criticality.setdefault(candidate.criticality, {})
+            counter = by_type.setdefault(candidate.material_type or None, Counter())
             counter[_candidate_outcome(candidate, minimum_history_months)] += 1
 
     def _outcome_against(self, target: CandidateAttributes, candidate: CandidateAttributes) -> str:
@@ -177,6 +180,8 @@ class PopulationProfile:
             return EligibilityRejection.CRITICALITY_MISSING_CANDIDATE.value
         if candidate.criticality != target.criticality:
             return EligibilityRejection.CRITICALITY_MISMATCH.value
+        if material_types_conflict(target.material_type, candidate.material_type):
+            return EligibilityRejection.MATERIAL_TYPE_MISMATCH.value
         return _candidate_outcome(candidate, self.minimum_history_months)
 
     def profile(self, target: CandidateAttributes) -> tuple[int, dict[str, int]]:
@@ -188,12 +193,16 @@ class PopulationProfile:
             counts[EligibilityRejection.CRITICALITY_MISSING_CANDIDATE.value] = (
                 self.missing_criticality
             )
-            same = self.by_criticality.get(target.criticality, Counter())
-            same_total = sum(same.values())
+            same = self.by_criticality.get(target.criticality, {})
+            same_total = sum(sum(counter.values()) for counter in same.values())
             counts[EligibilityRejection.CRITICALITY_MISMATCH.value] = (
                 self.total - self.missing_criticality - same_total
             )
-            counts.update(same)
+            for material_type, counter in same.items():
+                if material_types_conflict(target.material_type, material_type):
+                    counts[EligibilityRejection.MATERIAL_TYPE_MISMATCH.value] += sum(counter.values())
+                else:
+                    counts.update(counter)
 
         # SELF is checked first, so a record that is the target moves out of the
         # bucket it would otherwise have landed in.
@@ -231,6 +240,11 @@ class _Vocabulary:
 
 _CATEGORICAL = CATEGORICAL_FEATURES + BUSINESS_CATEGORICAL_FEATURES
 """Every categorical feature the exact score compares, in one place."""
+
+_MATERIAL_TYPE = "material_type"
+_ENCODED = _CATEGORICAL + (_MATERIAL_TYPE,)
+"""Encoded per donor: the scored features plus material type, which is a hard
+constraint (``eligibility.material_types_conflict``) and never scored."""
 
 
 @dataclass
@@ -270,6 +284,9 @@ class Shortlist:
     """Eligible donors whose pair would fail the evidence rule -- counted over
     the whole partition, so it does not depend on the shortlist."""
     exhaustive: bool
+    type_conflicts: int = 0
+    """Donors in the partition rejected for a different known material type --
+    eligible by criticality, so in the partition, but never a neighbour."""
 
 
 def _unit(vector: np.ndarray) -> tuple[np.ndarray, bool]:
@@ -323,7 +340,7 @@ class DonorIndex:
         self.minimum_evidence_features = minimum_evidence_features
         self.identity_evidence_features = identity_evidence_features
         self.embeddings = embeddings
-        self.vocabularies = {feature: _Vocabulary() for feature in _CATEGORICAL}
+        self.vocabularies = {feature: _Vocabulary() for feature in _ENCODED}
 
         grouped: dict[str, list[CandidateAttributes]] = {}
         for candidate in population:
@@ -350,10 +367,10 @@ class DonorIndex:
         donors = sorted(donors, key=lambda d: (d.sap_material_number, d.sap_plant_code))
         codes = {
             feature: np.array(
-                [self.vocabularies[feature].fit(getattr(d, feature)) for d in donors],
+                [self.vocabularies[feature].fit(getattr(d, feature) or None) for d in donors],
                 dtype=np.int64,
             )
-            for feature in _CATEGORICAL
+            for feature in _ENCODED
         }
         prices = np.array(
             [float(d.unit_price) if d.unit_price is not None else np.nan for d in donors],
@@ -402,7 +419,7 @@ class DonorIndex:
             unit, ok = _unit(raw)
             vector = unit if ok else None
         return TargetEncoding(
-            codes={f: self.vocabularies[f].lookup(getattr(target, f)) for f in _CATEGORICAL},
+            codes={f: self.vocabularies[f].lookup(getattr(target, f) or None) for f in _ENCODED},
             price=float(target.unit_price) if target.unit_price is not None else np.nan,
             vector=vector,
         )
@@ -519,6 +536,20 @@ class DonorIndex:
         fused = np.where(evidence, scores["combined"], np.nan)
         struct_business = scores["struct_business"]
         text = scores["text"]
+
+        # Material type: a donor of another known type is rejected by eligibility, so like
+        # SELF it is neither low-evidence nor allowed a shortlist slot. Blank is compatible.
+        target_type = target.codes[_MATERIAL_TYPE]
+        donor_types = partition.codes[_MATERIAL_TYPE]
+        if target_type == UNKNOWN:
+            conflicting = np.zeros(len(partition), dtype=bool)
+        else:
+            conflicting = (donor_types != UNKNOWN) & (donor_types != target_type)
+        if conflicting.any():
+            evidence = evidence | conflicting
+            for channel in (fused, struct_business, text):
+                channel[conflicting] = np.nan
+
         if self_index is not None:
             # The target's own record is SELF: rejected by eligibility, so it is
             # neither low-evidence nor allowed to take a shortlist slot.
@@ -543,7 +574,13 @@ class DonorIndex:
 
         if self_index is not None:
             indices = indices[indices != self_index]
-        return Shortlist(indices=indices, low_evidence=low_evidence, exhaustive=exhaustive)
+        indices = indices[~conflicting[indices]]
+        return Shortlist(
+            indices=indices,
+            low_evidence=low_evidence,
+            exhaustive=exhaustive,
+            type_conflicts=int(conflicting.sum()),
+        )
 
 
 def cosine_block(

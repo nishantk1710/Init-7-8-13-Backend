@@ -17,6 +17,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.initiatives.i7.contracts import Criticality
+from app.initiatives.i7.contracts.enums import ScopeDecision
 from app.initiatives.i7.inventory import service_level as service_level_module
 from app.initiatives.i7.recommendations import explanation
 from app.initiatives.i7.recommendations.conversion import evaluate as evaluate_conversion
@@ -155,7 +156,10 @@ def build_normal_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecomm
             ("reason", blocking_reason),
         ]
 
-    conversion = None  # Conversion eligibility applies to OAR materials only.
+    # A material on the standard path can still be OAR (DISMM ND/PD/blank) --
+    # history decides the path, MRP type decides OAR -- and the frequently used
+    # ones are exactly the conversion candidates, so it is evaluated here too.
+    conversion = conversion_for(row, policy)
 
     impact = explanation.expected_impact(
         current_ss=row.current_safety_stock,
@@ -248,6 +252,24 @@ def _lead_time_plain(method: str | None, valid_po_count: int | None) -> str | No
     return "Delivery time is taken from past purchase orders."
 
 
+def conversion_for(row: Any, policy: PolicyDocument) -> ConversionDecision | None:
+    """The Min-Max conversion decision for one material-plant, on either path.
+
+    ``None`` -- not evaluated at all -- when Stage 1 put the material-plant
+    OUT_OF_SCOPE: only OAR materials are considered for conversion, and a
+    "not eligible" on a material that was never OAR would read as "stays on
+    OAR". Stage 1's verdict is read from the feature row, never re-derived.
+    """
+    if row.oar_scope == ScopeDecision.OUT_OF_SCOPE:
+        return None
+    return evaluate_conversion(
+        consumption_count_12m=row.consumption_count_12m,
+        criticality=row.criticality,
+        policy=policy.conversion_triggers,
+        oar_scope=row.oar_scope,
+    )
+
+
 def _criticality_tier(raw: str | None) -> Criticality | None:
     """The stored tier as the policy's enum, or None when absent or unrecognised.
 
@@ -316,14 +338,8 @@ def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommend
         )
 
     # This path is chosen by cold-start history, not by MRP type, so a row here
-    # is not necessarily OAR. Stage 1's own verdict decides whether conversion
-    # applies; it is read, never re-derived.
-    conversion = evaluate_conversion(
-        consumption_count_12m=row.consumption_count_12m,
-        criticality=row.criticality,
-        policy=policy.conversion_triggers,
-        oar_scope=row.oar_scope,
-    )
+    # is not necessarily OAR -- conversion_for reads Stage 1's verdict.
+    conversion = conversion_for(row, policy)
 
     impact = explanation.expected_impact(
         current_ss=row.current_safety_stock,

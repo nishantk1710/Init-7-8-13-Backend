@@ -27,7 +27,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.core.db import get_sessionmaker
-from app.initiatives.i7.contracts import Criticality, DemandPattern
+from app.initiatives.i7.contracts import Criticality, DemandPattern, ScopeDecision
 from app.initiatives.i7.inventory import (
     lead_time as lead_time_module,
 )
@@ -81,6 +81,7 @@ _INPUT_SQL = """
            f.sap_plant_code,
            f.demand_class,
            f.history_status,
+           f.oar_scope,
            f.criticality,
            f.total_periods,
            f.non_zero_periods,
@@ -204,18 +205,36 @@ def calculate_one(
         status=CalculationStatus.NOT_EVALUABLE_SERVICE_LEVEL_UNSET
     )
 
-    # --- Cold start: Phase 6's problem, not this one -------------------
-    if demand_class == DemandPattern.UNCLASSIFIED.value:
+    # --- OAR (MRP type ND / PD / blank): Phase 6's, whatever its history ----
+    # Routed by Stage 1's own verdict, not by history: an OAR material with
+    # years of usage still takes its parameters from similar materials.
+    if row.oar_scope == ScopeDecision.IN_SCOPE:
         deferred = CalculationStatus.DEFERRED_TO_OAR
         return _row(
             material, plant, demand_class, row, blank_lead, blank_var, blank_service,
             SafetyStockResult(
                 status=deferred,
-                detail="no usable demand history; parameters come from the OAR "
-                "similarity engine (Phase 6)",
+                detail="ordered on demand (OAR); parameters come from similar "
+                "materials' current SAP values (Phase 6)",
             ),
             RopResult(status=deferred),
             MaxStockResult(status=deferred),
+        )
+
+    # --- Not OAR, and too little history to forecast ----------------------
+    # There is deliberately no similar-materials fallback for a VB / other
+    # material: it is forecast or it is not evaluable.
+    if demand_class == DemandPattern.UNCLASSIFIED.value:
+        no_history = CalculationStatus.NOT_EVALUABLE_NO_HISTORY
+        return _row(
+            material, plant, demand_class, row, blank_lead, blank_var, blank_service,
+            SafetyStockResult(
+                status=no_history,
+                detail="too little usage history to forecast, and not ordered on "
+                "demand (OAR), so not sized from similar materials",
+            ),
+            RopResult(status=no_history),
+            MaxStockResult(status=no_history),
         )
 
     # --- Lead time -------------------------------------------------------

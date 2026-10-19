@@ -298,6 +298,7 @@ def _batched(iterator: Iterator[dict[str, Any]], size: int) -> Iterator[list[dic
 _MATERIAL_SQL = """
     SELECT a.material,
            a.material_group,
+           a.material_type,
            a.base_unit_of_measure,
            a.x_plant_matl_status,
            a.ext_material_group,
@@ -495,6 +496,7 @@ def _stage_materials(
                 "app_material_id": None,
                 "description": clean(row.material_description),
                 "material_group": clean(row.material_group),
+                "material_type": clean(row.material_type),
                 "base_unit_of_measure": clean(row.base_unit_of_measure),
                 "material_status": clean(row.x_plant_matl_status),
                 "external_material_group": clean(row.ext_material_group),

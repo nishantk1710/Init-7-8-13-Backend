@@ -122,18 +122,17 @@ def test_eligibility_holds_regardless_of_demand_class():
     assert result.demand_class == "INTERMITTENT"
 
 
-def test_critical_alone_is_not_eligible_with_unclassified_demand_class():
+def test_critical_alone_is_eligible_with_unclassified_demand_class():
     """consumption_count_12m <= 4 + Critical + demand_class = UNCLASSIFIED ->
-    not eligible: both conditions are required, and demand class supplies
-    neither."""
+    eligible on criticality alone; demand class plays no part."""
     row = oar_row(
         demand_class="UNCLASSIFIED",
         consumption_count_12m=2,
         criticality=Criticality.CRITICAL.value,
     )
     result = builder.build_oar_recommendation(row, UNSIGNED_POLICY)
-    assert result.conversion.eligibility.value == "NOT_ELIGIBLE"
-    assert result.conversion.production_impact is True
+    assert result.conversion.eligibility.value == "ELIGIBLE"
+    assert result.conversion.trigger.value == "PRODUCTION_IMPACT"
     assert result.demand_class == "UNCLASSIFIED"
 
 
@@ -175,17 +174,90 @@ def test_unclassified_demand_class_does_not_block_an_otherwise_eligible_oar():
     assert result.conversion.trigger.value == "CONSUMPTION_AND_CRITICALITY"
 
 
-def test_a_cold_start_material_stage_1_did_not_call_oar_is_not_eligible():
+def test_a_cold_start_material_stage_1_did_not_call_oar_gets_no_decision():
     """The OAR recommendation path is chosen by history, not MRP type. A
     material-plant Stage 1 put OUT_OF_SCOPE (e.g. a VB material with thin
-    history) is not offered a conversion, however it otherwise scores."""
+    history) is not evaluated at all, however it would otherwise score -- a
+    "not eligible" on it would read as "stays on OAR"."""
     row = oar_row(
         oar_scope="OUT_OF_SCOPE",
         consumption_count_12m=10,
         criticality=Criticality.CRITICAL.value,
     )
     result = builder.build_oar_recommendation(row, UNSIGNED_POLICY)
+    assert result.conversion is None
+
+
+# --- The standard path is evaluated too: OAR is MRP type, not history ----------
+
+
+def normal_row(**overrides) -> SimpleNamespace:
+    defaults = dict(
+        sap_material_number="5000019221",
+        sap_plant_code="1300",
+        demand_class="INTERMITTENT",
+        history_status="SUFFICIENT",
+        criticality=Criticality.CRITICAL.value,
+        non_zero_periods=7,
+        consumption_count_12m=7,
+        oar_scope="IN_SCOPE",
+        feature_run_id=1,
+        baseline_model="SBA",
+        forecast_rate=Decimal("1.2"),
+        current_safety_stock=Decimal(1),
+        current_reorder_point=Decimal(2),
+        current_maximum_stock=Decimal(4),
+        unit_price=None,
+        lead_time_method="PLANNED_FALLBACK",
+        valid_po_count=0,
+        lt_avg_months=Decimal("1"),
+        lt_avg_days=Decimal("30"),
+        sigma_lt_days=Decimal("3"),
+        circuit=None,
+        service_level=None,
+        z_factor=None,
+        safety_stock_status="NOT_EVALUABLE_SERVICE_LEVEL_UNSET",
+        safety_stock_method=None,
+        safety_stock=None,
+        detail=None,
+        rop_status="NOT_EVALUABLE_SERVICE_LEVEL_UNSET",
+        rop=None,
+        max_stock_status="NOT_CONFIGURED",
+        max_stock_strategy=None,
+        max_stock=None,
+        inventory_run_id=1,
+        forecast_run_id=1,
+    )
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def test_a_standard_path_oar_material_is_evaluated():
+    """The crusher liner case: frequently used, CRITICAL, PD/ND -- on the
+    standard path because it has history, and still a conversion candidate."""
+    result = builder.build_normal_recommendation(normal_row(), UNSIGNED_POLICY)
+    assert result.is_oar is False
+    assert result.conversion.eligibility.value == "ELIGIBLE"
+    assert result.conversion.trigger.value == "CONSUMPTION_AND_CRITICALITY"
+
+
+def test_a_standard_path_oar_material_can_be_not_eligible():
+    row = normal_row(consumption_count_12m=2, criticality=Criticality.NORMAL.value)
+    result = builder.build_normal_recommendation(row, UNSIGNED_POLICY)
     assert result.conversion.eligibility.value == "NOT_ELIGIBLE"
+
+
+def test_a_standard_path_obsolete_material_is_not_eligible():
+    row = normal_row(consumption_count_12m=40, criticality=Criticality.OBSOLETE.value)
+    result = builder.build_normal_recommendation(row, UNSIGNED_POLICY)
+    assert result.conversion.eligibility.value == "NOT_ELIGIBLE"
+
+
+def test_a_standard_path_material_that_is_not_oar_gets_no_decision():
+    """A VB (Min-Max managed) material has nothing to convert."""
+    row = normal_row(oar_scope="OUT_OF_SCOPE")
+    result = builder.build_normal_recommendation(row, UNSIGNED_POLICY)
+    assert result.conversion is None
 
 
 def test_obsolete_is_never_eligible_through_the_builder():

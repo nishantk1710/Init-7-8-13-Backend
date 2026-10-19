@@ -22,9 +22,17 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import NamedTuple
 
-ALGORITHM_VERSION = "oar-similarity-3"
+ALGORITHM_VERSION = "oar-similarity-5"
 """Identifies the similarity implementation behind a stored result. Not a
 semantic version -- nothing here maintains a release contract.
+
+``oar-similarity-5`` added a hard constraint against ``-4``: a neighbour must
+share the target's material type (MTART) when both are known. A blank type on
+either side does not block a match.
+
+``oar-similarity-4`` changed the targets against ``-3``: every OAR
+material-plant (MRP type ND / PD / blank), whatever its history -- not every
+cold-start one. A VB / other material is no longer a target.
 
 ``oar-similarity-3`` changed the donors against ``-2``:
 
@@ -71,6 +79,9 @@ class EligibilityRejection(StrEnum):
     CRITICALITY_MISMATCH = "CRITICALITY_MISMATCH"
     CRITICALITY_MISSING_TARGET = "CRITICALITY_MISSING_TARGET"
     CRITICALITY_MISSING_CANDIDATE = "CRITICALITY_MISSING_CANDIDATE"
+    MATERIAL_TYPE_MISMATCH = "MATERIAL_TYPE_MISMATCH"
+    """Both material types are known and differ. A blank type on either side
+    never produces this -- it is skipped, not counted as a mismatch."""
     """Missing criticality never means "probably the same". The Solution Design
     makes same-class a hard constraint, and with 1.7% coverage a permissive
     reading would match almost everything to almost everything."""
@@ -226,6 +237,10 @@ class CandidateAttributes(NamedTuple):
     manufacturer: str | None
     unit_price: Decimal | None
     description: str | None
+    material_type: str | None = None
+    """MTART. A hard constraint when known on both sides -- a spare part is never
+    sized from a consumable -- and no constraint when either side is blank: an
+    unmaintained type is not evidence of a different type."""
 
 
 class Neighbour(NamedTuple):

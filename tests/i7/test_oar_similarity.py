@@ -48,6 +48,7 @@ def material(
     manufacturer: str | None = "SKF",
     unit_price: Decimal | None = Decimal(1000),
     description: str | None = "SKF 6310-2RS deep groove ball bearing",
+    material_type: str | None = None,
 ) -> CandidateAttributes:
     return CandidateAttributes(
         sap_material_number=number,
@@ -62,6 +63,7 @@ def material(
         manufacturer=manufacturer,
         unit_price=unit_price,
         description=description,
+        material_type=material_type,
     )
 
 
@@ -936,3 +938,38 @@ def test_fifteen_qualifying_selects_top_ten_before_the_gate():
         minimum_similarity=Decimal("0.60"),
     )
     assert result.status is EstimateStatus.SUCCESS
+
+
+# --- Material type (MTART): a hard constraint when known on both sides --------------------
+
+
+def test_a_different_material_type_is_rejected():
+    """A spare part is never sized from a consumable."""
+    reason = eligibility.reject_reason(
+        material(material_type="ERSA"), material("M2", material_type="HIBE"), HISTORY_MINIMUM
+    )
+    assert reason is EligibilityRejection.MATERIAL_TYPE_MISMATCH
+
+
+def test_the_same_material_type_is_allowed():
+    assert eligibility.reject_reason(
+        material(material_type="ERSA"), material("M2", material_type="ERSA"), HISTORY_MINIMUM
+    ) is None
+
+
+@pytest.mark.parametrize("target_type, candidate_type", [(None, "ERSA"), ("ERSA", None), ("", "ERSA"), ("ERSA", ""), (None, None)])
+def test_a_blank_material_type_never_blocks_a_match(target_type, candidate_type):
+    """An unmaintained type is not evidence of a different type."""
+    assert eligibility.reject_reason(
+        material(material_type=target_type), material("M2", material_type=candidate_type), HISTORY_MINIMUM
+    ) is None
+
+
+def test_criticality_is_still_checked_before_material_type():
+    """Precedence is part of the measurable rejection profile."""
+    reason = eligibility.reject_reason(
+        material(material_type="ERSA"),
+        material("M2", criticality="NORMAL", material_type="HIBE"),
+        HISTORY_MINIMUM,
+    )
+    assert reason is EligibilityRejection.CRITICALITY_MISMATCH

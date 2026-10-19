@@ -155,10 +155,14 @@ def evaluate_targets(
 
             shortlist = index.shortlist(partition, target, encodings[i], cosines[i], config)
 
-            expected = len(partition) - (
-                1
-                if (target.sap_material_number, target.sap_plant_code) in partition.index_by_key
-                else 0
+            expected = (
+                len(partition)
+                - (
+                    1
+                    if (target.sap_material_number, target.sap_plant_code) in partition.index_by_key
+                    else 0
+                )
+                - shortlist.type_conflicts
             )
             if expected != eligible_count:
                 # The partition and the closed-form counts are two views of the

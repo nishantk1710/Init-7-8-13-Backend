@@ -90,6 +90,9 @@ def _material(rng: random.Random, i: int, *, donor: bool) -> CandidateAttributes
         manufacturer=rng.choice([None, None, None, "SKF", "ACME"]),
         unit_price=rng.choice([None, Decimal(rng.randint(10, 5000))]),
         description=rng.choice(ALL_TEXTS + [None, "   "]),
+        # Mostly one type, some another, some blank: exercises the MTART constraint and its
+        # blank exemption in both engines.
+        material_type=rng.choice(["ERSA", "ERSA", "ERSA", "HIBE", None, ""]),
     )
 
 
@@ -192,7 +195,10 @@ def _compare(seed: int, policy: PolicyDocument, embeddings, config=TIGHT, donors
     "policy", [PolicyDocument(), DEV_POLICY, LOW_FLOOR_POLICY], ids=["production", "dev", "low-floor"]
 )
 def test_two_stage_matches_exhaustive_with_text(seed, policy) -> None:
-    two_stage, exhaustive, stats = _compare(seed, policy, EMBEDDINGS)
+    # 600 donors, not the default 480: the material-type constraint makes each target's
+    # eligible set smaller, and the skip-ratio claim below is about a shortlist that is
+    # small next to that set -- which needs a population of some size to show.
+    two_stage, exhaustive, stats = _compare(seed, policy, EMBEDDINGS, donors=600)
 
     assert [_summary(r) for r in two_stage] == [_summary(r) for r in exhaustive]
     assert stats.scored_fraction < 0.6  # and it really did skip most exact scores
