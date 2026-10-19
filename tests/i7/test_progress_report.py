@@ -101,3 +101,30 @@ def test_the_recommendation_stage_reads_the_explanation_progress_from_the_log(db
     text = i7_progress.render(i7_progress.collect(db, str(log)))
     assert "500 of 18,000 explanations written (AI_GENERATED 480, DETERMINISTIC_FALLBACK 20)" in text
     assert "NOW: 6 Recommendations" in text
+
+
+def test_every_count_compiles_for_sql_server(db, tmp_path, monkeypatch):
+    """The progress report runs against Azure SQL, not the SQLite these tests use. SQLite
+    accepts ``IS 1`` where SQL Server fails with "Incorrect syntax near '1'", so compile each
+    count for SQL Server and look for what it rejects."""
+    from sqlalchemy.dialects import mssql
+
+    compiled: list[str] = []
+
+    def record(session, statement):
+        compiled.append(str(statement.compile(dialect=mssql.dialect())))
+        return 1  # nonzero, so the report also runs the deleted-material check
+
+    monkeypatch.setattr(i7_progress, "_count", record)
+    db.add_all([
+        StagingRun(source="test", status="succeeded", started_at=NOW),
+        FeatureBuildRun(status="succeeded", started_at=NOW, policy_id="p", policy_version=1),
+        ForecastRun(status="running", started_at=NOW, policy_id="p", policy_version=1),
+        InventoryRun(status="succeeded", started_at=NOW, policy_id="p", policy_version=1, formula_version="f"),
+        OarRun(status="running", started_at=NOW, policy_id="p", policy_version=1, algorithm_version="a", embedding_model_version="e", structured_weight=0.35, text_weight=0.3, business_weight=0.35, top_k=5, minimum_history_months=12, retrieval_config="c"),
+    ])
+    db.commit()
+    i7_progress.collect(db, str(tmp_path / "none.log"))
+    assert any("deletion_flag" in sql for sql in compiled), "the deleted-material check did not run"
+    for sql in compiled:
+        assert " IS 1" not in sql and " IS true" not in sql.lower() and " IS 0" not in sql, sql
