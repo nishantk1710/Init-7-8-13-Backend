@@ -126,7 +126,7 @@ def test_yesterdays_snapshot_is_used_aged_and_dated(monkeypatch):
 def test_a_never_moved_part_is_still_refused(monkeypatch):
     _serve(monkeypatch, StoredSnapshot(TODAY - timedelta(days=1), {}))
 
-    with pytest.raises(session.SessionError, match="has no WATCH row"):
+    with pytest.raises(session.SessionError, match="no recorded stock movement or usage"):
         _assess()
 
 
