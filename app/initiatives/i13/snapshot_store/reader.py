@@ -97,6 +97,17 @@ class SqlSnapshot:
         return tuple(self.meta.get("history_months") or ())
 
     @property
+    def recorded_history_start(self) -> date | None:
+        """The earliest goods movement the build held, from its meta -- free,
+        unlike ``movement_history_start()``, which scans the movement work
+        table. None for a version built before this was recorded."""
+        value = self.meta.get("movement_history_start")
+        try:
+            return date.fromisoformat(str(value)[:10]) if value else None
+        except ValueError:
+            return None
+
+    @property
     def chain_diagnostics(self) -> ProcurementChainDiagnostics:
         d = dict(self.meta.get("chain_diagnostics") or {})
         d["duplicate_pr_keys"] = [tuple(k) for k in d.get("duplicate_pr_keys", [])]

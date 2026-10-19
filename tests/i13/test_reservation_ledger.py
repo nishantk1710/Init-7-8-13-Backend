@@ -306,3 +306,68 @@ def test_oar_material_included_by_default() -> None:
     )
     assert len(entries) == 1
     assert entries[0].material_scope is MaterialScope.OAR
+
+
+# --- the lifecycle of a reservation with no PO: what its PR reference says --------
+#
+# "No PO" is PR_CREATED on a procurement line, which starts from a PR. Here most
+# reservations name no PR at all, so PR_CREATED would claim a requisition the
+# data does not show.
+
+
+def test_no_pr_on_the_reservation_is_reserved_not_pr_created() -> None:
+    entry = _build(reservations=[_reservation("50020", "1", "MAT1", "1300", "5")])[0]
+    assert entry.lifecycle_status is LifecycleStatus.RESERVED
+
+
+def test_a_pr_the_extract_does_not_hold_is_pr_not_found() -> None:
+    entry = _build(
+        reservations=[_reservation("50021", "1", "MAT1", "1300", "5", banfn="2000000099", bnfpo="10")],
+    )[0]
+    assert entry.lifecycle_status is LifecycleStatus.PR_NOT_FOUND
+
+
+def test_a_pr_several_reservations_name_is_pr_shared() -> None:
+    entries = _build(
+        reservations=[
+            _reservation("50022", "1", "MAT1", "1300", "2", banfn="2000000022", bnfpo="10"),
+            _reservation("50023", "1", "MAT1", "1300", "3", banfn="2000000022", bnfpo="10"),
+        ],
+        prs=[_pr("2000000022", "10", "MAT1", "1300", "5")],
+    )
+    assert {e.lifecycle_status for e in entries} == {LifecycleStatus.PR_SHARED}
+
+
+def test_a_linked_pr_with_no_po_yet_is_still_pr_created() -> None:
+    entry = _build(
+        reservations=[_reservation("50024", "1", "MAT1", "1300", "5", banfn="2000000024", bnfpo="10")],
+        prs=[_pr("2000000024", "10", "MAT1", "1300", "5")],
+    )[0]
+    assert entry.reservation_pr_link_status is ReservationPrLinkStatus.LINKED
+    assert entry.lifecycle_status is LifecycleStatus.PR_CREATED
+
+
+def test_issued_from_stock_with_no_pr_is_still_issued() -> None:
+    entry = _build(
+        reservations=[_reservation("50025", "1", "MAT1", "1300", "5")],
+        gi_rows=[_gi("50025", "1", "261", "5", 3)],
+    )[0]
+    assert entry.lifecycle_status is LifecycleStatus.ISSUED
+
+
+# --- "issued 0" before the movement history held is not a known zero --------------
+
+
+def test_issued_before_history_only_when_nothing_issued_and_required_earlier() -> None:
+    from app.api.i13.reservation_ledger import issued_before_history
+
+    old = _build(reservations=[_reservation("50030", "1", "MAT1", "1300", "5")])[0]
+    start = old.requirement_date.replace(year=old.requirement_date.year + 1)
+    assert issued_before_history(old, start) is True
+    assert issued_before_history(old, None) is False, "unknown history start: claim nothing"
+    assert issued_before_history(old, old.requirement_date) is False, "required on the first day held"
+    issued = _build(
+        reservations=[_reservation("50031", "1", "MAT1", "1300", "5")],
+        gi_rows=[_gi("50031", "1", "261", "5", 3)],
+    )[0]
+    assert issued_before_history(issued, start) is False, "an issue was seen: it is known"

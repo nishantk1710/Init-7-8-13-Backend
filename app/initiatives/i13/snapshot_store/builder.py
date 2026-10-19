@@ -100,6 +100,10 @@ class BuildStats:
     oar_positions: int = 0
     months: set[str] = field(default_factory=set)
     work_rows: dict[str, int] = field(default_factory=dict)
+    #: The earliest goods-movement posting date held (ISO), or None. A
+    #: reservation required before it may have been issued before it, so its
+    #: "issued 0" is not known (``reservation_ledger`` route).
+    movement_history_start: str | None = None
 
 
 # --- writing -----------------------------------------------------------------
@@ -466,6 +470,7 @@ def build(
     stats = BuildStats()
     try:
         stats.work_rows = work_tables.create(db.connection(), work, log=log)
+        stats.movement_history_start = db.execute(text(f"SELECT MIN(posting_date) FROM {work.mov}")).scalar()
         db.commit()
 
         batches = plan_batches(db, work, settings.i13_build_batch_materials, settings.i13_build_batch_rows)
@@ -512,6 +517,7 @@ def build(
             "history_months": sorted(stats.months),
             "records": dict(writer.counts),
             "work_rows": stats.work_rows,
+            "movement_history_start": stats.movement_history_start,
         }
         elapsed = round(time.monotonic() - started, 1)
         db.execute(

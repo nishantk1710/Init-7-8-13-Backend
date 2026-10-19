@@ -428,27 +428,30 @@ ALL = Batch("0", "9999999999")
 # stored byte changes a fingerprint. "mixed" re-recorded 2026-10-12 when a
 # blank DISMM became OAR: its None MARC rows moved oarkey/reclass 87 -> 124 and
 # exception 137 -> 203; every other kind kept its row count.
+# "rledger" re-recorded 2026-10-19 in all three: a reservation with no PO and
+# nothing issued now reads RESERVED / PR_NOT_FOUND / PR_SHARED by its PR
+# reference instead of PR_CREATED (same rows, corrected lifecycle).
 EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
     "mixed": {
         "attrib": (294, "8ed2d08032c19abd"), "chain": (286, "3acc54d4fa857d75"),
         "exception": (203, "c09b29bbf9144cff"), "grni": (35, "8220e6cbe90af2a4"),
         "lledger": (286, "63f70f31e772cd2c"), "movement": (186, "7bdd74b74aaa2066"),
         "oarkey": (124, "2c8b298b582a7125"), "reclass": (124, "cdc9fd30044f3cd3"),
-        "rledger": (294, "525c88a5e0f53d01"), "usage": (134, "d97450f2b9ebf2be"),
+        "rledger": (294, "152ccfd3b68aff02"), "usage": (134, "d97450f2b9ebf2be"),
         "watch": (192, "45e850e61927cae5"),
     },
     "giant_procurement": {
         "attrib": (3, "f77f2830ef44df9f"), "chain": (1483, "17e55edc51ed3706"),
         "exception": (2, "635263fdeb4ddacc"), "lledger": (1483, "c4922bcfb0283472"),
         "movement": (1, "e888732abb0b5eb0"), "oarkey": (1, "34de90e00df89cf2"),
-        "reclass": (1, "796ae91ff3f6fa23"), "rledger": (3, "70b74a1d4c7df63e"),
+        "reclass": (1, "796ae91ff3f6fa23"), "rledger": (3, "3e636498cefa3ea8"),
         "usage": (1, "ed89b5283468661c"), "watch": (1, "fa4db6f7a742ecab"),
     },
     "giant_reservations": {
         "attrib": (4481, "172a43e538fb60e0"), "chain": (12, "441a698e4314a2ad"),
         "exception": (4434, "4268ba8060c97795"), "lledger": (12, "cdfe9465332faf23"),
         "movement": (1, "145d27f46ec8471e"), "oarkey": (1, "702ce6717c803e00"),
-        "reclass": (1, "99733b38e83d2030"), "rledger": (4481, "995755c45f0dfcc6"),
+        "reclass": (1, "99733b38e83d2030"), "rledger": (4481, "906ccc961d424b9e"),
         "usage": (1, "4db03c5965f3dd07"), "watch": (1, "f00d6be52232d9fe"),
     },
 }

@@ -139,8 +139,19 @@ class GiLinkStatus(str, Enum):
 
 class LifecycleStatus(str, Enum):
     """W6.1's single derived status -- see ``procurement_chain.py``'s
-    ``_derive_lifecycle_status`` for exactly how each value is reached."""
+    ``_derive_lifecycle_status`` for exactly how each value is reached.
 
+    The first three are reservation-ledger only (W6.2), for a reservation with
+    no purchase order and nothing issued, where ``PR_CREATED`` would claim a
+    requisition the data does not show (``reservation_ledger._without_po``):
+    ``RESERVED`` -- the reservation names no PR (RESB.BANFN empty);
+    ``PR_NOT_FOUND`` -- it names one the EBAN extract does not hold;
+    ``PR_SHARED`` -- it names one that several reservations name, so whose
+    procurement it is cannot be told."""
+
+    RESERVED = "RESERVED"
+    PR_NOT_FOUND = "PR_NOT_FOUND"
+    PR_SHARED = "PR_SHARED"
     PR_CREATED = "PR_CREATED"
     ORDERED = "ORDERED"
     PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED"
