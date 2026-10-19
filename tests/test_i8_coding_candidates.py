@@ -1254,3 +1254,47 @@ class TestTheScreenCacheDropsStaleFastScreens:
         svc.get_coding_screen(None, None, cfg, use_model=True, limit=10)
 
         assert calls == [(True, 10)]
+
+
+class TestAScreenWithoutItsPricesIsNotKept:
+    """When the MBEW lookup fails, the screen is served with every price
+    LOOKUP_FAILED -- and must not be cached, or it would stay price-less until
+    the next snapshot rebuild instead of trying MBEW again on the next load."""
+
+    @pytest.fixture(autouse=True)
+    def clean_cache(self):
+        from app.initiatives.i8.service import reset_coding_screen
+
+        reset_coding_screen()
+        yield
+        reset_coding_screen()
+
+    def test_the_next_load_asks_again(self, monkeypatch) -> None:
+        import app.initiatives.i8.service as svc
+        from app.initiatives.i8.coding_candidates import ScreenStats
+        from app.initiatives.i8.new_item_price import PRICED, MissingPrice
+
+        counts = [{MissingPrice.LOOKUP_FAILED.value: 116}, {PRICED: 95}]
+        calls: list[dict[str, int]] = []
+
+        def fake_build(db, snapshot, cfg, *, use_model, limit, sources):
+            calls.append(counts[len(calls)])
+            return svc.CodingScreen(
+                candidates=(),
+                stats=ScreenStats(new_item_price_counts=calls[-1]),
+                built_at=datetime(2026, 10, 19, tzinfo=timezone.utc),
+                build_seconds=0.0,
+                used_model=use_model,
+            )
+
+        monkeypatch.setattr(svc, "build_coding_screen", fake_build)
+        cfg = get_i8_settings()
+
+        first = svc.get_coding_screen(None, None, cfg, use_model=False)
+        assert first.stats.new_item_price_counts == {MissingPrice.LOOKUP_FAILED.value: 116}
+
+        # Rebuilt, because the first was not kept; this one is, so a third
+        # load is served from cache.
+        svc.get_coding_screen(None, None, cfg, use_model=False)
+        svc.get_coding_screen(None, None, cfg, use_model=False)
+        assert len(calls) == 2

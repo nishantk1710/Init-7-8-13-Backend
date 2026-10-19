@@ -1007,7 +1007,8 @@ class CodingCandidateMeta(I8Model):
     corroborated: int
     new_item_price_counts: dict[str, int] = {}
     """Material-plants by price state over the whole screen: ``PRICED``,
-    ``TOKEN_VALUE``, ``NO_NEW_VALUATION``, ``NOT_IN_MBEW``."""
+    ``TOKEN_VALUE``, ``NO_NEW_VALUATION``, ``NOT_IN_MBEW``, or
+    ``LOOKUP_FAILED`` on every one when the MBEW read failed or timed out."""
 
     by_verdict: dict[str, int]
     keywords: list[str]
