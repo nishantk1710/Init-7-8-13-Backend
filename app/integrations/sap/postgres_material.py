@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.shared.material_scope.deletion import deleted_column
 from app.shared.plant_scope import sql_predicate
 
 # Plants 1300 and 1500 only -- the team lead's ruling of 2026-09-21. Applied in
@@ -26,8 +27,8 @@ _PLANT_SCOPE = sql_predicate("plant")
 
 
 _MRP_TYPE_QUERY = """
-    SELECT material, plant, mrp_type
-    FROM n_marc
+    SELECT material, plant, mrp_type, {deleted_column}
+    FROM n_marc mc
     WHERE material <> '' AND plant <> '' AND {plant_scope}
       {material_filter}
       {plant_filter}
@@ -35,14 +36,23 @@ _MRP_TYPE_QUERY = """
 
 
 def fetch_material_scope_index(
-    db: Session, *, material: str | None = None, plant: str | None = None
+    db: Session,
+    *,
+    material: str | None = None,
+    plant: str | None = None,
+    deleted: set[tuple[str, str]] | None = None,
 ) -> dict[tuple[str, str], str | None]:
     """(material, plant) -> raw DISMM string, for ``classify_material_scope``
     to classify. Not itself a scope decision.
 
     A MARC row with no MRP type maps to ``""``, never ``None``: blank DISMM is
     OAR, while ``None`` -- what ``.get`` returns for a pair MARC does not hold --
-    is not, so the two must stay apart."""
+    is not, so the two must stay apart.
+
+    A pair flagged for deletion in SAP (MARC/MARA-LVORM, see
+    ``app.shared.material_scope.deletion``) is left out -- so it classifies
+    EXCLUDED like a missing row -- and added to ``deleted`` when the caller
+    passes a set, so it can say why. One query either way."""
     params: dict[str, Any] = {}
     material_filter = ""
     if material:
@@ -58,7 +68,16 @@ def fetch_material_scope_index(
             material_filter=material_filter,
             plant_filter=plant_filter,
             plant_scope=_PLANT_SCOPE,
+            deleted_column=deleted_column("mc"),
         )
     )
     records = db.execute(query, params).fetchall()
-    return {(r.material.strip(), r.plant.strip()): (r.mrp_type or "").strip() for r in records}
+    index: dict[tuple[str, str], str | None] = {}
+    for r in records:
+        key = (r.material.strip(), r.plant.strip())
+        if getattr(r, "deleted", 0):
+            if deleted is not None:
+                deleted.add(key)
+            continue
+        index[key] = (r.mrp_type or "").strip()
+    return index

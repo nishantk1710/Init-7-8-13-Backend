@@ -383,6 +383,8 @@ def compute_fingerprint(db: Session, *, settings: Settings | None = None, config
     else:
         parts += [f"date:{reference_date_for(settings).isoformat()}"]
     parts += [f"config:{config!r}", f"plans:{plans_stamp}"]
+    # Changes which materials are OAR at all, so flipping it must rebuild.
+    parts.append(f"exclude_deleted:{settings.i13_exclude_deleted_materials}")
     if settings.i13_uat_simulation_enabled and not stored:
         from app.models.i13_session_link import UatReservationSgtxt
 

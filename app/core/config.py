@@ -842,6 +842,10 @@ class Settings(BaseSettings):
     # written into the comma list above, hence its own switch. A material+plant
     # with no MARC row at all is never OAR, whatever this says.
     i13_oar_include_blank_mrp_type: bool = True
+    # A material flagged for deletion in SAP -- MARC-LVORM (at the plant) or
+    # MARA-LVORM (client level) = X -- is never OAR, whatever its MRP type
+    # (UAT, 19 Oct 2026). See app/shared/material_scope/deletion.py.
+    i13_exclude_deleted_materials: bool = True
 
     # Aging bands (days since last goods movement).
     i13_aging_fast_max_days: int = 365
