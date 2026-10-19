@@ -368,7 +368,8 @@ _ATTRIBUTE_SQL = """
             AND p.sap_plant_code = u.sap_plant_code
       LEFT JOIN i7_staged_material m
              ON m.sap_material_number = u.sap_material_number
-     WHERE p.deletion_flag IS NULL OR p.deletion_flag = :not_deleted
+     WHERE (p.deletion_flag IS NULL OR p.deletion_flag = :not_deleted)
+       AND (m.deletion_flag IS NULL OR m.deletion_flag = :not_deleted)
      ORDER BY u.sap_material_number, u.sap_plant_code
 """
 # A material-plant MARC explicitly flags for deletion (LVORM/deletion_flag =
@@ -376,6 +377,12 @@ _ATTRIBUTE_SQL = """
 # every downstream stage (forecast, inventory, OAR, recommendations) reads
 # from, so excluding it here is excluding it everywhere at once, per Solution
 # Design Stage 5's "be an active material" requirement.
+#
+# The same holds for the material-level flag (MARA LVORM, ``m.deletion_flag``): a
+# material flagged for deletion in MARA is out at every plant, so none of its
+# material-plants is built. Before 2026-10-19 only the plant-level flag was
+# applied; a MARA-flagged material was still sized (it was merely not allowed to
+# be a similar material for others).
 #
 # NULL passes deliberately -- both "no MARC row for this material-plant"
 # (Gamsberg has zero MARC rows; the universe CTE above exists precisely so
