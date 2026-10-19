@@ -790,6 +790,20 @@ class Settings(BaseSettings):
     # row of every target in memory at once.
     i7_oar_write_batch_size: int = 2000
 
+    # Recommendation explanations requested from the AI model at the same time.
+    # Each call waits on the provider (about 4 s on Foundry), so one at a time
+    # takes most of a day for a full catalogue. 1 restores one-at-a-time.
+    # Raise with care: the provider's rate limit is retried, then falls back to
+    # the template text for that recommendation.
+    i7_rationale_concurrency: int = 8
+
+    @field_validator("i7_rationale_concurrency")
+    @classmethod
+    def _rationale_concurrency(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("I7_RATIONALE_CONCURRENCY must be at least 1")
+        return value
+
     @field_validator("i7_oar_retrieval_mode")
     @classmethod
     def _oar_retrieval_mode(cls, value: str) -> str:

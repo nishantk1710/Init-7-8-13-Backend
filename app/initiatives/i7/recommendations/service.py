@@ -5,7 +5,10 @@
 
 Reads the latest successful run of each upstream phase in two grouped queries
 and assembles one recommendation per material-plant in memory, batching the
-insert. No query and no external call happens per material.
+insert. No query happens per material. The one external call per material is
+the explanation text (``rationale.generate_rationale``, an AI call when a
+provider is configured); those run ``I7_RATIONALE_CONCURRENCY`` at a time,
+with no database connection held open while they wait.
 
 **The forecast run is pinned to the selected inventory run, not independently
 re-derived.** ``forecast_run_id`` is read from
@@ -27,6 +30,7 @@ with unchanged inputs a no-op rather than a duplicate.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -34,6 +38,7 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.initiatives.i7.recommendations import builder, rationale, repository
 from app.initiatives.i7.recommendations.builder import BuiltRecommendation
@@ -75,10 +80,45 @@ def _factors_text(factors: tuple) -> str | None:
     return "\n".join(f"{factor.label}: {factor.detail}" for factor in factors)[:2000]
 
 
-def _to_row(built: BuiltRecommendation) -> dict[str, Any]:
+#: How often the explanation step reports progress, in recommendations.
+RATIONALE_PROGRESS_EVERY = 500
+
+
+def _generate_rationales(
+    built: list[BuiltRecommendation], workers: int
+) -> list[rationale.RationaleResult]:
+    """One explanation per recommendation, in the same order, ``workers`` at a time.
+
+    Each call is an independent HTTP request to the AI provider, so they run
+    side by side; ``generate_rationale`` never raises (any failure becomes the
+    template text). Progress is logged so a long run can be followed.
+    """
+    results: list[rationale.RationaleResult | None] = [None] * len(built)
+    sources: dict[str, int] = {}
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="i7-rationale") as pool:
+        futures = {
+            pool.submit(rationale.generate_rationale, item): index
+            for index, item in enumerate(built)
+        }
+        for done, future in enumerate(as_completed(futures), start=1):
+            outcome = future.result()
+            results[futures[future]] = outcome
+            sources[outcome.source] = sources.get(outcome.source, 0) + 1
+            if done % RATIONALE_PROGRESS_EVERY == 0 or done == len(built):
+                logger.info(
+                    "recommendation explanations: %d of %d done (%s)",
+                    done,
+                    len(built),
+                    ", ".join(f"{name} {count}" for name, count in sorted(sources.items())),
+                )
+    return results  # type: ignore[return-value]  # every slot is filled above
+
+
+def _to_row(
+    built: BuiltRecommendation, rationale_result: rationale.RationaleResult
+) -> dict[str, Any]:
     conversion = built.conversion
     impact = built.impact
-    rationale_result = rationale.generate_rationale(built)
 
     return {
         "recommendation_id": _recommendation_id(
@@ -165,6 +205,10 @@ def generate_recommendations(policy: PolicyDocument | None = None) -> Recommenda
     result = RecommendationRunResult()
 
     try:
+        # Three steps, and the explanations sit between two sessions on
+        # purpose: they are slow external calls (hours one at a time), and a
+        # connection held idle that long is dropped by Azure SQL, which used to
+        # fail the whole run at the very end.
         with session_factory() as session:
             inventory_run_id = repository.latest_inventory_run(session)
             oar_run_id = repository.latest_oar_run(session)
@@ -198,12 +242,21 @@ def generate_recommendations(policy: PolicyDocument | None = None) -> Recommenda
                 for row in repository.load_uncovered_oar_targets(session, oar_run_id):
                     built.append(builder.deferred_recommendation(row, policy))
 
-            rows = [_to_row(item) for item in built]
-            for row in rows:
-                result.status_counts[row["status"]] = (
-                    result.status_counts.get(row["status"], 0) + 1
-                )
+        workers = get_settings().i7_rationale_concurrency
+        logger.info(
+            "recommendation generation: %d built, writing explanations %d at a time",
+            len(built),
+            workers,
+        )
+        rationales = _generate_rationales(built, workers)
 
+        rows = [_to_row(item, outcome) for item, outcome in zip(built, rationales)]
+        for row in rows:
+            result.status_counts[row["status"]] = (
+                result.status_counts.get(row["status"], 0) + 1
+            )
+
+        with session_factory() as session:
             written = 0
             reused = 0
             for row in rows:
