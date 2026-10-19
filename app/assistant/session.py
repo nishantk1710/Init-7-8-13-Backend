@@ -174,8 +174,8 @@ def _assessment_for(
         # First start, nothing built yet. Said at once rather than computed live.
         raise SessionError(
             f"Stock and usage figures for {routed.material_id} at plant {routed.plant} "
-            "are not available yet -- the I13 data is still being prepared. Try again "
-            "in a few minutes."
+            "are not available yet -- the stock and usage data is still being "
+            "prepared. Try again in a few minutes."
         )
     metric = snapshot.watch_row(routed.material_id, routed.plant)
     figures_as_of = snapshot.reference_date if snapshot.reference_date != today else None
@@ -188,10 +188,10 @@ def _assessment_for(
         # a row of zeros, which would read as "you have none and consume none"
         # when the truth is "we have never seen this part".
         raise SessionError(
-            f"{routed.material_id} at plant {routed.plant} is OAR but has no WATCH "
-            "row -- no movement or ledger activity has ever been recorded for it, "
-            "so there is no stock or cover position to show. This is a data gap, "
-            "not a zero."
+            f"{routed.material_id} at plant {routed.plant} is an OAR part with no "
+            "recorded stock movement or usage -- nothing has ever been received, "
+            "issued or reserved for it here, so there is no stock or cover position "
+            "to show. This is a data gap, not a zero."
         )
 
     return build_i13_assessment(
