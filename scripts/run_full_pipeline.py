@@ -34,13 +34,16 @@ syntax.
 """
 
 import argparse
+import logging
 import os
 import sys
 from decimal import Decimal
 
 from sqlalchemy import case, func, select, true
 
+from app.core.config import get_settings
 from app.core.db import get_sessionmaker
+from app.core.logging import configure_logging
 from app.models.i7_features import MaterialFeature
 from app.models.i7_forecast import Forecast
 from app.models.i7_inventory import InventoryCalculation
@@ -686,6 +689,13 @@ def main() -> int:
         help="show only material-plants that produced no numbers",
     )
     arguments = parser.parse_args()
+
+    # The phases report progress through logging (forecasting checkpoints, the
+    # recommendation explanations' "N of M done"); without this a long run
+    # prints nothing until it ends. The AI client's one-line-per-call token log
+    # is held back: thousands of those would bury the progress lines.
+    configure_logging(get_settings())
+    logging.getLogger("app.integrations.ai").setLevel(logging.WARNING)
 
     skip = {name.strip() for name in arguments.skip.split(",") if name.strip()}
     unknown = skip - set(PHASES)
