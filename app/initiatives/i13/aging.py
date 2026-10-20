@@ -30,13 +30,15 @@ def months_before(reference: date, months: int) -> date:
     return date(year, month, day)
 
 
-def classify_aging_band(days_since_last_movement: int | None, thresholds: AgingThresholds) -> AgingBand:
-    if days_since_last_movement is None:
-        # Never moved: at least as aged as "more than slow_max_days".
+def classify_aging_band(days_since_last_issue: int | None, thresholds: AgingThresholds) -> AgingBand:
+    """SOP 3.15: the band is measured from the last ISSUE (201/261, net of
+    reversals) -- a goods receipt does not reset it. ``None`` is never issued."""
+    if days_since_last_issue is None:
+        # Never issued: at least as aged as "more than slow_max_days".
         return AgingBand.NON_MOVING
-    if days_since_last_movement <= thresholds.fast_max_days:
+    if days_since_last_issue <= thresholds.fast_max_days:
         return AgingBand.FAST
-    if days_since_last_movement <= thresholds.slow_max_days:
+    if days_since_last_issue <= thresholds.slow_max_days:
         return AgingBand.SLOW
     return AgingBand.NON_MOVING
 

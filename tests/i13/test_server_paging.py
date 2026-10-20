@@ -84,12 +84,15 @@ LEDGER = [
 ]
 
 WATCH = [
-    watch_metric(material="W1", last_movement_date=date(2024, 1, 1)),
-    watch_metric(material="W2", last_movement_date=None, aging_band=AgingBand.NON_MOVING),
-    watch_metric(material="W3", last_movement_date=date(2026, 9, 1),
+    watch_metric(material="W1", last_issue_date=date(2024, 1, 1)),
+    # Never issued, though stock was received last week: a receipt does not
+    # make it recent (SOP 3.15 measures from the last issue).
+    watch_metric(material="W2", last_issue_date=None, last_movement_date=date(2026, 10, 14),
+                 aging_band=AgingBand.NON_MOVING),
+    watch_metric(material="W3", last_issue_date=date(2026, 9, 1),
                  acquired_vs_plan_status=AcquiredVsPlanStatus.ON_PLAN),
-    watch_metric(material="W4", last_movement_date=date(2025, 5, 1), aging_band=AgingBand.NON_MOVING),
-    watch_metric(material="W9", material_scope=MaterialScope.EXCLUDED, last_movement_date=date(2026, 10, 1)),
+    watch_metric(material="W4", last_issue_date=date(2025, 5, 1), aging_band=AgingBand.NON_MOVING),
+    watch_metric(material="W9", material_scope=MaterialScope.EXCLUDED, last_issue_date=date(2026, 10, 1)),
 ]
 
 RESERVATIONS = [
@@ -174,7 +177,7 @@ def test_the_session_filter_keeps_the_same_order(stored):
 # --- WATCH ---------------------------------------------------------------------------
 
 
-def test_watch_most_recent_activity_first_over_oar_only(stored):
+def test_watch_most_recent_issue_first_over_oar_only(stored):
     rows, total = stored.watch(oar_only=True, recent=True)
     assert total == 4
     assert [m.material for m in rows] == ["W3", "W4", "W1", "W2"]

@@ -437,6 +437,8 @@ ALL = Batch("0", "9999999999")
 # it (the old VB rows now read EXCLUDED, not MIN_MAX). Row counts otherwise kept.
 # "lledger" and "watch" re-recorded 2026-10-20 in all three: they now store
 # their filter/sort columns beside the payload (kinds.RECORD_LAYOUT 2). Same rows.
+# "mixed" "watch" re-recorded again the same day: its sort date is the last issue
+# (RECORD_LAYOUT 3), not the last movement. Same rows.
 EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
     "mixed": {
         "attrib": (294, "214738b080d76802"), "chain": (286, "636c21f9a8b8679e"),
@@ -444,7 +446,7 @@ EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
         "lledger": (286, "633eac345001474d"), "movement": (186, "085dd35e7ee606ce"),
         "oarkey": (87, "cafeb8032728b5cb"), "reclass": (87, "4b90da3bcd2f2450"),
         "rledger": (294, "9bb3976d183c3a0e"), "usage": (134, "a4ef4d00cc908924"),
-        "watch": (192, "9b4a414134d20508"),
+        "watch": (192, "09f4fe57ae4967f2"),
     },
     "giant_procurement": {
         "attrib": (3, "f77f2830ef44df9f"), "chain": (1483, "17e55edc51ed3706"),
