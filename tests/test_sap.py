@@ -368,10 +368,13 @@ class TestContract:
         against both new names on the same day. Set membership is unaffected.
         """
         sets = contract()
-        assert len(sets) == 21
+        # 21 across the two renamed services, plus gate pass's three since
+        # 16-Oct-2026 (ZMM_KPI02_GP_SRV, re-scoped).
+        assert len(sets) == 24
         assert {s.service for s in sets.values()} == {
             "ZMM_KPI02_ADD_SRV",
             "ZMM_KPI02_TAB_SRV",
+            "ZMM_KPI02_GP_SRV",
         }
 
     def test_every_set_has_a_key_and_properties(self) -> None:

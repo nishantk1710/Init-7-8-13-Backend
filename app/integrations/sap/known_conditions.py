@@ -22,13 +22,17 @@ from __future__ import annotations
 
 # --- Shape ----------------------------------------------------------------
 
-EXPECTED_ENTITY_SET_COUNT = 21
+EXPECTED_ENTITY_SET_COUNT = 24
 
 # Renamed by SAP 22-Sep-2026: ZVZI_KPI02_SHARED_SRV -> ZMM_KPI02_ADD_SRV,
 # ZMM_KPI02_SRV -> ZMM_KPI02_TAB_SRV. Verified against live $metadata the same
 # day (data-generator/discovery/entity_sets.csv) and again via a direct probe
-# of both new names. Set membership and count (21) are unaffected.
-SERVICES = frozenset({"ZMM_KPI02_ADD_SRV", "ZMM_KPI02_TAB_SRV"})
+# of both new names. Set membership and count (21) were unaffected.
+#
+# ZMM_KPI02_GP_SRV (gate pass: GatePassHeaderSet, GatePassItemSet,
+# GatePassReturnSet) joined on 16-Oct-2026 when the team re-scoped gate pass;
+# it had been live since 22-Sep and deliberately left out. 21 + 3 = 24.
+SERVICES = frozenset({"ZMM_KPI02_ADD_SRV", "ZMM_KPI02_TAB_SRV", "ZMM_KPI02_GP_SRV"})
 
 # Registered and responding, but holding no rows. Real answers, not failures --
 # the client reports them as empty rather than erroring, and the seed loads
@@ -107,20 +111,21 @@ PURCHASE_REQUISITION_KEY = ("Banfn", "Bnfpo")
 DECLARED_FLAGS_ARE_UNIFORMLY_FALSE = True
 DECLARED_FLAGS = ("filterable", "sortable", "creatable", "updatable")
 
-# Counted across BOTH services. A value longer than its declared maximum means
+# Counted across ALL services. A value longer than its declared maximum means
 # something upstream truncated or corrupted it.
-# Re-measured against the 2026-10-07 $metadata (data-generator/discovery/
-# properties.csv, 251 rows across the same 21 in-scope sets and two services;
-# GatePass and ZMM_GET_CSV_SRV are not in this file, see cpi_discovery.py
-# DESCOPED_SERVICES). Up from 237: ReservationItemSet +9 (Bednr, Charg, Ebeln,
-# Ebelp, Lifnr, Matkl, Shkzg, Sobkz, waers), MonthlyMovementStatisticSet +2
-# (Vrsio, Ssour, both key), MaterialValuationSet +1 (Bwtar, key),
-# MaterialPlantSet +1 (Beskz), VendorSet +1 (Land1). Precision fell from 17 to
-# 6 because the date and quantity fields SAP re-typed to Edm.String carry none.
-PROPERTIES_WITH_MAX_LENGTH = 229
+# Re-measured against the 2026-10-16 $metadata (data-generator/discovery/
+# properties.csv, 320 rows across 24 sets and three services). Up from 251 on
+# 2026-10-07: the gate-pass service's three sets (+55: 21 + 22 + 12, all with
+# a length), and the dates SAP added in the October transport -- Crdat, Erdat
+# and Rsdat on ReservationItemSet, Ersda on MaterialSet, MaterialDescriptionSet,
+# MaterialPlantSet, StorageLocationStockSet, BatchStockSet and
+# MonthlyMovementStatisticSet, Erdat on InfoRecordSet, InfoRecordOrgSet and
+# VendorSet, Udate and Utime on ChangeDocItemSet. Precision stays at 6: the
+# new fields are Edm.String and carry none.
+PROPERTIES_WITH_MAX_LENGTH = 292
 PROPERTIES_WITH_PRECISION = 6
-PROPERTIES_WITH_LABEL = 251  # every one, which is what makes labels usable
-TOTAL_PROPERTIES = 251
+PROPERTIES_WITH_LABEL = 320  # every one, which is what makes labels usable
+TOTAL_PROPERTIES = 320
 
 # SAP's business labels are the same words the July extract uses as column
 # headers, which is what makes them worth capturing beyond W2.5's requirement.

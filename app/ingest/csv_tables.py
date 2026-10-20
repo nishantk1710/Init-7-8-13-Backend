@@ -229,12 +229,14 @@ CSV_TABLES: tuple[CsvTable, ...] = (
     # the rest. SAP has delivered all three since 30-Sep, in the wide layout
     # and with exact counts (304 / 319 / 24 on 06-Oct). The wide window keeps
     # the check EXACT, which is what those deliveries met.
+    # Back in scope 2026-10-16: the three sets carry ZzdeltaDate and the
+    # hourly delta merges into these tables like the rest.
     CsvTable("ZMM_GP_HDR", "GatePassHeaderSet", windowed=False,
-             note="gate pass header; evidence only", count_service="ZMM_KPI02_GP_SRV"),
+             note="gate pass header", count_service="ZMM_KPI02_GP_SRV"),
     CsvTable("ZMM_GP_ITEM", "GatePassItemSet", windowed=False,
-             note="gate pass items; evidence only", count_service="ZMM_KPI02_GP_SRV"),
+             note="gate pass items", count_service="ZMM_KPI02_GP_SRV"),
     CsvTable("ZMM_GP_IN", "GatePassReturnSet", windowed=False,
-             note="gate pass returns; evidence only", count_service="ZMM_KPI02_GP_SRV"),
+             note="gate pass returns", count_service="ZMM_KPI02_GP_SRV"),
 )
 
 BY_TABLE: dict[str, CsvTable] = {t.sap_table: t for t in CSV_TABLES}

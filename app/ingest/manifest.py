@@ -292,6 +292,17 @@ DELTAS: dict[str, Delta] = {
     "ReservationItemSet": Delta(
         field="Crdat", literal=LITERAL_DATS, via=("GoodsMovementItemSet",), via_key="Rsnum"
     ),
+    # Gate pass (ZMM_KPI02_GP_SRV, back in scope 2026-10-16). ZzdeltaDate is
+    # SAP's "delta date" on all three: the header's last-changed date when it
+    # has been changed and its creation date when not, so a status change
+    # (released, returned, cancelled) moves it; an item's is its header's, or
+    # its own out date when that is later; a return's is its own in date.
+    # Measured on DEV (2026-10-15) and QA (2026-10-16): every header that was
+    # ever changed carries the change date. A gate pass with no creation date
+    # at all carries '00000000' and stays with the full extract.
+    "GatePassHeaderSet": Delta(field="ZzdeltaDate", literal=LITERAL_DATS),
+    "GatePassItemSet": Delta(field="ZzdeltaDate", literal=LITERAL_DATS),
+    "GatePassReturnSet": Delta(field="ZzdeltaDate", literal=LITERAL_DATS),
     # MBEW has no date and is a price table: refreshed whole, weekly, by the
     # scheduler's OData full pull (ODATA_FULL_PULL_SETS). Not a delta.
 }

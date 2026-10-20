@@ -20,3 +20,6 @@ ZMM_KPI02_TAB_SRV,ChangeDocItemSet,ChangeDocItem,Changenr;Chngind;Fname;Objectcl
 ZMM_KPI02_TAB_SRV,BatchStockSet,BatchStock,Charg;Lgort;Matnr;Werks,6,false
 ZMM_KPI02_TAB_SRV,MonthlyMovementStatisticSet,MonthlyMovementStatistic,Lgort;Matnr;Spmon;Ssour;Vrsio;Werks,15,false
 ZMM_KPI02_TAB_SRV,StockMovementStatisticSet,StockMovementStatistic,Lgort;Matnr;Werks,14,false
+ZMM_KPI02_GP_SRV,GatePassHeaderSet,GatePassHeader,ZzgpNo;Zzyear,21,false
+ZMM_KPI02_GP_SRV,GatePassItemSet,GatePassItem,ZzgpNo;Zzposnr;Zzyear,22,false
+ZMM_KPI02_GP_SRV,GatePassReturnSet,GatePassReturn,Zcount;ZzgpNo;Zzposnr;Zzyear,12,false

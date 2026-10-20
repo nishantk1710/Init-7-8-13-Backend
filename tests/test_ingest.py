@@ -148,10 +148,11 @@ def test_table_name_handles_runs_of_capitals() -> None:
 
 def test_every_discovered_set_has_a_spec() -> None:
     """Derived, not written down -- a set added to discovery appears here."""
-    assert len(specs()) == 21
+    assert len(specs()) == 24
     assert {s.service for s in specs()} == {
         "ZMM_KPI02_ADD_SRV",
         "ZMM_KPI02_TAB_SRV",
+        "ZMM_KPI02_GP_SRV",
     }
 
 
@@ -631,6 +632,10 @@ def test_the_sets_sap_dated_in_october_read_the_dates_they_were_given() -> None:
         "InfoRecordOrgSet": ("Erdat", LITERAL_DATS),
         "VendorSet": ("Erdat", LITERAL_DATS),
         "ReservationItemSet": ("Crdat", LITERAL_DATS),
+        # Gate pass, back in scope 2026-10-16.
+        "GatePassHeaderSet": ("ZzdeltaDate", LITERAL_DATS),
+        "GatePassItemSet": ("ZzdeltaDate", LITERAL_DATS),
+        "GatePassReturnSet": ("ZzdeltaDate", LITERAL_DATS),
     }
     measured = delta_support()
     for name, (field, literal) in expected.items():
@@ -1063,6 +1068,7 @@ def test_only_deltas_that_can_run_are_runnable(monkeypatch) -> None:
         "MaterialSet", "MaterialDescriptionSet", "MaterialPlantSet",
         "StorageLocationStockSet", "BatchStockSet", "InfoRecordSet", "InfoRecordOrgSet",
         "VendorSet", "ReservationItemSet",
+        "GatePassHeaderSet", "GatePassItemSet", "GatePassReturnSet",
     }
     assert spec_for("MaterialValuationSet").runnable_delta is None
 
