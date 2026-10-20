@@ -456,8 +456,8 @@ class BatchReservationRepository:
 def scope_index(db: Session, work: WorkTables, batch: Batch) -> dict[tuple[str, str], str | None]:
     """``fetch_material_scope_index`` for one batch."""
     rows = db.execute(
-        text(f"SELECT material, plant, mrp_type FROM {work.marc} WHERE {batch.predicate()}"),
+        text(f"SELECT material, plant, mrp_controller FROM {work.marc} WHERE {batch.predicate()}"),
         batch.params(),
     ).fetchall()
-    # Blank stays "" (OAR), distinct from a missing pair (None) -- as there.
-    return {(r.material.strip(), r.plant.strip()): (r.mrp_type or "").strip() for r in rows}
+    # Blank stays "", distinct from a missing pair (None) -- as there.
+    return {(r.material.strip(), r.plant.strip()): (r.mrp_controller or "").strip() for r in rows}

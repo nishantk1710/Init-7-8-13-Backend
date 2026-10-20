@@ -317,7 +317,7 @@ def _build_batch(
         as_of=as_of,
     )
     band_by_key = {(m.material, m.plant): m.aging_band.value for m in movement_metrics}
-    oar_keys = [key for key, dismm in index.items() if classify_material_scope(dismm) is MaterialScope.OAR]
+    oar_keys = [key for key, code in index.items() if classify_material_scope(code) is MaterialScope.OAR]
     for key in sorted(oar_keys):
         band = band_by_key.get(key, AgingBand.NON_MOVING.value)
         stats.band_counts[band] += 1

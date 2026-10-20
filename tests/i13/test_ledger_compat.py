@@ -84,9 +84,9 @@ def test_po_without_reservation_is_full_chain_when_received() -> None:
 
 
 def test_non_oar_material_excluded_by_default() -> None:
-    procurement_repo = FakeProcurementRepository(prs=[_pr("2000000004", "10", "MAT-VB", "1300", "5")])
+    procurement_repo = FakeProcurementRepository(prs=[_pr("2000000004", "10", "MAT-POD", "1300", "5")])
     reservation_repo = FakeReservationRepository()
-    scope = {("MAT-VB", "1300"): "VB"}
+    scope = {("MAT-POD", "1300"): "POD"}
 
     entries = build_legacy_ledger(procurement_repo, reservation_repo, scope, plant="1300")
     assert entries == []

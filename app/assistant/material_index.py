@@ -21,11 +21,11 @@ queries restrict them, so searching here gives the same answer:
   change which materials a non-English word finds.
 * ZMM065 (``criticality_current``) -- material, plant, description at in-scope
   plants.
-* MARC (``n_marc``) -- material, plant, MRP type at in-scope plants.
+* MARC (``n_marc``) -- material, plant, MRP controller at in-scope plants.
 * MARD (``n_mard``) -- material, plant at in-scope plants.
 
 Material numbers are normalised once, at load, and each is one string shared by
-every source. Held as plain tuples, plant codes and MRP types shared, and an
+every source. Held as plain tuples, plant codes and MRP controllers shared, and an
 upper-case copy kept only where SAP's text is not already upper case. Measured
 with tracemalloc on synthetic rows (one MAKT text, one MARC and two MARD rows
 per material, a ZMM065 row per four): ~0.6 KB per material, so ~30 MB at
@@ -94,7 +94,7 @@ def _upper(value: str) -> str:
 
 
 def _shared(value: str) -> str:
-    """One object per distinct plant code / MRP type, however many rows name it."""
+    """One object per distinct plant code / MRP controller, however many rows name it."""
     return sys.intern(value)
 
 
@@ -105,7 +105,7 @@ class MaterialIndex:
     makt: dict[str, tuple[MaktText, ...]] = field(default_factory=dict)
     report: list[ReportRow] = field(default_factory=list)
     marc: dict[str, tuple[tuple[str, str], ...]] = field(default_factory=dict)
-    """``{material: ((plant, MRP type), ...)}``; a blank DISMM stays ``""``."""
+    """``{material: ((plant, MRP controller), ...)}``; a blank DISPO stays ``""``."""
     mard: dict[str, tuple[str, ...]] = field(default_factory=dict)
     """``{material: (plant, ...)}``."""
     held: list[str] = field(default_factory=list)
@@ -183,9 +183,9 @@ def load_all(db: Session) -> tuple[MaterialIndex, bool]:
 
     rows = read(
         "n_marc",
-        # Deleted (LVORM) rows give no MRP type, so the search never hints OAR
-        # for them; the plant still comes from MARD below.
-        f"SELECT material, plant, mrp_type FROM n_marc mc WHERE plant <> '' AND {sql_predicate('plant')} "
+        # Deleted (LVORM) rows give no MRP controller, so the search never hints
+        # OAR for them; the plant still comes from MARD below.
+        f"SELECT material, plant, mrp_controller FROM n_marc mc WHERE plant <> '' AND {sql_predicate('plant')} "
         f"{not_deleted_predicate('mc')}",
     )
     marc: dict[str, dict[str, str]] = {}
@@ -193,7 +193,7 @@ def load_all(db: Session) -> tuple[MaterialIndex, bool]:
         material = number(row.material)
         plant = (row.plant or "").strip()
         if material and plant:
-            marc.setdefault(material, {})[_shared(plant)] = _shared((row.mrp_type or "").strip())
+            marc.setdefault(material, {})[_shared(plant)] = _shared((row.mrp_controller or "").strip())
     index.marc = {material: tuple(plants.items()) for material, plants in marc.items()}
 
     rows = read(

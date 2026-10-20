@@ -43,7 +43,7 @@ def _build(*, reservations=(), prs=(), po_items=(), gr_rows=(), gi_rows=(), scop
     movement_repo = FakeMovementRepository()
     procurement_repo = FakeProcurementRepository(prs=list(prs), po_items=list(po_items), gr_rows=list(gr_rows))
     reservation_repo = FakeReservationRepository(reservations=list(reservations), gi_rows=list(gi_rows))
-    scope_index = scope_index if scope_index is not None else {("MAT1", "1000"): "ND"}
+    scope_index = scope_index if scope_index is not None else {("MAT1", "1000"): "OAR"}
     return build_exception_queue(movement_repo, procurement_repo, reservation_repo, scope_index, i13_config, data_dir, as_of=AS_OF)
 
 
@@ -88,7 +88,7 @@ def test_plan_breach_skipped_when_issuance_evidence_exists(data_dir: Path, i13_c
 def test_no_plan_for_oar_reservation_without_a_plan(data_dir: Path, i13_config) -> None:
     exceptions = _build(
         reservations=[_reservation()], prs=[_pr()], plan_rows=[],
-        scope_index={("MAT1", "1000"): "ND"}, data_dir=data_dir, i13_config=i13_config,
+        scope_index={("MAT1", "1000"): "OAR"}, data_dir=data_dir, i13_config=i13_config,
     )
     no_plan = [e for e in exceptions if e.type is ExceptionType.NO_PLAN]
     assert len(no_plan) == 1
@@ -98,7 +98,7 @@ def test_no_plan_for_oar_reservation_without_a_plan(data_dir: Path, i13_config) 
 def test_no_plan_not_raised_for_non_oar_material(data_dir: Path, i13_config) -> None:
     exceptions = _build(
         reservations=[_reservation()], prs=[_pr()], plan_rows=[],
-        scope_index={("MAT1", "1000"): "VB"}, data_dir=data_dir, i13_config=i13_config,
+        scope_index={("MAT1", "1000"): "POD"}, data_dir=data_dir, i13_config=i13_config,
     )
     assert not [e for e in exceptions if e.type is ExceptionType.NO_PLAN]
 
@@ -140,6 +140,6 @@ def test_gr_not_issued_not_raised_for_a_non_oar_material(data_dir: Path, i13_con
     gr_row = {"Ebeln": "4500000000", "Ebelp": "0010", "Bwart": "101", "Menge": Decimal("10"), "BudatMkpf": AS_OF - timedelta(days=45)}
     exceptions = _build(
         reservations=[_reservation()], prs=[_pr()], po_items=[po_item], gr_rows=[gr_row],
-        scope_index={("MAT1", "1000"): "VB"}, plan_rows=[], data_dir=data_dir, i13_config=i13_config,
+        scope_index={("MAT1", "1000"): "POD"}, plan_rows=[], data_dir=data_dir, i13_config=i13_config,
     )
     assert not [e for e in exceptions if e.type is ExceptionType.GR_NOT_ISSUED_30_DAY]

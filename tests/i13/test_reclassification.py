@@ -43,7 +43,7 @@ def _candidates(repo, scope_index, config, *, criticality=None, hod=None, **kwar
 def test_more_than_four_consumptions_is_a_candidate(i13_config) -> None:
     movements = [_movement("MAT1", "1000", days, i) for i, days in enumerate([10, 40, 70, 100, 130])]
     repo = FakeMovementRepository(movements=movements)
-    scope_index = {("MAT1", "1000"): "ND"}
+    scope_index = {("MAT1", "1000"): "OAR"}
 
     candidate = _candidates(repo, scope_index, i13_config)[0]
     assert candidate.consumption_count_12m == 5
@@ -56,7 +56,7 @@ def test_four_consumptions_does_not_satisfy_greater_than_four(i13_config) -> Non
     """The SOP rule is strictly '> 4', not '>= 4' -- exactly 4 must not flag."""
     movements = [_movement("MAT1", "1000", days, i) for i, days in enumerate([10, 40, 70, 100])]
     repo = FakeMovementRepository(movements=movements)
-    scope_index = {("MAT1", "1000"): "PD"}
+    scope_index = {("MAT1", "1000"): "OAR"}
 
     candidate = _candidates(repo, scope_index, i13_config)[0]
     assert candidate.consumption_count_12m == 4
@@ -66,7 +66,7 @@ def test_four_consumptions_does_not_satisfy_greater_than_four(i13_config) -> Non
 
 def test_non_oar_material_is_excluded(i13_config) -> None:
     repo = FakeMovementRepository()
-    scope_index = {("MAT2", "1000"): "VB"}
+    scope_index = {("MAT2", "1000"): "POD"}
 
     candidates = _candidates(repo, scope_index, i13_config)
     assert all(c.material != "MAT2" for c in candidates)
@@ -80,7 +80,7 @@ def test_oar_material_with_no_movement_history_is_still_a_candidate_row() -> Non
 
     config = build_i13_config(Settings())
     repo = FakeMovementRepository()
-    scope_index = {("MAT1", "1000"): "ND"}
+    scope_index = {("MAT1", "1000"): "OAR"}
 
     candidate = _candidates(repo, scope_index, config)[0]
     assert candidate.consumption_count_12m == 0
@@ -89,7 +89,7 @@ def test_oar_material_with_no_movement_history_is_still_a_candidate_row() -> Non
 
 def test_critical_material_is_a_candidate_despite_low_consumption(i13_config) -> None:
     repo = FakeMovementRepository(movements=[_movement("MAT1", "1000", d, i) for i, d in enumerate([10, 40])])
-    scope_index = {("MAT1", "1000"): "ND"}
+    scope_index = {("MAT1", "1000"): "OAR"}
     criticality = FakeCriticalitySource({("MAT1", "1000"): "CRITICAL"})
 
     candidate = _candidates(repo, scope_index, i13_config, criticality=criticality)[0]
@@ -101,7 +101,7 @@ def test_critical_material_is_a_candidate_despite_low_consumption(i13_config) ->
 
 def test_hod_justified_material_is_a_candidate_despite_low_consumption(i13_config) -> None:
     repo = FakeMovementRepository(movements=[_movement("MAT1", "1000", d, i) for i, d in enumerate([10, 40])])
-    scope_index = {("MAT1", "1000"): "ND"}
+    scope_index = {("MAT1", "1000"): "OAR"}
     hod = FakeHodJustificationProvider({("MAT1", "1000"): True})
 
     candidate = _candidates(repo, scope_index, i13_config, hod=hod)[0]
@@ -114,7 +114,7 @@ def test_hod_justified_material_is_a_candidate_despite_low_consumption(i13_confi
 def test_all_three_indicators_retain_every_applicable_reason(i13_config) -> None:
     movements = [_movement("MAT1", "1000", d, i) for i, d in enumerate([10, 40, 70, 100, 130, 160])]
     repo = FakeMovementRepository(movements=movements)
-    scope_index = {("MAT1", "1000"): "ND"}
+    scope_index = {("MAT1", "1000"): "OAR"}
     criticality = FakeCriticalitySource({("MAT1", "1000"): "CRITICAL"})
     hod = FakeHodJustificationProvider({("MAT1", "1000"): True})
 
@@ -127,7 +127,7 @@ def test_all_three_indicators_retain_every_applicable_reason(i13_config) -> None
 
 def test_no_evidence_on_any_indicator_is_not_a_candidate(i13_config) -> None:
     repo = FakeMovementRepository()
-    scope_index = {("MAT1", "1000"): "ND"}
+    scope_index = {("MAT1", "1000"): "OAR"}
     criticality = FakeCriticalitySource({("MAT1", "1000"): "NORMAL"})
     hod = FakeHodJustificationProvider({("MAT1", "1000"): False})
 
@@ -144,7 +144,7 @@ def test_unavailable_hod_source_does_not_block_a_candidate_from_other_evidence(i
     FREQUENT_CONSUMPTION alone, but data_available reflects the gap."""
     movements = [_movement("MAT1", "1000", d, i) for i, d in enumerate([10, 40, 70, 100, 130, 160])]
     repo = FakeMovementRepository(movements=movements)
-    scope_index = {("MAT1", "1000"): "ND"}
+    scope_index = {("MAT1", "1000"): "OAR"}
     criticality = FakeCriticalitySource({("MAT1", "1000"): "NORMAL"})
 
     candidate = _candidates(repo, scope_index, i13_config, criticality=criticality)[0]
@@ -158,7 +158,7 @@ def test_unavailable_hod_source_with_no_other_evidence_is_not_confidently_negati
     """count=2, NORMAL, HOD unavailable -> not a candidate today, but this
     must never be reported as proven complete negative evidence."""
     repo = FakeMovementRepository(movements=[_movement("MAT1", "1000", d, i) for i, d in enumerate([10, 40])])
-    scope_index = {("MAT1", "1000"): "ND"}
+    scope_index = {("MAT1", "1000"): "OAR"}
     criticality = FakeCriticalitySource({("MAT1", "1000"): "NORMAL"})
 
     candidate = _candidates(repo, scope_index, i13_config, criticality=criticality)[0]
@@ -169,7 +169,7 @@ def test_unavailable_hod_source_with_no_other_evidence_is_not_confidently_negati
 
 def test_unknown_criticality_is_not_silently_treated_as_critical(i13_config) -> None:
     repo = FakeMovementRepository()
-    scope_index = {("MAT1", "1000"): "ND"}
+    scope_index = {("MAT1", "1000"): "OAR"}
     criticality = FakeCriticalitySource({})  # material entirely absent from the source
 
     candidate = _candidates(repo, scope_index, i13_config, criticality=criticality)[0]
@@ -182,7 +182,7 @@ def test_default_hod_provider_is_unknown_not_a_fabricated_false(i13_config) -> N
     """No hod_provider given -- NullHodJustificationProvider (W6.6 not built
     yet) answers UNKNOWN, never a fabricated False."""
     repo = FakeMovementRepository()
-    scope_index = {("MAT1", "1000"): "ND"}
+    scope_index = {("MAT1", "1000"): "OAR"}
 
     candidates = build_reclassification_candidates(
         repo, scope_index, i13_config, as_of=AS_OF, criticality_source=FakeCriticalitySource()
@@ -194,7 +194,7 @@ def test_default_hod_provider_is_unknown_not_a_fabricated_false(i13_config) -> N
 def test_repeated_execution_with_same_input_is_deterministic(i13_config) -> None:
     movements = [_movement("MAT1", "1000", d, i) for i, d in enumerate([10, 40, 70, 100, 130])]
     repo = FakeMovementRepository(movements=movements)
-    scope_index = {("MAT1", "1000"): "ND"}
+    scope_index = {("MAT1", "1000"): "OAR"}
     criticality = FakeCriticalitySource({("MAT1", "1000"): "CRITICAL"})
     hod = FakeHodJustificationProvider({("MAT1", "1000"): True})
 
@@ -219,7 +219,7 @@ def test_multiple_plants_do_not_double_count_consumption(i13_config) -> None:
         *[_movement("MAT1", "1500", d, i) for i, d in enumerate([20, 50])],
     ]
     repo = FakeMovementRepository(movements=movements)
-    scope_index = {("MAT1", "1000"): "ND", ("MAT1", "1500"): "ND"}
+    scope_index = {("MAT1", "1000"): "OAR", ("MAT1", "1500"): "OAR"}
 
     candidates = {c.plant: c for c in _candidates(repo, scope_index, i13_config)}
     assert candidates["1000"].consumption_count_12m == 3
@@ -228,7 +228,7 @@ def test_multiple_plants_do_not_double_count_consumption(i13_config) -> None:
 
 def test_candidate_carries_as_of_date_threshold_and_generated_at(i13_config) -> None:
     repo = FakeMovementRepository()
-    scope_index = {("MAT1", "1000"): "ND"}
+    scope_index = {("MAT1", "1000"): "OAR"}
 
     candidate = _candidates(repo, scope_index, i13_config)[0]
     assert candidate.as_of_date == AS_OF

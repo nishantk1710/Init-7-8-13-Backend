@@ -13,8 +13,8 @@ so this module calls them and does not re-implement either:
 * **80-series (repairable)** -- ``is_eighty_series`` from
   ``app.initiatives.i8.material_number``, driven by ``I8Settings.series_prefixes``.
 * **OAR (planned on demand)** -- ``classify_material_scope`` from
-  ``app.shared.material_scope``, driven by ``Settings.i13_oar_mrp_types`` over
-  MARC's ``DISMM``. That package's own scope note already named "any
+  ``app.shared.material_scope``, driven by ``Settings.i13_oar_mrp_controllers``
+  over MARC's MRP controller (``DISPO``). That package's own scope note already named "any
   reservation-time assistant/router" as an intended consumer.
 
 A router that re-derived either rule would drift from the register and the
@@ -24,12 +24,13 @@ material in front of a user.
 The overlap, and why I08 wins
 -----------------------------
 Nothing prevents a material from being both 80-series *and* OAR -- the two rules
-read different fields (the material number, and MARC's MRP type) and neither
+read different fields (the material number, and MARC's MRP controller) and neither
 excludes the other. So a precedence is needed, and picking one silently would
 bury a business decision in a conditional.
 
 **This is not an edge case. Measured against the seeded extract on 21-Sep, 2,294
-of the 2,350 80-series material+plant rows in MARC -- 97.6% -- are also OAR.**
+of the 2,350 80-series material+plant rows in MARC -- 97.6% -- were also OAR**
+under the MRP-type rule of the time (the DISPO rule of 20 Oct is far narrower).
 So precedence is not a tie-breaker for a rare collision; it is the rule that
 decides which flow essentially every repairable spare gets. It deserved
 measuring before being chosen, and it is recorded here so nobody has to re-derive
@@ -87,8 +88,8 @@ class RoutedFlow:
 
     Carries its inputs rather than just its answer. A requester who is shown the
     wrong flow -- or no flow -- asks "why?", and the answer has to be
-    reconstructable from the record months later, when the MRP type in MARC may
-    have changed and the configuration with it.
+    reconstructable from the record months later, when the MRP controller in
+    MARC may have changed and the configuration with it.
     """
 
     flow: Flow
@@ -105,9 +106,15 @@ class RoutedFlow:
     """The I13 classification. ``EXCLUDED`` also covers "MARC has no row"."""
 
     mrp_type: str | None
-    """The raw DISMM the scope was classified from. ``""`` where MARC has a row
-    with no MRP type (classified OAR); ``None`` where MARC has no row for this
-    material at this plant, which is a data gap rather than a classification."""
+    """MARC's MRP type (DISMM) -- recorded and shown, no longer the OAR rule.
+    ``""`` where MARC has a row with no MRP type; ``None`` where MARC has no
+    (undeleted) row for this material at this plant."""
+
+    mrp_controller: str | None = None
+    """MARC's MRP controller (DISPO), which the scope was classified from: OAR
+    when it is ``OAR``. ``""`` where MARC has a row with none; ``None`` where
+    MARC has no row, which is a data gap rather than a classification. Not
+    stored on the session -- a session rebuilt from its record has ``None``."""
 
     also_matched: Flow | None = None
     """Set when both predicates matched and precedence decided it. The flow that
@@ -127,7 +134,7 @@ class RoutedFlow:
         """One sentence, for the session record and for a person asking why."""
         if self.flow is Flow.I08:
             both = (
-                " It is also OAR by MRP type, and the repairable flow takes "
+                " It is also OAR by MRP controller, and the repairable flow takes "
                 "precedence."
                 if self.also_matched is Flow.I13
                 else ""
@@ -136,7 +143,7 @@ class RoutedFlow:
         if self.flow is Flow.I13:
             return (
                 f"{self.material_id} is OAR (planned on demand) at plant "
-                f"{self.plant} -- MRP type {self.mrp_type or 'blank'}."
+                f"{self.plant} -- MRP controller {self.mrp_controller or 'blank'}."
             )
         if self.flagged_for_deletion:
             return (
@@ -144,15 +151,15 @@ class RoutedFlow:
                 f"plant {self.plant}, so it is not tracked as OAR. The assistant "
                 "has nothing to say about it."
             )
-        if self.mrp_type is None:
+        if self.mrp_controller is None:
             return (
                 f"{self.material_id} is not 80-series, and MARC has no row "
                 f"for it at plant {self.plant}, so it cannot be classified as "
                 "OAR either. The assistant has nothing to say about it."
             )
         return (
-            f"{self.material_id} is not 80-series, and MRP type "
-            f"{self.mrp_type or 'blank'} is not in the OAR list. The assistant "
+            f"{self.material_id} is not 80-series, and MRP controller "
+            f"{self.mrp_controller or 'blank'} is not OAR. The assistant "
             "has nothing to say about it."
         )
 
@@ -166,7 +173,7 @@ def route(
 ) -> RoutedFlow:
     """Decide the flow for one material at one plant.
 
-    One query -- the MRP type for this material and plant. The 80-series test is
+    One query -- the MRP controller for this material and plant. The 80-series test is
     pure and needs no database at all, so the query is only ever asked for the
     OAR half.
 
@@ -193,9 +200,12 @@ def route(
     # the one that matches. Querying with the padded CPI form would miss every
     # row and route every material to NONE.
     deleted: set[tuple[str, str]] = set()
-    scope_index = fetch_material_scope_index(db, material=material_key, plant=plant_key, deleted=deleted)
-    mrp_type = scope_index.get((material_key, plant_key))
-    material_scope = classify_material_scope(mrp_type)
+    mrp_types: dict[tuple[str, str], str] = {}
+    scope_index = fetch_material_scope_index(
+        db, material=material_key, plant=plant_key, deleted=deleted, mrp_types=mrp_types
+    )
+    mrp_controller = scope_index.get((material_key, plant_key))
+    material_scope = classify_material_scope(mrp_controller)
 
     is_oar = material_scope is MaterialScope.OAR
 
@@ -215,7 +225,8 @@ def route(
         plant=plant_key,
         eighty_series=eighty_series,
         material_scope=material_scope,
-        mrp_type=mrp_type,
+        mrp_type=mrp_types.get((material_key, plant_key)),
+        mrp_controller=mrp_controller,
         also_matched=also_matched,
         flagged_for_deletion=(material_key, plant_key) in deleted,
     )

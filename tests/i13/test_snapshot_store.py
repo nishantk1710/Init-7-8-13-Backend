@@ -31,7 +31,7 @@ M1, M2, M3, M4, M5, M6 = (f"{n:018d}" for n in range(1000000001, 1000000007))
 
 # Every raw column a view or builder reads, SAP vocabulary.
 RAW = {
-    "raw_marc": ["MATNR", "WERKS", "DISMM"],
+    "raw_marc": ["MATNR", "WERKS", "DISMM", "DISPO"],
     "raw_mard": ["MATNR", "WERKS", "LGORT", "LABST"],
     "raw_mkpf": ["MBLNR", "MJAHR", "BUDAT"],
     "raw_mseg": ["MBLNR", "MJAHR", "ZEILE", "BWART", "MATNR", "WERKS", "MENGE", "EBELN", "EBELP", "RSNUM", "RSPOS"],
@@ -46,8 +46,10 @@ RAW = {
 
 ROWS = {
     "raw_marc": [
-        (M1, "1300", "PD"), (M1, "1500", "ND"), (M2, "1500", "PD"), (M3, "1300", "VB"),
-        (M4, "1300", ""), (M5, "1300", "PD"), (M6, "1500", "V1"), (M1, "3000", "PD"),
+        # DISPO (MRP controller) decides OAR; DISMM is carried, not read.
+        (M1, "1300", "PD", "OAR"), (M1, "1500", "ND", "OAR"), (M2, "1500", "PD", "OAR"),
+        (M3, "1300", "VB", "POD"), (M4, "1300", "", ""), (M5, "1300", "PD", "OAR"),
+        (M6, "1500", "V1", "101"), (M1, "3000", "PD", "OAR"),
     ],
     "raw_mard": [
         (M1, "1300", "0001", "10"), (M1, "1300", "0002", "2.5"), (M2, "1500", "0001", "4"),

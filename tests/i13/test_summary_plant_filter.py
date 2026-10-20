@@ -14,13 +14,13 @@ from app.initiatives.i13 import summary as summary_module
 from app.initiatives.i13.models import AgingBand, ExceptionType
 from app.initiatives.i13.summary import summary_from_snapshot
 
-# DISMM per material-plant: ND/PD are OAR, VB is Min-Max (never counted).
+# DISPO per material-plant: OAR is OAR, any other controller (POD) is not.
 SCOPE = {
-    ("M1", "1300"): "PD",
-    ("M2", "1300"): "ND",
-    ("M3", "1300"): "VB",
-    ("M1", "1500"): "PD",
-    ("M4", "1500"): "PD",
+    ("M1", "1300"): "OAR",
+    ("M2", "1300"): "OAR",
+    ("M3", "1300"): "POD",
+    ("M1", "1500"): "OAR",
+    ("M4", "1500"): "OAR",
 }
 # M4/1500 has no movement history, so it is NON_MOVING by definition.
 METRICS = (

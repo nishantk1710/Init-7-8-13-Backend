@@ -19,6 +19,7 @@ from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
 from app.shared.material_scope import MaterialScope, classify_material_scope
+from app.shared.material_scope.deletion import not_deleted_predicate
 from app.shared.plant_scope import sql_predicate
 
 needs_db = pytest.mark.skipif(not get_settings().database_url, reason="DATABASE_URL not set")
@@ -131,7 +132,10 @@ def test_real_mrp_consolidation_case_is_reported_unresolved() -> None:
 def test_oar_scope_excludes_real_non_oar_reservations() -> None:
     with get_sessionmaker()() as session:
         non_oar_material = session.execute(
-            text("SELECT TOP 1 material, plant FROM raw_marc WHERE mrp_type = 'VB'")
+            text(
+                "SELECT TOP 1 material, plant FROM n_marc "
+                f"WHERE COALESCE(mrp_controller, '') NOT IN ('', 'OAR') AND {sql_predicate('plant')}"
+            )
         ).first()
         assert non_oar_material is not None
 
@@ -156,7 +160,7 @@ def test_oar_scope_excludes_real_non_oar_reservations() -> None:
         )
     assert default_entries == []
     if all_entries:
-        assert all(e.material_scope is MaterialScope.MIN_MAX for e in all_entries)
+        assert all(e.material_scope is MaterialScope.EXCLUDED for e in all_entries)
 
 
 @needs_db
@@ -165,13 +169,14 @@ def test_material_scope_index_matches_classify_material_scope() -> None:
     with get_sessionmaker()() as session:
         # In-scope plants only: fetch_material_scope_index returns no row for
         # any other plant, so an unscoped sample would make this a test of the
-        # plant filter instead of the DISMM classification it is for.
+        # plant filter instead of the DISPO classification it is for. Deleted
+        # pairs are left out of the index, so they are left out here too.
         row = session.execute(
             text(
-                "SELECT TOP 1 material, plant, mrp_type FROM raw_marc "
-                f"WHERE mrp_type <> '' AND {sql_predicate('plant')}"
+                "SELECT TOP 1 material, plant, mrp_controller FROM n_marc mc "
+                f"WHERE mrp_controller <> '' AND {sql_predicate('plant')} {not_deleted_predicate('mc')}"
             )
         ).first()
-        assert row is not None, "no in-scope MARC row carries an MRP type"
+        assert row is not None, "no in-scope MARC row carries an MRP controller"
         index = fetch_material_scope_index(session, material=row.material, plant=row.plant)
-    assert classify_material_scope(index[(row.material, row.plant)]) == classify_material_scope(row.mrp_type)
+    assert classify_material_scope(index[(row.material, row.plant)]) == classify_material_scope(row.mrp_controller)

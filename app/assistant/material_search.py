@@ -22,8 +22,8 @@ Where the rows come from, and why there are several sources
 * **Plants** -- MARC (``n_marc``) and MARD (``n_mard``), plus the plants the
   ZMM065 rows name. MARC has **no Gamsberg (1500) rows** in the July extract, so
   a MARC-only spine would never suggest a 1500 material at all.
-* **Flow hint** -- MARC's MRP type only, exactly what the router reads. A pair
-  known only from MARD or ZMM065 has no MRP type and so can only be I08 (by its
+* **Flow hint** -- MARC's MRP controller only, exactly what the router reads. A pair
+  known only from MARD or ZMM065 has no MRP controller and so can only be I08 (by its
   number) or nothing, which is also what the router would say.
 
 ZMM065 is a workbook report, not an extract table, and may not be loaded. A
@@ -95,7 +95,8 @@ class MaterialMatch:
     """``None`` where neither MAKT nor ZMM065 names it. Found by number only."""
 
     flow_hint: Flow
-    mrp_type: str | None
+    mrp_controller: str | None
+    """MARC's DISPO, which the I13 half of ``flow_hint`` is read from."""
 
     @property
     def plant_name(self) -> str | None:
@@ -176,7 +177,7 @@ def search(
     if not materials:
         return []
 
-    mrp_types, pairs = (
+    controllers, pairs = (
         _plants_from_index(index, materials) if index is not None else _plants(db, materials)
     )
     pairs |= {pair for pair in report_pairs if pair[0] in descriptions}
@@ -185,14 +186,14 @@ def search(
     for material, plant in pairs:
         if material not in descriptions:
             continue
-        mrp_type = mrp_types.get((material, plant))
+        mrp_controller = controllers.get((material, plant))
         matches.append(
             MaterialMatch(
                 material_id=material,
                 plant=plant,
                 description=descriptions[material],
-                flow_hint=_flow_hint(material, mrp_type, i8_config),
-                mrp_type=mrp_type,
+                flow_hint=_flow_hint(material, mrp_controller, i8_config),
+                mrp_controller=mrp_controller,
             )
         )
 
@@ -200,11 +201,11 @@ def search(
     return matches[:limit]
 
 
-def _flow_hint(material: str, mrp_type: str | None, i8_config: I8Settings) -> Flow:
+def _flow_hint(material: str, mrp_controller: str | None, i8_config: I8Settings) -> Flow:
     """The router's precedence, over the same two predicates. I08 wins."""
     if is_eighty_series(material, i8_config):
         return Flow.I08
-    if classify_material_scope(mrp_type) is MaterialScope.OAR:
+    if classify_material_scope(mrp_controller) is MaterialScope.OAR:
         return Flow.I13
     return Flow.NONE
 
@@ -336,14 +337,14 @@ def _materials_by_prefix(db: Session, prefix: str) -> list[str]:
 def _plants(
     db: Session, materials: list[str]
 ) -> tuple[dict[tuple[str, str], str | None], set[tuple[str, str]]]:
-    """Every in-scope plant each material is held at, and MARC's MRP type."""
-    mrp_types: dict[tuple[str, str], str | None] = {}
+    """Every in-scope plant each material is held at, and MARC's MRP controller."""
+    controllers: dict[tuple[str, str], str | None] = {}
     pairs: set[tuple[str, str]] = set()
 
     marc = db.execute(
         text(
             f"""
-            SELECT material, plant, mrp_type
+            SELECT material, plant, mrp_controller
             FROM n_marc mc
             WHERE material IN :materials AND plant <> '' AND {sql_predicate("plant")}
               {not_deleted_predicate("mc")}
@@ -353,8 +354,8 @@ def _plants(
     ).fetchall()
     for row in marc:
         key = (normalise(row.material) or "", (row.plant or "").strip())
-        # Blank stays "" -- a blank DISMM is OAR; None means no MARC row.
-        mrp_types[key] = (row.mrp_type or "").strip()
+        # Blank stays "" (not OAR, but MARC has the row); None means no MARC row.
+        controllers[key] = (row.mrp_controller or "").strip()
         pairs.add(key)
 
     mard = db.execute(
@@ -370,7 +371,7 @@ def _plants(
     for row in mard:
         pairs.add((normalise(row.material) or "", (row.plant or "").strip()))
 
-    return mrp_types, {pair for pair in pairs if pair[0] and pair[1]}
+    return controllers, {pair for pair in pairs if pair[0] and pair[1]}
 
 
 # --- the same, from memory ---------------------------------------------------------
@@ -418,12 +419,12 @@ def _plants_from_index(
     index: MaterialIndex, materials: list[str]
 ) -> tuple[dict[tuple[str, str], str | None], set[tuple[str, str]]]:
     """:func:`_plants` over the loaded copy."""
-    mrp_types: dict[tuple[str, str], str | None] = {}
+    controllers: dict[tuple[str, str], str | None] = {}
     pairs: set[tuple[str, str]] = set()
     for material in materials:
-        for plant, mrp_type in index.marc.get(material, ()):
-            mrp_types[(material, plant)] = mrp_type
+        for plant, mrp_controller in index.marc.get(material, ()):
+            controllers[(material, plant)] = mrp_controller
             pairs.add((material, plant))
         for plant in index.mard.get(material, ()):
             pairs.add((material, plant))
-    return mrp_types, pairs
+    return controllers, pairs

@@ -6,7 +6,7 @@ unimplemented stub, and ``app/core/security.py`` documents that
 authentication itself isn't wired in yet). ``ConfigEscalationRecipientProvider``
 is a local/config mapping -- plant -> HOD identity -- read from
 ``Settings.i13_hod_recipients`` (comma-separated ``PLANT:identity`` pairs,
-the same parsing convention as ``Settings.i13_oar_mrp_types``). It is a
+the same parsing convention as ``Settings.i13_oar_mrp_controllers``). It is a
 placeholder for a real DOA mapping, not a modelling of one: this codebase
 has no delegation-of-authority table or hierarchy today.
 
@@ -42,7 +42,7 @@ class ConfigEscalationRecipientProvider:
     @classmethod
     def from_config_string(cls, raw: str) -> "ConfigEscalationRecipientProvider":
         """``raw`` is ``"PLANT:identity,PLANT2:identity2"`` -- the same
-        comma-separated convention ``Settings.i13_oar_mrp_types`` uses.
+        comma-separated convention ``Settings.i13_oar_mrp_controllers`` uses.
         Malformed entries (no ``:``) are skipped, never guessed at."""
         mapping: dict[str, str] = {}
         for pair in raw.split(","):

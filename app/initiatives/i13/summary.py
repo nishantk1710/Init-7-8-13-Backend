@@ -70,8 +70,8 @@ def build_summary(
 
     oar_keys = {
         key
-        for key, dismm in material_scope_index.items()
-        if classify_material_scope(dismm) is MaterialScope.OAR and in_scope(*key)
+        for key, code in material_scope_index.items()
+        if classify_material_scope(code) is MaterialScope.OAR and in_scope(*key)
     }
 
     metrics = compute_all_movement_metrics(
@@ -195,8 +195,8 @@ def _scoped_summary(
 
     oar_keys = {
         key
-        for key, dismm in snapshot.material_scope_index.items()
-        if classify_material_scope(dismm) is MaterialScope.OAR and in_scope(*key)
+        for key, code in snapshot.material_scope_index.items()
+        if classify_material_scope(code) is MaterialScope.OAR and in_scope(*key)
     }
     band_by_key = {(m.material, m.plant): m.aging_band for m in snapshot.movement_metrics}
     band_counts = {AgingBand.FAST: 0, AgingBand.SLOW: 0, AgingBand.NON_MOVING: 0}

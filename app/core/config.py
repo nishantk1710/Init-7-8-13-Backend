@@ -833,17 +833,14 @@ class Settings(BaseSettings):
             raise ValueError("I7_OAR_EXHAUSTIVE_BELOW must not be negative")
         return value
 
-    # Current VZI OAR material-scope ruling (MARC.DISMM), comma-separated.
-    # See app/shared/material_scope/policy.py -- this is shared platform
-    # config, not owned by any single initiative.
-    i13_oar_mrp_types: str = "ND,PD"
-    i13_min_max_mrp_types: str = "VB"
-    # A MARC row whose DISMM is blank also counts as OAR. A blank cannot be
-    # written into the comma list above, hence its own switch. A material+plant
-    # with no MARC row at all is never OAR, whatever this says.
-    i13_oar_include_blank_mrp_type: bool = True
+    # Current VZI OAR material-scope ruling (20 Oct 2026): the MRP controller,
+    # MARC.DISPO, comma-separated. Replaces the earlier MRP type (DISMM) rule.
+    # A blank DISPO, and every code not listed, is not OAR. See
+    # app/shared/material_scope/policy.py -- shared platform config, read by
+    # I13 and the assistant's routing.
+    i13_oar_mrp_controllers: str = "OAR"
     # A material flagged for deletion in SAP -- MARC-LVORM (at the plant) or
-    # MARA-LVORM (client level) = X -- is never OAR, whatever its MRP type
+    # MARA-LVORM (client level) = X -- is never OAR, whatever its MRP controller
     # (UAT, 19 Oct 2026). See app/shared/material_scope/deletion.py.
     i13_exclude_deleted_materials: bool = True
 
@@ -1082,14 +1079,9 @@ class Settings(BaseSettings):
         return tuple(code.strip() for code in self.i7_plants.split(",") if code.strip())
 
     @property
-    def i13_oar_mrp_type_set(self) -> frozenset[str]:
-        """Normalised MRP type codes that count as OAR (in-scope) materials."""
-        return frozenset(code.strip().upper() for code in self.i13_oar_mrp_types.split(",") if code.strip())
-
-    @property
-    def i13_min_max_mrp_type_set(self) -> frozenset[str]:
-        """Normalised MRP type codes that count as Min-Max (stocked) materials."""
-        return frozenset(code.strip().upper() for code in self.i13_min_max_mrp_types.split(",") if code.strip())
+    def i13_oar_mrp_controller_set(self) -> frozenset[str]:
+        """Normalised MRP controller (DISPO) codes that count as OAR materials."""
+        return frozenset(code.strip().upper() for code in self.i13_oar_mrp_controllers.split(",") if code.strip())
 
     @property
     def assistant_justification_reason_category_list(self) -> list[str]:
