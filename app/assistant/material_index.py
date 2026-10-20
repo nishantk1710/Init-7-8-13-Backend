@@ -56,6 +56,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.initiatives.i8.material_number import normalise
+from app.shared.material_scope.deletion import not_deleted_predicate
 from app.shared.plant_scope import sql_predicate
 
 logger = get_logger(__name__)
@@ -182,7 +183,10 @@ def load_all(db: Session) -> tuple[MaterialIndex, bool]:
 
     rows = read(
         "n_marc",
-        f"SELECT material, plant, mrp_type FROM n_marc WHERE plant <> '' AND {sql_predicate('plant')}",
+        # Deleted (LVORM) rows give no MRP type, so the search never hints OAR
+        # for them; the plant still comes from MARD below.
+        f"SELECT material, plant, mrp_type FROM n_marc mc WHERE plant <> '' AND {sql_predicate('plant')} "
+        f"{not_deleted_predicate('mc')}",
     )
     marc: dict[str, dict[str, str]] = {}
     for row in rows or ():

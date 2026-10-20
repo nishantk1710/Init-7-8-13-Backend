@@ -113,6 +113,11 @@ class RoutedFlow:
     """Set when both predicates matched and precedence decided it. The flow that
     did NOT run, kept so the decision stays visible."""
 
+    flagged_for_deletion: bool = False
+    """MARC/MARA-LVORM is set for this material at this plant, so it is not OAR
+    whatever its MRP type (``app.shared.material_scope.deletion``). Kept apart
+    from a missing MARC row so the reason does not call it a data gap."""
+
     @property
     def in_scope(self) -> bool:
         return self.flow is not Flow.NONE
@@ -132,6 +137,12 @@ class RoutedFlow:
             return (
                 f"{self.material_id} is OAR (planned on demand) at plant "
                 f"{self.plant} -- MRP type {self.mrp_type or 'blank'}."
+            )
+        if self.flagged_for_deletion:
+            return (
+                f"{self.material_id} is flagged for deletion in SAP (LVORM) at "
+                f"plant {self.plant}, so it is not tracked as OAR. The assistant "
+                "has nothing to say about it."
             )
         if self.mrp_type is None:
             return (
@@ -181,7 +192,8 @@ def route(
     # 45,409 rows begin with a zero, measured 21-Sep), so the normalised key is
     # the one that matches. Querying with the padded CPI form would miss every
     # row and route every material to NONE.
-    scope_index = fetch_material_scope_index(db, material=material_key, plant=plant_key)
+    deleted: set[tuple[str, str]] = set()
+    scope_index = fetch_material_scope_index(db, material=material_key, plant=plant_key, deleted=deleted)
     mrp_type = scope_index.get((material_key, plant_key))
     material_scope = classify_material_scope(mrp_type)
 
@@ -205,4 +217,5 @@ def route(
         material_scope=material_scope,
         mrp_type=mrp_type,
         also_matched=also_matched,
+        flagged_for_deletion=(material_key, plant_key) in deleted,
     )

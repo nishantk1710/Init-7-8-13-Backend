@@ -56,6 +56,7 @@ from app.core.logging import get_logger
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.material_number import is_eighty_series, normalise
 from app.shared.material_scope import MaterialScope, classify_material_scope
+from app.shared.material_scope.deletion import not_deleted_predicate
 from app.shared.plant_scope import PLANT_NAMES, sql_predicate
 
 logger = get_logger(__name__)
@@ -343,8 +344,9 @@ def _plants(
         text(
             f"""
             SELECT material, plant, mrp_type
-            FROM n_marc
+            FROM n_marc mc
             WHERE material IN :materials AND plant <> '' AND {sql_predicate("plant")}
+              {not_deleted_predicate("mc")}
             """
         ).bindparams(bindparam("materials", expanding=True)),
         {"materials": materials},

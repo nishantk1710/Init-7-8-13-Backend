@@ -27,6 +27,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from app.core.logging import get_logger
+from app.shared.material_scope.deletion import not_deleted_predicate
 from app.shared.plant_scope import sql_predicate
 
 logger = get_logger(__name__)
@@ -92,8 +93,10 @@ def _statements(w: WorkTables) -> list[tuple[str, str, list[str]]]:
     return [
         (
             w.marc,
+            # Materials flagged for deletion (LVORM) are left out here, so the
+            # OAR population every screen reads never contains them.
             (f"SELECT {_key('material')}, {_key('plant')}, mrp_type INTO {w.marc} "
-            f"FROM n_marc WHERE material <> '' AND plant <> '' AND {plant}"),
+            f"FROM n_marc mc WHERE material <> '' AND plant <> '' AND {plant} {not_deleted_predicate('mc')}"),
             ["material, plant"],
         ),
         (
