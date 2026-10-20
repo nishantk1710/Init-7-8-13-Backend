@@ -656,3 +656,28 @@ class SummaryReportResponse(SummaryReportListItem):
     #: for the shape. Stored as generated, never recomputed.
     facts: dict
     narrative: SummaryReportNarrative
+
+
+class LedgerCountsResponse(BaseModel):
+    """The procurement view's header, over every line the filters match."""
+
+    total: int
+    by_linkage_status: dict[str, int]
+
+
+class WatchCountsResponse(BaseModel):
+    """The dashboard's bars and tab badges, over every WATCH row the filters
+    match -- not over a page of them."""
+
+    total: int
+    by_acquired_vs_plan_status: dict[str, int]
+    by_aging_band: dict[str, int]
+
+
+class ActExceptionCountsResponse(BaseModel):
+    """The dashboard's exception-status bar, over the whole queue."""
+
+    total: int
+    by_status: dict[str, int]
+    #: Exceptions with a requester to route to; the rest reach nobody.
+    with_requester: int

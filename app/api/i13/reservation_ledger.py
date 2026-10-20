@@ -14,6 +14,7 @@ from app.api.i13.deps import page, snapshot_or_live, with_material_names
 from app.core.db import get_db
 from app.initiatives.i13.attribution import attribute_consumption
 from app.initiatives.i13.models import LifecycleStatus, ReservationLedgerEntry
+from app.initiatives.i13.ordering import newest_requirement_first
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
 from collections.abc import Mapping
 
@@ -145,6 +146,8 @@ def list_reservation_ledger(
         wanted = session_id.strip().upper()
         linked = {key for key, sid in sessions.items() if sid == wanted}
         entries = [e for e in entries if (e.reservation_number, e.reservation_item) in linked]
+    # Newest requirement date first, as the stored snapshot orders it.
+    entries = newest_requirement_first(entries)
     # The in-memory snapshot holds the same history start; the live path does not know it.
     history_start = snapshot.movement_history_start if snapshot is not None else None
     return [

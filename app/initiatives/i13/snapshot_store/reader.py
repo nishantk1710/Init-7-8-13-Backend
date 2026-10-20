@@ -25,13 +25,14 @@ from functools import cached_property
 from pathlib import Path
 from typing import Any, TypeVar
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.initiatives.i13.config import get_i13_config
 from app.initiatives.i13.exceptions import exception_queue_from
 from app.initiatives.i13.ledger_compat import LegacyLedgerEntry
+from app.initiatives.i13.ordering import newest_requirement_first
 from app.initiatives.i13.models import (
     AgingBand,
     ConsumptionAttribution,
@@ -120,6 +121,20 @@ class SqlSnapshot:
 
     # --- the query every list shares ---------------------------------------
 
+    @staticmethod
+    def _newest_first(column) -> list:
+        """``column`` descending with NULLs last, on SQL Server and Postgres
+        alike (neither takes the other's NULLS LAST spelling)."""
+        return [case((column.is_(None), 1), else_=0), column.desc()]
+
+    def _counts(self, clauses: list, column) -> dict[str, int]:
+        """How many rows matching ``clauses`` hold each value of ``column`` --
+        over every row, not a page of them."""
+        rows = self.db.execute(
+            select(column, func.count()).select_from(R).where(*clauses).group_by(column)
+        ).all()
+        return {value: n for value, n in rows if value is not None}
+
     def _where(
         self,
         kind: str,
@@ -188,17 +203,41 @@ class SqlSnapshot:
         grni: bool | None = None,
         acquired_vs_plan_status=None,
         oar_only=False,
+        recent: bool = False,
         limit=None,
         offset=0,
     ) -> tuple[list[WatchMetric], int]:
+        """``recent`` orders by last goods movement, newest first (a version
+        built before that was stored falls back to material order)."""
+        order = [*self._newest_first(R.d1), R.material, R.plant] if recent else [R.material, R.plant]
         return self._list(
             WatchMetric, kinds.WATCH,
-            order=[R.material, R.plant], limit=limit, offset=offset,
+            order=order, limit=limit, offset=offset,
             plant=plant, material=material, oar_only=oar_only,
             f1=aging_band.upper() if aging_band else None,
             f2=acquired_vs_plan_status.upper() if acquired_vs_plan_status else None,
             f3=None if grni is None else ("Y" if grni else "N"),
         )
+
+    def watch_counts(
+        self, *, plant=None, material=None, aging_band=None, grni: bool | None = None,
+        acquired_vs_plan_status=None, oar_only=False,
+    ) -> dict[str, Any]:
+        """Totals for the dashboard's bars and tab badges, over every WATCH
+        row the filters match -- not over a page of them."""
+        clauses = self._where(
+            kinds.WATCH, plant=plant, material=material, oar_only=oar_only,
+            f1=aging_band.upper() if aging_band else None,
+            f2=acquired_vs_plan_status.upper() if acquired_vs_plan_status else None,
+            f3=None if grni is None else ("Y" if grni else "N"),
+        )
+        by_status = self._counts(clauses, R.f2)
+        by_band = self._counts(clauses, R.f1)
+        return {
+            "total": sum(by_band.values()),
+            "by_acquired_vs_plan_status": by_status,
+            "by_aging_band": by_band,
+        }
 
     def watch_row(self, material: str, plant: str) -> WatchMetric | None:
         return self._one(WatchMetric, kinds.WATCH, material=material, plant=plant)
@@ -222,11 +261,46 @@ class SqlSnapshot:
 
     # --- ledgers -------------------------------------------------------------------
 
-    def legacy_ledger(self, *, plant=None, material=None, oar_only=True, limit=None, offset=0):
-        return self._list(
-            LegacyLedgerEntry, kinds.LLEDGER, limit=limit, offset=offset,
-            plant=plant, material=material, oar_only=oar_only,
+    def _legacy_where(
+        self, *, plant=None, material=None, oar_only=True,
+        procurement_status=None, utilisation_status=None, delivery_status=None,
+    ) -> list:
+        return self._where(
+            kinds.LLEDGER, plant=plant, material=material, oar_only=oar_only,
+            f1=procurement_status.upper() if procurement_status else None,
+            f2=utilisation_status.upper() if utilisation_status else None,
+            f3=delivery_status.upper() if delivery_status else None,
         )
+
+    def legacy_ledger(
+        self, *, plant=None, material=None, oar_only=True,
+        procurement_status=None, utilisation_status=None, delivery_status=None,
+        limit=None, offset=0,
+    ):
+        """Newest first: by PR date, else first goods receipt (kinds.lledger's
+        ``d1``); lines with neither go last, in build order."""
+        rows, total = self._page(
+            self._legacy_where(
+                plant=plant, material=material, oar_only=oar_only, procurement_status=procurement_status,
+                utilisation_status=utilisation_status, delivery_status=delivery_status,
+            ),
+            [*self._newest_first(R.d1), R.seq], limit, offset,
+        )
+        return _items(LegacyLedgerEntry, (r.payload for r in rows)), total
+
+    def legacy_ledger_counts(
+        self, *, plant=None, material=None, oar_only=True,
+        procurement_status=None, utilisation_status=None, delivery_status=None,
+    ) -> dict[str, Any]:
+        """The procurement view's header: lines in total and by linkage status."""
+        by_linkage = self._counts(
+            self._legacy_where(
+                plant=plant, material=material, oar_only=oar_only, procurement_status=procurement_status,
+                utilisation_status=utilisation_status, delivery_status=delivery_status,
+            ),
+            R.text1,
+        )
+        return {"total": sum(by_linkage.values()), "by_linkage_status": by_linkage}
 
     def legacy_entry(self, ledger_id: str, *, oar_only=True) -> LegacyLedgerEntry | None:
         return self._one(
@@ -261,11 +335,15 @@ class SqlSnapshot:
             f1=lifecycle_status, f2=reservation_number or None, f3=pr_number or None, extra=extra,
         )
         if reservation_keys is None:
-            rows, total = self._page(clauses, [R.seq], limit, offset, columns=(R.payload, R.text1))
+            # Newest requirement date first; undated lines last, in build order.
+            rows, total = self._page(
+                clauses, [*self._newest_first(R.d1), R.seq], limit, offset, columns=(R.payload, R.text1)
+            )
             return [(codec.decode(ReservationLedgerEntry, json.loads(r.payload)), r.text1) for r in rows], total
         rows = self.db.execute(select(R.payload, R.text1).where(*clauses).order_by(R.seq)).all()
         entries = [(codec.decode(ReservationLedgerEntry, json.loads(r.payload)), r.text1) for r in rows]
         entries = [(e, s) for e, s in entries if (e.reservation_number, e.reservation_item) in reservation_keys]
+        entries = newest_requirement_first(entries, key=lambda pair: pair[0])
         end = None if limit is None else offset + limit
         return entries[offset:end], len(entries)
 

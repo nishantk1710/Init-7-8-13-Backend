@@ -435,28 +435,30 @@ ALL = Batch("0", "9999999999")
 # blank not OAR): oarkey/reclass 124 -> 87 and exception 203 -> 137 (the None
 # MARC rows are no longer OAR); every kind's oar flag or scope label moved with
 # it (the old VB rows now read EXCLUDED, not MIN_MAX). Row counts otherwise kept.
+# "lledger" and "watch" re-recorded 2026-10-20 in all three: they now store
+# their filter/sort columns beside the payload (kinds.RECORD_LAYOUT 2). Same rows.
 EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
     "mixed": {
         "attrib": (294, "214738b080d76802"), "chain": (286, "636c21f9a8b8679e"),
         "exception": (137, "8bb3e45bd8f2e431"), "grni": (35, "cc064da9a493ed3f"),
-        "lledger": (286, "eddc61ad0c85f7a5"), "movement": (186, "085dd35e7ee606ce"),
+        "lledger": (286, "633eac345001474d"), "movement": (186, "085dd35e7ee606ce"),
         "oarkey": (87, "cafeb8032728b5cb"), "reclass": (87, "4b90da3bcd2f2450"),
         "rledger": (294, "9bb3976d183c3a0e"), "usage": (134, "a4ef4d00cc908924"),
-        "watch": (192, "f2a1ec8533592b4e"),
+        "watch": (192, "9b4a414134d20508"),
     },
     "giant_procurement": {
         "attrib": (3, "f77f2830ef44df9f"), "chain": (1483, "17e55edc51ed3706"),
-        "exception": (2, "635263fdeb4ddacc"), "lledger": (1483, "c4922bcfb0283472"),
+        "exception": (2, "635263fdeb4ddacc"), "lledger": (1483, "e52e170a109ac7ea"),
         "movement": (1, "e888732abb0b5eb0"), "oarkey": (1, "34de90e00df89cf2"),
         "reclass": (1, "796ae91ff3f6fa23"), "rledger": (3, "3e636498cefa3ea8"),
-        "usage": (1, "ed89b5283468661c"), "watch": (1, "fa4db6f7a742ecab"),
+        "usage": (1, "ed89b5283468661c"), "watch": (1, "5ed9bb4c2ae856d7"),
     },
     "giant_reservations": {
         "attrib": (4481, "172a43e538fb60e0"), "chain": (12, "441a698e4314a2ad"),
-        "exception": (4434, "4268ba8060c97795"), "lledger": (12, "cdfe9465332faf23"),
+        "exception": (4434, "4268ba8060c97795"), "lledger": (12, "1f4d08631e05f3f6"),
         "movement": (1, "145d27f46ec8471e"), "oarkey": (1, "702ce6717c803e00"),
         "reclass": (1, "99733b38e83d2030"), "rledger": (4481, "906ccc961d424b9e"),
-        "usage": (1, "4db03c5965f3dd07"), "watch": (1, "f00d6be52232d9fe"),
+        "usage": (1, "4db03c5965f3dd07"), "watch": (1, "95046445439c7ae5"),
     },
 }
 

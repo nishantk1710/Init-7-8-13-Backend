@@ -184,6 +184,37 @@ class SqlExceptionRepository:
         )
         return int(self._session.execute(stmt).scalar_one())
 
+    def counts(
+        self,
+        *,
+        material: str | None = None,
+        plant: str | None = None,
+        exception_type: ExceptionType | None = None,
+    ) -> dict:
+        """Matching exceptions by status, and how many have a requester -- two
+        grouped queries over the table, never the rows themselves."""
+        def filtered(stmt):
+            return self._filtered(
+                stmt, material=material, plant=plant, exception_type=exception_type, status=None,
+                owner_requester_id=None,
+            )
+
+        by_status = {
+            status: int(n)
+            for status, n in self._session.execute(
+                filtered(select(ActExceptionRecord.status, func.count()).select_from(ActExceptionRecord))
+                .group_by(ActExceptionRecord.status)
+            ).all()
+        }
+        with_requester = int(
+            self._session.execute(
+                filtered(select(func.count()).select_from(ActExceptionRecord)).where(
+                    ActExceptionRecord.owner_requester_id.is_not(None)
+                )
+            ).scalar_one()
+        )
+        return {"total": sum(by_status.values()), "by_status": by_status, "with_requester": with_requester}
+
     def list_confirmations(
         self,
         *,

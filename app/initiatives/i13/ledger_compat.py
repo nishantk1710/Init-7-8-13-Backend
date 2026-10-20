@@ -101,6 +101,25 @@ class LegacyLedgerEntry:
     attribution_evidence: str | None = None
 
 
+DELIVERY_STATES = ("DELIVERED", "PARTIAL", "NOT_DELIVERED", "NO_PO")
+"""The procurement view's delivery filter -- the frontend's
+``deliveryStatusFromProcurement``, decided here so it can be filtered on in
+SQL over every line rather than over the lines a page happened to load."""
+
+
+def delivery_state(entry: LegacyLedgerEntry) -> str:
+    """``NO_PO`` without a purchase order, else the procurement status read as
+    delivery: OPEN is not delivered, PARTIALLY_RECEIVED partial, RECEIVED
+    delivered."""
+    if not entry.po_number:
+        return "NO_PO"
+    return {
+        ProcurementStatus.OPEN: "NOT_DELIVERED",
+        ProcurementStatus.PARTIALLY_RECEIVED: "PARTIAL",
+        ProcurementStatus.RECEIVED: "DELIVERED",
+    }[entry.procurement_status]
+
+
 def _procurement_status(received_qty: Decimal, ordered_qty: Decimal | None) -> ProcurementStatus:
     if received_qty <= 0:
         return ProcurementStatus.OPEN

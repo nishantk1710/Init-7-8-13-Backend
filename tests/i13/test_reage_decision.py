@@ -122,6 +122,17 @@ def test_changing_which_materials_are_oar_rebuilds(monkeypatch):
     assert base == _fingerprint(monkeypatch, "sql", day, i13_oar_mrp_controllers=" oar ")
 
 
+def test_a_new_record_layout_rebuilds_the_sql_store(monkeypatch):
+    """A kind that starts storing a new column (kinds.RECORD_LAYOUT) needs a
+    build to fill it; the served version stays readable meanwhile."""
+    from app.initiatives.i13.snapshot_store import kinds
+
+    day = date(2026, 10, 20)
+    before = _fingerprint(monkeypatch, "sql", day)
+    monkeypatch.setattr(kinds, "RECORD_LAYOUT", kinds.RECORD_LAYOUT + 1)
+    assert _fingerprint(monkeypatch, "sql", day) != before
+
+
 def test_uat_reservations_do_not_rebuild_the_sql_store(monkeypatch):
     """A UAT stamp refreshes its own material in place (uat._apply); counting it
     in the fingerprint started a full rebuild of over an hour per stamp."""
