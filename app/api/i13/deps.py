@@ -14,6 +14,7 @@ from app.core.db import get_db
 from app.initiatives.i13.snapshot import I13Snapshot, SnapshotBuilding, SnapshotFailed, get_i13_snapshot
 from app.initiatives.i13.snapshot_store import lifecycle as store
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
+from app.initiatives.i13.expected_delivery import attach_expected_delivery
 from app.shared.material_names import attach_material_names
 
 T = TypeVar("T")
@@ -110,6 +111,23 @@ def get_current_actor(x_actor_id: str | None = Header(default=None, alias="X-Act
     ``Actor`` (the W6.6 routes and application services) stays the same.
     """
     return Actor(id=x_actor_id or "unknown-actor")
+
+
+def with_expected_delivery() -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Fill ``expected_delivery_date`` (EKET-EINDT) on a ledger route's rows
+    from their PO line. Reads the in-memory list only (see
+    ``app.initiatives.i13.expected_delivery``): no query on the route."""
+
+    def decorate(route: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(route)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            result = route(*args, **kwargs)
+            attach_expected_delivery(result if isinstance(result, list) else [result])
+            return result
+
+        return wrapper
+
+    return decorate
 
 
 def with_material_names(

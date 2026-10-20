@@ -139,6 +139,10 @@ class ReservationLedgerEntryResponse(BaseModel):
 
     first_gr_date: date | None
     last_gr_date: date | None
+    expected_delivery_date: date | None = None
+    """EKET-EINDT of the PO line's next schedule line still to deliver (the
+    last one when all are delivered); null with no PO line or no EKET row.
+    Attached at the route from ``app.initiatives.i13.expected_delivery``."""
     first_issue_date: date | None
     last_issue_date: date | None
 
@@ -201,6 +205,10 @@ class UtilisationLedgerEntryResponse(BaseModel):
     latest_gr_date: date | None
     first_gi_date: date | None
     latest_gi_date: date | None
+    expected_delivery_date: date | None = None
+    """EKET-EINDT of the PO line's next schedule line still to deliver (the
+    last one when all are delivered); null with no PO line or no EKET row.
+    Attached at the route from ``app.initiatives.i13.expected_delivery``."""
 
     procurement_status: ProcurementStatus
     utilisation_status: LedgerUtilisationStatus

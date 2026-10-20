@@ -116,6 +116,13 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
                 material_names.start_loading()
                 material_names.wait_for_load(material_names.STARTUP_WAIT_SECONDS)
 
+                # EKET is small: the ledger's expected delivery dates, loaded
+                # now so the first ledger page has them.
+                from app.initiatives.i13 import expected_delivery
+
+                expected_delivery.start_loading()
+                expected_delivery.wait_for_load(material_names.STARTUP_WAIT_SECONDS)
+
                 # The material search's copy of MAKT, ZMM065, MARC and MARD.
                 # Waited for, like names: it scans the same views, and the
                 # snapshot builds below should not scan alongside it.
