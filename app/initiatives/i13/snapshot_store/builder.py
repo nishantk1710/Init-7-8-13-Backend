@@ -364,10 +364,15 @@ def _build_batch(
     if not dated_only:
         writer.write(kinds.chain(e, is_oar(e.material, e.plant)) for e in build_procurement_chain(procurement_repo))
         diagnostics.append(compute_chain_diagnostics(procurement_repo))
+        # EBAN-BADAT per PR item, for the procurement view's newest-first order.
+        pr_dates = {
+            (pr["Banfn"], pr["Bnfpo"]): pr.get("Badat") for pr in procurement_repo.get_purchase_requisitions()
+        }
         writer.write(
-            kinds.lledger(e, is_oar(e.material, e.plant))
+            kinds.lledger(e, is_oar(e.material, e.plant), pr_dates.get((e.pr_number, e.pr_item)))
             for e in build_legacy_ledger(procurement_repo, reservation_repo, index, include_out_of_scope=True)
         )
+        del pr_dates
 
     # The reservation ledger is undated, but GRNI and the queue below are
     # measured from it, so a re-age computes it too -- it just does not store it.

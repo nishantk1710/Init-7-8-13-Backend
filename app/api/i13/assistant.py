@@ -39,10 +39,10 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session as DbSession
 
 from app.api.assistant.schemas import PlanModel
@@ -231,10 +231,12 @@ def post_consumption_plan(
 @with_material_names()
 def list_consumption_plans(
     db: DbDep,
+    response: Response,
     session_id: Annotated[str | None, Query()] = None,
     material: Annotated[str | None, Query()] = None,
     plant: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[PlanModel]:
     """Plans this platform captured.
 
@@ -263,9 +265,13 @@ def list_consumption_plans(
     from app.api.assistant.router import _plan_model
     from app.initiatives.i13.session_link import links_by_session
 
+    # Newest first, paged in SQL; the total travels in X-Total-Count.
+    total = db.execute(select(func.count()).select_from(statement.order_by(None).subquery())).scalar_one()
+    response.headers["X-Total-Count"] = str(total)
     # The reservation each plan's session ID was typed into (SGTXT), if any.
     links = links_by_session(db)
-    return [_plan_model(p, links.get(p.session_id)) for p in db.execute(statement.limit(limit)).scalars()]
+    rows = db.execute(statement.offset(offset).limit(limit)).scalars()
+    return [_plan_model(p, links.get(p.session_id)) for p in rows]
 
 
 @router.get(

@@ -14,8 +14,10 @@ exception queue) so neither pre-existing route's behaviour changes.
 """
 
 import dataclasses
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
@@ -35,11 +37,12 @@ from app.initiatives.i13.act_notifications import LoggingNotificationAdapter
 from app.initiatives.i13.act_runner import run_detection
 from app.initiatives.i13.act_stock_provider import PostgresCrossPlantStockProvider
 from app.initiatives.i13.config import I13Config, get_i13_config
+from app.initiatives.i13.ordering import newest_first
 from app.initiatives.i13.snapshot import I13Snapshot
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.initiatives.i13.watch_mart import get_watch_metric, list_watch_metrics
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
-from app.schemas.i13 import WatchMetricResponse
+from app.schemas.i13 import ActExceptionCountsResponse, WatchCountsResponse, WatchMetricResponse
 from app.shared.material_scope import MaterialScope
 from app.schemas.i13_act import (
     ActConfirmationWithExceptionResponse,
@@ -84,6 +87,9 @@ def list_act_utilisation(
     aging_band: str | None = Query(None),
     grni: bool | None = Query(None, description="Filter by W6.3's gr_not_issued_flag"),
     acquired_vs_plan_status: str | None = Query(None),
+    sort: Literal["recent", "material"] = Query(
+        "recent", description="recent: last goods movement, newest first (undated last). material: by number."
+    ),
     limit: int = Query(1000, ge=1, le=5000, description="See the note on pagination below."),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -103,7 +109,8 @@ def list_act_utilisation(
     if isinstance(snapshot, SqlSnapshot):
         rows, total = snapshot.watch(
             plant=plant, material=material, aging_band=aging_band, grni=grni,
-            acquired_vs_plan_status=acquired_vs_plan_status, oar_only=True, limit=limit, offset=offset,
+            acquired_vs_plan_status=acquired_vs_plan_status, oar_only=True, recent=sort == "recent",
+            limit=limit, offset=offset,
         )
         response.headers["X-Total-Count"] = str(total)
         return [WatchMetricResponse.model_validate(row) for row in rows]
@@ -131,7 +138,52 @@ def list_act_utilisation(
             gr_not_issued_flag=grni,
             acquired_vs_plan_status=acquired_vs_plan_status,
         )
+    if sort == "recent":
+        rows = newest_first(rows, lambda m: m.last_movement_date)
     return [WatchMetricResponse.model_validate(row) for row in page(rows, response, limit=limit, offset=offset)]
+
+
+@router.get("/utilisation/counts", response_model=WatchCountsResponse)
+def count_act_utilisation(
+    plant: str | None = Query(None),
+    material: str | None = Query(None),
+    aging_band: str | None = Query(None),
+    grni: bool | None = Query(None),
+    acquired_vs_plan_status: str | None = Query(None),
+    db: Session = Depends(get_db),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
+) -> WatchCountsResponse:
+    """OAR WATCH rows in total, by acquired-vs-plan status and by aging band,
+    for the same filters as ``/utilisation`` -- the dashboard's bars and tab
+    badges, without loading the rows."""
+    if isinstance(snapshot, SqlSnapshot):
+        return WatchCountsResponse(
+            **snapshot.watch_counts(
+                plant=plant, material=material, aging_band=aging_band, grni=grni,
+                acquired_vs_plan_status=acquired_vs_plan_status, oar_only=True,
+            )
+        )
+    band = aging_band.upper() if aging_band else None
+    status_filter = acquired_vs_plan_status.upper() if acquired_vs_plan_status else None
+    source = (
+        [m for m in snapshot.watch_sorted if m.material_scope is MaterialScope.OAR]
+        if snapshot is not None
+        else list_watch_metrics(db, plant=plant, material=material)
+    )
+    rows = [
+        m
+        for m in source
+        if (not plant or m.plant == plant)
+        and (not material or m.material == material)
+        and (band is None or m.aging_band.value == band)
+        and (grni is None or m.gr_not_issued_flag is grni)
+        and (status_filter is None or m.acquired_vs_plan_status.value == status_filter)
+    ]
+    return WatchCountsResponse(
+        total=len(rows),
+        by_acquired_vs_plan_status=dict(Counter(m.acquired_vs_plan_status.value for m in rows)),
+        by_aging_band=dict(Counter(m.aging_band.value for m in rows)),
+    )
 
 
 @router.get("/utilisation/{material}/{plant}", response_model=WatchMetricResponse)
@@ -187,6 +239,22 @@ def list_act_exceptions(
     items = repository.list(**filters, limit=limit, offset=offset)
     response.headers["X-Total-Count"] = str(repository.count(**filters))
     return [ActExceptionResponse.model_validate(item) for item in items]
+
+
+@router.get("/exceptions/counts", response_model=ActExceptionCountsResponse)
+def count_act_exceptions(
+    plant: str | None = Query(None),
+    material: str | None = Query(None),
+    exception_type: str | None = Query(None, alias="type"),
+    db: Session = Depends(get_db),
+) -> ActExceptionCountsResponse:
+    """The whole queue by status, and how many have a requester to route to --
+    the dashboard's exception-status bar, without loading the queue."""
+    return ActExceptionCountsResponse(
+        **_repository(db).counts(
+            material=material, plant=plant, exception_type=_parse_enum(ExceptionType, exception_type, "type")
+        )
+    )
 
 
 @router.get("/confirmations", response_model=list[ActConfirmationWithExceptionResponse])

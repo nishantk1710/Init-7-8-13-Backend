@@ -22,21 +22,67 @@ actual fix; treat an unfiltered call as a diagnostic escape hatch, not a
 page a UI should call routinely.
 """
 
+from collections import Counter
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app.api.i13.deps import page, snapshot_or_live, with_material_names
 from app.core.db import get_db
-from app.initiatives.i13.ledger_compat import build_legacy_ledger
+from app.initiatives.i13.ledger_compat import LegacyLedgerEntry, build_legacy_ledger, delivery_state
 from app.initiatives.i13.snapshot import I13Snapshot
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
-from app.schemas.i13 import UtilisationLedgerEntryResponse
+from app.schemas.i13 import LedgerCountsResponse, UtilisationLedgerEntryResponse
 from app.shared.material_scope import MaterialScope
 
 router = APIRouter()
+
+_STATUS_FILTERS = dict(
+    procurement_status=Query(None, description="OPEN, PARTIALLY_RECEIVED or RECEIVED."),
+    utilisation_status=Query(None, description="NOT_ISSUED, PARTIALLY_ISSUED or FULLY_ISSUED."),
+    delivery_status=Query(None, description="DELIVERED, PARTIAL, NOT_DELIVERED or NO_PO."),
+)
+
+
+def _matching(
+    entries: list[LegacyLedgerEntry],
+    *,
+    plant: str | None,
+    material: str | None,
+    procurement_status: str | None,
+    utilisation_status: str | None,
+    delivery_status: str | None,
+) -> list[LegacyLedgerEntry]:
+    """The in-memory and live paths' version of the stored filters."""
+    wanted_p = procurement_status.upper() if procurement_status else None
+    wanted_u = utilisation_status.upper() if utilisation_status else None
+    wanted_d = delivery_status.upper() if delivery_status else None
+    return [
+        e
+        for e in entries
+        if (not plant or e.plant == plant)
+        and (not material or e.material == material)
+        and (wanted_p is None or e.procurement_status.value == wanted_p)
+        and (wanted_u is None or e.utilisation_status.value == wanted_u)
+        and (wanted_d is None or delivery_state(e) == wanted_d)
+    ]
+
+
+def _unstored_entries(
+    db: Session, snapshot: I13Snapshot | None, *, plant, material, include_out_of_scope
+) -> list[LegacyLedgerEntry]:
+    if snapshot is not None:
+        return snapshot.legacy_ledger if include_out_of_scope else snapshot.legacy_ledger_oar
+    procurement_repo = PostgresProcurementRepository(db)
+    reservation_repo = PostgresReservationRepository(db)
+    material_scope_index = fetch_material_scope_index(db, material=material, plant=plant)
+    return build_legacy_ledger(
+        procurement_repo, reservation_repo, material_scope_index,
+        material=material, plant=plant, include_out_of_scope=include_out_of_scope,
+    )
 
 
 @router.get("/ledger", response_model=list[UtilisationLedgerEntryResponse])
@@ -45,6 +91,9 @@ def list_ledger_entries(
     response: Response,
     plant: str | None = Query(None),
     material: str | None = Query(None),
+    procurement_status: str | None = _STATUS_FILTERS["procurement_status"],
+    utilisation_status: str | None = _STATUS_FILTERS["utilisation_status"],
+    delivery_status: str | None = _STATUS_FILTERS["delivery_status"],
     include_out_of_scope: bool = Query(
         False, description="Include non-OAR (Min-Max/Excluded) materials. Debug/inspection only."
     ),
@@ -53,27 +102,59 @@ def list_ledger_entries(
     db: Session = Depends(get_db),
     snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> list[UtilisationLedgerEntryResponse]:
+    """Procurement lines, filtered and paged over the whole ledger. On the
+    stored snapshot they come newest first (PR date, else first goods
+    receipt); the in-memory and live paths keep build order."""
+    filters = dict(
+        procurement_status=procurement_status, utilisation_status=utilisation_status,
+        delivery_status=delivery_status,
+    )
     if isinstance(snapshot, SqlSnapshot):
         rows, total = snapshot.legacy_ledger(
-            plant=plant, material=material, oar_only=not include_out_of_scope, limit=limit, offset=offset
+            plant=plant, material=material, oar_only=not include_out_of_scope, limit=limit, offset=offset,
+            **filters,
         )
         response.headers["X-Total-Count"] = str(total)
         return [UtilisationLedgerEntryResponse.model_validate(row) for row in rows]
-    if snapshot is not None:
-        source = snapshot.legacy_ledger if include_out_of_scope else snapshot.legacy_ledger_oar
-        entries = [e for e in source if (not plant or e.plant == plant) and (not material or e.material == material)]
-    else:
-        procurement_repo = PostgresProcurementRepository(db)
-        reservation_repo = PostgresReservationRepository(db)
-        material_scope_index = fetch_material_scope_index(db, material=material, plant=plant)
-        entries = build_legacy_ledger(
-            procurement_repo, reservation_repo, material_scope_index,
-            material=material, plant=plant, include_out_of_scope=include_out_of_scope,
-        )
+    entries = _matching(
+        _unstored_entries(db, snapshot, plant=plant, material=material, include_out_of_scope=include_out_of_scope),
+        plant=plant, material=material, **filters,
+    )
     return [
         UtilisationLedgerEntryResponse.model_validate(entry)
         for entry in page(entries, response, limit=limit, offset=offset)
     ]
+
+
+@router.get("/ledger/counts", response_model=LedgerCountsResponse)
+def count_ledger_entries(
+    plant: str | None = Query(None),
+    material: str | None = Query(None),
+    procurement_status: str | None = _STATUS_FILTERS["procurement_status"],
+    utilisation_status: str | None = _STATUS_FILTERS["utilisation_status"],
+    delivery_status: str | None = _STATUS_FILTERS["delivery_status"],
+    include_out_of_scope: bool = Query(False, description="See /ledger."),
+    db: Session = Depends(get_db),
+    snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
+) -> LedgerCountsResponse:
+    """Lines in total and by linkage status, for the same filters as
+    ``/ledger`` -- the header's numbers, without loading the lines."""
+    filters = dict(
+        procurement_status=procurement_status, utilisation_status=utilisation_status,
+        delivery_status=delivery_status,
+    )
+    if isinstance(snapshot, SqlSnapshot):
+        return LedgerCountsResponse(
+            **snapshot.legacy_ledger_counts(
+                plant=plant, material=material, oar_only=not include_out_of_scope, **filters
+            )
+        )
+    entries = _matching(
+        _unstored_entries(db, snapshot, plant=plant, material=material, include_out_of_scope=include_out_of_scope),
+        plant=plant, material=material, **filters,
+    )
+    by_linkage = Counter(e.linkage_status.value for e in entries)
+    return LedgerCountsResponse(total=len(entries), by_linkage_status=dict(by_linkage))
 
 
 @router.get("/ledger/{ledger_id}", response_model=UtilisationLedgerEntryResponse)

@@ -35,7 +35,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from app.initiatives.i13.ledger_compat import LegacyLedgerEntry
+from app.initiatives.i13.ledger_compat import LegacyLedgerEntry, delivery_state
 from app.initiatives.i13.models import (
     ConsumptionAttribution,
     ExceptionQueueItem,
@@ -47,6 +47,13 @@ from app.initiatives.i13.models import (
     WatchMetric,
 )
 from app.initiatives.i13.snapshot_store import codec
+
+#: Bumped when a kind starts storing a new column beside its payload. It is
+#: part of the I13 fingerprint, so a deploy that changes it rebuilds (inside
+#: the build window) while the version already stored keeps serving -- unlike a
+#: change to a stored type, which makes that version unreadable at once.
+#: 2 (20 Oct 2026): lledger's statuses and sort date; watch's last movement.
+RECORD_LAYOUT = 2
 
 WATCH = "watch"
 MOVEMENT = "movement"
@@ -126,6 +133,8 @@ def watch(m: WatchMetric, oar: bool) -> Record:
     return Record(
         WATCH, m.material, m.plant, oar, _p(m),
         f1=m.aging_band.value, f2=m.acquired_vs_plan_status.value, f3=_yn(m.gr_not_issued_flag),
+        # "Most recent activity first" sorts on this.
+        d1=m.last_movement_date,
     )
 
 
@@ -145,8 +154,16 @@ def rledger(e: ReservationLedgerEntry, sgtxt: str | None) -> Record:
     )
 
 
-def lledger(e: LegacyLedgerEntry, oar: bool) -> Record:
-    return Record(LLEDGER, e.material, e.plant, oar, _p(e), rec_key=e.ledger_id)
+def lledger(e: LegacyLedgerEntry, oar: bool, sort_date: date | None = None) -> Record:
+    """The procurement view's filters live beside the payload so they run in
+    SQL over every line: procurement status, utilisation status, delivery
+    state, and the linkage status the header counts. ``sort_date`` -- the PR
+    date (EBAN-BADAT), else the first goods receipt -- orders it newest first."""
+    return Record(
+        LLEDGER, e.material, e.plant, oar, _p(e), rec_key=e.ledger_id,
+        f1=e.procurement_status.value, f2=e.utilisation_status.value, f3=delivery_state(e),
+        d1=sort_date or e.first_gr_date, text1=e.linkage_status.value,
+    )
 
 
 def chain(e: PartialLedgerEntry, oar: bool) -> Record:
