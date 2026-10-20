@@ -1,10 +1,10 @@
-"""MRP type (DISMM) from Postgres, for W6.2's OAR material-scope filter.
+"""MRP controller (DISPO) from the database, for the OAR material-scope filter.
 
-Reads ``raw_marc`` (MARC-equivalent) -- key (material, plant) is 100% unique
+Reads ``n_marc`` (MARC-equivalent) -- key (material, plant) is 100% unique
 in this dataset (45,409 rows, measured). This module supplies only the raw
-DISMM string per (material, plant); classifying it OAR/Min-Max/Excluded is
-``app.shared.material_scope.policy.classify_material_scope`` -- the existing
-W2.4 rule, reused unchanged, never reimplemented here.
+DISPO string per (material, plant); classifying it OAR/Excluded is
+``app.shared.material_scope.policy.classify_material_scope`` -- reused
+unchanged, never reimplemented here.
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ _PLANT_SCOPE = sql_predicate("plant")
 
 
 
-_MRP_TYPE_QUERY = """
-    SELECT material, plant, mrp_type, {deleted_column}
+_SCOPE_QUERY = """
+    SELECT material, plant, mrp_type, mrp_controller, {deleted_column}
     FROM n_marc mc
     WHERE material <> '' AND plant <> '' AND {plant_scope}
       {material_filter}
@@ -41,13 +41,18 @@ def fetch_material_scope_index(
     material: str | None = None,
     plant: str | None = None,
     deleted: set[tuple[str, str]] | None = None,
+    mrp_types: dict[tuple[str, str], str] | None = None,
 ) -> dict[tuple[str, str], str | None]:
-    """(material, plant) -> raw DISMM string, for ``classify_material_scope``
-    to classify. Not itself a scope decision.
+    """(material, plant) -> raw DISPO (MRP controller) string, for
+    ``classify_material_scope`` to classify. Not itself a scope decision.
 
-    A MARC row with no MRP type maps to ``""``, never ``None``: blank DISMM is
-    OAR, while ``None`` -- what ``.get`` returns for a pair MARC does not hold --
-    is not, so the two must stay apart.
+    A MARC row with no MRP controller maps to ``""``, never ``None``: both
+    classify as not OAR, but ``""`` says MARC has the row, which the assistant's
+    reason needs to tell apart from a data gap.
+
+    ``mrp_types``, when passed, is filled with each returned pair's MRP type
+    (DISMM) -- no longer the rule, but still what the assistant records and
+    shows.
 
     A pair flagged for deletion in SAP (MARC/MARA-LVORM, see
     ``app.shared.material_scope.deletion``) is left out -- so it classifies
@@ -64,7 +69,7 @@ def fetch_material_scope_index(
         params["plant"] = plant
 
     query = text(
-        _MRP_TYPE_QUERY.format(
+        _SCOPE_QUERY.format(
             material_filter=material_filter,
             plant_filter=plant_filter,
             plant_scope=_PLANT_SCOPE,
@@ -79,5 +84,7 @@ def fetch_material_scope_index(
             if deleted is not None:
                 deleted.add(key)
             continue
-        index[key] = (r.mrp_type or "").strip()
+        index[key] = (r.mrp_controller or "").strip()
+        if mrp_types is not None:
+            mrp_types[key] = (r.mrp_type or "").strip()
     return index

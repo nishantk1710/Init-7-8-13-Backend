@@ -69,8 +69,8 @@ def oar_material() -> tuple[str, str]:
                 """
                 SELECT TOP 1 r.material, r.plant, COUNT(*) AS n
                 FROM raw_resb r
-                JOIN raw_marc m ON m.material = r.material AND m.plant = r.plant
-                WHERE m.mrp_type IN ('ND', 'PD')
+                JOIN n_marc m ON m.material = r.material AND m.plant = r.plant
+                WHERE m.mrp_controller = 'OAR'
                   AND r.material NOT LIKE '80%'
                 GROUP BY 1, 2
                 HAVING COUNT(*) BETWEEN 20 AND 200

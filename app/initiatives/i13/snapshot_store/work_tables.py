@@ -94,8 +94,9 @@ def _statements(w: WorkTables) -> list[tuple[str, str, list[str]]]:
         (
             w.marc,
             # Materials flagged for deletion (LVORM) are left out here, so the
-            # OAR population every screen reads never contains them.
-            (f"SELECT {_key('material')}, {_key('plant')}, mrp_type INTO {w.marc} "
+            # OAR population every screen reads never contains them. DISPO is
+            # the OAR rule (app/shared/material_scope/policy.py).
+            (f"SELECT {_key('material')}, {_key('plant')}, mrp_controller INTO {w.marc} "
             f"FROM n_marc mc WHERE material <> '' AND plant <> '' AND {plant} {not_deleted_predicate('mc')}"),
             ["material, plant"],
         ),

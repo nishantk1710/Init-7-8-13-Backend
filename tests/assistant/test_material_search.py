@@ -55,7 +55,7 @@ class _Zmm:
 class _Marc:
     material: str
     plant: str
-    mrp_type: str | None = None
+    mrp_controller: str | None = None
 
 
 @dataclass(frozen=True)
@@ -175,7 +175,7 @@ class TestByName:
     def test_every_word_must_match(self) -> None:
         db = _FakeDb(
             makt=[_Makt("1000000123", "IMPELLER, SLURRY PUMP"), _Makt("1000000999", "PUMP SEAL")],
-            marc=[_Marc("1000000123", "1300", "PD"), _Marc("1000000999", "1300", "PD")],
+            marc=[_Marc("1000000123", "1300", "OAR"), _Marc("1000000999", "1300", "OAR")],
         )
         found = search(db, "slurry pump")
         assert [m.material_id for m in found] == ["1000000123"]
@@ -184,7 +184,7 @@ class TestByName:
         """ZMM065 names most repair materials MAKT does not."""
         db = _FakeDb(
             zmm_bmm=[_Zmm("000000008000005632", "1300", "PUMP, CENTRIFUGAL")],
-            marc=[_Marc("8000005632", "1300", "ND")],
+            marc=[_Marc("8000005632", "1300", "OAR")],
         )
         [match] = search(db, "centrifugal")
         assert match.material_id == "8000005632"
@@ -226,7 +226,7 @@ class TestByName:
 
 class TestByNumber:
     def test_a_prefix_matches_materials_with_no_description_at_all(self) -> None:
-        db = _FakeDb(marc=[_Marc("8000005632", "1300", "ND")])
+        db = _FakeDb(marc=[_Marc("8000005632", "1300", "OAR")])
         [match] = search(db, "800000")
         assert match.material_id == "8000005632"
         assert match.description is None
@@ -269,22 +269,22 @@ class TestPlants:
 class TestTheFlowHint:
     def test_eighty_series_is_i08_even_when_also_oar(self) -> None:
         """The router's precedence: I08 wins."""
-        db = _FakeDb(marc=[_Marc("8000005632", "1300", "ND")])
+        db = _FakeDb(marc=[_Marc("8000005632", "1300", "OAR")])
         assert search(db, "8000005632")[0].flow_hint is Flow.I08
 
-    def test_oar_by_mrp_type_is_i13(self) -> None:
-        db = _FakeDb(marc=[_Marc("1000000123", "1300", "PD")])
+    def test_oar_by_mrp_controller_is_i13(self) -> None:
+        db = _FakeDb(marc=[_Marc("1000000123", "1300", "OAR")])
         assert search(db, "1000000123")[0].flow_hint is Flow.I13
 
     def test_without_a_marc_row_a_non_eighty_series_part_is_none(self) -> None:
-        """No MRP type is known, so the router would say none too."""
+        """No MRP controller is known, so the router would say none too."""
         db = _FakeDb(mard=[_Mard("1000000123", "1500")])
         assert search(db, "1000000123")[0].flow_hint is Flow.NONE
 
     def test_parts_the_assistant_covers_come_before_ones_it_does_not(self) -> None:
         db = _FakeDb(
             makt=[_Makt("1000000001", "PUMP GASKET"), _Makt("1000000123", "PUMP IMPELLER")],
-            marc=[_Marc("1000000001", "1300", "VB"), _Marc("1000000123", "1300", "PD")],
+            marc=[_Marc("1000000001", "1300", "POD"), _Marc("1000000123", "1300", "OAR")],
         )
         assert [m.material_id for m in search(db, "pump")] == ["1000000123", "1000000001"]
 
@@ -319,7 +319,7 @@ class TestTheRoute:
     def test_serves_camel_case_items_and_the_hint_note(self) -> None:
         db = _FakeDb(
             makt=[_Makt("8000005632", "PUMP CENTRIFUGAL")],
-            marc=[_Marc("8000005632", "1300", "ND")],
+            marc=[_Marc("8000005632", "1300", "OAR")],
         )
         response = self._client(db).get("/api/assistant/materials", params={"q": "pump"})
         assert response.status_code == 200, response.text
@@ -331,7 +331,7 @@ class TestTheRoute:
                 "plant": "1300",
                 "plantName": "Black Mountain Mining",
                 "flowHint": "i08",
-                "mrpType": "ND",
+                "mrpController": "OAR",
             }
         ]
         assert "Hint only" in body["note"]

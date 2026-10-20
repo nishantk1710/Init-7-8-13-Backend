@@ -17,13 +17,13 @@ from app.shared.material_scope import MaterialScope, classify_material_scope
 from app.shared.material_scope.deletion import deleted_condition, not_deleted_predicate
 
 MARC = [
-    # material, plant, mrp_type, MARC-LVORM
-    ("1000000001", "1300", "ND", ""),  # active OAR
-    ("1000000002", "1300", "ND", "X"),  # deleted at this plant
-    ("1000000002", "1500", "PD", ""),  # ... but not at the other plant
-    ("1000000003", "1300", "PD", None),  # deleted at client level (MARA)
-    ("1000000003", "1500", "ND", ""),  # ... so at every plant
-    ("1000000004", "1300", "", " x "),  # padded / lower case still counts
+    # material, plant, mrp_type, mrp_controller, MARC-LVORM
+    ("1000000001", "1300", "ND", "OAR", ""),  # active OAR
+    ("1000000002", "1300", "ND", "OAR", "X"),  # deleted at this plant
+    ("1000000002", "1500", "PD", "OAR", ""),  # ... but not at the other plant
+    ("1000000003", "1300", "PD", "OAR", None),  # deleted at client level (MARA)
+    ("1000000003", "1500", "ND", "OAR", ""),  # ... so at every plant
+    ("1000000004", "1300", "", "OAR", " x "),  # padded / lower case still counts
 ]
 MARA = [
     ("1000000001", ""),
@@ -37,9 +37,14 @@ MARA = [
 def db():
     engine = create_engine("sqlite://")
     with engine.begin() as c:
-        c.execute(text("CREATE TABLE n_marc (material TEXT, plant TEXT, mrp_type TEXT, df_at_plant_level TEXT)"))
+        c.execute(
+            text(
+                "CREATE TABLE n_marc (material TEXT, plant TEXT, mrp_type TEXT, mrp_controller TEXT, "
+                "df_at_plant_level TEXT)"
+            )
+        )
         c.execute(text("CREATE TABLE n_mara (material TEXT, df_at_client_level TEXT)"))
-        c.execute(text("INSERT INTO n_marc VALUES (:m, :p, :t, :d)"), [dict(zip("mptd", r)) for r in MARC])
+        c.execute(text("INSERT INTO n_marc VALUES (:m, :p, :t, :c, :d)"), [dict(zip("mptcd", r)) for r in MARC])
         c.execute(text("INSERT INTO n_mara VALUES (:m, :d)"), [dict(zip("md", r)) for r in MARA])
     with Session(engine) as session:
         yield session
@@ -48,13 +53,25 @@ def db():
 def test_deleted_pairs_are_left_out_and_reported(db):
     deleted: set[tuple[str, str]] = set()
     index = fetch_material_scope_index(db, deleted=deleted)
-    assert index == {("1000000001", "1300"): "ND", ("1000000002", "1500"): "PD"}
+    assert index == {("1000000001", "1300"): "OAR", ("1000000002", "1500"): "OAR"}
     assert deleted == {
         ("1000000002", "1300"),
         ("1000000003", "1300"),
         ("1000000003", "1500"),
         ("1000000004", "1300"),
     }
+
+
+def test_only_an_undeleted_oar_controller_is_oar(db):
+    """The full I13 rule: DISPO = OAR and not flagged for deletion. A live row
+    with another controller is in the index (MARC holds it) but is not OAR."""
+    db.execute(text("INSERT INTO n_marc VALUES ('1000000005', '1300', 'PD', 'POD', '')"))
+    db.execute(text("INSERT INTO n_marc VALUES ('1000000006', '1300', 'PD', '', '')"))
+    index = fetch_material_scope_index(db)
+    oar = {key for key, code in index.items() if classify_material_scope(code) is MaterialScope.OAR}
+    assert oar == {("1000000001", "1300"), ("1000000002", "1500")}
+    assert index[("1000000005", "1300")] == "POD"
+    assert index[("1000000006", "1300")] == ""
 
 
 def test_a_deleted_pair_classifies_excluded(db):

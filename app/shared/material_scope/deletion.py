@@ -3,9 +3,9 @@
 UAT ruling, 19 Oct 2026: a material whose deletion flag is set -- MARC-LVORM
 (deleted at that plant) or MARA-LVORM (deleted at client level, so at every
 plant) equal to ``X`` -- is left out of the OAR population, whatever its MRP
-type says.
+controller says.
 
-It is applied where the (material, plant) -> MRP type lookup is read, never
+It is applied where the (material, plant) -> MRP controller lookup is read, never
 afterwards: a pair missing from that lookup already classifies as
 ``EXCLUDED`` (``classify_material_scope(None)``), so every OAR screen, KPI and
 the assistant's routing drop the material through the one path they already

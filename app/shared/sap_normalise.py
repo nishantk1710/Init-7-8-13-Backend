@@ -132,6 +132,9 @@ TABLES: dict[str, tuple[Col, ...]] = {
         _c("material", "MATNR", kind="key"),
         _c("plant", "WERKS"),
         _c("mrp_type", "DISMM"),
+        # MRP controller: the I13 OAR rule since 20 Oct 2026 (DISPO = OAR).
+        # See app/shared/material_scope/policy.py.
+        _c("mrp_controller", "DISPO"),
         _c("planned_deliv_time", "PLIFZ", kind="num"),
         _c("procurement_type", "BESKZ"),
         _c("reorder_point", "MINBE", kind="num"),

@@ -181,6 +181,7 @@ def _routing_model(routed) -> RoutingModel:
         eighty_series=routed.eighty_series,
         material_scope=routed.material_scope.value,
         mrp_type=routed.mrp_type,
+        mrp_controller=routed.mrp_controller,
         also_matched=routed.also_matched.value if routed.also_matched else None,
         reason=routed.reason,
     )
@@ -219,7 +220,7 @@ def search_materials(
                 plant=m.plant,
                 plant_name=m.plant_name,
                 flow_hint=m.flow_hint.value,
-                mrp_type=m.mrp_type,
+                mrp_controller=m.mrp_controller,
             )
             for m in matches
         ],

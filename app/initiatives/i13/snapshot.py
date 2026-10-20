@@ -383,8 +383,9 @@ def compute_fingerprint(db: Session, *, settings: Settings | None = None, config
     else:
         parts += [f"date:{reference_date_for(settings).isoformat()}"]
     parts += [f"config:{config!r}", f"plans:{plans_stamp}"]
-    # Changes which materials are OAR at all, so flipping it must rebuild.
+    # Both change which materials are OAR at all, so changing either must rebuild.
     parts.append(f"exclude_deleted:{settings.i13_exclude_deleted_materials}")
+    parts.append(f"oar_controllers:{','.join(sorted(settings.i13_oar_mrp_controller_set))}")
     if settings.i13_uat_simulation_enabled and not stored:
         from app.models.i13_session_link import UatReservationSgtxt
 
@@ -482,7 +483,7 @@ def build_i13_snapshot(
 
     # The summary's band counts, exactly as summary.build_summary counts them:
     # OAR keys only, and an OAR key with no movement history is NON_MOVING.
-    oar_keys = {key for key, dismm in scope_index.items() if classify_material_scope(dismm) is MaterialScope.OAR}
+    oar_keys = {key for key, code in scope_index.items() if classify_material_scope(code) is MaterialScope.OAR}
     band_counts = {AgingBand.FAST.value: 0, AgingBand.SLOW.value: 0, AgingBand.NON_MOVING.value: 0}
     seen: set[Key] = set()
     for metric in movement_metrics:

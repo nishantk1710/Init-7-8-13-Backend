@@ -27,6 +27,7 @@ class _Row:
     material: str
     plant: str
     mrp_type: str | None
+    mrp_controller: str | None = None
 
 
 class _FakeResult:
@@ -55,14 +56,16 @@ class _FakeSession:
 
 
 # The OAR vocabulary is not injected: ``classify_material_scope`` reads the
-# process-wide settings, and these tests run against its shipped defaults
-# (``ND,PD`` OAR / ``VB`` Min-Max). That is deliberate -- a test that pinned its
+# process-wide settings, and these tests run against its shipped default
+# (MRP controller ``OAR`` is OAR, anything else is not). That is deliberate -- a test that pinned its
 # own vocabulary would keep passing on the day the real ruling changed, which is
 # the one thing anybody would want it to notice.
 
 
-def _marc(material: str = "8000005632", plant: str = "1300", mrp_type: str | None = "ND"):
-    return _FakeSession([_Row(material=material, plant=plant, mrp_type=mrp_type)])
+def _marc(
+    material: str = "8000005632", plant: str = "1300", dispo: str | None = "OAR", mrp_type: str | None = "PD"
+):
+    return _FakeSession([_Row(material=material, plant=plant, mrp_type=mrp_type, mrp_controller=dispo)])
 
 
 class TestTheEightySeriesHalf:
@@ -82,24 +85,34 @@ class TestTheEightySeriesHalf:
 
 class TestTheOarHalf:
     def test_an_oar_material_gets_the_i13_flow(self) -> None:
-        decision = route(_marc(material="1000000123", mrp_type="ND"), "1000000123", "1300")
+        decision = route(_marc(material="1000000123", dispo="OAR", mrp_type="ND"), "1000000123", "1300")
         assert decision.flow is Flow.I13
         assert decision.material_scope is MaterialScope.OAR
+        assert decision.mrp_controller == "OAR"
         assert decision.mrp_type == "ND"
+        assert "MRP controller OAR" in decision.reason
 
-    def test_min_max_is_not_oar_and_gets_nothing(self) -> None:
-        decision = route(_marc(material="1000000123", mrp_type="VB"), "1000000123", "1300")
+    def test_another_controller_is_not_oar_and_gets_nothing(self) -> None:
+        decision = route(_marc(material="1000000123", dispo="POD"), "1000000123", "1300")
         assert decision.flow is Flow.NONE
-        assert decision.material_scope is MaterialScope.MIN_MAX
+        assert decision.material_scope is MaterialScope.EXCLUDED
+        assert "MRP controller POD is not OAR" in decision.reason
+
+    def test_the_mrp_type_no_longer_decides(self) -> None:
+        """ND/PD was the rule until 20 Oct 2026; DISPO is now."""
+        decision = route(_marc(material="1000000123", dispo="POD", mrp_type="ND"), "1000000123", "1300")
+        assert decision.flow is Flow.NONE
+        decision = route(_marc(material="1000000123", dispo="OAR", mrp_type="VB"), "1000000123", "1300")
+        assert decision.flow is Flow.I13
 
     def test_scope_is_decided_per_plant(self) -> None:
         """The same material can be OAR at one plant and not at another --
-        DISMM is plant-level (MARC), which is the whole reason the router takes
+        DISPO is plant-level (MARC), which is the whole reason the router takes
         a plant at all."""
         marc = _FakeSession(
             [
-                _Row(material="1000000123", plant="1300", mrp_type="ND"),
-                _Row(material="1000000123", plant="1500", mrp_type="VB"),
+                _Row(material="1000000123", plant="1300", mrp_type="PD", mrp_controller="OAR"),
+                _Row(material="1000000123", plant="1500", mrp_type="PD", mrp_controller="POD"),
             ]
         )
         assert route(marc, "1000000123", "1300").flow is Flow.I13
@@ -111,7 +124,7 @@ class TestNoScope:
         """And therefore no session. Minting one to record silence would put a
         row in an append-only table for every reservation we have no opinion
         about."""
-        decision = route(_marc(material="1000000123", mrp_type="VB"), "1000000123", "1300")
+        decision = route(_marc(material="1000000123", dispo="POD"), "1000000123", "1300")
         assert decision.flow is Flow.NONE
         assert decision.in_scope is False
 
@@ -121,51 +134,54 @@ class TestNoScope:
         decision = route(_FakeSession([]), "1000000123", "1300")
         assert decision.flow is Flow.NONE
         assert decision.mrp_type is None
+        assert decision.mrp_controller is None
         assert "MARC has no row" in decision.reason
 
-    def test_a_blank_dismm_is_oar(self) -> None:
-        """A MARC row with no MRP type is OAR, alongside ND and PD."""
-        decision = route(_marc(material="1000000123", mrp_type=""), "1000000123", "1300")
-        assert decision.material_scope is MaterialScope.OAR
-        assert decision.flow is Flow.I13
-        assert "MRP type blank" in decision.reason
+    def test_a_blank_dispo_is_not_oar(self) -> None:
+        """A MARC row with no MRP controller is not OAR -- unlike a blank DISMM
+        under the rule before 20 Oct 2026."""
+        decision = route(_marc(material="1000000123", dispo=""), "1000000123", "1300")
+        assert decision.material_scope is MaterialScope.EXCLUDED
+        assert decision.flow is Flow.NONE
+        assert "MRP controller blank is not OAR" in decision.reason
 
 
 class TestPrecedence:
     """Nothing stops a material being both. The rules read different fields."""
 
     def test_i08_wins_when_both_match(self) -> None:
-        decision = route(_marc(mrp_type="ND"), "8000005632", "1300")
+        decision = route(_marc(dispo="OAR"), "8000005632", "1300")
         assert decision.flow is Flow.I08
 
     def test_the_losing_match_is_recorded_rather_than_discarded(self) -> None:
         """This is a business decision, not a derivation, and it needs
         confirming -- so the flow that did not run travels on the result instead
         of disappearing into a conditional."""
-        decision = route(_marc(mrp_type="ND"), "8000005632", "1300")
+        decision = route(_marc(dispo="OAR"), "8000005632", "1300")
         assert decision.also_matched is Flow.I13
         assert decision.material_scope is MaterialScope.OAR
         assert "takes precedence" in decision.reason
 
     def test_nothing_is_recorded_when_only_one_matched(self) -> None:
-        decision = route(_marc(mrp_type="VB"), "8000005632", "1300")
+        decision = route(_marc(dispo="POD"), "8000005632", "1300")
         assert decision.flow is Flow.I08
         assert decision.also_matched is None
 
 
 class TestTheDecisionCarriesItsInputs:
     def test_every_routing_input_is_on_the_result(self) -> None:
-        """A requester shown the wrong flow asks why, and MARC's MRP type may
-        have changed by the time anybody looks."""
-        decision = route(_marc(mrp_type="PD"), "8000005632", "1300")
+        """A requester shown the wrong flow asks why, and MARC's MRP controller
+        may have changed by the time anybody looks."""
+        decision = route(_marc(dispo="OAR", mrp_type="PD"), "8000005632", "1300")
         assert decision.eighty_series is True
         assert decision.material_scope is MaterialScope.OAR
+        assert decision.mrp_controller == "OAR"
         assert decision.mrp_type == "PD"
         assert decision.plant == "1300"
 
-    @pytest.mark.parametrize("mrp_type,expected", [("ND", Flow.I13), ("VB", Flow.NONE)])
-    def test_the_reason_is_a_sentence_a_person_can_read(self, mrp_type: str, expected: Flow) -> None:
-        decision = route(_marc(material="1000000123", mrp_type=mrp_type), "1000000123", "1300")
+    @pytest.mark.parametrize("dispo,expected", [("OAR", Flow.I13), ("POD", Flow.NONE)])
+    def test_the_reason_is_a_sentence_a_person_can_read(self, dispo: str, expected: Flow) -> None:
+        decision = route(_marc(material="1000000123", dispo=dispo), "1000000123", "1300")
         assert decision.flow is expected
         assert decision.reason.startswith("1000000123")
         assert decision.reason.endswith(".")

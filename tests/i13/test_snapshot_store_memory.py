@@ -54,7 +54,7 @@ WORK = WorkTables(0)
 class Marc(NamedTuple):
     material: str
     plant: str
-    mrp_type: str | None
+    mrp_controller: str | None
 
 
 class Mov(NamedTuple):
@@ -174,7 +174,7 @@ def giant_procurement(scale: float = 1.0) -> dict[str, Table]:
             yield _resb(f"9{i:09d}", m, p, i)
 
     return {
-        "marc": lambda: iter([Marc(m, p, "PD")]),
+        "marc": lambda: iter([Marc(m, p, "OAR")]),
         "mov": mov,
         "stock": lambda: iter([Stock(m, p, "120.000")]),
         "pr": lambda: iter(()),
@@ -216,7 +216,7 @@ def giant_reservations(scale: float = 1.0) -> dict[str, Table]:
             yield Gr(_s(f"46{i % pos:08d}"), _s("10"), _s("101"), _s("25.000"), _day(i * 5), _s(m))
 
     return {
-        "marc": lambda: iter([Marc(m, p, "ND")]),
+        "marc": lambda: iter([Marc(m, p, "OAR")]),
         "mov": mov,
         "stock": lambda: iter([Stock(m, p, "3400.000")]),
         "pr": pr,
@@ -250,7 +250,7 @@ def mixed_tenant(seed: int = 13, materials: int = 120) -> dict[str, Table]:
         for p in ("1300", "1500"):
             if rng.random() < 0.3 and p == "1500":
                 continue
-            marc.append(Marc(m, p, rng.choice(["PD", "ND", "VB", "V1", None])))
+            marc.append(Marc(m, p, rng.choice(["OAR", "OAR", "POD", "101", None])))
             if rng.random() < 0.7:
                 stock.append(Stock(m, p, f"{rng.randint(0, 40)}.000"))
             for k in range(rng.randint(0, 3)):
@@ -431,14 +431,18 @@ ALL = Batch("0", "9999999999")
 # "rledger" re-recorded 2026-10-19 in all three: a reservation with no PO and
 # nothing issued now reads RESERVED / PR_NOT_FOUND / PR_SHARED by its PR
 # reference instead of PR_CREATED (same rows, corrected lifecycle).
+# "mixed" re-recorded 2026-10-20 when OAR moved to MRP controller (DISPO = OAR,
+# blank not OAR): oarkey/reclass 124 -> 87 and exception 203 -> 137 (the None
+# MARC rows are no longer OAR); every kind's oar flag or scope label moved with
+# it (the old VB rows now read EXCLUDED, not MIN_MAX). Row counts otherwise kept.
 EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
     "mixed": {
-        "attrib": (294, "8ed2d08032c19abd"), "chain": (286, "3acc54d4fa857d75"),
-        "exception": (203, "c09b29bbf9144cff"), "grni": (35, "8220e6cbe90af2a4"),
-        "lledger": (286, "63f70f31e772cd2c"), "movement": (186, "7bdd74b74aaa2066"),
-        "oarkey": (124, "2c8b298b582a7125"), "reclass": (124, "cdc9fd30044f3cd3"),
-        "rledger": (294, "152ccfd3b68aff02"), "usage": (134, "d97450f2b9ebf2be"),
-        "watch": (192, "45e850e61927cae5"),
+        "attrib": (294, "214738b080d76802"), "chain": (286, "636c21f9a8b8679e"),
+        "exception": (137, "8bb3e45bd8f2e431"), "grni": (35, "cc064da9a493ed3f"),
+        "lledger": (286, "eddc61ad0c85f7a5"), "movement": (186, "085dd35e7ee606ce"),
+        "oarkey": (87, "cafeb8032728b5cb"), "reclass": (87, "4b90da3bcd2f2450"),
+        "rledger": (294, "9bb3976d183c3a0e"), "usage": (134, "a4ef4d00cc908924"),
+        "watch": (192, "f2a1ec8533592b4e"),
     },
     "giant_procurement": {
         "attrib": (3, "f77f2830ef44df9f"), "chain": (1483, "17e55edc51ed3706"),

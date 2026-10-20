@@ -196,7 +196,7 @@ def build_reservation_ledger(
 ) -> list[ReservationLedgerEntry]:
     """The W6.2 entry point: Reservation -> PR -> PO -> GR -> GI.
 
-    ``material_scope_index`` is (material, plant) -> raw DISMM string (see
+    ``material_scope_index`` is (material, plant) -> raw DISPO string (see
     ``postgres_material.fetch_material_scope_index``) -- passed in rather
     than fetched here, so callers control its scope/filters the same way
     they control the reservation/procurement fetches.

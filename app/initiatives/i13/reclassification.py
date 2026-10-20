@@ -75,10 +75,10 @@ def build_reclassification_candidates(
 
     oar_keys = [
         key
-        for key, dismm in material_scope_index.items()
+        for key, code in material_scope_index.items()
         if (not material or key[0] == material)
         and (not plant or key[1] == plant)
-        and classify_material_scope(dismm) is MaterialScope.OAR
+        and classify_material_scope(code) is MaterialScope.OAR
     ]
     # One batched lookup rather than one `get` per key. `get` opens a session
     # and runs a query per call, which over the ~44k OAR positions was the bulk

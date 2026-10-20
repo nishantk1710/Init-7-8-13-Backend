@@ -45,11 +45,13 @@ def test_a_workbook_table_reads_its_own_labels() -> None:
 
 def test_a_csv_table_reads_the_sap_field_behind_each_label() -> None:
     """The failure this layer exists for: CSV loads carry MATNR, not material."""
-    present = ["MATNR", "WERKS", "DISMM"]
+    present = ["MATNR", "WERKS", "DISMM", "DISPO"]
 
     assert _source("marc", present, "material") == "MATNR"
     assert _source("marc", present, "plant") == "WERKS"
     assert _source("marc", present, "mrp_type") == "DISMM"
+    # The MRP controller -- the I13 OAR rule (DISPO = OAR).
+    assert _source("marc", present, "mrp_controller") == "DISPO"
 
 
 def test_matching_is_case_insensitive_but_keeps_the_real_spelling() -> None:
@@ -78,6 +80,8 @@ def test_an_undelivered_column_is_null_in_the_view() -> None:
     sql = view_sql("marc", ["MATNR", "WERKS"], MSSQL)
 
     assert "CAST(NULL AS nvarchar(4000)) AS mrp_type" in sql
+    # No DISPO delivered: the controller is NULL, so nothing classifies OAR.
+    assert "CAST(NULL AS nvarchar(4000)) AS mrp_controller" in sql
 
 
 def test_a_missing_raw_table_gives_an_empty_view_rather_than_an_error() -> None:

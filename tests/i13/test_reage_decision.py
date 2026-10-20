@@ -111,6 +111,17 @@ def test_moving_a_pinned_reference_date_still_rebuilds(monkeypatch):
     )
 
 
+def test_changing_which_materials_are_oar_rebuilds(monkeypatch):
+    """The OAR controller list and the deletion switch decide the population
+    every screen reads, so a deploy that changes either must rebuild."""
+    day = date(2026, 10, 20)
+    base = _fingerprint(monkeypatch, "sql", day)
+    assert base != _fingerprint(monkeypatch, "sql", day, i13_oar_mrp_controllers="OAR,POD")
+    assert base != _fingerprint(monkeypatch, "sql", day, i13_exclude_deleted_materials=False)
+    # Same codes, different spelling: the same population, so no rebuild.
+    assert base == _fingerprint(monkeypatch, "sql", day, i13_oar_mrp_controllers=" oar ")
+
+
 def test_uat_reservations_do_not_rebuild_the_sql_store(monkeypatch):
     """A UAT stamp refreshes its own material in place (uat._apply); counting it
     in the fingerprint started a full rebuild of over an hour per stamp."""

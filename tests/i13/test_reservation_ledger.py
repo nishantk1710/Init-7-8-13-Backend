@@ -94,8 +94,8 @@ class _FakeProcurementRepository:
 
 
 def _oar_scope_index(*keys):
-    """(material, plant) -> "ND" (an OAR MRP type) for every key given."""
-    return {key: "ND" for key in keys}
+    """(material, plant) -> "OAR" (the OAR MRP controller) for every key given."""
+    return {key: "OAR" for key in keys}
 
 
 def _build(reservations=(), gi_rows=(), prs=(), po_items=(), gr_rows=(), scope_index=None, **kwargs):
@@ -283,26 +283,26 @@ def test_all_direct_store_when_no_procurement_at_all() -> None:
 
 def test_non_oar_material_excluded_by_default() -> None:
     entries = _build(
-        reservations=[_reservation("50050", "1", "MAT-VB", "1300", "5")],
-        scope_index={("MAT-VB", "1300"): "VB"},
+        reservations=[_reservation("50050", "1", "MAT-POD", "1300", "5")],
+        scope_index={("MAT-POD", "1300"): "POD"},
     )
     assert entries == []
 
 
 def test_include_out_of_scope_returns_non_oar_materials() -> None:
     entries = _build(
-        reservations=[_reservation("50051", "1", "MAT-VB", "1300", "5")],
-        scope_index={("MAT-VB", "1300"): "VB"},
+        reservations=[_reservation("50051", "1", "MAT-POD", "1300", "5")],
+        scope_index={("MAT-POD", "1300"): "POD"},
         include_out_of_scope=True,
     )
     assert len(entries) == 1
-    assert entries[0].material_scope is MaterialScope.MIN_MAX
+    assert entries[0].material_scope is MaterialScope.EXCLUDED
 
 
 def test_oar_material_included_by_default() -> None:
     entries = _build(
-        reservations=[_reservation("50052", "1", "MAT-ND", "1300", "5")],
-        scope_index={("MAT-ND", "1300"): "ND"},
+        reservations=[_reservation("50052", "1", "MAT-OAR", "1300", "5")],
+        scope_index={("MAT-OAR", "1300"): "OAR"},
     )
     assert len(entries) == 1
     assert entries[0].material_scope is MaterialScope.OAR

@@ -93,7 +93,7 @@ def test_partial_refresh_does_not_touch_other_plants_rows() -> None:
 
     with get_sessionmaker()() as session:
         other_plant = session.execute(
-            text("SELECT DISTINCT TOP 1 plant FROM raw_marc WHERE mrp_type IN ('ND', 'PD') AND plant <> '1300'")
+            text("SELECT DISTINCT TOP 1 plant FROM n_marc WHERE mrp_controller = 'OAR' AND plant <> '1300'")
         ).scalar_one_or_none()
         if other_plant is None:
             pytest.skip("no second real OAR plant available in this dataset")
