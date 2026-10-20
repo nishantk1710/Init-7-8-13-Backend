@@ -323,11 +323,23 @@ class AssistantSession(Base):
 
     @property
     def reference(self) -> str:
-        """What the requester types into SAP: ``R.../n`` for a request line,
-        the session ID otherwise."""
+        """How the line is quoted on screen: ``R.../n`` for a request line, the
+        session ID otherwise. Not what goes into SAP -- see :attr:`sap_text`."""
         if self.request_id and self.line_no:
             return f"{self.request_id}/{self.line_no}"
         return self.id
+
+    @property
+    def sap_text(self) -> str:
+        """What the requester types into SAP: the bare request ID for a request
+        line, the session ID otherwise.
+
+        A request is one SAP reservation, and SAP copies the header text to
+        every item, so every line of a request carries the same ``R...`` in
+        SGTXT. Linking tells the lines apart by material and plant
+        (``app/initiatives/i13/session_link.py``); the ``/n`` is display only.
+        """
+        return self.request_id or self.id
 
     def __repr__(self) -> str:
         return (

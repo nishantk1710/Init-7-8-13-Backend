@@ -20,12 +20,15 @@ into the reservation's item text, SGTXT -- loaded by the extract as
 
 Multi-material requests
 -----------------------
-A line of a request (``app/assistant/requests.py``) is quoted as
-``<request>/<n>`` -- ``RSA1MT7EKP/2``. :func:`request_refs_in` reads those,
-and the link is made to **the line's own session**, found by request +
-material + plant: a request holds each material once, so that pair names one
-line. The ``/n`` is read only as a cross-check (:func:`line_number_note`), so a
-wrong or missing one still links. Because the link row names the line's session,
+A request is one SAP reservation. The requester types the bare request ID
+(``RSA1MT7EKP``) into the reservation header, and SAP copies that text to every
+item's SGTXT -- so every item of the reservation carries the same reference.
+:func:`request_refs_in` reads it, and each item is linked to **its line's own
+session**, found by request + material + plant: a request holds each material
+once, so that pair names one line. The assistant quotes a line on screen as
+``<request>/<n>``. An older SGTXT that carries the ``/n`` still links, and a
+``/n`` that names another line is noted (:func:`line_number_note`); a missing
+one is the normal case and is not. Because the link row names the line's session,
 everything downstream -- the ledger, compliance, ACT, plan matching -- treats it
 exactly as a stand-alone session's link.
 
@@ -203,16 +206,16 @@ def load_request_lines(db: Session, request_ids: Iterable[str]) -> dict[str, lis
 def line_number_note(sgtxt: str | None, request_id: str, line_no: int | None) -> str | None:
     """Why a request line's link deserves a second look, or ``None``.
 
-    The link is made by material and plant, so a wrong or missing ``/n`` does
-    not stop it -- but somebody reading the reservation will read the ``/n``.
+    The link is made by material and plant, and SGTXT normally carries the bare
+    request ID (SAP copies the header text to every item), so no ``/n`` is the
+    normal case. A ``/n`` that names another line is worth a note: somebody
+    reading the reservation will read it.
     """
     refs = [ref for ref in request_refs_in(sgtxt).valid if ref.request_id == request_id]
     if not refs or line_no is None:
         return None
     typed = refs[0].line_no
-    if typed is None:
-        return f"No line number typed; matched to /{line_no} by material and plant."
-    if typed != line_no:
+    if typed is not None and typed != line_no:
         return f"Typed /{typed}; matched to /{line_no} by material and plant."
     return None
 
