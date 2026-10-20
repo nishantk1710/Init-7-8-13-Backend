@@ -108,6 +108,16 @@ def _row(rsnum, rspos, material, sgtxt, plant="1300"):
 
 
 class TestChoosingTheLine:
+    def test_one_header_text_on_every_item_links_each_to_its_own_material(self) -> None:
+        # SAP copies the header text to every item, and item numbers need not
+        # follow the line numbers.
+        rows = [_row("9", "1", "MAT-B", REQUEST), _row("9", "33", "MAT-A", REQUEST)]
+        assert set(_links_wanted(rows, {}, LINES)) == {("S-LINE-2", "9", "1"), ("S-LINE-1", "9", "33")}
+
+    def test_one_material_split_over_two_items_links_both_to_its_line(self) -> None:
+        rows = [_row("9", "1", "MAT-A", REQUEST), _row("9", "2", "MAT-A", REQUEST)]
+        assert set(_links_wanted(rows, {}, LINES)) == {("S-LINE-1", "9", "1"), ("S-LINE-1", "9", "2")}
+
     def test_each_item_links_to_its_own_material_line(self) -> None:
         rows = [_row("9", "1", "MAT-A", f"{REQUEST}/1"), _row("9", "2", "MAT-B", f"{REQUEST}/2")]
         assert set(_links_wanted(rows, {}, LINES)) == {("S-LINE-1", "9", "1"), ("S-LINE-2", "9", "2")}
@@ -128,12 +138,12 @@ class TestChoosingTheLine:
 
 
 class TestTheLineNumberNote:
-    def test_quiet_when_the_number_is_right(self) -> None:
+    def test_quiet_for_the_bare_request_id_or_the_right_number(self) -> None:
+        assert line_number_note(REQUEST, REQUEST, 2) is None
         assert line_number_note(f"{REQUEST}/2", REQUEST, 2) is None
 
-    def test_says_so_when_it_is_wrong_or_missing(self) -> None:
+    def test_says_so_when_the_number_names_another_line(self) -> None:
         assert line_number_note(f"{REQUEST}/1", REQUEST, 2) == "Typed /1; matched to /2 by material and plant."
-        assert "No line number typed" in line_number_note(REQUEST, REQUEST, 2)
 
 
 class TestStatus:
@@ -216,9 +226,9 @@ class TestUatSimulation:
             assert len({r.reservation_number for r in rows}) == 1
             assert int(rows[0].reservation_number) >= uat_service.SIMULATED_RANGE_START
             assert [(r.reservation_item, r.material, r.sgtxt) for r in rows] == [
-                ("1", OAR_NORMAL, f"{recorded}/1"),
-                ("2", OAR_ABOVE, f"{recorded}/2"),
-                ("3", REPAIR_NEW, f"{recorded}/5"),
+                ("1", OAR_NORMAL, recorded),
+                ("2", OAR_ABOVE, recorded),
+                ("3", REPAIR_NEW, recorded),
             ]
             # Declined lines (not needed, existing unit used) are not reserved.
             assert OAR_NOT_NEEDED not in {r.material for r in rows}
@@ -243,7 +253,7 @@ class TestUatSimulation:
         with factory() as db:
             line = request_service.lines_of(db, recorded)[0]
             row = uat_service.simulate(db, line.id, actor="tester")
-            assert row.sgtxt == f"{recorded}/1"
+            assert row.sgtxt == recorded
 
 
 def test_the_request_simulation_route_is_hidden_when_uat_is_off(monkeypatch) -> None:

@@ -12,12 +12,14 @@ conversation does not exist in the loaded extract. This module fills that gap
   uses (99xxxxxx), with SGTXT = the session ID;
 * :func:`stamp` -- the session ID typed into an existing reservation's SGTXT;
 * :func:`simulate_request` -- one reservation for a whole multi-material
-  request, an item per line to be reserved, each with SGTXT ``<request>/<n>``;
+  request, an item per line to be reserved, each with SGTXT ``<request>`` --
+  SAP copies the reservation's header text to every item;
 * :func:`remove` -- undo any of them, one item at a time.
 
-What is "typed" is the session's **reference**: the session ID for a session
-opened on its own, ``<request>/<n>`` for a line of a request -- exactly what the
-assistant told the requester to type.
+What is "typed" is the session's **SAP text**: the session ID for a session
+opened on its own, the bare request ID for a line of a request -- exactly what
+the assistant told the requester to type. Linking tells the lines of a request
+apart by material and plant.
 
 After each, the material is refreshed in the I13 snapshot (ledger, WATCH,
 session links) and detection runs for it, exactly as a new extract and a
@@ -63,7 +65,7 @@ class _Session:
     material: str
     plant: str
     flow: str
-    reference: str
+    sap_text: str
     """What the requester types into SGTXT -- see the module docstring."""
 
 
@@ -73,7 +75,7 @@ def _session(db: Session, session_id: str) -> _Session:
     row = db.get(AssistantSession, session_id.strip().upper())
     if row is None:
         raise UatError(f"No assistant session {session_id!r}.")
-    return _Session(row.id, row.material_id, row.plant, row.flow, row.reference)
+    return _Session(row.id, row.material_id, row.plant, row.flow, row.sap_text)
 
 
 def _next_simulated_number(db: Session) -> int:
@@ -145,7 +147,7 @@ def simulate(db: Session, session_id: str, *, actor: str) -> UatReservationSgtxt
         # Required when the plan said it would be used; today if no plan.
         requirement_date=(plan.window_start if plan is not None and plan.window_start else date.today()),
         requirement_quantity=(plan.planned_quantity if plan is not None else Decimal("1")),
-        sgtxt=session.reference,
+        sgtxt=session.sap_text,
         session_id=session.session_id,
         created_by=actor,
     )
@@ -162,9 +164,10 @@ def simulate_request(db: Session, request_id: str, *, actor: str) -> list[UatRes
 
     One reservation number, an item per line that was going to be reserved --
     an OAR line that captured a plan, a repairable line that proceeds with a
-    new unit -- each with SGTXT ``<request>/<n>``. A line declined in the
-    conversation (not needed, or the existing unit used) gets no item, as the
-    requester would not have reserved it.
+    new unit -- each with SGTXT ``<request>``, as SAP copies the header text to
+    every item. A line declined in the conversation (not needed, or the
+    existing unit used) gets no item, as the requester would not have reserved
+    it.
     """
     from app.assistant import requests as request_service
     from app.assistant import script
@@ -207,7 +210,7 @@ def simulate_request(db: Session, request_id: str, *, actor: str) -> list[UatRes
                 simulated=True,
                 requirement_date=(plan.window_start if plan is not None and plan.window_start else date.today()),
                 requirement_quantity=(plan.planned_quantity if plan is not None else Decimal("1")),
-                sgtxt=record.session.reference,
+                sgtxt=record.session.sap_text,
                 session_id=record.session.id,
                 created_by=actor,
             )
@@ -264,7 +267,7 @@ def stamp(db: Session, session_id: str, *, reservation_number: str, reservation_
         simulated=False,
         requirement_date=reservation.get("Bdter"),
         requirement_quantity=reservation.get("Bdmng"),
-        sgtxt=session.reference,
+        sgtxt=session.sap_text,
         original_sgtxt=(raw_text or None),
         session_id=session.session_id,
         created_by=actor,
@@ -273,7 +276,7 @@ def stamp(db: Session, session_id: str, *, reservation_number: str, reservation_
     db.flush()
     _apply(db, session.material, session.plant)
     db.commit()
-    logger.info("UAT: stamped %s/%s with %s", reservation_number, reservation_item, session.reference)
+    logger.info("UAT: stamped %s/%s with %s", reservation_number, reservation_item, session.sap_text)
     return row
 
 
