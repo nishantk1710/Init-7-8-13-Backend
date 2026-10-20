@@ -292,15 +292,15 @@ class SqlSnapshot:
         self, *, plant=None, material=None, oar_only=True,
         procurement_status=None, utilisation_status=None, delivery_status=None,
     ) -> dict[str, Any]:
-        """The procurement view's header: lines in total and by linkage status."""
-        by_linkage = self._counts(
-            self._legacy_where(
-                plant=plant, material=material, oar_only=oar_only, procurement_status=procurement_status,
-                utilisation_status=utilisation_status, delivery_status=delivery_status,
-            ),
-            R.text1,
+        """The procurement view's header: lines in total and by linkage status.
+        The total is counted on its own, so a version built before linkage was
+        stored beside the payload still reports it (with no breakdown)."""
+        clauses = self._legacy_where(
+            plant=plant, material=material, oar_only=oar_only, procurement_status=procurement_status,
+            utilisation_status=utilisation_status, delivery_status=delivery_status,
         )
-        return {"total": sum(by_linkage.values()), "by_linkage_status": by_linkage}
+        total = self.db.execute(select(func.count()).select_from(R).where(*clauses)).scalar_one()
+        return {"total": int(total), "by_linkage_status": self._counts(clauses, R.text1)}
 
     def legacy_entry(self, ledger_id: str, *, oar_only=True) -> LegacyLedgerEntry | None:
         return self._one(
