@@ -354,6 +354,7 @@ _ATTRIBUTE_SQL = """
     SELECT u.sap_material_number,
            u.sap_plant_code,
            p.mrp_type,
+           p.mrp_controller,
            p.current_safety_stock,
            p.current_reorder_point,
            p.current_maximum_stock,
@@ -734,6 +735,7 @@ def _build_one(
     attributes = MaterialAttributes(
         key=key,
         mrp_type=row.mrp_type,
+        mrp_controller=row.mrp_controller,
         material_status=row.material_status,
     )
     oar = assess_oar_scope(attributes, policy.oar)

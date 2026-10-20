@@ -241,17 +241,17 @@ class TestMaterialPlantStagingAppliesTheOdataConversion:
         with engine.begin() as connection:
             connection.execute(text(
                 "CREATE TABLE n_marc (material TEXT, plant TEXT, mrp_type TEXT, "
-                "planned_deliv_time TEXT, reorder_point TEXT, safety_stock TEXT, "
-                "maximum_stock_level TEXT, df_at_plant_level TEXT)"
+                "mrp_controller TEXT, planned_deliv_time TEXT, reorder_point TEXT, "
+                "safety_stock TEXT, maximum_stock_level TEXT, df_at_plant_level TEXT)"
             ))
             for r in marc_rows:
                 connection.execute(
                     text(
                         "INSERT INTO n_marc VALUES (:material, :plant, :mrp_type, "
-                        ":planned_deliv_time, :reorder_point, :safety_stock, "
-                        ":maximum_stock_level, :df_at_plant_level)"
+                        ":mrp_controller, :planned_deliv_time, :reorder_point, "
+                        ":safety_stock, :maximum_stock_level, :df_at_plant_level)"
                     ),
-                    {"safety_stock": None, **r},
+                    {"safety_stock": None, "mrp_controller": None, **r},
                 )
         session = Session(engine)
 
@@ -327,6 +327,28 @@ class TestMaterialPlantStagingAppliesTheOdataConversion:
         staged = self._staged_rows(monkeypatch, marc_rows, odata_present=True, odata_rows=[])
 
         assert staged[("11251003", "1300")]["deletion_flag"] is True
+
+    def test_mrp_controller_is_staged_upper_cased_and_blank_stays_null(self, monkeypatch) -> None:
+        """DISPO is what the OAR rule keys on. It is staged trimmed and upper-cased
+        (as I13's classify_material_scope normalises it), and a blank stays NULL so
+        the policy can read "no controller" as not OAR."""
+        base = {"plant": "1300", "mrp_type": "PD", "planned_deliv_time": "14",
+                "reorder_point": "10", "maximum_stock_level": "20", "df_at_plant_level": None}
+        marc_rows = [
+            {**base, "material": "11251010", "mrp_controller": " oar "},
+            {**base, "material": "11251011", "mrp_controller": "OAR"},
+            {**base, "material": "11251012", "mrp_controller": ""},
+            {**base, "material": "11251013", "mrp_controller": None},
+            {**base, "material": "11251014", "mrp_controller": "K01"},
+        ]
+
+        staged = self._staged_rows(monkeypatch, marc_rows, odata_present=True, odata_rows=[])
+
+        assert staged[("11251010", "1300")]["mrp_controller"] == "OAR"
+        assert staged[("11251011", "1300")]["mrp_controller"] == "OAR"
+        assert staged[("11251012", "1300")]["mrp_controller"] is None
+        assert staged[("11251013", "1300")]["mrp_controller"] is None
+        assert staged[("11251014", "1300")]["mrp_controller"] == "K01"
 
 
 # --- Unit price and currency from the OData valuation set ---------------------

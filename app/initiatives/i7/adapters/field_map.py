@@ -53,6 +53,7 @@ MARC_FIELDS = (
     FieldMapping("material", "MATNR", "sap_material_number"),
     FieldMapping("plant", "WERKS", "sap_plant_code"),
     FieldMapping("mrp_type", "DISMM", "mrp_type"),
+    FieldMapping("mrp_controller", "DISPO", "mrp_controller"),
     FieldMapping("planned_deliv_time", "PLIFZ", "planned_delivery_time_days"),
     FieldMapping("reorder_point", "MINBE", "current_reorder_point"),
     FieldMapping("safety_stock", "EISBE", "current_safety_stock"),

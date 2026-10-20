@@ -1,9 +1,24 @@
 """OAR identification policy.
 
-The business rule is now clarified: MRP Type ``VB`` is normal Min-Max managed,
-``ND`` and ``PD`` are OAR. So the active rule is::
+**Two conditions, ANDed (20 Oct 2026).** A material-plant is OAR when its MRP
+controller (``MARC.DISPO``) is ``OAR`` *and* its MRP type passes the DISMM rule
+below. The controller condition is the VZI ruling I13 already applies
+(``app.shared.material_scope.policy``) and I07 now matches it, reading the same
+shared setting (``Settings.i13_oar_mrp_controllers``) so the two modules cannot
+drift apart. A blank or missing controller is **not** OAR
+(``blank_means_out_of_scope``) -- unlike DISMM, where blank counts as OAR.
 
-    MRP_TYPE in {ND, PD}
+The plant scope (1300 and 1500, ``I7_PLANTS``) and the deletion exclusion
+(LVORM = X at plant or client level) are not predicates here: they are applied
+earlier, at ingestion and in the feature-store build, so a pair never reaches
+this rule unless it is in scope and not deleted. The deletion exclusion is the
+same one I13 applies.
+
+The DISMM part of the rule, as it stood before the controller condition::
+
+    MRP_TYPE in {ND, PD}  (blank also counts as OAR -- see below)
+
+MRP Type ``VB`` is normal Min-Max managed; ``ND`` and ``PD`` are OAR.
 
 Two documents previously disagreed with this (FRS v1.3: ``MARA.EXTWG = 100``;
 an earlier checked-in rule: ``DISMM in {ND, PD} AND MSTAE != '01'``). The
@@ -46,6 +61,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.config import get_settings
 from app.initiatives.i7.contracts.enums import ScopeDecision
 from app.initiatives.i7.contracts.material import MaterialAttributes
 from app.initiatives.i7.errors import ConfigurationError
@@ -65,6 +81,7 @@ class PredicateField(StrEnum):
     """
 
     MRP_TYPE = "mrp_type"
+    MRP_CONTROLLER = "mrp_controller"
     MATERIAL_STATUS = "material_status"
     MATERIAL_GROUP = "material_group"
 
@@ -114,8 +131,20 @@ class ScopePredicate(BaseModel):
     this exists because the OAR rule specifically was confirmed the other
     way (see oar.py's module docstring)."""
 
+    blank_means_out_of_scope: bool = False
+    """The opposite exception, for a field whose *presence* is the evidence --
+    the MRP controller (DISPO): a material is OAR because its controller says
+    ``OAR``, so no controller is no evidence, and evaluates OUT_OF_SCOPE rather
+    than UNKNOWN. Covers both a missing value (``None``, as the staging adapter
+    collapses a blank cell) and a whitespace-only string. Off by default, and
+    never together with ``blank_means_in_scope``."""
+
     @model_validator(mode="after")
     def _values_match_operator(self) -> "ScopePredicate":
+        if self.blank_means_in_scope and self.blank_means_out_of_scope:
+            raise ValueError(
+                f"predicate on {self.field} cannot treat blank as both in and out of scope"
+            )
         if not self.values:
             raise ValueError(f"predicate on {self.field} needs at least one value")
         single = {PredicateOperator.EQUALS, PredicateOperator.NOT_EQUALS, PredicateOperator.STARTS_WITH}
@@ -126,6 +155,8 @@ class ScopePredicate(BaseModel):
     def evaluate(self, attributes: MaterialAttributes) -> ScopeDecision:
         """Apply this predicate to one material-plant."""
         raw = getattr(attributes, self.field.value)
+        if self.blank_means_out_of_scope and (raw is None or not raw.strip()):
+            return ScopeDecision.OUT_OF_SCOPE
         if raw is None:
             return ScopeDecision.IN_SCOPE if self.blank_means_in_scope else ScopeDecision.UNKNOWN
         if raw in self.unknown_values:
@@ -193,7 +224,13 @@ class OarPolicy(BaseModel):
 
 
 def current_oar_policy() -> OarPolicy:
-    """The rule in force: ``MRP_TYPE in {ND, PD}``, blank also counts as OAR.
+    """The rule in force: ``MRP_CONTROLLER in {OAR}`` AND ``MRP_TYPE in {ND, PD}``
+    (blank MRP type also counts as OAR).
+
+    The controller codes are read from ``Settings.i13_oar_mrp_controllers`` --
+    the same setting I13 classifies by -- so a retuned list moves both modules.
+    ``blank_means_out_of_scope=True`` makes a missing controller not OAR, where
+    the MRP-type predicate below makes a missing type OAR.
 
     ``blank_means_in_scope=True`` is what actually implements the blank
     exception: the staging adapter's ``clean()`` collapses an empty DISMM
@@ -208,6 +245,12 @@ def current_oar_policy() -> OarPolicy:
     return OarPolicy(
         predicates=(
             ScopePredicate(
+                field=PredicateField.MRP_CONTROLLER,
+                operator=PredicateOperator.IN,
+                values=tuple(sorted(get_settings().i13_oar_mrp_controller_set)),
+                blank_means_out_of_scope=True,
+            ),
+            ScopePredicate(
                 field=PredicateField.MRP_TYPE,
                 operator=PredicateOperator.IN,
                 values=("ND", "PD"),
@@ -217,7 +260,8 @@ def current_oar_policy() -> OarPolicy:
         rollup=None,
         confirmed=False,
         notes=(
-            "MRP-type value set: ND, PD and blank all count as OAR "
+            "MRP controller (DISPO) must be OAR -- the I13 ruling of 2026-10-20, "
+            "same setting. MRP-type value set: ND, PD and blank all count as OAR "
             "(business-confirmed). Roll-up policy still pending team-lead "
             "confirmation. Live scan: ND+PD = 46.4% of catalogue, 47% of rows "
             "have no DISMM (now also IN_SCOPE), six undocumented MRP codes "
