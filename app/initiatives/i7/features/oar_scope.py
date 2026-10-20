@@ -5,8 +5,10 @@ Thin by design. The rule itself lives in the Phase 1
 AND -- and this module adds only what the feature store needs on top: a reason
 string explaining *which* predicate decided, and the unresolved roll-up state.
 
-No MRP type or material status value appears here. Configuration owns those, and
-a leakage test fails the build if one leaks out.
+No MRP type, MRP controller or material status value appears here. Configuration
+owns those, and a leakage test fails the build if one leaks out. The rule is two
+predicates ANDed -- MRP controller (DISPO) = OAR, then the MRP type (DISMM) rule;
+a missing controller is OUT_OF_SCOPE, not UNKNOWN.
 
 Three states are still possible in general (OUT_OF_SCOPE / UNKNOWN / IN_SCOPE),
 but for the current OAR rule specifically, UNKNOWN no longer arises from a

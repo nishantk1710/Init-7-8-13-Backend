@@ -227,6 +227,11 @@ def _scoped(statement: Any, scope: frozenset[str]) -> Any:
     return statement.bindparams(bindparam("plant_scope", expanding=True)) if scope else statement
 
 
+def _upper(value: str | None) -> str | None:
+    """``value`` upper-cased; ``None`` stays ``None``."""
+    return value.upper() if value is not None else None
+
+
 def _out_of_scope(plant: str | None, scope: frozenset[str]) -> bool:
     """Whether ``plant`` falls outside the configured plant scope.
 
@@ -534,7 +539,7 @@ def _stage_materials(
 # stock comparison wrong for exactly the materials somebody had bothered to
 # maintain. A blank or unreadable value still stages as NULL, never 0.
 _MATERIAL_PLANT_SQL = """
-    SELECT material, plant, mrp_type, planned_deliv_time,
+    SELECT material, plant, mrp_type, mrp_controller, planned_deliv_time,
            reorder_point, safety_stock, maximum_stock_level, df_at_plant_level
       FROM n_marc
 """
@@ -691,6 +696,9 @@ def _stage_material_plants(
                 # real state, and the OAR policy -- not the adapter -- decides
                 # what it means.
                 "mrp_type": clean(values["mrp_type"]),
+                # DISPO, upper-cased so the OAR predicate matches the way I13's
+                # classify_material_scope does (trim + upper). Blank stays NULL.
+                "mrp_controller": _upper(clean(values["mrp_controller"])),
                 "planned_delivery_time_days": parse_int(values["planned_deliv_time"]),
                 # Staged as delivered. parse_decimal returns None for a blank
                 # or unparseable value, so "not supplied" stays NULL rather

@@ -38,6 +38,12 @@ class MaterialAttributes(BaseModel):
     field itself still just reports what SAP holds, the interpretation
     belongs to the policy, not to this contract."""
 
+    mrp_controller: str | None = None
+    """MARC.DISPO, upper-cased. The OAR rule requires it to be ``OAR`` (the I13
+    ruling of 2026-10-20); ``None`` means MARC has no controller for this
+    material-plant, which is *not* OAR. Like ``mrp_type`` this reports what SAP
+    holds -- the meaning belongs to the policy."""
+
     material_status: str | None = None
     """MARA.MSTAE. ``'01'`` marks an obsolete material and excludes it from OAR
     under the current rule; that comparison lives in the policy, not here."""

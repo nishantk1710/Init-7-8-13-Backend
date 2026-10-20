@@ -177,6 +177,10 @@ class StagedMaterialPlant(Base):
     mrp_type: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
     """DISMM. Blank means "not maintained" -- unknown, not "not OAR"."""
 
+    mrp_controller: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    """DISPO, upper-cased. The OAR rule requires ``OAR`` here; blank is not OAR.
+    NULL on rows staged before this column existed, until the next staging run."""
+
     planned_delivery_time_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     current_safety_stock: Mapped[Decimal | None] = mapped_column(QUANTITY, nullable=True)

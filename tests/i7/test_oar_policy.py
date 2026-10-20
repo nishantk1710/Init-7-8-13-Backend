@@ -29,14 +29,22 @@ from app.initiatives.i7.policy import (
 
 
 def attributes(
-    *, mrp_type: str | None = None, material_status: str | None = None, plant: str = "1300", **extra
+    *,
+    mrp_type: str | None = None,
+    material_status: str | None = None,
+    plant: str = "1300",
+    mrp_controller: str | None = "OAR",
+    **extra,
 ) -> MaterialAttributes:
+    """``mrp_controller`` defaults to the OAR code so the MRP-type cases below
+    isolate the DISMM predicate; the controller rule has its own tests."""
     return MaterialAttributes(
         key=MaterialPlantKey(
             material=MaterialIdentity(sap_material_number="000000000010000000"),
             plant=PlantIdentity(sap_plant_code=plant),
         ),
         mrp_type=mrp_type,
+        mrp_controller=mrp_controller,
         material_status=material_status,
         **extra,
     )
@@ -64,10 +72,71 @@ def test_mrp_type_alone_determines_oar_regardless_of_material_status():
     assert decision is ScopeDecision.IN_SCOPE
 
 
-def test_only_one_predicate_in_the_active_rule():
+def test_the_active_rule_is_the_controller_and_the_mrp_type_predicates():
     policy = current_oar_policy()
-    assert len(policy.predicates) == 1
-    assert policy.predicates[0].field is PredicateField.MRP_TYPE
+    assert [p.field for p in policy.predicates] == [
+        PredicateField.MRP_CONTROLLER,
+        PredicateField.MRP_TYPE,
+    ]
+
+
+# --- The MRP controller (DISPO) condition -----------------------------
+
+
+def test_oar_requires_the_oar_controller():
+    """The 2026-10-20 ruling, shared with I13: DISPO = OAR."""
+    policy = current_oar_policy()
+    assert policy.evaluate(attributes(mrp_type="PD", mrp_controller="OAR")) is ScopeDecision.IN_SCOPE
+    assert policy.evaluate(attributes(mrp_type="PD", mrp_controller="K01")) is ScopeDecision.OUT_OF_SCOPE
+
+
+@pytest.mark.parametrize("controller", [None, "", "   "])
+def test_a_blank_controller_is_not_oar_even_with_an_oar_mrp_type(controller):
+    """Unlike DISMM, where blank counts as OAR: a controller is positive
+    evidence, so no controller is no evidence -- OUT_OF_SCOPE, never UNKNOWN."""
+    for mrp_type in ("ND", "PD", None):
+        decision = current_oar_policy().evaluate(
+            attributes(mrp_type=mrp_type, mrp_controller=controller)
+        )
+        assert decision is ScopeDecision.OUT_OF_SCOPE
+
+
+def test_a_blank_mrp_type_is_still_oar_when_the_controller_is_oar():
+    assert current_oar_policy().evaluate(attributes(mrp_type=None)) is ScopeDecision.IN_SCOPE
+
+
+def test_both_predicates_must_hold():
+    policy = current_oar_policy()
+    assert policy.evaluate(attributes(mrp_type="VB", mrp_controller="OAR")) is ScopeDecision.OUT_OF_SCOPE
+    assert policy.evaluate(attributes(mrp_type="ND", mrp_controller="X99")) is ScopeDecision.OUT_OF_SCOPE
+
+
+def test_the_controller_codes_come_from_the_setting_i13_also_reads():
+    """One list for both modules: retuning ``i13_oar_mrp_controllers`` moves I07
+    and I13 together, so they cannot disagree about the same material."""
+    from app.core.config import get_settings
+    from app.shared.material_scope import MaterialScope, classify_material_scope
+
+    configured = {
+        value
+        for p in current_oar_policy().predicates
+        if p.field is PredicateField.MRP_CONTROLLER
+        for value in p.values
+    }
+    assert configured == set(get_settings().i13_oar_mrp_controller_set)
+    for code in configured:
+        assert classify_material_scope(code) is MaterialScope.OAR
+
+
+def test_a_predicate_cannot_treat_blank_as_both_in_and_out_of_scope():
+    with pytest.raises(PydanticValidationError):
+        ScopePredicate(
+            field=PredicateField.MRP_CONTROLLER,
+            operator=PredicateOperator.IN,
+            values=("OAR",),
+            blank_means_in_scope=True,
+            blank_means_out_of_scope=True,
+        )
 
 
 # --- Unknown handling -------------------------------------------------

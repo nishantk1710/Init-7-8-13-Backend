@@ -3,7 +3,7 @@
 The rule in force::
 
     ConversionEligible =
-        OarMaterialPlant                      -- Stage 1: MARC.DISMM in {ND, PD} or blank
+        OarMaterialPlant                      -- Stage 1: MARC.DISPO = OAR and MARC.DISMM in {ND, PD} or blank
     AND NOT Obsolete                          -- OBSOLETE is never eligible
     AND (    ConsumptionCount12M > 4
           OR Criticality in {CRITICAL, IMPACT, INSURANCE} )
@@ -13,7 +13,7 @@ that always apply.
 
 Identification and conversion are separate decisions. This module never
 re-derives OAR status: it reads the Stage 1 verdict (``MaterialFeature.oar_scope``).
-The DISMM rule itself lives in :func:`app.initiatives.i7.policy.oar.current_oar_policy`.
+The DISPO and DISMM rule itself lives in :func:`app.initiatives.i7.policy.oar.current_oar_policy`.
 A material-plant Stage 1 put OUT_OF_SCOPE is not evaluated at all -- the
 builder does not call this for it.
 

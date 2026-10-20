@@ -30,14 +30,23 @@ POLICY = current_oar_policy()
 
 
 def attributes(
-    *, mrp_type=None, material_status=None, plant="1300", material="000000000010000000", **extra
+    *,
+    mrp_type=None,
+    material_status=None,
+    plant="1300",
+    material="000000000010000000",
+    mrp_controller="OAR",
+    **extra,
 ) -> MaterialAttributes:
+    """``mrp_controller`` defaults to the OAR code so the DISMM cases below stay
+    about DISMM; the controller condition is covered at the end of the file."""
     return MaterialAttributes(
         key=MaterialPlantKey(
             material=MaterialIdentity(sap_material_number=material),
             plant=PlantIdentity(sap_plant_code=plant),
         ),
         mrp_type=mrp_type,
+        mrp_controller=mrp_controller,
         material_status=material_status,
         **extra,
     )
@@ -183,3 +192,39 @@ def test_extwg_is_not_an_active_predicate():
     assert "external_material_group" not in {field.value for field in PredicateField}
     configured = {value for predicate in POLICY.predicates for value in predicate.values}
     assert "100" not in configured
+
+
+# --- The MRP controller (DISPO) condition ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "mrp_type,mrp_controller,expected",
+    [
+        ("PD", "OAR", ScopeDecision.IN_SCOPE),
+        ("ND", "OAR", ScopeDecision.IN_SCOPE),
+        (None, "OAR", ScopeDecision.IN_SCOPE),
+        ("PD", "K01", ScopeDecision.OUT_OF_SCOPE),
+        ("PD", None, ScopeDecision.OUT_OF_SCOPE),
+        ("PD", "", ScopeDecision.OUT_OF_SCOPE),
+        (None, None, ScopeDecision.OUT_OF_SCOPE),
+        ("VB", "OAR", ScopeDecision.OUT_OF_SCOPE),
+    ],
+)
+def test_controller_and_mrp_type_are_both_required(mrp_type, mrp_controller, expected):
+    assessment = assess_oar_scope(
+        attributes(mrp_type=mrp_type, mrp_controller=mrp_controller), POLICY
+    )
+    assert assessment.scope is expected
+
+
+def test_a_missing_controller_is_out_of_scope_not_unknown():
+    """No MARC row (or no DISPO) is "not OAR" -- the same answer I13 gives."""
+    assessment = assess_oar_scope(attributes(mrp_type="PD", mrp_controller=None), POLICY)
+    assert assessment.scope is ScopeDecision.OUT_OF_SCOPE
+    assert "mrp_controller" in assessment.reason
+
+
+def test_the_reason_names_the_failing_predicate_when_only_the_type_fails():
+    assessment = assess_oar_scope(attributes(mrp_type="VB", mrp_controller="OAR"), POLICY)
+    assert "mrp_type" in assessment.reason
+    assert "mrp_controller" not in assessment.reason

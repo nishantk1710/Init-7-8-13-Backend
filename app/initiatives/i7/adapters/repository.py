@@ -108,6 +108,7 @@ def _build_attributes(
             material_row.description if material_row else None,
         ),
         mrp_type=plant_row.mrp_type,
+        mrp_controller=plant_row.mrp_controller,
         material_status=material_row.material_status if material_row else None,
         external_material_group=(
             material_row.external_material_group if material_row else None
