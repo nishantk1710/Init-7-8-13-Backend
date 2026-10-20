@@ -207,7 +207,7 @@ class SqlSnapshot:
         limit=None,
         offset=0,
     ) -> tuple[list[WatchMetric], int]:
-        """``recent`` orders by last goods movement, newest first (a version
+        """``recent`` orders by last issue, newest first, never-issued last (a version
         built before that was stored falls back to material order)."""
         order = [*self._newest_first(R.d1), R.material, R.plant] if recent else [R.material, R.plant]
         return self._list(

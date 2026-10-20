@@ -88,7 +88,7 @@ def list_act_utilisation(
     grni: bool | None = Query(None, description="Filter by W6.3's gr_not_issued_flag"),
     acquired_vs_plan_status: str | None = Query(None),
     sort: Literal["recent", "material"] = Query(
-        "recent", description="recent: last goods movement, newest first (undated last). material: by number."
+        "recent", description="recent: last issue (201/261), newest first; never issued last. material: by number."
     ),
     limit: int = Query(1000, ge=1, le=5000, description="See the note on pagination below."),
     offset: int = Query(0, ge=0),
@@ -139,7 +139,7 @@ def list_act_utilisation(
             acquired_vs_plan_status=acquired_vs_plan_status,
         )
     if sort == "recent":
-        rows = newest_first(rows, lambda m: m.last_movement_date)
+        rows = newest_first(rows, lambda m: m.last_issue_date)
     return [WatchMetricResponse.model_validate(row) for row in page(rows, response, limit=limit, offset=offset)]
 
 

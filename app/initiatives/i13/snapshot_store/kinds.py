@@ -53,7 +53,9 @@ from app.initiatives.i13.snapshot_store import codec
 #: the build window) while the version already stored keeps serving -- unlike a
 #: change to a stored type, which makes that version unreadable at once.
 #: 2 (20 Oct 2026): lledger's statuses and sort date; watch's last movement.
-RECORD_LAYOUT = 2
+#: 3 (20 Oct 2026): watch sorts on its last issue -- what the aging band is
+#:    measured from (SOP 3.15) -- not its last movement.
+RECORD_LAYOUT = 3
 
 WATCH = "watch"
 MOVEMENT = "movement"
@@ -133,8 +135,10 @@ def watch(m: WatchMetric, oar: bool) -> Record:
     return Record(
         WATCH, m.material, m.plant, oar, _p(m),
         f1=m.aging_band.value, f2=m.acquired_vs_plan_status.value, f3=_yn(m.gr_not_issued_flag),
-        # "Most recent activity first" sorts on this.
-        d1=m.last_movement_date,
+        # "Most recent activity first" sorts on this: the last issue, which the
+        # aging band is measured from (SOP 3.15), so a receipt alone does not
+        # put a part at the top of a list that calls it non-moving.
+        d1=m.last_issue_date,
     )
 
 
