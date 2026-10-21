@@ -132,6 +132,7 @@ def _apply_filters(
     status_group: str | None = None,
     risk: str | None = None,
     conversion_eligibility: str | None = None,
+    consumption_above_threshold: bool | None = None,
 ) -> Select:
     """Every filter here maps to a real, persisted column or a keyed lookup.
     Nothing that would require loading rows into Python to evaluate.
@@ -158,6 +159,14 @@ def _apply_filters(
         statement = statement.where(Recommendation.confidence == confidence)
     if conversion_eligibility is not None:
         statement = statement.where(Recommendation.conversion_eligibility == conversion_eligibility)
+    if consumption_above_threshold:
+        # Issued more than the policy's own count in the trailing 12 months -- the threshold
+        # stored on the row, not a literal, so it follows the policy. A row with no count (never
+        # evaluated) cannot be shown to pass, so the comparison to NULL leaves it out; zero
+        # consumption fails for any non-negative threshold.
+        statement = statement.where(
+            Recommendation.consumption_count_12m > Recommendation.consumption_count_threshold
+        )
     if criticality is not None:
         statement = statement.where(Recommendation.criticality == criticality)
     if generated_from is not None:
@@ -421,6 +430,14 @@ def list_recommendations(
         Literal["ELIGIBLE", "NOT_ELIGIBLE", "UNKNOWN"] | None,
         Query(description="The OAR -> Min-Max conversion decision. A recommendation with no decision (not OAR) matches none."),
     ] = None,
+    consumption_above_threshold: Annotated[
+        bool | None,
+        Query(
+            description="true: only recommendations issued more than the policy's consumption-count "
+            "threshold in the last 12 months (this also drops zero-consumption materials). A "
+            "recommendation with no count yet is left out."
+        ),
+    ] = None,
 ) -> RecommendationListResponse:
     if sort not in SORT_FIELDS:
         raise bad_request(
@@ -451,6 +468,7 @@ def list_recommendations(
             status_group=status_group,
             risk=risk,
             conversion_eligibility=conversion_eligibility,
+            consumption_above_threshold=consumption_above_threshold,
         ).where(_not_smooth())
     )
 
