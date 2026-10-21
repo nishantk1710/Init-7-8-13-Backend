@@ -49,13 +49,17 @@ MAX_MEASUREMENT_AGE_DAYS = 31
 AWAITING_DECISION = ("PENDING_APPROVAL", "HELD")
 
 
-def _in_period(period_start: date, exclusive_end: date):
-    return (Recommendation.generated_at >= period_start, Recommendation.generated_at < exclusive_end)
+def _in_period(period_start: date | None, exclusive_end: date):
+    """The half-open period. With no ``period_start`` there is no lower bound: everything generated before the end,
+    which is what a month-end position is over -- the recommendations in force on that day."""
+    upper = Recommendation.generated_at < exclusive_end
+    return (Recommendation.generated_at >= period_start, upper) if period_start is not None else (upper,)
 
 
-def newest_in_period_ids(period_start: date, exclusive_end: date):
-    """The id of the newest recommendation of each material-plant generated in the period. ``id`` is an
-    auto-increment, so the highest id of a material-plant is its newest."""
+def newest_in_period_ids(period_start: date | None, exclusive_end: date):
+    """The id of the newest recommendation of each material-plant generated in the period (or, with no
+    ``period_start``, before its end). ``id`` is an auto-increment, so the highest id of a material-plant is its
+    newest."""
     return (
         select(func.max(Recommendation.id))
         .where(*_in_period(period_start, exclusive_end))
@@ -114,7 +118,7 @@ def status_counts(session: Session, period_start: date, exclusive_end: date) -> 
 # --- Position: the newest recommendation of each material-plant -------------------------------------
 
 
-def _population(period_start: date, exclusive_end: date, plant: str | None = None) -> Select:
+def _population(period_start: date | None, exclusive_end: date, plant: str | None = None) -> Select:
     """The position population (one plant, or every plant). The smooth-demand rows the Overview leaves out are left
     out here too."""
     return _apply_filters(
@@ -163,7 +167,7 @@ def stockout_position(session: Session, base: Select, cutoff: date, plant: str |
 
 
 def position_figures(
-    session: Session, period_start: date, exclusive_end: date, cutoff: date, plant: str | None = None
+    session: Session, period_start: date | None, exclusive_end: date, cutoff: date, plant: str | None = None
 ) -> PositionFigures:
     """Stockout, excess and working capital over the newest recommendation of each material-plant in the period
     (for one plant, or every plant)."""
@@ -203,3 +207,39 @@ def position_figures(
         currency=_portfolio_currency(session),
     )
 
+
+
+# --- Current vs recommended stock levels -------------------------------------------------------------
+
+
+def stock_levels(session: Session, period_start: date | None, exclusive_end: date) -> list[dict]:
+    """The mean current (SAP) and recommended safety stock, reorder point and max stock over the position population
+    (the newest recommendation of each material-plant), each over the rows that have *both* values.
+
+    A mean, labelled as one, with how many rows it is over. Sums divided here, so the mean is an exact Decimal on every
+    database. A level with no row that has both values is ``None``, never 0.
+    """
+    base = _population(period_start, exclusive_end)
+    pairs = {
+        "safety_stock": (Recommendation.current_safety_stock, Recommendation.recommended_safety_stock),
+        "reorder_point": (Recommendation.current_rop, Recommendation.recommended_rop),
+        "max_stock": (Recommendation.current_max_stock, Recommendation.recommended_max_stock),
+    }
+    levels = []
+    for key, (current, recommended) in pairs.items():
+        total_current, total_recommended, rows = session.execute(
+            base.with_only_columns(func.sum(current), func.sum(recommended), func.count()).where(
+                current.isnot(None), recommended.isnot(None)
+            )
+        ).one()
+        n = int(rows)
+        levels.append(
+            {
+                "key": key,
+                "aggregation": "mean",
+                "records": n,
+                "current": Decimal(str(total_current)) / n if n else None,
+                "recommended": Decimal(str(total_recommended)) / n if n else None,
+            }
+        )
+    return levels

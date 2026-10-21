@@ -722,6 +722,13 @@ class Settings(BaseSettings):
     # until new data arrives or someone runs the pipeline by hand.
     i7_pipeline_retries: int = 2
 
+    # Whether the nightly watcher also saves the I07 monthly KPI snapshots (i7_kpi_snapshot) the Quarterly Report's
+    # trends and quarter-end position read: after the night's run it refreshes the current month's rolling reading and
+    # finalises last month's. OFF by default, and it only acts when the watcher itself is on
+    # (i7_pipeline_watch_enabled) -- there is no second timer. Needs the migration a3c9e7f15b42 applied first. The same
+    # capture can be run by hand: python -m app.reporting.capture_snapshot.
+    i7_kpi_snapshot_enabled: bool = False
+
     # Whether Auto-ARIMA runs as the CHALLENGER to SES for Smooth and Erratic
     # demand. OFF by default. On nonprod (13 Oct 2026) it was the whole cost of
     # forecasting: ~7-8 minutes per material-plant on Azure (4 s on a laptop), so

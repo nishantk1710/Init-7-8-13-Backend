@@ -18,9 +18,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.initiatives.i7.reporting import kpi_definitions
-from app.initiatives.i7.reporting.data_coverage import build_data_coverage
+from app.initiatives.i7.reporting.data_coverage import BASIS_CURRENT, build_data_coverage
 from app.initiatives.i7.reporting.forecast_actual import build_forecast_actual
 from app.initiatives.i7.reporting.monthly_activity import build_monthly_activity, period_months
+from app.initiatives.i7.reporting.quarter_trends import REALISED_SAVINGS_NOTE, build_trends
 from app.initiatives.i7.reporting.period import (
     exclusive_end_of,
     is_period_complete,
@@ -123,6 +124,10 @@ def _adoption(
 
 def _cards(
     *,
+    from_snapshot: bool,
+    quarter_end_label: str,
+    quarter_end_reason: str | None,
+    position_measured_on: date | None,
     period_label: str,
     cutoff: date,
     as_of: date,
@@ -133,6 +138,16 @@ def _cards(
     position: PositionFigures,
 ) -> list[KpiCard]:
     stockout = position.stockout
+    # Where the position figures come from, said on the cards that use them. A valid quarter-end snapshot is a
+    # measurement on the month's end; otherwise they are worked out now, and the card says so and why.
+    basis = "snapshot" if from_snapshot else "current_calculation"
+    position_note = (
+        None if from_snapshot
+        else (
+            f"Current calculation, not a quarter-end measurement: no valid {quarter_end_label} snapshot ({quarter_end_reason})"
+            if quarter_end_reason else None
+        )
+    )
     cards: list[KpiCard] = [
         KpiCard(
             key="materials_assessed",
@@ -175,6 +190,7 @@ def _cards(
                 kind=MetricKind.MEASUREMENT,
                 measured_on=stockout.as_of,
                 period_label=f"as of {stockout.as_of:%d %b %Y}" if stockout.as_of else "not measured",
+                basis=basis,
                 unavailable_reason=stockout.stale_note,
             )
         )
@@ -190,6 +206,7 @@ def _cards(
                 kind=MetricKind.MEASUREMENT,
                 measured_on=stockout.as_of,
                 period_label=f"as of {stockout.as_of:%d %b %Y}",
+                basis=basis,
                 denominator=stockout.evaluated,
                 denominator_label="material-plants that could be judged",
                 note=(
@@ -214,14 +231,15 @@ def _cards(
                 f"{position.excess_count} material-plants whose current maximum is above it. An estimate, not a saving."
             ),
             kind=MetricKind.MEASUREMENT,
-            measured_on=cutoff,
-            period_label=period_label,
+            measured_on=position_measured_on if from_snapshot else cutoff,
+            period_label=f"{quarter_end_label} month-end" if from_snapshot else period_label,
             denominator=position.population,
             denominator_label="newest recommendation of each material-plant",
+            basis=basis,
             unavailable_reason=(
                 None if position.excess_opportunity is not None else "No excess material-plant has a unit price, a current and a recommended maximum stock together."
             ),
-            note=MONEY_CAVEAT,
+            note=" ".join(n for n in (position_note, MONEY_CAVEAT) if n),
         )
     )
 
@@ -238,14 +256,15 @@ def _cards(
                 "means more tied up, positive means released. An estimate, not a realised saving."
             ),
             kind=MetricKind.MEASUREMENT,
-            measured_on=cutoff,
-            period_label=period_label,
+            measured_on=position_measured_on if from_snapshot else cutoff,
+            period_label=f"{quarter_end_label} month-end" if from_snapshot else period_label,
             denominator=position.priced_count,
             denominator_label="recommendations with a price and both reorder points",
+            basis=basis,
             unavailable_reason=(
                 None if position.net_rop_value_impact is not None else "No recommendation has a unit price and both a current and a recommended reorder point."
             ),
-            note=MONEY_CAVEAT,
+            note=" ".join(n for n in (position_note, MONEY_CAVEAT) if n),
         )
     )
 
@@ -269,6 +288,30 @@ def _cards(
         )
     )
     return cards
+
+
+def _coverage(
+    session: Session, period_start: date, period_end: date, today: date, cutoff: date, *,
+    source_activity: SourceActivitySection | None, position: PositionFigures, trends, from_snapshot: bool,
+):
+    """The data-coverage section, with the basis said honestly: which figures are a saved month-end snapshot and which are
+    worked out now, and which months have no snapshot."""
+    coverage = build_data_coverage(
+        session, period_start, period_end, today, cutoff, source_activity=source_activity, position=position
+    )
+    warnings = [w for w in coverage.warnings if w != BASIS_CURRENT]
+    warnings += [n for n in trends.notes if n != REALISED_SAVINGS_NOTE]  # which months have no snapshot, or why none can be read
+    if from_snapshot:
+        end = trends.quarter_end
+        warnings.append(
+            f"The quarter-end position (stockout, excess, working capital) is the saved {end.label} month-end snapshot, "
+            f"measured {end.measured_on:%d %b %Y}. Everything else is a current calculation."
+        )
+    else:
+        warnings.append(BASIS_CURRENT)
+        if trends.quarter_end.reason:
+            warnings.append(f"No quarter-end snapshot: {trends.quarter_end.reason}")
+    return coverage.model_copy(update={"basis": "snapshot" if from_snapshot else "current_calculation", "warnings": warnings})
 
 
 def build_quarter_management(
@@ -295,6 +338,12 @@ def build_quarter_management(
         PlantPosition(plant=code, figures=kpi_definitions.position_figures(session, period_start, exclusive_end, cutoff, code))
         for code in plants
     ]
+    # Saved monthly snapshots: the trend, and -- only when the last month's is valid -- the quarter-end position, which then
+    # replaces the current calculation above for the cards and the by-plant charts, so they all read one measurement.
+    trends, snapshot_position, snapshot_plants = build_trends(session, period_start, period_end)
+    from_snapshot = snapshot_position is not None
+    if from_snapshot:
+        position, plant_positions = snapshot_position, snapshot_plants
     forecast = build_forecast_actual(session, period_start, period_end)
 
     months = period_months(period_start, period_end, today, source_activity)
@@ -336,6 +385,10 @@ def build_quarter_management(
             session, period_start, period_end, today, source_activity=source_activity, forecast=forecast
         ),
         kpis=_cards(
+            from_snapshot=from_snapshot,
+            quarter_end_label=trends.quarter_end.label,
+            quarter_end_reason=trends.quarter_end.reason,
+            position_measured_on=trends.quarter_end.measured_on,
             period_label=period_label,
             cutoff=cutoff,
             as_of=today,
@@ -346,12 +399,15 @@ def build_quarter_management(
             position=position,
         ),
         position=position,
+        position_basis="snapshot" if from_snapshot else "current_calculation",
+        trends=trends,
         plant_positions=plant_positions,
         status_distribution=distribution,
         forecast_actual=forecast,
         adoption=_adoption(session, period_start, exclusive_end, awaiting),
-        data_coverage=build_data_coverage(
-            session, period_start, period_end, today, cutoff, source_activity=source_activity, position=position
+        data_coverage=_coverage(
+            session, period_start, period_end, today, cutoff,
+            source_activity=source_activity, position=position, trends=trends, from_snapshot=from_snapshot,
         ),
         definitions=DEFINITIONS,
     )
