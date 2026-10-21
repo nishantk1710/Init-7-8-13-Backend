@@ -31,6 +31,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.initiatives.i13.aging import classify_aging_band
 from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.models import AcquiredVsPlanStatus, AgingBand, ReservationLedgerEntry, WatchMetric
@@ -92,16 +93,42 @@ def _open_po_quantity_by_material_plant(
     ordered (over-receipt/source anomaly): that is not negative open supply.
     PR-only entries (``po_number is None``) are excluded -- nothing has been
     ordered yet, so there is no open PO quantity to count.
+
+    A PO line SAP has closed counts as nothing open, whatever is still
+    unreceived (UAT, 21 Oct 2026): EKPO-ELIKZ = ``X`` (delivery completed --
+    nothing more will be delivered, even on a short-closed line) or EKPO-LOEKZ
+    set (``L`` deleted, ``S`` blocked). Switch:
+    ``Settings.i13_open_po_respect_closed``.
     """
     entries = build_procurement_chain(procurement_repository, material=material, plant=plant)
+    closed = _closed_po_lines(procurement_repository, material=material, plant=plant)
     totals: dict[tuple[str, str], Decimal] = defaultdict(lambda: Decimal("0"))
     for entry in entries:
         if entry.po_number is None or entry.ordered_quantity is None:
+            continue
+        if (entry.po_number, entry.po_item) in closed:
             continue
         open_qty = entry.ordered_quantity - entry.received_quantity
         if open_qty > 0:
             totals[(entry.material, entry.plant)] += open_qty
     return dict(totals)
+
+
+def _closed_po_lines(
+    procurement_repository: PostgresProcurementRepository, *, material: str | None, plant: str | None
+) -> set[tuple[str, str]]:
+    """PO lines (EBELN, EBELP) SAP has closed: delivery completed or deleted.
+
+    Read with the same arguments ``build_procurement_chain`` uses, so the
+    repository's per-instance cache answers it without a second query.
+    """
+    if not get_settings().i13_open_po_respect_closed:
+        return set()
+    return {
+        (po["Ebeln"], po["Ebelp"])
+        for po in procurement_repository.get_purchase_order_items(pr_number=None, material=material, plant=plant)
+        if po.get("Elikz") == "X" or po.get("Loekz")
+    }
 
 
 def _gr_not_issued(

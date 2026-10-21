@@ -273,6 +273,47 @@ def test_open_po_quantity_clamps_at_zero_when_over_received(data_dir: Path, i13_
     assert metric.open_po_quantity == 0
 
 
+def _po_line(ebeln: str, menge: str, *, elikz: str = "", loekz: str = "") -> dict:
+    return {"Ebeln": ebeln, "Ebelp": "0010", "Banfn": None, "Bnfpo": None, "Matnr": "MAT1", "Werks": "1000",
+            "Menge": Decimal(menge), "Elikz": elikz, "Loekz": loekz}
+
+
+def _gr(ebeln: str, menge: str) -> dict:
+    return {"Ebeln": ebeln, "Ebelp": "0010", "Bwart": "101", "Menge": Decimal(menge), "BudatMkpf": AS_OF - timedelta(days=5)}
+
+
+def _open_po(data_dir: Path, i13_config, po_items: list[dict], gr_rows: list[dict]) -> Decimal:
+    reservation, pr = _reservation_and_pr()
+    _write_plans(data_dir, [])
+    procurement_repo = FakeProcurementRepository(prs=[pr], po_items=po_items, gr_rows=gr_rows)
+    metrics = compute_watch_metrics(
+        FakeMovementRepository(), procurement_repo, FakeReservationRepository(reservations=[reservation]),
+        SCOPE_INDEX, i13_config, data_dir, as_of=AS_OF,
+    )
+    return next(m for m in metrics if m.material == "MAT1").open_po_quantity
+
+
+def test_a_closed_po_line_has_nothing_open(data_dir: Path, i13_config) -> None:
+    """UAT, 21 Oct: delivery completed (ELIKZ = X) -- even short-closed, 10
+    ordered and 6 received -- and a deleted line (LOEKZ = L) add nothing; an
+    open line still counts what is unreceived."""
+    po_items = [
+        _po_line("4500000010", "10", elikz="X"),
+        _po_line("4500000011", "5", loekz="L"),
+        _po_line("4500000012", "8"),
+    ]
+    gr_rows = [_gr("4500000010", "6"), _gr("4500000012", "3")]
+    assert _open_po(data_dir, i13_config, po_items, gr_rows) == 5
+
+
+def test_closed_lines_count_again_with_the_switch_off(data_dir: Path, i13_config, monkeypatch) -> None:
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "i13_open_po_respect_closed", False)
+    po_items = [_po_line("4500000010", "10", elikz="X"), _po_line("4500000011", "5", loekz="L")]
+    assert _open_po(data_dir, i13_config, po_items, [_gr("4500000010", "6")]) == 9
+
+
 def test_material_scope_is_exposed_for_oar_filtering(data_dir: Path, i13_config) -> None:
     reservation, pr = _reservation_and_pr()
     _write_plans(data_dir, [])

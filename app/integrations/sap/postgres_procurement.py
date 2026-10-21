@@ -155,7 +155,7 @@ def fetch_purchase_requisitions(
 
 _PO_ITEM_QUERY = """
     SELECT purchasing_document, item, purchase_requisition, item_of_requisition,
-           material, plant, order_quantity
+           material, plant, order_quantity, delivery_completed, deletion_indicator
     FROM n_ekpo
     WHERE purchasing_document <> '' AND material <> '' AND plant <> '' AND {plant_scope}
       {po_filter}
@@ -183,6 +183,12 @@ def _to_po_item_row(record: Any) -> Row:
         "Matnr": record.material.strip(),
         "Werks": record.plant.strip(),
         "Menge": _decimal(record.order_quantity),
+        # EKPO-ELIKZ ("X": delivery completed) and EKPO-LOEKZ ("L" deleted,
+        # "S" blocked). Carried, not filtered: the ledger still lists a closed
+        # line; only the open-PO quantity treats it as closed. getattr: rows
+        # built before these columns were read carry neither.
+        "Elikz": (getattr(record, "delivery_completed", None) or "").strip().upper(),
+        "Loekz": (getattr(record, "deletion_indicator", None) or "").strip().upper(),
     }
 
 
