@@ -37,6 +37,7 @@ from app.api.assistant.request_schemas import (
 )
 from app.api.assistant.schemas import LinkedReservationModel
 from app.api.deps import Actor, get_current_actor
+from app.assistant import departments as department_names
 from app.assistant import requests as request_service
 from app.assistant import script
 from app.assistant.models import AssistantRequest, AssistantSession
@@ -154,6 +155,7 @@ def create_request(
             requested_for=body.requested_for,
             origin=Origin(body.origin),
             department=body.department,
+            department_note=body.department_note,
             settings=settings,
         )
     except request_service.RequestConflict as error:
@@ -190,6 +192,7 @@ def list_requests(
                 line_count=r.line_count,
                 skipped_count=len(json.loads(r.skipped or "[]")),
                 department=_single(departments.get(r.id, [])),
+                department_name=department_names.name_for(_single(departments.get(r.id, []))),
                 departments=departments.get(r.id, []),
             )
             for r in rows
@@ -257,6 +260,8 @@ def _request_response(db: DbSession, request: AssistantRequest, *, replayed: boo
                 material_description=names.get(session.material_id),
                 plant=session.plant,
                 department=session.department,
+                department_name=department_names.name_for(session.department),
+                department_note=session.department_note,
                 decision=record.decision,
                 planned_quantity=quantity(plan.planned_quantity) if plan else None,
                 suggested_quantity=quantity(suggestion.suggested_quantity) if suggestion else None,
@@ -298,6 +303,11 @@ def _request_response(db: DbSession, request: AssistantRequest, *, replayed: boo
         origin=request.origin,
         issued_at=request.issued_at,
         department=_single(departments),
+        department_name=department_names.name_for(_single(departments)),
+        # Every line carries the request's note; the first that has one.
+        department_note=next(
+            (r.session.department_note for r in records if r.session.department_note), None
+        ),
         departments=departments,
         lines=lines,
         skipped=[SkippedModel(**{

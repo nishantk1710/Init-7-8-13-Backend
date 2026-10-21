@@ -89,6 +89,8 @@ class CreateRequestBody(AssistantModel):
     requested_for: str | None = PydanticField(default=None, max_length=128)
     department: str | None = PydanticField(default=None, max_length=64)
     """The request's one department code; every line is recorded against it."""
+    department_note: str | None = PydanticField(default=None, max_length=200)
+    """Optional free text beside the department code; never checked."""
     origin: Literal["BADI", "PLATFORM"] = "PLATFORM"
     lines: list[LineAnswersModel] = PydanticField(min_length=1, max_length=50)
 
@@ -113,6 +115,8 @@ class RequestLineModel(AssistantModel):
     material_description: str | None = None
     plant: str
     department: str | None = None
+    department_name: str | None = None
+    department_note: str | None = None
     decision: str | None = None
     planned_quantity: str | None = None
     suggested_quantity: str | None = None
@@ -141,6 +145,10 @@ class RequestResponse(AssistantModel):
     department: str | None = None
     """The request's department. Null for a request from before 21 Oct whose
     lines named different ones -- ``departments`` lists them."""
+    department_name: str | None = None
+    """``department``'s name from the department list, if it has one."""
+    department_note: str | None = None
+    """Free text typed beside the department, if any."""
     departments: list[str]
     lines: list[RequestLineModel]
     skipped: list[SkippedModel]
@@ -161,6 +169,7 @@ class RequestSummaryModel(AssistantModel):
     line_count: int
     skipped_count: int
     department: str | None = None
+    department_name: str | None = None
     departments: list[str]
 
 

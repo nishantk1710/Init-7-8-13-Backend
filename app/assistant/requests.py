@@ -390,6 +390,7 @@ def create(
     requested_for: str | None = None,
     origin: Origin = Origin.PLATFORM,
     department: str | None = None,
+    department_note: str | None = None,
     today: date | None = None,
     settings: Settings | None = None,
 ) -> CreatedRequest:
@@ -397,7 +398,8 @@ def create(
 
     ``department`` is the request's one department. Per-line departments are
     still accepted (a screen from before 21 Oct sends them) as long as they all
-    agree with it and with each other."""
+    agree with it and with each other. ``department_note`` is free text beside
+    it, recorded on every line as the department is."""
     settings = settings or get_settings()
     today = today or date.today()
     i13_config = get_i13_config()
@@ -476,6 +478,7 @@ def create(
                 plant=plant,
                 requester=requester,
                 department=department,
+                department_note=department_note,
                 requested_for=requested_for,
                 origin=origin,
                 today=today,

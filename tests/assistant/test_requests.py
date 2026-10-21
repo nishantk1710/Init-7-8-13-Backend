@@ -34,6 +34,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.assistant import departments
 from app.assistant import requests as request_service
 from app.assistant import script
 from app.assistant import session as session_module
@@ -533,6 +534,7 @@ class TestRoutes:
             "plant": PLANT,
             "requestedFor": "J Miller",
             "department": "10100",
+            "departmentNote": "  Shaft 2 conveyor crew  ",
             "lines": lines or [
                 {"materialId": OAR_NORMAL, "plant": PLANT, "decision": "proceed",
                  "quantity": "8", "windowStart": "2026-08-01", "windowEnd": "2027-03-31",
@@ -563,7 +565,8 @@ class TestRoutes:
         assert oar_line["kind"] == "i13" and oar_line["suggestion"]["quantity"] == "8"
         assert consumable["kind"] == "out_of_scope"
 
-    def test_create_then_read_back(self, client) -> None:
+    def test_create_then_read_back(self, client, monkeypatch) -> None:
+        monkeypatch.setattr(departments, "_names", {"10100": "FINANCE-COMMERCIAL DEPARTMENT"})
         response = client.post("/api/assistant/requests", json=self._body())
         assert response.status_code == 201, response.text
         body = response.json()
@@ -571,6 +574,12 @@ class TestRoutes:
         assert [l["reference"] for l in body["lines"]] == [f"{request_id}/1", f"{request_id}/2"]
         assert body["department"] == "10100"
         assert body["departments"] == ["10100"]
+        # The name is the list's, looked up on read; the note is as typed, trimmed.
+        assert body["departmentName"] == "FINANCE-COMMERCIAL DEPARTMENT"
+        assert body["departmentNote"] == "Shaft 2 conveyor crew"
+        assert {(l["departmentName"], l["departmentNote"]) for l in body["lines"]} == {
+            ("FINANCE-COMMERCIAL DEPARTMENT", "Shaft 2 conveyor crew")
+        }
         assert body["skipped"][0]["materialId"] == CONSUMABLE
         first = body["lines"][0]
         assert (first["plannedQuantity"], first["suggestedQuantity"], first["acceptedQuantity"]) == ("8", "8", "8")

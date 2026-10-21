@@ -87,11 +87,21 @@ class StartSessionRequest(AssistantModel):
         max_length=64,
         description=(
             "Which department the part is for -- the requester's, not the "
-            "operator's -- as its 5-digit code (EBAN.AFNAM, e.g. 10100); see "
-            "GET /assistant/departments. From the platform it must be on that "
-            "list. Optional: the BAdI pop-up carries a material and a plant "
-            "and may not supply this, so a session opened from SAP "
-            "legitimately has none, and is never refused over it."
+            "operator's -- as its 5-digit code (e.g. 10100) from VZI's "
+            "department list; see GET /assistant/departments. From the "
+            "platform it must be on that list. Optional: the BAdI pop-up "
+            "carries a material and a plant and may not supply this, so a "
+            "session opened from SAP legitimately has none, and is never "
+            "refused over it."
+        ),
+    )
+    department_note: str | None = PydanticField(
+        default=None,
+        max_length=200,
+        description=(
+            "Optional free text about the department, typed beside the code "
+            "(a section, a crew, who it is on behalf of). Stored as typed; "
+            "never checked against the list."
         ),
     )
     requested_for: str | None = PydanticField(
@@ -145,9 +155,11 @@ class MaterialSearchResponse(AssistantModel):
 
 
 class DepartmentModel(AssistantModel):
-    """One department code, and the plants it has requisitions at."""
+    """One department code, its name, and the plants the list gives it."""
 
     code: str
+    name: str | None = None
+    """From VZI's department list. Null for a code the list does not name."""
     plants: list[str]
     primary: bool
     """Show it before anything is typed. False: offer it on search only."""
@@ -347,6 +359,10 @@ class SessionTraceResponse(AssistantModel):
     """MAKT / ZMM065 name -- see app.shared.material_names."""
     plant: str
     department: str | None = None
+    department_name: str | None = None
+    """The code's name from the department list; null when it has none."""
+    department_note: str | None = None
+    """Free text typed beside the department, if any."""
     requested_for: str | None = None
     """Who the part was for. Null for a session opened before the field existed,
     or from SAP, which cannot supply one."""
@@ -389,6 +405,10 @@ class SessionSummary(AssistantModel):
     """MAKT / ZMM065 name -- see app.shared.material_names."""
     plant: str
     department: str | None = None
+    department_name: str | None = None
+    """The code's name from the department list; null when it has none."""
+    department_note: str | None = None
+    """Free text typed beside the department, if any."""
     requested_for: str | None = None
     requester: str
     origin: str

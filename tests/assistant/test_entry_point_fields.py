@@ -82,7 +82,7 @@ def department_code() -> str:
     from app.assistant import departments
 
     with get_sessionmaker()() as db:
-        loaded, _ = departments.load_all(db)
+        loaded, _, _ = departments.load_all(db)
     return min(loaded) if loaded else "10100"
 
 
@@ -111,7 +111,7 @@ def _row(session_id: str):
         return db.execute(
             text(
                 """
-                SELECT department, requested_for, requester, requested_quantity
+                SELECT department, department_note, requested_for, requester, requested_quantity
                 FROM assistant_session
                 WHERE id = :id
                 """
@@ -169,6 +169,16 @@ class TestTheNewFieldsAreRecorded:
 
         assert _row(body["sessionId"]).department == department_code
 
+    def test_a_department_note_is_stored_beside_the_code(self, in_scope_material, department_code) -> None:
+        """Free text goes in its own column; the code stays the controlled value."""
+        material, plant = in_scope_material
+        row = _row(
+            _open(material, plant, department=department_code, departmentNote="  Shaft 2 crew  ")["sessionId"]
+        )
+
+        assert row.department == department_code
+        assert row.department_note == "Shaft 2 crew"
+
     def test_both_are_optional(self, in_scope_material) -> None:
         """A session opened from SAP carries neither, and that must still work.
 
@@ -179,6 +189,7 @@ class TestTheNewFieldsAreRecorded:
         row = _row(_open(material, plant)["sessionId"])
 
         assert row.department is None
+        assert row.department_note is None
         assert row.requested_for is None
 
     @pytest.mark.parametrize("blank", ["", "   ", "\t"])
@@ -208,7 +219,7 @@ class TestTheNewFieldsAreRecorded:
 
     @pytest.mark.parametrize(
         "field,length",
-        [("department", 64), ("requestedFor", 128)],
+        [("department", 64), ("departmentNote", 200), ("requestedFor", 128)],
     )
     def test_an_over_length_value_is_refused(self, in_scope_material, field, length) -> None:
         """422 at the boundary, rather than a truncation the database performs.

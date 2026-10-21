@@ -109,6 +109,31 @@ def test_every_i13_table_has_a_view() -> None:
         assert f"n_{table}" in sap_normalise.VIEWS
 
 
+def test_the_department_list_reads_the_workbook_headers() -> None:
+    """raw_dept_codes was loaded from Plant Dept Codes 1.XLSX as it stands:
+    headers with spaces, which the view quotes and renames."""
+    present = ["Plant", "Department code", "Department"]
+
+    assert [(r.label, r.source) for r in resolve("dept_codes", present)] == [
+        ("plant", "Plant"), ("code", "Department code"), ("name", "Department"),
+    ]
+    sql = view_sql("dept_codes", present, MSSQL)
+    assert "[Department code] AS code" in sql
+    assert sql.endswith("FROM raw_dept_codes")
+
+
+def test_the_department_list_also_reads_the_seed_loaders_names() -> None:
+    """app.seed names the same headers plant / department_code / department."""
+    present = ["plant", "department_code", "department"]
+
+    assert [r.source for r in resolve("dept_codes", present)] == ["plant", "department_code", "department"]
+
+
+def test_no_department_list_is_an_empty_view() -> None:
+    """Until it is loaded the assistant falls back to checking the code's shape."""
+    assert "WHERE 1 = 0" in view_sql("dept_codes", None, MSSQL)
+
+
 def test_a_load_of_an_uncovered_table_rebuilds_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[int] = []
     monkeypatch.setattr(sap_normalise, "rebuild_read_layers", lambda: calls.append(1) or True)
