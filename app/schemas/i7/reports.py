@@ -1044,6 +1044,73 @@ class DataCoverage(BaseModel):
     warnings: list[str]
 
 
+class TrendMonth(BaseModel):
+    """One month of the trend, from its saved snapshot. ``None`` is "not measured", never 0."""
+
+    model_config = ConfigDict(frozen=True)
+
+    month: date
+    label: str
+    state: str
+    """``MISSING`` (no snapshot was captured), ``OPEN`` (a rolling reading of a month still running) or ``FINAL``."""
+    measured_on: date | None
+    month_end_valid: bool
+    stockout_valid: bool
+    """The stockout reading is current enough for this month. When it is not, the stockout fields below are ``None``."""
+    population: int | None = None
+    stockout_at_risk: int | None = None
+    stockout_evaluated: int | None = None
+    stockout_insufficient: int | None = None
+    excess_count: int | None = None
+    excess_opportunity: Decimal | None = None
+    net_rop_value_impact: Decimal | None = None
+    """The estimated working-capital impact of the recommendations on the measurement date -- an estimate, not a saving."""
+    net_rop_change_from_previous: Decimal | None = None
+    """How that estimate moved since the previous month; ``None`` unless both months have one, made with the same calculation."""
+    currency: str | None = None
+    revision: int | None = None
+    calc_version: str | None = None
+    note: str | None = None
+
+
+class StockLevelMean(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    label: str
+    aggregation: str
+    """How the figures are aggregated: ``mean`` over the records that have both a current and a recommended value."""
+    records: int
+    current: Decimal | None
+    recommended: Decimal | None
+
+
+class QuarterEnd(BaseModel):
+    """The quarter-end position: the last month's snapshot, only when it is valid -- never an earlier month relabelled."""
+
+    model_config = ConfigDict(frozen=True)
+
+    status: AvailabilityStatus
+    month: date
+    label: str
+    snapshot_state: str
+    measured_on: date | None
+    reason: str | None = None
+    population: int | None = None
+    stock_levels: list[StockLevelMean] = []
+    latest_available_month: date | None = None
+    latest_available_label: str | None = None
+    latest_available_measured_on: date | None = None
+
+
+class QuarterTrends(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    months: list[TrendMonth]
+    quarter_end: QuarterEnd
+    notes: list[str]
+
+
 class QuarterManagement(BaseModel):
     """The management view of one period. Report version 1.2."""
 
@@ -1060,6 +1127,11 @@ class QuarterManagement(BaseModel):
     forecast_actual: ForecastActualSection
     adoption: AdoptionQuarter
     data_coverage: DataCoverage
+    trends: QuarterTrends | None = None
+    """Monthly figures from saved snapshots, and the quarter-end position. ``None`` on a report made before snapshots."""
+    position_basis: str = "current_calculation"
+    """``snapshot`` when ``position`` and ``plant_positions`` are the valid quarter-end snapshot's; otherwise
+    ``current_calculation`` over the period's recommendations."""
     definitions: list[str]
     """What each kind of figure on the page means, so a card's number is never read as another kind."""
 
