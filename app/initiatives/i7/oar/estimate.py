@@ -10,6 +10,20 @@ A closer neighbour contributes more. Rounding happens once, at the end -- each
 neighbour's raw value enters the average, because rounding first would compound
 several ceilings into a systematic overstatement.
 
+**Max stock consistency floor** (approved deviation, ``oar-similarity-6``,
+2026-10-19). The three averages are independent, so the Max can come out at or
+below the reorder point -- a Max with no room above the point that triggers a
+reorder. After all three are calculated and rounded::
+
+    Max_final = max( Max_weighted , ROP_final + SS_final )
+
+applied only when ROP, safety stock and the weighted Max are all present; a
+missing value is never filled in. ROP and safety stock are never changed. The
+audit trace keeps the original weighted Max next to the floor, the final value
+and whether the floor was applied -- the original is never overwritten. Stock
+items are not affected: their Max comes from the Max Stock strategy
+(``inventory/max_stock.py``), not from this module.
+
 **Nothing is borrowed from a neighbour that has nothing to lend.** A neighbour
 contributes only when it carries values (``inventory_eligible``). The OAR run
 admits only donors whose current SAP ROP, safety stock and max stock are all
@@ -36,6 +50,37 @@ from app.initiatives.i7.oar.types import (
     Neighbour,
     OarEstimate,
 )
+
+
+MAX_FLOOR_REASON = "MAX_RAISED_TO_ROP_PLUS_SAFETY_STOCK"
+"""The trace reason recorded when the floor raised the Max."""
+
+
+def apply_max_floor(
+    rop: int | None, safety_stock: int | None, weighted_max: int | None
+) -> tuple[int | None, tuple[tuple[str, str], ...]]:
+    """``(final_max, trace_entries)`` -- Max raised to ROP + safety stock if it is below.
+
+    Only when all three are present (zero is a present value). Otherwise the
+    weighted Max is returned as it was -- ``None`` stays ``None`` -- and the
+    trace says the floor was not evaluated, rather than inventing a value.
+    """
+    if rop is None or safety_stock is None or weighted_max is None:
+        return weighted_max, (
+            ("max_stock_weighted", "none" if weighted_max is None else str(weighted_max)),
+            ("max_stock_floor_applied", "false"),
+            ("max_stock_floor_reason", "NOT_EVALUATED_MISSING_INPUT"),
+        )
+    floor = rop + safety_stock
+    raised = weighted_max < floor
+    final = floor if raised else weighted_max
+    return final, (
+        ("max_stock_weighted", str(weighted_max)),
+        ("max_stock_floor", str(floor)),
+        ("max_stock_final", str(final)),
+        ("max_stock_floor_applied", "true" if raised else "false"),
+        ("max_stock_floor_reason", MAX_FLOOR_REASON if raised else "NOT_NEEDED"),
+    )
 
 
 def _weighted(
@@ -134,17 +179,18 @@ def calculate(
         ("minimum_neighbours", str(minimum_neighbours)),
     ]
     results: dict[str, int | None] = {}
+    detail: list[tuple[str, str]] = []
 
     for attribute in ("safety_stock", "rop", "max_stock"):
         weighted = _weighted(eligible, attribute)
         if weighted is None:
             results[attribute] = None
-            trace.append((f"{attribute}_status", "no_contributing_neighbour"))
+            detail.append((f"{attribute}_status", "no_contributing_neighbour"))
             continue
         numerator, denominator = weighted
         raw = numerator / denominator
         results[attribute] = int(raw.to_integral_value(rounding=ROUND_CEILING))
-        trace.extend(
+        detail.extend(
             (
                 (f"{attribute}_numerator", str(numerator)),
                 (f"{attribute}_denominator", str(denominator)),
@@ -152,6 +198,13 @@ def calculate(
             )
         )
 
+    results["max_stock"], floor_trace = apply_max_floor(
+        results["rop"], results["safety_stock"], results["max_stock"]
+    )
+    # The floor's record goes ahead of the per-field arithmetic: the stored trace is cut at a fixed
+    # length, and the audit entries must survive that before the raw digits do.
+    trace.extend(floor_trace)
+    trace.extend(detail)
     trace.append(("rounding_method", "CEILING"))
 
     return OarEstimate(

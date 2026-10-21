@@ -51,7 +51,7 @@ _OAR_SQL = """
            f.oar_scope,
            t.status, t.confidence, t.candidates_considered, t.eligible_candidates,
            t.neighbour_count, t.best_similarity,
-           t.estimate_status, t.safety_stock AS oar_safety_stock,
+           t.estimate_status, t.estimate_trace, t.safety_stock AS oar_safety_stock,
            t.rop AS oar_rop, t.max_stock AS oar_max_stock,
            t.oar_run_id,
            f.current_safety_stock, f.current_reorder_point, f.current_maximum_stock,

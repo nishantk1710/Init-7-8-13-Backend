@@ -112,6 +112,33 @@ _NORMAL_TRACE_FIELDS = (
 )
 
 
+_MAX_FLOOR_TRACE_KEYS = (
+    "max_stock_weighted",
+    "max_stock_floor",
+    "max_stock_final",
+    "max_stock_floor_applied",
+    "max_stock_floor_reason",
+)
+"""The Max-consistency-floor entries of the OAR estimate's own trace -- what lets an approver tell
+the similarity-weighted Max from the adjusted one."""
+
+
+def _max_floor_entries(estimate_trace: str | None) -> list[tuple[str, str]]:
+    """The floor's audit entries out of the stored ``key=value;key=value`` estimate trace.
+
+    Empty for a result with no trace, or one stored before the floor existed (``oar-similarity-5``
+    and earlier) -- nothing is invented for it.
+    """
+    if not estimate_trace:
+        return []
+    found: dict[str, str] = {}
+    for part in str(estimate_trace).split(";"):
+        key, separator, value = part.partition("=")
+        if separator and key in _MAX_FLOOR_TRACE_KEYS:
+            found[key] = value
+    return [(key, found[key]) for key in _MAX_FLOOR_TRACE_KEYS if key in found]
+
+
 def _trace_from_row(row: Any, fields: tuple[tuple[str, str], ...]) -> list[tuple[str, str]]:
     """Ordered (label, value) pairs, skipping fields the row does not carry."""
     entries = []
@@ -336,6 +363,7 @@ def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommend
                 ("max_stock", str(row.oar_max_stock)),
             ]
         )
+        trace.extend(_max_floor_entries(getattr(row, "estimate_trace", None)))
 
     # This path is chosen by cold-start history, not by MRP type, so a row here
     # is not necessarily OAR -- conversion_for reads Stage 1's verdict.
