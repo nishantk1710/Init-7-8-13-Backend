@@ -104,6 +104,7 @@ def test_summary_returns_200_with_expected_shape():
         "not_evaluable_count",
         "currency",
         "net_safety_stock_value_impact",
+        "net_rop_value_impact",
         "critical_stockout_risk_count",
         "stockout_risk_evaluated_count",
         "stockout_risk_insufficient_data_count",

@@ -104,6 +104,25 @@ def submit(state: WorkflowState) -> WorkflowState:
     return replace(state, status=LifecycleStatus.PENDING_APPROVAL, chain_index=0)
 
 
+def reject_unsubmitted(state: WorkflowState, comment: str | None) -> WorkflowState:
+    """Decline a recommendation straight from the Recommendations page, without sending it through
+    the approval chain first.
+
+    Only a READY_FOR_REVIEW recommendation -- one that is still the planner's -- may be declined this
+    way; once it is in the chain, REJECT belongs to the pending role (see :func:`apply_action`). Like
+    every REJECT it needs a stated reason, and it ends in REJECTED with no pending role: nothing is
+    left to approve, and nothing ever reaches SAP.
+    """
+    if state.status is not LifecycleStatus.READY_FOR_REVIEW:
+        raise WorkflowError(
+            f"cannot reject a recommendation in state {state.status.value} without the approval chain; "
+            "only READY_FOR_REVIEW may be declined before it is submitted"
+        )
+    if not (comment and comment.strip()):
+        raise WorkflowError(f"{ApprovalAction.REJECT.value} requires a non-empty comment")
+    return replace(state, status=LifecycleStatus.REJECTED, chain_index=0)
+
+
 def apply_action(
     state: WorkflowState,
     action: ApprovalAction,

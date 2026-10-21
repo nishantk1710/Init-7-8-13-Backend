@@ -164,6 +164,91 @@ def test_the_summary_reads_no_sap_change_history(db, monkeypatch):
     assert summary(db).total_evaluated == 1
 
 
+# --- SAP adoption: only what has something to adopt ----------------------------------------
+
+
+def stock(material, plant="1300", *, rop=None, safety=None, maximum=None, current=(None, None, None)):
+    row = rec(material, plant, rop=rop)
+    row.recommended_safety_stock = safety
+    row.recommended_max_stock = maximum
+    row.current_rop, row.current_safety_stock, row.current_max_stock = current
+    row.is_oar = False
+    return row
+
+
+def oar(material, plant="1300", *, eligibility="ELIGIBLE", rop=10):
+    row = rec(material, plant, rop=rop)
+    row.is_oar = True
+    row.conversion_eligibility = eligibility
+    return row
+
+
+def test_a_stock_item_whose_three_values_are_unchanged_is_not_tracked(db):
+    db.add_all([stock("SAME", rop=10, safety=5, maximum=40, current=(10, 5, 40))])
+    db.commit()
+    assert summary(db).total_evaluated == 0
+
+
+def test_a_stock_item_is_tracked_when_any_one_of_the_three_changes(db):
+    db.add_all([
+        stock("ROP", rop=12, safety=5, maximum=40, current=(10, 5, 40)),
+        stock("SS", rop=10, safety=6, maximum=40, current=(10, 5, 40)),
+        stock("MAX", rop=10, safety=5, maximum=50, current=(10, 5, 40)),
+    ])
+    db.commit()
+    assert summary(db).total_evaluated == 3
+
+
+def test_a_recommended_value_against_a_blank_current_one_is_a_change(db):
+    db.add_all([stock("BLANK", rop=10, current=(None, None, None))])
+    db.commit()
+    assert summary(db).total_evaluated == 1
+
+
+def test_a_value_left_unrecommended_is_not_a_change(db):
+    # Only the safety stock is recommended, and it equals SAP's: the blank ROP/max are not changes.
+    db.add_all([stock("PARTIAL", rop=None, safety=5, current=(10, 5, 40))])
+    db.commit()
+    assert summary(db).total_evaluated == 0
+
+
+def test_an_oar_recommendation_is_tracked_only_when_eligible_for_conversion(db):
+    db.add_all([oar("YES"), oar("NO", eligibility="NOT_ELIGIBLE"), oar("UNDECIDED", eligibility=None)])
+    db.commit()
+    assert summary(db).total_evaluated == 1
+
+
+def test_the_type_filter_splits_the_tracked_set_into_oar_and_stock_item(db):
+    db.add_all([oar("O1"), oar("O2"), stock("S1", rop=12, current=(10, None, None))])
+    db.commit()
+    assert adoption_api.get_adoption_summary(session=db, plant=None, demand_type="oar").total_evaluated == 2
+    assert adoption_api.get_adoption_summary(session=db, plant=None, demand_type="stock_item").total_evaluated == 1
+    assert summary(db).total_evaluated == 3
+
+
+def test_the_recommendations_list_filter_agrees_with_the_adoption_count(db):
+    db.add_all([
+        oar("YES"), oar("NO", eligibility="NOT_ELIGIBLE"),
+        stock("CHANGED", rop=12, current=(10, None, None)), stock("SAME", rop=10, current=(10, None, None)),
+    ])
+    db.commit()
+    from sqlalchemy import func, select
+
+    listed = db.execute(
+        select(func.count()).select_from(
+            recommendations_api._latest_only(
+                recommendations_api._apply_filters(
+                    select(Recommendation.id),
+                    status=None, plant=None, material=None, demand_class=None, is_oar=None,
+                    confidence=None, criticality=None, generated_from=None, generated_to=None,
+                    actionable=True,
+                )
+            ).subquery()
+        )
+    ).scalar_one()
+    assert listed == summary(db).total_evaluated == 2
+
+
 # --- Forecast vs Actual: summed from the champion backtests --------------------------------
 
 

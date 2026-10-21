@@ -61,6 +61,45 @@ def submit_for_approval(
     recommendation.chain_index = new_state.chain_index
 
 
+def reject_before_submission(
+    session: Session,
+    recommendation: Recommendation,
+    actor_id: str,
+    comment: str | None,
+    policy: PolicyDocument | None = None,
+) -> None:
+    """Decline a READY_FOR_REVIEW recommendation without submitting it, writing the ledger entry.
+
+    The entry is a REJECT recorded under the route's first role -- the same role a SUBMIT is recorded
+    under -- so the history reads as "declined at the point it would have been sent".
+    """
+    policy = policy or PolicyDocument()
+    route = routing.route_for(recommendation.is_oar, recommendation.criticality, policy)
+    state = workflow.WorkflowState(
+        status=LifecycleStatus(recommendation.status),
+        chain_index=recommendation.chain_index,
+        adjustment_count=recommendation.adjustment_count,
+        route=route,
+    )
+    new_state = workflow.reject_unsubmitted(state, comment)
+
+    session.add(
+        ApprovalLedgerEntry(
+            recommendation_id=recommendation.recommendation_id,
+            recommendation_version=recommendation.current_version,
+            actor_id=actor_id,
+            actor_role=route[0].value,
+            action=ApprovalAction.REJECT.value,
+            previous_status=state.status.value,
+            new_status=new_state.status.value,
+            comment=comment,
+            timestamp=workflow.event_timestamp(),
+        )
+    )
+    recommendation.status = new_state.status.value
+    recommendation.chain_index = new_state.chain_index
+
+
 def apply_approval_action(
     session: Session,
     recommendation: Recommendation,
