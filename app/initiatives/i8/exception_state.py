@@ -64,14 +64,22 @@ from app.initiatives.i8.models import ExceptionEvent
 
 logger = get_logger(__name__)
 
-#: The states an item moves through. A closed set: unlike fault categories,
-#: these are not VZI's vocabulary to extend -- each one has behaviour attached
-#: (what the default filter shows, which ones the queue may resolve itself).
-STATUSES: tuple[str, ...] = ("OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED")
+#: The states an item moves through. Two, on purpose (21-Oct-2026).
+#:
+#: There were four -- OPEN, IN_PROGRESS, RESOLVED, CLOSED -- and two of them
+#: carried nothing. IN_PROGRESS said "somebody has it", which the owner already
+#: says, and its only effect was to drop the item off the default Open view.
+#: RESOLVED and CLOSED behaved identically. An item here ends one of two ways:
+#: the data is fixed and the check stops finding it (:func:`auto_resolve`), or a
+#: person closes it with a reason while the check still finds it. The history
+#: already tells those apart by ``kind``, so the status does not have to.
+STATUSES: tuple[str, ...] = ("OPEN", "CLOSED")
 
-#: Still being worked. What the queue shows by default, and the only states
-#: :func:`auto_resolve` will move -- see its docstring.
-ACTIVE_STATUSES: frozenset[str] = frozenset({"OPEN", "IN_PROGRESS"})
+#: What the two retired statuses read as. History rows are never rewritten, so
+#: entries from before 21-Oct still say IN_PROGRESS or RESOLVED -- every
+#: AUTO_RESOLVED entry written until then says RESOLVED -- and are folded
+#: through this instead.
+LEGACY_STATUSES: dict[str, str] = {"IN_PROGRESS": "OPEN", "RESOLVED": "CLOSED"}
 
 #: The actor recorded when the queue resolves an item itself.
 SYSTEM_ACTOR = "system"
@@ -99,12 +107,26 @@ class ExceptionWorkState:
 
     @property
     def is_active(self) -> bool:
-        return self.status in ACTIVE_STATUSES
+        """Still open: what the queue shows by default, and the only state
+        :func:`auto_resolve` will move."""
+        return self.status == "OPEN"
 
 
 #: What an item nobody has touched reads as. Not a placeholder: an exception
 #: starts open and unassigned, which is exactly what no history means.
 UNTOUCHED = ExceptionWorkState()
+
+
+def canonical_status(status: str | None) -> str | None:
+    """A stored or requested status in today's vocabulary.
+
+    For reading: a history row, or a ``?status=`` from an old bookmark. Writes
+    go through :func:`validate_status`, which takes only the current two.
+    """
+    if not status:
+        return status
+    clean = status.strip().upper()
+    return LEGACY_STATUSES.get(clean, clean)
 
 
 def validate_status(status: str) -> str:
@@ -135,14 +157,15 @@ def fold(events: Iterable[ExceptionEvent]) -> ExceptionWorkState:
 
     The last entry that set a status wins; the owner is whoever the last
     ``ASSIGNED`` entry named, and that entry naming nobody is an unassignment
-    rather than an absence. Comments move neither.
+    rather than an absence. Comments move neither. A retired status counts as
+    the one it became (:data:`LEGACY_STATUSES`).
     """
     status = "OPEN"
     owner: str | None = None
     ordered = tuple(events)
     for event in ordered:
         if event.status:
-            status = event.status
+            status = canonical_status(event.status) or status
         if event.kind == "ASSIGNED":
             owner = event.owner
     return ExceptionWorkState(status=status, owner=owner, history=ordered)
@@ -236,11 +259,18 @@ def assign(db: Session, exception_id: str, owner: str | None, *, actor: str) -> 
 def set_status(
     db: Session, exception_id: str, status: str, *, actor: str, note: str = ""
 ) -> ExceptionEvent:
-    """Move the item, recording who moved it and why."""
+    """Move the item, recording who moved it and why.
+
+    Closing needs a note. A person closing an item is the one ending the data
+    did not produce -- the check may well still find it -- so the history has
+    to say why, or the close cannot be told from a mistake later. Reopening
+    needs none: the check still finding the item is reason enough.
+    """
     clean = validate_status(status)
-    event = record(
-        db, exception_id, kind="STATUS", actor=actor, status=clean, text=note.strip()
-    )
+    text = (note or "").strip()
+    if clean == "CLOSED" and not text:
+        raise ExceptionStateError("closing an item needs a note saying why")
+    event = record(db, exception_id, kind="STATUS", actor=actor, status=clean, text=text)
     logger.info("I08 exception %s set to %s by %s", exception_id, clean, actor)
     return event
 
@@ -254,19 +284,22 @@ def add_comment(db: Session, exception_id: str, text: str, *, actor: str) -> Exc
 
 
 def auto_resolve(db: Session, detected_ids: Iterable[str]) -> int:
-    """Resolve the items whose checks have stopped finding them.
+    """Close the items whose checks have stopped finding them.
 
     Called from the listing, over the ids the checks raised on this read. A
-    history that folds to OPEN or IN_PROGRESS, for an id not among them,
-    describes a finding that no longer exists -- somebody recorded the
-    declaration, or SAP closed the repair line, or a justification named the
-    purchase.
+    history that folds to OPEN, for an id not among them, describes a finding
+    that no longer exists -- somebody recorded the declaration, or SAP closed
+    the repair line, or a justification named the purchase.
 
-    Only active items move. One already RESOLVED or CLOSED is left alone, so
-    re-reading the queue cannot keep appending to its history, and a deliberate
-    close is never overwritten by the machine.
+    Only open items move. One already CLOSED is left alone, so re-reading the
+    queue cannot keep appending to its history, and a deliberate close is never
+    overwritten by the machine.
 
-    Returns how many were resolved, for the caller to log.
+    The entry sets CLOSED, the same status a person sets. What tells the two
+    apart is the kind, ``AUTO_RESOLVED``, and the ``system`` actor -- the kind
+    keeps its name because the rows written before 21-Oct carry it.
+
+    Returns how many were closed, for the caller to log.
     """
     detected = set(detected_ids)
     stale = [
@@ -283,7 +316,7 @@ def auto_resolve(db: Session, detected_ids: Iterable[str]) -> int:
                 exception_id=exception_id,
                 kind="AUTO_RESOLVED",
                 actor=SYSTEM_ACTOR,
-                status="RESOLVED",
+                status="CLOSED",
                 # Why, not just that. The data moving is the only way an item
                 # stops being found.
                 text=(

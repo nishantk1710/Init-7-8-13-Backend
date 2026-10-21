@@ -90,6 +90,7 @@ from app.initiatives.i8.exception_state import (
     add_comment,
     assign,
     auto_resolve,
+    canonical_status,
     load_states,
     set_status,
     state_of,
@@ -786,7 +787,10 @@ def get_exceptions(
     status_filter: str | None = Query(
         None,
         alias="status",
-        description="OPEN / IN_PROGRESS / RESOLVED / CLOSED",
+        description=(
+            "OPEN / CLOSED. The retired IN_PROGRESS and RESOLVED still answer, "
+            "as OPEN and CLOSED, so an old link does not come back empty."
+        ),
     ),
     owner: str | None = Query(
         None,
@@ -888,7 +892,7 @@ def get_exceptions(
     states = load_states(db)
 
     if status_filter:
-        wanted_status = status_filter.strip().upper()
+        wanted_status = canonical_status(status_filter)
         items = tuple(
             i for i in items if states.get(i.id, UNTOUCHED).status == wanted_status
         )

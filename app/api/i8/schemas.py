@@ -665,8 +665,10 @@ class ExceptionHistoryEntry(I8Model):
     and rendering them identically invites the first to be read where only the
     second happened."""
 
-    status: str | None = None
-    """The status this entry set. Null on a comment or an assignment."""
+    status: Literal["OPEN", "CLOSED"] | None = None
+    """The status this entry set. Null on a comment or an assignment. An entry
+    stored with a retired status (IN_PROGRESS, RESOLVED) is served as the one
+    it became, so the history and the item's status speak one vocabulary."""
 
     owner: str | None = None
     """Who the item was assigned to, on an ``ASSIGNED`` entry. Null there means
@@ -718,7 +720,9 @@ class ExceptionQueueItem(I8Model):
     # row there and reports the defaults -- OPEN and unassigned -- which is
     # the truth about it rather than a placeholder.
 
-    status: Literal["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"] = "OPEN"
+    status: Literal["OPEN", "CLOSED"] = "OPEN"
+    """Two on purpose -- see ``STATUSES`` in ``exception_state``. Who closed
+    it, a person or the check, is in ``history``."""
 
     owner: str | None = None
     """Null means unassigned, which is a real state and the common one."""
@@ -727,9 +731,9 @@ class ExceptionQueueItem(I8Model):
     """Whether the check still finds this item.
 
     Always true for an item in the list -- being listed is what detection
-    means. It is served because a RESOLVED item may be listed when the caller
+    means. It is served because a CLOSED item may be listed when the caller
     asks for one by id or by status, and then the distinction between "someone
-    resolved it" and "the data moved" is the whole story."""
+    closed it" and "the data moved" is the whole story."""
 
     history: list[ExceptionHistoryEntry] = []
     """Oldest first, the order a history is read in. Empty for an item nobody
@@ -1082,7 +1086,8 @@ class ExceptionEventRequest(I8Model):
     ====================  ============================================
     ``ASSIGNED``          ``owner`` -- or null to unassign, which is
                           an action and gets its own entry
-    ``STATUS``            ``status``, and ideally ``text`` saying why
+    ``STATUS``            ``status``, and ``text`` saying why --
+                          required when closing
     ``COMMENT``           ``text``
     ====================  ============================================
 
@@ -1091,8 +1096,9 @@ class ExceptionEventRequest(I8Model):
     """
 
     kind: Literal["ASSIGNED", "STATUS", "COMMENT"]
-    status: Literal["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"] | None = None
+    status: Literal["OPEN", "CLOSED"] | None = None
     owner: str | None = Field(default=None, max_length=128)
     text: str = Field(default="", max_length=2000)
-    """What was said, or why the status moved. Optional on a status change and
-    worth sending: a history of bare transitions explains nothing later."""
+    """What was said, or why the status moved. Required to close an item (a 422
+    without it), optional to reopen one: a history of bare closes explains
+    nothing later."""

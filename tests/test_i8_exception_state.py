@@ -11,9 +11,12 @@ are easy to get wrong are the ones about what that fold means.
 
 * an untouched item has no rows at all, and must still read OPEN and unassigned
 * unassigning is an entry in the history, not a missing field
-* auto-resolution moves only ACTIVE items, and says it was the check and not a
+* auto-resolution moves only OPEN items, and says it was the check and not a
   person who moved them
 * a deliberate CLOSED is never overwritten by the machine
+* a person closing an item says why
+* history written under the four statuses retired on 21-Oct-2026 still folds,
+  into the two that replaced them
 """
 
 from __future__ import annotations
@@ -28,9 +31,11 @@ from app.initiatives.i8.exception_state import (
     add_comment,
     assign,
     auto_resolve,
+    canonical_status,
     fold,
     load_histories,
     load_states,
+    set_status,
     state_of,
     validate_kind,
     validate_status,
@@ -100,26 +105,26 @@ class TestAssigning:
 
 class TestStatus:
     def test_folds_to_the_status_set_last(self, db) -> None:
-        set_status_calls = [("IN_PROGRESS", "Chasing the vendor."), ("RESOLVED", "Declared.")]
-        from app.initiatives.i8.exception_state import set_status
-
+        set_status_calls = [
+            ("CLOSED", "Reviewed, no action."),
+            ("OPEN", "The check still finds it."),
+            ("CLOSED", "Declared."),
+        ]
         for status, note in set_status_calls:
             set_status(db, EX_A, status, actor="priya", note=note)
 
         state = state_of(db, EX_A)
-        assert state.status == "RESOLVED"
+        assert state.status == "CLOSED"
 
         event = state.history[-1]
         assert event.kind == "STATUS"
-        assert event.status == "RESOLVED"
+        assert event.status == "CLOSED"
         assert event.actor == "priya"
         assert event.text == "Declared."
 
     def test_a_status_change_does_not_clear_the_owner(self, db) -> None:
-        from app.initiatives.i8.exception_state import set_status
-
         assign(db, EX_A, "priya", actor="tester")
-        set_status(db, EX_A, "IN_PROGRESS", actor="priya")
+        set_status(db, EX_A, "CLOSED", actor="priya", note="Declared.")
         assert state_of(db, EX_A).owner == "priya"
 
     def test_refuses_a_status_that_is_not_one(self, db) -> None:
@@ -129,8 +134,31 @@ class TestStatus:
         # sends the caller to the source.
         assert "OPEN" in str(exc.value)
 
+    @pytest.mark.parametrize("retired", ["IN_PROGRESS", "RESOLVED"])
+    def test_refuses_the_retired_statuses(self, retired) -> None:
+        # Read through LEGACY_STATUSES, never written: a new entry saying
+        # IN_PROGRESS would put a third state back into the history.
+        with pytest.raises(ExceptionStateError):
+            validate_status(retired)
+
     def test_accepts_the_vocabulary_in_any_case(self) -> None:
-        assert validate_status(" resolved ") == "RESOLVED"
+        assert validate_status(" closed ") == "CLOSED"
+
+
+class TestClosingByHand:
+    def test_needs_a_note(self, db) -> None:
+        """A person's close is the ending the data did not produce -- the
+        check may still find the item -- so it has to say why."""
+        with pytest.raises(ExceptionStateError) as exc:
+            set_status(db, EX_A, "CLOSED", actor="priya", note="   ")
+        assert "note" in str(exc.value)
+        # Refused before anything was written.
+        assert load_histories(db, [EX_A]) == {}
+
+    def test_reopening_needs_none(self, db) -> None:
+        set_status(db, EX_A, "CLOSED", actor="priya", note="Not a real gap.")
+        set_status(db, EX_A, "OPEN", actor="priya")
+        assert state_of(db, EX_A).status == "OPEN"
 
 
 class TestKinds:
@@ -173,7 +201,7 @@ class TestAutoResolve:
         assert auto_resolve(db, [EX_B]) == 1
 
         state = state_of(db, EX_A)
-        assert state.status == "RESOLVED"
+        assert state.status == "CLOSED"
         # The owner survives: somebody was working it, and the history should
         # still say who.
         assert state.owner == "priya"
@@ -197,8 +225,6 @@ class TestAutoResolve:
         AUTO_RESOLVED entry to every closed item, and the history would fill
         with noise nobody wrote.
         """
-        from app.initiatives.i8.exception_state import set_status
-
         set_status(db, EX_A, "CLOSED", actor="priya", note="Reviewed, no action.")
         before = len(state_of(db, EX_A).history)
 
@@ -209,12 +235,27 @@ class TestAutoResolve:
         assert state.status == "CLOSED"
         assert len(state.history) == before
 
-    def test_moves_in_progress_too(self, db) -> None:
-        from app.initiatives.i8.exception_state import set_status
+    def test_moves_an_item_left_in_progress_before_the_change(self, db) -> None:
+        # IN_PROGRESS is no longer written, but rows saying it are still in
+        # the table. They fold to OPEN, so the check stopping still closes them.
+        db.add(ExceptionEvent(exception_id=EX_A, kind="STATUS", status="IN_PROGRESS", actor="p"))
+        db.commit()
 
-        set_status(db, EX_A, "IN_PROGRESS", actor="priya")
         assert auto_resolve(db, []) == 1
-        assert state_of(db, EX_A).status == "RESOLVED"
+        assert state_of(db, EX_A).status == "CLOSED"
+
+    def test_leaves_an_item_it_resolved_before_the_change(self, db) -> None:
+        # Every AUTO_RESOLVED entry written before 21-Oct says RESOLVED. If
+        # that folded to anything but CLOSED, each read would close it again.
+        db.add(
+            ExceptionEvent(
+                exception_id=EX_A, kind="AUTO_RESOLVED", status="RESOLVED", actor="system"
+            )
+        )
+        db.commit()
+
+        assert auto_resolve(db, []) == 0
+        assert state_of(db, EX_A).status == "CLOSED"
 
     def test_touches_nothing_when_nobody_has_worked_anything(self, db) -> None:
         # The common case on a queue of thousands: no history rows at all.
@@ -224,11 +265,9 @@ class TestAutoResolve:
 
 class TestHistoryOrder:
     def test_reads_oldest_first(self, db) -> None:
-        from app.initiatives.i8.exception_state import set_status
-
         assign(db, EX_A, "priya", actor="tester")
         add_comment(db, EX_A, "Chasing.", actor="priya")
-        set_status(db, EX_A, "RESOLVED", actor="priya", note="Declared.")
+        set_status(db, EX_A, "CLOSED", actor="priya", note="Declared.")
 
         kinds = [e.kind for e in state_of(db, EX_A).history]
         assert kinds == ["ASSIGNED", "COMMENT", "STATUS"]
@@ -247,15 +286,27 @@ class TestFold:
     def test_an_empty_history_is_open_and_unassigned(self) -> None:
         assert fold(()) == UNTOUCHED
 
-    def test_a_comment_after_a_resolve_does_not_reopen_it(self) -> None:
+    def test_a_comment_after_a_close_does_not_reopen_it(self) -> None:
         # The bug this guards: folding on "the last entry" rather than "the
-        # last entry that SET a status". Somebody adding a note to a resolved
+        # last entry that SET a status". Somebody adding a note to a closed
         # item must not drag it back into the queue.
         events = [
-            ExceptionEvent(exception_id=EX_A, kind="STATUS", status="RESOLVED", actor="p"),
+            ExceptionEvent(exception_id=EX_A, kind="STATUS", status="CLOSED", actor="p"),
             ExceptionEvent(exception_id=EX_A, kind="COMMENT", actor="p", text="For the record."),
         ]
-        assert fold(events).status == "RESOLVED"
+        assert fold(events).status == "CLOSED"
+
+    @pytest.mark.parametrize(
+        ("stored", "folds_to"), [("IN_PROGRESS", "OPEN"), ("RESOLVED", "CLOSED")]
+    )
+    def test_a_retired_status_folds_to_the_one_it_became(self, stored, folds_to) -> None:
+        events = [ExceptionEvent(exception_id=EX_A, kind="STATUS", status=stored, actor="p")]
+        assert fold(events).status == folds_to
+
+    def test_canonical_status_leaves_the_current_two_and_no_status_alone(self) -> None:
+        assert canonical_status("OPEN") == "OPEN"
+        assert canonical_status(" closed ") == "CLOSED"
+        assert canonical_status(None) is None
 
 
 class TestEventIds:

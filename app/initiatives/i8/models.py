@@ -359,8 +359,10 @@ class ExceptionEvent(Base):
     only the second happened."""
 
     status: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    """The status this entry set, for STATUS and AUTO_RESOLVED. Null on a
-    comment or an assignment, which do not move the item."""
+    """The status this entry set, for STATUS and AUTO_RESOLVED: OPEN or
+    CLOSED. Null on a comment or an assignment, which do not move the item.
+    Rows written before 21-Oct-2026 may say IN_PROGRESS or RESOLVED; they are
+    read through ``LEGACY_STATUSES``, never rewritten."""
 
     owner: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     """Who the item was assigned to, on an ``ASSIGNED`` entry.
