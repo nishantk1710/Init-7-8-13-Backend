@@ -197,6 +197,13 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "i7_workflow_ledger. Enters the recommendation into its approval route "
         "at the first role."
     ),
+    ("/api/v1/i7/recommendations/{recommendation_id}/reject", "post"): (
+        "Reject a READY_FOR_REVIEW recommendation without submitting it -> "
+        "i7_recommendation + i7_workflow_ledger. A planner declines a change they "
+        "will not adopt, instead of sending it through the approval chain only to "
+        "have it rejected there. A reason is required; appends one REJECT ledger "
+        "entry and calls no SAP API."
+    ),
     ("/api/v1/i7/reports/quarterly/generate", "post"): (
         "Generate (or regenerate) the I07 Quarterly Deep-Dive Report -> "
         "i7_quarterly_report. Idempotent per quarter: overwrites rather than "
