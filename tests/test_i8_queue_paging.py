@@ -505,14 +505,14 @@ class TestOneException:
         queues.exceptions = (exception(1), exception(2))
         wanted = queues.exceptions[1].id
         with factory() as db:
-            set_status(db, wanted, "IN_PROGRESS", actor="tester")
+            set_status(db, wanted, "CLOSED", actor="tester", note="Not a real gap.")
 
         response = queues.client.get(f"{EXCEPTIONS}/{wanted}")
 
         assert response.status_code == 200
         body = response.json()
         assert body["id"] == wanted
-        assert body["status"] == "IN_PROGRESS"
+        assert body["status"] == "CLOSED"
         assert body["stillDetected"] is True
         assert body["repairLine"]["documentNumber"] == "4500000002"
 
@@ -546,6 +546,93 @@ class TestOneException:
                 select(ExceptionEvent.kind).where(ExceptionEvent.exception_id == gone)
             ).scalars()
             assert list(kinds) == ["ASSIGNED"]
+
+
+# --- Two statuses, OPEN and CLOSED (21-Oct-2026) -----------------------------
+
+
+def legacy_entry(exception_id: str, kind: str, status: str) -> ExceptionEvent:
+    """A history row as written before IN_PROGRESS and RESOLVED were retired."""
+    return ExceptionEvent(exception_id=exception_id, kind=kind, status=status, actor="system")
+
+
+class TestTwoStatuses:
+    def test_closing_without_a_note_is_refused(self, queues) -> None:
+        queues.exceptions = (exception(1),)
+        wanted = queues.exceptions[0].id
+
+        response = queues.client.post(
+            f"{EXCEPTIONS}/{wanted}/events", json={"kind": "STATUS", "status": "CLOSED"}
+        )
+
+        assert response.status_code == 422
+        assert "note" in response.json()["detail"]
+
+    def test_closing_with_a_note_closes_it(self, queues) -> None:
+        queues.exceptions = (exception(1),)
+        wanted = queues.exceptions[0].id
+
+        response = queues.client.post(
+            f"{EXCEPTIONS}/{wanted}/events",
+            json={"kind": "STATUS", "status": "CLOSED", "text": "Pre-dates the control."},
+        )
+
+        assert response.status_code == 201
+        assert response.json()["status"] == "CLOSED"
+
+    @pytest.mark.parametrize("retired", ["IN_PROGRESS", "RESOLVED"])
+    def test_a_retired_status_cannot_be_written(self, queues, retired) -> None:
+        queues.exceptions = (exception(1),)
+        wanted = queues.exceptions[0].id
+
+        response = queues.client.post(
+            f"{EXCEPTIONS}/{wanted}/events",
+            json={"kind": "STATUS", "status": retired, "text": "Old screen."},
+        )
+
+        assert response.status_code == 422
+
+    def test_old_history_is_served_in_the_two_statuses(self, queues, factory) -> None:
+        """Rows are never rewritten, so the old words are still stored. The
+        item and every entry in its history must still answer OPEN or CLOSED,
+        or the response would not validate."""
+        queues.exceptions = (exception(1), exception(2))
+        in_progress, resolved = (item.id for item in queues.exceptions)
+        with factory() as db:
+            db.add(legacy_entry(in_progress, "STATUS", "IN_PROGRESS"))
+            db.add(legacy_entry(resolved, "STATUS", "RESOLVED"))
+            db.commit()
+
+        first = queues.client.get(f"{EXCEPTIONS}/{in_progress}").json()
+        second = queues.client.get(f"{EXCEPTIONS}/{resolved}").json()
+
+        assert first["status"] == "OPEN"
+        assert first["history"][0]["status"] == "OPEN"
+        assert second["status"] == "CLOSED"
+        assert second["history"][0]["status"] == "CLOSED"
+
+    def test_an_old_status_filter_still_finds_its_items(self, queues, factory) -> None:
+        # A bookmark from before the change: ?status=RESOLVED means CLOSED now.
+        queues.exceptions = (exception(1), exception(2))
+        closed = queues.exceptions[1].id
+        with factory() as db:
+            set_status(db, closed, "CLOSED", actor="tester", note="Not a real gap.")
+
+        assert ids(queues.client.get(EXCEPTIONS, params={"status": "RESOLVED"}).json()) == [closed]
+        assert ids(queues.client.get(EXCEPTIONS, params={"status": "CLOSED"}).json()) == [closed]
+
+    def test_an_item_the_check_drops_is_closed_by_the_system(self, queues, factory) -> None:
+        gone = "EX-MISSING_ATTESTATION-4500000099-10"
+        with factory() as db:
+            assign(db, gone, "priya", actor="tester")
+        queues.exceptions = (exception(1),)
+
+        queues.client.get(EXCEPTIONS)
+
+        body = queues.client.get(f"{EXCEPTIONS}/{gone}").json()
+        assert body["status"] == "CLOSED"
+        assert body["history"][-1]["kind"] == "AUTO_RESOLVED"
+        assert body["history"][-1]["actor"] == "system"
 
 
 # --- The register ------------------------------------------------------------

@@ -51,7 +51,11 @@ from app.initiatives.i8.config import I8Settings
 from app.initiatives.i8.declarations import DeclarationRow
 from app.initiatives.i8.exceptions import RAISED_BY_I8, ExceptionItem, ExceptionStats
 from app.initiatives.i8.line_justifications import LineJustification
-from app.initiatives.i8.exception_state import UNTOUCHED, ExceptionWorkState
+from app.initiatives.i8.exception_state import (
+    UNTOUCHED,
+    ExceptionWorkState,
+    canonical_status,
+)
 from app.initiatives.i8.models import ExceptionEvent, RepairAttestation
 from app.initiatives.i8.register import RegisterStats, RepairLine
 from app.initiatives.i8.universe import UniverseRow, UniverseStats
@@ -549,7 +553,7 @@ def exception_history_entry(event: ExceptionEvent) -> ExceptionHistoryEntry:
     return ExceptionHistoryEntry(
         id=event.id,
         kind=event.kind,
-        status=event.status,
+        status=canonical_status(event.status),
         owner=event.owner,
         actor=event.actor,
         text=event.text or "",
