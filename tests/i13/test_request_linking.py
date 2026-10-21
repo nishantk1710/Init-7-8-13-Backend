@@ -54,7 +54,16 @@ REQUEST = ids.mint_request()
 
 
 def _mistyped(reference: str) -> str:
-    return reference[:5] + ("A" if reference[5] != "A" else "B") + reference[6:]
+    """One character changed so the checksum fails -- never removing the last
+    digit. ``REQUEST`` is random, and a reference with no digit left reads as
+    an ordinary word ("REPAIRABLE"), not a mistyped reference, which made the
+    tests that use this fail now and then in CI."""
+    for position in range(1, len(reference)):
+        for replacement in ids.ALPHABET:
+            candidate = reference[:position] + replacement + reference[position + 1:]
+            if any(c.isdigit() for c in candidate[1:]) and not ids.is_valid_request(candidate):
+                return candidate
+    raise AssertionError(f"cannot mistype {reference}")
 
 
 # --- reading the item text ----------------------------------------------------------
