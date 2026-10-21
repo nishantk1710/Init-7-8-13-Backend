@@ -153,6 +153,7 @@ def create_request(
             requester=actor.id,
             requested_for=body.requested_for,
             origin=Origin(body.origin),
+            department=body.department,
             settings=settings,
         )
     except request_service.RequestConflict as error:
@@ -188,6 +189,7 @@ def list_requests(
                 issued_at=r.issued_at,
                 line_count=r.line_count,
                 skipped_count=len(json.loads(r.skipped or "[]")),
+                department=_single(departments.get(r.id, [])),
                 departments=departments.get(r.id, []),
             )
             for r in rows
@@ -202,6 +204,10 @@ def get_request(request_id: str, db: DbDep, settings: SettingsDep) -> RequestRes
     except request_service.RequestError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
     return _request_response(db, request)
+
+
+def _single(departments: list[str]) -> str | None:
+    return departments[0] if len(departments) == 1 else None
 
 
 def _link_note(sgtxt: str | None, request_id: str, line_no: int | None, decision: str | None) -> str | None:
@@ -291,6 +297,7 @@ def _request_response(db: DbSession, request: AssistantRequest, *, replayed: boo
         requester=request.requester,
         origin=request.origin,
         issued_at=request.issued_at,
+        department=_single(departments),
         departments=departments,
         lines=lines,
         skipped=[SkippedModel(**{

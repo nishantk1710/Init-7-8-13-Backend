@@ -22,7 +22,10 @@ are append-only, so a half-written request could never be tidied away.
 What submit does, in order
 --------------------------
 1. Refuse a request that is empty, over the line cap, spans plants, repeats a
-   material, or names a department that is not a code (as the opener does).
+   material, has no department (platform), names more than one, or names one
+   that is not a code (as the opener does). One request is one plant and one
+   department (UAT, 21 Oct): the department is picked once and every line's
+   session carries it.
 2. Re-route and re-assess every line, now -- not trust the preview. If an OAR
    line's suggestion moved since the requester saw it (a snapshot refresh in
    between), refuse with the fresh figures (:class:`RequestConflict`): a
@@ -317,6 +320,27 @@ def _validate_shape(lines: list[LineAnswers], plant: str, settings: Settings) ->
         seen[key] = number
 
 
+def request_department(
+    lines: list[LineAnswers], department: str | None, *, origin: Origin = Origin.PLATFORM
+) -> str | None:
+    """The request's one department: the request-level value, or the one value
+    its lines agree on. Refuses two different departments, and -- from the
+    platform screen -- none at all. SAP (BAdI) may send none."""
+    named = (department or "").strip()
+    per_line = {(line.department or "").strip() for line in lines} - {""}
+    if named:
+        per_line.add(named)
+    if len(per_line) > 1:
+        raise RequestError(
+            f"One request is for one department; this one names {', '.join(sorted(per_line))}. "
+            "Pick one department for the whole request."
+        )
+    chosen = next(iter(per_line), None)
+    if chosen is None and origin is Origin.PLATFORM:
+        raise RequestError("Pick the department this request is for.")
+    return chosen
+
+
 def _answer_for(step, line: LineAnswers, line_no: int) -> dict[str, Any]:
     """The answer this line's screen gave to the step the script is asking."""
     justification = {"reason_category": line.reason_category, "free_text": line.free_text}
@@ -365,10 +389,15 @@ def create(
     requester: str,
     requested_for: str | None = None,
     origin: Origin = Origin.PLATFORM,
+    department: str | None = None,
     today: date | None = None,
     settings: Settings | None = None,
 ) -> CreatedRequest:
-    """Record a whole request, or nothing. See the module docstring."""
+    """Record a whole request, or nothing. See the module docstring.
+
+    ``department`` is the request's one department. Per-line departments are
+    still accepted (a screen from before 21 Oct sends them) as long as they all
+    agree with it and with each other."""
     settings = settings or get_settings()
     today = today or date.today()
     i13_config = get_i13_config()
@@ -379,16 +408,15 @@ def create(
         return CreatedRequest(request=existing, sessions=lines_of(db, existing.id), replayed=True)
 
     _validate_shape(lines, plant, settings)
-
-    for number, line in enumerate(lines, start=1):
-        try:
-            departments.check(
-                (line.department or "").strip(),
-                from_sap=origin is Origin.BADI,
-                enabled=settings.assistant_department_check_enabled,
-            )
-        except departments.DepartmentError as error:
-            raise RequestError(str(error), line=number) from error
+    department = request_department(lines, department, origin=origin)
+    try:
+        departments.check(
+            department or "",
+            from_sap=origin is Origin.BADI,
+            enabled=settings.assistant_department_check_enabled,
+        )
+    except departments.DepartmentError as error:
+        raise RequestError(str(error)) from error
 
     # --- 2. route and assess every line now, before anything is written ------
     prepared: list[_Prepared] = []
@@ -447,7 +475,7 @@ def create(
                 material_id=item.routed.material_id,
                 plant=plant,
                 requester=requester,
-                department=line.department,
+                department=department,
                 requested_for=requested_for,
                 origin=origin,
                 today=today,

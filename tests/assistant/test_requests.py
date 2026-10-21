@@ -152,7 +152,6 @@ def oar(material: str, quantity: str, *, seen: str | None = "8", decision: str =
     return request_service.LineAnswers(
         material_id=material,
         plant=PLANT,
-        department="10100",
         decision=decision,
         quantity=quantity,
         window_start="2026-08-01",
@@ -164,10 +163,8 @@ def oar(material: str, quantity: str, *, seen: str | None = "8", decision: str =
     )
 
 
-def repair(material: str, decision: str | None, department: str = "10300", **extra):
-    return request_service.LineAnswers(
-        material_id=material, plant=PLANT, department=department, decision=decision, **extra
-    )
+def repair(material: str, decision: str | None, **extra):
+    return request_service.LineAnswers(material_id=material, plant=PLANT, decision=decision, **extra)
 
 
 def every_case() -> list[request_service.LineAnswers]:
@@ -179,7 +176,7 @@ def every_case() -> list[request_service.LineAnswers]:
         oar(OAR_NOT_NEEDED, "", decision="not_needed"),
         repair(REPAIR_EXISTING, "use_existing"),
         repair(REPAIR_NEW, "proceed_new", reason_category="URGENT_BREAKDOWN", free_text="Line 2 down"),
-        repair(REPAIR_NONE, None, department="10600"),
+        repair(REPAIR_NONE, None),
         request_service.LineAnswers(material_id=OAR_NO_DATA, plant=PLANT, decision="proceed"),
     ]
 
@@ -187,7 +184,7 @@ def every_case() -> list[request_service.LineAnswers]:
 CONSUMABLE_LINE = request_service.LineAnswers(material_id=CONSUMABLE, plant=PLANT)
 
 
-def create(db, lines, settings, key="draft-0001"):
+def create(db, lines, settings, key="draft-0001", department="10100"):
     return request_service.create(
         db,
         plant=PLANT,
@@ -195,6 +192,7 @@ def create(db, lines, settings, key="draft-0001"):
         idempotency_key=key,
         requester=ACTOR,
         requested_for="J Miller",
+        department=department,
         today=TODAY,
         settings=settings,
     )
@@ -241,12 +239,11 @@ class TestEveryCase:
             (CONSUMABLE, "out_of_scope"), (OAR_NO_DATA, "data_gap"),
         ]
 
-    def test_each_line_keeps_its_own_department(self, created) -> None:
+    def test_every_line_carries_the_request_department(self, created) -> None:
+        """One request, one department (UAT, 21 Oct): picked once, on every line."""
         db, request_id, _ = created
-        assert [s.department for s in request_service.lines_of(db, request_id)] == [
-            "10100", "10100", "10100", "10100", "10300", "10300", "10600",
-        ]
-        assert request_service.departments_by_request(db, [request_id])[request_id] == ["10100", "10300", "10600"]
+        assert {s.department for s in request_service.lines_of(db, request_id)} == {"10100"}
+        assert request_service.departments_by_request(db, [request_id])[request_id] == ["10100"]
 
     def test_every_line_finished_its_conversation(self, created) -> None:
         db, request_id, _ = created
@@ -380,12 +377,26 @@ class TestShape:
         with factory() as db, pytest.raises(request_service.RequestError, match="nothing to record"):
             create(db, [CONSUMABLE_LINE], settings)
 
-    def test_a_department_that_is_not_a_code_names_its_line(self, factory, settings) -> None:
+    def test_a_department_that_is_not_a_code_is_refused(self, factory, settings) -> None:
         checked = settings.model_copy(update={"assistant_department_check_enabled": True})
-        lines = [oar(OAR_NORMAL, "8"), repair(REPAIR_EXISTING, "use_existing", department="Mechanical")]
-        with factory() as db, pytest.raises(request_service.RequestError) as error:
-            create(db, lines, checked)
-        assert error.value.line == 2
+        lines = [oar(OAR_NORMAL, "8"), repair(REPAIR_EXISTING, "use_existing")]
+        with factory() as db, pytest.raises(request_service.RequestError, match="not a department code"):
+            create(db, lines, checked, department="Mechanical")
+
+    def test_a_request_needs_a_department(self, factory, settings) -> None:
+        with factory() as db, pytest.raises(request_service.RequestError, match="Pick the department"):
+            create(db, [oar(OAR_NORMAL, "8")], settings, department=None)
+
+    def test_two_departments_on_one_request_are_refused(self, factory, settings) -> None:
+        lines = [oar(OAR_NORMAL, "8"), repair(REPAIR_EXISTING, "use_existing", department="10300")]
+        with factory() as db, pytest.raises(request_service.RequestError, match="one department"):
+            create(db, lines, settings, department="10100")
+
+    def test_older_screens_per_line_departments_are_accepted_when_they_agree(self, factory, settings) -> None:
+        lines = [oar(OAR_NORMAL, "8", department="10300"), repair(REPAIR_EXISTING, "use_existing", department="10300")]
+        with factory() as db:
+            created = create(db, lines, settings, department=None)
+            assert {s.department for s in created.sessions} == {"10300"}
 
 
 class TestIdempotency:
@@ -521,11 +532,12 @@ class TestRoutes:
             "idempotencyKey": key,
             "plant": PLANT,
             "requestedFor": "J Miller",
+            "department": "10100",
             "lines": lines or [
-                {"materialId": OAR_NORMAL, "plant": PLANT, "department": "10100", "decision": "proceed",
+                {"materialId": OAR_NORMAL, "plant": PLANT, "decision": "proceed",
                  "quantity": "8", "windowStart": "2026-08-01", "windowEnd": "2027-03-31",
                  "purpose": "Mill 3", "seenSuggestedQuantity": "8"},
-                {"materialId": REPAIR_NEW, "plant": PLANT, "department": "10300", "decision": "proceed_new",
+                {"materialId": REPAIR_NEW, "plant": PLANT, "decision": "proceed_new",
                  "reasonCategory": "URGENT_BREAKDOWN", "freeText": "Line 2 down"},
                 {"materialId": CONSUMABLE, "plant": PLANT},
             ],
@@ -557,7 +569,8 @@ class TestRoutes:
         body = response.json()
         request_id = body["requestId"]
         assert [l["reference"] for l in body["lines"]] == [f"{request_id}/1", f"{request_id}/2"]
-        assert body["departments"] == ["10100", "10300"]
+        assert body["department"] == "10100"
+        assert body["departments"] == ["10100"]
         assert body["skipped"][0]["materialId"] == CONSUMABLE
         first = body["lines"][0]
         assert (first["plannedQuantity"], first["suggestedQuantity"], first["acceptedQuantity"]) == ("8", "8", "8")

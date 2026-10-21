@@ -69,6 +69,7 @@ class LineAnswersModel(AssistantModel):
     material_id: str = PydanticField(max_length=40)
     plant: str = PydanticField(max_length=8)
     department: str | None = PydanticField(default=None, max_length=64)
+    """Deprecated: send ``department`` on the request. Accepted while it agrees."""
     decision: Literal["proceed", "not_needed", "use_existing", "proceed_new"] | None = None
     quantity: str | None = PydanticField(default=None, max_length=20)
     window_start: str | None = PydanticField(default=None, max_length=10)
@@ -86,6 +87,8 @@ class CreateRequestBody(AssistantModel):
     """One per draft. Resubmitting the same draft returns the same request."""
     plant: str = PydanticField(max_length=8)
     requested_for: str | None = PydanticField(default=None, max_length=128)
+    department: str | None = PydanticField(default=None, max_length=64)
+    """The request's one department code; every line is recorded against it."""
     origin: Literal["BADI", "PLATFORM"] = "PLATFORM"
     lines: list[LineAnswersModel] = PydanticField(min_length=1, max_length=50)
 
@@ -135,6 +138,9 @@ class RequestResponse(AssistantModel):
     requester: str
     origin: str
     issued_at: datetime
+    department: str | None = None
+    """The request's department. Null for a request from before 21 Oct whose
+    lines named different ones -- ``departments`` lists them."""
     departments: list[str]
     lines: list[RequestLineModel]
     skipped: list[SkippedModel]
@@ -154,6 +160,7 @@ class RequestSummaryModel(AssistantModel):
     issued_at: datetime
     line_count: int
     skipped_count: int
+    department: str | None = None
     departments: list[str]
 
 
