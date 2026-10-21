@@ -257,6 +257,7 @@ def start(
     plant: str,
     requester: str | None = None,
     department: str | None = None,
+    department_note: str | None = None,
     requested_for: str | None = None,
     origin: Origin = Origin.PLATFORM,
     requested_quantity: Decimal | None = None,
@@ -292,7 +293,8 @@ def start(
     turn a typed name into an audit author, which is the one thing the split
     between these two columns exists to prevent.
 
-    ``department`` is the requester's, not the operator's.
+    ``department`` is the requester's, not the operator's. ``department_note``
+    is free text typed beside it, stored as typed (trimmed) and never checked.
 
     ``requested_quantity`` is **no longer sent by the entry point** -- the
     quantity of record is captured inside the conversation against a purpose and
@@ -366,6 +368,7 @@ def start(
         material_id=routed.material_id,
         plant=routed.plant,
         department=_stated(department),
+        department_note=_stated(department_note),
         requested_for=_stated(requested_for),
         requested_quantity=requested_quantity,
         eighty_series=routed.eighty_series,

@@ -236,7 +236,7 @@ def search_materials(
 def list_departments(
     plant: Annotated[str | None, Query(max_length=8)] = None,
 ) -> DepartmentListResponse:
-    """Every department code with a purchase requisition at 1300 or 1500.
+    """Every department code on VZI's department list at 1300 or 1500, named.
 
     The ``plant``'s own codes come first and are marked ``primary``; the rest
     are for search. Writes nothing and never touches the database on the
@@ -246,7 +246,7 @@ def list_departments(
     return DepartmentListResponse(
         plant=plant,
         items=[
-            DepartmentModel(code=d.code, plants=list(d.plants), primary=d.primary)
+            DepartmentModel(code=d.code, name=d.name, plants=list(d.plants), primary=d.primary)
             for d in items
         ],
         loaded=departments.is_loaded(),
@@ -295,6 +295,7 @@ def start_session(
             # They land in different columns and must not be crossed over.
             requester=actor.id,
             department=body.department,
+            department_note=body.department_note,
             requested_for=body.requested_for,
             origin=Origin(body.origin),
         )
@@ -483,6 +484,8 @@ def list_sessions(
                 material_id=row.material_id,
                 plant=row.plant,
                 department=row.department,
+                department_name=departments.name_for(row.department),
+                department_note=row.department_note,
                 requested_for=row.requested_for,
                 requester=row.requester,
                 origin=row.origin,
@@ -562,6 +565,8 @@ def get_session(session_id: str, db: DbDep) -> SessionTraceResponse:
         material_id=session.material_id,
         plant=session.plant,
         department=session.department,
+        department_name=departments.name_for(session.department),
+        department_note=session.department_note,
         requested_for=session.requested_for,
         requested_quantity=(
             None if session.requested_quantity is None else str(session.requested_quantity)

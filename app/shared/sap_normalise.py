@@ -305,9 +305,9 @@ TABLES: dict[str, tuple[Col, ...]] = {
         _c("currency", "WAERS"),
         _c("planned_deliv_time", "PLIFZ", kind="num"),
         # The department code VZI keys into Requisitioner (``10100``,
-        # ``40301``). Read by the assistant's department list
-        # (app/assistant/departments.py). Text, not a key: it is not padded,
-        # and some values are names (``BMW``, ``OAR``) the list filters out.
+        # ``40301``). The assistant's department list read it until 21 Oct
+        # 2026; it reads ``n_dept_codes`` now. Text, not a key: it is not
+        # padded, and some values are names (``BMW``, ``OAR``).
         _c("requisitioner", "AFNAM"),
     ),
     "mara": (
@@ -387,6 +387,17 @@ TABLES: dict[str, tuple[Col, ...]] = {
         _c("change_indicator", "CHNGIND"),
         _c("new_value", "VALUE_NEW"),
         _c("old_value", "VALUE_OLD"),
+    ),
+    # VZI's department list -- plant, 5-digit code, name -- read by the
+    # assistant (app/assistant/departments.py). Not an SAP table: loaded from
+    # ``Plant Dept Codes 1.XLSX`` until a pull exists, so the "SAP" names
+    # here are that workbook's headers -- as loaded on Azure (21 Oct, with
+    # spaces) and as app.seed would name them (``department_code``). A pull
+    # with its own field names adds them after these.
+    "dept_codes": (
+        _c("plant", "Plant", "WERKS"),
+        _c("code", "Department code", "department_code"),
+        _c("name", "Department"),
     ),
     "eket": (
         _c("purchasing_document", "EBELN", kind="key"),

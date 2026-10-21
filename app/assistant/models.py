@@ -164,9 +164,12 @@ class AssistantSession(Base):
     department: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     """Which department the requester is reserving for.
 
-    Since 15 Oct 2026 a 5-digit department code (``10100``), picked from the
-    codes VZI keys into ``EBAN.AFNAM`` -- see ``app/assistant/departments.py``.
-    Rows written before then hold whatever was typed, and stay as written.
+    Since 15 Oct 2026 a 5-digit department code (``10100``), picked from a
+    list -- VZI's department list since 21 Oct, ``EBAN.AFNAM`` before; see
+    ``app/assistant/departments.py``. Rows written before 15 Oct hold whatever
+    was typed, and stay as written. The name is looked up when read, never
+    stored: the list names the code, and a renamed department is renamed
+    everywhere.
 
     Asked at the entry point rather than derived, because there is no
     deterministic source for it: nothing the platform loads maps a person to a
@@ -178,6 +181,15 @@ class AssistantSession(Base):
     pop-up carries a material and a plant; it does not carry a department, so a
     session opened from SAP legitimately has none until the SAP team adds it to
     the deep link. A blank here is the honest record of that."""
+
+    department_note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    """Anything the requester adds about the department, as typed (UAT, 21 Oct).
+
+    Optional, and **beside** the code, never instead of it: ``department``
+    stays the controlled value every per-department figure counts, and this
+    is free text nobody checked -- a section, a crew, "on behalf of Mine
+    Engineering". On a request every line carries the same note, as it
+    carries the same department."""
 
     requested_for: Mapped[str | None] = mapped_column(
         String(128), nullable=True, index=True
