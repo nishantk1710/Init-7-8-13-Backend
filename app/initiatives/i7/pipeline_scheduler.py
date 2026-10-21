@@ -92,6 +92,8 @@ class SchedulePolicy:
     retries: int
     interval_seconds: int
     initial_delay_seconds: int
+    snapshots_enabled: bool = False
+    """Also save the monthly KPI snapshots after the night's run (``I7_KPI_SNAPSHOT_ENABLED``)."""
 
     @classmethod
     def from_settings(cls, settings) -> "SchedulePolicy":
@@ -115,7 +117,7 @@ class SchedulePolicy:
             problems.append(f"I7_PIPELINE_INITIAL_DELAY_SECONDS must be >= 0, got {delay}")
         if problems:
             raise InvalidScheduleError("; ".join(problems))
-        return cls(hour, retries, interval, delay)
+        return cls(hour, retries, interval, delay, bool(getattr(settings, "i7_kpi_snapshot_enabled", False)))
 
 
 def open_slot(now: datetime, policy: SchedulePolicy) -> datetime | None:
@@ -155,19 +157,63 @@ def attempts_used(session: Session, fingerprint: str) -> int:
     ).scalar_one()
 
 
+def capture_snapshots(session_factory: Callable[[], Session], now: datetime | None = None) -> str:
+    """The nightly KPI-snapshot step: refresh this month's rolling reading and finalise last month's.
+
+    Runs after the night's pipeline run, never during one (a reading taken mid-run would describe a half-built state
+    and, being once a day, would hold until tomorrow). Idempotent and cheap when there is nothing to do: a month that is
+    final, or already read today, is skipped without being recomputed.
+    """
+    from app.initiatives.i7.reporting import snapshots
+    from app.models.i7_pipeline import STATUS_RUNNING
+
+    today = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date()
+    with session_factory() as session:
+        running = session.execute(
+            select(func.count()).select_from(PipelineRun).where(PipelineRun.status == STATUS_RUNNING)
+        ).scalar_one()
+        if running:
+            return "a pipeline run is in progress; snapshots wait"
+        results = snapshots.capture_due(session, today)
+    return ", ".join(f"{r.month:%Y-%m} {r.action}" for r in results) or "up to date"
+
+
 def tick(
     policy: SchedulePolicy,
     *,
     session_factory: Callable[[], Session],
     runner: Callable[[str], str],
     now: datetime | None = None,
+    capture: Callable[[Callable[[], Session], datetime | None], str] | None = None,
 ) -> str:
     """One look. Returns a one-line description of what it did, for the log.
 
     Never raises: a database blip in one tick must not end the loop. ``runner``
     is ``watch.check_and_run`` in production; tests pass a fake, so nothing
     here can start a real pipeline by accident.
+
+    When the policy asks for snapshots (and a ``capture`` step is given), they are saved after the pipeline check in
+    the same open slot -- on this one timer, never a second. A failed capture is logged and reported in the returned
+    line; it never ends the loop or affects the pipeline.
     """
+    outcome = _tick_pipeline(policy, session_factory=session_factory, runner=runner, now=now)
+    if capture is None or not policy.snapshots_enabled or outcome == "no slot open":
+        return outcome
+    try:
+        return f"{outcome}; snapshots: {capture(session_factory, now)}"
+    except Exception as exc:  # noqa: BLE001 -- see the docstring
+        logger.exception("I07 nightly: the KPI snapshot capture failed (logged in i7_kpi_snapshot_log; retried next tick)")
+        return f"{outcome}; snapshots failed: {type(exc).__name__}"
+
+
+def _tick_pipeline(
+    policy: SchedulePolicy,
+    *,
+    session_factory: Callable[[], Session],
+    runner: Callable[[str], str],
+    now: datetime | None = None,
+) -> str:
+    """The pipeline half of :func:`tick`: ask the change check, and run if it says so."""
     from app.initiatives.i7.watch import should_run
 
     now = now or datetime.now(timezone.utc)
@@ -207,6 +253,7 @@ def run_loop(
     session_factory: Callable[[], Session],
     runner: Callable[[str], str],
     clock: Callable[[], datetime] | None = None,
+    capture: Callable[[Callable[[], Session], datetime | None], str] | None = None,
 ) -> None:
     """Tick every ``policy.interval_seconds`` until ``stop`` is set.
 
@@ -225,6 +272,7 @@ def run_loop(
                 session_factory=session_factory,
                 runner=runner,
                 now=clock() if clock else None,
+                capture=capture,
             )
             logger.debug("I07 nightly tick: %s", outcome)
         except Exception:  # noqa: BLE001 -- a bad tick must never end the loop
@@ -253,7 +301,7 @@ def start(stop: threading.Event, settings) -> threading.Thread | None:
     thread = threading.Thread(
         target=run_loop,
         args=(stop, policy),
-        kwargs={"session_factory": get_sessionmaker(), "runner": check_and_run},
+        kwargs={"session_factory": get_sessionmaker(), "runner": check_and_run, "capture": capture_snapshots},
         name="i7-pipeline-nightly",
         daemon=True,
     )
