@@ -387,7 +387,10 @@ def test_the_status_distribution_is_over_this_periods_recommendations_with_its_d
 
 
 def test_adoption_is_not_measured_without_sap_evidence_and_an_approval_is_not_an_adoption(db):
-    db.add_all([rec("A", at(2026, 10), status="APPROVED"), rec("B", at(2026, 10), status="PENDING_APPROVAL")])
+    db.add_all([
+        rec("A", at(2026, 10), status="APPROVED", cur_rop=1, rec_rop=5),
+        rec("B", at(2026, 10), status="PENDING_APPROVAL", cur_rop=1, rec_rop=5),
+    ])
     db.add(SapAdoptionResult(recommendation_id="REC-A-1300-1", status="UNKNOWN", evaluated_at=at(2026, 11)))
     db.commit()
     adoption = build(db, AFTER_Q4).adoption
@@ -395,10 +398,15 @@ def test_adoption_is_not_measured_without_sap_evidence_and_an_approval_is_not_an
     assert adoption.confirmed_adoptions is None
     assert adoption.pending_approvals == 1
     assert "not an adoption" in adoption.reason
+    # Nothing is adopted and nothing is "not adopted": every one with a change is simply pending.
+    assert (adoption.tracked, adoption.adopted, adoption.not_adopted, adoption.pending) == (2, 0, 0, 2)
 
 
 def test_adoption_counts_confirmed_results_for_this_periods_recommendations_only(db):
-    db.add_all([rec("A", at(2026, 10)), rec("B", at(2026, 10)), rec("OLD", at(2026, 6))])
+    db.add_all([
+        rec("A", at(2026, 10), cur_rop=1, rec_rop=5), rec("B", at(2026, 10), cur_rop=1, rec_rop=5),
+        rec("C", at(2026, 10), cur_rop=1, rec_rop=5), rec("OLD", at(2026, 6), cur_rop=1, rec_rop=5),
+    ])
     db.add_all([
         SapAdoptionResult(recommendation_id="REC-A-1300-1", status="ADOPTED", evaluated_at=at(2026, 11)),
         SapAdoptionResult(recommendation_id="REC-B-1300-1", status="NOT_ADOPTED", evaluated_at=at(2026, 11)),
@@ -408,6 +416,13 @@ def test_adoption_counts_confirmed_results_for_this_periods_recommendations_only
     adoption = build(db, AFTER_Q4).adoption
     assert adoption.status is AvailabilityStatus.AVAILABLE
     assert adoption.confirmed_adoptions == 1
+    assert (adoption.tracked, adoption.adopted, adoption.not_adopted, adoption.pending) == (3, 1, 1, 1)  # OLD is another period
+
+
+def test_a_recommendation_with_nothing_to_adopt_is_not_counted_in_adoption(db):
+    db.add_all([rec("SAME", at(2026, 10), cur_rop=5, rec_rop=5), rec("CHANGED", at(2026, 10), cur_rop=1, rec_rop=5)])
+    db.commit()
+    assert build(db, AFTER_Q4).adoption.tracked == 1
 
 
 # --- data coverage ---------------------------------------------------------------------------

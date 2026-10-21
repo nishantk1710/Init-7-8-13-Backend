@@ -997,13 +997,24 @@ class ForecastActualSection(BaseModel):
 
 
 class AdoptionQuarter(BaseModel):
+    """SAP adoption of the period's recommendations that have something to adopt: an OAR one eligible for the
+    Min-Max conversion, or a stock item whose reorder point, safety stock or max stock changes -- the Overview's
+    own rule, so the chart and the Adopted card read the same here as there."""
+
     model_config = ConfigDict(frozen=True)
 
     status: AvailabilityStatus
     confirmed_adoptions: int | None
     pending_approvals: int
-    """Recommendations generated in the period still awaiting a decision, as of the report's cutoff."""
+    """Recommendations generated in the period still awaiting a decision, as of the date the report was generated."""
     reason: str
+    tracked: int | None = None
+    """How many recommendations have a change to adopt (the newest of each material-plant in the period)."""
+    adopted: int | None = None
+    partially_adopted: int | None = None
+    not_adopted: int | None = None
+    pending: int | None = None
+    """No SAP change evidence yet: the four counts add up to ``tracked``. Pending is not "not adopted"."""
 
 
 class MonthCoverage(BaseModel):

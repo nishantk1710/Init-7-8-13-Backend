@@ -27,6 +27,7 @@ from app.initiatives.i7.reporting.period import (
     month_label,
     reporting_cutoff,
 )
+from app.api.i7.recommendations import _apply_filters
 from app.core.config import get_settings
 from app.models.i7_recommendation import Recommendation, SapAdoptionResult
 from app.schemas.i7.reports import (
@@ -73,17 +74,30 @@ def _unit(currency: str | None) -> str:
 def _adoption(
     session: Session, period_start: date, exclusive_end: date, awaiting: int
 ) -> AdoptionQuarter:
-    """Adoption of the recommendations generated in the period. Approval is not adoption: only SAP change evidence
-    in the ledger (``i7_sap_adoption``) counts."""
+    """Adoption of the period's recommendations that have something to adopt (the Overview's ``actionable`` rule,
+    over the newest recommendation of each material-plant). Approval is not adoption: only SAP change evidence in the
+    ledger (``i7_sap_adoption``) counts, and everything with no evidence is pending, never "not adopted"."""
+    tracked = _apply_filters(
+        select(Recommendation.recommendation_id),
+        status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None, criticality=None,
+        generated_from=None, generated_to=None, actionable=True,
+    ).where(Recommendation.id.in_(kpi_definitions.newest_in_period_ids(period_start, exclusive_end)))
+    total = kpi_definitions.count_of(session, tracked)
     ledger = dict(
         session.execute(
             select(SapAdoptionResult.status, func.count())
-            .join(Recommendation, Recommendation.recommendation_id == SapAdoptionResult.recommendation_id)
-            .where(Recommendation.generated_at >= period_start, Recommendation.generated_at < exclusive_end)
+            .where(SapAdoptionResult.recommendation_id.in_(tracked))
             .group_by(SapAdoptionResult.status)
         ).all()
     )
-    evidence = sum(count for status, count in ledger.items() if status != "UNKNOWN")
+    adopted = int(ledger.get("ADOPTED", 0))
+    partially = int(ledger.get("PARTIALLY_ADOPTED", 0))
+    not_adopted = int(ledger.get("NOT_ADOPTED", 0))
+    evidence = adopted + partially + not_adopted
+    counts = dict(
+        tracked=total, adopted=adopted, partially_adopted=partially, not_adopted=not_adopted,
+        pending=max(total - evidence, 0),
+    )
     if evidence == 0:
         return AdoptionQuarter(
             status=AvailabilityStatus.UNKNOWN,
@@ -93,15 +107,17 @@ def _adoption(
                 "Not measured: no SAP change evidence has been recorded for this period's recommendations, so adoption "
                 "cannot be confirmed. An approval is not an adoption; this is distinct from a measured 0%."
             ),
+            **counts,
         )
     return AdoptionQuarter(
         status=AvailabilityStatus.AVAILABLE,
-        confirmed_adoptions=int(ledger.get("ADOPTED", 0)),
+        confirmed_adoptions=adopted,
         pending_approvals=awaiting,
         reason=(
-            f"{evidence} recommendations have SAP change evidence recorded; the rest have none yet. Confirmed adoptions "
-            "are those whose SAP change matches what was approved."
+            f"{evidence} of {total} recommendations with a change to adopt have SAP change evidence recorded; the rest "
+            "have none yet. Confirmed adoptions are those whose SAP change matches what was approved."
         ),
+        **counts,
     )
 
 
