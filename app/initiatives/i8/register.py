@@ -27,7 +27,17 @@ only 770 of the 1,225 repair lines have an EKKO header in this extract at all.
 ``raw_ekko`` starts at 07-Jan-2025 while ``raw_ekpo`` reaches further back. An
 inner join to pick up the document type silently drops 455 genuine repair lines,
 37% of the register. So the header is LEFT JOINed and displayed, and the gate is
-item category alone.
+item category alone. (By the 15-Oct data "nowhere else" no longer held: 49 ZDOM
+lines carry item category 3 as well, all closed or deleted, and one RFQ -- see
+the next ruling. Gating on ZREP would drop an open ZDOM line, so it still does
+not gate.)
+
+**A request for quotation is not an order** (:func:`is_rfq_line`). Ruled
+21-Oct-2026. RFQ 6000016330/10 (document type AN) carries item category 3, so
+it passed the gate. SAP never ticks "Delivery completed" on an RFQ, so it sat in
+the register as open, with a quantity of 0: 105 open lines against 104 under
+repair. It is the one test that needs the header, so a line with no header is
+kept -- there is nothing to say it is an RFQ.
 
 **Open is SAP's call: the "Delivery completed" flag** (:func:`is_delivery_completed`).
 Ruled 19-Oct-2026. The register lists only the repair lines SAP still has
@@ -107,8 +117,8 @@ AT_VENDOR = "At Vendor"
 @dataclass(frozen=True)
 class RepairLine:
     """One repair purchase-order line SAP still has open, with its assembled
-    lifecycle. Lines SAP has closed, deleted or blocked are never built -- see
-    :func:`load_repair_lines`."""
+    lifecycle. Lines SAP has closed, deleted or blocked, and lines on a request
+    for quotation, are never built -- see :func:`load_repair_lines`."""
 
     # --- identity -------------------------------------------------------
     purchasing_document: str
@@ -287,6 +297,15 @@ def is_blocked_line(row: Mapping, cfg: I8Settings) -> bool:
     the next snapshot.
     """
     return row["loekz"] == cfg.po_blocked_indicator
+
+
+def is_rfq_line(header: Mapping | None, cfg: I8Settings) -> bool:
+    """Whether this line is on a request for quotation (EKKO.BSART), not an order.
+
+    Takes the header, not the line: the document type lives on EKKO. A line
+    with no header is not called an RFQ -- see the module docstring.
+    """
+    return header is not None and header["bsart"] == cfg.rfq_doc_type
 
 
 # --- Layer 2: assemble the lifecycle per line -----------------------------
@@ -602,9 +621,10 @@ class RegisterStats:
     Every field defaults to zero so the empty register is a valid value rather
     than a special case with a positional argument list to keep in step.
 
-    Every line counted here is open in SAP. The three ``excluded_*`` figures
-    say how many repair lines SAP has deleted, closed or blocked, so the total
-    reconciles with a raw EKPO count and with SAP's own open-PO list.
+    Every line counted here is open in SAP. The four ``excluded_*`` figures
+    say how many repair lines SAP has deleted, closed or blocked, or holds on a
+    request for quotation, so the total reconciles with a raw EKPO count and
+    with SAP's own open-PO list.
     """
 
     total_lines: int = 0
@@ -656,6 +676,11 @@ class RegisterStats:
     above. Counted only when not already deleted or closed: 68 on the 15-Oct
     data."""
 
+    excluded_rfq_lines: int = 0
+    """Item-category-3 lines on a request for quotation (EKKO.BSART), left out
+    of every figure above: an RFQ orders nothing. Counted only when not already
+    deleted, closed or blocked: 1 on the 15-Oct data."""
+
 
 def load_repair_lines(
     db: Session,
@@ -670,9 +695,10 @@ def load_repair_lines(
     """Build the register. Layers 1 and 2, then the Layer 3 arithmetic.
 
     Returns the repair lines SAP still has open, and only those: a line SAP has
-    deleted, closed ("Delivery completed") or blocked is counted in the stats
-    and never built. Every screen that reads the register -- declarations,
-    exceptions, the assistant -- therefore sees open lines only.
+    deleted, closed ("Delivery completed") or blocked, or one on a request for
+    quotation, is counted in the stats and never built. Every screen that reads
+    the register -- declarations, exceptions, the assistant -- therefore sees
+    open order lines only.
 
     ``candidates`` lets a caller that already holds the EKPO pull pass it in,
     so the snapshot reads the 82,718 rows once for both the register and the
@@ -717,6 +743,12 @@ def load_repair_lines(
         db, documents, materials, cfg, sources
     )
 
+    # Requests for quotation. The one test that needs the header, so it runs
+    # once the header is here rather than with the three above -- and so it is
+    # counted last: an RFQ SAP has deleted, closed or blocked is counted as that.
+    order_rows = [row for row in repair_rows if not is_rfq_line(headers.get(row["ebeln"]), cfg)]
+    excluded["excluded_rfq_lines"] = len(repair_rows) - len(order_rows)
+
     lines = [
         _build_line(
             row,
@@ -728,7 +760,7 @@ def load_repair_lines(
             today=today,
             cfg=cfg,
         )
-        for row in repair_rows
+        for row in order_rows
     ]
 
     vendors = {line.vendor for line in lines if line.vendor}
@@ -760,13 +792,14 @@ def load_repair_lines(
     )
     logger.info(
         "I08 register: %d open repair lines of %d candidates (%d overdue; "
-        "left out: %d delivery completed, %d blocked, %d deleted in SAP)",
+        "left out: %d delivery completed, %d blocked, %d deleted in SAP, %d on an RFQ)",
         stats.total_lines,
         stats.candidates_scanned,
         stats.overdue_lines,
         stats.excluded_delivery_completed_lines,
         stats.excluded_blocked_lines,
         stats.excluded_deleted_lines,
+        stats.excluded_rfq_lines,
     )
     return lines, stats
 

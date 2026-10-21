@@ -1129,6 +1129,8 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
             "materialNumberLength": cfg.material_number_length,
             "repairItemCategory": cfg.repair_item_category,
             "repairDocType": cfg.repair_doc_type,
+            # Left out of the register since 21-Oct-2026: an RFQ orders nothing.
+            "rfqDocType": cfg.rfq_doc_type,
             # What "open" means since 19-Oct-2026 -- SAP's rule, not ours.
             "openLineRule": (
                 f"EKPO.ELIKZ not '{cfg.delivery_completed_indicator}' (delivery "

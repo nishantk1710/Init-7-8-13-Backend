@@ -33,7 +33,12 @@ from typing import Any
 # 2 since 19-Oct-2026: RepairLine lost its receipt, delivery-flag and blocked
 # fields and the Snapshot its vendor turnaround, so a version-1 payload no
 # longer constructs. Raise it whenever a stored dataclass changes shape.
-CODEC_VERSION = 2
+#
+# 3 since 21-Oct-2026: RegisterStats gained excluded_rfq_lines. A version-2
+# payload would still construct, the field has a default -- but it was built
+# before RFQs were left out, and would go on serving the RFQ line as open until
+# the source data next changed. Raising the version makes the deploy rebuild.
+CODEC_VERSION = 3
 _ALLOWED = "app.initiatives.i8."
 
 
