@@ -25,6 +25,7 @@ from app.initiatives.i7.recommendations.types import WorkflowError
 from app.models.i7_recommendation import Recommendation
 from app.schemas.i7.approvals import (
     ApprovalActionRequest,
+    RejectRequest,
     SubmitRequest,
     WorkflowStateResponse,
 )
@@ -95,6 +96,32 @@ def submit_recommendation(
         ledger.submit_for_approval(session, row, actor_id=body.actor_id, policy=policy)
     except WorkflowError as exc:
         raise conflict("INVALID_WORKFLOW_STATE", str(exc)) from exc
+    session.commit()
+    return _state_response(row, policy)
+
+
+@router.post(
+    "/recommendations/{recommendation_id}/reject",
+    response_model=WorkflowStateResponse,
+    summary="Reject a recommendation without sending it for approval",
+    description="For a planner who does not want to adopt a recommendation: declines it straight "
+    "from the Recommendations page instead of submitting it only to have an approver reject it. "
+    "Only a READY_FOR_REVIEW recommendation may be declined this way -- once it is in the approval "
+    "chain, REJECT belongs to the pending role (POST .../actions). A non-empty comment is "
+    "required. Ends in REJECTED, writes one immutable approval-ledger entry, and calls no SAP API.",
+    responses={404: {"description": "Recommendation not found"}, 409: {"description": "Not READY_FOR_REVIEW, or no comment"}},
+)
+def reject_recommendation(
+    recommendation_id: str,
+    body: RejectRequest,
+    session: Annotated[Session, Depends(get_session)],
+) -> WorkflowStateResponse:
+    row = load_latest_recommendation(session, recommendation_id)
+    policy = PolicyDocument()
+    try:
+        ledger.reject_before_submission(session, row, actor_id=body.actor_id, comment=body.comment, policy=policy)
+    except WorkflowError as exc:
+        raise conflict("INVALID_WORKFLOW_ACTION", str(exc)) from exc
     session.commit()
     return _state_response(row, policy)
 

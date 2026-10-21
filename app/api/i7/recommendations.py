@@ -11,7 +11,7 @@ from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import Select, case, exists, func, or_, select
+from sqlalchemy import Select, and_, case, exists, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -100,6 +100,42 @@ def _risk_case():
     )
 
 
+def _actionable():
+    """A recommendation with something to adopt in SAP.
+
+    * **OAR** -- only when it is eligible for the Min-Max conversion (and a value was calculated):
+      the conversion is the one change an OAR recommendation proposes, so a not-eligible or
+      undecided one has nothing to adopt.
+    * **Stock item** (anything not OAR) -- only when at least one of reorder point, safety stock
+      and maximum stock is recommended and differs from SAP's current value. A recommended value
+      against a current one SAP leaves blank is a change. Three equal values are not.
+
+    One definition for the Recommendations list (``actionable=true``) and for every SAP adoption
+    count, so the two always count the same material-plants.
+    """
+
+    def changes(recommended, current):
+        return and_(recommended.is_not(None), or_(current.is_(None), recommended != current))
+
+    has_value = or_(
+        Recommendation.recommended_rop.is_not(None),
+        Recommendation.recommended_safety_stock.is_not(None),
+        Recommendation.recommended_max_stock.is_not(None),
+    )
+    not_oar = or_(~Recommendation.is_oar, Recommendation.is_oar.is_(None))
+    return or_(
+        and_(Recommendation.is_oar, Recommendation.conversion_eligibility == "ELIGIBLE", has_value),
+        and_(
+            not_oar,
+            or_(
+                changes(Recommendation.recommended_rop, Recommendation.current_rop),
+                changes(Recommendation.recommended_safety_stock, Recommendation.current_safety_stock),
+                changes(Recommendation.recommended_max_stock, Recommendation.current_max_stock),
+            ),
+        ),
+    )
+
+
 def _not_smooth():
     """A SMOOTH material-plant is not recommended -- its current SAP values stand (see
     app.initiatives.i7.smooth_demand) -- so a SMOOTH row written before that rule is not listed
@@ -133,6 +169,7 @@ def _apply_filters(
     risk: str | None = None,
     conversion_eligibility: str | None = None,
     consumption_above_threshold: bool | None = None,
+    actionable: bool | None = None,
 ) -> Select:
     """Every filter here maps to a real, persisted column or a keyed lookup.
     Nothing that would require loading rows into Python to evaluate.
@@ -159,6 +196,8 @@ def _apply_filters(
         statement = statement.where(Recommendation.confidence == confidence)
     if conversion_eligibility is not None:
         statement = statement.where(Recommendation.conversion_eligibility == conversion_eligibility)
+    if actionable:
+        statement = statement.where(_actionable())
     if consumption_above_threshold:
         # Issued more than the policy's own count in the trailing 12 months -- the threshold
         # stored on the row, not a literal, so it follows the policy. A row with no count (never
@@ -438,6 +477,15 @@ def list_recommendations(
             "recommendation with no count yet is left out."
         ),
     ] = None,
+    actionable: Annotated[
+        bool | None,
+        Query(
+            description="true: only recommendations with something to adopt in SAP -- an OAR one "
+            "eligible for the Min-Max conversion, or a stock item whose reorder point, safety stock "
+            "or maximum stock differs from SAP's current value. The same set the SAP adoption "
+            "counts cover."
+        ),
+    ] = None,
 ) -> RecommendationListResponse:
     if sort not in SORT_FIELDS:
         raise bad_request(
@@ -469,6 +517,7 @@ def list_recommendations(
             risk=risk,
             conversion_eligibility=conversion_eligibility,
             consumption_above_threshold=consumption_above_threshold,
+            actionable=actionable,
         ).where(_not_smooth())
     )
 
@@ -654,6 +703,19 @@ def get_recommendation_summary(
         )
     ).scalar()
 
+    # The Overview's Working Capital Impact: the reorder point, not the safety stock. Same sign and
+    # the same "priced, current and recommended all present" rule as above, so a row missing any of
+    # the three is left out of the sum rather than read as zero.
+    net_rop_value_row = session.execute(
+        base.with_only_columns(
+            func.sum(Recommendation.unit_price * (Recommendation.current_rop - Recommendation.recommended_rop))
+        ).where(
+            Recommendation.unit_price.isnot(None),
+            Recommendation.current_rop.isnot(None),
+            Recommendation.recommended_rop.isnot(None),
+        )
+    ).scalar()
+
     # --- High Stockout Risk: stock on hand < average daily consumption x lead time --
     # Every Fast and Slow moving material-plant in the usage table, recommended or not, with the
     # usage read as of the configured anchor date -- see app.initiatives.i7.stockout_risk for the
@@ -704,6 +766,7 @@ def get_recommendation_summary(
         not_evaluable_count=not_evaluable_count,
         currency=_portfolio_currency(session),
         net_safety_stock_value_impact=net_value_row,
+        net_rop_value_impact=net_rop_value_row,
         critical_stockout_risk_count=stockout_risk.at_risk,
         stockout_risk_evaluated_count=stockout_risk.evaluated,
         stockout_risk_insufficient_data_count=stockout_risk.insufficient_data,

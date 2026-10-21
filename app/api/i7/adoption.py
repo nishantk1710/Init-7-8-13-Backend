@@ -19,10 +19,10 @@ known reconciliation, not an append-only log of every request)."""
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.i7.deps import get_session, load_latest_recommendation
@@ -297,17 +297,13 @@ def list_adoption(
             criticality=criticality,
             generated_from=None,
             generated_to=None,
+            # Only material-plants with something to adopt: an OAR one eligible for the Min-Max
+            # conversion, or a stock item with a changed reorder point, safety stock or maximum
+            # stock. The vast majority of the catalogue never reaches a calculated value (see the
+            # upstream criticality/history/lead-time data gaps), and a not-eligible OAR or an
+            # unchanged stock item has nothing for an adoption check to reconcile against.
+            actionable=True,
         )
-    ).where(
-        # Only list material-plants a value was actually calculated for --
-        # the vast majority of the catalogue never reaches this point (see
-        # the upstream criticality/history/lead-time data gaps), and there is
-        # nothing for an adoption check to reconcile against for them.
-        or_(
-            Recommendation.recommended_rop.is_not(None),
-            Recommendation.recommended_safety_stock.is_not(None),
-            Recommendation.recommended_max_stock.is_not(None),
-        ),
     )
 
     total = session.execute(select(func.count()).select_from(base.subquery())).scalar_one()
@@ -362,29 +358,36 @@ def list_adoption(
 def get_adoption_summary(
     session: Annotated[Session, Depends(get_session)],
     plant: Annotated[str | None, Query(description="One SAP plant code; omit for every plant.")] = None,
+    demand_type: Annotated[
+        Literal["oar", "stock_item"] | None,
+        Query(alias="type", description="oar, or stock_item (everything that is not OAR); omit for both."),
+    ] = None,
+    demand_class: Annotated[str | None, Query(description="The stored demand class.")] = None,
+    criticality_level: Annotated[
+        Literal["Critical", "High", "Medium", "Low"] | None,
+        Query(description="The display level: CRITICAL / IMPACT / INSURANCE; Low is NORMAL, OBSOLETE or no tier."),
+    ] = None,
 ) -> AdoptionSummary:
-    has_value = or_(
-        Recommendation.recommended_rop.is_not(None),
-        Recommendation.recommended_safety_stock.is_not(None),
-        Recommendation.recommended_max_stock.is_not(None),
-    )
-
     def tracked(*columns):
-        """The newest recommendation per material-plant that has a value."""
+        """The newest recommendation per material-plant that has something to adopt -- the same
+        set GET /recommendations?actionable=true lists."""
         return _latest_only(
             _apply_filters(
                 select(*columns),
                 status=None,
                 plant=plant,
                 material=None,
-                demand_class=None,
+                demand_class=demand_class,
                 is_oar=None,
                 confidence=None,
                 criticality=None,
                 generated_from=None,
                 generated_to=None,
+                demand_type=demand_type,
+                criticality_level=criticality_level,
+                actionable=True,
             )
-        ).where(has_value)
+        )
 
     total_tracked = session.execute(
         select(func.count()).select_from(tracked(Recommendation.id).subquery())

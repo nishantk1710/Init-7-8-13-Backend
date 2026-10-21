@@ -596,6 +596,13 @@ class RecommendationSummaryStats(BaseModel):
     recommended_max_stock`` (both present, any positive gap, no minimum
     margin). An I07-derived proxy, not a Vedanta-confirmed KPI definition."""
 
+    net_rop_value_impact: Decimal | None = None
+    """SUM(unit_price * (current_rop - recommended_rop)) over rows where unit_price and both reorder
+    points are present -- the Overview's Working Capital Impact. Same sign as
+    ``net_safety_stock_value_impact`` (positive releases working capital, negative ties up more) but
+    on the reorder point, which already includes the safety stock. ``None`` when no in-scope row has
+    all three values, never defaulted to 0."""
+
     excess_inventory_opportunity: Decimal | None
     """SUM(unit_price * (current_max_stock - recommended_max_stock)) over
     rows in the excess-inventory count above where unit_price is also

@@ -36,6 +36,17 @@ class SubmitRequest(BaseModel):
     actor_id: str = Field(min_length=1)
 
 
+class RejectRequest(BaseModel):
+    """Declining a recommendation from the Recommendations page, before it is submitted."""
+
+    model_config = ConfigDict(frozen=True)
+
+    actor_id: str = Field(min_length=1)
+    comment: str | None = None
+    """The reason. Required -- ``workflow.reject_unsubmitted`` enforces it, as it does for every
+    REJECT -- so it is not duplicated as a schema rule here."""
+
+
 class WorkflowStateResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
