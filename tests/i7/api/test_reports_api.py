@@ -56,9 +56,17 @@ def test_generate_returns_200_with_a_full_report_body(clean_test_quarter):
         "material_criticality", "management_summary",
         # Added in report version 1.1: consumption by the month it happened in. Additive and optional.
         "source_activity",
+        # Added in report version 1.2: the period's management view. Additive and optional.
+        "management",
     }
     assert body["metadata"]["quarter"] == quarter
-    assert body["metadata"]["report_version"] == "1.1"
+    assert body["metadata"]["report_version"] == "1.2"
+    # The management view: three months of a quarter, the cards, and the Overview's per-plant positions.
+    assert [m["label"] for m in body["management"]["period"]["months"]] == ["Jan 2099", "Feb 2099", "Mar 2099"]
+    assert [row["key"] for row in body["management"]["monthly_activity"]["rows"]][:2] == [
+        "sap_consumption_transactions", "recommendations_generated",
+    ]
+    assert body["management"]["plant_positions"][0]["plant"] is None
     # One entry per calendar month of the quarter, whatever the staged data holds.
     assert [m["month"] for m in body["source_activity"]["months"]] == ["2099-01-01", "2099-02-01", "2099-03-01"]
 

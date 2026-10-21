@@ -46,7 +46,7 @@ those modules already wrote.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -55,6 +55,7 @@ from sqlalchemy.orm import Session
 from app.core.logging import get_logger
 from app.initiatives.i7.reporting.baseline_comparison import compare_metric
 from app.initiatives.i7.reporting.period import resolve_quarter
+from app.initiatives.i7.reporting.quarter_management import build_quarter_management
 from app.initiatives.i7.reporting.source_activity import build_source_activity
 from app.models.i7_features import MaterialFeature
 from app.models.i7_forecast import Forecast
@@ -91,7 +92,7 @@ from app.schemas.i7.reports import (
 
 logger = get_logger(__name__)
 
-REPORT_VERSION = "1.1"
+REPORT_VERSION = "1.2"
 
 
 def _exclusive_end(period_end):
@@ -198,6 +199,12 @@ def generate_quarterly_report(session: Session, quarter: str) -> QuarterlyReport
         session, period_start, period_end, recommendations_in_period=total_recommendations
     )
 
+    # The management view: the period's activity by month, the KPI cards, the position, the status distribution, the
+    # forecast by month and the data coverage -- all from one set of definitions (see quarter_management.py).
+    management = build_quarter_management(
+        session, period_start, period_end, today=date.today(), source_activity=source_activity
+    )
+
     metadata = ReportMetadata(
         quarter=quarter,
         period_start=period_start,
@@ -256,6 +263,7 @@ def generate_quarterly_report(session: Session, quarter: str) -> QuarterlyReport
         sap_adoption=sap_adoption,
         limitations=limitations,
         source_activity=source_activity,
+        management=management,
     )
 
     logger.info(

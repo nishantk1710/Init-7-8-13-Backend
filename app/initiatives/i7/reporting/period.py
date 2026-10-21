@@ -66,3 +66,55 @@ def resolve_quarter(quarter: str) -> tuple[date, date]:
     period_start = date(year, start_month, 1)
     period_end = date(year, end_month, end_day)
     return period_start, period_end
+
+
+# --- The months of a period, and how much of it has happened -----------------------------------------
+
+_MONTH_ABBREVIATIONS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def month_label(month: date) -> str:
+    """``date(2026, 10, 1)`` -> ``"Oct 2026"``."""
+    return f"{_MONTH_ABBREVIATIONS[month.month - 1]} {month.year}"
+
+
+def exclusive_end_of(period_end: date) -> date:
+    """The day after ``period_end``: the exclusive upper bound every period filter uses, so a quarter ending
+    on 31 December is ``< 1 January`` and a row stamped late on the 31st is still inside it."""
+    from datetime import timedelta
+
+    return period_end + timedelta(days=1)
+
+
+def months_of(period_start: date, period_end: date) -> list[date]:
+    """The first day of every calendar month from ``period_start`` to ``period_end`` inclusive -- the three
+    months of a quarter. Year transitions roll over (Q4 2026 is Oct, Nov, Dec; Q1 2027 follows)."""
+    months: list[date] = []
+    current = date(period_start.year, period_start.month, 1)
+    while current <= period_end:
+        months.append(current)
+        current = date(current.year + 1, 1, 1) if current.month == 12 else date(current.year, current.month + 1, 1)
+    return months
+
+
+def reporting_cutoff(period_end: date, today: date | None = None) -> date:
+    """The last day a report can speak for: the period's end, or today while the period is still running."""
+    today = today or date.today()
+    return min(period_end, today)
+
+
+def is_period_complete(period_end: date, today: date | None = None) -> bool:
+    """A period is complete once its last day has passed."""
+    today = today or date.today()
+    return today > period_end
+
+
+def month_state(month: date, period_end: date, today: date | None = None) -> str:
+    """``ended`` / ``in_progress`` / ``not_started`` for one month of a period, as of ``today``."""
+    today = today or date.today()
+    next_month = date(month.year + 1, 1, 1) if month.month == 12 else date(month.year, month.month + 1, 1)
+    if today >= next_month:
+        return "ended"
+    if today >= month:
+        return "in_progress"
+    return "not_started"

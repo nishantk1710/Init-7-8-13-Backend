@@ -796,6 +796,274 @@ class SourceActivitySection(BaseModel):
     output_note: str
 
 
+# --------------------------------------------------------------------------
+# 18. Quarter management view (report version 1.2)
+#
+# Everything the management reader sees first: the period and how much of it has happened, the activity
+# month by month, the KPI cards, the position, the status distribution, the forecast by month and what the
+# data does and does not cover. One section, built once by the service from the same functions, so the page,
+# the PDF and the Excel export read the same figures.
+#
+# Every metric says what KIND of figure it is (MetricKind). The four are never mixed under one label: an event
+# in the period is not a status today, and neither is a measurement on a date.
+# --------------------------------------------------------------------------
+
+
+class MetricKind(StrEnum):
+    EVENT = "EVENT"
+    """Something that happened during the period and is counted by when it happened (a recommendation
+    generated, an approval decision). Additive across months."""
+    STATUS_AS_OF = "STATUS_AS_OF"
+    """How things stand on a date (recommendations awaiting a decision *now*). Not additive, and not an event."""
+    MEASUREMENT = "MEASUREMENT"
+    """A reading taken on a date (stock against lead-time need as of the last usage build). Never summed across
+    months."""
+    AGGREGATE = "AGGREGATE"
+    """A sum or average over the period's observations (forecast and actual demand)."""
+
+
+class PeriodStatus(StrEnum):
+    COMPLETE = "COMPLETE"
+    IN_PROGRESS = "IN_PROGRESS"
+
+
+class PeriodMonth(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    month: date
+    """First day of the month."""
+    label: str
+    """E.g. ``"Oct 2026"``."""
+    state: str
+    """``ended``, ``in_progress`` (the month containing the cutoff) or ``not_started``."""
+    has_consumption_data: bool
+    """Whether the staged SAP consumption covers this month at all."""
+    usable: bool
+    """Has started, and the staged data covers it: a month the report can say something about."""
+
+
+class PeriodInfo(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: PeriodStatus
+    cutoff: date
+    """The last day the report can speak for: the period's end, or today for a period still running."""
+    months: list[PeriodMonth]
+    note: str
+
+
+class ActivityRow(BaseModel):
+    """One metric across the quarter's three months, with its total."""
+
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    label: str
+    unit: str
+    kind: MetricKind
+    months: list[int | Decimal | None]
+    """One value per month of the period, in order. ``None`` is "not available for that month" (not started,
+    not covered, not tracked) -- never 0, which is a real count of nothing."""
+    quarter_total: int | Decimal | None
+    """The sum of the months that have a value, ``None`` when none has."""
+    status: AvailabilityStatus
+    reconciles: bool | None = None
+    """For an additive count: whether the months add up to the same figure counted over the whole period in one
+    query. ``None`` when there is nothing to compare."""
+    note: str | None = None
+
+
+class MonthlyActivity(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    months: list[PeriodMonth]
+    rows: list[ActivityRow]
+
+
+class KpiCard(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    title: str
+    unit: str
+    value: Decimal | None
+    status: AvailabilityStatus
+    explanation: str
+    """One plain sentence on what the number means."""
+    kind: MetricKind
+    measured_on: date | None
+    """The date the figure was measured, for a measurement or a status as of; ``None`` for an event total."""
+    period_label: str
+    """What the figure covers, e.g. ``"Oct 2026 – Dec 2026"`` or ``"as of 31 May 2026"``."""
+    denominator: int | None = None
+    denominator_label: str | None = None
+    basis: str = "current_calculation"
+    """``current_calculation`` (worked out when the report was generated) or ``snapshot`` (a saved month-end)."""
+    unavailable_reason: str | None = None
+    note: str | None = None
+
+
+class StockoutPosition(BaseModel):
+    """Fast / Slow moving material-plants judged against their lead-time need, as of the usage build date."""
+
+    model_config = ConfigDict(frozen=True)
+
+    at_risk: int
+    evaluated: int
+    insufficient_data: int
+    as_of: date | None
+    """``None``: the usage has not been built, so the counts mean "not computed"."""
+    stale: bool
+    """The usage was last built too long before the report's cutoff to speak for the period (or for a
+    quarter-end). The counts are kept for the record but are not shown as the period's position."""
+    stale_note: str | None = None
+
+
+class PositionFigures(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    population: int
+    """The newest recommendation of each material-plant generated in the period: what the figures below count."""
+    stockout: StockoutPosition
+    excess_count: int
+    excess_opportunity: Decimal | None
+    net_rop_value_impact: Decimal | None
+    """SUM(unit_price x (current - recommended ROP)): positive releases working capital. ``None`` (never 0) when no
+    recommendation has a price and both reorder points. An estimate of the recommendations' effect, not a saving
+    that has been realised."""
+    priced_count: int
+    """How many of the population that figure is over."""
+    currency: str | None = None
+
+
+class PlantPosition(BaseModel):
+    """The position figures for one plant (``None`` is every plant): what the Overview's two by-plant charts draw."""
+
+    model_config = ConfigDict(frozen=True)
+
+    plant: str | None
+    figures: PositionFigures
+
+
+class StatusCount(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: str
+    count: int
+    percentage: Decimal | None
+
+
+class StatusDistribution(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    kind: MetricKind = MetricKind.STATUS_AS_OF
+    basis: str
+    """Says which status this is: the current one of each recommendation generated in the period."""
+    measured_on: date
+    total: int
+    rows: list[StatusCount]
+
+
+class ForecastActualMonth(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    month: date
+    forecast: Decimal | None
+    actual: Decimal | None
+    material_count: int
+
+
+class ForecastActualAccuracy(BaseModel):
+    """Aggregated from the observations themselves, with the project's own metric definitions (mean absolute error,
+    bias as a fraction of actual demand) -- never an average of monthly percentages."""
+
+    model_config = ConfigDict(frozen=True)
+
+    observations: int
+    mean_absolute_error: Decimal | None
+    bias_percentage: Decimal | None
+
+
+class ForecastActualSection(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: AvailabilityStatus
+    months: list[ForecastActualMonth]
+    forecast_total: Decimal | None
+    actual_total: Decimal | None
+    accuracy: ForecastActualAccuracy | None
+    forecast_run_id: int | None
+    note: str
+
+
+class AdoptionQuarter(BaseModel):
+    """SAP adoption of the period's recommendations that have something to adopt: an OAR one eligible for the
+    Min-Max conversion, or a stock item whose reorder point, safety stock or max stock changes -- the Overview's
+    own rule, so the chart and the Adopted card read the same here as there."""
+
+    model_config = ConfigDict(frozen=True)
+
+    status: AvailabilityStatus
+    confirmed_adoptions: int | None
+    pending_approvals: int
+    """Recommendations generated in the period still awaiting a decision, as of the date the report was generated."""
+    reason: str
+    tracked: int | None = None
+    """How many recommendations have a change to adopt (the newest of each material-plant in the period)."""
+    adopted: int | None = None
+    partially_adopted: int | None = None
+    not_adopted: int | None = None
+    pending: int | None = None
+    """No SAP change evidence yet: the four counts add up to ``tracked``. Pending is not "not adopted"."""
+
+
+class MonthCoverage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    month: date
+    label: str
+    consumption_status: SourceMonthStatus
+    recommendations_generated: int
+
+
+class DataCoverage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    latest_consumption_date: date | None
+    """The last goods issue in the stockout usage table; ``None`` when it has not been built."""
+    latest_consumption_month: date | None
+    """The last month with staged consumption."""
+    latest_stock_loaded_at: datetime | None
+    """When the staged stock on hand was last loaded -- the nearest thing to a stock measurement date."""
+    stockout_usage_as_of: date | None
+    months: list[MonthCoverage]
+    eligible_recommendations: int
+    eligible_material_plants: int
+    basis: str
+    """Whether the figures are from saved monthly snapshots or current calculations."""
+    warnings: list[str]
+
+
+class QuarterManagement(BaseModel):
+    """The management view of one period. Report version 1.2."""
+
+    model_config = ConfigDict(frozen=True)
+
+    period: PeriodInfo
+    monthly_activity: MonthlyActivity
+    kpis: list[KpiCard]
+    position: PositionFigures
+    plant_positions: list[PlantPosition] = []
+    """Every plant, then each plant the Overview offers (1300, 1500) -- the same figures as ``position`` for the
+    first entry. Added so the report can draw the Overview's stockout-by-plant and excess-by-plant charts."""
+    status_distribution: StatusDistribution
+    forecast_actual: ForecastActualSection
+    adoption: AdoptionQuarter
+    data_coverage: DataCoverage
+    definitions: list[str]
+    """What each kind of figure on the page means, so a card's number is never read as another kind."""
+
+
 class QuarterlyReport(BaseModel):
     """The I07 Quarterly Deep-Dive Report -- the complete response of the
     report-generation API and the payload the quarterly CLI writes.
@@ -825,6 +1093,10 @@ class QuarterlyReport(BaseModel):
     source_activity: SourceActivitySection | None = None
     """Added in report version 1.1. ``None`` on a report stored before then, which still
     validates -- so an older quarter simply has no source-activity section until regenerated."""
+    management: QuarterManagement | None = None
+    """Added in report version 1.2: the period's activity by month, KPI cards, position, status distribution,
+    forecast by month and data coverage. ``None`` on a report stored before then, which still validates; the
+    page then offers to regenerate it rather than show the old, sample-based charts as if they were this."""
 
     @classmethod
     def from_report_json(cls, report_json: str) -> "QuarterlyReport":
