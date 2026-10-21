@@ -386,6 +386,8 @@ def compute_fingerprint(db: Session, *, settings: Settings | None = None, config
     # Both change which materials are OAR at all, so changing either must rebuild.
     parts.append(f"exclude_deleted:{settings.i13_exclude_deleted_materials}")
     parts.append(f"oar_controllers:{','.join(sorted(settings.i13_oar_mrp_controller_set))}")
+    # Changes every material's open-PO quantity (WATCH, the assistant's facts).
+    parts.append(f"open_po_respect_closed:{settings.i13_open_po_respect_closed}")
     if stored:
         # What the store keeps beside each payload (kinds.RECORD_LAYOUT).
         from app.initiatives.i13.snapshot_store import kinds

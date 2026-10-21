@@ -843,6 +843,11 @@ class Settings(BaseSettings):
     # MARA-LVORM (client level) = X -- is never OAR, whatever its MRP controller
     # (UAT, 19 Oct 2026). See app/shared/material_scope/deletion.py.
     i13_exclude_deleted_materials: bool = True
+    # A PO line SAP has closed -- EKPO-ELIKZ = X (delivery completed) or
+    # EKPO-LOEKZ set (L deleted, S blocked) -- has nothing open on it, so it
+    # adds nothing to a material's open-PO quantity (UAT, 21 Oct 2026). See
+    # app/initiatives/i13/watch.py. Part of the snapshot fingerprint.
+    i13_open_po_respect_closed: bool = True
 
     # Aging bands (days since last goods movement).
     i13_aging_fast_max_days: int = 365
