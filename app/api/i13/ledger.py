@@ -27,7 +27,7 @@ from collections import Counter
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
-from app.api.i13.deps import page, snapshot_or_live, with_material_names
+from app.api.i13.deps import page, snapshot_or_live, with_expected_delivery, with_material_names
 from app.core.db import get_db
 from app.initiatives.i13.ledger_compat import LegacyLedgerEntry, build_legacy_ledger, delivery_state
 from app.initiatives.i13.snapshot import I13Snapshot
@@ -87,6 +87,7 @@ def _unstored_entries(
 
 @router.get("/ledger", response_model=list[UtilisationLedgerEntryResponse])
 @with_material_names()
+@with_expected_delivery()
 def list_ledger_entries(
     response: Response,
     plant: str | None = Query(None),
@@ -158,6 +159,7 @@ def count_ledger_entries(
 
 
 @router.get("/ledger/{ledger_id}", response_model=UtilisationLedgerEntryResponse)
+@with_expected_delivery()
 def get_ledger_entry(
     ledger_id: str,
     include_out_of_scope: bool = Query(False, description="See /ledger."),
