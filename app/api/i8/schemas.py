@@ -339,7 +339,8 @@ class RepairChain(I8Model):
 class RegisterMeta(I8Model):
     """The register's counts. Every line counted is open in SAP; the
     ``excluded*`` figures say how many repair lines SAP has deleted, closed or
-    blocked, each counted under the first of the three that applies."""
+    blocked, or holds on a request for quotation, each counted under the first
+    of the four that applies."""
 
     total_lines: int
     open_lines: int
@@ -366,6 +367,10 @@ class RegisterMeta(I8Model):
 
     excluded_blocked_lines: int = 0
     """Repair lines blocked in SAP (EKPO.LOEKZ)."""
+
+    excluded_rfq_lines: int = 0
+    """Item-category-3 lines on a request for quotation (EKKO.BSART), which
+    orders nothing."""
 
 
 class VendorOption(I8Model):

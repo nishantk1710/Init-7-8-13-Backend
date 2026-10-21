@@ -37,6 +37,7 @@ from app.initiatives.i8.register import (
     is_blocked_line,
     is_deleted_line,
     is_delivery_completed,
+    is_rfq_line,
     load_repair_lines,
     repair_status,
 )
@@ -255,6 +256,71 @@ class TestOpenIsSapsCall:
         assert stats.excluded_blocked_lines == 1
 
 
+class TestAnRfqIsNotAnOrder:
+    """The 21-Oct-2026 ruling: a line on a request for quotation is left out.
+
+    RFQ 6000016330/10 (document type AN) carried item category 3 and, since
+    SAP never ticks "Delivery completed" on an RFQ, read as open -- with a
+    quantity of 0, so the Overview showed 105 open lines and 104 under repair.
+    """
+
+    CFG = I8Settings(_env_file=None)
+
+    @staticmethod
+    def _header(bsart):
+        return {"bsart": bsart, "lifnr": "501910", "aedat": date(2026, 10, 8)}
+
+    def test_an_rfq_header_marks_the_line(self) -> None:
+        assert is_rfq_line(self._header("AN"), self.CFG) is True
+        assert is_rfq_line(self._header("ZREP"), self.CFG) is False
+        assert is_rfq_line(self._header(None), self.CFG) is False
+
+    def test_a_line_with_no_header_is_kept(self) -> None:
+        """Nothing says it is an RFQ, and a header-less repair line is real."""
+        assert is_rfq_line(None, self.CFG) is False
+
+    def test_the_rfq_type_is_configuration(self) -> None:
+        cfg = I8Settings(_env_file=None, rfq_doc_type="ZRFQ")
+        assert is_rfq_line(self._header("ZRFQ"), cfg) is True
+        assert is_rfq_line(self._header("AN"), cfg) is False
+
+    def test_the_rfq_line_is_counted_and_never_built(self, monkeypatch) -> None:
+        headers = {
+            "4500001645": self._header("ZREP"),
+            "6000016330": self._header("AN"),
+        }
+        monkeypatch.setattr(
+            register, "_evidence", lambda *args, **kwargs: ({}, {}, headers, {}, {})
+        )
+        candidates = [
+            _row(ebeln="4500001645", ebelp="30"),
+            _row(ebeln="6000016330", ebelp="10", menge=Decimal(0)),
+            _row(ebeln="4500000002", ebelp="10"),  # no header: kept
+        ]
+        lines, stats = load_repair_lines(None, self.CFG, today=TODAY, candidates=candidates)
+        assert [line.purchasing_document for line in lines] == ["4500001645", "4500000002"]
+        assert stats.total_lines == stats.open_lines == 2
+        assert stats.excluded_rfq_lines == 1
+        # The two figures the Overview put side by side agree again.
+        assert sum(line.qty_under_repair for line in lines) == stats.open_lines
+
+    def test_an_rfq_sap_has_closed_is_counted_as_closed(self, monkeypatch) -> None:
+        """Counted under the first reason that applies, and the RFQ test is last."""
+        monkeypatch.setattr(
+            register,
+            "_evidence",
+            lambda *args, **kwargs: ({}, {}, {"6000016330": self._header("AN")}, {}, {}),
+        )
+        candidates = [
+            _row(ebeln="6000016330", ebelp="10", elikz="X"),
+            _row(ebeln="6000016330", ebelp="20"),
+        ]
+        lines, stats = load_repair_lines(None, self.CFG, today=TODAY, candidates=candidates)
+        assert lines == []
+        assert stats.excluded_delivery_completed_lines == 1
+        assert stats.excluded_rfq_lines == 1
+
+
 # --- configuration discipline --------------------------------------------
 
 
@@ -459,6 +525,7 @@ class TestNothingIsHardCoded:
                 assert "ZREP" not in literals, f"{name}: 'ZREP' compared literally"
                 assert "3" not in literals, f"{name}: item category compared literally"
                 assert "X" not in literals, f"{name}: delivery-completed flag compared literally"
+                assert "AN" not in literals, f"{name}: RFQ document type compared literally"
             checked += 1
         assert checked == 3
 

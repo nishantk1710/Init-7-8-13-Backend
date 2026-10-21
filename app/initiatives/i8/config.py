@@ -61,6 +61,14 @@ class I8Settings(BaseSettings):
     # get this value silently drops 37% of the register.
     repair_doc_type: str = "ZREP"
 
+    # BSART of a request for quotation. Its lines are left out of the register:
+    # an RFQ asks a vendor for a price and orders nothing, and SAP never ticks
+    # "Delivery completed" on one, so it would sit there as open for good. One
+    # did until 21-Oct-2026 -- 6000016330/10, item category 3, quantity 0 --
+    # and the Overview read 105 open lines against 104 under repair. SAP's own
+    # open-PO count leaves RFQs out too.
+    rfq_doc_type: str = "AN"
+
     # EKPO.LOEKZ. A line carrying the deleted value is not a repair anybody is
     # waiting on, so it is left out of the register entirely. Before this was
     # read, 44 deleted repair lines sat in the register as open, and most of

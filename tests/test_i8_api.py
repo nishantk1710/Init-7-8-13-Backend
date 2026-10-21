@@ -382,6 +382,7 @@ class TestSnapshotEndpoint:
         body = client.get(SNAPSHOT).json()
         assert body["rules"]["repairItemCategory"] == "3"
         assert body["rules"]["repairDocType"] == "ZREP"
+        assert body["rules"]["rfqDocType"] == "AN"
         assert body["rules"]["seriesPrefixes"] == "80"
         assert "ELIKZ not 'X'" in body["rules"]["openLineRule"]
         assert body["repairRegister"]["totalLines"] == body["repairRegister"]["openLines"]
