@@ -1,0 +1,10 @@
+# OAR text similarity (all-MiniLM-L6-v2 embeddings). Optional: without it OAR runs, but neighbours are
+# scored on material group, unit of measure and price only -- never on the description.
+#
+# Install on the App Service build only (CI uses a fake embedding provider and must not pull torch):
+#   pip install -r requirements-oar-text.txt
+#
+# CPU-only torch: the default Linux wheel bundles CUDA libraries (~2 GB) the App Service cannot use.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+sentence-transformers

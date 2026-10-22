@@ -219,7 +219,7 @@ def test_the_weighted_averages_are_unchanged_when_no_floor_is_needed():
 
 
 def test_the_algorithm_version_records_the_floor():
-    assert ALGORITHM_VERSION == "oar-similarity-6"
+    assert int(ALGORITHM_VERSION.rsplit("-", 1)[1]) >= 6  # the floor arrived in 6; later versions keep it
 
 
 def test_the_recommendation_builder_ignores_a_row_without_a_trace():

@@ -618,13 +618,16 @@ def test_the_api_detail_schema_exposes_the_recommended_values(dev_result):
 
 
 EXPECTED_DONORS = {
-    # material -> (similarity, SS, ROP, Max). D000004 ("0.8875", 7, 22, 37)
-    # qualifies too but is sixth, so the Top-5 cap leaves it out.
-    "D000001": ("0.9875", 5, 15, 25),
-    "D000006": ("0.9875", 4, 13, 22),
-    "D000005": ("0.9625", 5, 16, 27),
-    "D000002": ("0.95", 6, 18, 30),
-    "D000003": ("0.925", 4, 12, 20),
+    # material -> (similarity, SS, ROP, Max). D000004 qualifies too but is sixth, so the Top-5 cap
+    # leaves it out. The similarities are for oar-similarity-7, where price is compared on a log
+    # scale: the donors are all priced near 100, so the price term is ~1.0 for every one of them
+    # (on the old linear scale it was 0.93-1.0 and the combined scores 0.925-0.9875). SS/ROP/Max are
+    # the donors' own Phase 5 values and are unaffected by the scale.
+    "D000001": ("0.9998756208", 5, 15, 25),
+    "D000006": ("0.9998768463", 4, 13, 22),
+    "D000005": ("0.9996230870", 5, 16, 27),
+    "D000002": ("0.9995145021", 6, 18, 30),
+    "D000003": ("0.9992344547", 4, 12, 20),
 }
 
 EXPECTED_ESTIMATE = {"safety_stock": 5, "rop": 15, "max_stock": 25}
@@ -642,14 +645,19 @@ def test_verified_scenario_donor_table(dev_donors, dev_result):
     """
     actual = {
         neighbour.material: (
-            str(neighbour.score.combined),
+            neighbour.score.combined,
             neighbour.safety_stock,
             neighbour.rop,
             neighbour.max_stock,
         )
         for neighbour in dev_result.neighbours
     }
-    assert actual == EXPECTED_DONORS
+    assert set(actual) == set(EXPECTED_DONORS)
+    for material, (similarity, safety_stock, rop, max_stock) in EXPECTED_DONORS.items():
+        got_similarity, *got_values = actual[material]
+        # ln() is a float: compared to 1e-9, not as a string a different libm could spell differently.
+        assert abs(got_similarity - Decimal(similarity)) < Decimal("1e-9"), material
+        assert got_values == [safety_stock, rop, max_stock], material
 
 
 def test_verified_scenario_produces_five_fifteen_twentyfive(dev_result):

@@ -32,6 +32,7 @@ generic from description text; absent a manufacturer, the feature is missing.
 missing -- reported as such, never treated as a match.)
 """
 
+import math
 from decimal import Decimal
 
 from app.initiatives.i7.oar.structured_similarity import (
@@ -49,6 +50,19 @@ BUSINESS_CATEGORICAL_FEATURES = ("manufacturer",)
 module docstring."""
 
 PRICE_FEATURE = "unit_price"
+
+
+def log_price(price: Decimal | None) -> Decimal | None:
+    """ln(price), or ``None`` when there is no positive price to take it of.
+
+    Price is compared on a log scale (``oar-similarity-7``): what makes two parts alike in price is
+    the ratio, not the rupee difference. On the linear scale one repairable at several million
+    stretched the population range until a 100-rupee item and a 10,000-rupee item scored 0.999
+    alike. ``price_range`` is the matching spread of ln(price).
+    """
+    if price is None or price <= 0:
+        return None
+    return Decimal(str(math.log(float(price))))
 
 
 def score(
@@ -72,7 +86,7 @@ def score(
             used.append(feature)
 
     price_distance = numeric_distance(
-        target.unit_price, candidate.unit_price, price_range
+        log_price(target.unit_price), log_price(candidate.unit_price), price_range
     )
     if price_distance is None:
         missing.append(PRICE_FEATURE)
