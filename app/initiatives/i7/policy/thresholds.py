@@ -129,9 +129,11 @@ class SimilarityPolicy(BaseModel):
 
     text_floors_calibrated: bool = False
     """Whether ``minimum_identity_text_similarity`` and ``same_group_minimum_text_similarity`` have been set for
-    the CURRENT text score. Both were chosen (0.50) when the score was a MiniLM cosine. BGE cosines run higher,
-    and the fuzzy half adds to them (a word-subset still scores about 65), so the same 0.50 admits far more. Until this is set True -- after ``scripts.oar_identity_review floors`` or an expert review -- every
-    OAR run logs a warning, and the identity gate should be read as provisional."""
+    the CURRENT text score. Both were 0.50 when the score was a MiniLM cosine; BGE cosines run higher and the
+    fuzzy half adds to them, so 0.50 admits far more. They are now a PROVISIONAL 0.65, derived from the random
+    controls of a review sample (``scripts.oar_identity_review floors``), not confirmed against expert answers.
+    Until this is set True -- after an expert review has confirmed a floor -- every OAR run logs a warning, and
+    the identity gate should be read as provisional."""
 
     minimum_neighbours: int = Field(default=2, ge=1)
     """Hard admission gate: fewer than this many *qualifying* (>= minimum_similarity)
@@ -178,7 +180,7 @@ class SimilarityPolicy(BaseModel):
     it is counted and what it costs, and thousands of unrelated parts share
     both. Empty disables the requirement."""
 
-    minimum_identity_text_similarity: float | None = Field(default=0.50, ge=0, le=1)
+    minimum_identity_text_similarity: float | None = Field(default=0.65, ge=0, le=1)
     """Admission gate (oar-similarity-8): a neighbour must MATCH on identity, not merely have had an
     identity feature compared. It matches when it shares the target's material group, or when its
     description's text similarity to the target's is at least this value. ``identity_evidence_features``
@@ -186,7 +188,14 @@ class SimilarityPolicy(BaseModel):
     group with a weak text score (the impact wrench's five neighbours: other groups, text 0.31-0.46)
     still passed, carried over the 0.60 floor by price. With no embedding model the text route is
     closed and only the same-group route remains. ``None`` disables the rule (the pre-8 behaviour).
-    0.50 is a first setting, to be checked against known good and bad matches."""
+
+    **0.65 is PROVISIONAL (oar-similarity-11).** The floor was 0.50 for a MiniLM cosine. On the BGE + fuzzy text
+    score 0.50 admits far more: of 150 random eligible donors, MiniLM at 0.50 admitted 1 (0.7%) and the new score
+    at 0.50 admitted 18 (12%), and the first neighbours it let through were a self-locking nut for a taper lock
+    bush and hoses for a bushing half (text 0.53-0.54). ``scripts.oar_identity_review floors`` put the floor
+    that restores the old selectivity at 0.653 (0.546-0.653 allowing for sampling error); 0.65 is the top of
+    that range. It rests on one pair and on easy negatives, so it is a stopgap, not a calibration:
+    ``text_floors_calibrated`` stays False until an expert review confirms a floor."""
 
     identity_validation: bool = True
     """oar-similarity-10: identity is a stage of its own (``oar.identity``), run after scoring and before
@@ -196,14 +205,15 @@ class SimilarityPolicy(BaseModel):
     ``minimum_identity_text_similarity``) exactly -- kept so a before/after comparison can be run on
     the same inputs."""
 
-    same_group_minimum_text_similarity: float | None = Field(default=0.50, ge=0, le=1)
+    same_group_minimum_text_similarity: float | None = Field(default=0.65, ge=0, le=1)
     """A candidate accepted through the same-group route needs description evidence too: its text
     similarity to the target at or above this value (or a shared part number, or a shared component type).
     Material group 308175 holds filters, spray nozzles, proximity sensors and wrenches, so membership of
-    it says almost nothing about what a part is. 0.50 is the documented text baseline
-    (``minimum_identity_text_similarity``), deliberately NOT a newly tuned number: calibrating it needs
-    expert-reviewed pairs scored with the real embedding model (``oar.evaluation``). ``None`` drops the
-    requirement, so a same-group candidate passes on group alone (the oar-similarity-8/9 behaviour)."""
+    it says almost nothing about what a part is. 0.65, the same PROVISIONAL value as
+    ``minimum_identity_text_similarity`` and for the same reason (see there): not a tuned number, a stopgap until
+    expert-reviewed pairs scored with the real model (``oar.evaluation``, ``scripts.oar_identity_review
+    evaluate``) confirm one. ``None`` drops the requirement, so a same-group candidate passes on group alone
+    (the oar-similarity-8/9 behaviour)."""
 
     identity_component_conflict: bool = True
     """Reject a candidate whose description names a component type incompatible with the target's. Only

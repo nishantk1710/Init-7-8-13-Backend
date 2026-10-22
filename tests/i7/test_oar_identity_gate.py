@@ -214,5 +214,12 @@ def test_two_stage_retrieval_applies_the_same_gate() -> None:
     assert not chosen & {f"U{i}" for i in range(6)} and not chosen & {f"V{i}" for i in range(6)}
 
 
-def test_the_policy_default_is_a_first_setting_of_one_half() -> None:
-    assert SimilarityPolicy().minimum_identity_text_similarity == 0.50
+def test_the_policy_default_is_a_provisional_point_six_five() -> None:
+    """oar-similarity-11: 0.50 was the MiniLM floor; on the BGE + fuzzy score it admits far more (12% of random
+    unrelated pairs against 0.7%), so both identity floors are a provisional 0.65 until an expert review confirms
+    one. The gate tests above pin 0.50 through ``policy()`` and test the rule, not the default."""
+    default = SimilarityPolicy()
+
+    assert default.minimum_identity_text_similarity == 0.65
+    assert default.same_group_minimum_text_similarity == 0.65
+    assert default.text_floors_calibrated is False  # provisional: not confirmed against expert answers

@@ -31,6 +31,9 @@ from app.initiatives.i7.policy.dev_fixtures import (
 from app.initiatives.i7.policy.thresholds import ComponentTypeSpec, SimilarityPolicy
 
 GROUP = "308175"
+FLOORS = {"minimum_identity_text_similarity": 0.50, "same_group_minimum_text_similarity": 0.50}
+"""The mechanics tests below pin the floors at 0.50, the value they were written around, so they test the RULE at a
+known floor. The shipped default (a provisional 0.65) has its own tests at the end of this file."""
 TARGET = "FILTER PN:5112305242"
 NOZZLE = "FILTER PRESS ANDRITZ SPRAY NOZZLE"
 SENSOR = "FILTER PRESS ANDRITZ PROXIMITY SENSOR"
@@ -41,7 +44,7 @@ def policy(**similarity) -> PolicyDocument:
         service_level=load_mock_service_level_policy(),
         max_stock=load_mock_max_stock_policy(),
         similarity=SimilarityPolicy(
-            **{"text_embedding_weight": 1.0, "text_fuzzy_weight": 0.0, **similarity}
+            **{"text_embedding_weight": 1.0, "text_fuzzy_weight": 0.0, **FLOORS, **similarity}
         ),  # injected cosines: the text score is the cosine alone unless a test says otherwise
     )
 
@@ -85,7 +88,7 @@ def verdict(
     text: str | None = None,
     **similarity,
 ):
-    config = identity.IdentityConfig.from_policy(SimilarityPolicy(**similarity))
+    config = identity.IdentityConfig.from_policy(SimilarityPolicy(**{**FLOORS, **similarity}))
     return identity.assess_descriptions(
         target_description,
         candidate_description,
@@ -316,7 +319,7 @@ PROVIDER = PrecomputedEmbeddingProvider(VECTORS)
 
 def score(target, candidate, **similarity):
     return service._score_pair(
-        target, candidate, PROVIDER, Decimal(5), SimilarityPolicy(**similarity)
+        target, candidate, PROVIDER, Decimal(5), SimilarityPolicy(**{**FLOORS, **similarity})
     )
 
 
@@ -615,3 +618,54 @@ def test_the_scored_count_is_the_union_of_three_channels_not_the_eligible_pool()
     assert counts.merged_candidates == result.shortlisted_candidates < 1600
     assert counts.identity_passes == counts.merged_candidates  # all of them are filters
     assert counts.final_neighbours == len(result.neighbours) == 5
+
+
+# --- the shipped default floor: a provisional 0.65 ----------------------------------------------------------
+
+
+def default_verdict(target_description, candidate_description, *, same_group, text):
+    config = identity.IdentityConfig.from_policy(SimilarityPolicy())
+    return identity.assess_descriptions(
+        target_description, candidate_description, same_material_group=same_group,
+        text_similarity=Decimal(text), config=config,
+    )
+
+
+def test_both_identity_floors_default_to_a_provisional_point_six_five() -> None:
+    config = identity.IdentityConfig.from_policy(SimilarityPolicy())
+
+    assert config.text_floor == Decimal("0.65") and config.same_group_floor == Decimal("0.65")
+    assert SimilarityPolicy().text_floors_calibrated is False
+
+
+@pytest.mark.parametrize(
+    "target, candidate, text",
+    [
+        # the first picks the BGE + fuzzy score let through at 0.50, from the real review sample
+        ("TAPER LOCK BUSH 3535 85MM FENNER", "NUT SELF LOCKING M64 GR 8", "0.528"),
+        ("TAPER LOCK BUSH 3535 85MM FENNER", "HOUSING BEARING 513-60 MM SKF PLUMMER BL", "0.533"),
+        ("BUSHING HALF PN:3128310422", "HOSE FEED/FILTRATE PFH PNP4113821900", "0.543"),
+        ("BUSHING HALF PN:3128310422", "CRUSHER JAW METSO BOLT HEXAGON N01532895", "0.528"),
+    ],
+)
+def test_the_default_floor_refuses_the_weak_cross_group_picks_that_0_50_let_through(target, candidate, text) -> None:
+    refused = default_verdict(target, candidate, same_group=False, text=text)
+    admitted_at_old_floor = verdict(target, candidate, same_group=False, text=text)
+
+    assert admitted_at_old_floor.passed  # at 0.50 these were neighbours
+    assert refused.status is IdentityStatus.INSUFFICIENT_TEXT and "below 0.65" in refused.reason
+
+
+def test_the_default_floor_keeps_the_scores_that_looked_like_genuine_matches() -> None:
+    """Filter oil 0.664, pump wear plate 0.680, gland assembly 0.703 -- plausible matches, kept at 0.65."""
+    for text in ("0.664", "0.680", "0.703"):
+        assert default_verdict("PUMP WARMAN 6/4 E- AHF RUBBER - COVER PL", "PUMP LSA-S WEAR PLATE", same_group=True,
+                               text=text).passed
+
+
+def test_the_provisional_floor_costs_recall_and_the_tests_say_so() -> None:
+    """Filter elements at 0.546 and 0.572 look plausible and are now refused. A provisional floor trades recall
+    for precision; the expert review decides whether that trade is right."""
+    for text in ("0.546", "0.572"):
+        result = default_verdict("FILTER PN:5112305242", "FILTER ELEMENT F495 MM 48 MM", same_group=False, text=text)
+        assert not result.passed

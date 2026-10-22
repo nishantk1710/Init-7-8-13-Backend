@@ -138,12 +138,13 @@ fuzzy  = (token_set_ratio + token_sort_ratio) / 2 / 100          (rapidfuzz)
 1. A subset still scores well (about 65 above), and even descriptions with no word in common score a few points
    (`PUMP SEAL` vs `ZZZ QQQ`: set 12.5). A high text score is therefore not evidence of the same part; the
    identity stage is.
-2. **The identity floors were set for a MiniLM cosine and have not been calibrated for this score.** BGE cosines
-   run higher and the fuzzy half adds to them, so 0.50 admits far more than it did.
-   `SimilarityPolicy.text_floors_calibrated` stays `False` (and every run logs a warning) until they have been
-   re-set and confirmed: `python -m scripts.oar_identity_review floors` derives the floor that keeps the old
-   selectivity from the random controls of a review sample, and `evaluate` then sweeps floors against the
-   expert's answers.
+2. **The identity floors are a PROVISIONAL 0.65.** They were 0.50 for a MiniLM cosine; BGE cosines run higher and
+   the fuzzy half adds to them, so 0.50 admits far more (12% of random unrelated pairs, against 0.7% before) and
+   its first real picks included a self-locking nut for a taper lock bush. `python -m scripts.oar_identity_review
+   floors` put the floor that restores the old selectivity at 0.653 (0.546-0.653 allowing for sampling error);
+   0.65 is the top of that range. It rests on easy negatives and one pair, so it costs recall (plausible filters
+   at 0.55-0.57 are refused) and is a stopgap: `SimilarityPolicy.text_floors_calibrated` stays `False`, and every
+   run logs a warning, until `evaluate` has swept floors against the expert's answers and confirmed one.
 
 **Business.** Circuit, manufacturer (OEM proxy), price proximity over the
 population range. Criticality does **not** appear here — it is a filter applied
@@ -172,7 +173,7 @@ that material group or description had been *compared*; a neighbour in a differe
 similarity still passed, lifted over the 0.60 floor by a similar price (the impact wrench's neighbours were
 a blasting product, crusher bolts, a pipe wrench and a valve: other groups, text 0.31-0.46, combined
 0.61-0.63). Now a neighbour must share the target's material group, **or** have a text similarity of at
-least `SimilarityPolicy.minimum_identity_text_similarity` (0.50, a first setting to be checked against
+least `SimilarityPolicy.minimum_identity_text_similarity` (0.50 under MiniLM; a provisional 0.65 since oar-similarity-11, to be checked against
 known good and bad matches). Without an embedding model only the same-group route remains. A target left
 with fewer than three neighbours gets no estimate, with the reason recorded. The exact score
 (`scoring.combine`) and the two-stage retrieval (`retrieval.DonorIndex.prescore`) apply the same rule.
@@ -197,7 +198,7 @@ ranking, in this order (the first rule that applies decides):
    (`CONFIRMED_GROUP_TEXT`) unless the descriptions share only generic words -- FILTER, PRESS, ANDRITZ
    (`INSUFFICIENT_GENERIC_OVERLAP`). Otherwise `INSUFFICIENT_GROUP_ONLY`. Two descriptions with no words in
    common are *not* generic overlap: differently worded equivalents stay eligible.
-4. **Other or unknown group** -- text similarity >= `minimum_identity_text_similarity` (0.50, unchanged):
+4. **Other or unknown group** -- text similarity >= `minimum_identity_text_similarity` (provisional 0.65 on the BGE + fuzzy score; 0.50 on the MiniLM cosine it replaced):
    `CONFIRMED_TEXT`, else `INSUFFICIENT_TEXT` / `INSUFFICIENT_NO_TEXT`.
 
 Two identical descriptions count as text similarity 1.0 when no model is available. Identical wording is
@@ -215,7 +216,7 @@ slot or re-enter through another channel. `tests/i7/test_oar_identity.py` holds 
 per-pair rule to the same answer over 11,000+ generated pairs.
 
 **Thresholds are configuration, not new decisions.** `SimilarityPolicy.same_group_minimum_text_similarity` is
-0.50 -- the documented baseline, not a tuned number. The vocabulary (`identity_component_types`), the context
+a provisional 0.65 (0.50 for MiniLM) -- a stopgap, not a tuned number. The vocabulary (`identity_component_types`), the context
 phrases and the generic terms are policy fields with conservative defaults in `oar/identity.py`.
 `identity_validation=False` restores the `-8/-9` rule exactly, for before/after comparisons.
 **Calibrating the floors needs expert-reviewed pairs scored with the real embedding model** (`oar.evaluation`);
