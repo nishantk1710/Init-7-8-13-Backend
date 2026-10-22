@@ -117,7 +117,9 @@ def test_the_rule_can_be_switched_off_by_policy():
     lenient = PolicyDocument(
         service_level=load_mock_service_level_policy(),
         max_stock=load_mock_max_stock_policy(),
-        similarity=SimilarityPolicy(minimum_evidence_features=0, identity_evidence_features=()),
+        similarity=SimilarityPolicy(
+            minimum_evidence_features=0, identity_evidence_features=(), minimum_identity_text_similarity=None
+        ),
     )
     result = score(part("T", group=None, price=None), part("C", group=None, price=None), policy=lenient)
     assert result.evidence_sufficient is True

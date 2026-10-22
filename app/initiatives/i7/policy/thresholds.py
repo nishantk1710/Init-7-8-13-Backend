@@ -137,6 +137,16 @@ class SimilarityPolicy(BaseModel):
     it is counted and what it costs, and thousands of unrelated parts share
     both. Empty disables the requirement."""
 
+    minimum_identity_text_similarity: float | None = Field(default=0.50, ge=0, le=1)
+    """Admission gate (oar-similarity-8): a neighbour must MATCH on identity, not merely have had an
+    identity feature compared. It matches when it shares the target's material group, or when its
+    description's text similarity to the target's is at least this value. ``identity_evidence_features``
+    only asked that material group or description had been *compared* -- so a part in a different
+    group with a weak text score (the impact wrench's five neighbours: other groups, text 0.31-0.46)
+    still passed, carried over the 0.60 floor by price. With no embedding model the text route is
+    closed and only the same-group route remains. ``None`` disables the rule (the pre-8 behaviour).
+    0.50 is a first setting, to be checked against known good and bad matches."""
+
     @field_validator("identity_evidence_features")
     @classmethod
     def _known_features(cls, value: tuple[str, ...]) -> tuple[str, ...]:

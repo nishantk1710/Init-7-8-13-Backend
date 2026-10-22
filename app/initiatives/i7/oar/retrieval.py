@@ -339,12 +339,14 @@ class DonorIndex:
         minimum_evidence_features: int,
         identity_evidence_features: tuple[str, ...],
         embeddings: dict[str, np.ndarray] | None,
+        identity_text_floor: float | None = None,
     ) -> None:
         self.profile = PopulationProfile(population, minimum_history_months)
         self.price_range = float(price_range) if price_range is not None and price_range > 0 else None
         self.weights = weights
         self.minimum_evidence_features = minimum_evidence_features
         self.identity_evidence_features = identity_evidence_features
+        self.identity_text_floor = identity_text_floor
         self.embeddings = embeddings
         self.vocabularies = {feature: _Vocabulary() for feature in _ENCODED}
 
@@ -516,6 +518,13 @@ class DonorIndex:
             for feature in self.identity_evidence_features:
                 identity |= known_by_feature.get(feature, np.zeros(size, dtype=bool))
             evidence &= identity
+        if self.identity_text_floor is not None:
+            # Identity must MATCH (scoring.combine's rule): the same material group, or text at or
+            # above the floor. Compared-and-different no longer counts.
+            same_group = known_by_feature["material_group"] & (
+                partition.codes["material_group"] == target.codes["material_group"]
+            )
+            evidence &= same_group | (t_avail & (text >= self.identity_text_floor))
 
         return {
             "combined": combined,
