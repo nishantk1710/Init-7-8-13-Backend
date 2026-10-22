@@ -26,7 +26,7 @@ import app.core.config as config_module
 from app.core.config import Settings
 from app.initiatives.i7.oar import repository, service
 from app.initiatives.i7.oar.retrieval import RetrievalConfig
-from app.initiatives.i7.oar.types import CandidateAttributes
+from app.initiatives.i7.oar.types import ALGORITHM_VERSION, CandidateAttributes
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.policy.dev_fixtures import (
     load_mock_max_stock_policy,
@@ -173,7 +173,7 @@ def test_a_run_writes_every_target_and_explains_every_neighbour(world):
     with factory() as session:
         run = session.get(OarRun, result.run_id)
         assert run.retrieval_config.startswith("mode=two_stage")
-        assert run.algorithm_version == "oar-similarity-6"
+        assert run.algorithm_version == ALGORITHM_VERSION
         shortlisted = session.execute(
             select(OarTargetResult.shortlisted_candidates).where(OarTargetResult.oar_run_id == result.run_id)
         ).scalars().all()

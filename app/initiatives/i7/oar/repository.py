@@ -112,8 +112,8 @@ def load_candidate_population(session: Session) -> list[CandidateAttributes]:
     return [_to_attributes(row) for row in session.execute(text(_CANDIDATE_SQL))]
 
 
-PRICE_BAND_LOW = 0.05
-PRICE_BAND_HIGH = 0.95
+PRICE_BAND_LOW_PERCENT = 5
+PRICE_BAND_HIGH_PERCENT = 95
 
 
 def price_range(candidates: list[CandidateAttributes]) -> Decimal | None:
@@ -128,10 +128,10 @@ def price_range(candidates: list[CandidateAttributes]) -> Decimal | None:
     if len(logs) < 2:
         return None
     # The 5th-95th percentile of ln(price), not min-max: a few repairables costing millions made the
-    # linear range so wide that every ordinary item looked like the same price (similarity ~0.9999)
+    # linear range so wide that every ordinary item looked like the same price (99.99% alike)
     # and the price term separated nothing. Distances beyond the band are clamped to 1.
-    low = logs[int(PRICE_BAND_LOW * (len(logs) - 1))]
-    high = logs[int(round(PRICE_BAND_HIGH * (len(logs) - 1)))]
+    low = logs[(PRICE_BAND_LOW_PERCENT * (len(logs) - 1)) // 100]
+    high = logs[round(PRICE_BAND_HIGH_PERCENT * (len(logs) - 1) / 100)]
     span = high - low
     if span <= 0:
         span = logs[-1] - logs[0]
