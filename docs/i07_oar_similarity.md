@@ -115,12 +115,12 @@ scoring it too would add an identical constant to every pair.
 
 ```
 S = W1 x S_struct + W2 x S_text + W3 x S_business
-W1 = 0.35, W2 = 0.30, W3 = 0.35 (Phase 1 SimilarityPolicy — unchanged)
+W1 = 0.40, W2 = 0.40, W3 = 0.20 (SimilarityPolicy; 0.35 / 0.30 / 0.35 until oar-similarity-9)
 ```
 
 **A missing dimension is excluded and the weights renormalise over what
 remains** — not scored as 0. With text unavailable throughout this run, every
-score in practice is `0.35/0.65·S_struct + 0.35/0.65·S_business`.
+score in practice is `0.40/0.60·S_struct + 0.20/0.60·S_business`.
 `score_completeness` records the fraction of intended weight actually used, so a
 0.65 built from two dimensions is distinguishable from a 0.90 built from three.
 
@@ -235,8 +235,8 @@ candidates → `NO_ELIGIBLE_NEIGHBORS`, confidence LOW, no fallback attempted.
 `S_struct`, `S_business` and the weighted estimate are checked against
 hand-computed fixtures (e.g. `(0.90×10 + 0.80×20)/(0.90+0.80) = 14.7 → 15`); all
 match exactly. `S_combined` renormalisation is verified against a controlled
-three-dimension fixture: `0.35×0.80 + 0.30×0.60 + 0.35×0.90 = 0.775`, and with
-text withheld, `(0.35×0.80 + 0.35×0.90)/0.70 = 0.85`.
+three-dimension fixture: `0.40×0.80 + 0.40×0.60 + 0.20×0.90 = 0.74`, and with
+text withheld, `(0.40×0.80 + 0.20×0.90)/0.60 = 0.833`.
 
 ## Idempotency
 

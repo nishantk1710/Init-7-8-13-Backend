@@ -92,9 +92,15 @@ class SimilarityPolicy(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    structural_weight: float = Field(default=0.35, ge=0, le=1)
-    text_weight: float = Field(default=0.30, ge=0, le=1)
-    business_weight: float = Field(default=0.35, ge=0, le=1)
+    structural_weight: float = Field(default=0.40, ge=0, le=1)
+    text_weight: float = Field(default=0.40, ge=0, le=1)
+    business_weight: float = Field(default=0.20, ge=0, le=1)
+    """0.40 / 0.40 / 0.20 since oar-similarity-9 (the Solution Design's starting values were 0.35 / 0.30 /
+    0.35, flagged there for empirical tuning). 'Business' is price alone on this extract -- manufacturer
+    is nearly always blank -- and two unrelated parts in the same price band score ~0.9 on it, so at 0.35
+    price supplied over half the score of a poor match (the impact wrench's neighbours). What a part IS
+    (material group, unit of measure, description) now carries 0.80 of the weight and price 0.20. Without
+    a text model the weights renormalise to 0.67 structure / 0.33 price."""
 
     minimum_neighbours: int = Field(default=2, ge=1)
     """Hard admission gate: fewer than this many *qualifying* (>= minimum_similarity)
@@ -164,7 +170,7 @@ class SimilarityPolicy(BaseModel):
     @model_validator(mode="after")
     def _weights_and_k(self) -> "SimilarityPolicy":
         total = self.structural_weight + self.text_weight + self.business_weight
-        # Float tolerance: 0.35 + 0.30 + 0.35 is not exactly 1.0 in binary.
+        # Float tolerance: three float weights are not exactly 1.0 in binary.
         if abs(total - 1.0) > 1e-9:
             raise ValueError(f"similarity weights must sum to 1.0, got {total}")
         if self.minimum_neighbours > self.maximum_neighbours:

@@ -647,12 +647,12 @@ EXPECTED_DONORS = {
     # leaves it out. The similarities are for oar-similarity-7, where price is compared on a log
     # scale: the donors are all priced near 100, so the price term is ~1.0 for every one of them
     # (on the old linear scale it was 0.93-1.0 and the combined scores 0.925-0.9875). SS/ROP/Max are
-    # the donors' own Phase 5 values and are unaffected by the scale.
-    "D000001": ("0.9998756208", 5, 15, 25),
-    "D000006": ("0.9998768463", 4, 13, 22),
-    "D000005": ("0.9996230870", 5, 16, 27),
-    "D000002": ("0.9995145021", 6, 18, 30),
-    "D000003": ("0.9992344547", 4, 12, 20),
+    # the donors' own Phase 5 values and are unaffected by the scale. Weights 0.40 / 0.40 / 0.20 (oar-similarity-9).
+    "D000001": ("0.9999170806", 5, 15, 25),
+    "D000006": ("0.9999178975", 4, 13, 22),
+    "D000005": ("0.9997487247", 5, 16, 27),
+    "D000002": ("0.9996763347", 6, 18, 30),
+    "D000003": ("0.9994896365", 4, 12, 20),
 }
 
 EXPECTED_ESTIMATE = {"safety_stock": 5, "rop": 15, "max_stock": 25}
@@ -678,11 +678,13 @@ def test_verified_scenario_donor_table(dev_donors, dev_result):
         for neighbour in dev_result.neighbours
     }
     assert set(actual) == set(EXPECTED_DONORS)
+    wrong = {}
     for material, (similarity, safety_stock, rop, max_stock) in EXPECTED_DONORS.items():
         got_similarity, *got_values = actual[material]
         # ln() is a float: compared to 1e-9, not as a string a different libm could spell differently.
-        assert abs(got_similarity - Decimal(similarity)) < Decimal("1e-9"), material
-        assert got_values == [safety_stock, rop, max_stock], material
+        if abs(got_similarity - Decimal(similarity)) >= Decimal("1e-9") or got_values != [safety_stock, rop, max_stock]:
+            wrong[material] = (f"{got_similarity:.10f}", *got_values)
+    assert not wrong, f"donor table differs: {wrong}"
 
 
 def test_verified_scenario_produces_five_fifteen_twentyfive(dev_result):
