@@ -812,6 +812,11 @@ class ExceptionResponse(I8Model):
     meta: ExceptionMeta
     facets: ExceptionFacets
     reference_date: date
+    type_counts: dict[str, int] | None = None
+    """Items per type after every filter but ``type``: what each type tab on
+    the Exceptions screen holds, so a tab shows the number of rows it opens
+    on. Unlike ``meta``, these DO follow the filters -- status above all.
+    Optional so an older client ignores it."""
 
 
 # --- Coding candidates (W5.5) ---------------------------------------------

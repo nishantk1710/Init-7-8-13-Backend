@@ -635,6 +635,39 @@ class TestTwoStatuses:
         assert body["history"][-1]["actor"] == "system"
 
 
+class TestTypeCounts:
+    """The Exceptions screen's type tabs: how many items each would list."""
+
+    def test_counted_after_every_filter_but_the_type(self, queues, factory) -> None:
+        queues.exceptions = (
+            exception(1),
+            exception(2),
+            exception(3, type="OVERDUE_REPAIR", severity="critical"),
+            exception(4, type="OVERDUE_REPAIR", severity="critical", plant="1500"),
+        )
+        with factory() as db:
+            set_status(db, queues.exceptions[1].id, "CLOSED", actor="tester", note="Handled.")
+
+        body = queues.client.get(
+            EXCEPTIONS, params={"status": "OPEN", "plant": "1300", "type": "OVERDUE_REPAIR"}
+        ).json()
+
+        # The type narrows the list, not the counts; status and plant do both.
+        assert ids(body) == ["EX-OVERDUE_REPAIR-4500000003-10"]
+        assert body["typeCounts"] == {"MISSING_ATTESTATION": 1, "OVERDUE_REPAIR": 1}
+
+    def test_meta_still_describes_the_whole_check(self, queues, factory) -> None:
+        """typeCounts follow the filters; meta.byType does not, on purpose."""
+        queues.exceptions = (exception(1), exception(2))
+        with factory() as db:
+            set_status(db, queues.exceptions[0].id, "CLOSED", actor="tester", note="Handled.")
+
+        body = queues.client.get(EXCEPTIONS, params={"status": "OPEN"}).json()
+
+        assert body["typeCounts"] == {"MISSING_ATTESTATION": 1}
+        assert body["meta"]["byType"] == {"MISSING_ATTESTATION": 2}
+
+
 # --- The register ------------------------------------------------------------
 
 

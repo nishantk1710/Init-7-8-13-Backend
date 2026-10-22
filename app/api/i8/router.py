@@ -24,6 +24,7 @@ rather than being deleted when it went red.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 from typing import Annotated, TypeVar
 
@@ -919,9 +920,8 @@ def get_exceptions(
 
     facets = exception_facets(items, cfg)
 
-    if type_filter:
-        wanted = type_filter.strip().upper()
-        items = tuple(i for i in items if i.type == wanted)
+    # The type filter comes last, after the counts below; the rest narrow in
+    # any order.
     if plant:
         items = tuple(i for i in items if i.plant == plant)
     if repair:
@@ -968,6 +968,13 @@ def get_exceptions(
                 i for i in items if states.get(i.id, UNTOUCHED).owner == wanted_owner
             )
 
+    # What each type tab holds: every filter applied except the type itself,
+    # so the open tab's count is the number of rows under it.
+    type_counts = Counter(i.type for i in items)
+    if type_filter:
+        wanted = type_filter.strip().upper()
+        items = tuple(i for i in items if i.type == wanted)
+
     size = min(page_size or cfg.default_page_size, cfg.max_page_size)
     page_items, total = _paginate(items, page, size)
 
@@ -993,6 +1000,7 @@ def get_exceptions(
         meta=exception_meta(view.exception_stats, excluded_types, excluded),
         facets=facets,
         reference_date=snapshot.reference_date,
+        type_counts=dict(type_counts),
     )
 
 
