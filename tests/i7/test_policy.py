@@ -16,6 +16,7 @@ from app.initiatives.i7.errors import (
     I07Error,
     PolicyNotConfiguredError,
 )
+from app.initiatives.i7.policy.thresholds import current_conversion_trigger_policy
 from app.initiatives.i7.policy import (
     ClassificationPolicy,
     ConfidencePolicy,
@@ -73,7 +74,8 @@ def test_confidence_thresholds_kept_despite_data_not_reaching_them():
 def test_conversion_consumption_trigger_matches_the_documents():
     policy = ConversionTriggerPolicy()
     assert policy.consumption_count_threshold == 4
-    assert policy.consumption_count_months == 12
+    assert policy.consumption_count_months == 6
+    assert current_conversion_trigger_policy().consumption_count_months == 6
 
 
 # --- Invalid configuration is rejected --------------------------------
@@ -191,7 +193,7 @@ def test_conversion_criticality_tiers_unset_on_the_bare_policy():
 
 def test_policy_document_default_resolves_conversion_criticality_tiers():
     """Business-confirmed 2026-10-19: an OAR material-plant converts to
-    Min-Max when it had more than 4 net issues in 12 months *or* is CRITICAL,
+    Min-Max when it had more than 4 net issues in 6 months *or* is CRITICAL,
     IMPACT or INSURANCE (see policy/thresholds.py::current_conversion_trigger_policy).
     A fresh PolicyDocument() is not blocked on this gap."""
     policy = PolicyDocument()

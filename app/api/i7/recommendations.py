@@ -199,7 +199,7 @@ def _apply_filters(
     if actionable:
         statement = statement.where(_actionable())
     if consumption_above_threshold:
-        # Issued more than the policy's own count in the trailing 12 months -- the threshold
+        # Issued more than the policy's own count in the policy's trailing window (6 months) -- the threshold
         # stored on the row, not a literal, so it follows the policy. A row with no count (never
         # evaluated) cannot be shown to pass, so the comparison to NULL leaves it out; zero
         # consumption fails for any non-negative threshold.
@@ -491,7 +491,7 @@ def list_recommendations(
         bool | None,
         Query(
             description="true: only recommendations issued more than the policy's consumption-count "
-            "threshold in the last 12 months (this also drops zero-consumption materials). A "
+            "threshold in the policy's trailing window, 6 months (this also drops zero-consumption materials). A "
             "recommendation with no count yet is left out."
         ),
     ] = None,

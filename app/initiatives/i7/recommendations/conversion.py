@@ -5,7 +5,7 @@ The rule in force::
     ConversionEligible =
         OarMaterialPlant                      -- Stage 1: MARC.DISPO = OAR and MARC.DISMM in {ND, PD} or blank
     AND NOT Obsolete                          -- OBSOLETE is never eligible
-    AND (    ConsumptionCount12M > 4
+    AND (    ConsumptionCount6M > 4
           OR Criticality in {CRITICAL, IMPACT, INSURANCE} )
 
 Either trigger on its own is enough; the scope and OBSOLETE checks are gates
@@ -23,8 +23,8 @@ whatever else is missing. Otherwise one trigger that definitely holds is
 enough; only when no trigger holds and one of them could not be determined is
 the verdict UNKNOWN -- missing data is never read as "does not qualify".
 
-**What is counted.** ``ConsumptionCount12M`` is a transaction-level count --
-MSEG issue movements (201/261) minus reversal movements (202/262), trailing 12
+**What is counted.** ``ConsumptionCount`` (trailing ``consumption_count_months``: 6 since 2026-10-22, 12 before) is a transaction-level count --
+MSEG issue movements (201/261) minus reversal movements (202/262), trailing 6
 months ending at the extract's own last staged month -- computed and stored on
 ``MaterialFeature.consumption_count_12m`` by Phase 3 (see
 ``features/builder.py::consumption_count_12m``). It is NOT ``non_zero_periods``
@@ -87,14 +87,14 @@ def _not_excluded_condition(
 def _consumption_condition(
     consumption_count_12m: int | None, policy: ConversionTriggerPolicy
 ) -> tuple[bool | None, str]:
-    """More than the threshold net issue transactions in 12 months? ``(met, detail)``.
+    """More than the threshold net issue transactions in the policy's window (6 months)? ``(met, detail)``.
 
     ``consumption_count_12m`` is the MSEG issue-transaction count (reversals
     netted), NOT ``non_zero_periods`` -- see the module docstring.
     """
     if consumption_count_12m is None:
-        return None, "The last 12 months of usage could not be counted for this material."
-    used = f"It was used {_times(consumption_count_12m)} in the last 12 months"
+        return None, f"The last {policy.consumption_count_months} months of usage could not be counted for this material."
+    used = f"It was used {_times(consumption_count_12m)} in the last {policy.consumption_count_months} months"
     if consumption_count_12m > policy.consumption_count_threshold:
         return (
             True,

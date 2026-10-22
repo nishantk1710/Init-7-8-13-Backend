@@ -178,7 +178,7 @@ Separate from OAR identification. The rule in force (formula version
 ```
 ConversionEligible = OarMaterialPlant                 -- Stage 1: MARC.DISMM in {ND, PD} or blank
                  AND NOT Obsolete                     -- OBSOLETE is never eligible
-                 AND (    ConsumptionCount12M > 4
+                 AND (    ConsumptionCount6M > 4
                        OR Criticality in {CRITICAL, IMPACT, INSURANCE} )
 ```
 
@@ -196,7 +196,7 @@ decision at all (`conversion = None`); `UNKNOWN` or a missing scope is
 `UNKNOWN`. The DISMM rule itself is not re-derived here.
 
 **What is counted**: `consumption_count_12m` — MSEG issue transactions
-(201/261) minus reversals (202/262), trailing 12 months. Not
+(201/261) minus reversals (202/262), trailing 6 months (12 until 2026-10-22; the column keeps its historical name). Not
 `non_zero_periods`.
 
 **Criticality**: `ConversionTriggerPolicy.criticality_trigger_tiers =

@@ -34,7 +34,7 @@ SMOOTH ones included. VB / other materials are forecast, or not evaluable when
 they have too little history (no similar-materials fallback).
 
 Bumped from ``-3``: OAR -> Min-Max conversion eligibility is now an AND of
-"more than 4 net issues in 12 months" and a CRITICAL/IMPACT tier, evaluated
+"more than 4 net issues in 6 months" and a CRITICAL/IMPACT tier, evaluated
 only for Stage 1 OAR material-plants; OBSOLETE is never eligible and the I13
 HOD trigger is gone. Rows stored under ``-3`` carry the old OR-rule verdict.
 
@@ -196,7 +196,7 @@ class ConversionTrigger(StrEnum):
     """
 
     CONSUMPTION_FREQUENCY = "CONSUMPTION_FREQUENCY"
-    """Eligible on usage alone: more than the threshold net issues in 12 months."""
+    """Eligible on usage alone: more than the threshold net issues in 6 months."""
 
     PRODUCTION_IMPACT = "PRODUCTION_IMPACT"
     """Eligible on criticality alone: a qualifying tier (CRITICAL / IMPACT / INSURANCE)."""
