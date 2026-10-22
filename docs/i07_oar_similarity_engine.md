@@ -100,7 +100,7 @@ S_business = 1 - mean(distances over manufacturer (MFRNR), price proximity)
              price distance = min(|p_a - p_b| / population price range, 1)
 
 S = sum(W_d * S_d for available d) / sum(W_d for available d)
-    W_struct = 0.35, W_text = 0.30, W_business = 0.35   (SimilarityPolicy, unchanged)
+    W_struct = 0.40, W_text = 0.40, W_business = 0.20   (SimilarityPolicy; was 0.35 / 0.30 / 0.35)
 ```
 
 All components are in [0, 1].
