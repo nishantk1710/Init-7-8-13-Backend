@@ -277,6 +277,45 @@ def test_a_genuine_match_lost_to_a_component_conflict_is_called_out() -> None:
     assert [p["pair_id"] for p in ident["component_conflicts_judged_genuine"]] == ["9"]
 
 
+def test_the_what_if_applies_each_rule_to_the_same_pairs() -> None:
+    """D is a genuine same-group match the built rule refused because nothing specific is shared; its reason
+    says the component type agrees. Accepting such pairs admits D (genuine) and nothing wrong here."""
+    d = j("4", T1, "D", True, text="0.40", same=True, status="INSUFFICIENT_GROUP_ONLY", arms={"refused"})
+    d = Judged(**{**d.__dict__, "identity_reason": "no identity match: ... (component type agrees, but nothing specific is shared)"})
+    others = [x for x in JUDGED if x.pair_id != "4"]
+
+    built, alternative = review.what_if(others + [d])
+
+    # built admits A, C, F (all genuine); the alternative also admits D
+    assert (built["admitted"], built["genuine_admitted"], built["precision"]) == (3, 3, 1.0)
+    assert built["recall"] == 0.75  # 3 of the 4 genuine pairs: D was refused
+    assert (alternative["admitted"], alternative["genuine_admitted"], alternative["wrong_admitted"]) == (4, 4, 0)
+    assert alternative["recall"] == 1.0
+    assert alternative["targets_with_two_or_more_admitted"] == 1  # T1 now has A, C, D
+
+
+def test_a_component_conflict_is_never_admitted_by_a_variant() -> None:
+    conflict = Judged(**{**JUDGED[1].__dict__, "identity_reason": "component type conflict (component type agrees?)"})
+
+    assert all(w["admitted"] == 0 for w in review.what_if([conflict]))
+
+
+def test_the_what_if_marker_matches_the_identity_stage_wording() -> None:
+    """The what-if reads the reason text; if oar.identity rewords it, this fails instead of silently
+    admitting nothing."""
+    from app.initiatives.i7.oar import identity
+    from app.initiatives.i7.policy.thresholds import SimilarityPolicy
+
+    config = identity.IdentityConfig.from_policy(SimilarityPolicy())
+    verdict = identity.assess_descriptions(
+        "FILTER PN:5112305242", "FILTER ELEMENT HYDRAULIC", same_material_group=True,
+        text_similarity=D("0.44"), config=config,
+    )
+
+    assert verdict.status.value == "INSUFFICIENT_GROUP_ONLY"
+    assert review.TYPE_AGREES_MARK in verdict.reason
+
+
 def test_where_the_rules_disagree() -> None:
     m = review.evaluate_review(JUDGED)
 
@@ -337,7 +376,7 @@ def test_the_command_line_evaluation_prints_the_report(tmp_path, capsys) -> None
 
     assert status == 0
     for heading in ("Neighbours (top 5)", "Where the rules disagree", "The identity stage", "Text floors",
-                    "Gates (PROPOSED"):
+                    "What-if", "Gates (PROPOSED"):
         assert heading in out
     assert "Gates (PROPOSED" in (tmp_path / "report.md").read_text(encoding="utf-8")
 

@@ -314,6 +314,7 @@ class Judged:
     combined: Decimal | None
     identity_status: str
     note: str | None
+    identity_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -367,6 +368,7 @@ def load_review(review_path: Path, key_path: Path) -> ReviewLoad:
                     combined=Decimal(combined) if combined else None,
                     identity_status=key["identity_status"],
                     note=(row.get("note") or "").strip() or None,
+                    identity_reason=key.get("identity_reason", ""),
                 )
             )
     return ReviewLoad(judged, unjudged, unsure, unknown)
@@ -381,6 +383,55 @@ def rankings(judged: Iterable[Judged], arm: str) -> dict[Key, list[Key]]:
         if rank is not None:
             out[j.target].append((rank, j.candidate))
     return {t: [c for _, c in sorted(pairs)] for t, pairs in out.items()}
+
+
+TYPE_AGREES_MARK = "component type agrees"
+"""Appears in the reason of an ``INSUFFICIENT_GROUP_ONLY`` verdict when the candidate and target name the same
+component type and nothing more (``oar.identity.assess``). A test holds this to the identity module's wording."""
+
+
+def _built(j: Judged) -> bool:
+    return j.identity_status.startswith(("CONFIRMED", "NOT_ASSESSED"))
+
+
+def _type_agrees_too(j: Judged) -> bool:
+    """The as-built rule, and also: same group and the component type agrees, with no text floor required."""
+    return _built(j) or (j.identity_status == "INSUFFICIENT_GROUP_ONLY" and TYPE_AGREES_MARK in j.identity_reason)
+
+
+ALTERNATIVES = (
+    ("as built (oar-similarity-10)", _built),
+    ("also accept: same group and the component type agrees", _type_agrees_too),
+)
+
+
+def what_if(judged: Sequence[Judged]) -> list[dict]:
+    """Each rule variant applied to the SAME reviewed pairs -- no second review needed.
+
+    A candidate rule suggested by looking at these pairs will look better on them than it will on new ones, so
+    this is a way to decide what to try next, not proof that it works: confirm it on a fresh sample. Component
+    conflicts stay refused under every variant. Precision and recall are over the reviewed pairs, which are not
+    an unbiased sample of all pairs.
+    """
+    with_verdict = [j for j in judged if j.identity_status]
+    genuine_total = sum(1 for j in with_verdict if j.relevant)
+    rows = []
+    for name, admits in ALTERNATIVES:
+        admitted = [j for j in with_verdict if admits(j)]
+        genuine = sum(1 for j in admitted if j.relevant)
+        targets = defaultdict(int)
+        for j in admitted:
+            targets[j.target] += 1
+        rows.append({
+            "variant": name,
+            "admitted": len(admitted),
+            "genuine_admitted": genuine,
+            "wrong_admitted": len(admitted) - genuine,
+            "precision": genuine / len(admitted) if admitted else None,
+            "recall": genuine / genuine_total if genuine_total else None,
+            "targets_with_two_or_more_admitted": sum(1 for n in targets.values() if n >= 2),
+        })
+    return rows
 
 
 def evaluate_review(
@@ -476,6 +527,7 @@ def evaluate_review(
         "dropped_by_new": {"pairs": len(only_old), "genuine": sum(1 for j in only_old if j.relevant)},
         "added_by_new": {"pairs": len(only_new), "genuine": sum(1 for j in only_new if j.relevant)},
     }
+    result["what_if"] = what_if(judged)
     result["random_controls"] = {
         "pairs": sum(1 for j in judged if "random" in j.arms),
         "genuine": sum(1 for j in judged if "random" in j.arms and j.relevant),
@@ -587,6 +639,21 @@ def render_report(load: ReviewLoad, metrics: dict, gate_results: list, *, k: int
         for p in s["points"]:
             lines.append(f"| {p['threshold']} | {p['admitted']} | {f(p['precision'])} | {f(p['recall'])} |")
         lines += ["", f"Recommended floor: **{s['recommended'] or 'none qualifies -- collect more reviews'}**", ""]
+
+    lines += [
+        "## What-if: other rules on the same reviewed pairs", "",
+        "Rule variants applied to the pairs above, with no second review. A rule suggested by these very pairs "
+        "will look better on them than on new ones: use this to choose what to try, then confirm on a fresh "
+        "sample. Conflicts stay refused in every variant.", "",
+        "| rule | admitted | genuine | wrong | precision | recall | targets with 2+ admitted |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for w in metrics["what_if"]:
+        lines.append(
+            f"| {w['variant']} | {w['admitted']} | {w['genuine_admitted']} | {w['wrong_admitted']} | "
+            f"{f(w['precision'])} | {f(w['recall'])} | {w['targets_with_two_or_more_admitted']} |"
+        )
+    lines.append("")
 
     lines += ["## Gates (PROPOSED -- confirm with the business before relying on them)", ""]
     for name, met, detail in gate_results:
