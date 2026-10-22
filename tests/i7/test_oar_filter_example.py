@@ -62,8 +62,14 @@ def policy(**similarity) -> PolicyDocument:
         service_level=load_mock_service_level_policy(),
         max_stock=load_mock_max_stock_policy(),
         similarity=SimilarityPolicy(
-            **{"text_embedding_weight": 1.0, "text_fuzzy_weight": 0.0, **similarity}
-        ),  # injected cosines: the text score is the cosine alone
+            **{
+                "text_embedding_weight": 1.0,
+                "text_fuzzy_weight": 0.0,
+                "minimum_identity_text_similarity": 0.50,
+                "same_group_minimum_text_similarity": 0.50,
+                **similarity,
+            }
+        ),  # injected cosines, floors at the 0.50 this fixture was written around
     )
 
 

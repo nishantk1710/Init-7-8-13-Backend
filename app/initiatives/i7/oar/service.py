@@ -604,10 +604,10 @@ def run_oar_similarity(
         )
         if not policy.similarity.text_floors_calibrated:
             logger.warning(
-                "OAR run: the identity text floors (%s other-group, %s same-group) were set for a MiniLM "
-                "cosine and have NOT been calibrated for the current text score (BGE + fuzzy). The identity "
-                "gate is provisional: see SimilarityPolicy.text_floors_calibrated and "
-                "scripts.oar_identity_review floors.",
+                "OAR run: the identity text floors (%s other-group, %s same-group) are PROVISIONAL for the "
+                "current text score (BGE + fuzzy): derived from random controls, not confirmed by an expert "
+                "review. The identity gate is provisional: see SimilarityPolicy.text_floors_calibrated and "
+                "scripts.oar_identity_review.",
                 policy.similarity.minimum_identity_text_similarity,
                 policy.similarity.same_group_minimum_text_similarity,
             )
