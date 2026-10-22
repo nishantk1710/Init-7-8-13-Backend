@@ -35,13 +35,14 @@ from typing import Iterator, Sequence
 
 import numpy as np
 
+from app.initiatives.i7.oar import identity as identity_module
 from app.initiatives.i7.oar.retrieval import (
     DonorIndex,
     RetrievalConfig,
     cosine_block,
 )
 from app.initiatives.i7.oar.text_similarity import EmbeddingProvider
-from app.initiatives.i7.oar.types import CandidateAttributes, OarResult
+from app.initiatives.i7.oar.types import CandidateAttributes, OarResult, RetrievalTally
 from app.initiatives.i7.policy import PolicyDocument
 
 
@@ -84,7 +85,14 @@ def build_index(
         minimum_evidence_features=similarity.minimum_evidence_features,
         identity_evidence_features=tuple(similarity.identity_evidence_features),
         embeddings=embeddings,
-        identity_text_floor=similarity.minimum_identity_text_similarity,
+        # The oar-similarity-8/9 floor applies only with identity validation off; with it on, the
+        # identity stage's own config does (and carries the same baseline floor for other-group donors).
+        identity_text_floor=(
+            None if similarity.identity_validation else similarity.minimum_identity_text_similarity
+        ),
+        identity=(
+            identity_module.config_for(similarity) if similarity.identity_validation else None
+        ),
     )
 
 
@@ -115,7 +123,8 @@ def evaluate_targets(
         population, price_range=price_range, policy=policy, embeddings=embeddings
     )
     stats = stats if stats is not None else EngineStats()
-    population_size = len(population)
+    # The donor pool is the de-duplicated one the index holds, so the count reported is the count scored.
+    population_size = index.donor_count
     batch_size = max(1, config.target_batch_size)
 
     for start in range(0, len(targets), batch_size):
@@ -151,6 +160,7 @@ def evaluate_targets(
                     shortlisted=0,
                     retrieval=config.mode,
                     policy=policy,
+                    tally=RetrievalTally(duplicates_dropped=index.duplicates_dropped),
                 )
                 continue
 
@@ -186,6 +196,13 @@ def evaluate_targets(
                 )
                 for j in shortlist.indices
             ]
+            if len({(entry[0], entry[1]) for entry in scored}) != len(scored):
+                # Donors are de-duplicated on entry, so this cannot happen -- and a donor scored twice
+                # would weigh twice in the estimate, so it is checked rather than assumed.
+                raise RuntimeError(
+                    f"OAR retrieval scored a donor twice for {target.sap_material_number}/"
+                    f"{target.sap_plant_code}"
+                )
 
             stats.eligible_pairs += eligible_count
             stats.shortlisted_pairs += len(scored)
@@ -204,4 +221,12 @@ def evaluate_targets(
                 shortlisted=len(scored),
                 retrieval="exhaustive" if shortlist.exhaustive else "two_stage",
                 policy=policy,
+                tally=RetrievalTally(
+                    duplicates_dropped=index.duplicates_dropped,
+                    structure_shortlist=shortlist.structure_pool,
+                    text_shortlist=shortlist.text_pool,
+                    fused_shortlist=shortlist.fused_pool,
+                    identity_conflicts=shortlist.identity_conflicts,
+                    identity_insufficient=shortlist.identity_insufficient,
+                ),
             )

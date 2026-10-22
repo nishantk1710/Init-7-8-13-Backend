@@ -54,9 +54,11 @@ recomputes them, and nothing here generates a recommendation — that is Phase 7
 | `text_similarity.py` | MiniLM embeddings, pluggable, absent by default |
 | `business_similarity.py` | circuit, price proximity, manufacturer |
 | `scoring.py` | weighted combination with renormalisation |
+| `identity.py` | identity validation: part numbers, component types, same-group evidence (`oar-similarity-10`) |
 | `ranking.py` | deterministic Top-K |
 | `confidence.py` | HIGH/MEDIUM/LOW grading |
-| `estimate.py` | similarity-weighted SS/ROP/Max |
+| `estimate.py` | similarity-weighted SS/ROP/Max (weighted median by default) |
+| `demand_check.py` | diagnostic: a proposed ROP against the target's own consumption |
 | `service.py` | orchestration and persistence |
 
 ## OAR vs. Intermittent — not the same axis
@@ -126,6 +128,8 @@ score in practice is `0.40/0.60·S_struct + 0.20/0.60·S_business`.
 
 ## Identity must match (oar-similarity-8)
 
+*Superseded in part by `oar-similarity-10`, below: the same-group route now needs description evidence.*
+
 Admission needs at least two features compared **and** an identity match. Until `-7` the rule only asked
 that material group or description had been *compared*; a neighbour in a different group with weak text
 similarity still passed, lifted over the 0.60 floor by a similar price (the impact wrench's neighbours were
@@ -136,9 +140,66 @@ known good and bad matches). Without an embedding model only the same-group rout
 with fewer than three neighbours gets no estimate, with the reason recorded. The exact score
 (`scoring.combine`) and the two-stage retrieval (`retrieval.DonorIndex.prescore`) apply the same rule.
 
+## Identity is a stage of its own (oar-similarity-10)
+
+`oar-similarity-8` asked for an identity match but accepted **the same material group on its own**. Group
+308175 holds filters, spray nozzles, proximity sensors and wrenches, so a target `FILTER PN:5112305242`
+accepted `FILTER PRESS ANDRITZ SPRAY NOZZLE` and `FILTER PRESS ANDRITZ PROXIMITY SENSOR` as neighbours and
+their ROPs went into the estimate. Identity is now validated by `oar/identity.py`, after scoring and before
+ranking, in this order (the first rule that applies decides):
+
+1. **Component conflict** -- both descriptions name a component type from the vocabulary and no pair is
+   compatible (`filter` vs `nozzle`; `sensor` and `proximity_sensor` *are* compatible, one being a kind of
+   the other): `REJECTED_COMPONENT_CONFLICT`. A description naming no vocabulary type is *unknown*, never a
+   conflict. "FILTER PRESS" is context (the machine), so its FILTER is not read as a component type.
+2. **Shared part number** (separators ignored; `55KW` and `100X50X6` are specifications, not part numbers):
+   `CONFIRMED_PART_NUMBER`.
+3. **Same material group** needs description evidence too: a compatible component type plus either text
+   similarity >= `same_group_minimum_text_similarity` or a shared specific word
+   (`CONFIRMED_GROUP_COMPONENT_TYPE`); or, with the type unknown, text similarity >= that floor
+   (`CONFIRMED_GROUP_TEXT`) unless the descriptions share only generic words -- FILTER, PRESS, ANDRITZ
+   (`INSUFFICIENT_GENERIC_OVERLAP`). Otherwise `INSUFFICIENT_GROUP_ONLY`. Two descriptions with no words in
+   common are *not* generic overlap: differently worded equivalents stay eligible.
+4. **Other or unknown group** -- text similarity >= `minimum_identity_text_similarity` (0.50, unchanged):
+   `CONFIRMED_TEXT`, else `INSUFFICIENT_TEXT` / `INSUFFICIENT_NO_TEXT`.
+
+Two identical descriptions count as text similarity 1.0 when no model is available. Identical wording is
+otherwise never required.
+
+**Auditable.** The verdict, the component types found, any shared part number and the text similarity travel
+on `CombinedScore.identity`; a refused candidate keeps all its scores. `scoring.explain` (stored per
+neighbour) ends `identity=<STATUS>`. `OarResult.rejected_candidates` keeps the ten best-scoring refusals with
+their reasons. `i7_oar_target.rejection_summary` gains `IDENTITY_COMPONENT_CONFLICT=n` and
+`IDENTITY_INSUFFICIENT_EVIDENCE=n`, counted over the whole eligible pool.
+
+**The shortlist applies the same rule before it picks** (`retrieval.DonorIdentity`, vectorised). A donor the
+identity stage refuses is invisible to the structured, semantic and fused channels alike, so it cannot take a
+slot or re-enter through another channel. `tests/i7/test_oar_identity.py` holds the vectorised mask and the
+per-pair rule to the same answer over 11,000+ generated pairs.
+
+**Thresholds are configuration, not new decisions.** `SimilarityPolicy.same_group_minimum_text_similarity` is
+0.50 -- the documented baseline, not a tuned number. The vocabulary (`identity_component_types`), the context
+phrases and the generic terms are policy fields with conservative defaults in `oar/identity.py`.
+`identity_validation=False` restores the `-8/-9` rule exactly, for before/after comparisons.
+**Calibrating the floors needs expert-reviewed pairs scored with the real embedding model** (`oar.evaluation`);
+neither exists in this repository, so the tests inject their similarities.
+
+### Where the retrieval counts come from
+
+For one target (`OarResult.stage_counts`, summed per run in the log):
+
+| Count | Stage responsible |
+| --- | --- |
+| donor pool (e.g. 2,045) | `repository.load_candidate_population`: SUFFICIENT history and SAP SS, ROP and max all > 0 -- de-duplicated by material-plant |
+| hard-filter passes (e.g. 1,598) | `eligibility`: same criticality, compatible material type, active, >= 12 months, not the target |
+| structure / text / fused shortlists | the three channels of `retrieval.DonorIndex.shortlist` (50 / 50 / 100 by default) |
+| merged (e.g. 149) | their de-duplicated union -- the only candidates scored exactly, because the partition is above `exhaustive_below` (200) |
+| identity conflicts / insufficient | `oar.identity`, over the whole eligible pool |
+| identity passes, score-floor passes, final | exact scoring, `minimum_similarity` (0.60), Top-K (5) |
+
 ## Ranking and Top-K
 
-Deterministic: similarity descending, then same-circuit, then material number,
+Only candidates that pass identity **and** the score floor are ranked. Deterministic: similarity descending, then same-circuit, then material number,
 then plant. Top-K comes from `SimilarityPolicy`: at most **5** neighbours, and an
 estimate needs at least **3** (changed 2026-10-19 from 5–10, a business override
 of the documented K = 5–10). Fewer eligible candidates than K yields fewer
@@ -158,9 +219,36 @@ LOW confidence, because one donor is not a basis for a stocking parameter.
 ## Similarity-weighted estimate
 
 ```
-SS_oar = sum(s_i x SS_i) / sum(s_i)      (same form for ROP, Max)
+SS_oar = weighted_median(SS_i ; weight s_i)     (same form for ROP, Max)
 Max_final = max(Max_oar, ROP_oar + SS_oar)
 ```
+
+**The estimator is a similarity-weighted median** (`oar-similarity-10`, `SimilarityPolicy.estimator`); the
+Formula Reference's weighted mean `sum(s_i x v_i) / sum(s_i)` remains selectable as `weighted_mean`. A mean is
+dragged by one extreme donor: four filter donors with ROP 3, 9, 6, 3 and a fifth with ROP 61 (similarities
+0.90, 0.80, 0.75, 0.70, 0.65) give a mean ROP of 14.78 -> 15 and a median of **6**. The median is the first
+value, walking up through the donors sorted by value, at which the accumulated similarity reaches half the
+total; when it lands on exactly half it is the midpoint of that value and the next (computed in `Decimal`, so
+the tie is exact). The result is rounded up as before and the Max floor below still applies. No donor is
+removed for having a high value, and donor SAP values are never changed.
+
+Both estimates are always computed. The trace records `estimator`, and for each parameter `<p>_mean`,
+`<p>_median` and `<p>_material_difference` (a diagnostic flag: the two differ by at least
+`estimator_material_difference_ratio` = 25% of the mean; it changes nothing). The recommendation's
+`calculation_trace` carries them. Each donor's weight and lent values are the neighbour rows already stored.
+`python -m scripts.compare_oar_estimators` re-derives both estimates from a stored run's neighbours.
+
+## Target-demand sanity check
+
+`oar/demand_check.py` -- a **diagnostic**, never a gate, and kept apart from similarity and eligibility. It is
+not evidence of identity (a quiet target can still have the right neighbours) and it does not touch the
+approved OAR conversion usage rule. It compares a proposed ROP with what the target's own consumption calls
+for over its lead time, `mean x LT + z x sigma x sqrt(LT)` (z = 1.645), and flags `HIGH_VS_DEMAND` above 2x
+that (both `DemandSanityPolicy`, first settings for a diagnostic). A ROP above *annual* consumption is not by
+itself a flag. The window is the 12 months ending at the latest month the **source data** holds, never the
+system date. `INSUFFICIENT_DATA_*` (no history, incomplete window, no lead time, no variability) is reported
+instead of inventing a value, and no history is *not* zero consumption: `ZERO_CONSUMPTION` needs a complete
+window with nothing consumed. It appears in the OAR recommendation's `calculation_trace` as `demand_check_*`.
 
 **Max stock consistency floor** (`oar-similarity-6`, approved deviation from the plain weighted
 average, 2026-10-19). The three averages are independent, so Max could land at or below ROP. After all

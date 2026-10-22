@@ -37,6 +37,14 @@ their best candidates, and the union is the shortlist:
 * **fused** -- best by the full combined pre-score, restricted to pairs that
   would be admitted on evidence.
 
+**Identity is applied before any channel picks** (``oar-similarity-10``). The identity stage
+(``oar.identity``) refuses a candidate whose description names a component type incompatible with the
+target's, and one whose only claim is a shared material group. Left to the exact score, such a candidate
+would still take a slot in the structured and semantic pools -- slots that then hold nothing a neighbour can
+come from. So the same rule is evaluated here, vectorised over the partition (``DonorIdentity``), and every
+channel sees a refused donor as not there: it cannot enter through the structured pool because it missed the
+semantic one. ``tests/i7/test_oar_identity.py`` holds this mask and the per-pair verdict to the same answer.
+
 The fused channel is what keeps retrieval honest: it ranks by the same formula
 the exact score uses, so the true Top-K is inside it whenever the pool is at
 least K and floating point agrees with ``Decimal`` -- which it does to well
@@ -73,6 +81,7 @@ import numpy as np
 from app.initiatives.i7.oar import text_similarity
 from app.initiatives.i7.oar.business_similarity import BUSINESS_CATEGORICAL_FEATURES, log_price
 from app.initiatives.i7.oar.eligibility import material_types_conflict
+from app.initiatives.i7.oar.identity import DescriptionProfile, EMPTY_PROFILE, IdentityConfig
 from app.initiatives.i7.oar.structured_similarity import CATEGORICAL_FEATURES
 from app.initiatives.i7.oar.types import CandidateAttributes, EligibilityRejection
 
@@ -268,6 +277,7 @@ class DonorPartition:
     vectors: np.ndarray | None
     has_vector: np.ndarray
     index_by_key: dict[tuple[str, str], int]
+    identity: "DonorIdentity | None" = None
 
     def __len__(self) -> int:
         return len(self.donors)
@@ -278,6 +288,8 @@ class TargetEncoding:
     codes: dict[str, int]
     price: float
     vector: np.ndarray | None
+    profile: DescriptionProfile = EMPTY_PROFILE
+    """The target description's identity profile (part numbers, component types, specific words)."""
 
 
 @dataclass(frozen=True)
@@ -293,6 +305,15 @@ class Shortlist:
     type_conflicts: int = 0
     """Donors in the partition rejected for a different known material type --
     eligible by criticality, so in the partition, but never a neighbour."""
+    structure_pool: int | None = None
+    text_pool: int | None = None
+    fused_pool: int | None = None
+    """How many donors each channel picked, before the union. ``None`` when the partition was scored
+    exhaustively and no channel ran."""
+    identity_conflicts: int | None = None
+    identity_insufficient: int | None = None
+    """Eligible donors the identity stage refuses, over the whole partition. ``None`` when scoring was
+    exhaustive: the exact verdicts are counted instead."""
 
 
 def _unit(vector: np.ndarray) -> tuple[np.ndarray, bool]:
@@ -321,6 +342,104 @@ def top_n(scores: np.ndarray, n: int) -> np.ndarray:
     return np.concatenate([above, ties])
 
 
+def _postings(values: list[Iterable[str]]) -> dict[str, np.ndarray]:
+    """Word -> positions of the donors whose description carries it."""
+    table: dict[str, list[int]] = {}
+    for position, words in enumerate(values):
+        for word in words:
+            table.setdefault(word, []).append(position)
+    return {word: np.asarray(positions, dtype=np.int64) for word, positions in table.items()}
+
+
+class DonorIdentity:
+    """A partition's donors as the identity stage sees them, held as arrays.
+
+    ``oar.identity.assess`` decides one pair; :meth:`evaluate` decides one target against every donor at
+    once, by the same rule: component conflict first, then a shared part number, then the same-group or
+    different-group route. Part numbers and specific words are looked up through postings (word -> donors)
+    rather than compared donor by donor, so the cost is the size of the target's description, not of the
+    partition.
+    """
+
+    def __init__(self, donors: Sequence[CandidateAttributes], config: IdentityConfig) -> None:
+        profiles = [config.vocabulary.profile(donor.description) for donor in donors]
+        self.size = len(donors)
+        self.type_mask = np.array([p.type_mask for p in profiles], dtype=np.int64)
+        self.has_distinctive = np.array([bool(p.distinctive) for p in profiles], dtype=bool)
+        self.part_numbers = _postings([p.part_numbers for p in profiles])
+        self.distinctive = _postings([p.distinctive for p in profiles])
+        self.generic = _postings([p.generic for p in profiles])
+        self.signatures = _postings([(p.signature,) if p.signature else () for p in profiles])
+
+    def evaluate(
+        self,
+        target: DescriptionProfile,
+        same_group: np.ndarray,
+        text: np.ndarray,
+        text_known: np.ndarray,
+        config: IdentityConfig,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """``(passed, conflict)`` per donor. ``conflict`` implies not ``passed``."""
+        size = self.size
+        none = np.zeros(size, dtype=bool)
+
+        if target.signature:
+            # An identical description stands in for the text similarity the model would have given (1.0)
+            # when there is none -- the rule in oar.identity.assess.
+            identical = np.zeros(size, dtype=bool)
+            positions = self.signatures.get(target.signature)
+            if positions is not None:
+                identical[positions] = True
+            use_identical = identical & ~text_known
+            if use_identical.any():
+                text = np.where(use_identical, 1.0, text)
+                text_known = text_known | use_identical
+
+        if target.types:
+            type_match = (self.type_mask & target.compatible_mask) != 0
+            conflict = ((self.type_mask != 0) & ~type_match) if config.conflict_enabled else none
+        else:
+            type_match = none
+            conflict = none
+
+        part_number_match = np.zeros(size, dtype=bool)
+        for number in target.part_numbers:
+            positions = self.part_numbers.get(number)
+            if positions is not None:
+                part_number_match[positions] = True
+
+        shared_specific = np.zeros(size, dtype=bool)
+        for word in target.distinctive:
+            positions = self.distinctive.get(word)
+            if positions is not None:
+                shared_specific[positions] = True
+        shared_generic = np.zeros(size, dtype=bool)
+        for word in target.generic:
+            positions = self.generic.get(word)
+            if positions is not None:
+                shared_generic[positions] = True
+        generic_driven = (
+            (self.has_distinctive & ~shared_specific & shared_generic) if target.distinctive else none
+        )
+
+        group_floor = config.same_group_floor
+        if group_floor is None:
+            same_group_ok = np.ones(size, dtype=bool)
+        else:
+            text_ok = text_known & (text >= float(group_floor))
+            same_group_ok = np.where(
+                type_match, text_ok | shared_specific, text_ok & ~generic_driven
+            )
+        cross_floor = config.text_floor
+        if cross_floor is None:
+            cross_group_ok = np.ones(size, dtype=bool)
+        else:
+            cross_group_ok = text_known & (text >= float(cross_floor))
+
+        passed = ~conflict & (part_number_match | np.where(same_group, same_group_ok, cross_group_ok))
+        return passed, conflict
+
+
 class DonorIndex:
     """Eligible donors partitioned by criticality, with everything Stage A needs.
 
@@ -340,7 +459,21 @@ class DonorIndex:
         identity_evidence_features: tuple[str, ...],
         embeddings: dict[str, np.ndarray] | None,
         identity_text_floor: float | None = None,
+        identity: IdentityConfig | None = None,
     ) -> None:
+        # One donor per material-plant, the first kept. A duplicate would be eligible, shortlisted and
+        # scored twice -- and weigh twice in the estimate -- so it is dropped here and counted.
+        seen: set[tuple[str, str]] = set()
+        unique: list[CandidateAttributes] = []
+        for candidate in population:
+            key = (candidate.sap_material_number, candidate.sap_plant_code)
+            if key not in seen:
+                seen.add(key)
+                unique.append(candidate)
+        self.duplicates_dropped = len(population) - len(unique)
+        self.donor_count = len(unique)
+        population = unique
+        self.identity = identity
         self.profile = PopulationProfile(population, minimum_history_months)
         self.price_range = float(price_range) if price_range is not None and price_range > 0 else None
         self.weights = weights
@@ -413,6 +546,7 @@ class DonorIndex:
             index_by_key={
                 (d.sap_material_number, d.sap_plant_code): i for i, d in enumerate(donors)
             },
+            identity=DonorIdentity(donors, self.identity) if self.identity is not None else None,
         )
 
     def partition_for(self, target: CandidateAttributes) -> DonorPartition | None:
@@ -430,6 +564,11 @@ class DonorIndex:
             codes={f: self.vocabularies[f].lookup(getattr(target, f) or None) for f in _ENCODED},
             price=_ln_price(target.unit_price),
             vector=vector,
+            profile=(
+                self.identity.vocabulary.profile(target.description)
+                if self.identity is not None
+                else EMPTY_PROFILE
+            ),
         )
 
     # --- the pre-score --------------------------------------------------------
@@ -518,19 +657,30 @@ class DonorIndex:
             for feature in self.identity_evidence_features:
                 identity |= known_by_feature.get(feature, np.zeros(size, dtype=bool))
             evidence &= identity
-        if self.identity_text_floor is not None:
-            # Identity must MATCH (scoring.combine's rule): the same material group, or text at or
-            # above the floor. Compared-and-different no longer counts.
-            same_group = known_by_feature["material_group"] & (
-                partition.codes["material_group"] == target.codes["material_group"]
+        same_group = known_by_feature["material_group"] & (
+            partition.codes["material_group"] == target.codes["material_group"]
+        )
+        if self.identity is not None and partition.identity is not None:
+            # The identity stage (oar.identity), over the whole partition.
+            identity_pass, identity_conflict = partition.identity.evaluate(
+                target.profile, same_group, text, t_avail, self.identity
             )
-            evidence &= same_group | (t_avail & (text >= self.identity_text_floor))
+            evidence &= identity_pass
+        else:
+            if self.identity_text_floor is not None:
+                # The oar-similarity-8/9 rule (scoring.combine's): the same material group, or text at
+                # or above the floor. Compared-and-different does not count.
+                evidence &= same_group | (t_avail & (text >= self.identity_text_floor))
+            identity_pass = np.ones(size, dtype=bool)
+            identity_conflict = np.zeros(size, dtype=bool)
 
         return {
             "combined": combined,
             "struct_business": struct_business,
             "text": np.where(t_avail, text, np.nan),
             "evidence": evidence,
+            "identity_pass": identity_pass,
+            "identity_conflict": identity_conflict,
         }
 
     def shortlist(
@@ -575,17 +725,34 @@ class DonorIndex:
         low_evidence = int((~evidence).sum())
 
         size = len(partition)
+        structure_pool = text_pool = fused_pool = None
+        identity_conflicts = identity_insufficient = None
         if config.mode == "exhaustive" or size <= config.exhaustive_below:
             indices = np.arange(size)
             exhaustive = True
         else:
+            # A donor the identity stage refuses is invisible to every channel, not just to the one that
+            # would have ranked it last: it cannot take a slot, and cannot return by another route.
+            refused = ~scores["identity_pass"]
+            if refused.any():
+                for channel in (fused, struct_business, text):
+                    channel[refused] = np.nan
             picked = [
                 top_n(struct_business, config.structured_pool),
                 top_n(text, config.semantic_pool),
                 top_n(fused, config.fused_pool),
             ]
+            structure_pool, text_pool, fused_pool = (len(p) for p in picked)
             indices = np.unique(np.concatenate(picked)).astype(np.int64)
             exhaustive = False
+
+            not_candidates = conflicting.copy()
+            if self_index is not None:
+                not_candidates[self_index] = True
+            identity_conflicts = int((scores["identity_conflict"] & ~not_candidates).sum())
+            identity_insufficient = int(
+                (refused & ~scores["identity_conflict"] & ~not_candidates).sum()
+            )
 
         if self_index is not None:
             indices = indices[indices != self_index]
@@ -595,6 +762,11 @@ class DonorIndex:
             low_evidence=low_evidence,
             exhaustive=exhaustive,
             type_conflicts=int(conflicting.sum()),
+            structure_pool=structure_pool,
+            text_pool=text_pool,
+            fused_pool=fused_pool,
+            identity_conflicts=identity_conflicts,
+            identity_insufficient=identity_insufficient,
         )
 
 

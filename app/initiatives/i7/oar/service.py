@@ -34,6 +34,7 @@ from app.initiatives.i7.oar import (
     confidence as confidence_module,
     eligibility,
     estimate as estimate_module,
+    identity,
     ranking,
     repository,
     scoring,
@@ -57,7 +58,9 @@ from app.initiatives.i7.oar.types import (
     OarEstimate,
     OarResult,
     OarStatus,
+    RetrievalTally,
     SimilarityStatus,
+    StageCounts,
 )
 from app.initiatives.i7.policy import PolicyDocument
 from app.models.i7_oar import OarNeighbour, OarRun, OarTargetResult
@@ -90,6 +93,9 @@ class OarRunResult:
     scored_fraction: float = 0.0
     """Exact scores computed, as a share of eligible (target, donor) pairs.
     1.0 under exhaustive retrieval."""
+    stage_totals: dict[str, int] = field(default_factory=dict)
+    """Every ``StageCounts`` field summed over the run's targets, so how many candidates survived each step
+    of retrieval is on record for the run as well as for each target."""
 
 
 def _score_pair(
@@ -116,7 +122,13 @@ def _score_pair(
             missing=("description",),
         )
 
-    return scoring.combine(
+    same_group = bool(
+        target.material_group
+        and candidate.material_group
+        and target.material_group == candidate.material_group
+    )
+    validate_identity = policy.identity_validation
+    combined = scoring.combine(
         struct,
         text,
         business,
@@ -125,17 +137,25 @@ def _score_pair(
         Decimal(str(policy.business_weight)),
         minimum_evidence_features=policy.minimum_evidence_features,
         identity_evidence_features=tuple(policy.identity_evidence_features),
-        same_material_group=bool(
-            target.material_group
-            and candidate.material_group
-            and target.material_group == candidate.material_group
-        ),
+        same_material_group=same_group,
+        # With identity validation on, identity is its own stage below; the combine-time rule is the
+        # oar-similarity-8/9 one, kept only for the switch that turns validation off.
         identity_text_floor=(
             Decimal(str(policy.minimum_identity_text_similarity))
-            if policy.minimum_identity_text_similarity is not None
+            if policy.minimum_identity_text_similarity is not None and not validate_identity
             else None
         ),
     )
+    if not validate_identity:
+        return combined
+    verdict = identity.assess_descriptions(
+        target.description,
+        candidate.description,
+        same_material_group=same_group,
+        text_similarity=text.value if text.is_available else None,
+        config=identity.config_for(policy),
+    )
+    return scoring.with_identity(combined, verdict)
 
 
 OAR_TEMPORARY_CRITICALITY = Criticality.NORMAL
@@ -235,6 +255,7 @@ def finalise_target(
     shortlisted: int,
     retrieval: str,
     policy: PolicyDocument,
+    tally: RetrievalTally | None = None,
 ) -> OarResult:
     """Ranking, confidence and the weighted estimate for one target.
 
@@ -262,11 +283,56 @@ def finalise_target(
             low_evidence_candidates=0,
             shortlisted_candidates=0,
             retrieval=retrieval,
+            stage_counts=StageCounts(
+                donor_pool=population_size,
+                duplicates_dropped=tally.duplicates_dropped if tally else 0,
+                hard_filter_passes=0,
+                structure_shortlist=None,
+                text_shortlist=None,
+                fused_shortlist=None,
+                merged_candidates=0,
+                identity_conflicts=0,
+                identity_insufficient=0,
+                identity_passes=0,
+                score_floor_passes=0,
+                final_neighbours=0,
+            ),
         )
 
     minimum_similarity = Decimal(str(policy.similarity.minimum_similarity))
+    scored = ranking.unique_entries(scored)
     neighbours = ranking.select_top_k(
         scored, policy.similarity.maximum_neighbours, minimum_similarity=minimum_similarity
+    )
+    identity_passes, floor_passes, final = ranking.stage_tally(
+        scored, minimum_similarity, policy.similarity.maximum_neighbours
+    )
+    tally = tally or RetrievalTally()
+    scored_conflicts = sum(1 for e in scored if e[2].identity is not None and e[2].identity.conflict)
+    scored_insufficient = sum(
+        1
+        for e in scored
+        if e[2].identity is not None and not e[2].identity.passed and not e[2].identity.conflict
+    )
+    stage_counts = StageCounts(
+        donor_pool=population_size,
+        duplicates_dropped=tally.duplicates_dropped,
+        hard_filter_passes=eligible_count,
+        structure_shortlist=tally.structure_shortlist,
+        text_shortlist=tally.text_shortlist,
+        fused_shortlist=tally.fused_shortlist,
+        merged_candidates=len(scored),
+        identity_conflicts=(
+            tally.identity_conflicts if tally.identity_conflicts is not None else scored_conflicts
+        ),
+        identity_insufficient=(
+            tally.identity_insufficient
+            if tally.identity_insufficient is not None
+            else scored_insufficient
+        ),
+        identity_passes=identity_passes,
+        score_floor_passes=floor_passes,
+        final_neighbours=final,
     )
     grade = confidence_module.grade(
         neighbours,
@@ -280,6 +346,8 @@ def finalise_target(
         _oar_service_level_configured(policy),
         minimum_neighbours=policy.similarity.minimum_neighbours,
         minimum_similarity=minimum_similarity,
+        strategy=policy.similarity.estimator,
+        material_difference_ratio=Decimal(str(policy.similarity.estimator_material_difference_ratio)),
     )
     best = max(
         (n.score.combined for n in neighbours if n.score.combined is not None),
@@ -309,7 +377,31 @@ def finalise_target(
         low_evidence_candidates=low_evidence,
         shortlisted_candidates=shortlisted,
         retrieval=retrieval,
+        stage_counts=stage_counts,
+        rejected_candidates=ranking.rejected_sample(scored, minimum_similarity),
     )
+
+
+def dedupe_donors(
+    population: list[CandidateAttributes],
+) -> tuple[list[CandidateAttributes], int]:
+    """One donor per material-plant, the first occurrence kept, and how many were dropped.
+
+    A material-plant is the donor's identity. If a join upstream ever lists one twice, scoring it twice
+    would count it twice in the weighted estimate and again in the neighbour list, so it is dropped here
+    and the count is reported rather than hidden. A population with no duplicates is returned as it came.
+    """
+    seen: set[tuple[str, str]] = set()
+    unique: list[CandidateAttributes] = []
+    for candidate in population:
+        key = (candidate.sap_material_number, candidate.sap_plant_code)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    if len(unique) == len(population):
+        return population, 0
+    return unique, len(population) - len(unique)
 
 
 def evaluate_target(
@@ -326,6 +418,7 @@ def evaluate_target(
     two-stage engine (``oar.engine.evaluate_targets``) is tested against, and
     what ``I7_OAR_RETRIEVAL_MODE=exhaustive`` runs.
     """
+    candidate_population, duplicates = dedupe_donors(candidate_population)
     eligible, rejections = eligibility.filter_candidates(
         target, candidate_population, policy.similarity.minimum_neighbour_history_months
     )
@@ -351,6 +444,7 @@ def evaluate_target(
         shortlisted=len(eligible),
         retrieval="exhaustive",
         policy=policy,
+        tally=RetrievalTally(duplicates_dropped=duplicates),
     )
 
 
@@ -358,6 +452,22 @@ def _trace_text(trace: tuple[tuple[str, str], ...]) -> str | None:
     if not trace:
         return None
     return ";".join(f"{key}={value}" for key, value in trace)[:1000]
+
+
+def _rejection_summary(outcome: OarResult) -> str | None:
+    """``reason=count;...`` -- the eligibility rejections, then the identity stage's refusals.
+
+    Identity refusals are counted over the whole eligible pool, so a target whose neighbours were all
+    filters can still show that twelve spray nozzles and a proximity sensor were turned away.
+    """
+    parts = [f"{reason}={count}" for reason, count in outcome.rejection_counts]
+    counts = outcome.stage_counts
+    if counts is not None:
+        if counts.identity_conflicts:
+            parts.append(f"IDENTITY_COMPONENT_CONFLICT={counts.identity_conflicts}")
+        if counts.identity_insufficient:
+            parts.append(f"IDENTITY_INSUFFICIENT_EVIDENCE={counts.identity_insufficient}")
+    return ";".join(parts)[:500] or None
 
 
 def _target_row(run_id: int, outcome: OarResult) -> dict[str, Any]:
@@ -374,10 +484,7 @@ def _target_row(run_id: int, outcome: OarResult) -> dict[str, Any]:
         "eligible_candidates": outcome.eligible_candidates,
         "neighbour_count": len(outcome.neighbours),
         "best_similarity": outcome.best_similarity,
-        "rejection_summary": ";".join(
-            f"{reason}={count}" for reason, count in outcome.rejection_counts
-        )[:500]
-        or None,
+        "rejection_summary": _rejection_summary(outcome),
         "estimate_status": outcome.estimate.status.value,
         "estimate_label": (
             outcome.estimate.label if outcome.estimate.status.value == "SUCCESS" else None
@@ -631,6 +738,10 @@ def run_oar_similarity(
                 result.estimate_status_counts[outcome.estimate.status.value] = (
                     result.estimate_status_counts.get(outcome.estimate.status.value, 0) + 1
                 )
+                if outcome.stage_counts is not None:
+                    for name, value in outcome.stage_counts._asdict().items():
+                        if value is not None:
+                            result.stage_totals[name] = result.stage_totals.get(name, 0) + value
                 target_rows.append(_target_row(run_id, outcome))
                 neighbour_rows.extend(
                     _neighbour_row(run_id, outcome, neighbour) for neighbour in outcome.neighbours
@@ -673,6 +784,7 @@ def run_oar_similarity(
             result.confidence_counts,
             result.estimate_status_counts,
         )
+        logger.info("OAR run %d: candidates per stage, summed over targets: %s", run_id, result.stage_totals)
         return result
 
     except Exception as exc:

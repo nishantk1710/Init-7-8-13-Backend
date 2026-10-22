@@ -19,6 +19,7 @@ from typing import Any
 from app.initiatives.i7.contracts import Criticality
 from app.initiatives.i7.contracts.enums import ScopeDecision
 from app.initiatives.i7.inventory import service_level as service_level_module
+from app.initiatives.i7.oar import demand_check
 from app.initiatives.i7.recommendations import explanation
 from app.initiatives.i7.recommendations.conversion import evaluate as evaluate_conversion
 from app.initiatives.i7.recommendations.types import (
@@ -137,6 +138,30 @@ def _max_floor_entries(estimate_trace: str | None) -> list[tuple[str, str]]:
         if separator and key in _MAX_FLOOR_TRACE_KEYS:
             found[key] = value
     return [(key, found[key]) for key in _MAX_FLOOR_TRACE_KEYS if key in found]
+
+
+_ESTIMATOR_TRACE_SUFFIXES = ("_mean", "_median", "_material_difference")
+_ESTIMATOR_TRACE_FIELDS = ("safety_stock", "rop", "max_stock")
+
+
+def _estimator_entries(estimate_trace: str | None) -> list[tuple[str, str]]:
+    """The estimator's audit entries out of the stored estimate trace: which method produced the numbers,
+    and the mean and median of each parameter side by side, so an approver can see what an outlier donor
+    would have done. Empty for a result stored before they existed -- nothing is invented for it."""
+    if not estimate_trace:
+        return []
+    found: dict[str, str] = {}
+    for part in str(estimate_trace).split(";"):
+        key, separator, value = part.partition("=")
+        if separator:
+            found[key] = value
+    entries = [("estimator", found["estimator"])] if "estimator" in found else []
+    for field in _ESTIMATOR_TRACE_FIELDS:
+        for suffix in _ESTIMATOR_TRACE_SUFFIXES:
+            key = f"{field}{suffix}"
+            if key in found:
+                entries.append((key, found[key]))
+    return entries
 
 
 def _trace_from_row(row: Any, fields: tuple[tuple[str, str], ...]) -> list[tuple[str, str]]:
@@ -364,6 +389,14 @@ def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommend
             ]
         )
         trace.extend(_max_floor_entries(getattr(row, "estimate_trace", None)))
+        trace.extend(_estimator_entries(getattr(row, "estimate_trace", None)))
+        # A diagnostic against the target's own consumption. It flags; it never changes the status or a
+        # number, and it is not part of similarity or eligibility.
+        trace.extend(
+            demand_check.evaluate(
+                demand_check.DemandInputs.from_row(row), row.oar_rop, policy.demand_sanity
+            ).trace_entries()
+        )
 
     # This path is chosen by cold-start history, not by MRP type, so a row here
     # is not necessarily OAR -- conversion_for reads Stage 1's verdict.

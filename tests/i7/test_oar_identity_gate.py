@@ -24,11 +24,15 @@ from app.initiatives.i7.policy.thresholds import SimilarityPolicy
 NO_TEXT = PrecomputedEmbeddingProvider(None)
 
 
-def policy(floor: float | None = 0.50) -> PolicyDocument:
+def policy(floor: float | None = 0.50, *, validation: bool = True) -> PolicyDocument:
     return PolicyDocument(
         service_level=load_mock_service_level_policy(),
         max_stock=load_mock_max_stock_policy(),
-        similarity=SimilarityPolicy(minimum_identity_text_similarity=floor, minimum_similarity=0.30),
+        similarity=SimilarityPolicy(
+            minimum_identity_text_similarity=floor,
+            minimum_similarity=0.30,
+            identity_validation=validation,
+        ),
     )
 
 
@@ -63,10 +67,22 @@ def score(target, candidate, provider=WITH_TEXT, floor=0.50):
 # --- The rule, on the exact score --------------------------------------------
 
 
-def test_the_same_material_group_matches_whatever_the_text() -> None:
+def test_the_same_material_group_alone_is_not_identity() -> None:
+    """oar-similarity-10: the old rule passed this (same group, text 0.10). Group membership is not proof of
+    what a part is -- see tests/i7/test_oar_identity.py for the component-level cases."""
     result = score(part("T", group="G1", description="target"), part("C", group="G1", description="far"))
 
+    assert result.evidence_sufficient is False
+    assert result.identity.status.value == "INSUFFICIENT_GROUP_ONLY"
+    assert "no identity match" in result.evidence_detail
+    assert "0.10" in result.evidence_detail
+
+
+def test_the_same_material_group_with_enough_text_matches() -> None:
+    result = score(part("T", group="G1", description="target"), part("C", group="G1", description="close"))
+
     assert result.evidence_sufficient is True
+    assert result.identity.status.value == "CONFIRMED_GROUP_TEXT"
 
 
 def test_a_different_group_with_weak_text_is_not_a_match() -> None:
@@ -90,13 +106,33 @@ def test_the_text_floor_is_inclusive() -> None:
     assert result.evidence_sufficient is True
 
 
-def test_without_a_text_model_only_the_same_group_qualifies() -> None:
-    same = score(part("T", group="G1"), part("C", group="G1"), provider=NO_TEXT)
-    other = score(part("T", group="G1"), part("C", group="G2"), provider=NO_TEXT)
+def test_without_a_text_model_a_same_group_candidate_needs_a_shared_part_or_specific_wording() -> None:
+    """With no model the text route is closed. Same group alone no longer qualifies; the descriptions can
+    still prove identity themselves."""
+    bare = score(part("T", group="G1"), part("C", group="G1"), provider=NO_TEXT)
+    other_bearing = score(
+        part("T", group="G1", description="BEARING 6310"),
+        part("C", group="G1", description="BEARING 7000"),
+        provider=NO_TEXT,
+    )
+    shared_number = score(
+        part("T", group="G1", description="BEARING 6310-2RS"),
+        part("C", group="G1", description="DEEP GROOVE 6310-2RS"),
+        provider=NO_TEXT,
+    )
+    shared_wording = score(
+        part("T", group="G1", description="BEARING 6310"),
+        part("C", group="G1", description="BEARING 6310 SHIELDED"),
+        provider=NO_TEXT,
+    )
+    other_group = score(part("T", group="G1"), part("C", group="G2"), provider=NO_TEXT)
 
-    assert same.evidence_sufficient is True
-    assert other.evidence_sufficient is False
-    assert "no text comparison" in other.evidence_detail
+    assert bare.evidence_sufficient is False
+    assert other_bearing.evidence_sufficient is False  # the same type, but nothing specific in common
+    assert shared_number.identity.status.value == "CONFIRMED_PART_NUMBER"
+    assert shared_wording.identity.status.value == "CONFIRMED_GROUP_COMPONENT_TYPE"
+    assert other_group.evidence_sufficient is False
+    assert "no text comparison" in other_group.evidence_detail
 
 
 def test_the_rule_can_be_switched_off() -> None:
@@ -135,14 +171,17 @@ def test_the_same_candidates_were_neighbours_before_the_gate() -> None:
 
 def test_same_group_and_strongly_described_candidates_still_qualify() -> None:
     target = part("T", group="G1", description="target")
-    same_group = [part(f"S{i}", group="G1", description="far") for i in range(3)]
+    same_group = [part(f"S{i}", group="G1", description="close") for i in range(3)]
     described = [part(f"D{i}", group="G9", description="close") for i in range(2)]
     unrelated = [part(f"U{i}", group="G8", description="weak") for i in range(4)]
+    group_only = [part(f"G{i}", group="G1", description="far") for i in range(3)]
 
-    result = service.evaluate_target(target, same_group + described + unrelated, WITH_TEXT, Decimal(5), {}, policy())
+    result = service.evaluate_target(
+        target, same_group + described + unrelated + group_only, WITH_TEXT, Decimal(5), {}, policy()
+    )
 
     assert {n.material for n in result.neighbours} == {f"S{i}" for i in range(3)} | {f"D{i}" for i in range(2)}
-    assert result.low_evidence_candidates == 4
+    assert result.low_evidence_candidates == 7  # four weak other-group, three same-group-only
 
 
 # --- The two-stage retrieval agrees with the exact score ----------------------------

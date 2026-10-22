@@ -55,14 +55,25 @@ _OAR_SQL = """
            t.rop AS oar_rop, t.max_stock AS oar_max_stock,
            t.oar_run_id,
            f.current_safety_stock, f.current_reorder_point, f.current_maximum_stock,
-           f.unit_price
+           f.unit_price,
+           f.total_periods, f.total_demand, f.mean_demand_all_periods,
+           f.std_dev_demand_all_periods, f.lead_time_days, f.planned_delivery_time_days,
+           w.window_end
       FROM i7_material_feature f
       JOIN i7_oar_target t
         ON t.sap_material_number = f.sap_material_number
        AND t.sap_plant_code = f.sap_plant_code
        AND t.oar_run_id = :oar_run_id
+      LEFT JOIN (
+            SELECT feature_run_id, MAX(last_period) AS window_end
+              FROM i7_material_feature
+             GROUP BY feature_run_id
+           ) w
+        ON w.feature_run_id = f.feature_run_id
      WHERE f.oar_scope = 'IN_SCOPE'
 """
+# The last six columns feed the target-demand sanity check (oar.demand_check): the target's own consumption
+# and lead time, and the latest month the extract holds (the window's end -- the data's, not the system date's).
 # current_safety_stock / current_reorder_point / current_maximum_stock /
 # unit_price all read from the feature store (f.), not re-joined from
 # i7_staged_material_plant / i7_staged_material: Phase 3 already carried every

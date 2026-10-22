@@ -15,6 +15,8 @@ Relaxing them to make the data look better would change what "high confidence"
 means to an approver, which is a business decision and not ours.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.criticality import CriticalityTier
@@ -81,6 +83,22 @@ SIMILARITY_FEATURES = (
 ``app.initiatives.i7.oar.types.FEATURE_NAMES`` -- duplicated rather than
 imported because the OAR package imports this module, and a test pins the two
 together. Circuit is deliberately absent: there is no source for it."""
+
+
+class ComponentTypeSpec(BaseModel):
+    """One component type in the identity stage's vocabulary (``oar.identity``).
+
+    ``patterns`` are the whole words or phrases that name the type in a material description
+    ("SPRAY NOZZLE", "PROXIMITY SENSOR"). ``parent`` makes a more specific type compatible with the
+    general one it belongs to: a PROXIMITY SENSOR is a SENSOR, so a description that says only SENSOR
+    is not in conflict with one that says PROXIMITY SENSOR.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str = Field(min_length=1)
+    patterns: tuple[str, ...] = Field(min_length=1)
+    parent: str | None = None
 
 
 class SimilarityPolicy(BaseModel):
@@ -157,6 +175,51 @@ class SimilarityPolicy(BaseModel):
     closed and only the same-group route remains. ``None`` disables the rule (the pre-8 behaviour).
     0.50 is a first setting, to be checked against known good and bad matches."""
 
+    identity_validation: bool = True
+    """oar-similarity-10: identity is a stage of its own (``oar.identity``), run after scoring and before
+    ranking, instead of a side effect of ``scoring.combine``. A shared material group is no longer proof
+    of identity by itself, and two descriptions that name different component types are rejected. ``False``
+    restores the oar-similarity-8/9 rule (same group, or text at or above
+    ``minimum_identity_text_similarity``) exactly -- kept so a before/after comparison can be run on
+    the same inputs."""
+
+    same_group_minimum_text_similarity: float | None = Field(default=0.50, ge=0, le=1)
+    """A candidate accepted through the same-group route needs description evidence too: its text
+    similarity to the target at or above this value (or a shared part number, or a shared component type).
+    Material group 308175 holds filters, spray nozzles, proximity sensors and wrenches, so membership of
+    it says almost nothing about what a part is. 0.50 is the documented text baseline
+    (``minimum_identity_text_similarity``), deliberately NOT a newly tuned number: calibrating it needs
+    expert-reviewed pairs scored with the real embedding model (``oar.evaluation``). ``None`` drops the
+    requirement, so a same-group candidate passes on group alone (the oar-similarity-8/9 behaviour)."""
+
+    identity_component_conflict: bool = True
+    """Reject a candidate whose description names a component type incompatible with the target's. Only
+    types in the vocabulary count; a description that names none is *unknown*, never a conflict."""
+
+    identity_component_types: tuple[ComponentTypeSpec, ...] | None = None
+    """The component-type vocabulary. ``None`` uses ``oar.identity.DEFAULT_COMPONENT_TYPES``. Conservative
+    on purpose: only types a description names unmistakably, because every entry is a way to reject a
+    genuine equivalent."""
+
+    identity_context_phrases: tuple[str, ...] | None = None
+    """Phrases that name the equipment a part belongs to, not the part -- "FILTER PRESS" is a machine, so
+    its word FILTER must not read as the component type. ``None`` uses
+    ``oar.identity.DEFAULT_CONTEXT_PHRASES``."""
+
+    identity_generic_terms: tuple[str, ...] | None = None
+    """Words too common to show that two parts are alike (FILTER, ANDRITZ, ASSEMBLY, ...). Sharing only
+    these is not distinctive overlap. ``None`` uses ``oar.identity.DEFAULT_GENERIC_TERMS``."""
+
+    estimator: Literal["weighted_median", "weighted_mean"] = "weighted_median"
+    """How the donors' SAP values become one estimate. ``weighted_median`` (oar-similarity-10, the default)
+    takes the similarity-weighted median of each of safety stock, ROP and max stock, so one donor with an
+    extreme value cannot drag the result. ``weighted_mean`` is the earlier similarity-weighted average,
+    kept for comparison."""
+
+    estimator_material_difference_ratio: float = Field(default=0.25, ge=0)
+    """Diagnostic only: the robust and mean estimates are recorded side by side, and a difference of at
+    least this fraction of the mean is flagged in the audit trace. Changes no number and no decision."""
+
     @field_validator("identity_evidence_features")
     @classmethod
     def _known_features(cls, value: tuple[str, ...]) -> tuple[str, ...]:
@@ -209,6 +272,32 @@ class ConfidencePolicy(BaseModel):
         if self.oar_medium_minimum_neighbours > self.oar_high_minimum_neighbours:
             raise ValueError("MEDIUM neighbour threshold must not exceed HIGH")
         return self
+
+
+class DemandSanityPolicy(BaseModel):
+    """Diagnostic -- is a proposed OAR ROP plausible against the target's own consumption?
+
+    A flag, never a gate: it changes no recommendation status and no number, and it is kept apart from
+    similarity scoring and donor eligibility (``oar.demand_check``). The defaults are first settings for
+    a diagnostic, not calibrated business thresholds.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = True
+
+    window_months: int = Field(default=12, ge=1)
+    """Observation window, ending at the latest month the source data holds (never the system date). A
+    target with fewer observed months than this has an *incomplete* window: reported as insufficient
+    data, not read as low or zero consumption."""
+
+    service_z: float = Field(default=1.645, gt=0)
+    """One-sided 95% normal quantile. The plausible requirement over the lead time is
+    ``mean x LT + z x sigma x sqrt(LT)``, with the monthly mean and deviation over the window."""
+
+    high_multiple: float = Field(default=2.0, ge=1)
+    """A proposed ROP is flagged when it exceeds this multiple of that requirement. A ROP above
+    annual consumption is NOT by itself a flag."""
 
 
 class LeadTimePolicy(BaseModel):
