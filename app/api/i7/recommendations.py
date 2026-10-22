@@ -318,25 +318,43 @@ def _display_fields_for(session: Session, materials: set[str]) -> dict[str, tupl
     snapshotted onto every recommendation -- that would be right for
     ``unit_price``, where the value in force at generation time is itself the
     fact being recorded, but a description has no such property. The currency
-    travels with the price SAP gave (MBEW WAERS, staged alongside the unit
-    price), so it is read from the same place rather than stored a second time.
+    travels with the price SAP gave (WAERS, staged alongside the unit price on
+    ``i7_staged_material_plant``), so it is read from the same place rather than
+    stored a second time. A price is a plant's, so a material's currency is
+    shown only when every plant that states one agrees.
 
-    Both live on the same ``i7_staged_material`` row, so they are fetched
-    together: one ``IN`` over the page's materials, never a lookup per row and
-    never one query per field. A 200-row page costs one extra query rather than
-    200. A material absent from staging, or carrying no value for a field, maps
-    to ``None`` -- never to a placeholder derived from the material number.
+    Two ``IN`` queries over the page's materials, never a lookup per row and
+    never one query per field. A 200-row page costs two extra queries rather
+    than 200. A material absent from staging, or carrying no value for a field,
+    maps to ``None`` -- never to a placeholder derived from the material number.
     """
     if not materials:
         return {}
     rows = session.execute(
-        select(
-            StagedMaterial.sap_material_number,
-            StagedMaterial.description,
-            StagedMaterial.currency,
-        ).where(StagedMaterial.sap_material_number.in_(materials))
+        select(StagedMaterial.sap_material_number, StagedMaterial.description).where(
+            StagedMaterial.sap_material_number.in_(materials)
+        )
     ).all()
-    return {material: (description, currency) for material, description, currency in rows}
+    # The currency belongs to the plant's price (StagedMaterialPlant), not the material: it is
+    # shown only when every plant that states one agrees, never the first one found.
+    currencies: dict[str, set[str]] = {}
+    for material, currency in session.execute(
+        select(StagedMaterialPlant.sap_material_number, StagedMaterialPlant.currency)
+        .where(
+            StagedMaterialPlant.sap_material_number.in_(materials),
+            StagedMaterialPlant.currency.is_not(None),
+            StagedMaterialPlant.unit_price.is_not(None),
+        )
+        .distinct()
+    ).all():
+        currencies.setdefault(material, set()).add(currency)
+    return {
+        material: (
+            description,
+            next(iter(currencies[material])) if len(currencies.get(material, ())) == 1 else None,
+        )
+        for material, description in rows
+    }
 
 
 def _current_sap_stock_for(
@@ -397,8 +415,8 @@ def _portfolio_currency(session: Session) -> str | None:
     reports none rather than the first one found.
     """
     found = session.execute(
-        select(StagedMaterial.currency)
-        .where(StagedMaterial.currency.is_not(None), StagedMaterial.unit_price.is_not(None))
+        select(StagedMaterialPlant.currency)
+        .where(StagedMaterialPlant.currency.is_not(None), StagedMaterialPlant.unit_price.is_not(None))
         .distinct()
         .limit(2)
     ).scalars().all()

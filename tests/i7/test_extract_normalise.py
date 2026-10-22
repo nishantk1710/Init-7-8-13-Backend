@@ -27,6 +27,7 @@ from app.initiatives.i7.adapters.extract import (
 )
 from app.initiatives.i7.adapters.field_map import CREDIT_INDICATOR, DEBIT_INDICATOR
 from app.initiatives.i7.adapters.validation import RejectionReason, parse_flag
+from app.shared.valuation_price import PriceMissing, Valuation, choose_unit_price
 
 ISSUES = frozenset({"201", "261"})
 REVERSALS = frozenset({"202", "262"})
@@ -229,7 +230,9 @@ class TestMaterialPlantStagingAppliesTheOdataConversion:
     live records: the conversion has to run *before* values.update() overlays the
     raw OData row onto the n_marc-sourced one, or parse_flag() never sees it."""
 
-    def _staged_rows(self, monkeypatch, marc_rows, odata_present, odata_rows):
+    def _staged_rows(
+        self, monkeypatch, marc_rows, odata_present, odata_rows, valuations=None, rejections=None, policy=None
+    ):
         """Runs _stage_material_plants's row-building logic and returns what it
         would have upserted. n_marc is a real SQLite table (so rows have the
         ._mapping the function needs); only _marc_gaps/_odata_mrp_fields/_upsert
@@ -268,9 +271,15 @@ class TestMaterialPlantStagingAppliesTheOdataConversion:
         captured: list[dict] = []
         monkeypatch.setattr(extract, "_upsert", lambda session, model, rows, conflict: captured.extend(rows))
         monkeypatch.setattr(extract, "_safe_batch_size", lambda model, requested, session=None: 5000)
+        monkeypatch.setattr(
+            extract, "_valuations_by_plant", lambda session, scope=frozenset(): valuations or {}
+        )
 
         extract._stage_material_plants(
-            session=session, run_id=1, policy=ExtractIngestionPolicy(), rejections=_Rejections(1)
+            session=session,
+            run_id=1,
+            policy=policy or ExtractIngestionPolicy(),
+            rejections=rejections or _Rejections(1),
         )
         return {(r["sap_material_number"], r["sap_plant_code"]): r for r in captured}
 
@@ -351,7 +360,11 @@ class TestMaterialPlantStagingAppliesTheOdataConversion:
         assert staged[("11251014", "1300")]["mrp_controller"] == "K01"
 
 
-# --- Unit price and currency from the OData valuation set ---------------------
+# --- Unit price: one plant, one price ------------------------------------------
+#
+# The price rule itself is tested in tests/test_valuation_price.py. These prove the staging
+# adapter feeds it the right rows -- per plant, PEINH applied, currency validated -- and records
+# the outcome: the price, or the named reason there is none, counted so it can be reviewed.
 
 
 def _valuation_session(rows: str) -> Session:
@@ -364,44 +377,388 @@ def _valuation_session(rows: str) -> Session:
     return Session(engine)
 
 
-class TestOdataPrices:
-    def test_price_is_verpr_per_price_unit_in_the_stated_currency(self) -> None:
+def _mbew_session(rows: list[tuple]) -> Session:
+    """n_mbew as the normalise view presents it: (material, plant, bwtar, verpr, peinh)."""
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE n_mbew (material TEXT, valuation_area TEXT, valuation_type TEXT, "
+            "moving_price TEXT, price_unit TEXT)"
+        ))
+        for material, plant, bwtar, verpr, peinh in rows:
+            connection.execute(
+                text("INSERT INTO n_mbew VALUES (:m, :k, :t, :v, :p)"),
+                {"m": material, "k": plant, "t": bwtar, "v": verpr, "p": peinh},
+            )
+    return Session(engine)
+
+
+MBEW_COLUMNS = ["MATNR", "BWKEY", "BWTAR", "VERPR", "PEINH"]
+
+
+class TestValuationRow:
+    def test_the_price_is_verpr_per_price_unit(self) -> None:
+        row = extract._valuation_row(None, "250.00", "10", peinh_present=True, currency="ZAR", currency_present=True)
+
+        assert row.price == Decimal("25.0000")
+        assert row.currency == "ZAR"
+        assert row.problem is None
+
+    def test_a_price_per_three_units_is_rounded_to_the_column_scale(self) -> None:
+        row = extract._valuation_row(None, "100", "3", peinh_present=True)
+
+        assert row.price == Decimal("33.3333")
+
+    @pytest.mark.parametrize("peinh", ["0", "", "-5", "abc"])
+    def test_a_present_but_unusable_price_unit_is_refused_not_assumed_to_be_one(self, peinh: str) -> None:
+        row = extract._valuation_row(None, "10.00", peinh, peinh_present=True)
+
+        assert row.price is None
+        assert row.problem is PriceMissing.BAD_PRICE_UNIT
+
+    def test_an_absent_price_unit_column_means_one_unit(self) -> None:
+        row = extract._valuation_row(None, "10.00", None, peinh_present=False)
+
+        assert row.price == Decimal("10.0000")
+
+    @pytest.mark.parametrize("verpr", ["", None, "n/a"])
+    def test_an_unreadable_price_is_named(self, verpr) -> None:
+        row = extract._valuation_row(None, verpr, "1", peinh_present=True)
+
+        assert row.price is None
+        assert row.problem is PriceMissing.UNREADABLE_PRICE
+
+    def test_a_blank_currency_is_a_defect_only_when_the_source_has_a_currency_column(self) -> None:
+        stated = extract._valuation_row(None, "10", "1", peinh_present=True, currency="", currency_present=True)
+        absent = extract._valuation_row(None, "10", "1", peinh_present=True, currency=None, currency_present=False)
+
+        assert stated.problem is PriceMissing.MISSING_CURRENCY and stated.price is None
+        assert absent.problem is None and absent.price == Decimal("10.0000") and absent.currency is None
+
+    def test_the_valuation_type_is_trimmed_and_upper_cased(self) -> None:
+        assert extract._valuation_row(" new ", "10", "1", peinh_present=True).valuation_type == "NEW"
+        assert extract._valuation_row("", "10", "1", peinh_present=True).valuation_type is None
+
+
+class TestOdataValuations:
+    def test_price_is_verpr_per_price_unit_in_the_stated_currency_at_its_plant(self) -> None:
         with _valuation_session("('000000000022271519', '1500', '250.00', '10', 'ZAR')") as session:
-            prices = extract._odata_prices(session, _Rejections(1))
+            valuations = extract._odata_valuations(session)
 
-        assert prices == {"22271519": (Decimal("25.00"), "ZAR")}
+        [row] = valuations[("22271519", "1500")]
+        assert (row.price, row.currency, row.problem) == (Decimal("25.0000"), "ZAR", None)
 
-    def test_the_highest_valuation_area_wins_and_keeps_its_own_currency(self) -> None:
+    def test_each_plant_keeps_its_own_price_and_currency_nothing_is_the_highest(self) -> None:
         rows = "('000000000011251001', '1300', '10.00', '1', 'ZAR'), ('000000000011251001', '3000', '12.50', '1', 'NAD')"
         with _valuation_session(rows) as session:
-            prices = extract._odata_prices(session, _Rejections(1))
+            valuations = extract._odata_valuations(session)
 
-        assert prices["11251001"] == (Decimal("12.50"), "NAD")
+        assert valuations[("11251001", "1300")][0].price == Decimal("10.0000")
+        assert valuations[("11251001", "1300")][0].currency == "ZAR"
+        assert valuations[("11251001", "3000")][0].price == Decimal("12.5000")
+        assert valuations[("11251001", "3000")][0].currency == "NAD"
 
-    def test_a_zero_price_unit_is_rejected_not_assumed_to_be_one(self) -> None:
-        rejections = _Rejections(1)
+    def test_a_zero_price_unit_is_kept_as_a_named_problem_not_dropped(self) -> None:
         with _valuation_session("('000000000011251001', '1300', '10.00', '0', 'ZAR')") as session:
-            prices = extract._odata_prices(session, rejections)
+            valuations = extract._odata_valuations(session)
 
-        assert prices == {}
-        assert rejections.counts == {RejectionReason.INVALID_QUANTITY: 1}
+        [row] = valuations[("11251001", "1300")]
+        assert row.price is None
+        assert row.problem is PriceMissing.BAD_PRICE_UNIT
 
-    def test_no_currency_from_sap_means_none_not_a_guess(self) -> None:
+    def test_a_blank_currency_is_rejected_not_staged_with_a_guess(self) -> None:
         with _valuation_session("('000000000011251001', '1300', '10.00', '1', '')") as session:
-            prices = extract._odata_prices(session, _Rejections(1))
+            valuations = extract._odata_valuations(session)
 
-        assert prices["11251001"] == (Decimal("10.00"), None)
+        [row] = valuations[("11251001", "1300")]
+        assert row.price is None
+        assert row.problem is PriceMissing.MISSING_CURRENCY
+
+    def test_a_plant_outside_the_scope_is_not_read(self) -> None:
+        rows = "('000000000011251001', '1300', '10.00', '1', 'ZAR'), ('000000000011251001', '3000', '12.50', '1', 'NAD')"
+        with _valuation_session(rows) as session:
+            valuations = extract._odata_valuations(session, frozenset({"1300"}))
+
+        assert set(valuations) == {("11251001", "1300")}
+
+    def test_the_valuation_type_is_read_when_the_set_carries_it(self) -> None:
+        engine = create_engine("sqlite://")
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE odata_material_valuation "
+                "(Matnr TEXT, Bwkey TEXT, Bwtar TEXT, Verpr TEXT, Peinh TEXT, Waers TEXT)"
+            ))
+            connection.execute(text(
+                "INSERT INTO odata_material_valuation VALUES "
+                "('8000000001', '1300', 'NEW', '900.00', '1', 'ZAR'), "
+                "('8000000001', '1300', 'REFURBISHD', '300.00', '1', 'ZAR')"
+            ))
+        with Session(engine) as session:
+            valuations = extract._odata_valuations(session)
+
+        assert {r.valuation_type for r in valuations[("8000000001", "1300")]} == {"NEW", "REFURBISHD"}
+
+    def test_a_set_with_no_valuation_area_cannot_place_a_price_so_stages_none(self) -> None:
+        engine = create_engine("sqlite://")
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE odata_material_valuation (Matnr TEXT, Verpr TEXT)"))
+            connection.execute(text("INSERT INTO odata_material_valuation VALUES ('1', '10.00')"))
+        with Session(engine) as session:
+            assert extract._odata_valuations(session) == {}
 
     def test_no_valuation_table_means_no_price_not_an_error(self) -> None:
         with Session(create_engine("sqlite://")) as session:
-            assert extract._odata_prices(session, _Rejections(1)) == {}
+            assert extract._odata_valuations(session) == {}
 
-    def test_the_live_csv_mbew_sends_the_price_to_odata(self, monkeypatch) -> None:
+    def test_the_live_csv_mbew_without_a_price_sends_the_read_to_odata(self, monkeypatch) -> None:
         live_mbew = ["MANDT", "MATNR", "BWKEY", "BWTAR", "LVORM", "column_6", "BWPRS"]
+        sentinel = {("x", "1300"): []}
         monkeypatch.setattr(extract, "_columns", lambda session, table: live_mbew)
-        monkeypatch.setattr(extract, "_odata_prices", lambda session, rejections: {"x": (Decimal(1), "ZAR")})
+        monkeypatch.setattr(extract, "_odata_valuations", lambda session, scope=frozenset(): sentinel)
 
-        assert extract._price_by_material(session=None, rejections=_Rejections(1)) == {"x": (Decimal(1), "ZAR")}
+        assert extract._valuations_by_plant(session=None) is sentinel
+
+
+class TestMbewValuations:
+    def test_sodium_cyanide_each_plant_reads_its_own_price_not_the_dormant_plants(self, monkeypatch) -> None:
+        """Material 1000000053 as the live MBEW holds it. Staged per material, the highest
+        price (7,689.26 from plants 1100 and 1200) went to every plant: ~500x too high."""
+        monkeypatch.setattr(extract, "_columns", lambda session, table: MBEW_COLUMNS)
+        rows = [
+            ("1000000053", "1500", "", "15.45", "1"),
+            ("1000000053", "1300", "", "14.58", "1"),
+            ("1000000053", "1200", "", "7,689.26", "1"),
+            ("1000000053", "1100", "", "7,689.26", "1"),
+        ]
+        with _mbew_session(rows) as session:
+            # The view hands over plain numbers: "7,689.26" is the raw text, the view's is "7689.26".
+            session.execute(text("UPDATE n_mbew SET moving_price = '7689.26' WHERE moving_price = '7,689.26'"))
+            valuations = extract._valuations_by_plant(session)
+
+        assert choose_unit_price(valuations[("1000000053", "1500")]).price == Decimal("15.4500")
+        assert choose_unit_price(valuations[("1000000053", "1300")]).price == Decimal("14.5800")
+        assert choose_unit_price(valuations.get(("1000000053", "3000"), [])).missing is PriceMissing.NOT_IN_MBEW
+
+    def test_split_valuation_rows_stay_together_with_their_types(self, monkeypatch) -> None:
+        monkeypatch.setattr(extract, "_columns", lambda session, table: MBEW_COLUMNS)
+        rows = [
+            ("8000000001", "1300", "", "34840.62", "1"),
+            ("8000000001", "1300", "NEW", "38122.00", "1"),
+            ("8000000001", "1300", "REFURBISHD", "34840.62", "1"),
+        ]
+        with _mbew_session(rows) as session:
+            valuations = extract._valuations_by_plant(session)
+
+        choice = choose_unit_price(valuations[("8000000001", "1300")])
+        assert choice.price == Decimal("38122.0000")
+        assert choice.valuation_type == "NEW"
+
+    def test_the_price_unit_is_applied_on_this_path_too(self, monkeypatch) -> None:
+        monkeypatch.setattr(extract, "_columns", lambda session, table: MBEW_COLUMNS)
+        with _mbew_session([("5000000001", "1300", "", "250.00", "10")]) as session:
+            valuations = extract._valuations_by_plant(session)
+
+        assert choose_unit_price(valuations[("5000000001", "1300")]).price == Decimal("25.0000")
+
+    def test_a_blank_price_unit_is_refused_when_the_column_exists(self, monkeypatch) -> None:
+        monkeypatch.setattr(extract, "_columns", lambda session, table: MBEW_COLUMNS)
+        with _mbew_session([("5000000001", "1300", "", "250.00", "")]) as session:
+            valuations = extract._valuations_by_plant(session)
+
+        assert choose_unit_price(valuations[("5000000001", "1300")]).missing is PriceMissing.BAD_PRICE_UNIT
+
+    def test_a_delivery_without_a_price_unit_column_means_one_unit(self, monkeypatch) -> None:
+        monkeypatch.setattr(extract, "_columns", lambda session, table: ["MATNR", "BWKEY", "BWTAR", "VERPR"])
+        with _mbew_session([("5000000001", "1300", "", "250.00", None)]) as session:
+            valuations = extract._valuations_by_plant(session)
+
+        assert choose_unit_price(valuations[("5000000001", "1300")]).price == Decimal("250.0000")
+
+    def test_a_plant_outside_the_scope_is_not_read(self, monkeypatch) -> None:
+        monkeypatch.setattr(extract, "_columns", lambda session, table: MBEW_COLUMNS)
+        rows = [("5000000001", "1300", "", "10.00", "1"), ("5000000001", "1100", "", "99.00", "1")]
+        with _mbew_session(rows) as session:
+            valuations = extract._valuations_by_plant(session, frozenset({"1300"}))
+
+        assert set(valuations) == {("5000000001", "1300")}
+
+    def test_the_csv_mbew_states_no_currency_and_that_is_not_an_error(self, monkeypatch) -> None:
+        monkeypatch.setattr(extract, "_columns", lambda session, table: MBEW_COLUMNS)
+        with _mbew_session([("5000000001", "1300", "", "10.00", "1")]) as session:
+            valuations = extract._valuations_by_plant(session)
+
+        choice = choose_unit_price(valuations[("5000000001", "1300")])
+        assert choice.price == Decimal("10.0000")
+        assert choice.currency is None
+        assert choice.missing is None
+
+
+def _marc(material: str, plant: str, lvorm: str | None = None) -> dict:
+    return {"material": material, "plant": plant, "mrp_type": "PD", "planned_deliv_time": "14",
+            "reorder_point": "10", "maximum_stock_level": "20", "df_at_plant_level": lvorm}
+
+
+class TestPlantUnitPriceStaging:
+    """What _stage_material_plants writes: the plant's price, or the reason there is none."""
+
+    def _stage(self, monkeypatch, marc_rows, valuations, policy=None):
+        rejections = _Rejections(1)
+        helper = TestMaterialPlantStagingAppliesTheOdataConversion()
+        staged = helper._staged_rows(
+            monkeypatch, marc_rows, odata_present=True, odata_rows=[],
+            valuations=valuations, rejections=rejections, policy=policy,
+        )
+        return staged, rejections
+
+    def test_the_plants_price_valuation_type_and_currency_reach_the_staged_row(self, monkeypatch) -> None:
+        valuations = {("8000000001", "1300"): [
+            Valuation(None, Decimal("34840.62")),
+            Valuation("NEW", Decimal("38122.00"), currency="ZAR"),
+            Valuation("REFURBISHD", Decimal("34840.62")),
+        ]}
+
+        staged, rejections = self._stage(monkeypatch, [_marc("8000000001", "1300")], valuations)
+        row = staged[("8000000001", "1300")]
+
+        assert row["unit_price"] == Decimal("38122.00")
+        assert row["currency"] == "ZAR"
+        assert row["price_valuation_type"] == "NEW"
+        assert row["price_missing_reason"] is None
+        assert rejections.counts == {}
+
+    def test_two_plants_of_one_material_stage_two_different_prices(self, monkeypatch) -> None:
+        """The cyanide case end to end: not 7,689.26 at both, each plant its own."""
+        valuations = {
+            ("1000000053", "1500"): [Valuation(None, Decimal("15.45"))],
+            ("1000000053", "1300"): [Valuation(None, Decimal("14.58"))],
+            ("1000000053", "1200"): [Valuation(None, Decimal("7689.26"))],
+        }
+
+        staged, _ = self._stage(
+            monkeypatch, [_marc("1000000053", "1500"), _marc("1000000053", "1300")], valuations
+        )
+
+        assert staged[("1000000053", "1500")]["unit_price"] == Decimal("15.45")
+        assert staged[("1000000053", "1300")]["unit_price"] == Decimal("14.58")
+
+    def test_a_placeholder_price_stages_none_with_the_reason_and_is_counted(self, monkeypatch) -> None:
+        valuations = {("8000000002", "1300"): [Valuation("NEW", Decimal("0.01"))]}
+
+        staged, rejections = self._stage(monkeypatch, [_marc("8000000002", "1300")], valuations)
+        row = staged[("8000000002", "1300")]
+
+        assert row["unit_price"] is None
+        assert row["price_missing_reason"] == PriceMissing.TOKEN_VALUE.value
+        assert rejections.counts == {PriceMissing.TOKEN_VALUE.value: 1}
+
+    def test_a_material_plant_with_no_valuation_row_is_counted_not_priced_from_another_plant(self, monkeypatch) -> None:
+        valuations = {("5000000003", "1500"): [Valuation(None, Decimal("200.00"))]}
+
+        staged, rejections = self._stage(monkeypatch, [_marc("5000000003", "1300")], valuations)
+        row = staged[("5000000003", "1300")]
+
+        assert row["unit_price"] is None
+        assert row["price_missing_reason"] == PriceMissing.NOT_IN_MBEW.value
+        assert rejections.counts == {PriceMissing.NOT_IN_MBEW.value: 1}
+
+    def test_a_material_plant_flagged_for_deletion_is_not_priced(self, monkeypatch) -> None:
+        valuations = {("5000000004", "1300"): [Valuation(None, Decimal("200.00"))]}
+
+        staged, rejections = self._stage(monkeypatch, [_marc("5000000004", "1300", lvorm="X")], valuations)
+        row = staged[("5000000004", "1300")]
+
+        assert row["deletion_flag"] is True
+        assert row["unit_price"] is None
+        assert row["price_missing_reason"] == PriceMissing.DELETED_MATERIAL_PLANT.value
+        assert rejections.counts == {PriceMissing.DELETED_MATERIAL_PLANT.value: 1}
+
+    def test_split_valuated_with_only_condition_rows_has_no_price(self, monkeypatch) -> None:
+        valuations = {("8000000005", "1300"): [
+            Valuation(None, Decimal("5000.00")), Valuation("DAMAGED", Decimal("100.00")),
+        ]}
+
+        staged, rejections = self._stage(monkeypatch, [_marc("8000000005", "1300")], valuations)
+
+        assert staged[("8000000005", "1300")]["price_missing_reason"] == PriceMissing.NO_NEW_VALUATION.value
+        assert rejections.counts == {PriceMissing.NO_NEW_VALUATION.value: 1}
+
+    def test_the_affected_count_is_visible_by_reason(self, monkeypatch) -> None:
+        """What a reviewer reads after a run: how many material-plants have no price, and why."""
+        marc = [_marc(f"80000000{n:02d}", "1300") for n in range(1, 8)]
+        valuations = {
+            ("8000000001", "1300"): [Valuation("NEW", Decimal("900.00"))],            # priced
+            ("8000000002", "1300"): [Valuation("NEW", Decimal("0.01"))],              # placeholder
+            ("8000000003", "1300"): [Valuation("NEW", Decimal("1.00"))],              # placeholder
+            ("8000000004", "1300"): [Valuation("SCRAP", Decimal("50.00"))],           # no NEW
+            ("8000000005", "1300"): [Valuation(None, None, problem=PriceMissing.BAD_PRICE_UNIT)],
+            # 06 and 07 have no row at all
+        }
+
+        staged, rejections = self._stage(monkeypatch, marc, valuations)
+
+        assert rejections.counts == {
+            PriceMissing.TOKEN_VALUE.value: 2,
+            PriceMissing.NO_NEW_VALUATION.value: 1,
+            PriceMissing.BAD_PRICE_UNIT.value: 1,
+            PriceMissing.NOT_IN_MBEW.value: 2,
+        }
+        assert sum(1 for r in staged.values() if r["unit_price"] is not None) == 1
+
+    def test_the_placeholder_floor_comes_from_the_policy(self, monkeypatch) -> None:
+        from app.initiatives.i7.adapters.ingestion_policy import ExtractIngestionPolicy
+
+        valuations = {("5000000006", "1300"): [Valuation(None, Decimal("5.00"))]}
+
+        default, _ = self._stage(monkeypatch, [_marc("5000000006", "1300")], valuations)
+        raised, _ = self._stage(
+            monkeypatch, [_marc("5000000006", "1300")], valuations,
+            policy=ExtractIngestionPolicy(price_token_max=Decimal("10")),
+        )
+
+        assert default[("5000000006", "1300")]["unit_price"] == Decimal("5.00")
+        assert raised[("5000000006", "1300")]["unit_price"] is None
+
+    def test_the_staged_price_is_never_the_highest_across_plants(self, monkeypatch) -> None:
+        valuations = {
+            ("1000000099", "1300"): [Valuation(None, Decimal("20.00"))],
+            ("1000000099", "3000"): [Valuation(None, Decimal("20000.00"))],
+        }
+
+        staged, _ = self._stage(monkeypatch, [_marc("1000000099", "1300")], valuations)
+
+        assert staged[("1000000099", "1300")]["unit_price"] == Decimal("20.00")
+
+
+class TestPlantPriceReachesTheContract:
+    def test_the_attributes_carry_the_plant_price_not_the_retired_material_price(self) -> None:
+        from app.initiatives.i7.adapters.repository import _build_attributes
+        from app.models.i7_staging import StagedMaterial, StagedMaterialPlant
+
+        plant_row = StagedMaterialPlant(
+            sap_material_number="1000000053", sap_plant_code="1300", mrp_type="PD",
+            unit_price=Decimal("14.58"), currency="ZAR", deletion_flag=False,
+        )
+        material_row = StagedMaterial(
+            sap_material_number="1000000053", description="Sodium cyanide",
+            unit_price=Decimal("7689.26"), currency="XXX",  # the retired cross-plant price
+        )
+
+        attributes = _build_attributes(plant_row, material_row)
+
+        assert attributes.unit_price == Decimal("14.58")
+        assert attributes.currency == "ZAR"
+
+    def test_a_plant_with_no_price_has_none_even_if_the_retired_column_holds_one(self) -> None:
+        from app.initiatives.i7.adapters.repository import _build_attributes
+        from app.models.i7_staging import StagedMaterial, StagedMaterialPlant
+
+        plant_row = StagedMaterialPlant(
+            sap_material_number="1000000053", sap_plant_code="1300", mrp_type="PD", unit_price=None,
+            deletion_flag=False,
+        )
+        material_row = StagedMaterial(sap_material_number="1000000053", unit_price=Decimal("7689.26"))
+
+        assert _build_attributes(plant_row, material_row).unit_price is None
 
 
 class TestPlantScope:

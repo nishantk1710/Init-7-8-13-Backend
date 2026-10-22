@@ -12,7 +12,11 @@ but carries ``confirmed = False``, and the staging run records which set it used
 so a later correction can be scoped exactly.
 """
 
+from decimal import Decimal
+
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.shared.valuation_price import DEFAULT_TOKEN_MAX
 
 
 class ConsumptionMovementPolicy(BaseModel):
@@ -87,6 +91,14 @@ class ExtractIngestionPolicy(BaseModel):
     def plant_scope(self) -> frozenset[str]:
         """``plants`` as a set, for membership tests. Empty means no filter."""
         return frozenset(p.strip() for p in self.plants if p.strip())
+
+    price_token_max: Decimal = Field(default=DEFAULT_TOKEN_MAX, ge=0)
+    """A valuation price at or below this is a placeholder, not a price, and the material-plant
+    stages with no unit price and the reason ``price_token_value``. ``1.00`` by default: SAP keeps
+    0.01 and 1.00 on rows that are not really valued. Set from ``I7_PRICE_TOKEN_MAX``
+    (app.core.config). It is a floor on what counts as a price, in the currency of the rows --
+    raising it trades genuinely cheap items for fewer placeholder prices, so it is a business
+    choice made in one visible place."""
 
     batch_size: int = Field(default=5000, ge=1)
     """Rows per insert batch. The raw tables hold 3.4M rows; streaming in

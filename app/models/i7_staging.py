@@ -153,6 +153,11 @@ class StagedMaterial(Base):
 
     unit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    """RETIRED -- ``unit_price`` and ``currency`` here were one price per material, the highest
+    across plants, which is wrong whenever plants value a material differently (sodium cyanide:
+    7,689.26 taken from two dormant plants against 14.58 and 15.45 where it is used). Staging
+    now writes both NULL; the price lives on ``StagedMaterialPlant``. Kept as columns, not
+    dropped, so the change is one reversible step."""
 
     source_table: Mapped[str] = mapped_column(String(64))
     staging_run_id: Mapped[int] = mapped_column(Integer, index=True)
@@ -188,6 +193,26 @@ class StagedMaterialPlant(Base):
     current_maximum_stock: Mapped[Decimal | None] = mapped_column(QUANTITY, nullable=True)
 
     deletion_flag: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    """THIS plant's replacement price (MBEW VERPR / PEINH), read from this plant's own
+    valuation rows -- never another plant's and never the highest found. NULL means no
+    usable price, and ``price_missing_reason`` says which of the named reasons. Read by the
+    feature store; ``i7_staged_material.unit_price`` is retired."""
+
+    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    """The currency SAP stated for ``unit_price`` (MaterialValuationSet Waers). NULL when the
+    source states none -- the CSV MBEW has no currency column -- and never guessed."""
+
+    price_valuation_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """The BWTAR the price was read from: ``NEW`` or ``NEW-INS`` for a split-valuated material,
+    NULL for the blank row of one that is not (or when there is no price)."""
+
+    price_missing_reason: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    """Why ``unit_price`` is NULL -- a ``PriceMissing`` code such as ``price_token_value`` or
+    ``price_no_new_valuation``. NULL when there is a price. Counted per staging run in
+    ``i7_staging_rejection`` and kept here per row so a reviewer can list the affected
+    material-plants."""
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
     """False when a COMPLETE snapshot no longer carried this material-plant.
