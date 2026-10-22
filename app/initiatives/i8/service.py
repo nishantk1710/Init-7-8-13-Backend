@@ -408,6 +408,15 @@ def get_snapshot(
         _build_lock.release()
 
 
+def cached_snapshot() -> Snapshot | None:
+    """The snapshot already built, or None. Never builds and never waits.
+
+    For a caller that can do without it -- a label, not the data it serves.
+    """
+    with _state_lock:
+        return _state.snapshot
+
+
 def _await_background_build(wait_seconds: float) -> Snapshot:
     with _state_lock:
         last_error = _state.last_error

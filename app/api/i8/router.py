@@ -24,6 +24,7 @@ rather than being deleted when it went red.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 from typing import Annotated, TypeVar
 
@@ -41,6 +42,7 @@ from app.api.i8.mappers import (
     exception_history_entry,
     exception_item,
     exception_meta,
+    material_descriptions,
     register_facets,
     register_meta,
     repair_chain,
@@ -60,6 +62,7 @@ from app.api.i8.schemas import (
     MaterialReference,
     RepairChain,
     RegisterResponse,
+    RegisterViewCounts,
     RepairableUnitResponse,
     RepairDetail,
     RepairEvidenceItem,
@@ -70,6 +73,7 @@ from app.api.i8.schemas import (
 )
 from app.core.config import get_settings
 from app.core.db import get_db
+from app.initiatives.i8.aging import aging_bucket as band_of
 from app.initiatives.i8.aging import bucket_labels
 from app.initiatives.i8.attestation import (
     AttestationDraft,
@@ -105,6 +109,7 @@ from app.initiatives.i8.service import (
     Snapshot,
     SnapshotBuilding,
     SnapshotFailed,
+    cached_snapshot,
     get_attestation_view,
     get_coding_screen,
     get_snapshot,
@@ -424,10 +429,26 @@ def get_register(
         None, alias="declarationStatus", description="Required, Completed or Flagged"
     ),
     aging_bucket: str | None = Query(None, alias="agingBucket"),
+    stage_aging_bucket: str | None = Query(
+        None,
+        alias="stageAgingBucket",
+        description=(
+            "The aging band of the days a line has spent in its current stage, "
+            "where agingBucket bands the days it has been open"
+        ),
+    ),
     with_exceptions: bool = Query(
         False,
         alias="withExceptions",
         description="Only lines a check has raised something against",
+    ),
+    quick_view: str | None = Query(
+        None,
+        alias="view",
+        description=(
+            "A quick view on top of the filters: overdue, undeclared, atVendor "
+            "or withExceptions. viewCounts counts each one before it is applied."
+        ),
     ),
     exclude_exception_type: str | None = Query(
         None,
@@ -502,6 +523,13 @@ def get_register(
             for line in lines
             if _declaration_status_of(line, view).lower() == wanted_declaration
         )
+    if stage_aging_bucket:
+        bands = cfg.aging_band_boundaries_list
+        lines = tuple(
+            line
+            for line in lines
+            if band_of(line.days_in_current_stage, bands) == stage_aging_bucket
+        )
     if with_exceptions:
         lines = tuple(line for line in lines if raised.get(line.key))
     if q and q.strip():
@@ -519,6 +547,31 @@ def get_register(
             )
         )
 
+    # The quick views: what the screen's preset buttons select, counted over
+    # the filtered lines before one of them is applied.
+    view_tests = {
+        "overdue": lambda line: line.overdue_status == "OVERDUE",
+        "undeclared": lambda line: _declaration_status_of(line, view) != "Completed",
+        "atVendor": lambda line: line.repair_status == "At Vendor",
+        "withExceptions": lambda line: bool(raised.get(line.key)),
+    }
+    view_counts = RegisterViewCounts(
+        all=len(lines),
+        overdue=sum(1 for line in lines if view_tests["overdue"](line)),
+        undeclared=sum(1 for line in lines if view_tests["undeclared"](line)),
+        at_vendor=sum(1 for line in lines if view_tests["atVendor"](line)),
+        with_exceptions=sum(1 for line in lines if view_tests["withExceptions"](line)),
+    )
+    if quick_view:
+        test = view_tests.get(quick_view)
+        if test is None:
+            raise HTTPException(
+                # A bare 422, as elsewhere here: Starlette renamed the constant.
+                status_code=422,
+                detail=f"Unknown view {quick_view!r}; use one of {', '.join(view_tests)}.",
+            )
+        lines = tuple(line for line in lines if test(line))
+
     page_lines, total = _paginate(lines, page, page_size)
     return RegisterResponse(
         items=[
@@ -531,6 +584,7 @@ def get_register(
         meta=register_meta(snapshot.register_stats),
         facets=facets,
         reference_date=snapshot.reference_date,
+        view_counts=view_counts,
     )
 
 
@@ -667,10 +721,20 @@ def get_attestations(
 
     # Reverse index built once rather than a query per row.
     superseded_by = {r.supersedes: r.id for r in rows if r.supersedes}
+    # The snapshot already built, never one built for this: the declaration
+    # form reads this endpoint for its fault categories, and should not sit
+    # through a cold start for a label. Without one, the number shows alone.
+    descriptions = material_descriptions(cached_snapshot(), (r.material_id for r in rows))
 
     return AttestationResponse(
         items=[
-            attestation_item(r, cfg, superseded_by=superseded_by.get(r.id)) for r in rows
+            attestation_item(
+                r,
+                cfg,
+                superseded_by=superseded_by.get(r.id),
+                description=descriptions.get(r.material_id),
+            )
+            for r in rows
         ],
         total=len(rows),
         # Served with the data so a form does not hard-code VZI's vocabulary.
@@ -856,9 +920,8 @@ def get_exceptions(
 
     facets = exception_facets(items, cfg)
 
-    if type_filter:
-        wanted = type_filter.strip().upper()
-        items = tuple(i for i in items if i.type == wanted)
+    # The type filter comes last, after the counts below; the rest narrow in
+    # any order.
     if plant:
         items = tuple(i for i in items if i.plant == plant)
     if repair:
@@ -905,6 +968,13 @@ def get_exceptions(
                 i for i in items if states.get(i.id, UNTOUCHED).owner == wanted_owner
             )
 
+    # What each type tab holds: every filter applied except the type itself,
+    # so the open tab's count is the number of rows under it.
+    type_counts = Counter(i.type for i in items)
+    if type_filter:
+        wanted = type_filter.strip().upper()
+        items = tuple(i for i in items if i.type == wanted)
+
     size = min(page_size or cfg.default_page_size, cfg.max_page_size)
     page_items, total = _paginate(items, page, size)
 
@@ -930,6 +1000,7 @@ def get_exceptions(
         meta=exception_meta(view.exception_stats, excluded_types, excluded),
         facets=facets,
         reference_date=snapshot.reference_date,
+        type_counts=dict(type_counts),
     )
 
 

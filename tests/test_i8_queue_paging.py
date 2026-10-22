@@ -635,6 +635,39 @@ class TestTwoStatuses:
         assert body["history"][-1]["actor"] == "system"
 
 
+class TestTypeCounts:
+    """The Exceptions screen's type tabs: how many items each would list."""
+
+    def test_counted_after_every_filter_but_the_type(self, queues, factory) -> None:
+        queues.exceptions = (
+            exception(1),
+            exception(2),
+            exception(3, type="OVERDUE_REPAIR", severity="critical"),
+            exception(4, type="OVERDUE_REPAIR", severity="critical", plant="1500"),
+        )
+        with factory() as db:
+            set_status(db, queues.exceptions[1].id, "CLOSED", actor="tester", note="Handled.")
+
+        body = queues.client.get(
+            EXCEPTIONS, params={"status": "OPEN", "plant": "1300", "type": "OVERDUE_REPAIR"}
+        ).json()
+
+        # The type narrows the list, not the counts; status and plant do both.
+        assert ids(body) == ["EX-OVERDUE_REPAIR-4500000003-10"]
+        assert body["typeCounts"] == {"MISSING_ATTESTATION": 1, "OVERDUE_REPAIR": 1}
+
+    def test_meta_still_describes_the_whole_check(self, queues, factory) -> None:
+        """typeCounts follow the filters; meta.byType does not, on purpose."""
+        queues.exceptions = (exception(1), exception(2))
+        with factory() as db:
+            set_status(db, queues.exceptions[0].id, "CLOSED", actor="tester", note="Handled.")
+
+        body = queues.client.get(EXCEPTIONS, params={"status": "OPEN"}).json()
+
+        assert body["typeCounts"] == {"MISSING_ATTESTATION": 1}
+        assert body["meta"]["byType"] == {"MISSING_ATTESTATION": 2}
+
+
 # --- The register ------------------------------------------------------------
 
 
@@ -726,6 +759,72 @@ class TestRegisterFilters:
 
         assert ids(body) == ["4500000004-10", "4500000005-10", "4500000006-10"]
         assert body["total"] == 7
+
+
+class TestQuickViews:
+    """The register screen's preset buttons: Overdue, Not declared, At vendor
+    and With exceptions, each showing how many lines it would list."""
+
+    def test_each_view_is_counted_over_the_filtered_lines(self, queues) -> None:
+        queues.lines = (
+            repair_line(1, overdue_status="OVERDUE"),
+            repair_line(2, overdue_status="OVERDUE", repair_status="PO Issued"),
+            repair_line(3, repair_status="PO Issued"),
+            repair_line(4, plant="1500"),
+        )
+        queues.declarations = (declaration(3, status="Completed"),)
+        queues.exceptions = (exception(1),)
+
+        body = listing(queues, plant="1300")
+
+        assert body["viewCounts"] == {
+            "all": 3,
+            "overdue": 2,
+            "undeclared": 2,
+            "atVendor": 1,
+            "withExceptions": 1,
+        }
+
+    def test_a_view_narrows_the_list_but_not_the_counts(self, queues) -> None:
+        """The counts are taken before the view, so the other buttons keep
+        their numbers while one is selected."""
+        queues.lines = (repair_line(1, overdue_status="OVERDUE"), repair_line(2))
+
+        everything = listing(queues)
+        overdue = listing(queues, view="overdue")
+
+        assert ids(overdue) == ["4500000001-10"]
+        assert overdue["total"] == 1
+        assert overdue["viewCounts"] == everything["viewCounts"]
+
+    def test_not_declared_is_required_and_flagged(self, queues) -> None:
+        """A Flagged line was declared not repairable and sent anyway: it still
+        wants somebody, so it is not declared in the sense the button means."""
+        queues.lines = (repair_line(1), repair_line(2), repair_line(3))
+        queues.declarations = (
+            declaration(1, status="Completed"),
+            declaration(2, status="Flagged"),
+        )
+
+        assert ids(listing(queues, view="undeclared")) == ["4500000002-10", "4500000003-10"]
+
+    def test_an_unknown_view_is_refused(self, queues) -> None:
+        queues.lines = (repair_line(1),)
+
+        assert queues.client.get(REGISTER, params={"view": "everything"}).status_code == 422
+
+
+class TestStageAging:
+    def test_bands_the_days_in_the_current_stage_not_the_days_open(self, queues) -> None:
+        """The Overview's cells are days in the current stage; a cell's link
+        must open those lines, not the ones open that long."""
+        queues.lines = (
+            repair_line(1, days_open=200, days_in_current_stage=10),
+            repair_line(2, days_open=200, days_in_current_stage=90),
+        )
+
+        assert ids(listing(queues, stageAgingBucket="0-15")) == ["4500000001-10"]
+        assert ids(listing(queues, stageAgingBucket="60+")) == ["4500000002-10"]
 
 
 class TestLineExceptions:

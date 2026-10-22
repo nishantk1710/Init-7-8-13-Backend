@@ -403,6 +403,20 @@ class RegisterFacets(I8Model):
     ``criticality=none`` finds them."""
 
 
+class RegisterViewCounts(I8Model):
+    """How many of the filtered lines each quick view of the register holds.
+
+    Counted after every filter and before ``view``, so the screen's quick views
+    can each show their number whichever one is selected.
+    """
+
+    all: int
+    overdue: int
+    undeclared: int
+    at_vendor: int
+    with_exceptions: int
+
+
 class RegisterResponse(I8Model):
     items: list[RepairChain]
     page: int
@@ -411,6 +425,7 @@ class RegisterResponse(I8Model):
     meta: RegisterMeta
     facets: RegisterFacets
     reference_date: date
+    view_counts: RegisterViewCounts | None = None
 
 
 class LifecycleStage(I8Model):
@@ -797,6 +812,11 @@ class ExceptionResponse(I8Model):
     meta: ExceptionMeta
     facets: ExceptionFacets
     reference_date: date
+    type_counts: dict[str, int] | None = None
+    """Items per type after every filter but ``type``: what each type tab on
+    the Exceptions screen holds, so a tab shows the number of rows it opens
+    on. Unlike ``meta``, these DO follow the filters -- status above all.
+    Optional so an older client ignores it."""
 
 
 # --- Coding candidates (W5.5) ---------------------------------------------

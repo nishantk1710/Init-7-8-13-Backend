@@ -58,6 +58,7 @@ from app.initiatives.i8.exception_state import (
 )
 from app.initiatives.i8.models import ExceptionEvent, RepairAttestation
 from app.initiatives.i8.register import RegisterStats, RepairLine
+from app.initiatives.i8.service import Snapshot
 from app.initiatives.i8.universe import UniverseRow, UniverseStats
 
 
@@ -217,20 +218,39 @@ def repair_justification(value: LineJustification) -> RepairJustification:
     )
 
 
+def _day(value) -> str:
+    """A date the way the screens show one: ``08 May 2025``."""
+    return value.strftime("%d %b %Y")
+
+
+def _person(actor: str | None) -> str:
+    """Who recorded something, without showing a placeholder id as a name."""
+    if not actor or actor.upper().startswith("UNAUTHENTICATED"):
+        return "someone not signed in"
+    return actor
+
+
 def _at_vendor_evidence(line: RepairLine) -> str:
-    """Why this line is, or is not, showing time at a vendor."""
+    """Why this line is, or is not, showing time at a vendor.
+
+    The evidence is read by the people using the repair page, so it names SAP
+    movements the way they know them (541) rather than the tables behind them.
+    """
     if line.dispatched_at is None:
         return (
-            "No dispatch movement attributable to this line, so time at the "
-            "vendor cannot be measured. Stores post most 541s on the day of "
-            "the goods receipt, so few open lines have one."
+            "Time at the vendor counts from the dispatch, which SAP has not "
+            "recorded for this line. Stores often post the dispatch (movement "
+            "541) on the day the part comes back, so few open lines have one."
         )
     promised = (
-        f"Promised back {line.due_date}."
+        f"Promised back {_day(line.due_date)}."
         if line.due_date
-        else "No schedule line, so no promised return date exists."
+        else "The PO has no delivery date, so no return was promised."
     )
-    return f"At the vendor since {line.dispatched_at}, and SAP still has the line open. {promised}"
+    return (
+        f"At the vendor since {_day(line.dispatched_at)}, and SAP still has the "
+        f"line open. {promised}"
+    )
 
 
 def timeline(
@@ -258,29 +278,26 @@ def timeline(
             label="Removed from machine",
             occurred_at=None,
             evidence=(
-                "MSEG 261/201 carries no PO reference at all, so removal cannot "
-                "be tied to this line. Modelled at material+plant level or left "
-                "out -- never linked by a guess."
+                "Not tracked: SAP's goods issue to the machine (movement 261/201) "
+                "does not name the repair PO, so it cannot be tied to this line."
             ),
         ),
         LifecycleStage(
             stage="attested",
-            label="Condition attested",
+            label="Condition declared",
             occurred_at=attestation.attested_at.date() if attestation else None,
             evidence=(
                 (
-                    f"Attestation {attestation.id}: "
+                    f"Declaration {attestation.id}: "
                     f"{CONDITION_LABELS[Recommendation(attestation.recommendation)]}"
                     f" ({attestation.fault_category.replace('_', ' ').lower()}), "
-                    f"by {attestation.attestor}"
+                    f"by {_person(attestation.attestor)}"
                 )
                 if attestation
                 else (
-                    "No condition-to-repair attestation covers this line. The "
-                    "part was sent for repair with no recorded assessment -- "
-                    "see GET /api/i8/exceptions. Until this platform there was "
-                    "nowhere to record one, so this is expected on every "
-                    "historical repair rather than a data gap."
+                    "No condition declaration is on record for this line. Until "
+                    "this platform there was nowhere to record one, so most older "
+                    "repairs have none."
                 )
             ),
             days_since=(
@@ -294,20 +311,21 @@ def timeline(
             label="Repair PO raised",
             occurred_at=line.raised_at,
             evidence=(
-                f"EKPO line {line.purchasing_document}/{line.item}, "
-                f"item category {line.item_category}"
+                f"Repair PO {line.purchasing_document}/{line.item} "
+                f"(item category {line.item_category}"
                 + (f", document type {line.doc_type}" if line.doc_type else "")
+                + ")"
             ),
             days_since=days_between(line.raised_at, today),
         ),
         LifecycleStage(
             stage="dispatched",
-            label="Dispatched to vendor",
+            label="Sent to vendor",
             occurred_at=line.dispatched_at,
             evidence=(
-                "MSEG 541 on this PO line (vendor-stock side)"
+                "Goods issue to the vendor (movement 541) on this PO line."
                 if line.dispatched_at
-                else "No 541 movement attributable to this line."
+                else "No goods issue to the vendor (movement 541) is linked to this line."
             ),
             days_since=days_between(line.dispatched_at, today),
         ),
@@ -372,6 +390,24 @@ def line_exception(item: ExceptionItem) -> LineException:
 # --- W5.3: attestation, declarations, exceptions --------------------------
 
 
+def material_descriptions(snapshot: Snapshot | None, material_ids: Iterable[str]) -> dict[str, str]:
+    """Material descriptions by material number, for the ones the snapshot knows.
+
+    The universe first, then the repair lines -- a material can have a repair
+    line and no universe row. Empty without a snapshot: this is a label, and a
+    caller should show the number alone rather than wait for a build.
+    """
+    wanted = set(material_ids)
+    if snapshot is None or not wanted:
+        return {}
+    found: dict[str, str] = {}
+    for source in (snapshot.universe, snapshot.lines):
+        for row in source:
+            if row.material_id in wanted and row.description and row.material_id not in found:
+                found[row.material_id] = row.description
+    return found
+
+
 def attestation_item(
     row: RepairAttestation,
     cfg: I8Settings,
@@ -379,22 +415,26 @@ def attestation_item(
     superseded_by: str | None = None,
     covers_repair_lines: list[str] | None = None,
     coverage_note: str | None = None,
+    description: str | None = None,
 ) -> Attestation:
     """One stored attestation.
 
     ``superseded_by`` is passed in rather than followed from the row, because
     resolving it per row is a query per attestation. The caller already has the
     whole list and can build the reverse index once.
+
+    ``description`` is the material's, looked up when the row is read -- see
+    :func:`material_descriptions`.
     """
     return Attestation(
         id=row.id,
         material=MaterialReference(
             material_id=row.material_id,
             material_code=row.material_id,
-            # No description here on purpose: the attestation table does not
-            # carry one, and copying it from the register at write time would
-            # freeze a description that lives somewhere else.
-            description=None,
+            # Never stored with the attestation: copied at write time it would
+            # freeze a description that lives somewhere else. The caller reads
+            # it from the snapshot instead, when there is one.
+            description=description,
         ),
         plant=plant_reference(row.plant, cfg),
         quantity=row.quantity,
