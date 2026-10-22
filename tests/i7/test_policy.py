@@ -61,7 +61,7 @@ def test_similarity_weights_match_the_documents():
         0.30,
         0.35,
     )
-    assert (policy.minimum_neighbours, policy.maximum_neighbours) == (3, 5)
+    assert (policy.minimum_neighbours, policy.maximum_neighbours) == (2, 5)
 
 
 def test_confidence_thresholds_kept_despite_data_not_reaching_them():

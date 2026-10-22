@@ -179,7 +179,7 @@ Rounded up once, at the end. Label: `SIMILARITY-BASED ESTIMATE`.
 | Gate | Value | Behaviour |
 |---|---|---|
 | `minimum_similarity` | 0.60 | hard admission floor, applied with `>=` before the Top-K cut |
-| `minimum_neighbours` | 3 (was 5 until 2026-10-19) | 1–2 qualifying neighbours produce **no** partial estimate |
+| `minimum_neighbours` | 2 (was 3 until 2026-10-22, 5 until 2026-10-19) | a single qualifying neighbour produces **no** partial estimate; two give a LOW-confidence one |
 | `maximum_neighbours` | 5 (was 10 until 2026-10-19) | Top-K cap |
 | `minimum_neighbour_history_months` | 12 | hard eligibility constraint |
 

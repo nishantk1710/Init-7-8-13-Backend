@@ -125,6 +125,16 @@ def _score_pair(
         Decimal(str(policy.business_weight)),
         minimum_evidence_features=policy.minimum_evidence_features,
         identity_evidence_features=tuple(policy.identity_evidence_features),
+        same_material_group=bool(
+            target.material_group
+            and candidate.material_group
+            and target.material_group == candidate.material_group
+        ),
+        identity_text_floor=(
+            Decimal(str(policy.minimum_identity_text_similarity))
+            if policy.minimum_identity_text_similarity is not None
+            else None
+        ),
     )
 
 

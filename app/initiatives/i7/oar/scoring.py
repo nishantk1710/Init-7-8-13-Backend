@@ -83,6 +83,8 @@ def combine(
     business_weight: Decimal,
     minimum_evidence_features: int = 0,
     identity_evidence_features: tuple[str, ...] = (),
+    same_material_group: bool = False,
+    identity_text_floor: Decimal | None = None,
 ) -> CombinedScore:
     """Weighted combination over the available dimensions.
 
@@ -135,6 +137,15 @@ def combine(
     sufficient, reason = assess_evidence(
         features_used, minimum_evidence_features, identity_evidence_features
     )
+    if sufficient and identity_text_floor is not None:
+        text_value = text.value if text.is_available else None
+        if not same_material_group and not (text_value is not None and text_value >= identity_text_floor):
+            sufficient = False
+            reason = "no identity match: different material group and " + (
+                "no text comparison"
+                if text_value is None
+                else f"text similarity {text_value:.2f} below {identity_text_floor}"
+            )
 
     return CombinedScore(
         combined=total,

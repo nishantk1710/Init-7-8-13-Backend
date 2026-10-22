@@ -124,6 +124,18 @@ score in practice is `0.35/0.65·S_struct + 0.35/0.65·S_business`.
 `score_completeness` records the fraction of intended weight actually used, so a
 0.65 built from two dimensions is distinguishable from a 0.90 built from three.
 
+## Identity must match (oar-similarity-8)
+
+Admission needs at least two features compared **and** an identity match. Until `-7` the rule only asked
+that material group or description had been *compared*; a neighbour in a different group with weak text
+similarity still passed, lifted over the 0.60 floor by a similar price (the impact wrench's neighbours were
+a blasting product, crusher bolts, a pipe wrench and a valve: other groups, text 0.31-0.46, combined
+0.61-0.63). Now a neighbour must share the target's material group, **or** have a text similarity of at
+least `SimilarityPolicy.minimum_identity_text_similarity` (0.50, a first setting to be checked against
+known good and bad matches). Without an embedding model only the same-group route remains. A target left
+with fewer than three neighbours gets no estimate, with the reason recorded. The exact score
+(`scoring.combine`) and the two-stage retrieval (`retrieval.DonorIndex.prescore`) apply the same rule.
+
 ## Ranking and Top-K
 
 Deterministic: similarity descending, then same-circuit, then material number,

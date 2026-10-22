@@ -84,6 +84,7 @@ def build_index(
         minimum_evidence_features=similarity.minimum_evidence_features,
         identity_evidence_features=tuple(similarity.identity_evidence_features),
         embeddings=embeddings,
+        identity_text_floor=similarity.minimum_identity_text_similarity,
     )
 
 

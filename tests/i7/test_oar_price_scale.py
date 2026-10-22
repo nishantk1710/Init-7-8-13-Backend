@@ -28,7 +28,7 @@ def population(*prices: str) -> list[CandidateAttributes]:
 
 
 def test_the_algorithm_version_changed_so_old_results_are_not_reused() -> None:
-    assert ALGORITHM_VERSION == "oar-similarity-7"
+    assert int(ALGORITHM_VERSION.rsplit("-", 1)[1]) >= 7  # the log-scale price arrived in 7
 
 
 def test_log_price_is_none_without_a_positive_price() -> None:
