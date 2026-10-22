@@ -693,6 +693,7 @@ def test_weighted_estimate_matches_the_documented_formula():
     result = estimate.calculate(
         [neighbour_with("0.90", 10, 20, 30), neighbour_with("0.80", 20, 40, 60)],
         service_level_configured=True,
+        strategy="weighted_mean",
     )
     assert result.status is EstimateStatus.SUCCESS
     trace = dict(result.trace)
@@ -704,6 +705,7 @@ def test_weighted_estimate_covers_rop_and_max():
     result = estimate.calculate(
         [neighbour_with("0.90", 10, 20, 30), neighbour_with("0.80", 20, 40, 60)],
         service_level_configured=True,
+        strategy="weighted_mean",
     )
     assert result.rop == 30  # 29.41 -> 30
     assert result.max_stock == 45  # 44.12 -> 45

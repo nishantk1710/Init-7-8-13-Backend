@@ -40,6 +40,7 @@ from app.initiatives.i7.policy.dev_fixtures import (
     load_mock_max_stock_policy,
     load_mock_service_level_policy,
 )
+from app.initiatives.i7.policy.thresholds import SimilarityPolicy
 from app.initiatives.i7.recommendations import builder
 from app.initiatives.i7.recommendations.types import LifecycleStatus
 
@@ -50,6 +51,11 @@ DEV_POLICY = PolicyDocument(
 )
 """Both development fixtures, opted into explicitly -- exactly what
 ``default_policy()`` assembles when both env flags are set."""
+
+MEAN_POLICY = DEV_POLICY.model_copy(update={"similarity": SimilarityPolicy(estimator="weighted_mean")})
+"""The same development policy with the earlier similarity-weighted AVERAGE as the estimator. The default
+estimator is the weighted median (oar-similarity-10); on these close-valued donors the two round to the same
+integers, so a test that must be about the average has to ask for it, or it would pass whichever ran."""
 
 PRODUCTION_POLICY = PolicyDocument()
 """What every environment builds with no dev flag set."""
@@ -163,6 +169,11 @@ def dev_donors() -> dict[str, dict]:
 @pytest.fixture(scope="module")
 def dev_result(dev_donors):
     return run_oar(DEV_POLICY, inventory_values(dev_donors))
+
+
+@pytest.fixture(scope="module")
+def mean_result(dev_donors):
+    return run_oar(MEAN_POLICY, inventory_values(dev_donors))
 
 
 # --- 1. The DEV NORMAL service level reaches the Phase 5 donor calculation ---
@@ -521,16 +532,43 @@ def weighted(result, attribute: str) -> int:
     return math.ceil(numerator / denominator)
 
 
-def test_oar_safety_stock_is_the_similarity_weighted_average(dev_result):
-    assert dev_result.estimate.safety_stock == weighted(dev_result, "safety_stock")
+def weighted_median_by_hand(result, attribute: str) -> int:
+    """The value at which half the similarity weight lies on either side, rounded up -- written out here
+    separately from the implementation, so the assertion does not restate it."""
+    donors = sorted(
+        (Decimal(getattr(n, attribute)), n.score.combined)
+        for n in result.neighbours
+        if n.inventory_eligible
+    )
+    half = sum(weight for _, weight in donors) / 2
+    running = Decimal(0)
+    for index, (value, weight) in enumerate(donors):
+        running += weight
+        if running > half:
+            return math.ceil(value)
+        if running == half:
+            return math.ceil((value + donors[index + 1][0]) / 2)
+    raise AssertionError("unreachable")
 
 
-def test_oar_rop_is_the_similarity_weighted_average(dev_result):
-    assert dev_result.estimate.rop == weighted(dev_result, "rop")
+def test_oar_safety_stock_is_the_similarity_weighted_average(mean_result):
+    assert mean_result.estimate.safety_stock == weighted(mean_result, "safety_stock")
 
 
-def test_oar_max_is_the_similarity_weighted_average(dev_result):
-    assert dev_result.estimate.max_stock == weighted(dev_result, "max_stock")
+def test_oar_rop_is_the_similarity_weighted_average(mean_result):
+    assert mean_result.estimate.rop == weighted(mean_result, "rop")
+
+
+def test_oar_max_is_the_similarity_weighted_average(mean_result):
+    assert mean_result.estimate.max_stock == weighted(mean_result, "max_stock")
+
+
+def test_the_default_estimate_is_the_similarity_weighted_median(dev_result):
+    assert dev_result.estimate.strategy == "weighted_median"
+    assert dev_result.estimate.safety_stock == weighted_median_by_hand(dev_result, "safety_stock")
+    assert dev_result.estimate.rop == weighted_median_by_hand(dev_result, "rop")
+    # the Max floor (ROP + safety stock) can only raise the Max, never lower it
+    assert dev_result.estimate.max_stock >= weighted_median_by_hand(dev_result, "max_stock")
 
 
 def test_oar_rop_is_borrowed_not_recomputed_from_the_target(dev_result):
@@ -546,12 +584,12 @@ def test_oar_rop_is_borrowed_not_recomputed_from_the_target(dev_result):
     assert dev_result.estimate.rop > weighted_ss
 
 
-def test_each_parameter_is_weighted_independently(dev_result):
+def test_each_parameter_is_weighted_independently(mean_result):
     """Max is not derived from the estimated ROP, and ROP is not derived from
     the estimated SS -- all three are separate weighted averages over the same
     neighbours."""
-    assert dev_result.estimate.max_stock == weighted(dev_result, "max_stock")
-    assert dev_result.estimate.max_stock != dev_result.estimate.rop * 2
+    assert mean_result.estimate.max_stock == weighted(mean_result, "max_stock")
+    assert mean_result.estimate.max_stock != mean_result.estimate.rop * 2
 
 
 # --- 9. The DEV Max Stock strategy produces a donor Max value ---------------

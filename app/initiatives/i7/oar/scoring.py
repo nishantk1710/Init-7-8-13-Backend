@@ -39,11 +39,17 @@ alone, and it would outrank a genuine match measured on everything.
 The score is still computed and kept for explanation; it is only refused as a
 neighbour. Both requirements are policy (``SimilarityPolicy``), and setting
 ``minimum_features`` to 0 with no identity features restores the old behaviour.
+
+**Identity is not decided here any more** (``oar-similarity-10``). ``combine`` still carries the
+``same_material_group`` / ``identity_text_floor`` arguments, which reproduce the oar-similarity-8/9 rule when
+``SimilarityPolicy.identity_validation`` is off. With it on (the default) identity is a separate stage,
+``oar.identity``, whose verdict :func:`with_identity` attaches to the score: a pair is admitted only if both
+the evidence above *and* identity say so.
 """
 
 from decimal import Decimal
 
-from app.initiatives.i7.oar.types import CombinedScore, DimensionScore
+from app.initiatives.i7.oar.types import CombinedScore, DimensionScore, IdentityVerdict
 
 TOLERANCE = Decimal("0.000001")
 """Floating-point slack when clamping the result into [0, 1]. Renormalised
@@ -163,6 +169,23 @@ def combine(
     )
 
 
+def with_identity(score: CombinedScore, verdict: IdentityVerdict) -> CombinedScore:
+    """``score`` with the identity stage's verdict attached.
+
+    A verdict that did not pass makes the pair insufficient, and says why -- unless the evidence rule had
+    already refused it, in which case that reason stands (it was found first and is the cheaper fix). The
+    combined score and every dimension are left exactly as computed: a refused candidate keeps its numbers
+    for debugging.
+    """
+    if verdict.passed:
+        return score._replace(identity=verdict)
+    return score._replace(
+        identity=verdict,
+        evidence_sufficient=False,
+        evidence_detail=score.evidence_detail or verdict.reason,
+    )
+
+
 def explain(score: CombinedScore, limit: int = 500) -> str:
     """A one-line, stored explanation of a score: what entered it and how.
 
@@ -179,4 +202,6 @@ def explain(score: CombinedScore, limit: int = 500) -> str:
         f"text={score.text.status.value}",
         "evidence=" + ("ok" if score.evidence_sufficient else f"low({score.evidence_detail})"),
     ]
+    if score.identity is not None:
+        parts.append(f"identity={score.identity.status.value}")
     return ";".join(parts)[:limit]

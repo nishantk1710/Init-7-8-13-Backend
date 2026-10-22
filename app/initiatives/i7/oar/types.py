@@ -22,9 +22,21 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import NamedTuple
 
-ALGORITHM_VERSION = "oar-similarity-9"
+ALGORITHM_VERSION = "oar-similarity-10"
 """Identifies the similarity implementation behind a stored result. Not a
 semantic version -- nothing here maintains a release contract.
+
+``oar-similarity-10`` against ``-9``, three changes -- OAR scope, donor eligibility, the text similarity
+calculation, the score floor and the weights are untouched:
+
+* **Identity is a stage of its own** (``oar.identity``). A shared material group no longer proves identity:
+  a same-group candidate needs description evidence (a shared part number, a shared component type, or
+  text similarity at or above ``same_group_minimum_text_similarity``), and two descriptions that name
+  different component types are an ``IdentityStatus.REJECTED_COMPONENT_CONFLICT``. The two-stage shortlist
+  applies the same rule before it picks, so a rejected candidate cannot re-enter through another channel.
+* **The estimate is a weighted median** of each donor SAP value, not a weighted mean
+  (``SimilarityPolicy.estimator``), with both recorded side by side in the trace.
+* **Stage counts** (``StageCounts``) and the best-scoring rejected candidates travel on ``OarResult``.
 
 ``oar-similarity-6`` added a consistency floor against ``-5`` (approved deviation):
 the OAR Max stock is raised to ROP + safety stock when the similarity-weighted Max
@@ -100,6 +112,59 @@ class EligibilityRejection(StrEnum):
     HISTORY_UNKNOWN = "HISTORY_UNKNOWN"
     SELF = "SELF"
     """A material is not its own neighbour."""
+
+
+class IdentityStatus(StrEnum):
+    """What the identity stage concluded about one candidate (``oar.identity``)."""
+
+    CONFIRMED_PART_NUMBER = "CONFIRMED_PART_NUMBER"
+    """Both descriptions carry the same part number."""
+    CONFIRMED_GROUP_COMPONENT_TYPE = "CONFIRMED_GROUP_COMPONENT_TYPE"
+    """Same material group, and both descriptions name the same (or a compatible) component type."""
+    CONFIRMED_GROUP_TEXT = "CONFIRMED_GROUP_TEXT"
+    """Same material group, and the descriptions are similar enough on more than generic words."""
+    CONFIRMED_GROUP_UNVERIFIED = "CONFIRMED_GROUP_UNVERIFIED"
+    """Same material group, accepted on the group alone because the same-group description requirement
+    is switched off. Never produced by default."""
+    CONFIRMED_TEXT = "CONFIRMED_TEXT"
+    """Different (or unknown) material group, and text similarity at or above the identity floor."""
+    NOT_ASSESSED = "NOT_ASSESSED"
+    """The text requirement for this route is switched off. Never produced by default."""
+
+    REJECTED_COMPONENT_CONFLICT = "REJECTED_COMPONENT_CONFLICT"
+    """Both descriptions name a component type, and the two are incompatible -- a spray nozzle is not a
+    filter whatever its material group says."""
+    INSUFFICIENT_GROUP_ONLY = "INSUFFICIENT_GROUP_ONLY"
+    """Same material group and nothing else: no shared part number, and neither enough text similarity nor
+    (when the component type agrees) a shared specific word."""
+    INSUFFICIENT_GENERIC_OVERLAP = "INSUFFICIENT_GENERIC_OVERLAP"
+    """Same material group and enough text similarity, but no component type agrees, both descriptions carry
+    specific words and share none of them, and what they do share is generic (FILTER PRESS, ANDRITZ) -- the
+    similarity rests on generic words."""
+    INSUFFICIENT_TEXT = "INSUFFICIENT_TEXT"
+    """Different material group and text similarity below the identity floor."""
+    INSUFFICIENT_NO_TEXT = "INSUFFICIENT_NO_TEXT"
+    """Different material group and no text comparison to fall back on."""
+
+
+class IdentityVerdict(NamedTuple):
+    """One candidate's identity outcome, with the evidence behind it, for audit."""
+
+    status: IdentityStatus
+    reason: str
+    """A sentence that says why; refusals start ``no identity match`` or ``component type conflict``."""
+    target_types: tuple[str, ...] = ()
+    candidate_types: tuple[str, ...] = ()
+    shared_part_numbers: tuple[str, ...] = ()
+    text_similarity: Decimal | None = None
+
+    @property
+    def passed(self) -> bool:
+        return self.status.name.startswith(("CONFIRMED", "NOT_ASSESSED"))
+
+    @property
+    def conflict(self) -> bool:
+        return self.status is IdentityStatus.REJECTED_COMPONENT_CONFLICT
 
 
 class SimilarityStatus(StrEnum):
@@ -212,6 +277,10 @@ class CombinedScore(NamedTuple):
     hand, without an evidence policy, behaves as it always did."""
     evidence_detail: str | None = None
     """Why the evidence fell short, when it did."""
+    identity: "IdentityVerdict | None" = None
+    """The identity stage's verdict (``oar.identity``), or ``None`` when that stage did not run
+    (``SimilarityPolicy.identity_validation`` off, or a score built by hand). A verdict that did not
+    pass has already made ``evidence_sufficient`` False."""
 
 
 class CandidateAttributes(NamedTuple):
@@ -272,6 +341,34 @@ class Neighbour(NamedTuple):
     be an excellent match whose own parameters are blocked."""
 
 
+class EstimateDonor(NamedTuple):
+    """One donor as the estimate saw it: its weight and the SAP values it lent."""
+
+    material: str
+    plant: str
+    weight: Decimal
+    safety_stock: int | None
+    rop: int | None
+    max_stock: int | None
+
+
+class FieldAudit(NamedTuple):
+    """One parameter's estimate under both methods, for audit.
+
+    ``mean_raw`` and ``median_raw`` are before rounding; ``mean_final`` and ``median_final`` after the
+    round-up. ``chosen`` names the one that became the estimate. ``material_difference`` is a diagnostic:
+    the two finals differ by at least ``SimilarityPolicy.estimator_material_difference_ratio`` of the mean.
+    """
+
+    field: str
+    mean_raw: Decimal
+    median_raw: Decimal
+    mean_final: int
+    median_final: int
+    chosen: str
+    material_difference: bool
+
+
 class OarEstimate(NamedTuple):
     """Weighted inventory parameters borrowed from neighbours."""
 
@@ -292,6 +389,79 @@ class OarEstimate(NamedTuple):
     minimum_similarity: Decimal | None = None
     trace: tuple[tuple[str, str], ...] = ()
     detail: str | None = None
+    strategy: str | None = None
+    """``weighted_median`` or ``weighted_mean`` -- which estimator produced the numbers."""
+    donors: tuple[EstimateDonor, ...] = ()
+    """The donors that contributed, with their weights and SAP values."""
+    audit: tuple[FieldAudit, ...] = ()
+    """Mean and median per parameter, side by side."""
+
+
+class StageCounts(NamedTuple):
+    """How many candidates survived each step of retrieval, in order, for one target.
+
+    ``structure_shortlist``, ``text_shortlist`` and ``fused_shortlist`` are what each channel picked (``None``
+    when the partition was scored exhaustively, so there were no channels). ``merged_candidates`` is the
+    de-duplicated union, which is exactly what received the exact score.
+    """
+
+    donor_pool: int
+    """Distinct donor material-plants, after de-duplication."""
+    duplicates_dropped: int
+    hard_filter_passes: int
+    """Same criticality, compatible material type, active, enough history, not the target itself."""
+    structure_shortlist: int | None
+    text_shortlist: int | None
+    fused_shortlist: int | None
+    merged_candidates: int
+    identity_conflicts: int
+    """Eligible donors whose description names a component type incompatible with the target's."""
+    identity_insufficient: int
+    """Eligible donors refused for lack of identity evidence (and not a conflict)."""
+    identity_passes: int
+    """Exactly scored candidates the identity stage confirmed."""
+    score_floor_passes: int
+    """Of those, the ones at or above ``minimum_similarity``."""
+    final_neighbours: int
+
+    def describe(self) -> str:
+        def show(value: int | None) -> str:
+            return "-" if value is None else str(value)
+
+        return (
+            f"donors={self.donor_pool};duplicates={self.duplicates_dropped};"
+            f"hard_filter={self.hard_filter_passes};"
+            f"structure={show(self.structure_shortlist)};text={show(self.text_shortlist)};"
+            f"fused={show(self.fused_shortlist)};merged={self.merged_candidates};"
+            f"identity_conflicts={self.identity_conflicts};"
+            f"identity_insufficient={self.identity_insufficient};"
+            f"identity_pass={self.identity_passes};score_floor={self.score_floor_passes};"
+            f"final={self.final_neighbours}"
+        )
+
+
+class RetrievalTally(NamedTuple):
+    """What retrieval knows about one target that scoring cannot: how each channel picked, how many
+    duplicate donors it dropped, and how many eligible donors the identity stage refused across the WHOLE
+    pool (not only the shortlist). ``None`` for a count means "not known to retrieval" -- the result then
+    counts it from the candidates that were actually scored."""
+
+    duplicates_dropped: int = 0
+    structure_shortlist: int | None = None
+    text_shortlist: int | None = None
+    fused_shortlist: int | None = None
+    identity_conflicts: int | None = None
+    identity_insufficient: int | None = None
+
+
+class RejectedCandidate(NamedTuple):
+    """A scored candidate that was refused, kept so a refusal can be examined."""
+
+    material: str
+    plant: str
+    combined: Decimal | None
+    reason: str
+    status: str | None = None
 
 
 class OarResult(NamedTuple):
@@ -319,3 +489,6 @@ class OarResult(NamedTuple):
     candidate under exhaustive retrieval; the merged shortlist under two-stage."""
     retrieval: str | None = None
     """``"exhaustive"`` or ``"two_stage"`` -- which retrieval produced this."""
+    stage_counts: StageCounts | None = None
+    rejected_candidates: tuple[RejectedCandidate, ...] = ()
+    """The best-scoring candidates refused on identity or evidence, highest combined score first."""

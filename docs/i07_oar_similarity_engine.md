@@ -228,6 +228,31 @@ this work doesn't change them. To calibrate:
    policy version, and record the measurements with the change. Nothing in the
    code moves the floor automatically.
 
+### Running the review (`scripts/oar_identity_review.py`)
+
+The procedure above, built on `oar/evaluation.py`, with the arms `oar-similarity-10` needs. It compares the
+old rule (`identity_validation=False`, weighted mean) with the new one on the same targets.
+
+```
+# inside the network, real model installed (requirements-oar-text.txt): ~50 stratified targets
+python -m scripts.oar_identity_review sample --targets 50 --out review/ --include <MATERIAL>:<PLANT>
+# hand review/review_sheet.csv + review/PROTOCOL.md to the reviewer; keep review/key.csv away from them
+# afterwards, anywhere:
+python -m scripts.oar_identity_review evaluate --review completed.csv --key review/key.csv --report results.md
+```
+
+* Targets are spread over criticality x material group x whether the description names a component type
+  and carries a part number; `--include` forces the reported cases, `--focus-group` (default 308175)
+  over-samples the broad group the defect was found in.
+* Each target's pairs are the old top 5, the new top 5, the best candidates the new identity stage
+  **refused** (so a lost genuine match is seen) and a few random eligible donors, in shuffled order, blind.
+* `sample` stops without the real model: a review on a stand-in would measure the stand-in.
+* `evaluate` reports precision@k and recall@k old against new, the identity stage's false-rejection rate
+  (with every genuine match it lost), genuine matches lost to a component-type conflict (a vocabulary
+  fault), per-route text-floor sweeps with `recommend_threshold`, and the PROPOSED gates. The gates' defaults
+  are for the business to confirm. Nothing is applied automatically.
+* A blank or "unsure" answer is left out and counted; it is never read as "no".
+
 ## Benchmark
 
 `python -m scripts.benchmark_oar_similarity [--legacy-root <checkout of main>]`

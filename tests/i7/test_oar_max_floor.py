@@ -22,8 +22,8 @@ from app.initiatives.i7.recommendations.builder import _max_floor_entries
 from tests.i7.test_oar_similarity import neighbour_with
 
 
-def calculate(*neighbours):
-    return estimate.calculate(list(neighbours), service_level_configured=True)
+def calculate(*neighbours, strategy="weighted_median"):
+    return estimate.calculate(list(neighbours), service_level_configured=True, strategy=strategy)
 
 
 def only(ss: int, rop: int, mx: int):
@@ -211,7 +211,9 @@ def test_the_floor_lives_only_in_the_oar_estimate():
 
 def test_the_weighted_averages_are_unchanged_when_no_floor_is_needed():
     """The documented example: (0.90x10 + 0.80x20) / 1.7 -> SS 15, ROP 30, Max 45 (all above the floor)."""
-    result = calculate(neighbour_with("0.90", 10, 20, 30), neighbour_with("0.80", 20, 40, 60))
+    result = calculate(
+        neighbour_with("0.90", 10, 20, 30), neighbour_with("0.80", 20, 40, 60), strategy="weighted_mean"
+    )
     assert (result.safety_stock, result.rop, result.max_stock) == (15, 30, 45)
     trace = dict(result.trace)
     assert abs(float(trace["safety_stock_raw"]) - 14.7058823529) < 1e-6

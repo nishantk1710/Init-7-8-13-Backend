@@ -31,9 +31,11 @@ from app.initiatives.i7.policy.oar import (
 from app.initiatives.i7.policy.thresholds import (
     AdoptionPolicy,
     ClassificationPolicy,
+    ComponentTypeSpec,
     ConfidencePolicy,
     ConversionTriggerPolicy,
     DecliningDemandPolicy,
+    DemandSanityPolicy,
     HistoryGatePolicy,
     LeadTimePolicy,
     ModelAdoptionPolicy,
@@ -48,9 +50,11 @@ from app.initiatives.i7.policy.unresolved import (
 __all__ = [
     "AdoptionPolicy",
     "ClassificationPolicy",
+    "ComponentTypeSpec",
     "ConfidencePolicy",
     "ConversionTriggerPolicy",
     "DecliningDemandPolicy",
+    "DemandSanityPolicy",
     "HistoryGatePolicy",
     "LeadTimePolicy",
     "MaxStockStrategy",

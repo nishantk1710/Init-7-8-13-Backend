@@ -39,6 +39,11 @@ POLICY = PolicyDocument(
 )
 NO_TEXT = PrecomputedEmbeddingProvider(None)
 
+# The default description of every hand-built part below. Since oar-similarity-10 a shared material group is
+# not identity on its own, so a same-group candidate needs description evidence; these parts all describe the
+# same bearing, which gives it (a shared part number and component type) even with no text model. Tests about
+# a *missing* description pass ``description=None`` explicitly.
+
 
 def part(
     number: str,
@@ -48,7 +53,7 @@ def part(
     price: Decimal | None = Decimal(100),
     manufacturer: str | None = None,
     circuit: str | None = None,
-    description: str | None = None,
+    description: str | None = "BEARING 6310-2RS",
     criticality: str = "NORMAL",
 ) -> CandidateAttributes:
     return CandidateAttributes(
@@ -96,9 +101,14 @@ def test_unit_of_measure_and_price_are_not_identity():
     assert "identity" in result.evidence_detail
 
 
-def test_material_group_and_unit_of_measure_are_enough():
-    result = score(part("T"), part("C"))
-    assert result.evidence_sufficient is True
+def test_material_group_and_unit_of_measure_are_enough_only_with_description_evidence():
+    """oar-similarity-10: group + unit of measure are enough EVIDENCE (features compared), but a same-group
+    pair is admitted only if its descriptions also say it is the same part."""
+    assert score(part("T"), part("C")).evidence_sufficient is True
+
+    bare = score(part("T", description=None), part("C", description=None))
+    assert bare.evidence_sufficient is False
+    assert "same material group is not identity on its own" in bare.evidence_detail
 
 
 def test_a_description_counts_as_identity_evidence():
@@ -201,7 +211,8 @@ def test_every_score_explains_what_entered_it():
     assert "missing=equipment_type,description,manufacturer" in explanation
     assert "weights=structured:" in explanation and "business:" in explanation
     assert "text=NOT_AVAILABLE_NO_MODEL" in explanation
-    assert explanation.endswith("evidence=ok")
+    assert "evidence=ok" in explanation
+    assert explanation.endswith("identity=CONFIRMED_PART_NUMBER")
 
 
 def test_a_refused_score_says_why():
@@ -234,8 +245,13 @@ def test_differently_worded_descriptions_of_one_part_rank_first():
 
     result = service.evaluate_target(target, [lookalike, reworded], provider, Decimal(1000), {}, POLICY)
 
-    assert [n.material for n in result.neighbours] == ["A", "B"]
-    assert result.neighbours[0].score.text.value > result.neighbours[1].score.text.value
+    # oar-similarity-10: the reworded bearing is the neighbour. The housing shares the material group and
+    # the token 6310 but is not a bearing -- it was a lower-ranked neighbour before, and is now refused
+    # for want of identity evidence (text 0.39, nothing specific in common) and kept in the audit sample.
+    assert [n.material for n in result.neighbours] == ["A"]
+    [refused] = result.rejected_candidates
+    assert refused.material == "B"
+    assert refused.status == "INSUFFICIENT_GROUP_ONLY"
 
 
 def test_a_superficially_similar_description_does_not_beat_structure():
