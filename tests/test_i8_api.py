@@ -370,7 +370,7 @@ class TestRegisterEndpoint:
         # The stages the data cannot support say so, rather than being absent.
         removed = body["timeline"][0]
         assert removed["occurredAt"] is None
-        assert "no PO reference" in removed["evidence"]
+        assert "does not name the repair PO" in removed["evidence"]
 
     def test_an_unknown_line_is_404(self) -> None:
         assert client.get(f"{REGISTER}/9999999999/10").status_code == 404

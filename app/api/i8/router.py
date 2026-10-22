@@ -60,6 +60,7 @@ from app.api.i8.schemas import (
     MaterialReference,
     RepairChain,
     RegisterResponse,
+    RegisterViewCounts,
     RepairableUnitResponse,
     RepairDetail,
     RepairEvidenceItem,
@@ -70,6 +71,7 @@ from app.api.i8.schemas import (
 )
 from app.core.config import get_settings
 from app.core.db import get_db
+from app.initiatives.i8.aging import aging_bucket as band_of
 from app.initiatives.i8.aging import bucket_labels
 from app.initiatives.i8.attestation import (
     AttestationDraft,
@@ -424,10 +426,26 @@ def get_register(
         None, alias="declarationStatus", description="Required, Completed or Flagged"
     ),
     aging_bucket: str | None = Query(None, alias="agingBucket"),
+    stage_aging_bucket: str | None = Query(
+        None,
+        alias="stageAgingBucket",
+        description=(
+            "The aging band of the days a line has spent in its current stage, "
+            "where agingBucket bands the days it has been open"
+        ),
+    ),
     with_exceptions: bool = Query(
         False,
         alias="withExceptions",
         description="Only lines a check has raised something against",
+    ),
+    quick_view: str | None = Query(
+        None,
+        alias="view",
+        description=(
+            "A quick view on top of the filters: overdue, undeclared, atVendor "
+            "or withExceptions. viewCounts counts each one before it is applied."
+        ),
     ),
     exclude_exception_type: str | None = Query(
         None,
@@ -502,6 +520,13 @@ def get_register(
             for line in lines
             if _declaration_status_of(line, view).lower() == wanted_declaration
         )
+    if stage_aging_bucket:
+        bands = cfg.aging_band_boundaries_list
+        lines = tuple(
+            line
+            for line in lines
+            if band_of(line.days_in_current_stage, bands) == stage_aging_bucket
+        )
     if with_exceptions:
         lines = tuple(line for line in lines if raised.get(line.key))
     if q and q.strip():
@@ -519,6 +544,31 @@ def get_register(
             )
         )
 
+    # The quick views: what the screen's preset buttons select, counted over
+    # the filtered lines before one of them is applied.
+    view_tests = {
+        "overdue": lambda line: line.overdue_status == "OVERDUE",
+        "undeclared": lambda line: _declaration_status_of(line, view) != "Completed",
+        "atVendor": lambda line: line.repair_status == "At Vendor",
+        "withExceptions": lambda line: bool(raised.get(line.key)),
+    }
+    view_counts = RegisterViewCounts(
+        all=len(lines),
+        overdue=sum(1 for line in lines if view_tests["overdue"](line)),
+        undeclared=sum(1 for line in lines if view_tests["undeclared"](line)),
+        at_vendor=sum(1 for line in lines if view_tests["atVendor"](line)),
+        with_exceptions=sum(1 for line in lines if view_tests["withExceptions"](line)),
+    )
+    if quick_view:
+        test = view_tests.get(quick_view)
+        if test is None:
+            raise HTTPException(
+                # A bare 422, as elsewhere here: Starlette renamed the constant.
+                status_code=422,
+                detail=f"Unknown view {quick_view!r}; use one of {', '.join(view_tests)}.",
+            )
+        lines = tuple(line for line in lines if test(line))
+
     page_lines, total = _paginate(lines, page, page_size)
     return RegisterResponse(
         items=[
@@ -531,6 +581,7 @@ def get_register(
         meta=register_meta(snapshot.register_stats),
         facets=facets,
         reference_date=snapshot.reference_date,
+        view_counts=view_counts,
     )
 
 

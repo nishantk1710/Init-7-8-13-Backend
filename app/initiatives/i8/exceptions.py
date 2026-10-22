@@ -174,6 +174,14 @@ class ExceptionItem:
     unit. ``purchasing_document``/``item`` are then the repair it overlapped."""
 
 
+def _day(value: date | None, missing: str) -> str:
+    """A date the way the screens show one -- ``08 May 2025`` -- or ``missing``.
+
+    The item text is read by people, not parsed, so it does not use ISO dates.
+    """
+    return value.strftime("%d %b %Y") if value is not None else missing
+
+
 def is_pre_automation(line: RepairLine, cutover: date | None) -> bool:
     """Whether this line was raised before the attestation control existed.
 
@@ -239,27 +247,28 @@ def missing_attestations(
                 plant=line.plant,
                 purchasing_document=line.purchasing_document,
                 item=line.item,
+                # Written for the people working the queue, who know SAP but
+                # not this codebase: no table names, no "attestation" (the
+                # screens say "condition declaration"), dates as 08 May 2025.
                 title=(
                     "Raised before Spares Automation"
                     if historical
-                    else "No condition-to-repair attestation"
+                    else "No condition declaration"
                 ),
                 detail=(
                     (
-                        f"This line was raised on "
-                        f"{line.raised_at.isoformat() if line.raised_at else 'an unknown date'}, "
-                        f"before the condition-to-repair attestation was introduced on "
-                        f"{cutover.isoformat() if cutover else 'the cutover date'}. "
-                        "No assessment is on record because none was asked for at "
-                        "the time; this is not an outstanding action."
+                        f"This line was raised on {_day(line.raised_at, 'an unknown date')}, "
+                        f"before condition declarations began on "
+                        f"{_day(cutover, 'the cutover date')}. No assessment is on record "
+                        "because none was asked for at the time, so nothing needs doing."
                     )
                     if historical
                     else (
-                        f"No attestation was found for material {line.material_id} at "
-                        f"plant {line.plant} within {coverage.window_days} days of "
-                        f"{line.raised_at.isoformat() if line.raised_at else 'the line being raised'}. "
-                        "The part was sent for repair with no recorded assessment of "
-                        "its condition."
+                        "No condition declaration covers this repair line: none was "
+                        f"recorded on it, or for material {line.material_id} at plant "
+                        f"{line.plant} within {coverage.window_days} days of "
+                        f"{_day(line.raised_at, 'the PO date')}. The part went for repair "
+                        "without a recorded assessment of its condition."
                     )
                 ),
                 raised_at=line.raised_at,
@@ -304,8 +313,8 @@ def overdue_repairs(lines, *, grace_days: int) -> list[ExceptionItem]:
             # days_remaining goes negative once the date has passed.
             days_late = -line.days_remaining if line.days_remaining < 0 else None
 
-        where = f" at {line.vendor_name or line.vendor}" if (line.vendor_name or line.vendor) else ""
-        due = line.due_date.isoformat() if line.due_date else "an unrecorded date"
+        where = f" from {line.vendor_name or line.vendor}" if (line.vendor_name or line.vendor) else ""
+        due = _day(line.due_date, "an unrecorded date")
 
         items.append(
             ExceptionItem(
@@ -322,10 +331,10 @@ def overdue_repairs(lines, *, grace_days: int) -> list[ExceptionItem]:
                 item=line.item,
                 title="Repair overdue",
                 detail=(
-                    f"Promised back on {due}{where}, past the "
-                    f"{grace_days}-day grace period"
-                    + (f" by {days_late} days" if days_late is not None else "")
-                    + ". SAP still has the repair line open."
+                    f"Due back on {due}{where}"
+                    + (f", {days_late} days ago" if days_late is not None else "")
+                    + f". A repair is flagged once it is more than {grace_days} days "
+                    "late, and SAP still has this repair line open."
                 ),
                 raised_at=line.raised_at,
             )

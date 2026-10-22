@@ -574,7 +574,7 @@ class TestMissingAttestationException:
 
         assert items[0].pre_automation is True
         assert items[0].title == "Raised before Spares Automation"
-        assert "2026-10-01" in items[0].detail
+        assert "01 Oct 2026" in items[0].detail
         # Open, but INFO: there was no form to fill in when it was raised.
         assert items[0].severity == "info"
         # Counted, but not as work.
@@ -586,7 +586,7 @@ class TestMissingAttestationException:
         items, stats = build_exceptions([line], cover, cutover=date(2026, 10, 1))
 
         assert items[0].pre_automation is False
-        assert items[0].title == "No condition-to-repair attestation"
+        assert items[0].title == "No condition declaration"
         assert items[0].severity == "warning"
         assert (stats.total, stats.pre_automation, stats.actionable) == (1, 0, 1)
 
@@ -598,7 +598,7 @@ class TestMissingAttestationException:
         items, stats = build_exceptions([line], cover)
 
         assert items[0].pre_automation is False
-        assert items[0].title == "No condition-to-repair attestation"
+        assert items[0].title == "No condition declaration"
         assert (stats.pre_automation, stats.actionable) == (0, 1)
         assert stats.attestation_cutover_date is None
 
@@ -666,8 +666,8 @@ class TestMissingAttestationException:
         assert items[0].type == ExceptionType.OVERDUE_REPAIR.value
         # The rule is traceable from the row: when it was promised, and the
         # grace it is measured against.
-        assert "2026-06-01" in items[0].detail
-        assert "7-day grace" in items[0].detail
+        assert "01 Jun 2026" in items[0].detail
+        assert "more than 7 days late" in items[0].detail
         assert "40 days" in items[0].detail
 
     def test_an_on_time_line_is_not_raised(self) -> None:
