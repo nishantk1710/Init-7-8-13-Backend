@@ -335,11 +335,34 @@ def test_a_donor_with_no_criticality_still_blocks_rather_than_defaulting():
     assert result["safety_stock"] is None
 
 
-# --- 3. At least three qualifying neighbours are required -------------------
+# --- 3. At least two qualifying neighbours are required ---------------------
 
 
-def test_minimum_neighbours_is_three_and_is_a_hard_gate(dev_donors):
-    assert PolicyDocument().similarity.minimum_neighbours == 3
+def test_minimum_neighbours_is_two_and_is_a_hard_gate(dev_donors):
+    assert PolicyDocument().similarity.minimum_neighbours == 2
+
+    donor_values = inventory_values(dev_donors)
+    target = attributes("T000001", 101)
+    one = [attributes(material, price) for material, _, _, price in DONORS[:1]]
+
+    result = evaluate_target(
+        target, one, NoEmbeddingModel(), Decimal("20"), donor_values, DEV_POLICY
+    )
+
+    assert len(result.neighbours) == 1
+    assert result.estimate.status is EstimateStatus.NOT_EVALUABLE_INSUFFICIENT_NEIGHBOURS
+    # One perfectly good neighbour, with values, and still no partial estimate.
+    assert result.estimate.safety_stock is None
+    assert result.estimate.rop is None
+    assert result.estimate.max_stock is None
+    assert result.estimate.qualifying_neighbours == 1
+    assert result.estimate.minimum_neighbours == 2
+
+
+def test_two_qualifying_neighbours_give_an_estimate_graded_low(dev_donors):
+    """Two neighbours are enough since 2026-10-22, and the estimate says it is thin: fewer than the three a
+    MEDIUM grade needs is always LOW."""
+    from app.initiatives.i7.oar import confidence
 
     donor_values = inventory_values(dev_donors)
     target = attributes("T000001", 101)
@@ -350,14 +373,16 @@ def test_minimum_neighbours_is_three_and_is_a_hard_gate(dev_donors):
     )
 
     assert len(result.neighbours) == 2
-    assert result.estimate.status is EstimateStatus.NOT_EVALUABLE_INSUFFICIENT_NEIGHBOURS
-    # Two perfectly good neighbours, both with values, and still no partial
-    # estimate.
-    assert result.estimate.safety_stock is None
-    assert result.estimate.rop is None
-    assert result.estimate.max_stock is None
+    assert result.estimate.status is EstimateStatus.SUCCESS
     assert result.estimate.qualifying_neighbours == 2
-    assert result.estimate.minimum_neighbours == 3
+    graded = confidence.grade(
+        list(result.neighbours),
+        DEV_POLICY.confidence.oar_high_minimum_neighbours,
+        Decimal(str(DEV_POLICY.confidence.oar_high_minimum_similarity)),
+        DEV_POLICY.confidence.oar_medium_minimum_neighbours,
+        Decimal(str(DEV_POLICY.confidence.oar_medium_minimum_similarity)),
+    )
+    assert graded.value == "LOW"
 
 
 def test_three_qualifying_neighbours_is_enough(dev_donors):
@@ -807,6 +832,6 @@ def test_the_gates_are_the_confirmed_values():
     neighbours became 3-5 (was 5-10) on 2026-10-19."""
     similarity = PolicyDocument().similarity
     assert similarity.minimum_similarity == 0.60
-    assert similarity.minimum_neighbours == 3
+    assert similarity.minimum_neighbours == 2
     assert similarity.maximum_neighbours == 5
     assert similarity.minimum_neighbour_history_months == 12

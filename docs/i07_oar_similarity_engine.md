@@ -30,7 +30,7 @@ target --> hard eligibility gates --> Stage A shortlist --> Stage B exact score
 | Admission floor | combined >= **0.60** | `SimilarityPolicy.minimum_similarity` |
 | Minimum evidence | **new**, see below | `SimilarityPolicy.minimum_evidence_features`, `identity_evidence_features` |
 | Neighbours kept | top **5** (was 10, changed 2026-10-19) | `SimilarityPolicy.maximum_neighbours` |
-| Estimate needs | >= **3** qualifying neighbours (was 5) | `SimilarityPolicy.minimum_neighbours` |
+| Estimate needs | >= **2** qualifying neighbours (was 3, and 5 before that) | `SimilarityPolicy.minimum_neighbours` |
 | Donor gate | current SAP SS, ROP **and** Max all > 0; those SAP values are lent (was: Phase 5 SS, ROP and Max all `SUCCESS`) | `repository.load_candidate_population`, `load_inventory_values` |
 | Estimate | `sum(s_i * v_i) / sum(s_i)`, rounded up once | `estimate.py` |
 | Max floor | `Max = max(weighted Max, ROP + SS)` when all three are present (`oar-similarity-6`, 2026-10-19; approved deviation) | `estimate.apply_max_floor` |

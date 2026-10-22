@@ -35,7 +35,7 @@ callers that pass their own values.
 ``neighbours`` arriving here has already been filtered to
 ``SimilarityPolicy.minimum_similarity`` (>= 0.60) and capped at Top-K by
 ``ranking.select_top_k`` -- this module only checks the resulting *count*
-against ``minimum_neighbours`` (3). Below it, no partial SS/ROP/Max is
+against ``minimum_neighbours`` (2). Below it, no partial SS/ROP/Max is
 computed from the neighbours that do qualify:
 ``NOT_EVALUABLE_INSUFFICIENT_NEIGHBOURS`` reports exactly how many qualified
 and how many were required, distinct from ``NOT_EVALUABLE_NO_NEIGHBORS``

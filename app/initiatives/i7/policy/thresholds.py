@@ -96,14 +96,18 @@ class SimilarityPolicy(BaseModel):
     text_weight: float = Field(default=0.30, ge=0, le=1)
     business_weight: float = Field(default=0.35, ge=0, le=1)
 
-    minimum_neighbours: int = Field(default=3, ge=1)
+    minimum_neighbours: int = Field(default=2, ge=1)
     """Hard admission gate: fewer than this many *qualifying* (>= minimum_similarity)
     neighbours blocks the estimate entirely -- see oar/estimate.py's
     NOT_EVALUABLE_INSUFFICIENT_NEIGHBOURS. Never relaxed by padding with
     low-similarity candidates.
 
-    3, set 2026-10-19 (was 5). The Solution Design and Formula Reference say
-    K = 5-10; this is a deliberate business override, not a reading of them.
+    2, set 2026-10-22 (was 3, and 5 before 2026-10-19). The Solution Design and Formula
+    Reference say K = 5-10; this is a deliberate business override, not a reading of them.
+    Lowered from 3 together with the identity-match rule (``minimum_identity_text_similarity``),
+    which removes cross-group look-alikes and so leaves fewer, genuine neighbours. An estimate
+    from fewer than ``ConfidencePolicy.oar_medium_minimum_neighbours`` (3) neighbours is graded
+    LOW by ``oar.confidence.grade``, so a two-neighbour estimate always says so.
     Every neighbour now carries SAP values to lend (see
     ``oar.repository.load_candidate_population``), so the minimum counts
     materials that actually contribute to the estimate."""
