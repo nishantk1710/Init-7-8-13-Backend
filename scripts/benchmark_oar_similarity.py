@@ -25,7 +25,7 @@ Real matching accuracy. The catalogue is synthetic: every material belongs to a
 "part family", descriptions are family templates, and the embedding provider is
 a deterministic stand-in whose vectors cluster by family. Precision here shows
 that the engine uses the signals it is given correctly; it does not show that
-MiniLM puts real VZI spare-part descriptions in the right places. That needs
+the real embedding model puts real VZI spare-part descriptions in the right places. That needs
 the real model and expert-reviewed pairs (``oar.evaluation``).
 """
 

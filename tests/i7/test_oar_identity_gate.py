@@ -32,6 +32,8 @@ def policy(floor: float | None = 0.50, *, validation: bool = True) -> PolicyDocu
             minimum_identity_text_similarity=floor,
             minimum_similarity=0.30,
             identity_validation=validation,
+            text_embedding_weight=1.0,  # these tests inject cosines: the text score is the cosine alone
+            text_fuzzy_weight=0.0,
         ),
     )
 

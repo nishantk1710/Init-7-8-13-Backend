@@ -36,6 +36,7 @@ from typing import Iterator, Sequence
 import numpy as np
 
 from app.initiatives.i7.oar import identity as identity_module
+from app.initiatives.i7.oar import text_match
 from app.initiatives.i7.oar.retrieval import (
     DonorIndex,
     RetrievalConfig,
@@ -85,6 +86,7 @@ def build_index(
         minimum_evidence_features=similarity.minimum_evidence_features,
         identity_evidence_features=tuple(similarity.identity_evidence_features),
         embeddings=embeddings,
+        text_weights=(float(similarity.text_embedding_weight), float(similarity.text_fuzzy_weight)),
         # The oar-similarity-8/9 floor applies only with identity validation off; with it on, the
         # identity stage's own config does (and carries the same baseline floor for other-group donors).
         identity_text_floor=(
@@ -144,6 +146,16 @@ def evaluate_targets(
             for i, row in zip(positions, rows):
                 cosines[i] = row
 
+        # The fuzzy half of the text score, one rapidfuzz call per partition for the whole batch.
+        fuzzies: list[np.ndarray | None] = [None] * len(batch)
+        if index.text_weights[1] > 0:
+            for criticality, positions in by_partition.items():
+                rows = text_match.fuzzy_matrix(
+                    [encodings[i].text for i in positions], index.partitions[criticality].texts
+                )
+                for i, row in zip(positions, rows):
+                    fuzzies[i] = row
+
         for i, target in enumerate(batch):
             stats.targets += 1
             eligible_count, rejections = index.profile.profile(target)
@@ -164,7 +176,9 @@ def evaluate_targets(
                 )
                 continue
 
-            shortlist = index.shortlist(partition, target, encodings[i], cosines[i], config)
+            shortlist = index.shortlist(
+                partition, target, encodings[i], cosines[i], config, fuzzy=fuzzies[i]
+            )
 
             expected = (
                 len(partition)

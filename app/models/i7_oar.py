@@ -213,8 +213,8 @@ class OarEmbedding(Base):
     never looked up -- nothing here has to be invalidated by hand, and old rows
     are only dead weight until pruned (``oar.embedding_store``).
 
-    The vector is little-endian float32 bytes (384 x 4 = 1,536 bytes for
-    MiniLM), not text: a binary column is the portable way to hold it, and it
+    The vector is little-endian float32 bytes (768 x 4 = 3,072 bytes for
+    BGE-base), not text: a binary column is the portable way to hold it, and it
     round-trips exactly.
     """
 

@@ -17,7 +17,7 @@ correctness, and ``clear`` is also the full rebuild: the next run regenerates
 whatever it needs.
 
 Why the database and not a file or a cache service: the vectors are small
-(1.5 KB each at 384 float32 dimensions), the database is already the one store
+(3 KB each at 768 float32 dimensions), the database is already the one store
 every worker and every instance shares, and it needs no new Azure resource.
 Redis or a vector database would add a service to buy nothing at this volume.
 

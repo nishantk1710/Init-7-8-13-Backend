@@ -22,7 +22,7 @@ from app.initiatives.i7.oar.service import prepare_embeddings
 from app.initiatives.i7.oar.text_similarity import (
     EmbeddingCache,
     InMemoryEmbeddingStore,
-    MiniLmEmbeddingProvider,
+    BgeEmbeddingProvider,
     PrecomputedEmbeddingProvider,
     cache_key,
 )
@@ -59,12 +59,12 @@ class CountingProvider:
 
 
 def test_the_key_changes_with_everything_that_changes_the_vector(monkeypatch):
-    base = cache_key("ball bearing 6310", "all-MiniLM-L6-v2", "v1")
-    assert cache_key("ball bearing 6311", "all-MiniLM-L6-v2", "v1") != base
+    base = cache_key("ball bearing 6310", "BAAI/bge-base-en-v1.5", "v1")
+    assert cache_key("ball bearing 6311", "BAAI/bge-base-en-v1.5", "v1") != base
     assert cache_key("ball bearing 6310", "other-model", "v1") != base
-    assert cache_key("ball bearing 6310", "all-MiniLM-L6-v2", "v2") != base
+    assert cache_key("ball bearing 6310", "BAAI/bge-base-en-v1.5", "v2") != base
     monkeypatch.setattr(text_similarity, "PREPROCESSING_VERSION", "ws-collapse-2")
-    assert cache_key("ball bearing 6310", "all-MiniLM-L6-v2", "v1") != base
+    assert cache_key("ball bearing 6310", "BAAI/bge-base-en-v1.5", "v1") != base
 
 
 def test_the_key_is_deterministic():
@@ -154,15 +154,25 @@ def test_the_scoring_provider_never_calls_a_model():
 def fake_sentence_transformers(monkeypatch):
     """A stand-in ``sentence_transformers`` module that counts model loads."""
     loads = {"n": 0}
-    calls: list[int] = []
+
+    class Calls(list):
+        """Batch sizes, plus what the model was actually given (``.texts``) and how (``.normalize``)."""
+
+        texts: list = []
+        normalize: list = []
+
+    calls = Calls()
+    calls.texts, calls.normalize = [], []
 
     class SentenceTransformer:
         def __init__(self, name):
             loads["n"] += 1
             self.name = name
 
-        def encode(self, texts, batch_size, convert_to_numpy, show_progress_bar):
+        def encode(self, texts, batch_size, convert_to_numpy, show_progress_bar, normalize_embeddings=False):
             calls.append(len(texts))
+            calls.texts.extend(texts)
+            calls.normalize.append(normalize_embeddings)
             return np.ones((len(texts), 4), dtype=np.float32)
 
     module = types.ModuleType("sentence_transformers")
@@ -176,7 +186,7 @@ def fake_sentence_transformers(monkeypatch):
 def test_the_model_is_loaded_once_per_process(fake_sentence_transformers):
     loads, _ = fake_sentence_transformers
     for _ in range(3):
-        provider = MiniLmEmbeddingProvider()
+        provider = BgeEmbeddingProvider()
         assert provider.is_available
         provider.encode(["a", "b"])
     assert loads["n"] == 1
@@ -184,7 +194,7 @@ def test_the_model_is_loaded_once_per_process(fake_sentence_transformers):
 
 def test_the_real_provider_encodes_in_bounded_batches(fake_sentence_transformers):
     _, calls = fake_sentence_transformers
-    MiniLmEmbeddingProvider(batch_size=4).encode([f"t{i}" for i in range(10)])
+    BgeEmbeddingProvider(batch_size=4).encode([f"t{i}" for i in range(10)])
     assert calls == [4, 4, 2]
 
 
@@ -192,7 +202,7 @@ def test_a_missing_library_is_remembered_not_retried(monkeypatch):
     monkeypatch.setattr(text_similarity, "_MODELS", {})
     monkeypatch.setattr(text_similarity, "_MODEL_FAILURES", set())
     monkeypatch.setitem(sys.modules, "sentence_transformers", None)  # import fails
-    provider = MiniLmEmbeddingProvider()
+    provider = BgeEmbeddingProvider()
     assert provider.is_available is False
     assert provider.encode(["a"]) is None
     assert text_similarity.MODEL_NAME in text_similarity._MODEL_FAILURES
@@ -261,3 +271,25 @@ def test_clear_is_a_full_rebuild(store):
     provider = CountingProvider()
     EmbeddingCache(provider, store=store).ensure(["a", "b"])
     assert sorted(provider.encoded) == ["a", "b"]
+
+
+def test_the_provider_asks_for_normalised_vectors_and_the_matching_normalisation(fake_sentence_transformers):
+    """BGE is run with normalize_embeddings=True, on text with commas removed and abbreviations expanded -- the
+    cache is keyed by the description as stored, so the key does not change when the rules do (the model
+    version carries them instead)."""
+    _, calls = fake_sentence_transformers
+
+    BgeEmbeddingProvider().encode(["bush,reducing  1 x 3/4", "Cover PL"])
+
+    assert calls.normalize == [True]
+    assert calls.texts == ["BUSHING REDUCING 1 X 3/4", "COVER PLATE"]
+
+
+def test_the_model_version_carries_the_normalisation_version() -> None:
+    from app.initiatives.i7.oar import text_match
+
+    version = BgeEmbeddingProvider().model_version
+
+    assert version == f"BAAI/bge-base-en-v1.5+{text_match.NORMALISATION_VERSION}"
+    assert text_similarity.EMBEDDING_DIMENSIONS == 768
+    assert not hasattr(text_similarity, "MiniLmEmbeddingProvider")  # MiniLM is gone

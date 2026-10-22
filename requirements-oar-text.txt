@@ -1,8 +1,12 @@
-# OAR text similarity (all-MiniLM-L6-v2 embeddings). Optional: without it OAR runs, but neighbours are
-# scored on material group, unit of measure and price only -- never on the description.
+# OAR text similarity: BAAI/bge-base-en-v1.5 embeddings (+ rapidfuzz, which requirements.txt already pins).
+# Optional: without it OAR runs, but neighbours are scored on material group, unit of measure and price only --
+# never on the description.
 #
 # Install on the App Service build only (CI uses a fake embedding provider and must not pull torch):
 #   pip install -r requirements-oar-text.txt
+#
+# The model (~440 MB) is downloaded from Hugging Face on first use and cached under HF_HOME; set HF_HOME to a
+# folder under /home on App Service or it is fetched again after every restart.
 #
 # CPU-only torch: the default Linux wheel bundles CUDA libraries (~2 GB) the App Service cannot use.
 --extra-index-url https://download.pytorch.org/whl/cpu

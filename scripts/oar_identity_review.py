@@ -8,6 +8,9 @@
     # 3. anywhere: measure the completed sheet
     python -m scripts.oar_identity_review evaluate --review review/review_sheet_completed.csv --key review/key.csv
 
+    # when the text score changes (oar-similarity-11), with the model: floors that keep the old selectivity
+    python -m scripts.oar_identity_review floors --review review/review_sheet.csv --key review/key.csv
+
 WHY THIS EXISTS. ``oar-similarity-10`` makes identity a stage of its own and replaces the weighted mean by a
 median. The unit tests prove the rules do what they say, on injected similarities. They cannot say whether
 the rules find the RIGHT materials on VZI's real descriptions; only a person who knows the parts can. This is
@@ -27,7 +30,7 @@ THIS SCRIPT DECIDES NOTHING. ``evaluate`` prints measurements and, against gates
 whether each is met. The gates' defaults are proposals for the business to confirm; no floor or vocabulary is
 changed automatically (a changed floor is a reviewed ``SimilarityPolicy`` change with these numbers attached).
 
-``sample`` needs the database AND the real MiniLM model, and stops if either is missing: a review run on a
+``sample`` needs the database AND the real text model (BGE + rapidfuzz), and stops if either is missing: a review run on a
 stand-in would measure the stand-in. ``evaluate`` needs neither.
 """
 
@@ -662,6 +665,300 @@ def render_report(load: ReviewLoad, metrics: dict, gate_results: list, *, k: int
     return "\n".join(lines)
 
 
+# --- floors for a new text score -----------------------------------------------------------------------------
+
+
+def _answers(review_path: Path) -> dict[str, bool | None]:
+    """pair_id -> True / False for a yes / no answer; unanswered, unsure and unreadable rows are absent.
+
+    Works on the blind sheet too (no ``relevant`` column, or all blank): nothing is answered, nothing is
+    excluded. Unlike ``load_review`` it never raises on an odd value -- here an answer only ever REMOVES a pair
+    from the unrelated population or ADDS it to the confirmed list, so an unreadable one is simply not used.
+    """
+    answers: dict[str, bool | None] = {}
+    with open(review_path, newline="", encoding="utf-8-sig") as handle:
+        for row in csv.DictReader(handle):
+            verdict = (row.get("relevant") or "").strip().lower()
+            if verdict in _TRUE:
+                answers[row["pair_id"]] = True
+            elif verdict in _FALSE:
+                answers[row["pair_id"]] = False
+    return answers
+
+
+def unrelated_pairs(review_path: Path, key_path: Path) -> list[tuple[str, str, Decimal]]:
+    """``(target description, candidate description, old text similarity)`` for the random-control pairs.
+
+    Only pairs drawn purely as random eligible donors (arm ``random``, nothing else): the nearest thing the
+    sample has to "unrelated" parts, since neither engine chose them nor did the identity stage refuse them
+    for being close. A few will be genuine equivalents by chance, so this is a provisional population -- and
+    when the expert's answers are in the file, a random pair they marked "yes" is removed from it. Pairs with no
+    old text score are left out.
+    """
+    with open(key_path, newline="", encoding="utf-8-sig") as handle:
+        keys = {row["pair_id"]: row for row in csv.DictReader(handle)}
+    answers = _answers(review_path)
+    pairs = []
+    with open(review_path, newline="", encoding="utf-8-sig") as handle:
+        for row in csv.DictReader(handle):
+            key = keys.get(row["pair_id"])
+            if key is None or key["arms"] != "random" or not key["text_similarity"]:
+                continue
+            if answers.get(row["pair_id"]) is True:
+                continue  # the expert says it IS a match: not an unrelated pair
+            pairs.append((row["target_description"], row["candidate_description"], Decimal(key["text_similarity"])))
+    return pairs
+
+
+def confirmed_matches(review_path: Path, key_path: Path) -> list[tuple[str, str, str, Decimal | None]]:
+    """``(pair_id, target description, candidate description, old text similarity)`` for every pair the expert
+    answered "yes" to, whichever arm it came from. Empty if the file carries no answers."""
+    with open(key_path, newline="", encoding="utf-8-sig") as handle:
+        keys = {row["pair_id"]: row for row in csv.DictReader(handle)}
+    answers = _answers(review_path)
+    found = []
+    with open(review_path, newline="", encoding="utf-8-sig") as handle:
+        for row in csv.DictReader(handle):
+            if answers.get(row["pair_id"]) is not True:
+                continue
+            old = (keys.get(row["pair_id"]) or {}).get("text_similarity") or ""
+            found.append((row["pair_id"], row["target_description"], row["candidate_description"],
+                          Decimal(old) if old else None))
+    return found
+
+
+def _quantile(sorted_values: Sequence[float], q: float) -> float:
+    if not sorted_values:
+        return float("nan")
+    return sorted_values[min(len(sorted_values) - 1, int(q * len(sorted_values)))]
+
+
+def wilson_interval(successes: int, trials: int, z: float = 1.96) -> tuple[float, float]:
+    """The Wilson 95% interval for a share of ``successes`` in ``trials``. Honest at 0 and at small n, where
+    the plain +-1.96 sqrt(p(1-p)/n) collapses to a zero-width interval."""
+    if trials <= 0:
+        return 0.0, 1.0
+    p = successes / trials
+    denominator = 1 + z * z / trials
+    centre = (p + z * z / (2 * trials)) / denominator
+    half = z * ((p * (1 - p) / trials + z * z / (4 * trials * trials)) ** 0.5) / denominator
+    return max(0.0, centre - half), min(1.0, centre + half)
+
+
+def equivalent_floor(old_scores: Sequence[float], new_scores: Sequence[float], old_floor: float) -> dict:
+    """The floor on the NEW text score that admits as many of the unrelated pairs as ``old_floor`` admitted on
+    the OLD one, and how uncertain that is.
+
+    ``selectivity`` is the share of unrelated pairs at or above the old floor. The proposed floor is the k-th
+    highest new score, k = the number of pairs the old floor admitted, so the same count clears it. With a
+    selectivity of 0 there is nothing to match against and no floor is proposed -- say so, do not invent one.
+
+    The selectivity is itself an estimate from a small sample, so its 95% Wilson interval is turned into a floor
+    RANGE: the floor that matches the interval's upper selectivity (the lower floor) to the one that matches its
+    lower selectivity (the higher floor).
+    """
+    if len(old_scores) != len(new_scores):
+        raise ValueError("old and new scores must be for the same pairs")
+    n = len(new_scores)
+    admitted_before = sum(1 for v in old_scores if v >= old_floor)
+    old_share = admitted_before / n if n else None
+    new_sorted = sorted(new_scores, reverse=True)
+    # The same NUMBER of the same pairs: the k-th highest new score, k = how many the old floor admitted.
+    proposed = new_sorted[admitted_before - 1] if admitted_before else None
+
+    interval = floor_range = None
+    if n:
+        low, high = wilson_interval(admitted_before, n)
+        interval = (low, high)
+        if admitted_before:
+            k_high = min(n, max(1, int(-(-(high * n) // 1))))  # ceil of high * n
+            k_low = max(1, int(low * n))
+            floor_range = (new_sorted[k_high - 1], new_sorted[k_low - 1])
+    ascending = sorted(new_scores)
+    return {
+        "pairs": n,
+        "admitted_by_old_floor": admitted_before,
+        "selectivity_at_old_floor": old_share,
+        "selectivity_interval": interval,
+        "new_share_at_old_floor": (sum(1 for v in new_scores if v >= old_floor) / n) if n else None,
+        "proposed_floor": proposed,
+        "floor_range": floor_range,
+        "new_distribution": {
+            "min": ascending[0] if n else None, "median": _quantile(ascending, 0.5) if n else None,
+            "p90": _quantile(ascending, 0.9) if n else None, "p95": _quantile(ascending, 0.95) if n else None,
+            "max": ascending[-1] if n else None,
+        },
+    }
+
+
+def confirmed_below_floor(
+    rows: Sequence[tuple[str, str, str, float, float | None]], floor: float, old_floor: float
+) -> dict:
+    """How many expert-confirmed matches the floor would refuse.
+
+    ``rows`` are ``(pair_id, target description, candidate description, new text score, old text score or
+    None)``. For comparison it also counts how many were below the OLD floor on the OLD score -- a floor that
+    refuses more genuine matches than the one it replaces is worth knowing about.
+    """
+    below = [r for r in rows if r[3] < floor]
+    old_scored = [r for r in rows if r[4] is not None]
+    return {
+        "count": len(rows),
+        "below": sorted(below, key=lambda r: r[3]),
+        "below_interval": wilson_interval(len(below), len(rows)) if rows else None,
+        "old_count": len(old_scored),
+        "old_below": sum(1 for r in old_scored if r[4] < old_floor),
+    }
+
+
+def render_floors(result: dict, old_floor: float, confirmed: dict | None = None) -> str:
+    def f(v) -> str:
+        return "n/a" if v is None else f"{v:.3f}" if isinstance(v, float) else str(v)
+
+    def pct(v) -> str:
+        return "n/a" if v is None else f"{100 * v:.0f}%"
+
+    d = result["new_distribution"]
+    interval, floor_range = result["selectivity_interval"], result["floor_range"]
+    lines = [
+        "# Text floors for the new text score", "",
+        f"Unrelated-pair population: **{result['pairs']}** random eligible donors from the review sample "
+        "(a few may be genuine equivalents by chance, so this is provisional).", "",
+        f"* The old floor ({old_floor}) on the old (MiniLM cosine) score admitted "
+        f"**{result['admitted_by_old_floor']}** of them ({f(result['selectivity_at_old_floor'])}).",
+        f"* The SAME floor ({old_floor}) on the new score (BGE + fuzzy) would admit "
+        f"**{f(result['new_share_at_old_floor'])}** of them.",
+        f"* New score on these pairs: min {f(d['min'])}, median {f(d['median'])}, 90th {f(d['p90'])}, "
+        f"95th {f(d['p95'])}, max {f(d['max'])}.", "",
+    ]
+    if result["proposed_floor"] is None:
+        lines.append("No equivalent floor can be proposed (the old floor admitted none of these pairs).")
+    else:
+        lines += [
+            f"**Equivalent floor: {result['proposed_floor']:.3f}** -- the floor on the new score that keeps the "
+            "identity gate as selective as it was on this sample.",
+        ]
+        if floor_range is not None:
+            lines.append(
+                f"Allowing for sampling error in the selectivity (95% interval {pct(interval[0])} to "
+                f"{pct(interval[1])}), the floor could be anywhere from {floor_range[0]:.3f} to {floor_range[1]:.3f}."
+            )
+        lines += [
+            "",
+            "To use it, set `minimum_identity_text_similarity` and `same_group_minimum_text_similarity` in "
+            "`SimilarityPolicy` to this value.",
+        ]
+
+    lines += ["", "## Expert-confirmed matches", ""]
+    if confirmed is None or confirmed["count"] == 0:
+        lines.append(
+            "No expert answers in this file, so it cannot be checked that the proposed floor keeps the genuine "
+            "matches. Run this again on the COMPLETED review sheet (`--review completed.csv`)."
+        )
+    elif result["proposed_floor"] is None:
+        lines.append(f"{confirmed['count']} pairs the expert confirmed, but there is no proposed floor to test.")
+    else:
+        below = confirmed["below"]
+        low, high = confirmed["below_interval"]
+        lines += [
+            f"* Expert-confirmed matching pairs: **{confirmed['count']}**.",
+            f"* Below the proposed floor ({result['proposed_floor']:.3f}): **{len(below)}** "
+            f"({pct(len(below) / confirmed['count'])}; 95% interval {pct(low)} to {pct(high)}) -- the genuine "
+            "matches this floor would refuse.",
+            f"* For comparison, below the OLD floor ({old_floor}) on the OLD score: "
+            f"**{confirmed['old_below']}** of {confirmed['old_count']}.",
+        ]
+        if below:
+            lines += ["", "The confirmed matches it would refuse (each is a floor, vocabulary or wording problem to read):", ""]
+            for pair_id, target, candidate, score, old in below:
+                lines.append(f"* {pair_id}  new {score:.3f}  old {f(old)}  |  {target}  ->  {candidate}")
+
+    lines += ["", "## How much to trust this", ""]
+    n = result["pairs"]
+    lines += [
+        f"* **The unrelated population is small** ({n} pairs, {result['admitted_by_old_floor']} of them above the "
+        "old floor). The proposed floor is an order statistic of those few pairs and will move noticeably with "
+        "a different sample; treat the range above, not the single number, as the answer.",
+        "* The random controls are eligible donors drawn at random, not a representative sample of all pairs, "
+        "and some are genuine matches by chance (removed here only where the expert said so).",
+    ]
+    if confirmed and confirmed["count"]:
+        c = confirmed["count"]
+        if confirmed["below"]:
+            note = (f"with {c} confirmed matches, the true share this floor refuses could plausibly be "
+                    f"{pct(confirmed['below_interval'][0])} to {pct(confirmed['below_interval'][1])}")
+        else:
+            note = (f"zero of {c} confirmed matches below the floor does NOT show none would be: with only {c}, "
+                    f"as many as {pct(confirmed['below_interval'][1])} could be (roughly 3/{c})")
+        lines.append(f"* **The confirmed matches are few:** {note}. A floor that looks safe on a handful of "
+                     "matches can still refuse genuine ones; the more answered pairs, the tighter this gets.")
+    lines += [
+        "",
+        "**`text_floors_calibrated` stays False.** This report proposes a floor; it does not certify one. Set the "
+        "flag only after a review with enough answered pairs (`evaluate`, which sweeps floors against the "
+        "expert's yes/no) has confirmed it.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def cmd_floors(args) -> int:  # pragma: no cover - needs the real model
+    from app.initiatives.i7.oar import text_similarity
+    from app.initiatives.i7.oar.text_similarity import (
+        BgeEmbeddingProvider, PrecomputedEmbeddingProvider, normalise_description,
+    )
+    from app.initiatives.i7.policy.thresholds import SimilarityPolicy
+
+    provider = BgeEmbeddingProvider()
+    if not provider.is_available:
+        print("The real text model (BAAI/bge-base-en-v1.5 via sentence-transformers, and rapidfuzz) is not "
+              "available here, so new scores cannot be computed.", file=sys.stderr)
+        return 2
+    pairs = unrelated_pairs(Path(args.review), Path(args.key))
+    confirmed = confirmed_matches(Path(args.review), Path(args.key))
+    if not pairs:
+        print("No random-control pairs with an old text score in this sample.", file=sys.stderr)
+        return 1
+
+    descriptions = [d for t, c, _ in pairs for d in (t, c)] + [d for _, t, c, _ in confirmed for d in (t, c)]
+    texts = sorted({normalise_description(d) for d in descriptions if normalise_description(d)})
+    vectors = dict(zip(texts, provider.encode(texts)))
+    scorer = PrecomputedEmbeddingProvider(vectors, provider.model_name, provider.model_version)
+    policy = SimilarityPolicy()
+
+    def new_score(target_description: str, candidate_description: str) -> float | None:
+        score = text_similarity.score(
+            target_description, candidate_description, scorer,
+            Decimal(str(policy.text_embedding_weight)), Decimal(str(policy.text_fuzzy_weight)),
+        )
+        return None if score.value is None else float(score.value)
+
+    new_scores, old_scores = [], []
+    for target_description, candidate_description, old in pairs:
+        value = new_score(target_description, candidate_description)
+        if value is not None:
+            new_scores.append(value)
+            old_scores.append(float(old))
+    result = equivalent_floor(old_scores, new_scores, args.old_floor)
+
+    rows = []
+    for pair_id, target_description, candidate_description, old in confirmed:
+        value = new_score(target_description, candidate_description)
+        if value is not None:
+            rows.append((pair_id, target_description, candidate_description, value,
+                         None if old is None else float(old)))
+    checked = (
+        confirmed_below_floor(rows, result["proposed_floor"], args.old_floor)
+        if result["proposed_floor"] is not None else {"count": len(rows), "below": [], "below_interval": None,
+                                                      "old_count": 0, "old_below": 0}
+    )
+    report = render_floors(result, args.old_floor, checked)
+    print(report)
+    if args.report:
+        Path(args.report).write_text(report, encoding="utf-8")
+    return 0
+
+
 # --- the orchestration that needs the database and the real model ---------------------------------------
 
 
@@ -673,13 +970,13 @@ def cmd_sample(args) -> int:  # pragma: no cover - needs the database and the re
     from app.core.db import get_sessionmaker
     from app.initiatives.i7.oar import eligibility, identity, repository, service
     from app.initiatives.i7.oar.embedding_store import SqlEmbeddingStore
-    from app.initiatives.i7.oar.text_similarity import MiniLmEmbeddingProvider, PrecomputedEmbeddingProvider
+    from app.initiatives.i7.oar.text_similarity import BgeEmbeddingProvider, PrecomputedEmbeddingProvider
     from app.initiatives.i7.policy.dev_fixtures import default_policy
 
-    provider = MiniLmEmbeddingProvider()
+    provider = BgeEmbeddingProvider()
     if not provider.is_available:
         print(
-            "The real embedding model (all-MiniLM-L6-v2, sentence-transformers) is not available here. "
+            "The real text model (BAAI/bge-base-en-v1.5 via sentence-transformers, and rapidfuzz) is not available here. "
             "A review built on a stand-in would measure the stand-in, so this stops. "
             "Install requirements-oar-text.txt and run again.",
             file=sys.stderr,
@@ -830,6 +1127,14 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--refused", type=int, default=5, help="best identity-refused candidates per target")
     s.add_argument("--random", type=int, default=3, help="random eligible donors per target")
     s.set_defaults(func=cmd_sample)
+
+    f = sub.add_parser("floors", help="floors for the NEW text score from the random controls (needs the model)")
+    f.add_argument("--review", required=True,
+                   help="the review sheet; pass the COMPLETED one to also check the expert's confirmed matches")
+    f.add_argument("--key", required=True)
+    f.add_argument("--old-floor", type=float, default=0.50)
+    f.add_argument("--report")
+    f.set_defaults(func=cmd_floors)
 
     e = sub.add_parser("evaluate", help="measure a completed review sheet (no database, no model)")
     e.add_argument("--review", required=True)

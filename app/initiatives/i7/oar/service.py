@@ -42,10 +42,10 @@ from app.initiatives.i7.oar import (
 )
 from app.initiatives.i7.oar.retrieval import RetrievalConfig
 from app.initiatives.i7.oar.text_similarity import (
+    BgeEmbeddingProvider,
     EmbeddingCache,
     EmbeddingProvider,
     EmbeddingStats,
-    MiniLmEmbeddingProvider,
     PrecomputedEmbeddingProvider,
 )
 from app.initiatives.i7.oar.types import (
@@ -111,7 +111,13 @@ def _score_pair(
     if provider.is_available:
         from app.initiatives.i7.oar.text_similarity import score as text_score
 
-        text = text_score(target.description, candidate.description, provider)
+        text = text_score(
+            target.description,
+            candidate.description,
+            provider,
+            embedding_weight=Decimal(str(policy.text_embedding_weight)),
+            fuzzy_weight=Decimal(str(policy.text_fuzzy_weight)),
+        )
     else:
         # Reported as a missing feature, the same as an absent description, so
         # the stored explanation says the description was not compared.
@@ -585,16 +591,30 @@ def run_oar_similarity(
 
     settings = get_settings()
     policy = policy or default_policy()
-    provider = provider or MiniLmEmbeddingProvider(batch_size=settings.i7_oar_embedding_batch_size)
+    provider = provider or BgeEmbeddingProvider(batch_size=settings.i7_oar_embedding_batch_size)
     config = config or RetrievalConfig.from_settings(settings)
     session_factory = get_sessionmaker()
 
     if provider.is_available:
-        logger.info("OAR run: text similarity ON (%s)", provider.model_name)
+        logger.info(
+            "OAR run: text similarity ON (%s; %.2f x embedding cosine + %.2f x token_set_ratio)",
+            provider.model_name,
+            policy.similarity.text_embedding_weight,
+            policy.similarity.text_fuzzy_weight,
+        )
+        if not policy.similarity.text_floors_calibrated:
+            logger.warning(
+                "OAR run: the identity text floors (%s other-group, %s same-group) were set for a MiniLM "
+                "cosine and have NOT been calibrated for the current text score (BGE + fuzzy). The identity "
+                "gate is provisional: see SimilarityPolicy.text_floors_calibrated and "
+                "scripts.oar_identity_review floors.",
+                policy.similarity.minimum_identity_text_similarity,
+                policy.similarity.same_group_minimum_text_similarity,
+            )
     else:
         logger.warning(
-            "OAR run: text similarity is OFF (no embedding model available) -- neighbours are scored on "
-            "material group, unit of measure and price only, never on what the description says. "
+            "OAR run: text similarity is OFF (the BGE model or rapidfuzz is not available) -- neighbours are "
+            "scored on material group, unit of measure and price only, never on what the description says. "
             "Install requirements-oar-text.txt to switch it on."
         )
     embedding_version = provider.model_version if provider.is_available else (

@@ -19,7 +19,7 @@ Eligible Candidates
        ↓
 ┌────────────────────────────┐   ┌────────────────────────────┐   ┌────────────────────────────┐
 │ Structured Similarity      │ + │ Text Similarity            │ + │ Business Similarity        │
-│ Gower                      │   │ MiniLM + Cosine             │   │ Circuit / Price / OEM      │
+│ Gower                      │   │ BGE cosine + fuzzy ratio    │   │ Circuit / Price / OEM      │
 └────────────────────────────┘   └────────────────────────────┘   └────────────────────────────┘
        ↓
 Combined Score (renormalised over available dimensions)
@@ -51,7 +51,8 @@ recomputes them, and nothing here generates a recommendation — that is Phase 7
 | `repository.py` | targets, candidate population, Phase 5 inventory lookups |
 | `eligibility.py` | the three hard constraints |
 | `structured_similarity.py` | Gower distance — material group, equipment type, UoM |
-| `text_similarity.py` | MiniLM embeddings, pluggable, absent by default |
+| `text_similarity.py` | BGE embeddings, pluggable, absent by default; the cache |
+| `text_match.py` | description normalisation and the rapidfuzz half of the text score |
 | `business_similarity.py` | circuit, price proximity, manufacturer |
 | `scoring.py` | weighted combination with renormalisation |
 | `identity.py` | identity validation: part numbers, component types, same-group evidence (`oar-similarity-10`) |
@@ -100,13 +101,49 @@ taken from the whole candidate population, never from the pair being compared.
 A feature missing on either side is **excluded**, not scored as a match — two
 materials that both lack an equipment type have not been shown to be alike.
 
-**Text (MiniLM + cosine).** `all-MiniLM-L6-v2`, 384-dim, CPU, exactly as
-specified. **Not installed in this environment**, so every result reports
-`NOT_AVAILABLE_NO_MODEL` and the combined score renormalises over structured and
-business alone. The provider is a real implementation behind a lazy import — no
-TF-IDF or token-overlap stand-in was substituted. Installing
-`sentence-transformers` switches it on with no code change; tests inject a fake
-provider so the suite never downloads a model.
+**Text (BGE + fuzzy, `oar-similarity-11`).** Two signals over the same normalised descriptions
+(`oar/text_match.py`):
+
+```
+S_text = 0.6 x cosine(BGE embeddings)  +  0.4 x fuzzy
+fuzzy  = (token_set_ratio + token_sort_ratio) / 2 / 100          (rapidfuzz)
+```
+
+* **Embedding**: `BAAI/bge-base-en-v1.5` through `sentence-transformers`, 768-dim, `normalize_embeddings=True`,
+  CPU. It replaced `all-MiniLM-L6-v2`, which is no longer supported.
+* **Fuzzy**: the average of rapidfuzz's `token_set_ratio` (ignores words only one side has) and
+  `token_sort_ratio` (every extra word counts against the match). Both are word-order independent. Averaged, a
+  short description that is a word-subset of a longer one is no longer a perfect match (`FILTER` against
+  `FILTER PRESS ANDRITZ SPRAY NOZZLE`: set 100, sort about 31, average about 65), while a reordering of the same
+  words still is.
+* **Normalisation, before both**: upper-case, commas and extra spaces removed, then whole-word abbreviation
+  expansion `BUSH`->`BUSHING`, `PL`->`PLATE`, `ASSY`->`ASSEMBLY`, `BRG`->`BEARING`. Only the text dimension sees
+  the normalised text; the identity stage reads the original description.
+* The weights are `SimilarityPolicy.text_embedding_weight` / `text_fuzzy_weight` (sum to 1; fuzzy 0 is the
+  embedding alone). Both parts are kept on the score (`DimensionScore.components`) and appear in the stored
+  explanation as `text_parts=embedding:..,fuzzy_set:..,fuzzy_sort:..`.
+* **Retrieval.** The semantic channel takes the top 50 donors **by the embedding cosine alone** (the "top 50 by
+  BGE"), and every shortlisted donor is then re-scored with the full formula. The pre-score mirrors the exact
+  score (the fuzzy half is one rapidfuzz `cdist` per batch of targets).
+* **FAISS is not used.** The semantic channel is an exact flat inner-product search already (numpy matrix
+  product per criticality partition), which is what a FAISS `IndexFlatIP` returns; and the pre-score needs the
+  text score of EVERY donor in the partition, which a top-k index cannot supply. `faiss-cpu` would add a native
+  dependency for no gain; the index sits behind `DonorPartition` if a partition ever outgrows a matrix product.
+* **Not installed by default.** `requirements-oar-text.txt` (torch, sentence-transformers) is optional, so without
+  it every result reports `NOT_AVAILABLE_NO_MODEL` and the combined score renormalises over structured and
+  business alone; `rapidfuzz` is in `requirements.txt`. No TF-IDF or token-overlap stand-in is substituted. Tests
+  inject a fake provider so the suite never downloads a model.
+
+**Two properties of this score to keep in mind.**
+1. A subset still scores well (about 65 above), and even descriptions with no word in common score a few points
+   (`PUMP SEAL` vs `ZZZ QQQ`: set 12.5). A high text score is therefore not evidence of the same part; the
+   identity stage is.
+2. **The identity floors were set for a MiniLM cosine and have not been calibrated for this score.** BGE cosines
+   run higher and the fuzzy half adds to them, so 0.50 admits far more than it did.
+   `SimilarityPolicy.text_floors_calibrated` stays `False` (and every run logs a warning) until they have been
+   re-set and confirmed: `python -m scripts.oar_identity_review floors` derives the floor that keeps the old
+   selectivity from the random controls of a review sample, and `evaluate` then sweeps floors against the
+   expert's answers.
 
 **Business.** Circuit, manufacturer (OEM proxy), price proximity over the
 population range. Criticality does **not** appear here — it is a filter applied

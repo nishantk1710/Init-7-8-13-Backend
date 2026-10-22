@@ -72,13 +72,13 @@ ever grows past what a matrix product handles.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Iterable, Sequence
 
 import numpy as np
 
-from app.initiatives.i7.oar import text_similarity
+from app.initiatives.i7.oar import text_match, text_similarity
 from app.initiatives.i7.oar.business_similarity import BUSINESS_CATEGORICAL_FEATURES, log_price
 from app.initiatives.i7.oar.eligibility import material_types_conflict
 from app.initiatives.i7.oar.identity import DescriptionProfile, EMPTY_PROFILE, IdentityConfig
@@ -278,6 +278,8 @@ class DonorPartition:
     has_vector: np.ndarray
     index_by_key: dict[tuple[str, str], int]
     identity: "DonorIdentity | None" = None
+    texts: list[str | None] = field(default_factory=list)
+    """Each donor's description after ``text_match.normalise_for_match``, for the fuzzy half of the text score."""
 
     def __len__(self) -> int:
         return len(self.donors)
@@ -288,6 +290,8 @@ class TargetEncoding:
     codes: dict[str, int]
     price: float
     vector: np.ndarray | None
+    text: str | None = None
+    """The target description after ``text_match.normalise_for_match``."""
     profile: DescriptionProfile = EMPTY_PROFILE
     """The target description's identity profile (part numbers, component types, specific words)."""
 
@@ -460,7 +464,11 @@ class DonorIndex:
         embeddings: dict[str, np.ndarray] | None,
         identity_text_floor: float | None = None,
         identity: IdentityConfig | None = None,
+        text_weights: tuple[float, float] = (1.0, 0.0),
     ) -> None:
+        # (embedding, fuzzy): the text dimension is w_e x cosine + w_f x token_set_ratio / 100. (1, 0) is the
+        # cosine alone, which is what a caller with no policy gets.
+        self.text_weights = text_weights
         # One donor per material-plant, the first kept. A duplicate would be eligible, shortlisted and
         # scored twice -- and weigh twice in the estimate -- so it is dropped here and counted.
         seen: set[tuple[str, str]] = set()
@@ -543,6 +551,7 @@ class DonorIndex:
             prices=prices,
             vectors=vectors,
             has_vector=has_vector,
+            texts=[text_match.normalise_for_match(d.description) for d in donors],
             index_by_key={
                 (d.sap_material_number, d.sap_plant_code): i for i, d in enumerate(donors)
             },
@@ -564,6 +573,7 @@ class DonorIndex:
             codes={f: self.vocabularies[f].lookup(getattr(target, f) or None) for f in _ENCODED},
             price=_ln_price(target.unit_price),
             vector=vector,
+            text=text_match.normalise_for_match(target.description),
             profile=(
                 self.identity.vocabulary.profile(target.description)
                 if self.identity is not None
@@ -578,12 +588,15 @@ class DonorIndex:
         partition: DonorPartition,
         target: TargetEncoding,
         cosines: np.ndarray | None,
+        fuzzy: np.ndarray | None = None,
     ) -> dict[str, np.ndarray]:
         """Vectorised mirror of the exact score for one target over a partition.
 
         Returns the per-donor arrays the channels select on, plus the evidence
         mask. ``cosines`` is this target's row of the batch matrix product, or
-        ``None`` when the text dimension is unavailable for the target.
+        ``None`` when the text dimension is unavailable for the target. ``fuzzy`` is this target's row of
+        ``text_match.fuzzy_matrix`` (``token_set_ratio / 100``); when the policy weights the fuzzy half and
+        none is given it is computed here, so a direct caller cannot get the wrong text score.
         """
         size = len(partition)
         w_struct, w_text, w_business = self.weights
@@ -627,12 +640,21 @@ class DonorIndex:
         b_avail = b_known > 0
         business = 1.0 - b_dist / np.maximum(b_known, 1)
 
-        # Text: cosine of unit vectors, floored at 0 like the exact score.
+        # Text: the cosine of unit vectors (floored at 0 like the exact score), blended with the fuzzy ratio when
+        # the policy weights it -- the same formula as ``text_similarity.score``.
+        w_embedding, w_fuzzy = self.text_weights
         if cosines is not None:
             t_avail = partition.has_vector.copy()
-            text = np.clip(cosines.astype(np.float64), 0.0, 1.0)
+            cosine = np.clip(cosines.astype(np.float64), 0.0, 1.0)
+            if w_fuzzy > 0:
+                if fuzzy is None:
+                    fuzzy = text_match.fuzzy_matrix([target.text], partition.texts)[0]
+                text = np.clip(w_embedding * cosine + w_fuzzy * fuzzy.astype(np.float64), 0.0, 1.0)
+            else:
+                text = cosine * w_embedding
         else:
             t_avail = np.zeros(size, dtype=bool)
+            cosine = np.zeros(size, dtype=np.float64)
             text = np.zeros(size, dtype=np.float64)
         known_by_feature[text_similarity.FEATURE] = t_avail
 
@@ -678,6 +700,7 @@ class DonorIndex:
             "combined": combined,
             "struct_business": struct_business,
             "text": np.where(t_avail, text, np.nan),
+            "cosine": np.where(t_avail, cosine, np.nan),
             "evidence": evidence,
             "identity_pass": identity_pass,
             "identity_conflict": identity_conflict,
@@ -690,9 +713,10 @@ class DonorIndex:
         target: TargetEncoding,
         cosines: np.ndarray | None,
         config: RetrievalConfig,
+        fuzzy: np.ndarray | None = None,
     ) -> Shortlist:
         """The donors to score exactly for one target, and the low-evidence count."""
-        scores = self.prescore(partition, target, cosines)
+        scores = self.prescore(partition, target, cosines, fuzzy)
         self_index = partition.index_by_key.get(
             (target_attributes.sap_material_number, target_attributes.sap_plant_code)
         )
@@ -700,7 +724,9 @@ class DonorIndex:
         evidence = scores["evidence"]
         fused = np.where(evidence, scores["combined"], np.nan)
         struct_business = scores["struct_business"]
-        text = scores["text"]
+        # The semantic channel ranks by the embedding cosine alone -- "the top 50 by BGE" -- and the exact score
+        # then re-scores them with the full text formula.
+        text = scores["cosine"]
 
         # Material type: a donor of another known type is rejected by eligibility, so like
         # SELF it is neither low-evidence nor allowed a shortlist slot. Blank is compatible.

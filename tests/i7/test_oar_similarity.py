@@ -329,8 +329,8 @@ def test_embeddings_are_deterministic():
 
 
 def test_the_specified_model_is_named():
-    assert text_similarity.MODEL_NAME == "all-MiniLM-L6-v2"
-    assert text_similarity.EMBEDDING_DIMENSIONS == 384
+    assert text_similarity.MODEL_NAME == "BAAI/bge-base-en-v1.5"
+    assert text_similarity.EMBEDDING_DIMENSIONS == 768
 
 
 # --- Business similarity ---------------------------------------------------------------
