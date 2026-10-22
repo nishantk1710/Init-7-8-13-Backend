@@ -10,7 +10,7 @@ materially different metric.
 
 from datetime import date
 
-from app.initiatives.i7.features.builder import _months_back, consumption_count_12m
+from app.initiatives.i7.features.builder import _months_back, consumption_count, consumption_count_12m
 
 
 def month(year: int, m: int) -> date:
@@ -111,3 +111,37 @@ def test_net_count_floors_at_zero_not_negative():
     extract) must not make the trailing count negative."""
     rows = [(month(2026, 1), 1, 5)]
     assert consumption_count_12m(rows, reference=month(2026, 1)) == 0
+
+
+# --- The window is a parameter: 6 months since 2026-10-22 ---------------------------------------------
+
+
+def test_a_six_month_window_ends_at_the_reference_and_starts_five_months_back():
+    rows = [
+        (month(2025, 7), 3, 0),  # seventh month back: outside a 6-month window, inside a 12-month one
+        (month(2025, 8), 2, 0),  # sixth month back: the first month inside
+        (month(2026, 1), 3, 1),  # the reference month: 2 net
+    ]
+
+    assert consumption_count(rows, month(2026, 1), 6) == 4
+    assert consumption_count(rows, month(2026, 1), 12) == 7
+
+
+def test_the_twelve_month_function_is_the_twelve_month_window():
+    rows = [(month(2025, 2), 5, 0), (month(2026, 1), 1, 0)]
+
+    assert consumption_count_12m(rows, month(2026, 1)) == consumption_count(rows, month(2026, 1), 12) == 6
+
+
+def test_a_six_month_window_nets_reversals_and_never_goes_negative():
+    assert consumption_count([(month(2026, 1), 1, 3)], month(2026, 1), 6) == 0
+    assert consumption_count([(month(2025, 11), 6, 1), (month(2026, 1), 1, 0)], month(2026, 1), 6) == 6
+
+
+def test_more_than_four_in_six_months_is_the_usage_trigger():
+    """Five net issues in six months passes the rule (> 4); four does not."""
+    five = [(month(2025, 10), 2, 0), (month(2025, 12), 3, 0)]
+    four = [(month(2025, 10), 2, 0), (month(2025, 12), 2, 0)]
+
+    assert consumption_count(five, month(2026, 1), 6) > 4
+    assert not consumption_count(four, month(2026, 1), 6) > 4

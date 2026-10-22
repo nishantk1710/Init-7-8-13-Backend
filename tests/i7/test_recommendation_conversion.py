@@ -1,7 +1,7 @@
 """OAR -> Min-Max conversion eligibility.
 
 Two gates -- Stage 1 OAR scope, and never OBSOLETE -- then either trigger is
-enough: more than 4 net issues in 12 months, OR a CRITICAL / IMPACT /
+enough: more than 4 net issues in 6 months, OR a CRITICAL / IMPACT /
 INSURANCE tier. Missing inputs are UNKNOWN, never assumed false; a definite
 failure is NOT_ELIGIBLE even when another input is missing.
 """
@@ -221,14 +221,14 @@ def test_the_decision_has_no_hod_field():
 
 def test_the_eligible_reason_names_what_qualified():
     assert decide(7, NORMAL).detail == (
-        "It was used 7 times in the last 12 months, more than the 4 needed to qualify "
+        "It was used 7 times in the last 6 months, more than the 4 needed to qualify "
         "for Min-Max ordering."
     )
     assert decide(1, INSURANCE).detail == (
         "Its criticality is Insurance, which qualifies it for Min-Max ordering."
     )
     assert decide(7, CRITICAL).detail == (
-        "It was used 7 times in the last 12 months, more than the 4 needed to qualify "
+        "It was used 7 times in the last 6 months, more than the 4 needed to qualify "
         "for Min-Max ordering. Its criticality is Critical, which qualifies it for "
         "Min-Max ordering."
     )
@@ -236,7 +236,7 @@ def test_the_eligible_reason_names_what_qualified():
 
 def test_the_not_eligible_reason_names_both_failed_triggers():
     assert decide(2, NORMAL).detail == (
-        "It was used 2 times in the last 12 months, which does not exceed the 4 needed "
+        "It was used 2 times in the last 6 months, which does not exceed the 4 needed "
         "to qualify for Min-Max ordering. Its criticality is Normal, which is not one of "
         "the levels that qualify (Critical, Impact, Insurance)."
     )

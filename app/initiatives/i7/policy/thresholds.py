@@ -253,7 +253,7 @@ class ConversionTriggerPolicy(BaseModel):
     trigger on its own is enough (OR):
 
     * more than ``consumption_count_threshold`` net issue transactions in the
-      trailing 12 months, **or**
+      trailing ``consumption_count_months`` (6) months, **or**
     * a criticality tier in ``criticality_trigger_tiers``.
 
     A tier in ``excluded_criticality_tiers`` is never eligible, whatever the
@@ -263,9 +263,10 @@ class ConversionTriggerPolicy(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    consumption_count_months: int = Field(default=12, ge=1)
+    consumption_count_months: int = Field(default=6, ge=1)
     consumption_count_threshold: int = Field(default=4, ge=0)
-    """More than 4 net issue transactions in a trailing 12 months."""
+    """More than 4 net issue transactions in the trailing 6 months (12 until 2026-10-22). The count is stored on
+    the feature and recommendation rows in columns still named ``consumption_count_12m`` -- a historical name."""
 
     criticality_trigger_tiers: tuple[str, ...] | None = None
     """The tiers that satisfy the criticality condition. **Unset** on the bare
@@ -309,9 +310,10 @@ def current_conversion_trigger_policy() -> ConversionTriggerPolicy:
     """The rule in force: ``criticality_trigger_tiers=("CRITICAL", "IMPACT", "INSURANCE")``.
 
     Business-confirmed 2026-10-19: an OAR material-plant is eligible for
-    Min-Max when it had more than 4 net issue transactions in the trailing 12
+    Min-Max when it had more than 4 net issue transactions in the trailing 6
     months **or** is CRITICAL, IMPACT or INSURANCE. OBSOLETE is never eligible.
-    Replaces the 2026-10-18 rule (usage AND CRITICAL/IMPACT), which itself
+    Window changed from 12 to 6 months on 2026-10-22 (business instruction); the criticality trigger and the
+    OBSOLETE exclusion are unchanged. Replaces the 2026-10-18 rule (usage AND CRITICAL/IMPACT), which itself
     replaced usage OR NORMAL OR an I13 HOD approval.
 
     Matches :func:`app.initiatives.i7.policy.oar.current_oar_policy`'s pattern:

@@ -203,11 +203,11 @@ def _months_back(reference: date, months: int) -> date:
     return date(year, month + 1, 1)
 
 
-def consumption_count_12m(
-    rows: list[tuple[date, int, int]] | None, reference: date | None
+def consumption_count(
+    rows: list[tuple[date, int, int]] | None, reference: date | None, months: int
 ) -> int:
-    """MSEG issue transactions minus reversal transactions, trailing 12 months
-    ending at ``reference`` (the extract's own last staged month).
+    """MSEG issue transactions minus reversal transactions, trailing ``months``
+    months ending at ``reference`` (the extract's own last staged month).
 
     Strictly a transaction-level count -- never converted into a count of
     non-zero months, and never derived from ``non_zero_periods``. Floored at
@@ -217,13 +217,20 @@ def consumption_count_12m(
     """
     if not rows or reference is None:
         return 0
-    window_start = _months_back(reference, 11)
+    window_start = _months_back(reference, months - 1)
     total = sum(
         issue_count - reversal_count
         for period, issue_count, reversal_count in rows
         if window_start <= period <= reference
     )
     return max(total, 0)
+
+
+def consumption_count_12m(
+    rows: list[tuple[date, int, int]] | None, reference: date | None
+) -> int:
+    """:func:`consumption_count` over the trailing 12 months (kept for callers that mean exactly that)."""
+    return consumption_count(rows, reference, 12)
 
 
 def observation_window(
@@ -706,7 +713,9 @@ def _build_one(
     statistics = demand_statistics(series)
     event_rows = consumption_events.get((material, plant))
     reference_date = window[1] if window is not None else None
-    count_12m = consumption_count_12m(event_rows, reference_date)
+    # The window is the policy's (ConversionTriggerPolicy.consumption_count_months: 6 since 2026-10-22), not a
+    # literal. The stored column is still called consumption_count_12m -- a historical name; it holds this count.
+    count_12m = consumption_count(event_rows, reference_date, policy.conversion_triggers.consumption_count_months)
     history = assess_history(statistics, policy.history_gate, policy.confidence)
 
     # Classification only runs when the gate passed. A cold-start material has
