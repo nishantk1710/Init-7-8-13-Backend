@@ -361,8 +361,8 @@ _ATTRIBUTE_SQL = """
            p.planned_delivery_time_days,
            m.material_status,
            m.criticality,
-           m.unit_price,
-           m.currency
+           p.unit_price,
+           p.currency
       FROM universe u
       LEFT JOIN i7_staged_material_plant p
              ON p.sap_material_number = u.sap_material_number

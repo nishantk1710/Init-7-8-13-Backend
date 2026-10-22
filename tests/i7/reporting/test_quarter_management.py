@@ -24,12 +24,12 @@ from app.initiatives.i7.stockout_risk.counts import StockoutRiskCounts
 from app.models.i7_features import MaterialFeature
 from app.models.i7_forecast import ForecastBacktestPath, ForecastRun
 from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation, SapAdoptionResult
-from app.models.i7_staging import StagedConsumption, StagedMaterial, StagedStock, StagingRun
+from app.models.i7_staging import StagedConsumption, StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun
 from app.models.i7_stockout_risk import StockoutRiskInput
 from app.schemas.i7.reports import AvailabilityStatus, MetricKind, PeriodStatus, QuarterlyReport, QuarterManagement
 
 TABLES = (
-    Recommendation, ApprovalLedgerEntry, SapAdoptionResult, StagedConsumption, StagedMaterial, StagedStock,
+    Recommendation, ApprovalLedgerEntry, SapAdoptionResult, StagedConsumption, StagedMaterial, StagedMaterialPlant, StagedStock,
     StagingRun, StockoutRiskInput, MaterialFeature, ForecastRun, ForecastBacktestPath,
 )
 

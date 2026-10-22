@@ -22,7 +22,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.i7 import recommendations as api
 from app.models.i7_features import DecliningDemandEvaluation
 from app.models.i7_recommendation import Recommendation
-from app.models.i7_staging import StagedMaterial
+from app.models.i7_staging import StagedMaterial, StagedMaterialPlant
 
 BASE = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
@@ -31,7 +31,7 @@ BASE = datetime(2026, 10, 1, tzinfo=timezone.utc)
 def db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     metadata = MetaData()
-    for model in (Recommendation, DecliningDemandEvaluation, StagedMaterial):
+    for model in (Recommendation, DecliningDemandEvaluation, StagedMaterial, StagedMaterialPlant):
         copy = model.__table__.to_metadata(metadata)
         copy.indexes.clear()
     metadata.create_all(engine)

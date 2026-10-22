@@ -668,6 +668,16 @@ class Settings(BaseSettings):
     # Codes are strings, not integers: PDWB is a real plant in this extract.
     i7_plants: str = "1500,1300"
 
+    # --- I07 unit price: the placeholder floor ------------------------------
+    #
+    # A valuation price at or below this is a placeholder (SAP keeps 0.01 and
+    # 1.00 on rows that are not really valued), so the material-plant stages with
+    # no unit price and the reason `price_token_value` -- counted in the staging
+    # rejections and kept per row. The same floor I08 applies to its New Item
+    # Price (I8_NEW_ITEM_PRICE_TOKEN_MAX), set separately so the two modules stay
+    # independent. Decimal, not float: it is compared against money.
+    i7_price_token_max: Decimal = Decimal("1.00")
+
     # --- I07 High Stockout Risk: the date its history is read as of ----------
     #
     # The card counts a material-plant at risk when its stock on hand is below

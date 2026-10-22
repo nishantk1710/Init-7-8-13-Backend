@@ -24,12 +24,12 @@ from app.models.i7_features import MaterialFeature
 from app.models.i7_forecast import ForecastBacktestPath, ForecastRun
 from app.models.i7_kpi_snapshot import KpiSnapshot, KpiSnapshotLog
 from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation, SapAdoptionResult
-from app.models.i7_staging import StagedConsumption, StagedMaterial, StagedStock, StagingRun
+from app.models.i7_staging import StagedConsumption, StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun
 from app.models.i7_stockout_risk import StockoutRiskInput
 from app.schemas.i7.reports import AvailabilityStatus, QuarterManagement
 
 TABLES = (
-    Recommendation, ApprovalLedgerEntry, SapAdoptionResult, StagedConsumption, StagedMaterial, StagedStock, StagingRun,
+    Recommendation, ApprovalLedgerEntry, SapAdoptionResult, StagedConsumption, StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun,
     StockoutRiskInput, MaterialFeature, ForecastRun, ForecastBacktestPath, KpiSnapshot, KpiSnapshotLog,
 )
 OCT, NOV, DEC = date(2026, 10, 1), date(2026, 11, 1), date(2026, 12, 1)

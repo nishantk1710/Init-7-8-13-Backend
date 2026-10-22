@@ -18,14 +18,14 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.i7 import recommendations as api
 from app.models.i7_recommendation import Recommendation
-from app.models.i7_staging import StagedConsumption, StagedMaterial
+from app.models.i7_staging import StagedConsumption, StagedMaterial, StagedMaterialPlant
 
 
 @pytest.fixture
 def db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     metadata = MetaData()
-    for model in (Recommendation, StagedConsumption, StagedMaterial):
+    for model in (Recommendation, StagedConsumption, StagedMaterial, StagedMaterialPlant):
         copy = model.__table__.to_metadata(metadata)
         copy.indexes.clear()
     metadata.create_all(engine)

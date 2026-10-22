@@ -88,6 +88,14 @@ from app.models.i7_staging import (
     StagingRun,
 )
 from app.shared import sap_normalise
+from app.shared.valuation_price import (
+    PriceChoice,
+    PriceMissing,
+    Valuation,
+    choose_unit_price,
+    group_by_plant,
+    normalise_valuation_type,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -352,67 +360,101 @@ def _material_sql(session: Session) -> str:
     )
 
 
-# Price and currency come from wherever SAP supplied them, never assumed:
+# The unit price is a PLANT's price, read from that plant's own valuation rows -- see
+# app.shared.valuation_price for the rule and why it is not "the highest we found".
 #
-#   raw_mbew carries a moving price (the July workbook)  -> n_mbew.moving_price,
-#       no currency column there, so currency stays NULL;
-#   raw_mbew does not (the live CSV MBEW has no VERPR)   -> odata_material_valuation
-#       (the OData MaterialValuationSet): Verpr per Peinh units, in Waers.
+# Where the rows come from, never assumed:
+#
+#   raw_mbew carries a moving price (the live CSV and the July workbook) -> n_mbew:
+#       VERPR per PEINH, one row per plant and valuation type (BWTAR). The extract has
+#       no currency column, so currency stays NULL -- that is an absent column, not a
+#       blank value, and is not an error;
+#   raw_mbew does not (an earlier CSV delivery had no VERPR)           -> odata_material_valuation
+#       (the OData MaterialValuationSet): Verpr per Peinh units, in Waers. This one
+#       does state a currency, so a blank Waers is a defect and the row is not read.
 #
 # The operating currency is ZAR by context, but writing that in would be
 # inventing source data -- a currency is staged only when SAP stated one.
 
-_PRICE_SQL = "SELECT material, moving_price FROM n_mbew"
+_VALUATION_SQL = """
+    SELECT material, valuation_area, valuation_type, moving_price, price_unit
+      FROM n_mbew
+"""
 ODATA_MATERIAL_VALUATION = "odata_material_valuation"
 
-
-def _keep_highest(
-    prices: dict[str, tuple[Decimal, str | None]], material: str, price: Decimal, currency: str | None
-) -> None:
-    """Highest price per material across valuation areas, with its own currency."""
-    if material not in prices or price > prices[material][0]:
-        prices[material] = (price, currency)
+_PRICE_PLACES = Decimal("0.0001")
+"""The staged column is NUMERIC(18,4); a price per 3 units must not carry 28 digits into it."""
 
 
-def _price_by_material(
-    session: Session, rejections: _Rejections
-) -> dict[str, tuple[Decimal, str | None]]:
-    """``material -> (unit price, currency)``, the highest across valuation areas.
+def _valuation_row(
+    bwtar: object | None,
+    verpr: object | None,
+    peinh: object | None,
+    *,
+    peinh_present: bool,
+    currency: object | None = None,
+    currency_present: bool = False,
+) -> Valuation:
+    """One MBEW row as the price rule reads it: ``VERPR / PEINH`` or the reason it has none.
 
-    Parsed before comparing: a MAX over the text column would rank "9.5" above
-    "10.0". Read from MBEW when it carries a moving price, else from the OData
-    valuation set (see the note above); empty when neither has one, so
-    unit_price stages as NULL -- a visible gap.
+    VERPR is quoted per PEINH units (250.00 per 10 EA is 25.00 each), so the division is what
+    makes it a unit price. A PEINH column that is *absent* means every price is per one unit; a
+    PEINH that is present but blank, zero or negative is refused, never assumed to be 1.
+    """
+    valuation_type = normalise_valuation_type(bwtar)
+    price = parse_decimal(verpr)
+    if price is None:
+        return Valuation(valuation_type, None, problem=PriceMissing.UNREADABLE_PRICE)
+    per = parse_decimal(peinh) if peinh_present else Decimal(1)
+    if per is None or per <= 0:
+        return Valuation(valuation_type, None, problem=PriceMissing.BAD_PRICE_UNIT)
+    stated = clean(currency)
+    if currency_present and stated is None:
+        return Valuation(valuation_type, None, problem=PriceMissing.MISSING_CURRENCY)
+    return Valuation(valuation_type, (price / per).quantize(_PRICE_PLACES), currency=stated)
+
+
+def _valuations_by_plant(
+    session: Session, scope: frozenset[str] = frozenset()
+) -> dict[tuple[str, str], list[Valuation]]:
+    """``(material, plant) -> that plant's MBEW rows``, for the plants in ``scope``.
+
+    Every row is kept, including the ones the rule will ignore (refurbished, scrap, the blank
+    aggregate row of a split-valuated material): which row counts is the rule's decision, made
+    once, in :func:`app.shared.valuation_price.choose_unit_price`, not here. Empty, and logged,
+    when no source has a price -- every material-plant then stages ``price_not_in_mbew``, a
+    visible gap rather than a zero.
     """
     present = _columns(session, "raw_mbew")
-    mbew_has_price = present is not None and any(
-        r.label == "moving_price" and r.source is not None
-        for r in sap_normalise.resolve("mbew", present)
-    )
-    if not mbew_has_price:
-        return _odata_prices(session, rejections)
+    resolved = {r.label: r for r in sap_normalise.resolve("mbew", present)} if present is not None else {}
+    if not (resolved.get("moving_price") and resolved["moving_price"].source is not None):
+        return _odata_valuations(session, scope)
 
-    prices: dict[str, tuple[Decimal, str | None]] = {}
-    for row in _read(session, _PRICE_SQL):
-        material = clean(row.material)
-        if material is None or clean(row.moving_price) is None:
+    peinh_present = bool(resolved.get("price_unit") and resolved["price_unit"].source is not None)
+    triples = []
+    for row in _read(session, _VALUATION_SQL):
+        material, plant = clean(row.material), clean(row.valuation_area)
+        if material is None or plant is None or _out_of_scope(plant, scope):
             continue
-        price = parse_decimal(row.moving_price)
-        if price is None:
-            rejections.add("n_mbew", material, RejectionReason.INVALID_QUANTITY, "moving price")
-            continue
-        _keep_highest(prices, material, price, None)
-    return prices
+        triples.append(
+            (material, plant, _valuation_row(
+                row.valuation_type, row.moving_price, row.price_unit, peinh_present=peinh_present
+            ))
+        )
+    grouped = group_by_plant(triples)
+    logger.info("material-plants: unit price from n_mbew (%d material-plants with a valuation row)", len(grouped))
+    return grouped
 
 
-def _odata_prices(session: Session, rejections: _Rejections) -> dict[str, tuple[Decimal, str | None]]:
-    """Unit prices from the OData MaterialValuationSet: ``Verpr / Peinh`` in ``Waers``.
+def _odata_valuations(
+    session: Session, scope: frozenset[str] = frozenset()
+) -> dict[tuple[str, str], list[Valuation]]:
+    """The same rows from the OData MaterialValuationSet: ``Verpr / Peinh`` in ``Waers``.
 
-    VERPR is quoted per PEINH units (a price of 250.00 per 10 EA is 25.00 each),
-    so the division is what makes it a unit price; a blank or zero PEINH is
-    rejected rather than assumed to be 1. Empty, and logged, when the set has
-    not been pulled -- ``python -m app.ingest --fetch --load --set
-    MaterialValuationSet``.
+    Needs ``Bwkey`` to place a price at a plant: without it a price belongs to no plant, and
+    guessing one is exactly what the plant rule exists to stop. ``Bwtar`` is read when the set
+    carries it. Empty, and logged, when the set has not been pulled --
+    ``python -m app.ingest --fetch --load --set MaterialValuationSet``.
     """
     present = _columns(session, ODATA_MATERIAL_VALUATION)
     if present is None:
@@ -423,31 +465,35 @@ def _odata_prices(session: Session, rejections: _Rejections) -> dict[str, tuple[
         )
         return {}
     by_lower = {name.lower(): name for name in present}
-    matnr, verpr = by_lower.get("matnr"), by_lower.get("verpr")
-    if matnr is None or verpr is None:
-        logger.warning("%s has no Matnr/Verpr columns; unit_price not filled", ODATA_MATERIAL_VALUATION)
+    matnr, bwkey, verpr = by_lower.get("matnr"), by_lower.get("bwkey"), by_lower.get("verpr")
+    if matnr is None or bwkey is None or verpr is None:
+        logger.warning(
+            "%s has no Matnr/Bwkey/Verpr columns; a price cannot be placed at a plant, unit_price not filled",
+            ODATA_MATERIAL_VALUATION,
+        )
         return {}
-    peinh, waers = by_lower.get("peinh"), by_lower.get("waers")
+    bwtar, peinh, waers = by_lower.get("bwtar"), by_lower.get("peinh"), by_lower.get("waers")
 
     quote = session.get_bind().dialect.identifier_preparer.quote
-    selected = {"m": matnr, "v": verpr, "p": peinh, "w": waers}
+    selected = {"mat": matnr, "area": bwkey, "vtype": bwtar, "price": verpr, "unit": peinh, "cur": waers}
     statement = "SELECT " + ", ".join(
         f"{quote(column)} AS {alias}" if column else f"NULL AS {alias}" for alias, column in selected.items()
     ) + f" FROM {ODATA_MATERIAL_VALUATION}"
 
-    prices: dict[str, tuple[Decimal, str | None]] = {}
+    triples = []
     for row in _read(session, statement):
-        material = odata_key(row.m)
-        if material is None or clean(row.v) is None:
+        material, plant = odata_key(row.mat), clean(row.area)
+        if material is None or plant is None or _out_of_scope(plant, scope):
             continue
-        price, per = parse_decimal(row.v), parse_decimal(row.p) if peinh else Decimal(1)
-        if price is None or per is None or per <= 0:
-            rejections.add(ODATA_MATERIAL_VALUATION, material, RejectionReason.INVALID_QUANTITY,
-                           f"Verpr={row.v!r} Peinh={row.p!r}")
-            continue
-        _keep_highest(prices, material, price / per, clean(row.w))
-    logger.info("materials: unit price and currency from %s (%d materials)", ODATA_MATERIAL_VALUATION, len(prices))
-    return prices
+        triples.append(
+            (material, plant, _valuation_row(
+                row.vtype, row.price, row.unit, peinh_present=peinh is not None,
+                currency=row.cur, currency_present=waers is not None,
+            ))
+        )
+    grouped = group_by_plant(triples)
+    logger.info("material-plants: unit price and currency from %s (%d material-plants)", ODATA_MATERIAL_VALUATION, len(grouped))
+    return grouped
 
 
 def _materials_in_plant_scope(session: Session, scope: frozenset[str]) -> set[str] | None:
@@ -479,7 +525,6 @@ def _materials_in_plant_scope(session: Session, scope: frozenset[str]) -> set[st
 def _stage_materials(
     session: Session, run_id: int, policy: ExtractIngestionPolicy, rejections: _Rejections
 ) -> int:
-    prices = _price_by_material(session, rejections)
     in_scope_materials = _materials_in_plant_scope(session, policy.plant_scope)
 
     def rows() -> Iterator[dict[str, Any]]:
@@ -516,8 +561,12 @@ def _stage_materials(
                 # now applies.
                 "deletion_flag": parse_flag(row.df_at_client_level),
                 "criticality": clean(row.criticality),
-                "unit_price": prices.get(material, (None, None))[0],
-                "currency": prices.get(material, (None, None))[1],
+                # A price belongs to a plant, not to a material: it is staged on
+                # i7_staged_material_plant (see _stage_material_plants). These two
+                # columns are retired and written NULL, explicitly, so a row staged
+                # before the change cannot keep serving the old cross-plant price.
+                "unit_price": None,
+                "currency": None,
                 "source_table": "n_mara",
                 "staging_run_id": run_id,
             }
@@ -657,6 +706,17 @@ def _stage_material_plants(
     source_table = f"n_marc+{ODATA_MATERIAL_PLANT}" if from_odata else "n_marc"
     scope = policy.plant_scope
     skipped_out_of_scope = [0]
+    valuations = _valuations_by_plant(session, scope)
+
+    def unit_price_of(material: str, plant: str, deleted: bool | None) -> PriceChoice:
+        """This plant's price, or the named reason it has none. Counted, never silent."""
+        if deleted:
+            choice = PriceChoice(missing=PriceMissing.DELETED_MATERIAL_PLANT)
+        else:
+            choice = choose_unit_price(valuations.get((material, plant), []), policy.price_token_max)
+        if choice.missing is not None:
+            rejections.add("n_mbew", f"{material}/{plant}", choice.missing.value, choice.detail or "")
+        return choice
 
     def rows() -> Iterator[dict[str, Any]]:
         for row in _read(session, _MATERIAL_PLANT_SQL):
@@ -688,6 +748,8 @@ def _stage_material_plants(
                     odata_values["df_at_plant_level"]
                 )
             values.update(odata_values)
+            deletion_flag = parse_flag(values["df_at_plant_level"])
+            price = unit_price_of(material, plant, deletion_flag)
             yield {
                 "sap_material_number": material,
                 "sap_plant_code": plant,
@@ -707,7 +769,13 @@ def _stage_material_plants(
                 "current_safety_stock": parse_decimal(values["safety_stock"]),
                 "current_reorder_point": parse_decimal(values["reorder_point"]),
                 "current_maximum_stock": parse_decimal(values["maximum_stock_level"]),
-                "deletion_flag": parse_flag(values["df_at_plant_level"]),
+                "deletion_flag": deletion_flag,
+                # This plant's own replacement price, or NULL with the reason beside it
+                # (price_missing_reason). Never another plant's, never the highest found.
+                "unit_price": price.price,
+                "currency": price.currency,
+                "price_valuation_type": price.valuation_type,
+                "price_missing_reason": price.missing.value if price.missing else None,
                 "source_table": source_table,
                 "staging_run_id": run_id,
             }
@@ -1342,7 +1410,10 @@ def stage_extract(
     if policy is None:
         from app.core.config import get_settings
 
-        policy = ExtractIngestionPolicy(plants=get_settings().i7_plant_list)
+        settings = get_settings()
+        policy = ExtractIngestionPolicy(
+            plants=settings.i7_plant_list, price_token_max=settings.i7_price_token_max
+        )
     lock = lock if lock is not None else _default_lock()
     if not lock.acquire():
         return StagingResult(

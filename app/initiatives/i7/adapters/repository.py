@@ -119,8 +119,9 @@ def _build_attributes(
         material_group=material_row.material_group if material_row else None,
         base_unit_of_measure=material_row.base_unit_of_measure if material_row else None,
         manufacturer=material_row.manufacturer if material_row else None,
-        unit_price=material_row.unit_price if material_row else None,
-        currency=material_row.currency if material_row else None,
+        # The plant's own price: it is staged per plant, not per material.
+        unit_price=plant_row.unit_price,
+        currency=plant_row.currency,
         current_safety_stock=plant_row.current_safety_stock,
         current_reorder_point=plant_row.current_reorder_point,
         current_maximum_stock=plant_row.current_maximum_stock,
