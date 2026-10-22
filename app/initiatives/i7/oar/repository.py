@@ -21,6 +21,7 @@ from decimal import ROUND_CEILING, Decimal
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.initiatives.i7.oar.business_similarity import log_price
 from app.initiatives.i7.oar.types import CandidateAttributes
 
 _TARGET_SQL = """
@@ -111,16 +112,29 @@ def load_candidate_population(session: Session) -> list[CandidateAttributes]:
     return [_to_attributes(row) for row in session.execute(text(_CANDIDATE_SQL))]
 
 
+PRICE_BAND_LOW = 0.05
+PRICE_BAND_HIGH = 0.95
+
+
 def price_range(candidates: list[CandidateAttributes]) -> Decimal | None:
-    """The population's price span, for the numeric Gower distance.
+    """The population's spread of ln(price) (5th-95th percentile), for the numeric Gower distance.
 
     Computed once over the whole candidate population rather than per pair --
     a range derived from two values would make every pair maximally distant.
     """
-    prices = [c.unit_price for c in candidates if c.unit_price is not None]
-    if len(prices) < 2:
+    logs = sorted(
+        value for value in (log_price(c.unit_price) for c in candidates) if value is not None
+    )
+    if len(logs) < 2:
         return None
-    span = max(prices) - min(prices)
+    # The 5th-95th percentile of ln(price), not min-max: a few repairables costing millions made the
+    # linear range so wide that every ordinary item looked like the same price (similarity ~0.9999)
+    # and the price term separated nothing. Distances beyond the band are clamped to 1.
+    low = logs[int(PRICE_BAND_LOW * (len(logs) - 1))]
+    high = logs[int(round(PRICE_BAND_HIGH * (len(logs) - 1)))]
+    span = high - low
+    if span <= 0:
+        span = logs[-1] - logs[0]
     return span if span > 0 else None
 
 

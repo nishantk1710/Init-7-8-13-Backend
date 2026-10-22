@@ -71,7 +71,7 @@ from typing import Iterable, Sequence
 import numpy as np
 
 from app.initiatives.i7.oar import text_similarity
-from app.initiatives.i7.oar.business_similarity import BUSINESS_CATEGORICAL_FEATURES
+from app.initiatives.i7.oar.business_similarity import BUSINESS_CATEGORICAL_FEATURES, log_price
 from app.initiatives.i7.oar.eligibility import material_types_conflict
 from app.initiatives.i7.oar.structured_similarity import CATEGORICAL_FEATURES
 from app.initiatives.i7.oar.types import CandidateAttributes, EligibilityRejection
@@ -239,6 +239,12 @@ class _Vocabulary:
 
 
 _CATEGORICAL = CATEGORICAL_FEATURES + BUSINESS_CATEGORICAL_FEATURES
+
+
+def _ln_price(price: Decimal | None) -> float:
+    """ln(price) as the exact score takes it (``business_similarity.log_price``), NaN when unknown."""
+    value = log_price(price)
+    return float(value) if value is not None else np.nan
 """Every categorical feature the exact score compares, in one place."""
 
 _MATERIAL_TYPE = "material_type"
@@ -373,7 +379,7 @@ class DonorIndex:
             for feature in _ENCODED
         }
         prices = np.array(
-            [float(d.unit_price) if d.unit_price is not None else np.nan for d in donors],
+            [_ln_price(d.unit_price) for d in donors],
             dtype=np.float64,
         )
         vectors = None
@@ -420,7 +426,7 @@ class DonorIndex:
             vector = unit if ok else None
         return TargetEncoding(
             codes={f: self.vocabularies[f].lookup(getattr(target, f) or None) for f in _ENCODED},
-            price=float(target.unit_price) if target.unit_price is not None else np.nan,
+            price=_ln_price(target.unit_price),
             vector=vector,
         )
 

@@ -472,6 +472,14 @@ def run_oar_similarity(
     config = config or RetrievalConfig.from_settings(settings)
     session_factory = get_sessionmaker()
 
+    if provider.is_available:
+        logger.info("OAR run: text similarity ON (%s)", provider.model_name)
+    else:
+        logger.warning(
+            "OAR run: text similarity is OFF (no embedding model available) -- neighbours are scored on "
+            "material group, unit of measure and price only, never on what the description says. "
+            "Install requirements-oar-text.txt to switch it on."
+        )
     embedding_version = provider.model_version if provider.is_available else (
         NO_EMBEDDING_MODEL_VERSION
     )
