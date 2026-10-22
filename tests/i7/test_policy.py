@@ -57,9 +57,9 @@ def test_model_adoption_thresholds_match_the_documents():
 def test_similarity_weights_match_the_documents():
     policy = SimilarityPolicy()
     assert (policy.structural_weight, policy.text_weight, policy.business_weight) == (
-        0.35,
-        0.30,
-        0.35,
+        0.40,
+        0.40,
+        0.20,
     )
     assert (policy.minimum_neighbours, policy.maximum_neighbours) == (2, 5)
 
@@ -102,8 +102,8 @@ def test_similarity_weights_must_sum_to_one():
 
 
 def test_documented_weights_survive_float_addition():
-    """0.35 + 0.30 + 0.35 is not exactly 1.0 in binary; the tolerance matters."""
-    assert SimilarityPolicy().structural_weight == 0.35
+    """Three float weights are not exactly 1.0 in binary; the tolerance matters."""
+    assert SimilarityPolicy().structural_weight == 0.40
 
 
 def test_inverted_neighbour_range_rejected():
