@@ -22,10 +22,10 @@ from app.initiatives.i7.stockout_risk.counts import StockoutRiskCounts
 from app.models.i7_features import MaterialFeature
 from app.models.i7_kpi_snapshot import STATUS_FINAL, STATUS_OPEN, KpiSnapshot, KpiSnapshotLog
 from app.models.i7_recommendation import Recommendation
-from app.models.i7_staging import StagedMaterial, StagedStock, StagingRun
+from app.models.i7_staging import StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun
 from app.models.i7_stockout_risk import StockoutRiskInput
 
-TABLES = (Recommendation, KpiSnapshot, KpiSnapshotLog, StagedMaterial, StagedStock, StagingRun, StockoutRiskInput, MaterialFeature)
+TABLES = (Recommendation, KpiSnapshot, KpiSnapshotLog, StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun, StockoutRiskInput, MaterialFeature)
 OCT = date(2026, 10, 1)
 NOV = date(2026, 11, 1)
 MID_OCT = date(2026, 10, 21)

@@ -36,8 +36,8 @@ table, so Phase 3 cannot accidentally reach past the contract.
 
 | Table | Rows | Natural key | From |
 | --- | --- | --- | --- |
-| `i7_staged_material` | 5,904 | `sap_material_number` | MARA + MAKT + ZMM065 + MBEW |
-| `i7_staged_material_plant` | 45,409 | material + plant | MARC |
+| `i7_staged_material` | 5,904 | `sap_material_number` | MARA + MAKT + ZMM065 |
+| `i7_staged_material_plant` | 45,409 | material + plant | MARC + MBEW (price) |
 | `i7_staged_consumption` | 13,736 | material + plant + period | MSEG |
 | `i7_staged_purchase_order` | 77,493 | PO document + item | EKPO + EKKO + EKBE + EKET |
 | `i7_staging_rejection` | 1,171 | — | any |
@@ -101,7 +101,7 @@ Other codes exist and stayed at zero on this extract: `missing_material`,
 | MRP type (DISMM) | 45,360 / 45,409 | 49 blank — *unknown*, not "not OAR" |
 | Planned delivery time | 44,495 | The lead-time fallback |
 | Description | 5,904 / 5,904 | Complete for MARA's population |
-| Unit price | 5,892 | MBEW; no currency column in the extract |
+| Unit price | per plant | `i7_staged_material_plant`; every gap carries a named reason |
 | Consumption | 6,901 material-plants | of 45,409 |
 | PO with goods receipt | 22,545 | 21,048 have a usable duration |
 | **Criticality** | **788 material-plants (1.7%)** | see blocker below |
@@ -124,8 +124,20 @@ throughout — not zero, since zero is a real and different claim. A recommendat
 can propose a safety stock but has nothing to compare against. Re-extraction
 request, not a code fix.
 
-**MBEW has no currency column.** `unit_price` is staged without one. ZAR is
-obvious from context but writing it in would be inventing source data.
+**Unit price is per plant, not per material.** The price lives on
+`i7_staged_material_plant` (`unit_price`, `currency`, `price_valuation_type`,
+`price_missing_reason`); `i7_staged_material.unit_price`/`currency` are retired
+and stay NULL. The rule is `app/shared/valuation_price.py`:
+
+- Split-valuated material: the `NEW` row, then `NEW-INS`, by precedence — never
+  the highest price. A blank-`BWTAR` row is read only when the material is not
+  split-valuated. Refurbished, damaged and scrap rows are never read.
+- A price at or below 1.00 (`I7_PRICE_TOKEN_MAX`) is a placeholder and is
+  rejected as `price_token_value`.
+- `PEINH` (price unit) is applied. A blank `WAERS` is refused where the source
+  has a currency column. Deleted material-plants are not priced.
+- Every gap is a named `price_missing_reason`, and each is counted in
+  `i7_staging_rejection`, so a missing price is never silent.
 
 **Still unresolved from Phase 0, untouched here:** the consumption movement-type
 set, the OAR rule confirmation and roll-up, service levels, Max Stock strategy,

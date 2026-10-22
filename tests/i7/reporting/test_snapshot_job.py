@@ -22,7 +22,7 @@ from app.models.i7_features import MaterialFeature
 from app.models.i7_kpi_snapshot import KpiSnapshot, KpiSnapshotLog
 from app.models.i7_pipeline import STATUS_RUNNING, PipelineRun
 from app.models.i7_recommendation import Recommendation
-from app.models.i7_staging import StagedMaterial, StagedStock, StagingRun
+from app.models.i7_staging import StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun
 from app.models.i7_stockout_risk import StockoutRiskInput
 from app.models.ingestion import IngestionRun
 from app.reporting import capture_snapshot
@@ -33,7 +33,7 @@ DAYTIME = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)  # no slot open
 ON = SchedulePolicy(20, 2, 300, 0, snapshots_enabled=True)
 OFF = SchedulePolicy(20, 2, 300, 0)
 
-TABLES = (Recommendation, KpiSnapshot, KpiSnapshotLog, StagedMaterial, StagedStock, StagingRun, StockoutRiskInput,
+TABLES = (Recommendation, KpiSnapshot, KpiSnapshotLog, StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun, StockoutRiskInput,
           MaterialFeature, PipelineRun, IngestionRun)
 
 
