@@ -277,6 +277,45 @@ def test_a_genuine_match_lost_to_a_component_conflict_is_called_out() -> None:
     assert [p["pair_id"] for p in ident["component_conflicts_judged_genuine"]] == ["9"]
 
 
+def test_the_what_if_applies_each_rule_to_the_same_pairs() -> None:
+    """D is a genuine same-group match the built rule refused because nothing specific is shared; its reason
+    says the component type agrees. Accepting such pairs admits D (genuine) and nothing wrong here."""
+    d = j("4", T1, "D", True, text="0.40", same=True, status="INSUFFICIENT_GROUP_ONLY", arms={"refused"})
+    d = Judged(**{**d.__dict__, "identity_reason": "no identity match: ... (component type agrees, but nothing specific is shared)"})
+    others = [x for x in JUDGED if x.pair_id != "4"]
+
+    built, alternative = review.what_if(others + [d])
+
+    # built admits A, C, F (all genuine); the alternative also admits D
+    assert (built["admitted"], built["genuine_admitted"], built["precision"]) == (3, 3, 1.0)
+    assert built["recall"] == 0.75  # 3 of the 4 genuine pairs: D was refused
+    assert (alternative["admitted"], alternative["genuine_admitted"], alternative["wrong_admitted"]) == (4, 4, 0)
+    assert alternative["recall"] == 1.0
+    assert alternative["targets_with_two_or_more_admitted"] == 1  # T1 now has A, C, D
+
+
+def test_a_component_conflict_is_never_admitted_by_a_variant() -> None:
+    conflict = Judged(**{**JUDGED[1].__dict__, "identity_reason": "component type conflict (component type agrees?)"})
+
+    assert all(w["admitted"] == 0 for w in review.what_if([conflict]))
+
+
+def test_the_what_if_marker_matches_the_identity_stage_wording() -> None:
+    """The what-if reads the reason text; if oar.identity rewords it, this fails instead of silently
+    admitting nothing."""
+    from app.initiatives.i7.oar import identity
+    from app.initiatives.i7.policy.thresholds import SimilarityPolicy
+
+    config = identity.IdentityConfig.from_policy(SimilarityPolicy())
+    verdict = identity.assess_descriptions(
+        "FILTER PN:5112305242", "FILTER ELEMENT HYDRAULIC", same_material_group=True,
+        text_similarity=D("0.44"), config=config,
+    )
+
+    assert verdict.status.value == "INSUFFICIENT_GROUP_ONLY"
+    assert review.TYPE_AGREES_MARK in verdict.reason
+
+
 def test_where_the_rules_disagree() -> None:
     m = review.evaluate_review(JUDGED)
 
@@ -337,7 +376,7 @@ def test_the_command_line_evaluation_prints_the_report(tmp_path, capsys) -> None
 
     assert status == 0
     for heading in ("Neighbours (top 5)", "Where the rules disagree", "The identity stage", "Text floors",
-                    "Gates (PROPOSED"):
+                    "What-if", "Gates (PROPOSED"):
         assert heading in out
     assert "Gates (PROPOSED" in (tmp_path / "report.md").read_text(encoding="utf-8")
 
@@ -358,4 +397,188 @@ def test_sampling_stops_when_the_real_model_is_unavailable(monkeypatch, capsys) 
     status = review.main(["sample", "--out", "unused"])
 
     assert status == 2
-    assert "real embedding model" in capsys.readouterr().err
+    assert "real text model" in capsys.readouterr().err
+
+
+# --- floors for a new text score ------------------------------------------------------------------------------
+
+
+def test_the_equivalent_floor_keeps_the_same_count_of_unrelated_pairs_above_it() -> None:
+    """Ten unrelated pairs. The old floor (0.50) on the old score admitted 2. On the new score those same ten
+    pairs sit higher, so the floor that admits the same two is the 2nd highest new score."""
+    old = [0.55, 0.52, 0.40, 0.35, 0.30, 0.28, 0.25, 0.20, 0.15, 0.10]
+    new = [0.91, 0.88, 0.80, 0.74, 0.70, 0.66, 0.60, 0.55, 0.52, 0.51]
+
+    result = review.equivalent_floor(old, new, 0.50)
+
+    assert result["selectivity_at_old_floor"] == 0.2
+    assert result["new_share_at_old_floor"] == 1.0  # the SAME 0.50 would admit every unrelated pair now
+    assert result["proposed_floor"] == 0.88
+    assert result["new_distribution"]["max"] == 0.91 and result["new_distribution"]["min"] == 0.51
+
+
+def test_no_floor_is_invented_when_the_old_floor_admitted_nothing() -> None:
+    result = review.equivalent_floor([0.1, 0.2, 0.3], [0.6, 0.7, 0.8], 0.50)
+
+    assert result["proposed_floor"] is None and result["selectivity_at_old_floor"] == 0.0
+
+
+def test_old_and_new_scores_must_be_for_the_same_pairs() -> None:
+    with pytest.raises(ValueError, match="same pairs"):
+        review.equivalent_floor([0.5], [0.6, 0.7], 0.50)
+
+
+def test_only_pure_random_controls_are_the_unrelated_population(tmp_path) -> None:
+    sheet = tmp_path / "review_sheet.csv"
+    key = tmp_path / "key.csv"
+    with open(sheet, "w", newline="", encoding="utf-8-sig") as h:
+        w = csv.DictWriter(h, fieldnames=["pair_id", "target_description", "candidate_description"])
+        w.writeheader()
+        for i in range(1, 5):
+            w.writerow({"pair_id": f"P{i}", "target_description": "T", "candidate_description": f"C{i}"})
+    with open(key, "w", newline="", encoding="utf-8-sig") as h:
+        w = csv.DictWriter(h, fieldnames=["pair_id", "arms", "text_similarity"])
+        w.writeheader()
+        w.writerow({"pair_id": "P1", "arms": "random", "text_similarity": "0.31"})
+        w.writerow({"pair_id": "P2", "arms": "old+random", "text_similarity": "0.40"})  # an engine liked it too
+        w.writerow({"pair_id": "P3", "arms": "random", "text_similarity": ""})  # no old score: left out
+        w.writerow({"pair_id": "P4", "arms": "refused", "text_similarity": "0.45"})
+
+    pairs = review.unrelated_pairs(sheet, key)
+
+    assert pairs == [("T", "C1", D("0.31"))]
+
+
+def test_the_wilson_interval_is_honest_at_zero_and_at_small_n() -> None:
+    assert review.wilson_interval(0, 0) == (0.0, 1.0)
+    low, high = review.wilson_interval(0, 150)
+    assert low == 0.0 and high == pytest.approx(0.025, abs=0.001)  # zero seen is not zero possible
+    low, high = review.wilson_interval(10, 150)
+    assert (low, high) == (pytest.approx(0.0366, abs=0.002), pytest.approx(0.1184, abs=0.002))
+    assert review.wilson_interval(2, 10)[1] > 0.5  # ten pairs say very little
+
+
+def test_the_floor_comes_with_a_range_from_the_sampling_error_in_the_selectivity() -> None:
+    """100 unrelated pairs, 10 admitted by the old floor (selectivity 10%, 95% interval 5.5% to 17.4%).
+    New scores 0.99, 0.986, ... The proposed floor is the 10th highest (0.954); the interval's upper end admits
+    18 pairs (floor 0.922) and its lower end 5 (floor 0.974)."""
+    new = [round(0.99 - i * 0.004, 3) for i in range(100)]
+    old = [0.6] * 10 + [0.3] * 90
+
+    result = review.equivalent_floor(old, new, 0.50)
+
+    assert result["admitted_by_old_floor"] == 10
+    assert result["proposed_floor"] == pytest.approx(0.954)
+    low, high = result["floor_range"]
+    assert (low, high) == (pytest.approx(0.922), pytest.approx(0.974))
+    assert low <= result["proposed_floor"] <= high
+
+
+def test_confirmed_matches_below_the_floor_are_counted_against_the_old_floor_too() -> None:
+    rows = [
+        ("P1", "T1", "C1", 0.90, 0.80),
+        ("P2", "T2", "C2", 0.70, 0.55),  # below a 0.80 floor on the new score, above 0.50 on the old
+        ("P3", "T3", "C3", 0.60, 0.45),  # below both
+        ("P4", "T4", "C4", 0.95, None),  # no old score recorded
+    ]
+
+    checked = review.confirmed_below_floor(rows, floor=0.80, old_floor=0.50)
+
+    assert checked["count"] == 4
+    assert [r[0] for r in checked["below"]] == ["P3", "P2"]  # lowest first
+    assert (checked["old_count"], checked["old_below"]) == (3, 1)
+    low, high = checked["below_interval"]
+    assert low < 0.5 < high  # 2 of 4 tells us almost nothing
+
+
+def report_for(confirmed_rows):
+    result = review.equivalent_floor([0.55, 0.52, 0.20, 0.15], [0.95, 0.90, 0.60, 0.55], 0.50)
+    confirmed = (review.confirmed_below_floor(confirmed_rows, result["proposed_floor"], 0.50)
+                 if confirmed_rows is not None else None)
+    return review.render_floors(result, 0.50, confirmed)
+
+
+def test_the_floors_report_counts_expert_confirmed_matches_below_the_proposed_floor() -> None:
+    text = report_for([("P1", "FILTER", "FILTER ELEMENT", 0.93, 0.62), ("P2", "BUSH", "BUSHING HALF", 0.80, 0.51),
+                       ("P3", "COVER PL", "COVER PLATE", 0.97, 0.70)])
+
+    assert "Equivalent floor: 0.900" in text
+    assert "Expert-confirmed matching pairs: **3**" in text
+    assert "Below the proposed floor (0.900): **1**" in text
+    assert "P2  new 0.800" in text and "BUSH  ->  BUSHING HALF" in text  # the one it would refuse, listed
+    assert "below the OLD floor (0.5) on the OLD score: **0** of 3" in text
+
+
+def test_the_floors_report_says_the_sample_is_small_and_what_zero_below_does_not_prove() -> None:
+    text = report_for([("P1", "A", "B", 0.95, 0.60), ("P2", "C", "D", 0.97, 0.70)])
+
+    assert "How much to trust this" in text
+    assert "The unrelated population is small" in text and "(4 pairs, 2 of them above the old floor)" in text
+    assert "zero of 2 confirmed matches below the floor does NOT show none would be" in text
+    assert "The confirmed matches are few" in text
+
+
+def test_the_floors_report_gives_a_range_not_only_one_number() -> None:
+    text = report_for(None)
+
+    assert "the floor could be anywhere from" in text and "95% interval" in text
+
+
+def test_text_floors_calibrated_stays_false_and_the_report_says_so() -> None:
+    from app.initiatives.i7.policy.thresholds import SimilarityPolicy
+
+    assert SimilarityPolicy().text_floors_calibrated is False
+    assert "`text_floors_calibrated` stays False" in report_for([("P1", "A", "B", 0.95, 0.60)])
+    assert "`text_floors_calibrated` stays False" in report_for(None)
+    assert "`text_floors_calibrated` stays False" in review.render_floors(
+        review.equivalent_floor([0.1], [0.7], 0.50), 0.50, None
+    )
+
+
+def test_without_expert_answers_the_report_says_so_and_how_to_get_them() -> None:
+    text = report_for(None)
+
+    assert "No expert answers in this file" in text and "COMPLETED review sheet" in text
+
+
+def write_pair_files(tmp_path, answers: dict[str, str]):
+    sheet, key = tmp_path / "sheet.csv", tmp_path / "key.csv"
+    with open(sheet, "w", newline="", encoding="utf-8-sig") as h:
+        w = csv.DictWriter(h, fieldnames=["pair_id", "target_description", "candidate_description", "relevant"])
+        w.writeheader()
+        for i in range(1, 6):
+            w.writerow({"pair_id": f"P{i}", "target_description": "T", "candidate_description": f"C{i}",
+                        "relevant": answers.get(f"P{i}", "")})
+    with open(key, "w", newline="", encoding="utf-8-sig") as h:
+        w = csv.DictWriter(h, fieldnames=["pair_id", "arms", "text_similarity"])
+        w.writeheader()
+        for i, arms in enumerate(["random", "random", "random", "old+new", "refused"], start=1):
+            w.writerow({"pair_id": f"P{i}", "arms": arms, "text_similarity": f"0.{i}0"})
+    return sheet, key
+
+
+def test_a_random_pair_the_expert_confirmed_is_not_an_unrelated_pair(tmp_path) -> None:
+    sheet, key = write_pair_files(tmp_path, {"P1": "yes", "P2": "no", "P3": "unsure"})
+
+    pairs = review.unrelated_pairs(sheet, key)
+
+    assert [c for _, c, _ in pairs] == ["C2", "C3"]  # P1 is a genuine match by chance: out; no/unsure/blank stay
+
+
+def test_confirmed_matches_come_from_every_arm_with_their_old_score(tmp_path) -> None:
+    sheet, key = write_pair_files(tmp_path, {"P1": "yes", "P4": "y", "P5": "no"})
+
+    found = review.confirmed_matches(sheet, key)
+
+    assert found == [("P1", "T", "C1", D("0.10")), ("P4", "T", "C4", D("0.40"))]
+    assert review.confirmed_matches(*write_pair_files(tmp_path, {})) == []  # a blank sheet confirms nothing
+
+
+def test_the_floors_command_stops_without_the_text_model(monkeypatch, capsys, tmp_path) -> None:
+    from app.initiatives.i7.oar import text_similarity
+
+    monkeypatch.setattr(text_similarity, "_load_model", lambda name: None)
+
+    status = review.main(["floors", "--review", str(tmp_path / "a"), "--key", str(tmp_path / "b")])
+
+    assert status == 2 and "not available" in capsys.readouterr().err

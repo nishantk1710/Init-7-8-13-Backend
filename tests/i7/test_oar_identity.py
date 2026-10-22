@@ -40,7 +40,9 @@ def policy(**similarity) -> PolicyDocument:
     return PolicyDocument(
         service_level=load_mock_service_level_policy(),
         max_stock=load_mock_max_stock_policy(),
-        similarity=SimilarityPolicy(**similarity),
+        similarity=SimilarityPolicy(
+            **{"text_embedding_weight": 1.0, "text_fuzzy_weight": 0.0, **similarity}
+        ),  # injected cosines: the text score is the cosine alone unless a test says otherwise
     )
 
 

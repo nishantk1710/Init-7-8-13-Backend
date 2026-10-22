@@ -169,10 +169,13 @@ consumers, so it is left for a business decision.
 
 ## Text similarity and embeddings
 
-* Model: `all-MiniLM-L6-v2` through `sentence-transformers`. **This is optional
-  and not in `requirements.txt`**, because it pulls in torch. Without it, the
-  text dimension reports `NOT_AVAILABLE_NO_MODEL` and scores renormalise over
-  structured and business. That is the state of every environment today.
+* Model: `BAAI/bge-base-en-v1.5` through `sentence-transformers` (`oar-similarity-11`; MiniLM is gone), with
+  rapidfuzz's `(token_set_ratio + token_sort_ratio) / 2` as the other half of the text score -- see `docs/i07_oar_similarity.md`.
+  **The model packages are optional and not in `requirements.txt`** (`requirements-oar-text.txt`: torch,
+  sentence-transformers), because they pull in torch; `rapidfuzz` is in `requirements.txt`. Without the model,
+  the text dimension reports `NOT_AVAILABLE_NO_MODEL` and scores renormalise over structured and business.
+  The model is about 440 MB, downloaded from Hugging Face on first use: set `HF_HOME` to a folder under `/home`
+  on App Service so it survives a restart. Vectors are 768 x float32 = 3 KB each.
 * **One embedding per unique normalised description per model version.** The
   layers are the per-run memory map, then `i7_oar_embedding` in Azure SQL,
   then the model in bounded batches (`I7_OAR_EMBEDDING_BATCH_SIZE`).

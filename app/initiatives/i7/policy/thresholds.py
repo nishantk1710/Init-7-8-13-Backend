@@ -120,6 +120,19 @@ class SimilarityPolicy(BaseModel):
     (material group, unit of measure, description) now carries 0.80 of the weight and price 0.20. Without
     a text model the weights renormalise to 0.67 structure / 0.33 price."""
 
+    text_embedding_weight: float = Field(default=0.6, ge=0, le=1)
+    text_fuzzy_weight: float = Field(default=0.4, ge=0, le=1)
+    """oar-similarity-11: the text dimension is ``text_embedding_weight`` x the BGE cosine plus
+    ``text_fuzzy_weight`` x the rapidfuzz average ``(token_set_ratio + token_sort_ratio) / 2 / 100``
+    (``oar.text_match``), over normalised descriptions. They must sum to 1. A fuzzy weight of 0 is the embedding
+    alone."""
+
+    text_floors_calibrated: bool = False
+    """Whether ``minimum_identity_text_similarity`` and ``same_group_minimum_text_similarity`` have been set for
+    the CURRENT text score. Both were chosen (0.50) when the score was a MiniLM cosine. BGE cosines run higher,
+    and the fuzzy half adds to them (a word-subset still scores about 65), so the same 0.50 admits far more. Until this is set True -- after ``scripts.oar_identity_review floors`` or an expert review -- every
+    OAR run logs a warning, and the identity gate should be read as provisional."""
+
     minimum_neighbours: int = Field(default=2, ge=1)
     """Hard admission gate: fewer than this many *qualifying* (>= minimum_similarity)
     neighbours blocks the estimate entirely -- see oar/estimate.py's
@@ -236,6 +249,11 @@ class SimilarityPolicy(BaseModel):
         # Float tolerance: three float weights are not exactly 1.0 in binary.
         if abs(total - 1.0) > 1e-9:
             raise ValueError(f"similarity weights must sum to 1.0, got {total}")
+        text_total = self.text_embedding_weight + self.text_fuzzy_weight
+        if abs(text_total - 1.0) > 1e-9:
+            raise ValueError(
+                f"text_embedding_weight and text_fuzzy_weight must sum to 1.0, got {text_total}"
+            )
         if self.minimum_neighbours > self.maximum_neighbours:
             raise ValueError("minimum_neighbours must not exceed maximum_neighbours")
         return self

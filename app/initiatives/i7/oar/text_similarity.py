@@ -1,18 +1,22 @@
-"""Dimension 2 -- material description embeddings.
+"""Dimension 2 -- material description text similarity.
 
-Solution Design, Stage 5::
+Two signals over normalised descriptions (``oar.text_match``)::
 
-    encode with all-MiniLM-L6-v2 (384-dim, CPU)
-    S_text = cosine(embed_a, embed_b)
+    encode with BAAI/bge-base-en-v1.5 (768-dim, normalised vectors, CPU)
+    S_text = 0.6 x cosine(embed_a, embed_b)  +  0.4 x (token_set_ratio + token_sort_ratio) / 2 / 100
+
+The Solution Design named all-MiniLM-L6-v2 and the cosine alone; ``oar-similarity-11`` replaced both (BGE for
+the meaning, rapidfuzz for the shared words) and MiniLM is no longer supported. The weights are
+``SimilarityPolicy.text_embedding_weight`` / ``text_fuzzy_weight``.
 
 **The provider is an interface with one real implementation.**
-``MiniLmEmbeddingProvider`` loads exactly the specified model; nothing
+``BgeEmbeddingProvider`` loads exactly the specified model; nothing
 substitutes TF-IDF, token overlap or another transformer when it is absent. If
-``sentence-transformers`` is not installed or the model cannot be loaded, the
+``sentence-transformers`` or ``rapidfuzz`` is not installed or the model cannot be loaded, the
 dimension reports ``NOT_AVAILABLE_NO_MODEL`` and the combined score renormalises
-over the dimensions that did compute. Installing the library later switches this
-on with no code change. It is deliberately NOT in requirements.txt: it pulls in
-torch, and the engine is complete without it.
+over the dimensions that did compute. Installing the libraries later switches this
+on with no code change. They are deliberately NOT in requirements.txt: sentence-transformers pulls in
+torch (see requirements-oar-text.txt), and the engine is complete without them.
 
 Tests inject a deterministic fake provider, so the suite never downloads a model.
 
@@ -49,10 +53,11 @@ from typing import Iterable, Protocol, Sequence
 
 import numpy as np
 
+from app.initiatives.i7.oar import text_match
 from app.initiatives.i7.oar.types import DimensionScore, SimilarityStatus
 
-MODEL_NAME = "all-MiniLM-L6-v2"
-EMBEDDING_DIMENSIONS = 384
+MODEL_NAME = "BAAI/bge-base-en-v1.5"
+EMBEDDING_DIMENSIONS = 768
 
 PREPROCESSING_VERSION = "ws-collapse-1"
 """Names the rule in :func:`normalise_description`. Part of every cache key, so
@@ -135,13 +140,19 @@ def _load_model(name: str):
             return None
 
 
-class MiniLmEmbeddingProvider:
-    """The real provider: sentence-transformers loading all-MiniLM-L6-v2.
+class BgeEmbeddingProvider:
+    """The real provider: sentence-transformers loading BAAI/bge-base-en-v1.5, vectors normalised.
 
     Imported lazily inside :func:`_load_model` so that importing this module --
     which the whole OAR package does -- never requires the dependency. Absent
     the library, ``encode`` returns ``None`` and the caller reports the dimension
-    as unavailable.
+    as unavailable. ``rapidfuzz`` is checked here too: the text dimension is the
+    embedding AND the fuzzy ratio, and the second half is not skipped silently.
+
+    The text handed in is the whitespace-normalised description (what the embedding cache is keyed by); it is
+    put through :func:`oar.text_match.normalise_for_match` (upper-case, commas removed, abbreviations expanded)
+    just before it reaches the model. ``model_version`` carries the normalisation version, so changing those
+    rules is a different cache key.
 
     ``batch_size`` bounds how many descriptions go to the model per call, which
     bounds the activation memory of one forward pass.
@@ -149,8 +160,8 @@ class MiniLmEmbeddingProvider:
 
     model_name = MODEL_NAME
 
-    def __init__(self, model_version: str = MODEL_NAME, batch_size: int = 64) -> None:
-        self.model_version = model_version
+    def __init__(self, model_version: str | None = None, batch_size: int = 64) -> None:
+        self.model_version = model_version or f"{MODEL_NAME}+{text_match.NORMALISATION_VERSION}"
         self.batch_size = max(1, int(batch_size))
         self._cache: dict[str, list[float]] = {}
 
@@ -159,7 +170,7 @@ class MiniLmEmbeddingProvider:
 
     @property
     def is_available(self) -> bool:
-        return self._model() is not None
+        return text_match.available() and self._model() is not None
 
     def encode(self, texts: list[str]) -> list[list[float]] | None:
         """Encode in bounded batches, reusing vectors this instance already has."""
@@ -171,10 +182,11 @@ class MiniLmEmbeddingProvider:
         for start in range(0, len(pending), self.batch_size):
             chunk = pending[start : start + self.batch_size]
             vectors = model.encode(
-                chunk,
+                [text_match.normalise_for_match(t) or t for t in chunk],
                 batch_size=self.batch_size,
                 convert_to_numpy=True,
                 show_progress_bar=False,
+                normalize_embeddings=True,
             )
             for text, vector in zip(chunk, vectors):
                 self._cache[description_hash(text)] = [float(value) for value in vector]
@@ -186,7 +198,7 @@ def cosine(left: Sequence[float], right: Sequence[float]) -> Decimal | None:
     """Cosine similarity, clamped to [0, 1], to six decimal places.
 
     A zero-norm vector has no direction, so the similarity is undefined rather
-    than zero. MiniLM embeddings can carry small negatives; the documented score
+    than zero. Embeddings can carry small negatives; the documented score
     is a similarity in [0, 1], so negatives floor at 0 -- "no resemblance"
     rather than "opposite", which is not a meaningful claim about spare parts.
 
@@ -213,8 +225,16 @@ def score(
     target_description: str | None,
     candidate_description: str | None,
     provider: EmbeddingProvider,
+    embedding_weight: Decimal = Decimal(1),
+    fuzzy_weight: Decimal = Decimal(0),
 ) -> DimensionScore:
-    """Cosine similarity between two material descriptions."""
+    """Text similarity between two material descriptions.
+
+    ``embedding_weight`` x cosine + ``fuzzy_weight`` x (token_set_ratio + token_sort_ratio) / 2 / 100. The
+    defaults (1, 0) are the cosine alone, which is what a caller with no policy gets; the OAR run passes the
+    policy's 0.6 / 0.4. Every part is kept on ``DimensionScore.components`` (``embedding``, ``fuzzy_set``,
+    ``fuzzy_sort``) so a score can be explained.
+    """
     target_text = normalise_description(target_description)
     candidate_text = normalise_description(candidate_description)
 
@@ -244,11 +264,28 @@ def score(
             missing=(FEATURE,),
         )
 
+    if fuzzy_weight == 0:
+        return DimensionScore(
+            value=similarity * embedding_weight,
+            status=SimilarityStatus.AVAILABLE,
+            available_features=1,
+            features=(FEATURE,),
+            components=(("embedding", str(similarity)),),
+        )
+
+    set_ratio, sort_ratio, ratio = text_match.fuzzy_ratio(
+        text_match.normalise_for_match(target_text), text_match.normalise_for_match(candidate_text)
+    )
     return DimensionScore(
-        value=similarity,
+        value=text_match.combine(similarity, ratio, embedding_weight, fuzzy_weight),
         status=SimilarityStatus.AVAILABLE,
         available_features=1,
         features=(FEATURE,),
+        components=(
+            ("embedding", str(similarity)),
+            ("fuzzy_set", f"{set_ratio / 100:.4f}"),
+            ("fuzzy_sort", f"{sort_ratio / 100:.4f}"),
+        ),
     )
 
 

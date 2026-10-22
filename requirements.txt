@@ -72,6 +72,9 @@ lightgbm==4.7.0
 # Pulled in by the two above; pinned so a fresh install matches this one.
 numpy==2.5.3
 scipy==1.18.1
+# Fuzzy half of the OAR text similarity (token_set_ratio, oar/text_match.py). Small and pure wheels; the
+# heavy half of the text stack (torch, sentence-transformers) stays in requirements-oar-text.txt.
+rapidfuzz==3.14.6
 pandas==3.0.5
 
 # Reads config/dev/i7_service_level_matrix.yaml, the development-only mock

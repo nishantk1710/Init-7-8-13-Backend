@@ -202,6 +202,8 @@ def explain(score: CombinedScore, limit: int = 500) -> str:
         f"text={score.text.status.value}",
         "evidence=" + ("ok" if score.evidence_sufficient else f"low({score.evidence_detail})"),
     ]
+    if score.text.components:
+        parts.append("text_parts=" + ",".join(f"{name}:{value}" for name, value in score.text.components))
     if score.identity is not None:
         parts.append(f"identity={score.identity.status.value}")
     return ";".join(parts)[:limit]

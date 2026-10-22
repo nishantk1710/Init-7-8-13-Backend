@@ -22,9 +22,15 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import NamedTuple
 
-ALGORITHM_VERSION = "oar-similarity-10"
+ALGORITHM_VERSION = "oar-similarity-11"
 """Identifies the similarity implementation behind a stored result. Not a
 semantic version -- nothing here maintains a release contract.
+
+``oar-similarity-11`` against ``-10``: the text dimension is ``0.6 x BGE cosine + 0.4 x rapidfuzz
+(token_set_ratio + token_sort_ratio) / 2`` over normalised descriptions (``oar.text_match``), with BAAI/bge-base-en-v1.5 replacing
+all-MiniLM-L6-v2, which is no longer supported. Nothing else changes -- but every text score does, so the
+identity floors set for MiniLM (``SimilarityPolicy.text_floors_calibrated``) are not calibrated for it, and a
+run stored under ``-10`` is not reused.
 
 ``oar-similarity-10`` against ``-9``, three changes -- OAR scope, donor eligibility, the text similarity
 calculation, the score floor and the weights are untouched:
@@ -242,6 +248,9 @@ class DimensionScore(NamedTuple):
     missing: tuple[str, ...] = ()
     """The features this dimension could not compare, because one side or both
     lacked them. Never counted as a match."""
+    components: tuple[tuple[str, str], ...] = ()
+    """What the value was made of, for audit: the text dimension lists its ``embedding`` cosine and its ``fuzzy``
+    ratio (0..1) here."""
 
     @property
     def is_available(self) -> bool:

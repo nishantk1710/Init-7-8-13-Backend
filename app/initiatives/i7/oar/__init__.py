@@ -6,7 +6,7 @@
         |                        (partition the donors before anything is scored)
     Stage A: vectorised pre-score -> structured + semantic + fused shortlist
         |
-    Stage B: Structured (Gower) + Text (MiniLM cosine) + Business similarity,
+    Stage B: Structured (Gower) + Text (BGE cosine + fuzzy ratio) + Business similarity,
              exact, for the shortlist only
         |
     Combined score, renormalised over available dimensions, minimum evidence
@@ -31,7 +31,8 @@ invented when neighbours exist but the service-level matrix is unsigned.
 | ``retrieval`` | Stage A: eligible partitions, closed-form rejection counts, shortlist |
 | ``engine`` | Stage A + Stage B over every target, in batches |
 | ``structured_similarity`` | Gower distance over material group, equipment, UoM |
-| ``text_similarity`` | MiniLM embeddings, pluggable, absent by default; the cache |
+| ``text_similarity`` | BGE embeddings, pluggable, absent by default; the cache |
+| ``text_match`` | description normalisation and the rapidfuzz half of the text score |
 | ``embedding_store`` | embeddings kept in ``i7_oar_embedding`` between runs |
 | ``business_similarity`` | price proximity, manufacturer (circuit not scored) |
 | ``scoring`` | weighted combination with renormalisation; evidence; explanations |
