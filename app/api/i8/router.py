@@ -41,6 +41,7 @@ from app.api.i8.mappers import (
     exception_history_entry,
     exception_item,
     exception_meta,
+    material_descriptions,
     register_facets,
     register_meta,
     repair_chain,
@@ -107,6 +108,7 @@ from app.initiatives.i8.service import (
     Snapshot,
     SnapshotBuilding,
     SnapshotFailed,
+    cached_snapshot,
     get_attestation_view,
     get_coding_screen,
     get_snapshot,
@@ -718,10 +720,20 @@ def get_attestations(
 
     # Reverse index built once rather than a query per row.
     superseded_by = {r.supersedes: r.id for r in rows if r.supersedes}
+    # The snapshot already built, never one built for this: the declaration
+    # form reads this endpoint for its fault categories, and should not sit
+    # through a cold start for a label. Without one, the number shows alone.
+    descriptions = material_descriptions(cached_snapshot(), (r.material_id for r in rows))
 
     return AttestationResponse(
         items=[
-            attestation_item(r, cfg, superseded_by=superseded_by.get(r.id)) for r in rows
+            attestation_item(
+                r,
+                cfg,
+                superseded_by=superseded_by.get(r.id),
+                description=descriptions.get(r.material_id),
+            )
+            for r in rows
         ],
         total=len(rows),
         # Served with the data so a form does not hard-code VZI's vocabulary.

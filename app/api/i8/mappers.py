@@ -58,6 +58,7 @@ from app.initiatives.i8.exception_state import (
 )
 from app.initiatives.i8.models import ExceptionEvent, RepairAttestation
 from app.initiatives.i8.register import RegisterStats, RepairLine
+from app.initiatives.i8.service import Snapshot
 from app.initiatives.i8.universe import UniverseRow, UniverseStats
 
 
@@ -389,6 +390,24 @@ def line_exception(item: ExceptionItem) -> LineException:
 # --- W5.3: attestation, declarations, exceptions --------------------------
 
 
+def material_descriptions(snapshot: Snapshot | None, material_ids: Iterable[str]) -> dict[str, str]:
+    """Material descriptions by material number, for the ones the snapshot knows.
+
+    The universe first, then the repair lines -- a material can have a repair
+    line and no universe row. Empty without a snapshot: this is a label, and a
+    caller should show the number alone rather than wait for a build.
+    """
+    wanted = set(material_ids)
+    if snapshot is None or not wanted:
+        return {}
+    found: dict[str, str] = {}
+    for source in (snapshot.universe, snapshot.lines):
+        for row in source:
+            if row.material_id in wanted and row.description and row.material_id not in found:
+                found[row.material_id] = row.description
+    return found
+
+
 def attestation_item(
     row: RepairAttestation,
     cfg: I8Settings,
@@ -396,22 +415,26 @@ def attestation_item(
     superseded_by: str | None = None,
     covers_repair_lines: list[str] | None = None,
     coverage_note: str | None = None,
+    description: str | None = None,
 ) -> Attestation:
     """One stored attestation.
 
     ``superseded_by`` is passed in rather than followed from the row, because
     resolving it per row is a query per attestation. The caller already has the
     whole list and can build the reverse index once.
+
+    ``description`` is the material's, looked up when the row is read -- see
+    :func:`material_descriptions`.
     """
     return Attestation(
         id=row.id,
         material=MaterialReference(
             material_id=row.material_id,
             material_code=row.material_id,
-            # No description here on purpose: the attestation table does not
-            # carry one, and copying it from the register at write time would
-            # freeze a description that lives somewhere else.
-            description=None,
+            # Never stored with the attestation: copied at write time it would
+            # freeze a description that lives somewhere else. The caller reads
+            # it from the snapshot instead, when there is one.
+            description=description,
         ),
         plant=plant_reference(row.plant, cfg),
         quantity=row.quantity,
