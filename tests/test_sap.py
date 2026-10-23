@@ -369,8 +369,9 @@ class TestContract:
         """
         sets = contract()
         # 21 across the two renamed services, plus gate pass's three since
-        # 16-Oct-2026 (ZMM_KPI02_GP_SRV, re-scoped).
-        assert len(sets) == 24
+        # 16-Oct-2026 (ZMM_KPI02_GP_SRV, re-scoped), plus DepartmentCodeSet on
+        # ZMM_KPI02_ADD_SRV since 23-Oct-2026.
+        assert len(sets) == 25
         assert {s.service for s in sets.values()} == {
             "ZMM_KPI02_ADD_SRV",
             "ZMM_KPI02_TAB_SRV",

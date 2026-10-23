@@ -22,6 +22,8 @@ EKPO = spec_for("PurchaseOrderItemSet")
 EKKO = spec_for("PurchaseOrderSet")
 EKBE = spec_for("POHistorySet")
 MARC = spec_for("MaterialPlantSet")
+MBEW = spec_for("MaterialValuationSet")
+DEPT = spec_for("DepartmentCodeSet")
 
 
 @pytest.fixture
@@ -472,3 +474,201 @@ class TestMergeLanded:
 
         assert result.status == raw_merge.REFUSED and "unusable" in result.detail
         assert count(engine, "raw_ekpo") == 0
+
+
+# --- Only what changed is written ----------------------------------------------------
+
+
+def log_writes(engine, table, key):
+    """Record every row an UPDATE touches, so a test can see what was written."""
+    with engine.begin() as c:
+        c.execute(text("CREATE TABLE writes (k TEXT)"))
+        c.execute(text(f"CREATE TRIGGER log_writes AFTER UPDATE ON {table} "
+                       f"BEGIN INSERT INTO writes VALUES (NEW.{key}); END"))
+
+
+class TestOnlyChangesAreWritten:
+    def test_a_row_that_comes_back_unchanged_is_not_rewritten(self, engine) -> None:
+        csv_shaped_ekpo(engine, [])
+        raw_merge.merge(EKPO, [{"Ebeln": "1", "Ebelp": "00010", "Menge": Decimal("2")},
+                               {"Ebeln": "2", "Ebelp": "00010", "Menge": Decimal("3")}], engine=engine)
+        log_writes(engine, "raw_ekpo", "EBELN")
+
+        again = raw_merge.merge(EKPO, [{"Ebeln": "1", "Ebelp": "00010", "Menge": Decimal("2")},
+                                       {"Ebeln": "2", "Ebelp": "00010", "Menge": Decimal("4")}], engine=engine)
+
+        assert (again.matched, again.updated, again.inserted) == (2, 1, 0)
+        assert fetch(engine, "SELECT k FROM writes") == [("2",)], "only the row whose value changed is written"
+        assert fetch(engine, "SELECT MENGE FROM raw_ekpo ORDER BY EBELN") == [("2",), ("4",)]
+
+    def test_a_whole_set_read_again_unchanged_writes_nothing(self, engine) -> None:
+        csv_shaped_ekpo(engine, [])
+        rows = [{"Ebeln": str(n), "Ebelp": "00010", "Menge": "1"} for n in range(60)]
+        raw_merge.merge(EKPO, rows, engine=engine)
+        log_writes(engine, "raw_ekpo", "EBELN")
+
+        again = raw_merge.merge(EKPO, rows, engine=engine, full=True)
+
+        assert (again.matched, again.updated, again.inserted) == (60, 0, 0)
+        assert count(engine, "writes") == 0 and not again.changed_anything
+
+    def test_a_change_of_letter_case_is_a_change(self, engine) -> None:
+        csv_shaped_ekpo(engine, [])
+        raw_merge.merge(EKPO, [{"Ebeln": "1", "Ebelp": "00010", "Txz01": "Main store"}], engine=engine)
+
+        again = raw_merge.merge(EKPO, [{"Ebeln": "1", "Ebelp": "00010", "Txz01": "MAIN STORE"}], engine=engine)
+
+        assert again.updated == 1
+        assert fetch(engine, "SELECT TXZ01 FROM raw_ekpo")[0][0] == "MAIN STORE"
+
+    def test_sql_server_compares_under_a_binary_collation(self) -> None:
+        """Its default collation ignores case ('Main store' = 'MAIN STORE'),
+        which would leave a re-cased value unwritten."""
+        from types import SimpleNamespace
+
+        mssql = SimpleNamespace(dialect=SimpleNamespace(name="mssql"))
+        sql = raw_merge._differs(["TXZ01"], "s", "t", mssql)
+        assert sql == ("EXISTS (SELECT s.[TXZ01] COLLATE Latin1_General_100_BIN2 "
+                       "EXCEPT SELECT t.[TXZ01] COLLATE Latin1_General_100_BIN2)")
+
+
+# --- A key SAP leaves blank on purpose (MBEW's valuation type) -----------------------
+
+
+def csv_shaped_mbew(engine, rows):
+    """raw_mbew as the CSV route creates it: BWTAR is '' for a material valued
+    as a whole; a workbook load leaves it NULL instead."""
+    with engine.begin() as c:
+        c.execute(text(
+            "CREATE TABLE raw_mbew (MATNR TEXT, BWKEY TEXT, BWTAR TEXT, LBKUM TEXT, SALK3 TEXT, VPRSV TEXT, "
+            "VERPR TEXT, STPRS TEXT, PEINH TEXT, BKLAS TEXT, WAERS TEXT, ZZOTHER TEXT)"))
+        for r in rows:
+            c.execute(text("INSERT INTO raw_mbew (MATNR, BWKEY, BWTAR, VERPR, PEINH, WAERS, ZZOTHER) "
+                           "VALUES (:m, :b, :t, :v, '1', 'ZAR', 'kept')"), r)
+
+
+def mbew_row(matnr, bwtar, verpr):
+    return {"Matnr": matnr, "Bwkey": "1300", "Bwtar": bwtar, "Verpr": verpr, "Peinh": "1", "Waers": "ZAR"}
+
+
+class TestBlankValuationType:
+    def test_the_spec_says_bwtar_may_be_blank(self) -> None:
+        assert MBEW.blank_allowed_keys == frozenset({"Bwtar"})
+        assert EKBE.blank_allowed_keys == frozenset()
+
+    def test_rows_with_no_valuation_type_are_merged_not_skipped(self, engine) -> None:
+        """Before 23 Oct every one of them counted as 'without a key'."""
+        csv_shaped_mbew(engine, [{"m": "M1", "b": "1300", "t": "", "v": "10.00"}])
+
+        result = raw_merge.merge(MBEW, [mbew_row("M1", "", "12.00"), mbew_row("M2", "", "5.00")],
+                                 engine=engine, full=True)
+
+        assert (result.rows_without_key, result.matched, result.updated, result.inserted) == (0, 1, 1, 1)
+        assert fetch(engine, "SELECT MATNR, BWTAR, VERPR, ZZOTHER FROM raw_mbew ORDER BY MATNR") == [
+            ("M1", "", "12.00", "kept"), ("M2", "", "5.00", None)]
+
+    def test_a_null_valuation_type_matches_a_blank_one(self, engine) -> None:
+        csv_shaped_mbew(engine, [{"m": "M1", "b": "1300", "t": None, "v": "10.00"}])
+
+        result = raw_merge.merge(MBEW, [mbew_row("M1", "", "12.00")], engine=engine)
+
+        assert (result.matched, result.updated, result.inserted) == (1, 1, 0)
+        assert count(engine, "raw_mbew") == 1
+
+    def test_the_blank_row_of_a_split_valued_material_is_never_repaired(self, engine) -> None:
+        """M1 is valued per valuation type: its blank-type row is a record of
+        its own, and a new valuation type must not be grafted onto it."""
+        csv_shaped_mbew(engine, [{"m": "M1", "b": "1300", "t": "", "v": "10.00"},
+                                 {"m": "M1", "b": "1300", "t": "NEW", "v": "11.00"}])
+
+        result = raw_merge.merge(MBEW, [mbew_row("M1", "", "10.00"), mbew_row("M1", "NEW", "11.00"),
+                                        mbew_row("M1", "USED", "4.00")], engine=engine)
+
+        assert (result.keys_repaired, result.updated, result.inserted) == (0, 0, 1)
+        assert fetch(engine, "SELECT BWTAR FROM raw_mbew ORDER BY BWTAR") == [("",), ("NEW",), ("USED",)]
+
+    def test_a_blank_in_any_other_key_field_still_skips_the_row(self, engine) -> None:
+        csv_shaped_mbew(engine, [])
+
+        result = raw_merge.merge(MBEW, [mbew_row("", "", "1.00"), mbew_row("M1", "", "1.00")], engine=engine)
+
+        assert (result.rows_without_key, result.inserted) == (1, 1)
+
+
+# --- A set no CSV extract carries: the department codes ------------------------------
+
+
+def dept_row(plant, code, name):
+    return {"Werks": plant, "DeptCode": code, "DeptName": name}
+
+
+def workbook_dept_codes(engine, rows):
+    """raw_dept_codes as uploaded from 'Plant Dept Codes 1.XLSX' on 21 Oct 2026:
+    the workbook's own headers, spaces and all."""
+    with engine.begin() as c:
+        c.execute(text('CREATE TABLE raw_dept_codes ("Plant" TEXT, "Department code" TEXT, "Department" TEXT)'))
+        for plant, code, name in rows:
+            c.execute(text("INSERT INTO raw_dept_codes VALUES (:p, :c, :n)"), {"p": plant, "c": code, "n": name})
+
+
+class TestDepartmentCodes:
+    def test_the_set_has_a_raw_table_of_its_own(self) -> None:
+        target = raw_merge.raw_table_for(DEPT)
+        assert target is not None and target.raw_table == "raw_dept_codes"
+        assert target.plant_property == "Werks"
+
+    def test_the_weekly_full_pull_includes_it_by_default(self) -> None:
+        from app.core.config import Settings
+
+        default = Settings.model_fields["odata_full_pull_sets"].default
+        assert [s.strip() for s in default.split(",")] == ["MaterialValuationSet", "DepartmentCodeSet"]
+
+    def test_the_first_pull_creates_the_table_in_sap_field_names(self, engine) -> None:
+        result = raw_merge.merge(DEPT, [dept_row("1300", "10100", "FINANCE"), dept_row("1500", "10701", "MINING"),
+                                        dept_row("2000", "20001", "ANOTHER COMPANY")], engine=engine, full=True)
+
+        assert result.status == raw_merge.MERGED and result.created
+        assert (result.inserted, result.rows_out_of_scope) == (2, 1)
+        from sqlalchemy import inspect
+        assert [c["name"] for c in inspect(engine).get_columns("raw_dept_codes")] == ["WERKS", "DEPT_CODE", "DEPT_NAME"]
+        assert engine.rebuilt == ["dept_codes"], "the n_dept_codes view is built over the new table"
+        assert fetch(engine, "SELECT WERKS, DEPT_CODE FROM raw_dept_codes ORDER BY WERKS") == [
+            ("1300", "10100"), ("1500", "10701")]
+
+    def test_the_hand_loaded_table_is_merged_into_its_own_columns(self, engine) -> None:
+        """Names corrected, new codes added, nothing deleted, no column added."""
+        workbook_dept_codes(engine, [("1300", "10100", "FINANCE"), ("1500", "10701", "MINING"),
+                                     ("1300", "OAR", "STORES")])
+
+        result = raw_merge.merge(DEPT, [
+            dept_row("1300", "10100", "FINANCE-COMMERCIAL DEPARTMENT"),   # renamed in SAP
+            dept_row("1500", "10701", "MINING"),                          # unchanged
+            dept_row("1300", "10102", "SAFETY"),                          # new
+            dept_row("3000", "30308", "ANOTHER COMPANY"),                 # out of scope
+        ], engine=engine, full=True)
+
+        assert result.status == raw_merge.MERGED and not result.created
+        assert (result.matched, result.updated, result.inserted, result.rows_out_of_scope) == (2, 1, 1, 1)
+        assert result.columns_added == [] and result.vocabulary == raw_merge.VOCAB_WORKBOOK
+        assert fetch(engine, 'SELECT "Plant", "Department code", "Department" FROM raw_dept_codes '
+                             'ORDER BY "Plant", "Department code"') == [
+            ("1300", "10100", "FINANCE-COMMERCIAL DEPARTMENT"), ("1300", "10102", "SAFETY"),
+            ("1300", "OAR", "STORES"), ("1500", "10701", "MINING")]
+
+    def test_the_workbook_spellings_are_only_read_for_this_table(self) -> None:
+        """A CSV-route table resolves exactly as before: no alias lookup."""
+        present = ["Plant", "Department code", "Department"]
+        assert raw_merge.resolve(DEPT, "dept_codes", present)[2] == ["DeptCode"]
+        vocab, resolved, missing = raw_merge.resolve(DEPT, "dept_codes", present, aliases=True)
+        assert missing == [] and {r.prop: r.column for r in resolved} == {
+            "Werks": "Plant", "DeptCode": "Department code", "DeptName": "Department"}
+
+    def test_a_hand_loaded_table_that_matches_nothing_is_refused(self, engine) -> None:
+        """The guard still holds: codes written another way would duplicate every row."""
+        workbook_dept_codes(engine, [("1300", f"{n}.0", "X") for n in range(10100, 10160)])
+
+        result = raw_merge.merge(DEPT, [dept_row("1300", str(n), "X") for n in range(10100, 10160)],
+                                 engine=engine, full=True)
+
+        assert result.status == raw_merge.REFUSED and "match no row" in result.detail
+        assert count(engine, "raw_dept_codes") == 60

@@ -389,15 +389,16 @@ TABLES: dict[str, tuple[Col, ...]] = {
         _c("old_value", "VALUE_OLD"),
     ),
     # VZI's department list -- plant, 5-digit code, name -- read by the
-    # assistant (app/assistant/departments.py). Not an SAP table: loaded from
-    # ``Plant Dept Codes 1.XLSX`` until a pull exists, so the "SAP" names
-    # here are that workbook's headers -- as loaded on Azure (21 Oct, with
-    # spaces) and as app.seed would name them (``department_code``). A pull
-    # with its own field names adds them after these.
+    # assistant (app/assistant/departments.py). Two spellings, one table:
+    # ``Plant Dept Codes 1.XLSX`` as loaded on Azure on 21 Oct (headers with
+    # spaces; ``department_code`` as app.seed would name it), and SAP's
+    # DepartmentCodeSet field names (WERKS, DEPT_CODE, DEPT_NAME), which a
+    # weekly pull writes when it creates the table and which raw_merge also
+    # reads here to find the workbook's columns when it merges into them.
     "dept_codes": (
         _c("plant", "Plant", "WERKS"),
-        _c("code", "Department code", "department_code"),
-        _c("name", "Department"),
+        _c("code", "Department code", "department_code", "DEPT_CODE"),
+        _c("name", "Department", "DEPT_NAME"),
     ),
     "eket": (
         _c("purchasing_document", "EBELN", kind="key"),

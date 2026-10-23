@@ -297,13 +297,21 @@ class TestScheduledScope:
         assert 0 < len(schedulable) < len(specs())
         assert all(s.delta is not None for s in schedulable)
 
-    def test_the_sets_the_timer_skips_are_covered_by_the_csv_route(self) -> None:
-        """Skipping them is only safe because the other path reaches them."""
+    def test_the_sets_the_timer_skips_are_covered_by_another_route(self) -> None:
+        """Skipping them is only safe because another path reaches them: the
+        CSV route, or -- for a set no CSV extract carries (the department
+        codes) -- the weekly OData full pull, which fills its raw table itself."""
+        from app.core.config import Settings
         from app.ingest.csv_tables import BY_ENTITY_SET
         from app.ingest.manifest import specs
+        from app.ingest.odata_tables import BY_ENTITY_SET as ODATA_ONLY
 
+        weekly = {s.strip() for s in Settings.model_fields["odata_full_pull_sets"].default.split(",")}
         skipped = [s.name for s in specs() if s.delta is None]
-        uncovered = [name for name in skipped if name not in BY_ENTITY_SET]
+        uncovered = [
+            name for name in skipped
+            if name not in BY_ENTITY_SET and not (name in ODATA_ONLY and name in weekly)
+        ]
 
         assert not uncovered, f"no route reaches {uncovered}"
 

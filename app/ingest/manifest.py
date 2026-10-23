@@ -50,6 +50,20 @@ KNOWN_EMPTY: frozenset[str] = frozenset()
 # ChangeDocItemSet, BatchStockSet).
 NO_COUNT: frozenset[str] = frozenset()
 
+# Key fields SAP leaves blank on purpose, where blank is a value to match on.
+#
+# MBEW's valuation type (BWTAR) is empty for every material valued as a whole
+# -- most of them -- and a split-valued material has a row with BWTAR blank
+# beside one row per valuation type, so the blank row is a record of its own,
+# not a key the extract failed to fill. The merge therefore keeps these rows,
+# matches blank to blank (a CSV load writes '', a workbook load NULL), and
+# never "repairs" the blank from another row -- contrast EKBE's GJAHR, which
+# the CSV leaves blank by mistake (raw_merge._repair_blank_keys). Without
+# this, the weekly full pull skipped every unsplit material as "without key".
+BLANK_ALLOWED_KEYS: dict[str, frozenset[str]] = {
+    "MaterialValuationSet": frozenset({"Bwtar"}),
+}
+
 # Sets SAP refuses to serve without a predicate. A bare read returns HTTP 400 --
 # not because the set is empty, but because the service demands one.
 #
@@ -305,6 +319,8 @@ DELTAS: dict[str, Delta] = {
     "GatePassReturnSet": Delta(field="ZzdeltaDate", literal=LITERAL_DATS),
     # MBEW has no date and is a price table: refreshed whole, weekly, by the
     # scheduler's OData full pull (ODATA_FULL_PULL_SETS). Not a delta.
+    # DepartmentCodeSet likewise: a small reference list with no date, read
+    # whole weekly into raw_dept_codes (app/ingest/odata_tables.py).
 }
 
 
@@ -351,6 +367,12 @@ class IngestSpec:
         cost more than it returns.
         """
         return NON_UNIQUE_DECLARED_KEYS.get(self.entity_set.name, self.entity_set.keys)
+
+    @property
+    def blank_allowed_keys(self) -> frozenset[str]:
+        """Key properties a row may leave blank and still be addressed by
+        (``BLANK_ALLOWED_KEYS``). Empty for almost every set."""
+        return BLANK_ALLOWED_KEYS.get(self.entity_set.name, frozenset())
 
     @property
     def expects_rows(self) -> bool:

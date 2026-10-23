@@ -22,7 +22,10 @@ from __future__ import annotations
 
 # --- Shape ----------------------------------------------------------------
 
-EXPECTED_ENTITY_SET_COUNT = 24
+# 24 until 23-Oct-2026, when ZMM_KPI02_ADD_SRV gained DepartmentCodeSet (VZI's
+# department list, key Werks + DeptCode) on DEV and QA -- the only difference
+# in either system's live $metadata from the 16-Oct captures.
+EXPECTED_ENTITY_SET_COUNT = 25
 
 # Renamed by SAP 22-Sep-2026: ZVZI_KPI02_SHARED_SRV -> ZMM_KPI02_ADD_SRV,
 # ZMM_KPI02_SRV -> ZMM_KPI02_TAB_SRV. Verified against live $metadata the same
@@ -122,10 +125,12 @@ DECLARED_FLAGS = ("filterable", "sortable", "creatable", "updatable")
 # MonthlyMovementStatisticSet, Erdat on InfoRecordSet, InfoRecordOrgSet and
 # VendorSet, Udate and Utime on ChangeDocItemSet. Precision stays at 6: the
 # new fields are Edm.String and carry none.
-PROPERTIES_WITH_MAX_LENGTH = 292
+# +3 on 2026-10-23: DepartmentCodeSet's Werks, DeptCode and DeptName, each
+# with a length and a label (323 rows across 25 sets).
+PROPERTIES_WITH_MAX_LENGTH = 295
 PROPERTIES_WITH_PRECISION = 6
-PROPERTIES_WITH_LABEL = 320  # every one, which is what makes labels usable
-TOTAL_PROPERTIES = 320
+PROPERTIES_WITH_LABEL = 323  # every one, which is what makes labels usable
+TOTAL_PROPERTIES = 323
 
 # SAP's business labels are the same words the July extract uses as column
 # headers, which is what makes them worth capturing beyond W2.5's requirement.

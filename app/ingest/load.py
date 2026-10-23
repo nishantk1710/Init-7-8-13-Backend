@@ -41,6 +41,14 @@ STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
 STATUS_SKIPPED = "skipped"
 
+# Whole-set odata_<table> copies the app reads directly, written by a full load
+# whatever ODATA_ARCHIVE_ENABLED says. I07 takes the MRP fields from
+# odata_material_plant (app/initiatives/i7/adapters/extract.py); the full
+# refresh's MaterialPlantSet enrichment is what keeps it current. Every other
+# copy is an archive nothing reads -- MBEW's is a price fallback only for a
+# raw_mbew with no VERPR, which the weekly merge supplies.
+ARCHIVE_READ_BY_APP: frozenset[str] = frozenset({"MaterialPlantSet"})
+
 # Suffix for the scratch table a merge stages rows through. Double underscore
 # so it cannot collide with an entity set whose name happens to end in "stg".
 STAGING_SUFFIX = "__stg"
@@ -340,22 +348,28 @@ def load_set(
                 f"{merged.table}: {merged.detail}" if merged.status == raw_merge.SKIPPED
                 else f"{merged.table}: {merged.updated} changed of {merged.matched} matched, "
                 f"{merged.inserted} inserted"
+                + (", table created" if merged.created else "")
                 + (f", {merged.keys_repaired} blank key(s) filled" if merged.keys_repaired else "")
                 + (f", added {', '.join(merged.columns_added)}" if merged.columns_added else "")
+                + (f", {merged.rows_out_of_scope} out-of-scope row(s) left out" if merged.rows_out_of_scope else "")
             )
 
-    if strategy == "merge" and not get_settings().odata_archive_enabled:
-        # Raw only, by configuration (ODATA_ARCHIVE_ENABLED=false): the
-        # increment is in raw_<table>, merged above, and the odata_<table>
-        # archive is not written. A merge that did not happen -- refused, or
-        # skipped for want of a raw table -- then has nowhere to go at all,
-        # and says so instead of succeeding on nothing.
+    if not get_settings().odata_archive_enabled and (
+        strategy == "merge" or spec.name not in ARCHIVE_READ_BY_APP
+    ):
+        # Raw only, by configuration (ODATA_ARCHIVE_ENABLED=false): the rows
+        # are in raw_<table>, merged above, and the odata_<table> archive is
+        # not written -- for an increment, and for a whole set (the weekly
+        # OData full pull) alike, except the one whole-set copy the app reads
+        # itself (ARCHIVE_READ_BY_APP). A merge that did not happen --
+        # refused, or skipped for want of a raw table -- then has nowhere to
+        # go at all, and says so instead of succeeding on nothing.
         if refused:
             return failure(refused)
         if not raw_merged:
             return failure(
                 f"nothing was merged into a raw table ({raw_note or 'merge not attempted'}) "
-                f"and the odata_ archive is switched off, so this delta has nowhere to go"
+                f"and the odata_ archive is switched off, so these rows have nowhere to go"
             )
         rows = expected or 0
         elapsed = time.monotonic() - started

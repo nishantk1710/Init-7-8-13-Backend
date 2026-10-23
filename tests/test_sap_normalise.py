@@ -129,6 +129,14 @@ def test_the_department_list_also_reads_the_seed_loaders_names() -> None:
     assert [r.source for r in resolve("dept_codes", present)] == ["plant", "department_code", "department"]
 
 
+def test_the_department_list_reads_the_table_the_weekly_pull_creates() -> None:
+    """Where raw_dept_codes does not exist (a new database), SAP's
+    DepartmentCodeSet creates it in its own field names."""
+    present = ["WERKS", "DEPT_CODE", "DEPT_NAME"]
+
+    assert [r.source for r in resolve("dept_codes", present)] == ["WERKS", "DEPT_CODE", "DEPT_NAME"]
+
+
 def test_no_department_list_is_an_empty_view() -> None:
     """Until it is loaded the assistant falls back to checking the code's shape."""
     assert "WHERE 1 = 0" in view_sql("dept_codes", None, MSSQL)

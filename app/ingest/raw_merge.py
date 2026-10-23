@@ -19,7 +19,10 @@ SAP's. EKPO over OData is 20 properties named ``Ebeln``, ``Aedat``; over CSV it
 is 277 columns named ``EBELN``, ``AEDAT``. So:
 
 * Existing rows are UPDATED column by column -- only the columns the OData set
-  carries. Deleting and re-inserting would null the other 257.
+  carries. Deleting and re-inserting would null the other 257. And only the
+  rows where one of those values actually differs (compared exactly, so a
+  change of letter case counts): a row a read brings back unchanged is left
+  as it is, so re-reading a window or a whole set rewrites nothing.
 * New rows are INSERTED with those columns filled and the rest NULL, until the
   next full pull fills them. That is the nature of a narrow delta and the
   reason the nightly full refresh exists.
@@ -64,6 +67,7 @@ WHAT IS REFUSED, AND WHY
 
 * No raw table yet: nothing to merge into. The CSV full pull builds it and sets
   the watermark; a delta before that has no baseline and is skipped, not failed.
+  (A set with no CSV route creates its own table instead -- see below.)
 * A key column the table lacks: rows cannot be matched, and inserting them
   unmatched is how duplicates start.
 * A whole set most of whose rows match nothing in the table. A full pull
@@ -74,6 +78,14 @@ WHAT IS REFUSED, AND WHY
 A KEY THE CSV LEFT BLANK is filled from OData when exactly one incoming row
 can be its owner (EKBE's GJAHR, blank on a fifth of the CSV rows), so the row
 is updated in place instead of gaining a twin.
+
+A KEY SAP LEAVES BLANK ON PURPOSE is different: MBEW's valuation type is
+empty for every material valued as a whole. Those rows are kept and matched
+blank to blank, never "repaired" (``manifest.BLANK_ALLOWED_KEYS``).
+
+A SET NO CSV EXTRACT CARRIES (``odata_tables``: the department codes) has its
+raw table created by its first full pull, holds only in-scope plants, and is
+merged into whatever column names a hand load gave it first.
 
 WHAT IT TELLS THE SNAPSHOTS
 
@@ -99,6 +111,8 @@ from app.core.logging import get_logger
 from app.core.storage import Storage, get_storage
 from app.ingest.csv_tables import CSV_TABLES, CsvTable
 from app.ingest.manifest import IngestSpec
+from app.ingest.odata_tables import BY_ENTITY_SET as ODATA_TABLES_BY_SET
+from app.ingest.odata_tables import OdataTable
 from app.seed.sqlserver import quote
 
 logger = get_logger(__name__)
@@ -126,6 +140,12 @@ class MergeResult:
     keys_repaired: int = 0
     columns_added: list[str] = field(default_factory=list)
     rows_without_key: int = 0
+    # Rows for plants the platform does not serve, left out of a table that
+    # holds only in-scope plants (odata_tables.OdataTable.plant_property).
+    rows_out_of_scope: int = 0
+    # The table did not exist and this merge created it: a set no CSV extract
+    # carries is created by its own first pull.
+    created: bool = False
     vocabulary: str | None = None
     detail: str | None = None
 
@@ -135,18 +155,22 @@ class MergeResult:
 
     @property
     def changed_anything(self) -> bool:
-        return bool(self.updated or self.inserted or self.keys_repaired or self.columns_added)
+        return bool(self.updated or self.inserted or self.keys_repaired or self.columns_added or self.created)
 
 
 # --- Names ------------------------------------------------------------------
 
 
-def raw_table_for(spec: IngestSpec) -> CsvTable | None:
-    """The CSV-route table holding the same data as this OData set, if any."""
+def raw_table_for(spec: IngestSpec) -> CsvTable | OdataTable | None:
+    """The raw table holding the same data as this OData set, if any.
+
+    The CSV route's table for nearly every set; for a set no CSV extract
+    carries, the table its own full pull fills (``odata_tables``).
+    """
     for table in CSV_TABLES:
         if table.entity_set == spec.name:
             return table
-    return None
+    return ODATA_TABLES_BY_SET.get(spec.name)
 
 
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
@@ -169,6 +193,19 @@ def _labels_for(table: str, field_name: str) -> list[str]:
     return [col.label for col in TABLES.get(table, ()) if field_name in col.sap]
 
 
+def _aliases_for(table: str, field_name: str) -> list[str]:
+    """Other raw spellings the normalise mapping lists beside this SAP field.
+
+    The column names a table loaded some other way carries for the same data
+    -- ``raw_dept_codes`` from VZI's workbook has ``Department code`` where a
+    pull would write ``DEPT_CODE``. Used only for tables the OData set alone
+    fills (``odata_tables``); a CSV-route table resolves exactly as before.
+    """
+    from app.shared.sap_normalise import TABLES
+
+    return [name for col in TABLES.get(table, ()) if field_name in col.sap for name in col.sap if name != field_name]
+
+
 def _is_number(table: str, field_name: str) -> bool:
     """Whether the normalise view reads this SAP field as a number."""
     from app.shared.sap_normalise import TABLES
@@ -189,7 +226,7 @@ class Resolved:
 
 
 def resolve(
-    spec: IngestSpec, table: str, present: list[str]
+    spec: IngestSpec, table: str, present: list[str], *, aliases: bool = False
 ) -> tuple[str | None, list[Resolved], list[str]]:
     """Map each OData property to a column of the raw table.
 
@@ -198,6 +235,10 @@ def resolve(
     say whether the table is CSV-shaped or workbook-shaped. Every other
     property prefers that vocabulary and is added under its SAP field name when
     the table has neither spelling.
+
+    ``aliases`` also accepts the other spellings the normalise mapping lists
+    for a field (``_aliases_for``), after the SAP name and the label. For the
+    tables only an OData set fills, which may have been loaded by hand first.
     """
     by_lower = {c.lower(): c for c in present}
     keys = set(spec.identity_keys)
@@ -223,6 +264,9 @@ def resolve(
         elif (hit := find(labels)) is not None:
             key_hits[prop] = hit
             vocabulary = vocabulary or VOCAB_WORKBOOK
+        elif aliases and (hit := find(_aliases_for(table, sap))) is not None:
+            key_hits[prop] = hit
+            vocabulary = vocabulary or VOCAB_WORKBOOK
         else:
             missing_keys.append(prop)
     if missing_keys:
@@ -239,6 +283,8 @@ def resolve(
             continue
         numeric = _is_number(table, sap)
         hit = find(order)
+        if hit is None and aliases:
+            hit = find(_aliases_for(table, sap))
         if hit is not None:
             resolved.append(Resolved(prop, hit, types.get(prop, "Edm.String"), False, numeric=numeric))
         else:
@@ -310,6 +356,41 @@ def _add_column_sql(engine: Engine, table: str, column: str) -> str:
     return f"ALTER TABLE {quote(table)} {keyword} {quote(column)} {_column_type_sql(engine)} NULL"
 
 
+def _key_match(key_columns: list[str], blankable: frozenset[str], s: str, t: str) -> str:
+    """The key equality between two row sources, ``s`` and ``t``.
+
+    A blank-allowed key column (``manifest.BLANK_ALLOWED_KEYS``) matches blank
+    to blank: the CSV route writes an empty field as '', a workbook load as
+    NULL, and the two must find each other.
+    """
+    parts = []
+    for k in key_columns:
+        if k in blankable:
+            parts.append(f"COALESCE({s}.{quote(k)}, '') = COALESCE({t}.{quote(k)}, '')")
+        else:
+            parts.append(f"{s}.{quote(k)} = {t}.{quote(k)}")
+    return " AND ".join(parts)
+
+
+# SQL Server compares text under the column's collation, which here ignores
+# letter case: 'Main store' = 'MAIN STORE'. A value SAP re-cased is a change,
+# so the comparison that decides what to write uses a binary collation.
+EXACT_COLLATION = "Latin1_General_100_BIN2"
+
+
+def _differs(columns: list[str], s: str, t: str, engine: Engine) -> str:
+    """SQL that is true when row ``s`` holds a value row ``t`` does not.
+
+    NULL-safe -- EXCEPT treats two NULLs as equal, where ``<>`` would call them
+    unknown -- and exact, under a binary collation on SQL Server (SQLite
+    compares binary already).
+    """
+    collate = f" COLLATE {EXACT_COLLATION}" if engine.dialect.name == "mssql" else ""
+    s_cols = ", ".join(f"{s}.{quote(c)}{collate}" for c in columns)
+    t_cols = ", ".join(f"{t}.{quote(c)}{collate}" for c in columns)
+    return f"EXISTS (SELECT {s_cols} EXCEPT SELECT {t_cols})"
+
+
 def merge(
     spec: IngestSpec,
     rows: list[dict[str, Any]],
@@ -324,23 +405,35 @@ def merge(
     the guard against a key mismatch (``FULL_MERGE_NEW_ROW_LIMIT``). ``source``
     names the landed file for the audit row a merge that changed something
     leaves in ``ingestion_run``.
+
+    Nothing is replaced or deleted: rows are matched on the key, a matched row
+    is written only when one of its values differs, and the rest are new.
     """
     target_spec = raw_table_for(spec)
     if target_spec is None:
-        return MergeResult(spec.raw_table, SKIPPED, detail="no CSV-route table holds this set")
+        return MergeResult(spec.raw_table, SKIPPED, detail="no raw table holds this set")
     table = target_spec.raw_table
+    # A table only this set fills: created by its first pull, and merged into
+    # whatever spelling a hand load gave its columns.
+    owned = isinstance(target_spec, OdataTable)
     engine = engine or get_engine()
 
     try:
-        if not _table_exists(engine, table):
+        exists = _table_exists(engine, table)
+        if not exists and not owned:
             return MergeResult(
                 table, SKIPPED,
                 detail=f"{table} does not exist yet; the CSV full pull creates it "
                        "(python -m app.ingest --csv-pull --csv-load --table "
                        f"{target_spec.sap_table})",
             )
-        present = [c["name"] for c in inspect(engine).get_columns(table)]
-        vocabulary, resolved, missing_keys = resolve(spec, target_spec.table, present)
+        # A table created here gets the SAP field names -- the vocabulary the
+        # CSV route uses, and one the normalise mapping lists.
+        present = (
+            [c["name"] for c in inspect(engine).get_columns(table)] if exists
+            else [sap_field(p.name) for p in spec.entity_set.properties]
+        )
+        vocabulary, resolved, missing_keys = resolve(spec, target_spec.table, present, aliases=owned)
         if missing_keys:
             return MergeResult(
                 table, REFUSED, vocabulary=vocabulary,
@@ -350,22 +443,37 @@ def merge(
             )
         assert vocabulary is not None
 
+        out_of_scope = 0
+        if owned and target_spec.plant_property:
+            from app.shared.plant_scope import is_in_scope
+
+            prop = target_spec.plant_property
+            kept = [row for row in rows if is_in_scope(None if row.get(prop) is None else str(row.get(prop)))]
+            out_of_scope = len(rows) - len(kept)
+            rows = kept
+
         keys = [r for r in resolved if r.is_key]
+        # Key columns where blank is a value (manifest.BLANK_ALLOWED_KEYS):
+        # kept, written as '', and matched blank to blank.
+        blankable = frozenset(k.column for k in keys if k.prop in spec.blank_allowed_keys)
         by_key: dict[tuple, dict[str, str | None]] = {}
         without_key = 0
         for row in rows:
-            key = tuple(shape(row.get(k.prop), k.edm_type, vocabulary) for k in keys)
-            if any(k in (None, "") for k in key):
+            values = {
+                r.column: shape(row.get(r.prop), r.edm_type, vocabulary, numeric=r.numeric) for r in resolved
+            }
+            for column in blankable:
+                if _blank(values[column]):
+                    values[column] = ""
+            if any(values[k.column] in (None, "") for k in keys if k.column not in blankable):
                 without_key += 1
                 continue
             # Last one wins: a chunked read can hand back the same row twice.
-            by_key[key] = {
-                r.column: shape(row.get(r.prop), r.edm_type, vocabulary, numeric=r.numeric) for r in resolved
-            }
+            by_key[tuple(values[k.column] for k in keys)] = values
 
         if not by_key:
             return MergeResult(table, MERGED, vocabulary=vocabulary, rows_without_key=without_key,
-                               detail="no rows with a complete key")
+                               rows_out_of_scope=out_of_scope, detail="no rows with a complete key")
 
         columns = [r.column for r in resolved]
         key_columns = [r.column for r in keys]
@@ -373,8 +481,11 @@ def merge(
         staging = f"{table}{STAGING_SUFFIX}"
         target = quote(table)
         stage_name = quote(staging)
+        match = _key_match(key_columns, blankable, "s", "t")
 
         with engine.begin() as conn:
+            if not exists:
+                Table(table, MetaData(), *[Column(c, UnicodeText) for c in present]).create(conn)
             for column in added:
                 conn.execute(text(_add_column_sql(engine, table, column)))
 
@@ -388,9 +499,8 @@ def merge(
             #    incoming row can be theirs. Before the exact match below, so
             #    a repaired row is then updated in place rather than inserted
             #    a second time beside its blank-keyed twin.
-            repaired = _repair_blank_keys(conn, table, key_columns, staging)
+            repaired = _repair_blank_keys(conn, table, key_columns, staging, blankable) if exists else 0
 
-            match = " AND ".join(f"s.{quote(k)} = t.{quote(k)}" for k in key_columns)
             unmatched = conn.execute(text(
                 f"SELECT COUNT(*) FROM {stage_name} s "
                 f"WHERE NOT EXISTS (SELECT 1 FROM {target} t WHERE {match})"
@@ -414,48 +524,40 @@ def merge(
                         "merging; nothing was changed."
                     )
 
-            # 3. What actually changes. Compared NULL-safely with EXCEPT, so a
-            #    re-read of an unchanged window counts nothing -- it is the
-            #    count that decides whether the snapshots over this table need
-            #    rebuilding, and a window re-read every hour must not say yes.
+            # 3. Only what actually changes is written. A matched row whose
+            #    values all equal the table's is left alone; the rest take the
+            #    incoming values. Compared NULL-safely with EXCEPT, and exactly
+            #    (``_differs``): a change of letter case is a change. The count
+            #    of rows written is also what decides whether the snapshots
+            #    over this table rebuild, so a window re-read every hour, or a
+            #    weekly re-read of an unchanged set, writes and rebuilds nothing.
             non_key = [c for c in columns if c not in key_columns]
             changed = 0
             if non_key:
-                s_cols = ", ".join(f"s.{quote(c)}" for c in non_key)
-                t_cols = ", ".join(f"t.{quote(c)}" for c in non_key)
-                changed = conn.execute(text(
-                    f"SELECT COUNT(*) FROM {target} t WHERE EXISTS ("
-                    f"SELECT 1 FROM {stage_name} s WHERE {match} "
-                    f"AND EXISTS (SELECT {s_cols} EXCEPT SELECT {t_cols}))"
-                )).scalar() or 0
-
-                # 4. Every matched row takes the incoming values -- all of
-                #    them, not only the rows counted as changed, so a
-                #    difference the comparison's collation cannot see (letter
-                #    case on SQL Server) is still written.
                 if engine.dialect.name == "mssql":
                     # One join. The portable form below runs one correlated
                     # lookup per column, which SQL Server plans as one join
                     # per column -- twenty-five of them for MSEG.
                     assignments = ", ".join(f"t.{quote(c)} = s.{quote(c)}" for c in non_key)
-                    matched = conn.execute(text(
+                    changed = conn.execute(text(
                         f"UPDATE t SET {assignments} FROM {target} t "
-                        f"INNER JOIN {stage_name} s ON {match}"
+                        f"INNER JOIN {stage_name} s ON {match} "
+                        f"WHERE {_differs(non_key, 's', 't', engine)}"
                     )).rowcount
                 else:
-                    on = " AND ".join(f"s.{quote(k)} = {target}.{quote(k)}" for k in key_columns)
+                    on = _key_match(key_columns, blankable, "s", target)
                     assignments = ", ".join(
                         f"{quote(c)} = (SELECT s.{quote(c)} FROM {stage_name} s WHERE {on})"
                         for c in non_key
                     )
-                    matched = conn.execute(text(
+                    changed = conn.execute(text(
                         f"UPDATE {target} SET {assignments} "
-                        f"WHERE EXISTS (SELECT 1 FROM {stage_name} s WHERE {on})"
+                        f"WHERE EXISTS (SELECT 1 FROM {stage_name} s WHERE {on} "
+                        f"AND {_differs(non_key, 's', target, engine)})"
                     )).rowcount
-            else:
-                matched = len(by_key) - unmatched
+            matched = len(by_key) - unmatched
 
-            # 5. The rest are new.
+            # 4. The rest are new.
             column_list = ", ".join(quote(c) for c in columns)
             inserted = conn.execute(text(
                 f"INSERT INTO {target} ({column_list}) "
@@ -464,9 +566,10 @@ def merge(
             )).rowcount
             stage.drop(conn)
 
-        if added:
+        if added or not exists:
             # The n_<table> view resolves columns when it is built; a column
-            # that did not exist then is invisible until it is rebuilt.
+            # -- or a table -- that did not exist then is invisible until it
+            # is rebuilt.
             from app.shared import sap_normalise
 
             sap_normalise.refresh_after_load(target_spec.table)
@@ -474,14 +577,17 @@ def merge(
         result = MergeResult(
             table, MERGED, updated=max(changed, 0), inserted=max(inserted, 0),
             matched=max(matched, 0), keys_repaired=repaired,
-            columns_added=added, rows_without_key=without_key, vocabulary=vocabulary,
+            columns_added=added, rows_without_key=without_key, rows_out_of_scope=out_of_scope,
+            created=not exists, vocabulary=vocabulary,
         )
         logger.info(
-            "%s: %d row(s) changed (%d matched), %d inserted into %s (%s vocabulary%s%s%s)",
+            "%s: %d row(s) changed (%d matched), %d inserted into %s (%s vocabulary%s%s%s%s%s)",
             spec.name, result.updated, result.matched, result.inserted, table, vocabulary,
+            "; table created by this pull" if result.created else "",
             f"; {repaired} blank key(s) filled from OData" if repaired else "",
             f"; added {', '.join(added)}" if added else "",
             f"; {without_key} row(s) without a key skipped" if without_key else "",
+            f"; {out_of_scope} row(s) for out-of-scope plants left out" if out_of_scope else "",
         )
         if result.changed_anything:
             _record_merge(engine, table, source or f"odata:{spec.name}")
@@ -535,8 +641,14 @@ def _blank(value: Any) -> bool:
 LOOSE_SUFFIX = "__odata_loose"
 
 
-def _repair_blank_keys(conn, table: str, key_columns: list[str], staging: str) -> int:
+def _repair_blank_keys(
+    conn, table: str, key_columns: list[str], staging: str, blankable: frozenset[str] = frozenset()
+) -> int:
     """Fill key columns the CSV left blank, from the OData row that is theirs.
+
+    ``blankable`` names key columns where blank is a real value
+    (``manifest.BLANK_ALLOWED_KEYS``, MBEW's BWTAR): never repaired, and
+    matched blank to blank like everywhere else in the merge.
 
     Measured 2026-10-06: EKBE's CSV extract leaves GJAHR -- one of its seven
     key fields -- blank on 20% of rows, while OData fills it. Matched exactly,
@@ -557,11 +669,14 @@ def _repair_blank_keys(conn, table: str, key_columns: list[str], staging: str) -
     is the memory the worker does not have. What comes back now is bounded
     by the increment, and the decision on it is unchanged.
     """
+    repairable = [k for k in key_columns if k not in blankable]
+    if not repairable:
+        return 0
     target = quote(table)
     stage = quote(staging)
     loose_name = f"{table}{LOOSE_SUFFIX}"
     loose_table = quote(loose_name)
-    exact = " AND ".join(f"t.{quote(k)} = s.{quote(k)}" for k in key_columns)
+    exact = _key_match(key_columns, blankable, "t", "s")
     s_keys = ", ".join(f"s.{quote(k)}" for k in key_columns)
     t_keys = ", ".join(f"t.{quote(k)}" for k in key_columns)
     key_list = ", ".join(quote(k) for k in key_columns)
@@ -582,9 +697,11 @@ def _repair_blank_keys(conn, table: str, key_columns: list[str], staging: str) -
     scratch.drop(conn, checkfirst=True)
     scratch.create(conn)
     conn.execute(scratch.insert(), [dict(zip(key_columns, key)) for key in loose])
-    blanks_sql = " OR ".join(f"t.{quote(k)} IS NULL OR t.{quote(k)} = ''" for k in key_columns)
+    blanks_sql = " OR ".join(f"t.{quote(k)} IS NULL OR t.{quote(k)} = ''" for k in repairable)
     agree = " AND ".join(
-        f"(t.{quote(k)} = l.{quote(k)} OR t.{quote(k)} IS NULL OR t.{quote(k)} = '')" for k in key_columns
+        f"COALESCE(t.{quote(k)}, '') = COALESCE(l.{quote(k)}, '')" if k in blankable
+        else f"(t.{quote(k)} = l.{quote(k)} OR t.{quote(k)} IS NULL OR t.{quote(k)} = '')"
+        for k in key_columns
     )
     try:
         blank_rows = conn.execute(text(
@@ -596,17 +713,24 @@ def _repair_blank_keys(conn, table: str, key_columns: list[str], staging: str) -
     if not blank_rows:
         return 0
 
+    def settled(row) -> tuple:
+        # A blank-allowed column's blank is a value: '' whether stored as ''
+        # or NULL, so it compares like any other known field.
+        return tuple("" if key_columns[i] in blankable and _blank(v) else v for i, v in enumerate(row))
+
+    loose = [settled(key) for key in loose]
+
     # Two blank-keyed rows identical on every key field cannot be told apart
     # by an UPDATE; repairing them would give both the same key.
     copies: dict[tuple, int] = {}
     for row in blank_rows:
-        copies[tuple(row)] = copies.get(tuple(row), 0) + 1
+        copies[settled(row)] = copies.get(settled(row), 0) + 1
 
     # Index the unmatched incoming keys by each blank pattern's known fields.
     by_pattern: dict[tuple[int, ...], dict[tuple, list[tuple]]] = {}
     candidates: dict[tuple, list[tuple]] = {}
     for row in copies:
-        known = tuple(i for i, value in enumerate(row) if not _blank(value))
+        known = tuple(i for i, value in enumerate(row) if not _blank(value) or key_columns[i] in blankable)
         index = by_pattern.get(known)
         if index is None:
             index = {}
@@ -631,7 +755,10 @@ def _repair_blank_keys(conn, table: str, key_columns: list[str], staging: str) -
     for row, key in repairs:
         sets, wheres, params = [], [], {}
         for i, column in enumerate(key_columns):
-            if _blank(row[i]):
+            if column in blankable:
+                wheres.append(f"COALESCE({quote(column)}, '') = :w{i}")
+                params[f"w{i}"] = row[i]
+            elif _blank(row[i]):
                 sets.append(f"{quote(column)} = :v{i}")
                 wheres.append(f"({quote(column)} IS NULL OR {quote(column)} = '')")
                 params[f"v{i}"] = key[i]

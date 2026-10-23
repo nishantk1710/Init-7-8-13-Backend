@@ -2,11 +2,14 @@
 
 Where the codes come from
 -------------------------
-VZI's department list, ``Plant Dept Codes 1.XLSX``: plant, 5-digit department
-code and its name (``1300  10100  FINANCE-COMMERCIAL DEPARTMENT``). There is no
-SAP pull for it yet, so the workbook is loaded into ``raw_dept_codes`` and read
-through ``n_dept_codes`` (see :mod:`app.shared.sap_normalise`). When the pull
-lands it fills the same table, and nothing here changes.
+VZI's department list: plant, 5-digit department code and its name
+(``1300  10100  FINANCE-COMMERCIAL DEPARTMENT``), read from ``raw_dept_codes``
+through ``n_dept_codes`` (see :mod:`app.shared.sap_normalise`). The table was
+first loaded from ``Plant Dept Codes 1.XLSX`` (21 Oct 2026); SAP's
+``DepartmentCodeSet`` now keeps it current through the weekly OData full pull
+(``ODATA_FULL_PULL_SETS``, :mod:`app.ingest.odata_tables`), which merges into
+the same table -- in-scope plants only, nothing deleted -- so nothing here
+changed.
 
 Rows whose code is not 5 digits (``BMW``, ``OAR``, ``GINCO``, ``POD``) are MRP
 and inventory-controller desks, not departments, and are left out. Until 21 Oct
