@@ -28,9 +28,9 @@ from app.initiatives.i7.recommendations.types import (
 def test_oar_route_is_exactly_the_four_required_roles_in_order():
     assert OAR_APPROVAL_CHAIN == (
         ApprovalRole.INVENTORY_CONTROLLER,
-        ApprovalRole.COMMERCIAL_HEAD,
         ApprovalRole.ENGINEERING_HEAD,
         ApprovalRole.PLANT_HEAD,
+        ApprovalRole.COMMERCIAL_HEAD,
     )
 
 
@@ -181,12 +181,12 @@ def test_oar_route_can_be_held_and_released_like_any_other_route():
         _submitted_oar_state(), ApprovalAction.APPROVE, ApprovalRole.INVENTORY_CONTROLLER, None
     )
     held = workflow.apply_action(
-        state, ApprovalAction.HOLD, ApprovalRole.COMMERCIAL_HEAD, "awaiting budget review"
+        state, ApprovalAction.HOLD, ApprovalRole.ENGINEERING_HEAD, "awaiting technical review"
     )
     assert held.status is LifecycleStatus.HELD
-    assert held.pending_role is ApprovalRole.COMMERCIAL_HEAD
+    assert held.pending_role is ApprovalRole.ENGINEERING_HEAD
     released = workflow.apply_action(
-        held, ApprovalAction.RELEASE_HOLD, ApprovalRole.COMMERCIAL_HEAD, None
+        held, ApprovalAction.RELEASE_HOLD, ApprovalRole.ENGINEERING_HEAD, None
     )
-    assert released.pending_role is ApprovalRole.COMMERCIAL_HEAD
+    assert released.pending_role is ApprovalRole.ENGINEERING_HEAD
     assert released.status is LifecycleStatus.PENDING_APPROVAL

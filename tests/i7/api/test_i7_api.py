@@ -801,8 +801,8 @@ def test_hold_and_send_back_leave_the_recommendation_in_different_states(ready_r
 @pytest.fixture
 def ready_oar_recommendation():
     """One throwaway READY_FOR_REVIEW OAR recommendation, to exercise the
-    fixed Inventory Controller -> Commercial Head -> Engineering Head ->
-    Plant Head route."""
+    fixed Inventory Controller -> Engineering Head -> Plant Head ->
+    Commercial Head route."""
     recommendation_id = "REC-TEST-API-OAR-WORKFLOW"
     with get_sessionmaker()() as session:
         session.execute(delete(ApprovalLedgerEntry).where(
@@ -847,7 +847,7 @@ def test_oar_recommendation_submits_into_the_oar_route(ready_oar_recommendation)
     assert submit.status_code == 200
     assert submit.json()["pending_role"] == "Inventory Controller"
     assert submit.json()["route"] == [
-        "Inventory Controller", "Commercial Head", "Engineering Head", "Plant Head",
+        "Inventory Controller", "Engineering Head", "Plant Head", "Commercial Head",
     ]
 
 
@@ -868,7 +868,7 @@ def test_oar_route_completes_through_all_four_named_roles(ready_oar_recommendati
     rid = ready_oar_recommendation
     client.post(f"/api/v1/i7/recommendations/{rid}/submit", json={"actor_id": "U1"})
     for role in (
-        "Inventory Controller", "Commercial Head", "Engineering Head", "Plant Head",
+        "Inventory Controller", "Engineering Head", "Plant Head", "Commercial Head",
     ):
         response = client.post(
             f"/api/v1/i7/recommendations/{rid}/actions",

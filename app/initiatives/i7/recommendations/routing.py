@@ -4,8 +4,8 @@ Two independent routes, resolved from persisted, existing recommendation
 fields -- never invented at the API layer:
 
 * OAR conversion recommendations (``is_oar=True``) always take
-  ``OAR_APPROVAL_CHAIN`` -- Inventory Controller -> Commercial Head ->
-  Engineering Head -> Plant Head. Fixed, regardless of criticality.
+  ``OAR_APPROVAL_CHAIN`` -- Inventory Controller -> Engineering Head ->
+  Plant Head -> Commercial Head. Fixed, regardless of criticality.
 * ROP/Max recommendations (``is_oar=False``) are routed by criticality tier,
   through ``PolicyDocument.approval_routing`` -- a configuration lookup, not
   a branch written here.
