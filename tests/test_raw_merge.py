@@ -244,8 +244,9 @@ class TestMerge:
     def test_a_property_the_table_lacks_gets_a_column_and_the_view_is_rebuilt(self, engine) -> None:
         """raw_marc over CSV has no DISMM/PLIFZ; the OData MaterialPlantSet does."""
         with engine.begin() as c:
+            # The CSV writes the material number unpadded; OData pads it to 18.
             c.execute(text("CREATE TABLE raw_marc (MATNR TEXT, WERKS TEXT, ZZCRITIC TEXT)"))
-            c.execute(text("INSERT INTO raw_marc VALUES ('000000000010000001', '1300', 'A')"))
+            c.execute(text("INSERT INTO raw_marc VALUES ('10000001', '1300', 'A')"))
 
         result = raw_merge.merge(MARC, [{
             "Matnr": "000000000010000001", "Werks": "1300", "Dismm": "PD", "Plifz": "14",
@@ -593,6 +594,49 @@ class TestBlankValuationType:
         result = raw_merge.merge(MBEW, [mbew_row("", "", "1.00"), mbew_row("M1", "", "1.00")], engine=engine)
 
         assert (result.rows_without_key, result.inserted) == (1, 1)
+
+
+# --- Material numbers: OData pads them, the raw tables do not -------------------------
+
+
+class TestMaterialNumbers:
+    def test_the_padding_comes_off_a_numeric_material_only(self) -> None:
+        assert raw_merge.external_material_number("000000000011251001") == "11251001"
+        assert raw_merge.external_material_number("1000000000") == "1000000000"
+        assert raw_merge.external_material_number("ABC-0012") == "ABC-0012"
+        assert raw_merge.external_material_number("000000000000000000") == "0"
+        assert raw_merge.external_material_number(None) is None
+
+    def test_a_padded_odata_row_finds_its_unpadded_csv_row(self, engine) -> None:
+        """Nonprod, 23 Oct 2026: raw_mbew holds '11251001', OData sends
+        '000000000011251001', and the weekly pull matched 0 of 130,368."""
+        csv_shaped_mbew(engine, [{"m": "11251001", "b": "1500", "t": "", "v": "10.00"}])
+
+        result = raw_merge.merge(MBEW, [mbew_row("000000000011251001", "", "12.00") | {"Bwkey": "1500"}],
+                                 engine=engine, full=True)
+
+        assert (result.matched, result.updated, result.inserted) == (1, 1, 0)
+        assert fetch(engine, "SELECT MATNR, VERPR FROM raw_mbew") == [("11251001", "12.00")]
+
+    def test_an_increment_updates_the_stock_row_instead_of_adding_a_twin(self, engine) -> None:
+        """raw_mard held 8 padded twins of CSV rows, each stock counted twice."""
+        mard = spec_for("StorageLocationStockSet")
+        with engine.begin() as c:
+            c.execute(text("CREATE TABLE raw_mard (MATNR TEXT, WERKS TEXT, LGORT TEXT, LABST TEXT, ZZOTHER TEXT)"))
+            c.execute(text("INSERT INTO raw_mard VALUES ('5000092261', '1300', 'S001', '4.000', 'kept')"))
+
+        result = raw_merge.merge(mard, [{"Matnr": "000000005000092261", "Werks": "1300", "Lgort": "S001",
+                                         "Labst": Decimal("3.000")}], engine=engine)
+
+        assert (result.matched, result.inserted) == (1, 0)
+        assert fetch(engine, "SELECT MATNR, LABST, ZZOTHER FROM raw_mard") == [("5000092261", "3.000", "kept")]
+
+    def test_a_material_outside_the_key_is_written_unpadded_too(self, engine) -> None:
+        csv_shaped_ekpo(engine, [])
+
+        raw_merge.merge(EKPO, [{"Ebeln": "1", "Ebelp": "00010", "Matnr": "000000005000092261"}], engine=engine)
+
+        assert fetch(engine, "SELECT MATNR FROM raw_ekpo")[0][0] == "5000092261"
 
 
 # --- A set no CSV extract carries: the department codes ------------------------------

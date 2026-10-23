@@ -79,6 +79,10 @@ A KEY THE CSV LEFT BLANK is filled from OData when exactly one incoming row
 can be its owner (EKBE's GJAHR, blank on a fifth of the CSV rows), so the row
 is updated in place instead of gaining a twin.
 
+A MATERIAL NUMBER is written as the raw tables hold it -- without the leading
+zeros OData pads it with (``external_material_number``) -- so an OData row
+finds its CSV row instead of landing beside it as a twin.
+
 A KEY SAP LEAVES BLANK ON PURPOSE is different: MBEW's valuation type is
 empty for every material valued as a whole. Those rows are kept and matched
 blank to blank, never "repaired" (``manifest.BLANK_ALLOWED_KEYS``).
@@ -304,6 +308,28 @@ def _nearest_day(moment: datetime) -> date:
     return (moment + timedelta(hours=12)).date()
 
 
+# SAP keeps a numeric material number zero-padded to 18 internally and shows it
+# without the zeros. OData sends the internal form ('000000000011251001'); the
+# CSV extract and the workbooks carry the external one ('11251001'), and so does
+# every raw table (measured on nonprod 23 Oct 2026: raw_mara, raw_marc, raw_mbew,
+# raw_mard all 10 or 8 characters). Matched one against the other, nothing
+# matched -- MBEW's weekly pull refused 0 of 130,368 -- and an hourly increment
+# inserted a padded twin beside the CSV row instead of updating it (raw_mard
+# held 8 such twins). So a material number is written the way the raw tables
+# hold it: an all-digit value without its leading zeros (SAP's MATN1 output),
+# anything else -- an alphanumeric material -- unchanged. Nothing downstream
+# sees a difference: every n_<table> view reads MATNR as a key and strips the
+# zeros anyway. Gate pass's Zzmatnr is left alone until its CSV form is measured.
+MATERIAL_NUMBER_PROPERTIES = frozenset({"Matnr"})
+
+
+def external_material_number(value: str | None) -> str | None:
+    """``'000000000011251001'`` -> ``'11251001'``; non-numeric values unchanged."""
+    if isinstance(value, str) and value.isdigit():
+        return value.lstrip("0") or "0"
+    return value
+
+
 def shape(value: Any, edm_type: str, vocabulary: str, *, numeric: bool = False) -> str | None:
     """One OData value as the raw table's text, in the table's vocabulary.
 
@@ -462,6 +488,9 @@ def merge(
             values = {
                 r.column: shape(row.get(r.prop), r.edm_type, vocabulary, numeric=r.numeric) for r in resolved
             }
+            for r in resolved:
+                if r.prop in MATERIAL_NUMBER_PROPERTIES:
+                    values[r.column] = external_material_number(values[r.column])
             for column in blankable:
                 if _blank(values[column]):
                     values[column] = ""
