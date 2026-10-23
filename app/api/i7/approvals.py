@@ -78,8 +78,8 @@ def get_workflow_state(
     response_model=WorkflowStateResponse,
     summary="Submit a recommendation for approval",
     description="Enters the recommendation's own route at its first role -- "
-    "the fixed OAR chain (Inventory Controller -> Commercial Head -> "
-    "Engineering Head -> Plant Head) for OAR conversion recommendations, or "
+    "the fixed OAR chain (Inventory Controller -> Engineering Head -> "
+    "Plant Head -> Commercial Head) for OAR conversion recommendations, or "
     "the criticality-routed ROP/Max chain otherwise. Requires the "
     "recommendation to be READY_FOR_REVIEW -- a NOT_EVALUABLE recommendation "
     "cannot be submitted.",

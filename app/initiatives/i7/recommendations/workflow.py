@@ -9,8 +9,8 @@ a batch job calls it from a script.
 **The chain a recommendation follows is data, not a constant.** ROP/Max
 recommendations are routed by criticality tier (see
 ``policy.ApprovalRoutingPolicy``); OAR conversion recommendations always use
-``OAR_APPROVAL_CHAIN`` (Inventory Controller -> Commercial Head -> Engineering
-Head -> Plant Head). Every function here takes the resolved ``route`` tuple
+``OAR_APPROVAL_CHAIN`` (Inventory Controller -> Engineering Head -> Plant
+Head -> Commercial Head). Every function here takes the resolved ``route`` tuple
 explicitly rather than reading a single module-level chain, so the same state
 machine enforces both without a second implementation.
 
