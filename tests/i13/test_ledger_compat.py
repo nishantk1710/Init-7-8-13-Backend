@@ -4,7 +4,7 @@ CSV-backed contract's exact shape/grain from real Postgres logic.
 
 from decimal import Decimal
 
-from app.initiatives.i13.ledger_compat import LinkageStatus, ProcurementStatus, build_legacy_ledger
+from app.initiatives.i13.ledger_compat import LinkageStatus, ProcurementStatus, build_legacy_ledger, delivery_state
 from tests.i13.conftest import FakeProcurementRepository, FakeReservationRepository, oar_scope_index
 
 
@@ -95,3 +95,51 @@ def test_non_oar_material_excluded_by_default() -> None:
         procurement_repo, reservation_repo, scope, plant="1300", include_out_of_scope=True
     )
     assert len(entries_unscoped) == 1
+
+
+def _po_line_ledger(po_items, gr_rows=()):
+    procurement_repo = FakeProcurementRepository(po_items=po_items, gr_rows=list(gr_rows))
+    entries = build_legacy_ledger(procurement_repo, FakeReservationRepository(), oar_scope_index(("MAT1", "1300")))
+    return {e.po_number: e for e in entries}
+
+
+def test_a_line_nothing_more_can_arrive_on_is_never_waiting_for_delivery() -> None:
+    """UAT, 23 Oct: 5000046515 at 1300 read 6 "Not delivered" lines and had
+    none -- five contract lines (BSART WK/MK, MENGE 0) and one line closed
+    with ELIKZ. Each reads as what it is."""
+    contract = {**_po("4600000926", "16100", "MAT1", "1300", "0"), "Bsart": "WK"}
+    rfq = {**_po("6000000001", "10", "MAT1", "1300", "4"), "Bsart": "AN"}
+    closed = {**_po("4100105958", "10", "MAT1", "1300", "2"), "Bsart": "ZDOM", "Elikz": "X"}
+    deleted = {**_po("4100000001", "10", "MAT1", "1300", "3"), "Loekz": "L"}
+    short = {**_po("4100000002", "10", "MAT1", "1300", "10"), "Elikz": "X"}
+    done = {**_po("4100000003", "10", "MAT1", "1300", "5"), "Elikz": "X"}
+    still_open = {**_po("4100000004", "10", "MAT1", "1300", "5"), "Bsart": "ZDOM"}
+    entries = _po_line_ledger(
+        [contract, rfq, closed, deleted, short, done, still_open],
+        [_gr("4100000002", "10", "101", "6", 1), _gr("4100000003", "10", "101", "5", 1)],
+    )
+
+    status = {po: e.procurement_status for po, e in entries.items()}
+    assert status == {
+        "4600000926": ProcurementStatus.NOT_AN_ORDER,
+        "6000000001": ProcurementStatus.NOT_AN_ORDER,
+        "4100105958": ProcurementStatus.CLOSED,
+        "4100000001": ProcurementStatus.CLOSED,
+        "4100000002": ProcurementStatus.CLOSED,  # closed short: 6 of 10, no more coming
+        "4100000003": ProcurementStatus.RECEIVED,  # received in full: simply delivered
+        "4100000004": ProcurementStatus.OPEN,
+    }
+    delivery = {po: delivery_state(e) for po, e in entries.items()}
+    assert [po for po, d in delivery.items() if d == "NOT_DELIVERED"] == ["4100000004"]
+    assert delivery["4600000926"] == "NOT_AN_ORDER"
+    assert delivery["4100105958"] == "CLOSED"
+
+
+def test_with_the_switch_off_every_line_reads_from_its_quantities(monkeypatch) -> None:
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "i13_open_po_respect_closed", False)
+    contract = {**_po("4600000926", "16100", "MAT1", "1300", "0"), "Bsart": "WK"}
+    closed = {**_po("4100105958", "10", "MAT1", "1300", "2"), "Elikz": "X"}
+    entries = _po_line_ledger([contract, closed])
+    assert {e.procurement_status for e in entries.values()} == {ProcurementStatus.OPEN}

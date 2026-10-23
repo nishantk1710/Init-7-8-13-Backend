@@ -38,6 +38,7 @@ from typing import Any
 
 from app.initiatives.i13.models import AttributionStatus, PartialLedgerEntry
 from app.initiatives.i13.movements import ISSUE_TYPES, event_dates, net_quantity
+from app.initiatives.i13.po_lines import PoLineState, po_line_states
 from app.initiatives.i13.procurement_chain import build_procurement_chain
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
@@ -50,6 +51,10 @@ class ProcurementStatus(str, Enum):
     OPEN = "OPEN"
     PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED"
     RECEIVED = "RECEIVED"
+    # Nothing more will arrive (app/initiatives/i13/po_lines.py), though not
+    # all of it did: SAP closed the line, or it was never an order.
+    CLOSED = "CLOSED"
+    NOT_AN_ORDER = "NOT_AN_ORDER"
 
 
 class LedgerUtilisationStatus(str, Enum):
@@ -101,7 +106,7 @@ class LegacyLedgerEntry:
     attribution_evidence: str | None = None
 
 
-DELIVERY_STATES = ("DELIVERED", "PARTIAL", "NOT_DELIVERED", "NO_PO")
+DELIVERY_STATES = ("DELIVERED", "PARTIAL", "NOT_DELIVERED", "CLOSED", "NOT_AN_ORDER", "NO_PO")
 """The procurement view's delivery filter -- the frontend's
 ``deliveryStatusFromProcurement``, decided here so it can be filtered on in
 SQL over every line rather than over the lines a page happened to load."""
@@ -110,17 +115,27 @@ SQL over every line rather than over the lines a page happened to load."""
 def delivery_state(entry: LegacyLedgerEntry) -> str:
     """``NO_PO`` without a purchase order, else the procurement status read as
     delivery: OPEN is not delivered, PARTIALLY_RECEIVED partial, RECEIVED
-    delivered."""
+    delivered; CLOSED and NOT_AN_ORDER keep their own names, so neither is
+    ever counted as waiting for a delivery."""
     if not entry.po_number:
         return "NO_PO"
     return {
         ProcurementStatus.OPEN: "NOT_DELIVERED",
         ProcurementStatus.PARTIALLY_RECEIVED: "PARTIAL",
         ProcurementStatus.RECEIVED: "DELIVERED",
+        ProcurementStatus.CLOSED: "CLOSED",
+        ProcurementStatus.NOT_AN_ORDER: "NOT_AN_ORDER",
     }[entry.procurement_status]
 
 
-def _procurement_status(received_qty: Decimal, ordered_qty: Decimal | None) -> ProcurementStatus:
+def _procurement_status(
+    received_qty: Decimal, ordered_qty: Decimal | None, line_state: PoLineState | None = None
+) -> ProcurementStatus:
+    """From the quantities, unless SAP says nothing more will arrive on the
+    line (``line_state``): then it is closed, or not an order -- except a line
+    received in full, which is simply received."""
+    if line_state is not None and not (ordered_qty and received_qty >= ordered_qty):
+        return ProcurementStatus(line_state.value)
     if received_qty <= 0:
         return ProcurementStatus.OPEN
     if ordered_qty and received_qty < ordered_qty:
@@ -140,6 +155,7 @@ def _to_legacy_entry(
     entry: PartialLedgerEntry,
     reservation_by_pr: dict[tuple[str, str], Row],
     gi_by_reservation: dict[tuple[str, str], list[Row]],
+    line_states: dict[tuple[str, str], PoLineState] | None = None,
 ) -> LegacyLedgerEntry:
     reservation = reservation_by_pr.get((entry.pr_number, entry.pr_item)) if entry.pr_number and entry.pr_item else None
 
@@ -181,7 +197,11 @@ def _to_legacy_entry(
         latest_gr_date=entry.last_gr_date,
         first_gi_date=first_gi_date,
         latest_gi_date=latest_gi_date,
-        procurement_status=_procurement_status(entry.received_quantity, entry.ordered_quantity),
+        procurement_status=_procurement_status(
+            entry.received_quantity,
+            entry.ordered_quantity,
+            (line_states or {}).get((entry.po_number, entry.po_item)) if entry.po_number else None,
+        ),
         utilisation_status=_utilisation_status(issued_qty, entry.received_quantity),
         linkage_status=linkage_status,
         data_source=f"reservation:{reservation_source},pr:LIVE,po:LIVE,gr:LIVE,gi:LIVE",
@@ -231,6 +251,8 @@ def build_legacy_ledger(
         (r["Banfn"], r["Bnfpo"]): r for r in reservations if r.get("Banfn") and r.get("Bnfpo")
     }
 
+    line_states = po_line_states(procurement_repository, material=material, plant=plant)
+
     gi_rows = reservation_repository.get_goods_issue_by_reservation()
     gi_by_reservation: dict[tuple[str, str], list[Row]] = {}
     for row in gi_rows:
@@ -242,5 +264,5 @@ def build_legacy_ledger(
             scope = classify_material_scope(material_scope_index.get((entry.material, entry.plant)))
             if scope is not MaterialScope.OAR:
                 continue
-        entries.append(_to_legacy_entry(entry, reservation_by_pr, gi_by_reservation))
+        entries.append(_to_legacy_entry(entry, reservation_by_pr, gi_by_reservation, line_states))
     return entries

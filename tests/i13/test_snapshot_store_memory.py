@@ -94,6 +94,11 @@ class Po(NamedTuple):
     material: str
     plant: str
     order_quantity: str
+    # What the open-line rule reads (app/initiatives/i13/po_lines.py): an open
+    # order here, as before.
+    delivery_completed: str | None = None
+    deletion_indicator: str | None = None
+    doc_type: str | None = None
 
 
 class Gr(NamedTuple):
