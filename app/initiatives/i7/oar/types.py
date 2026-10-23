@@ -22,9 +22,15 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import NamedTuple
 
-ALGORITHM_VERSION = "oar-similarity-11"
+ALGORITHM_VERSION = "oar-similarity-12"
 """Identifies the similarity implementation behind a stored result. Not a
 semantic version -- nothing here maintains a release contract.
+
+``oar-similarity-12`` against ``-11``: HIGH confidence no longer requires a same-circuit neighbour
+(``ConfidencePolicy.oar_require_same_circuit_for_high``, now False). Circuit is not a data field anywhere, so with
+the requirement nothing could ever grade HIGH and every well-matched target was capped at MEDIUM; HIGH is now the
+Formula Reference's own band (5 or more neighbours, best similarity above 0.80). Neighbours, scores and estimates
+are unchanged -- only the stored confidence moves -- and a run stored under ``-11`` is not reused.
 
 ``oar-similarity-11`` against ``-10``: the text dimension is ``0.6 x BGE cosine + 0.4 x rapidfuzz
 (token_set_ratio + token_sort_ratio) / 2`` over normalised descriptions (``oar.text_match``), with BAAI/bge-base-en-v1.5 replacing

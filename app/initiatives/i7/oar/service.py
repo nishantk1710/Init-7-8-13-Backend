@@ -346,6 +346,7 @@ def finalise_target(
         Decimal(str(policy.confidence.oar_high_minimum_similarity)),
         policy.confidence.oar_medium_minimum_neighbours,
         Decimal(str(policy.confidence.oar_medium_minimum_similarity)),
+        require_same_circuit_for_high=policy.confidence.oar_require_same_circuit_for_high,
     )
     oar_estimate = estimate_module.calculate(
         list(neighbours),

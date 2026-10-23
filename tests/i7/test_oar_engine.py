@@ -7,7 +7,7 @@ neighbours, and repeated runs are idempotent.
 """
 
 import pytest
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
@@ -180,17 +180,20 @@ def test_targets_with_no_neighbours_have_the_no_neighbours_estimate_status(sessi
 
 
 @needs_db
-def test_no_target_reaches_high_confidence(session):
-    """HIGH needs >= 5 neighbours in the same circuit; no circuit data exists
-    in this extract, so HIGH is unreachable -- exactly as it should be."""
+def test_high_confidence_needs_five_neighbours_and_strong_similarity(session):
+    """HIGH is >= 5 neighbours and best similarity > 0.80 (oar-similarity-12 no longer
+    requires a same-circuit neighbour: no circuit data exists in this extract)."""
     if not _ran(session):
         pytest.skip("no OAR run")
-    high = session.execute(
+    wrong = session.execute(
         select(func.count())
         .select_from(OarTargetResult)
-        .where(OarTargetResult.confidence == OarConfidence.HIGH.value)
+        .where(
+            OarTargetResult.confidence == OarConfidence.HIGH.value,
+            or_(OarTargetResult.neighbour_count < 5, OarTargetResult.best_similarity <= 0.80),
+        )
     ).scalar()
-    assert high == 0
+    assert wrong == 0
 
 
 # --- Structural properties ---------------------------------------------------------
