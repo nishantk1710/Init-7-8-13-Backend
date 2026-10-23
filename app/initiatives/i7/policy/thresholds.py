@@ -289,6 +289,12 @@ class ConfidencePolicy(BaseModel):
     oar_medium_minimum_neighbours: int = Field(default=3, ge=1)
     oar_medium_minimum_similarity: float = Field(default=0.60, ge=0, le=1)
 
+    # The Solution Design adds "a neighbour on the same circuit" to HIGH, but circuit is not a data
+    # field anywhere, so with this on nothing can ever grade HIGH. Off: HIGH is the Formula
+    # Reference's own band (>= 5 neighbours, best similarity > 0.80). Turn it back on once circuit
+    # is supplied.
+    oar_require_same_circuit_for_high: bool = False
+
     @model_validator(mode="after")
     def _bands_ordered(self) -> "ConfidencePolicy":
         if self.medium_minimum_history_months > self.high_minimum_history_months:

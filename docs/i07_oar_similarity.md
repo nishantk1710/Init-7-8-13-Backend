@@ -251,8 +251,13 @@ Formula Reference bands, read exactly: HIGH needs **>** 0.80 similarity and
 the similarity score — a single 0.97 neighbour is an excellent match and still
 LOW confidence, because one donor is not a basis for a stocking parameter.
 
-**HIGH is unreachable on this extract**: no circuit data exists anywhere in the
-27 raw tables, so the same-circuit condition can never be satisfied.
+**The same-circuit condition is OFF by default** (`oar-similarity-12`,
+`ConfidencePolicy.oar_require_same_circuit_for_high = False`). Circuit is not a data field anywhere in the 27 raw
+tables, so with the condition on nothing could ever grade HIGH and every well-matched target was capped at MEDIUM.
+HIGH is now the Formula Reference's own band: **5 or more neighbours and best similarity above 0.80**. This departs
+from the Solution Design, which adds a same-circuit neighbour to HIGH; set the flag back to `True` once circuit is
+supplied. On the first run under it, 138 of the 324 OAR estimates that had graded MEDIUM became HIGH (138 High, 186
+Medium, 113 Low among the 437 with an estimate).
 
 ## Similarity-weighted estimate
 

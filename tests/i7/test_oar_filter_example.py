@@ -103,7 +103,7 @@ def test_before_the_nozzle_was_a_neighbour_and_its_rop_of_61_pulled_the_estimate
     # Max (11.52 + 28.20 + 18.40 + 10.80 + 132.00) / 4.60 = 200.92 / 4.60 = 43.68 -> 44
     assert (result.estimate.safety_stock, result.estimate.rop, result.estimate.max_stock) == (6, 16, 44)
     assert result.estimate.strategy == "weighted_mean"
-    assert result.confidence is OarConfidence.MEDIUM
+    assert result.confidence is OarConfidence.HIGH  # five neighbours, best 0.96; no circuit needed (oar-similarity-12)
 
 
 # --- after --------------------------------------------------------------------------------------------
