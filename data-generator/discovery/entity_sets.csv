@@ -13,6 +13,7 @@ ZMM_KPI02_ADD_SRV,StorageLocationStockSet,StorageLocationStock,Lgort;Matnr;Werks
 ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,MaterialDocumentHeader,Mblnr;Mjahr,5,false
 ZMM_KPI02_ADD_SRV,POScheduleLineSet,POScheduleLine,Ebeln;Ebelp;Etenr,6,false
 ZMM_KPI02_ADD_SRV,POHistorySet,POHistory,Belnr;Buzei;Ebeln;Ebelp;Gjahr;Vgabe;Zekkn,16,false
+ZMM_KPI02_ADD_SRV,DepartmentCodeSet,DepartmentCode,DeptCode;Werks,3,
 ZMM_KPI02_TAB_SRV,ReservationItemSet,ReservationItem,Rsnum;Rspos,34,false
 ZMM_KPI02_TAB_SRV,MaterialValuationSet,MaterialValuation,Bwkey;Bwtar;Matnr,11,false
 ZMM_KPI02_TAB_SRV,ChangeDocHeaderSet,ChangeDocHeader,Changenr;Objectclas;Objectid,7,false

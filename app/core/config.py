@@ -203,14 +203,18 @@ class Settings(BaseSettings):
     # --- Weekly OData full pull ---------------------------------------------
     #
     # Sets with no date SAP filters on, refreshed whole over OData and merged
-    # into raw_<table> by key, once a week. MBEW is the case: a price table
-    # with no change date (agreed with the SAP team 2026-10-15). Small sets
-    # only -- a full OData read of a large one is refused at the read ceiling.
-    # Off by default, like the other timers.
+    # into raw_<table> by key, once a week: matched rows updated only where a
+    # value changed, new rows inserted, nothing deleted or replaced. MBEW is
+    # the case: a price table with no change date (agreed with the SAP team
+    # 2026-10-15). DepartmentCodeSet is the other: VZI's department list,
+    # exposed by SAP on 22-23 Oct 2026, merged into raw_dept_codes (in-scope
+    # plants only; the table is created by the first pull where it does not
+    # exist). Small sets only -- a full OData read of a large one is refused at
+    # the read ceiling. Off by default, like the other timers.
     odata_full_pull_enabled: bool = False
 
     # Comma-separated entity sets.
-    odata_full_pull_sets: str = "MaterialValuationSet"
+    odata_full_pull_sets: str = "MaterialValuationSet,DepartmentCodeSet"
 
     # Day of the week (0 = Monday ... 6 = Sunday) and hour, UTC. Sunday
     # 02:00 UTC is 04:00 in South Africa, after the I13 build window.
@@ -233,9 +237,11 @@ class Settings(BaseSettings):
     # first increment. False skips that second write: the increment goes into
     # raw_<table> only. What that costs: the odata_ tables stop moving, so
     # anything that reads them to tell a delta row from a CSV row (the export
-    # and reset scripts in /home/live_checks) goes stale. A full OData pull
-    # (--full, the weekly MBEW pull) still replaces odata_<table>; only the
-    # delta's archive write is governed here.
+    # and reset scripts in /home/live_checks) goes stale. Since 23-Oct-2026 a
+    # full OData pull (--full, the weekly MBEW and department-code pull) is
+    # governed too: merged into raw_<table> only, odata_<table> neither
+    # created nor replaced -- except odata_material_plant, which I07 reads
+    # directly (load.ARCHIVE_READ_BY_APP) and a full load keeps writing.
     odata_archive_enabled: bool = True
 
     # --- Normalise views ----------------------------------------------------

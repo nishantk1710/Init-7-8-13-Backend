@@ -166,6 +166,9 @@ ZMM_KPI02_ADD_SRV,POHistorySet,Shkzg,Edm.String,false,,1,,,false,false,Debit/Cre
 ZMM_KPI02_ADD_SRV,POHistorySet,Cpudt,Edm.String,false,,8,,,,false,Entered on
 ZMM_KPI02_ADD_SRV,POHistorySet,Matnr,Edm.String,false,,18,,,,false,Material
 ZMM_KPI02_ADD_SRV,POHistorySet,Werks,Edm.String,false,,4,,,false,false,Plant
+ZMM_KPI02_ADD_SRV,DepartmentCodeSet,Werks,Edm.String,false,K,4,,,,false,Plant
+ZMM_KPI02_ADD_SRV,DepartmentCodeSet,DeptCode,Edm.String,false,K,5,,,,false,Department code
+ZMM_KPI02_ADD_SRV,DepartmentCodeSet,DeptName,Edm.String,false,,50,,,false,false,Department
 ZMM_KPI02_TAB_SRV,ReservationItemSet,Rsnum,Edm.String,false,K,10,,,false,false,Reservation
 ZMM_KPI02_TAB_SRV,ReservationItemSet,Rspos,Edm.String,false,K,4,,,false,false,Item
 ZMM_KPI02_TAB_SRV,ReservationItemSet,Xloek,Edm.Boolean,false,,,,,false,false,Deleted

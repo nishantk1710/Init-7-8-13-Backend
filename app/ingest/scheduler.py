@@ -510,13 +510,16 @@ def _pull_whole_and_merge(name: str, root: str) -> str:
 # --- The weekly OData full pull ---------------------------------------------
 #
 # For a set with no date SAP filters on, the whole set read over OData and
-# merged into raw_<table> by key, once a week. MBEW is the case: a price table
-# with no change date, and the SAP team's answer (2026-10-15) was a weekly
-# complete extract. The same read-and-merge as the full refresh's enrichment
-# step, without the CSV sweep in front of it: these sets are small
-# (MaterialValuationSet is 2,116 rows on QA) and a whole OData read of one is
-# cheaper and better checked than a CSV delivery. A large set is refused at
-# the client's read ceiling rather than pulled.
+# merged into raw_<table> by key, once a week: only rows whose values changed
+# are written, new rows are added, nothing is deleted. MBEW is the case: a
+# price table with no change date, and the SAP team's answer (2026-10-15) was
+# a weekly complete extract. DepartmentCodeSet is the other (raw_dept_codes,
+# app/ingest/odata_tables.py). The same read-and-merge as the full refresh's
+# enrichment step, without the CSV sweep in front of it: these sets are small
+# enough to read whole (QA, counts.csv: MaterialValuationSet about 130,000
+# rows, DepartmentCodeSet 379) and a whole OData read is cheaper and better
+# checked than a CSV delivery. A large set is refused at the client's read
+# ceiling rather than pulled.
 
 ODATA_FULL_PULL_LOCK_NAME = "spares_ai_odata_full_pull"
 
@@ -705,7 +708,8 @@ def start(app) -> asyncio.Task | None:
     else:
         logger.info(
             "weekly OData full pull is off (ODATA_FULL_PULL_ENABLED is not 'true'); run it with: "
-            "python -m app.ingest --fetch --load --full --set MaterialValuationSet"
+            "python -m app.ingest --fetch --load --full --set MaterialValuationSet "
+            "(and --set DepartmentCodeSet)"
         )
 
     if not loops:

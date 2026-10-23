@@ -147,8 +147,9 @@ def test_table_name_handles_runs_of_capitals() -> None:
 
 
 def test_every_discovered_set_has_a_spec() -> None:
-    """Derived, not written down -- a set added to discovery appears here."""
-    assert len(specs()) == 24
+    """Derived, not written down -- a set added to discovery appears here
+    (DepartmentCodeSet did, on 23 Oct 2026)."""
+    assert len(specs()) == 25
     assert {s.service for s in specs()} == {
         "ZMM_KPI02_ADD_SRV",
         "ZMM_KPI02_TAB_SRV",
@@ -496,6 +497,58 @@ def test_with_the_archive_off_an_increment_goes_into_the_raw_table_only(storage,
     assert _FakeWriter.created == [] and _FakeWriter.loaded == []
     assert "raw_ekko: 0 changed of 0 matched, 1 inserted" in result.raw
     assert recorded == [(1, load_mod.STATUS_SUCCEEDED)]
+
+
+def _land_whole(storage, monkeypatch, name, rows, raw_table):
+    """One set read whole (load_strategy=replace), the database stubbed out
+    and the merge into ``raw_table`` MERGED."""
+    from app.ingest import raw_merge
+
+    spec = spec_for(name)
+    landed = fetch_mod.fetch_set(
+        spec, root="odata", client=StubClient(StubExtract(list(rows))),
+        storage=storage, run_date=RUN_DATE, mode="full", advance_watermark=False,
+    )
+    assert fetch_mod.read_manifest(storage, landed.prefix)["load_strategy"] == "replace"
+
+    recorded: list[tuple] = []
+    _FakeWriter.created, _FakeWriter.loaded = [], []
+    monkeypatch.setattr(load_mod, "RawTableWriter", _FakeWriter)
+    monkeypatch.setattr(load_mod, "get_engine", lambda: _FakeEngine())
+    monkeypatch.setattr(load_mod, "_table_exists", lambda cursor, table: False)
+    monkeypatch.setattr(load_mod, "_record", lambda spec, rows, status, *a, **k: recorded.append((rows, status)))
+    monkeypatch.setattr(load_mod, "get_settings", lambda: type("S", (), {"odata_archive_enabled": False})())
+    monkeypatch.setattr(
+        raw_merge, "merge_landed",
+        lambda *a, **k: raw_merge.MergeResult(raw_table, raw_merge.MERGED, updated=1, inserted=0, matched=1),
+    )
+    return spec, recorded
+
+
+def test_with_the_archive_off_the_weekly_full_pull_goes_into_the_raw_table_only(storage, monkeypatch) -> None:
+    """ODATA_ARCHIVE_ENABLED=false covers a whole set too: MBEW is merged into
+    raw_mbew and odata_material_valuation is neither created nor replaced."""
+    mbew, recorded = _land_whole(storage, monkeypatch, "MaterialValuationSet",
+                                 [{"Matnr": "M1", "Bwkey": "1300", "Bwtar": "", "Verpr": "1.00"}], "raw_mbew")
+
+    result = load_mod.load_set(mbew, root="odata", storage=storage)
+
+    assert result.status == load_mod.STATUS_SUCCEEDED, result.error
+    assert _FakeWriter.created == [] and _FakeWriter.loaded == []
+    assert "raw_mbew: 1 changed of 1 matched, 0 inserted" in result.raw
+    assert recorded == [(1, load_mod.STATUS_SUCCEEDED)]
+
+
+def test_with_the_archive_off_the_copy_i07_reads_is_still_written(storage, monkeypatch) -> None:
+    """odata_material_plant is read by I07 for the MRP fields, so a whole
+    MaterialPlantSet still replaces it whatever the setting."""
+    marc, _ = _land_whole(storage, monkeypatch, "MaterialPlantSet",
+                          [{"Matnr": "M1", "Werks": "1300", "Dismm": "PD"}], "raw_marc")
+
+    result = load_mod.load_set(marc, root="odata", storage=storage)
+
+    assert result.status == load_mod.STATUS_SUCCEEDED, result.error
+    assert _FakeWriter.loaded == [("odata_material_plant", 1)]
 
 
 def test_with_the_archive_off_a_skipped_merge_fails_the_load(storage, monkeypatch) -> None:

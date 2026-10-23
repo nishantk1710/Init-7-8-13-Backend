@@ -13,6 +13,7 @@ ZMM_KPI02_ADD_SRV,StorageLocationStockSet,2304,0.1
 ZMM_KPI02_ADD_SRV,MaterialDocumentHeaderSet,40651,0.3
 ZMM_KPI02_ADD_SRV,POScheduleLineSet,3631,0.1
 ZMM_KPI02_ADD_SRV,POHistorySet,3881,0.1
+ZMM_KPI02_ADD_SRV,DepartmentCodeSet,3,0.3
 ZMM_KPI02_TAB_SRV,ReservationItemSet,7088,0.2
 ZMM_KPI02_TAB_SRV,MaterialValuationSet,2116,0.1
 ZMM_KPI02_TAB_SRV,ChangeDocHeaderSet,242129,0.1
