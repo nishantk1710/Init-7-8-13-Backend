@@ -871,6 +871,12 @@ class Settings(BaseSettings):
     # adds nothing to a material's open-PO quantity (UAT, 21 Oct 2026). See
     # app/initiatives/i13/watch.py. Part of the snapshot fingerprint.
     i13_open_po_respect_closed: bool = True
+    # Purchasing document types (EKKO-BSART) that are not orders, so nothing is
+    # ever open on their lines: WK value and MK quantity contracts, AN requests
+    # for quotation, FPA (VZI's own agreement type, measured as an agreement:
+    # 3,564 of its 4,577 lines carry no quantity). UAT, 23 Oct 2026; see
+    # app/initiatives/i13/po_lines.py. Part of the snapshot fingerprint.
+    i13_non_order_doc_types: str = "WK,MK,AN,FPA"
 
     # Aging bands (days since last goods movement).
     i13_aging_fast_max_days: int = 365
@@ -1110,6 +1116,11 @@ class Settings(BaseSettings):
     def i13_oar_mrp_controller_set(self) -> frozenset[str]:
         """Normalised MRP controller (DISPO) codes that count as OAR materials."""
         return frozenset(code.strip().upper() for code in self.i13_oar_mrp_controllers.split(",") if code.strip())
+
+    @property
+    def i13_non_order_doc_type_set(self) -> frozenset[str]:
+        """Normalised EKKO-BSART codes whose lines are never open supply."""
+        return frozenset(code.strip().upper() for code in self.i13_non_order_doc_types.split(",") if code.strip())
 
     @property
     def assistant_justification_reason_category_list(self) -> list[str]:

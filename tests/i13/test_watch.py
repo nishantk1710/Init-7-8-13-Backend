@@ -324,3 +324,16 @@ def test_material_scope_is_exposed_for_oar_filtering(data_dir: Path, i13_config)
     metrics = compute_watch_metrics(movement_repo, procurement_repo, reservation_repo, SCOPE_INDEX, i13_config, data_dir, as_of=AS_OF)
     metric = next(m for m in metrics if m.material == "MAT1")
     assert metric.material_scope is MaterialScope.OAR
+
+
+def test_a_contract_or_a_request_for_quotation_is_never_on_order(data_dir: Path, i13_config) -> None:
+    """UAT, 23 Oct: a contract line orders nothing (MENGE 0, its quantity is
+    a target) and a request for quotation is not an order, whatever quantity
+    it asks about. Only the real order counts."""
+    po_items = [
+        {**_po_line("4600000926", "0"), "Bsart": "WK"},
+        {**_po_line("6000000001", "4"), "Bsart": "AN"},
+        {**_po_line("4100000001", "3"), "Bsart": "FPA"},
+        {**_po_line("4100000002", "2"), "Bsart": "ZDOM"},
+    ]
+    assert _open_po(data_dir, i13_config, po_items, []) == 2

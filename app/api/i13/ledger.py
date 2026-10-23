@@ -41,9 +41,9 @@ from app.shared.material_scope import MaterialScope
 router = APIRouter()
 
 _STATUS_FILTERS = dict(
-    procurement_status=Query(None, description="OPEN, PARTIALLY_RECEIVED or RECEIVED."),
+    procurement_status=Query(None, description="OPEN, PARTIALLY_RECEIVED, RECEIVED, CLOSED or NOT_AN_ORDER."),
     utilisation_status=Query(None, description="NOT_ISSUED, PARTIALLY_ISSUED or FULLY_ISSUED."),
-    delivery_status=Query(None, description="DELIVERED, PARTIAL, NOT_DELIVERED or NO_PO."),
+    delivery_status=Query(None, description="DELIVERED, PARTIAL, NOT_DELIVERED, CLOSED, NOT_AN_ORDER or NO_PO."),
 )
 
 
