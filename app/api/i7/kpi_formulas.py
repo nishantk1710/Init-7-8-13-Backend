@@ -164,6 +164,8 @@ def _apply(
         raise _invalid(exc) from exc
     except service.ApplyInProgress as exc:
         raise conflict("APPLY_IN_PROGRESS", str(exc)) from exc
+    except service.NotSetUp as exc:
+        raise ApiError(503, "KPI_FORMULAS_NOT_SET_UP", str(exc)) from exc
     if row.status == service.APPLYING:
         background.add_task(service.run_rebuild, row.id)
         return StatusOut(

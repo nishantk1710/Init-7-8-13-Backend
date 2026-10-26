@@ -308,3 +308,32 @@ def test_sql_server_never_gets_a_bare_numeric_cast():
 def test_only_declared_fields_exist():
     assert set(DEFAULTS) == set(FIELDS_BY_KEY)
     assert expression.MAX_LENGTH == 200
+
+
+# --- The versions table is missing (the migration has not been run) -----------------------------------
+
+
+@pytest.fixture
+def empty_database():
+    from sqlalchemy.orm import Session
+
+    engine = create_engine("sqlite://")  # no tables at all
+    with Session(engine) as session:
+        yield session
+
+
+def test_a_missing_table_does_not_break_reading(empty_database):
+    from app.initiatives.i7.kpi_formulas import service
+    from app.initiatives.i7.kpi_formulas.resolved import load_active
+
+    assert service.schema_ready(empty_database) is False
+    assert service.applying_version(empty_database) is None
+    assert service.history(empty_database) == []
+    assert load_active(empty_database).is_default
+
+
+def test_a_missing_table_is_a_clear_refusal_to_save_not_a_crash(empty_database):
+    from app.initiatives.i7.kpi_formulas import service
+
+    with pytest.raises(service.NotSetUp, match="migration"):
+        service.save_and_apply(empty_database, {"window_days": 60}, "someone")
