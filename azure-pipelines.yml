@@ -11,7 +11,7 @@
 # WHAT THIS DOES
 #
 #   Package the commit (tracked files only, so never .env or .venv) -> wait for
-#   approval on environment aicom-prod -> zip deploy to prod -> smoke checks.
+#   approval on environment aicom-prod-api -> zip deploy to prod -> smoke checks.
 #   No test stage: the same commit passed GitHub CI on its way through dev and
 #   main. Nonprod is untouched: it deploys from GitHub dev, and no nonprod
 #   credential exists in Azure DevOps.
@@ -24,7 +24,10 @@
 #
 #   * Variable group backend-prod: API_DEPLOY_USER, API_DEPLOY_PASSWORD (secret),
 #     API_HOST, API_SCM_HOST.
-#   * Environment aicom-prod, with the approval check.
+#   * Environment aicom-prod-api, with the approval, branch-control (main) and
+#     exclusive-lock checks. Its own environment, separate from the frontend's
+#     aicom-prod-web, so the two apps deploy in parallel while each app still
+#     never has two deployments overlapping.
 #
 # Rollback: open an earlier successful run and "Rerun stage" on Deploy_prod --
 # it redeploys that run's exact package.
@@ -58,7 +61,7 @@ stages:
       - group: backend-prod
     jobs:
       - deployment: api
-        environment: aicom-prod
+        environment: aicom-prod-api
         pool:
           vmImage: ubuntu-latest
         strategy:
