@@ -1,0 +1,80 @@
+# Zip deploy to an App Service through its Kudu (SCM) endpoint, using the app's
+# application-scope publish credentials -- the same mechanism GitHub's
+# azure/webapps-deploy uses with a publish profile.
+#
+# Asynchronous on purpose: the upload returns at once and the deployment is
+# polled until Kudu reports it finished. The backend's build runs on the App
+# Service (SCM_DO_BUILD_DURING_DEPLOYMENT=true), and a synchronous upload would
+# be cut by the 230 s front-end timeout while that build is still running.
+#
+# Kudu deployment status codes: 0 pending, 1 building, 2 deploying, 3 failed,
+# 4 success.
+#
+# Needs SCM basic-auth publishing switched ON for the app (it is, on both prod
+# apps). If VZI switches it off, the upload answers 401 -- move to a workload
+# identity service connection and the AzureWebApp@1 task then.
+
+parameters:
+  - name: package
+    type: string
+  - name: user
+    type: string
+  - name: password
+    type: string
+  - name: scmHost
+    type: string
+  - name: timeoutMinutes
+    type: number
+    default: 20
+
+steps:
+  - bash: |
+      set -euo pipefail
+      if [ ! -f "$PACKAGE" ]; then
+        echo "##vso[task.logissue type=error]Package not found: $PACKAGE"
+        exit 1
+      fi
+      case "$SCM_HOST" in
+        ''|'$('*) echo "##vso[task.logissue type=error]SCM host is not set -- check the variable group."; exit 1 ;;
+      esac
+
+      HEADERS=$(mktemp)
+      CODE=$(curl -sS -o /dev/null -D "$HEADERS" -w '%{http_code}' \
+               -u "$DEPLOY_USER:$DEPLOY_PASSWORD" \
+               -H "Content-Type: application/zip" --data-binary @"$PACKAGE" \
+               "https://$SCM_HOST/api/zipdeploy?isAsync=true")
+      if [ "$CODE" != "202" ]; then
+        echo "##vso[task.logissue type=error]Kudu refused the upload (HTTP $CODE). 401 = wrong deploy password, or SCM basic auth switched off."
+        exit 1
+      fi
+
+      STATUS_URL=$(awk 'tolower($1)=="location:" {print $2}' "$HEADERS" | tr -d '\r')
+      STATUS_URL=${STATUS_URL:-https://$SCM_HOST/api/deployments/latest}
+      echo "Uploaded. Polling $STATUS_URL"
+
+      DEADLINE=$(( $(date +%s) + TIMEOUT_MINUTES * 60 ))
+      while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+        BODY=$(curl -sS -u "$DEPLOY_USER:$DEPLOY_PASSWORD" "$STATUS_URL" || true)
+        read -r STATUS COMPLETE <<<"$(printf '%s' "$BODY" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("status"), d.get("complete"))' 2>/dev/null || echo '? False')"
+        echo "  status $STATUS, complete $COMPLETE"
+        if [ "$COMPLETE" = "True" ]; then
+          if [ "$STATUS" = "4" ]; then
+            echo "Deployment succeeded."
+            exit 0
+          fi
+          echo "$BODY"
+          echo "##vso[task.logissue type=error]Kudu reports the deployment failed (status $STATUS). Its log_url above has the details."
+          exit 1
+        fi
+        sleep 10
+      done
+      echo "##vso[task.logissue type=error]Deployment did not finish within $TIMEOUT_MINUTES minutes."
+      exit 1
+    displayName: Zip deploy (Kudu)
+    env:
+      # Secret variables reach a script only when mapped here explicitly.
+      PACKAGE: ${{ parameters.package }}
+      DEPLOY_USER: ${{ parameters.user }}
+      DEPLOY_PASSWORD: ${{ parameters.password }}
+      SCM_HOST: ${{ parameters.scmHost }}
+      TIMEOUT_MINUTES: ${{ parameters.timeoutMinutes }}

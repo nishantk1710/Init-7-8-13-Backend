@@ -1,0 +1,59 @@
+# Mirror main to Azure DevOps, where production is deployed from.
+#
+# HOW RELEASES FLOW
+#
+#   feature branch --PR--> dev  --deploy.yml-->  nonprod
+#   dev --release PR (merge commit, not squash)--> main --this file--> Azure DevOps main
+#   Azure DevOps main --azure-pipelines.yml, after approval--> prod
+#
+# The DevOps repository is an exact copy of this main and nothing is committed
+# there directly. The push below is fast-forward only, never forced: if DevOps
+# has drifted, this run fails and nothing is overwritten -- find out who
+# committed there and reconcile by hand.
+#
+# REQUIRED
+#
+#   * Repository secret AZDO_PAT -- an Azure DevOps personal access token with
+#     scope Code (Read & write) in organisation VZI. It expires: when this run
+#     fails with 401, renew the token and update the secret.
+
+name: Mirror main to Azure DevOps
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # Two mirrors racing would each try to move DevOps main; let them queue.
+  group: mirror-devops
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    # A manual run from any other branch must not push that branch over main.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: pushing from a shallow clone is refused when DevOps
+          # does not already hold the shallow boundary.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Guard -- refuse to run without the token
+        run: |
+          if [ -z "${{ secrets.AZDO_PAT }}" ]; then
+            echo "AZDO_PAT is not set. See the header of this file."
+            exit 1
+          fi
+
+      - name: Push main to Azure DevOps (fast-forward only)
+        env:
+          AZDO_PAT: ${{ secrets.AZDO_PAT }}
+        run: |
+          AUTH=$(printf ':%s' "$AZDO_PAT" | base64 -w0)
+          echo "::add-mask::$AUTH"
+          git -c http.extraheader="Authorization: Basic $AUTH" \
+            push https://dev.azure.com/VZI/VZI-AI-Commercial/_git/aicom-backend HEAD:refs/heads/main
