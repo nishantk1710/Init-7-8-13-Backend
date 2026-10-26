@@ -507,3 +507,8 @@ class OarResult(NamedTuple):
     stage_counts: StageCounts | None = None
     rejected_candidates: tuple[RejectedCandidate, ...] = ()
     """The best-scoring candidates refused on identity or evidence, highest combined score first."""
+    excluded_neighbours: tuple[Neighbour, ...] = ()
+    """Top-K donors a user removed for this target (``oar.exclusions``). They were ranked and selected like
+    any other, then left out: ``neighbours`` -- what the estimate, the confidence and the best similarity
+    are built from -- does not contain them, and nothing takes their place. Kept, with their original rank
+    and scores, so a restore can bring them back without scoring anything again."""
