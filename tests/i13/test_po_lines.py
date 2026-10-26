@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.initiatives.i13.po_lines import PoLineState, po_line_state
+from app.initiatives.i13.po_lines import PoLineState, po_line_state, pr_is_deleted
 
 
 def _row(**fields):
@@ -70,3 +70,29 @@ def test_both_po_readers_carry_what_the_rule_reads() -> None:
     batch_sql = inspect.getsource(BatchProcurementRepository.get_purchase_order_items)
     for column in needed:
         assert column in batch_sql
+
+
+@pytest.mark.parametrize(("loekz", "expected"), [("", False), (None, False), ("X", True)])
+def test_pr_is_deleted(loekz, expected) -> None:
+    assert pr_is_deleted({"Banfn": "1000000001", "Bnfpo": "10", "Loekz": loekz}) is expected
+
+
+def test_the_pr_rule_is_a_setting(monkeypatch) -> None:
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "i13_pr_respect_deleted", False)
+    assert pr_is_deleted({"Loekz": "X"}) is False
+
+
+def test_both_pr_readers_carry_the_deletion_flag() -> None:
+    """Same trap as the PO flags: a reader that leaves EBAN-LOEKZ out would
+    read every deleted requisition as live."""
+    from app.initiatives.i13.snapshot_store import work_tables
+    from app.initiatives.i13.snapshot_store.batch_repos import BatchProcurementRepository
+    from app.integrations.sap.postgres_procurement import _PR_QUERY
+
+    assert "deletion_indicator" in _selected(_PR_QUERY)
+    w = work_tables.WorkTables(version=1)
+    pr_statement = next(sql for table, sql, _ in work_tables._statements(w) if table == w.pr)
+    assert "deletion_indicator" in _selected(pr_statement)
+    assert "deletion_indicator" in inspect.getsource(BatchProcurementRepository.get_purchase_requisitions)

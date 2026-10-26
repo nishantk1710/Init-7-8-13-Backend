@@ -871,6 +871,11 @@ class Settings(BaseSettings):
     # adds nothing to a material's open-PO quantity (UAT, 21 Oct 2026). See
     # app/initiatives/i13/watch.py. Part of the snapshot fingerprint.
     i13_open_po_respect_closed: bool = True
+    # A purchase requisition item SAP has deleted -- EBAN-LOEKZ = X -- that no
+    # PO line orders is not procurement: the ledger leaves it out, and a
+    # reservation naming it reads "PR deleted in SAP" (UAT, 26 Oct 2026). See
+    # app/initiatives/i13/po_lines.py. Part of the snapshot fingerprint.
+    i13_pr_respect_deleted: bool = True
     # Purchasing document types (EKKO-BSART) that are not orders, so nothing is
     # ever open on their lines: WK value and MK quantity contracts, AN requests
     # for quotation, FPA (VZI's own agreement type, measured as an agreement:

@@ -18,6 +18,12 @@ A PO line has nothing more to come when SAP says so:
 Every other line is a real order still open for whatever it has not received.
 Switch: ``Settings.i13_open_po_respect_closed`` (off, every line is an order
 and none is closed -- the behaviour before 21 Oct).
+
+The requisition side (UAT, 26 Oct 2026): a PR item with EBAN-LOEKZ = X is
+deleted in SAP. Measured over the OAR population on non-prod, 1,059 of the
+ledger's 1,817 "Unmatched" lines were such PRs -- cancelled, not waiting for a
+PO. ``pr_is_deleted`` says so; a deleted PR that a PO line orders is left to
+the PO line's own state above. Switch: ``Settings.i13_pr_respect_deleted``.
 """
 
 from __future__ import annotations
@@ -55,6 +61,13 @@ def po_line_state(row: Row) -> PoLineState | None:
     if row.get("Loekz") or row.get("Elikz") == "X":
         return PoLineState.CLOSED
     return None
+
+
+def pr_is_deleted(row: Row) -> bool:
+    """True when this EBAN row is a requisition item SAP has deleted."""
+    if not get_settings().i13_pr_respect_deleted:
+        return False
+    return (row.get("Loekz") or "") == "X"
 
 
 def po_line_states(
