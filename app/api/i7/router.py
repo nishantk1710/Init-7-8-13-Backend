@@ -16,6 +16,7 @@ from app.api.i7 import (
     approval_history,
     approvals,
     health,
+    kpi_formulas,
     pipeline_runs,
     recommendations,
     reports,
@@ -53,3 +54,5 @@ router.include_router(pipeline_runs.router)
 # "quarterly" (with nothing after it), "generate", "status" and "export" are
 # never swallowed as a quarter value.
 router.include_router(reports.router)
+# /kpi-formulas is its own prefix; nothing else under /v1/i7 can read it as an id.
+router.include_router(kpi_formulas.router)
