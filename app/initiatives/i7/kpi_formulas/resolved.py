@@ -17,7 +17,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.initiatives.i7.kpi_formulas import expression
-from app.initiatives.i7.kpi_formulas.definitions import DEFAULTS, FIELDS, FIELDS_BY_KEY
+from app.initiatives.i7.kpi_formulas import data_catalog
+from app.initiatives.i7.kpi_formulas.definitions import DEFAULTS, FIELDS, FIELDS_BY_KEY, allowed_names
 from app.initiatives.i7.kpi_formulas.expression import FormulaError, Parsed
 from app.models.i7_kpi_formula import KpiFormulaVersion
 
@@ -78,7 +79,7 @@ def validate(values: dict[str, object], *, version: int | None = None) -> Formul
             resolved[field.key] = number
             continue
         try:
-            checked = expression.parse(str(raw), set(field.allowed), field.kind)
+            checked = expression.parse(str(raw), allowed_names(field), field.kind)
         except FormulaError as exc:
             errors[field.key] = str(exc)
             continue
@@ -102,23 +103,13 @@ def validate(values: dict[str, object], *, version: int | None = None) -> Formul
 
 
 def _dry_run(parsed: dict[str, Parsed]) -> None:
-    sample = {
-        "usage_in_window": Decimal(900),
-        "window_days": Decimal(90),
-        "lead_time_days": Decimal(30),
-        "stock_on_hand": Decimal(100),
-        "current_max_stock": Decimal(50),
-        "recommended_max_stock": Decimal(40),
-        "current_rop": Decimal(20),
-        "recommended_rop": Decimal(15),
-        "current_safety_stock": Decimal(10),
-        "recommended_safety_stock": Decimal(8),
-        "unit_price": Decimal(5),
-    }
+    """Run every formula once over made-up numbers, so a chain that cannot work fails here and not in SQL."""
+    sample: dict[str, Decimal | None] = {name: Decimal(10) for name in data_catalog.labels()}
+    sample["window_days"] = Decimal(90)
     for key in ("avg_daily_use", "stock_needed"):
         sample[key] = expression.evaluate(parsed[key], sample)  # type: ignore[assignment]
     for item in parsed.values():
-        expression.evaluate(item, sample)  # type: ignore[arg-type]
+        expression.evaluate(item, sample)
 
 
 def defaults() -> Formulas:

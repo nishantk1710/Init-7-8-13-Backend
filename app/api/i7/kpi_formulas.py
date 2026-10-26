@@ -15,7 +15,15 @@ from sqlalchemy.orm import Session
 from app.api.deps import Actor, get_current_actor
 from app.api.i7.deps import get_session
 from app.initiatives.i7.kpi_formulas import service
-from app.initiatives.i7.kpi_formulas.definitions import DEFAULTS, FIELDS, KPI_TITLES, VARIABLES
+from app.initiatives.i7.kpi_formulas.data_catalog import CATALOG, HELPER_LABELS
+from app.initiatives.i7.kpi_formulas.definitions import (
+    DEFAULTS,
+    FIELDS,
+    KPI_CONTROLS,
+    KPI_DATA_SETS,
+    KPI_TITLES,
+)
+from app.initiatives.i7.kpi_formulas.expression import FUNCTIONS
 from app.initiatives.i7.kpi_formulas.example import build_examples
 from app.initiatives.i7.kpi_formulas.presentation import formula_lines
 from app.initiatives.i7.kpi_formulas.resolved import Formulas, FormulaValidationError, load_active
@@ -24,6 +32,7 @@ from app.schemas.i7.kpi_formulas import (
     ActiveFormulasOut,
     ActiveSettings,
     ApplyIn,
+    DataItemOut,
     FiguresOut,
     FormulaFieldOut,
     FormulaInput,
@@ -76,7 +85,9 @@ def _fields(formulas: Formulas) -> list[FormulaFieldOut]:
             help=f.help,
             default=f.default,
             value=formulas.values[f.key],
-            allowed=[FormulaInput(name=n, label=VARIABLES[n]) for n in f.allowed],
+            data_set=f.data_set,
+            helpers=[FormulaInput(name=n, label=HELPER_LABELS[n]) for n in f.helpers],
+            example=f.example,
             minimum=f.minimum,
             maximum=f.maximum,
             needs_rebuild=f.needs_rebuild,
@@ -95,8 +106,19 @@ def get_page(session: Annotated[Session, Depends(get_session)]) -> FormulasPageO
     formulas = load_active(session)
     return FormulasPageOut(
         active=_active_view(session, formulas),
-        kpis=[KpiOut(key=k, title=t) for k, t in KPI_TITLES.items()],
+        kpis=[
+            KpiOut(key=k, title=t, data_set=KPI_DATA_SETS[k], controls=list(KPI_CONTROLS[k]))
+            for k, t in KPI_TITLES.items()
+        ],
         fields=_fields(formulas),
+        data={
+            data_set: [
+                DataItemOut(name=i.name, label=i.label, description=i.description, group=i.group, unit=i.unit)
+                for i in items
+            ]
+            for data_set, items in CATALOG.items()
+        },
+        functions=[f"{name}({', '.join('x' if n == 1 else v for v in 'ab'[:n])})" for name, n in FUNCTIONS.items()],
         status=_status(session),
         history=[VersionOut.model_validate(v, from_attributes=True) for v in service.history(session)],
     )
@@ -129,6 +151,8 @@ def _figures_out(f: service.Figures) -> FiguresOut:
         excess_count=f.excess_count,
         excess_opportunity=float(f.excess_opportunity) if f.excess_opportunity is not None else None,
         working_capital=float(f.working_capital) if f.working_capital is not None else None,
+        adoption_rate=float(f.adoption_rate) if f.adoption_rate is not None else None,
+        counted_as_adopted=float(f.counted_as_adopted) if f.counted_as_adopted is not None else None,
     )
 
 
@@ -164,6 +188,8 @@ def _apply(
         raise _invalid(exc) from exc
     except service.ApplyInProgress as exc:
         raise conflict("APPLY_IN_PROGRESS", str(exc)) from exc
+    except service.NotSetUp as exc:
+        raise ApiError(503, "KPI_FORMULAS_NOT_SET_UP", str(exc)) from exc
     if row.status == service.APPLYING:
         background.add_task(service.run_rebuild, row.id)
         return StatusOut(

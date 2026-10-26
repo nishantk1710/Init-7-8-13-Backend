@@ -4,20 +4,28 @@ The defaults here are the rules the Overview used before any of this was editabl
 formula language of :mod:`app.initiatives.i7.kpi_formulas.expression`. With no saved version the Overview
 uses exactly these, so nothing changes until someone applies an edit.
 
+A formula may use **any fact in the data catalogue of its row type** (:mod:`.data_catalog`), plus the
+helper values built by the formulas before it. Nothing about which facts a formula uses is fixed: the
+default at-risk rule happens to use stock on hand, usage and lead time; an invented one may use anything
+listed.
+
 What is **not** editable, deliberately:
 
-* the data-quality guard of High Stockout Risk -- a material-plant is judged only when its usage, stock
-  and lead time are all present and usable (a lead time of 0 is SAP's "not maintained", a negative stock
-  or a blank storage location is not a stock figure). A formula decides who is *at risk* among the
-  judged ones; it cannot turn a missing figure into "safe";
-* the population (latest recommendation per material-plant, smooth demand left out) and the SAP
-  adoption figures, which count a ledger and have no formula.
+* the data-quality guard of High Stockout Risk -- a material-plant is judged only when the facts its
+  formula uses are present and usable (a lead time of 0 is SAP's "not maintained", a negative stock or a
+  blank storage location is not a stock figure). A formula decides who is *at risk* among the judged
+  ones; it cannot turn a missing figure into "safe";
+* the population (latest recommendation per material-plant, smooth demand left out).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
+
+from app.initiatives.i7.kpi_formulas import data_catalog
+from app.initiatives.i7.kpi_formulas.data_catalog import ADOPTION as ADOPTION_DATA
+from app.initiatives.i7.kpi_formulas.data_catalog import RECOMMENDATION, STOCKOUT as STOCKOUT_DATA
 
 FieldKind = Literal["number", "condition", "setting"]
 
@@ -30,50 +38,51 @@ class FormulaField:
     kind: FieldKind
     default: str | int
     help: str
-    allowed: tuple[str, ...] = ()
-    """Names the formula may use (formula fields only)."""
+    data_set: str = ""
+    """Which data catalogue the formula draws on (``recommendation``, ``stockout`` or ``adoption``)."""
+    helpers: tuple[str, ...] = ()
+    """Values built by earlier formulas of the same card that this one may also use."""
     minimum: int | None = None
     maximum: int | None = None
     needs_rebuild: bool = False
     """Changing it means the stockout usage table must be rebuilt before the Overview is right."""
+    example: str = ""
+    """One sentence showing what a formula here could look like."""
 
 
-#: Plain-English names for every input, used on the page and on the information cards.
-VARIABLES: dict[str, str] = {
-    "usage_in_window": "units used in the window",
-    "window_days": "window days",
-    "avg_daily_use": "average daily use",
-    "stock_needed": "stock needed",
-    "lead_time_days": "lead time (days)",
-    "stock_on_hand": "stock on hand",
-    "current_max_stock": "current max stock",
-    "recommended_max_stock": "recommended max stock",
-    "current_rop": "current reorder point",
-    "recommended_rop": "recommended reorder point",
-    "current_safety_stock": "current safety stock",
-    "recommended_safety_stock": "recommended safety stock",
-    "unit_price": "unit price",
-}
+def allowed_names(field: FormulaField) -> frozenset[str]:
+    """Every name this formula may use: its data set's facts and its helpers."""
+    return data_catalog.names_of(field.data_set) | frozenset(field.helpers) if field.data_set else frozenset()
 
-_STOCK_INPUTS = ("usage_in_window", "window_days", "lead_time_days", "stock_on_hand")
-_LEVEL_INPUTS = (
-    "current_max_stock",
-    "recommended_max_stock",
-    "current_rop",
-    "recommended_rop",
-    "current_safety_stock",
-    "recommended_safety_stock",
-    "unit_price",
-)
+
+#: Plain-English names for every fact and helper, used on the page and on the information cards.
+VARIABLES: dict[str, str] = data_catalog.labels()
 
 STOCKOUT = "stockout"
 EXCESS = "excess"
 WORKING_CAPITAL = "working_capital"
+ADOPTION = "adoption"
 
 KPI_TITLES = {
     STOCKOUT: "High Stockout Risk",
     EXCESS: "Excess Inventory Candidates",
     WORKING_CAPITAL: "Working Capital Impact",
+    ADOPTION: "SAP Adoption",
+}
+
+#: What each calculation drives on the Overview: the card first, then the charts that repeat its rule.
+KPI_CONTROLS: dict[str, tuple[str, ...]] = {
+    STOCKOUT: ("High Stockout Risk card", "Stockout Risk Distribution chart", "Stockout risk by plant chart"),
+    EXCESS: ("Excess Inventory Candidates card", "Excess inventory by plant chart"),
+    WORKING_CAPITAL: ("Working Capital Impact card",),
+    ADOPTION: ("Adopted recommendation card", "SAP adoption chart"),
+}
+
+KPI_DATA_SETS: dict[str, str] = {
+    STOCKOUT: STOCKOUT_DATA,
+    EXCESS: RECOMMENDATION,
+    WORKING_CAPITAL: RECOMMENDATION,
+    ADOPTION: ADOPTION_DATA,
 }
 
 FIELDS: tuple[FormulaField, ...] = (
@@ -86,7 +95,7 @@ FIELDS: tuple[FormulaField, ...] = (
         minimum=7,
         maximum=730,
         needs_rebuild=True,
-        help="How many days of issues the usage is taken over. Changing it rebuilds the usage data.",
+        help="How many days of issues 'units used in the window' covers. Changing it rebuilds the usage data.",
     ),
     FormulaField(
         key="lookback_days",
@@ -104,8 +113,9 @@ FIELDS: tuple[FormulaField, ...] = (
         label="Average daily use",
         kind="number",
         default="usage_in_window / window_days",
-        allowed=("usage_in_window", "window_days"),
-        help="Units used per day.",
+        data_set=STOCKOUT_DATA,
+        help="Units used per day. A helper: the next formulas can use it by name.",
+        example="usage_in_window / window_days",
     ),
     FormulaField(
         key="stock_needed",
@@ -113,8 +123,10 @@ FIELDS: tuple[FormulaField, ...] = (
         label="Stock needed",
         kind="number",
         default="avg_daily_use * lead_time_days",
-        allowed=("avg_daily_use", "usage_in_window", "window_days", "lead_time_days"),
-        help="The stock required to last until a new order arrives.",
+        data_set=STOCKOUT_DATA,
+        helpers=("avg_daily_use",),
+        help="The stock required to last until a new order arrives. A helper: the next formula can use it.",
+        example="avg_daily_use * (lead_time_days + 7)   - add a week of cover",
     ),
     FormulaField(
         key="at_risk",
@@ -122,8 +134,10 @@ FIELDS: tuple[FormulaField, ...] = (
         label="At risk when",
         kind="condition",
         default="stock_on_hand < stock_needed",
-        allowed=("stock_on_hand", "stock_needed", "avg_daily_use", *_STOCK_INPUTS),
-        help="A comparison that is true for a material that is at risk.",
+        data_set=STOCKOUT_DATA,
+        helpers=("avg_daily_use", "stock_needed"),
+        help="A comparison that is true for a material that is at risk. Use any data below.",
+        example="stock_on_hand < stock_needed * 1.2 and lead_time_days > 10",
     ),
     FormulaField(
         key="excess_condition",
@@ -131,8 +145,9 @@ FIELDS: tuple[FormulaField, ...] = (
         label="Counts as excess when",
         kind="condition",
         default="current_max_stock > recommended_max_stock",
-        allowed=_LEVEL_INPUTS,
-        help="A comparison that is true for an excess-inventory candidate.",
+        data_set=RECOMMENDATION,
+        help="A comparison that is true for an excess-inventory candidate. Use any data below.",
+        example="current_max_stock > recommended_max_stock * 1.1   - at least 10% over",
     ),
     FormulaField(
         key="excess_value",
@@ -140,8 +155,9 @@ FIELDS: tuple[FormulaField, ...] = (
         label="Excess value",
         kind="number",
         default="unit_price * (current_max_stock - recommended_max_stock)",
-        allowed=_LEVEL_INPUTS,
+        data_set=RECOMMENDATION,
         help="The money tied up in one excess candidate, added up for the card.",
+        example="unit_price * (stock_on_hand - recommended_max_stock)",
     ),
     FormulaField(
         key="working_capital_value",
@@ -149,8 +165,32 @@ FIELDS: tuple[FormulaField, ...] = (
         label="Working capital impact",
         kind="number",
         default="unit_price * (current_rop - recommended_rop)",
-        allowed=_LEVEL_INPUTS,
+        data_set=RECOMMENDATION,
         help="The working-capital effect of one recommendation, added up for the card. Positive frees cash.",
+        example="unit_price * (current_rop - recommended_rop + current_safety_stock - recommended_safety_stock)",
+    ),
+    FormulaField(
+        key="adoption_rate",
+        kpi=ADOPTION,
+        label="Adoption rate",
+        kind="number",
+        default="(adopted + partially_adopted) / (adopted + partially_adopted + not_adopted)",
+        data_set=ADOPTION_DATA,
+        help=(
+            "A share between 0 and 1 (0.75 shows as 75%). By default pending ones are left out, so waiting for "
+            "SAP does not pull the rate down."
+        ),
+        example="adopted / tracked   - only fully adopted ones, out of everything tracked",
+    ),
+    FormulaField(
+        key="adopted_card",
+        kpi=ADOPTION,
+        label="Counts as adopted (the card)",
+        kind="number",
+        default="adopted",
+        data_set=ADOPTION_DATA,
+        help="How many recommendations the Adopted card counts.",
+        example="adopted + partially_adopted",
     ),
 )
 

@@ -59,8 +59,27 @@ def _aware(moment: datetime) -> datetime:
     return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
+class NotSetUp(RuntimeError):
+    """The ``i7_kpi_formula_version`` table does not exist: the migration has not been applied to this
+    database (a deploy does not run migrations unless told to)."""
+
+
+def schema_ready(session: Session) -> bool:
+    """Whether the versions table exists. Rolls back on a miss, so the session stays usable."""
+    try:
+        session.execute(select(KpiFormulaVersion.id).limit(1))
+        return True
+    except SQLAlchemyError:
+        session.rollback()
+        return False
+
+
 def _expire_stale(session: Session) -> None:
-    rows = session.execute(select(KpiFormulaVersion).where(KpiFormulaVersion.status == APPLYING)).scalars().all()
+    try:
+        rows = session.execute(select(KpiFormulaVersion).where(KpiFormulaVersion.status == APPLYING)).scalars().all()
+    except SQLAlchemyError:
+        session.rollback()  # no table yet: nothing can be applying
+        return
     for row in rows:
         if _now() - _aware(row.created_at) > STALE_AFTER:
             row.status = FAILED
@@ -70,9 +89,16 @@ def _expire_stale(session: Session) -> None:
 
 def applying_version(session: Session) -> KpiFormulaVersion | None:
     _expire_stale(session)
-    return session.execute(
-        select(KpiFormulaVersion).where(KpiFormulaVersion.status == APPLYING).order_by(KpiFormulaVersion.version.desc()).limit(1)
-    ).scalar_one_or_none()
+    try:
+        return session.execute(
+            select(KpiFormulaVersion)
+            .where(KpiFormulaVersion.status == APPLYING)
+            .order_by(KpiFormulaVersion.version.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    except SQLAlchemyError:
+        session.rollback()
+        return None
 
 
 def _next_version(session: Session) -> int:
@@ -103,6 +129,11 @@ def save_and_apply(session: Session, values: dict[str, Any], actor: str, note: s
     """Validate ``values`` and save them as the next version. Raises :class:`FormulaValidationError` or
     :class:`ApplyInProgress`. Commits."""
     formulas = validate(values)
+    if not schema_ready(session):
+        raise NotSetUp(
+            "The database has not been set up for editable calculations yet: the migration that creates "
+            "i7_kpi_formula_version has not been run. Ask whoever manages the database to run it."
+        )
     if applying_version(session) is not None:
         session.rollback()
         raise ApplyInProgress("Another change is still being applied. Wait for it to finish.")
@@ -183,6 +214,9 @@ class Figures:
     excess_count: int
     excess_opportunity: Decimal | None
     working_capital: Decimal | None
+    adoption_rate: Decimal | None
+    """As a percentage (75 = 75%); ``None`` when the formula cannot be worked out."""
+    counted_as_adopted: Decimal | None
 
 
 def figures(session: Session, formulas: Formulas) -> Figures:
@@ -199,6 +233,20 @@ def figures(session: Session, formulas: Formulas) -> Figures:
     ).scalar()
     capital = working_capital_sql(formulas)
     capital_total = session.execute(base.with_only_columns(func.sum(capital)).where(capital.is_not(None))).scalar()
+
+    from app.api.i7.adoption import adoption_counts
+    from app.initiatives.i7.kpi_formulas import expression
+
+    counts = adoption_counts(session)
+    adoption_values: dict[str, Decimal | None] = {
+        "adopted": Decimal(counts.adopted),
+        "partially_adopted": Decimal(counts.partially_adopted),
+        "not_adopted": Decimal(counts.not_adopted),
+        "pending": Decimal(counts.pending),
+        "tracked": Decimal(counts.tracked),
+    }
+    rate = expression.evaluate(formulas.parsed["adoption_rate"], adoption_values)
+    card = expression.evaluate(formulas.parsed["adopted_card"], adoption_values)
     return Figures(
         stockout_at_risk=stockout.at_risk,
         stockout_evaluated=stockout.evaluated,
@@ -206,6 +254,8 @@ def figures(session: Session, formulas: Formulas) -> Figures:
         excess_count=int(excess_count),
         excess_opportunity=Decimal(str(excess_total)) if excess_total is not None else None,
         working_capital=Decimal(str(capital_total)) if capital_total is not None else None,
+        adoption_rate=rate * 100 if isinstance(rate, Decimal) else None,
+        counted_as_adopted=card if isinstance(card, Decimal) else None,
     )
 
 
@@ -222,6 +272,7 @@ def preview(session: Session, values: dict[str, Any]) -> tuple[Formulas, Formula
 
 __all__ = [
     "ApplyInProgress",
+    "NotSetUp",
     "FormulaValidationError",
     "applying_version",
     "figures",

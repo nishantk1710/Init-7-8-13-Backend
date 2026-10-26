@@ -8,6 +8,16 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class DataItemOut(BaseModel):
+    """One fact a formula may use."""
+
+    name: str
+    label: str
+    description: str
+    group: str
+    unit: str
+
+
 class FormulaInput(BaseModel):
     name: str
     label: str
@@ -21,7 +31,11 @@ class FormulaFieldOut(BaseModel):
     help: str
     default: str | int
     value: str | int
-    allowed: list[FormulaInput] = []
+    data_set: str = ""
+    """Which list of data (``FormulasPageOut.data``) this formula draws on; empty for a plain number."""
+    helpers: list[FormulaInput] = []
+    """Values built by earlier formulas of the same card that this one may also use."""
+    example: str = ""
     minimum: int | None = None
     maximum: int | None = None
     needs_rebuild: bool = False
@@ -30,6 +44,9 @@ class FormulaFieldOut(BaseModel):
 class KpiOut(BaseModel):
     key: str
     title: str
+    data_set: str
+    controls: list[str]
+    """What this calculation drives on the Overview: the card first, then the charts that repeat its rule."""
 
 
 class ExampleInput(BaseModel):
@@ -84,6 +101,9 @@ class FormulasPageOut(BaseModel):
     active: ActiveFormulasOut
     kpis: list[KpiOut]
     fields: list[FormulaFieldOut]
+    data: dict[str, list[DataItemOut]]
+    """Everything a formula may use, by data set -- shown on the page so nobody has to guess."""
+    functions: list[str]
     status: StatusOut
     history: list[VersionOut]
 
@@ -100,6 +120,8 @@ class FiguresOut(BaseModel):
     excess_count: int
     excess_opportunity: float | None
     working_capital: float | None
+    adoption_rate: float | None
+    counted_as_adopted: float | None
 
 
 class PreviewOut(BaseModel):

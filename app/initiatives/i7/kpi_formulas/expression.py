@@ -30,10 +30,13 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, Mapping
 
-from sqlalchemy import Float, Numeric, and_, cast, func, not_, or_
+from sqlalchemy import Float, Numeric, and_, case, cast, func, literal, not_, or_
 
-MAX_LENGTH = 200
-MAX_NODES = 60
+MAX_LENGTH = 300
+MAX_NODES = 80
+
+#: The only functions a formula may call, and how many values each takes.
+FUNCTIONS: dict[str, int] = {"abs": 1, "min": 2, "max": 2}
 MAX_CONSTANT = Decimal("1000000000")
 
 Kind = Literal["number", "condition"]
@@ -96,10 +99,19 @@ def parse(source: str, allowed: frozenset[str] | set[str], expect: Kind) -> Pars
             if abs(Decimal(str(value))) > MAX_CONSTANT:
                 raise FormulaError(f"The number {value} is too large.")
             return "number"
+        if isinstance(node, ast.Call):
+            name = node.func.id if isinstance(node.func, ast.Name) else None
+            if name not in FUNCTIONS or node.keywords:
+                raise FormulaError("Only min(a, b), max(a, b) and abs(x) can be used as functions.")
+            wanted = FUNCTIONS[name]
+            if len(node.args) != wanted:
+                raise FormulaError(f"{name}() needs {wanted} value{'s' if wanted > 1 else ''}.")
+            for argument in node.args:
+                _require(walk(argument), "number", f"{name}()")
+            return "number"
         if isinstance(node, ast.Name):
             if node.id not in allowed:
-                choices = ", ".join(sorted(allowed))
-                raise FormulaError(f"'{node.id}' is not a value this formula can use. Use one of: {choices}.")
+                raise FormulaError(f"'{node.id}' is not data this calculation can use. Pick one from the list.")
             names.add(node.id)
             return "number"
         if isinstance(node, ast.UnaryOp):
@@ -160,6 +172,14 @@ def compile_sql(parsed: Parsed, columns: Mapping[str, Any]) -> Any:
     def build(node: ast.AST) -> Any:
         if isinstance(node, ast.Constant):
             return Decimal(str(node.value))
+        if isinstance(node, ast.Call):
+            args = [literal(a) if isinstance(a, Decimal) else a for a in (build(x) for x in node.args)]
+            if node.func.id == "abs":  # type: ignore[union-attr]
+                return func.abs(args[0])
+            left, right = args
+            keep_left = left >= right if node.func.id == "max" else left <= right  # type: ignore[union-attr]
+            # Either side unknown -> unknown, never "the other one": a missing figure is not zero.
+            return case((or_(left.is_(None), right.is_(None)), None), (keep_left, left), else_=right)
         if isinstance(node, ast.Name):
             return columns[node.id]
         if isinstance(node, ast.UnaryOp):
@@ -213,6 +233,13 @@ def evaluate(parsed: Parsed, values: Mapping[str, Decimal | None]) -> Decimal | 
     def run(node: ast.AST) -> Decimal | bool | None:
         if isinstance(node, ast.Constant):
             return Decimal(str(node.value))
+        if isinstance(node, ast.Call):
+            arguments = [run(x) for x in node.args]
+            if any(a is None for a in arguments):
+                return None
+            if node.func.id == "abs":  # type: ignore[union-attr]
+                return abs(arguments[0])  # type: ignore[arg-type]
+            return max(arguments) if node.func.id == "max" else min(arguments)  # type: ignore[union-attr,type-var]
         if isinstance(node, ast.Name):
             return values.get(node.id)
         if isinstance(node, ast.UnaryOp):
@@ -282,6 +309,8 @@ def to_text(parsed: Parsed, labels: Mapping[str, str] | None = None) -> str:
             )
         if isinstance(node, ast.Name):
             return labels.get(node.id, node.id)
+        if isinstance(node, ast.Call):
+            return f"{node.func.id}({', '.join(show(a) for a in node.args)})"  # type: ignore[union-attr]
         if isinstance(node, ast.UnaryOp):
             if isinstance(node.op, ast.Not):
                 return f"not ({show(node.operand)})"

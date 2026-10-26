@@ -9,7 +9,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import Column, Integer, MetaData, Numeric, Table, create_engine, select
+from sqlalchemy import Column, Integer, MetaData, Numeric, Table, create_engine, literal_column, select
 
 from app.initiatives.i7.kpi_formulas import expression
 from app.initiatives.i7.kpi_formulas.definitions import DEFAULTS, FIELDS_BY_KEY
@@ -39,7 +39,7 @@ def test_valid_formulas_are_accepted(source):
         "__import__('os').system('x')",
         "a.__class__",
         "a[0]",
-        "abs(a)",
+        "round(a)",
         "a ** 2",
         "a // b",
         "a % b",
@@ -61,8 +61,8 @@ def test_anything_outside_the_language_is_refused(source):
         parse(source, NAMES, "condition" if "<" in source or "==" in source or "in" in source else "number")
 
 
-def test_a_name_that_is_not_allowed_says_what_is():
-    with pytest.raises(FormulaError, match="a, b, c"):
+def test_a_name_that_is_not_allowed_says_to_pick_from_the_list():
+    with pytest.raises(FormulaError, match="Pick one from the list"):
         parse("a + zzz", NAMES, "number")
 
 
@@ -90,7 +90,7 @@ def test_length_and_size_are_capped():
     with pytest.raises(FormulaError, match="too long"):
         parse("a + " * 80 + "a", NAMES, "number")
     with pytest.raises(FormulaError, match="complicated"):
-        parse(" + ".join(["a"] * 40), NAMES, "number")
+        parse(" + ".join(["a"] * 50), NAMES, "number")
 
 
 def test_the_card_symbols_are_accepted():
@@ -231,6 +231,15 @@ def engine():
     return engine
 
 
+def _columns():
+    return {
+        "usage_in_window": _stock.c.usage_in_window,
+        "window_days": _stock.c.window_days,
+        "lead_time_days": _stock.c.lead_time_days,
+        "stock_on_hand": _stock.c.stock_on_hand,
+    }
+
+
 def _python_at_risk(formulas, row):
     u, w, lt, s = row
     values = {
@@ -255,13 +264,7 @@ def _python_at_risk(formulas, row):
 )
 def test_the_sql_agrees_with_the_python_reading(engine, overrides):
     formulas = validate(overrides)
-    expr = at_risk_sql(
-        formulas,
-        usage_in_window=_stock.c.usage_in_window,
-        window_days=_stock.c.window_days,
-        lead_time_days=_stock.c.lead_time_days,
-        stock_on_hand=_stock.c.stock_on_hand,
-    )
+    expr = at_risk_sql(formulas, _columns())
     with engine.connect() as connection:
         got = [bool(r[0]) if r[0] is not None else None for r in connection.execute(select(expr).order_by(_stock.c.id))]
     assert got == [_python_at_risk(formulas, row) for row in ROWS]
@@ -270,13 +273,7 @@ def test_the_sql_agrees_with_the_python_reading(engine, overrides):
 def test_the_default_matches_the_rule_the_overview_used_before_it_was_editable(engine):
     """``SOH x window < consumption x lead time`` -- the old, division-free test."""
     formulas = defaults()
-    expr = at_risk_sql(
-        formulas,
-        usage_in_window=_stock.c.usage_in_window,
-        window_days=_stock.c.window_days,
-        lead_time_days=_stock.c.lead_time_days,
-        stock_on_hand=_stock.c.stock_on_hand,
-    )
+    expr = at_risk_sql(formulas, _columns())
     old = [s * w < u * lt for (u, w, lt, s) in ROWS]
     with engine.connect() as connection:
         new = [bool(r[0]) for r in connection.execute(select(expr).order_by(_stock.c.id))]
@@ -307,4 +304,177 @@ def test_sql_server_never_gets_a_bare_numeric_cast():
 
 def test_only_declared_fields_exist():
     assert set(DEFAULTS) == set(FIELDS_BY_KEY)
-    assert expression.MAX_LENGTH == 200
+    assert expression.MAX_LENGTH == 300
+
+
+# --- The versions table is missing (the migration has not been run) -----------------------------------
+
+
+@pytest.fixture
+def empty_database():
+    from sqlalchemy.orm import Session
+
+    engine = create_engine("sqlite://")  # no tables at all
+    with Session(engine) as session:
+        yield session
+
+
+def test_a_missing_table_does_not_break_reading(empty_database):
+    from app.initiatives.i7.kpi_formulas import service
+    from app.initiatives.i7.kpi_formulas.resolved import load_active
+
+    assert service.schema_ready(empty_database) is False
+    assert service.applying_version(empty_database) is None
+    assert service.history(empty_database) == []
+    assert load_active(empty_database).is_default
+
+
+def test_a_missing_table_is_a_clear_refusal_to_save_not_a_crash(empty_database):
+    from app.initiatives.i7.kpi_formulas import service
+
+    with pytest.raises(service.NotSetUp, match="migration"):
+        service.save_and_apply(empty_database, {"window_days": 60}, "someone")
+
+
+# --- Invented formulas: the data list, functions, and adoption -----------------------------------------
+
+
+def test_every_catalogue_name_is_unique_within_its_data_set_and_not_a_function_or_stage():
+    from app.initiatives.i7.kpi_formulas.data_catalog import CATALOG, HELPER_LABELS
+
+    for data_set, items in CATALOG.items():
+        names = [i.name for i in items]
+        assert len(names) == len(set(names)), f"duplicate name in {data_set}"
+        assert not set(names) & set(expression.FUNCTIONS), data_set
+        assert not set(names) & set(HELPER_LABELS), data_set
+
+
+def test_every_catalogue_entry_points_at_a_real_column():
+    from app.initiatives.i7.kpi_formulas.data_catalog import RECOMMENDATION_ITEMS, STOCKOUT_ITEMS
+    from app.models.i7_features import MaterialFeature
+    from app.models.i7_recommendation import Recommendation
+    from app.models.i7_stockout_risk import StockoutRiskInput
+
+    models = {"recommendation": Recommendation, "feature": MaterialFeature, "usage": StockoutRiskInput}
+    for item in (*RECOMMENDATION_ITEMS, *STOCKOUT_ITEMS):
+        if item.source == "stock":
+            continue  # summed from the staged stock by the caller, not a column
+        assert hasattr(models[item.source], item.attribute), (item.name, item.source, item.attribute)
+        assert item.label and item.description and item.group and item.unit, item.name
+
+
+def test_a_formula_may_use_any_fact_in_its_data_set():
+    from app.initiatives.i7.kpi_formulas.data_catalog import names_of
+
+    for name in sorted(names_of("recommendation")):
+        validate({"excess_condition": f"{name} > 0"})
+    for name in sorted(names_of("stockout")):
+        validate({"at_risk": f"{name} > 0"})
+
+
+def test_a_fact_from_another_data_set_is_refused():
+    with pytest.raises(FormulaValidationError) as caught:
+        validate({"excess_condition": "usage_in_window > 0"})  # a stockout fact, not a recommendation one
+    assert "excess_condition" in caught.value.errors
+    with pytest.raises(FormulaValidationError):
+        validate({"adoption_rate": "unit_price / 2"})
+
+
+def test_invented_formulas_compile_for_sql_server_over_the_real_tables():
+    """Every fact, in every position, must compile -- the correlated feature-store sub-selects included."""
+    from sqlalchemy.dialects import mssql
+
+    from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql, working_capital_sql
+
+    formulas = validate(
+        {
+            "excess_condition": "(current_rop + adi + history_months) > max(cv_squared, 1) * 2 "
+            "and stock_on_hand >= abs(current_rop - recommended_rop)",
+            "excess_value": "unit_price * max(current_max_stock - recommended_max_stock, 0)",
+            "working_capital_value": "min(unit_price, 100) * (average_demand - demand_std_dev)",
+        }
+    )
+    for build in (excess_condition_sql, excess_value_sql, working_capital_sql):
+        sql = str(select(build(formulas)).compile(dialect=mssql.dialect()))
+        assert "AS NUMERIC)" not in sql
+    # unused facts cost nothing: a formula over its own columns adds no feature-store sub-select
+    plain = str(select(excess_condition_sql(defaults())).compile(dialect=mssql.dialect()))
+    assert "i7_material_feature" not in plain
+    assert "i7_material_feature" in str(select(excess_condition_sql(formulas)).compile(dialect=mssql.dialect()))
+
+
+@pytest.mark.parametrize(
+    ("source", "values", "expected"),
+    [
+        ("max(a, b)", {"a": 3, "b": 7}, 7),
+        ("min(a, b)", {"a": 3, "b": 7}, 3),
+        ("abs(a - b)", {"a": 3, "b": 7}, 4),
+        ("max(a - b, 0)", {"a": 3, "b": 7}, 0),
+        ("min(a, 5) * max(b, 1)", {"a": 9, "b": 0}, 5),
+    ],
+)
+def test_functions_agree_between_python_and_sql(engine, source, values, expected):
+    p = parse(source, {"a", "b"}, "number")
+    assert evaluate(p, {k: Decimal(v) for k, v in values.items()}) == expected
+    columns = {k: literal_column(str(v)) for k, v in values.items()}
+    with engine.connect() as connection:
+        got = connection.execute(select(compile_sql(p, columns))).scalar()
+    assert Decimal(str(got)) == expected
+
+
+def test_a_missing_value_makes_min_max_abs_unknown_not_the_other_one():
+    assert evaluate(parse("max(a, b)", {"a", "b"}, "number"), {"a": Decimal(1), "b": None}) is None
+    assert evaluate(parse("abs(a)", {"a"}, "number"), {"a": None}) is None
+
+
+@pytest.mark.parametrize(
+    "source", ["pow(a, 2)", "max(a)", "max(a, b, a)", "abs(a, b)", "max(a=1, b=2)", "a.max(b)", "sum(a, b)"]
+)
+def test_only_min_max_abs_with_the_right_number_of_values_are_functions(source):
+    with pytest.raises(FormulaError):
+        parse(source, NAMES, "number")
+
+
+def test_functions_print_as_written():
+    assert to_text(parse("max(a - b, 0) / c", NAMES, "number")) == "max(a - b, 0) ÷ c"
+
+
+def test_the_stockout_rule_judges_on_the_facts_it_uses():
+    from app.initiatives.i7.kpi_formulas.sql import stockout_used_names
+
+    assert stockout_used_names(defaults()) == {"usage_in_window", "window_days", "lead_time_days", "stock_on_hand"}
+    # no lead time anywhere in the rule -> lead time is not required to judge
+    only_stock = validate({"at_risk": "stock_on_hand < avg_daily_use * 30"})
+    assert stockout_used_names(only_stock) == {"stock_on_hand", "usage_in_window", "window_days"}
+    # a fact the helpers use counts, even though at_risk never names it
+    via_helper = validate({"stock_needed": "avg_daily_use * planned_delivery_days"})
+    assert "planned_delivery_days" in stockout_used_names(via_helper)
+    assert stockout_used_names(validate({"at_risk": "adi > 3"})) == {"adi"}
+
+
+def test_adoption_defaults_are_the_rule_the_card_always_used():
+    f = defaults()
+    for adopted, partially, not_adopted in [(10, 5, 5), (0, 0, 0), (3, 0, 0), (0, 0, 7), (12, 7, 1)]:
+        values = {
+            "adopted": Decimal(adopted),
+            "partially_adopted": Decimal(partially),
+            "not_adopted": Decimal(not_adopted),
+        }
+        rate = evaluate(f.parsed["adoption_rate"], values)
+        known = adopted + partially + not_adopted
+        if known == 0:
+            assert rate is None  # nothing observed is "not yet measured", never 0%
+        else:
+            assert round(float(rate * 100), 1) == round((adopted + partially) / known * 100, 1)
+        assert evaluate(f.parsed["adopted_card"], values) == adopted
+
+
+def test_adoption_can_be_changed():
+    f = validate({"adoption_rate": "adopted / tracked", "adopted_card": "adopted + partially_adopted"})
+    values = {"adopted": Decimal(10), "partially_adopted": Decimal(5), "not_adopted": Decimal(5), "tracked": Decimal(50)}
+    assert evaluate(f.parsed["adoption_rate"], values) == Decimal("0.2")
+    assert evaluate(f.parsed["adopted_card"], values) == 15
+    assert formula_lines(f)["adoption"] == [
+        "Adoption rate = adopted ÷ all tracked",
+        "Adopted card counts = adopted + partially adopted",
+    ]
