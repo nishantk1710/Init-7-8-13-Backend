@@ -518,10 +518,35 @@ class Settings(BaseSettings):
     # blocked by an unsigned service level.
     i7_dev_mock_max_stock: bool = False
 
-    # --- Reserved for future integrations. Not read by any code yet, and not
-    # --- required for startup. See app/core/security.py and app/integrations/.
+    # --- Sign-in: Microsoft Entra ID access tokens (app/core/security.py). ---
+    # Off by default, and off locally and in tests: with it off every request is
+    # served as today -- the author comes from the X-Actor-Id header and no role
+    # is checked -- so switching it on is a setting, not a deploy, and switching
+    # it back off is the rollback.
+    auth_enabled: bool = False
+    # The VZI tenant, and the Application (client) ID of the API's app
+    # registration (spares-ai-api-<env>). Both are required once AUTH_ENABLED
+    # is true; without them every protected request answers 503 rather than
+    # being let through.
     azure_tenant_id: str = ""
     azure_client_id: str = ""
+    # Extra accepted token audiences, comma-separated. The client ID and
+    # api://<client ID> are always accepted: a v2 access token carries the bare
+    # client ID as its audience (measured on spares-ai-api-prod, 26 Oct 2026),
+    # not the api:// URI the app registration displays.
+    auth_audience: str = ""
+    # The delegated scope a user's token must carry (Expose an API).
+    auth_required_scope: str = "access_as_user"
+    # Clock difference tolerated on exp/nbf/iat, and how long Entra's signing
+    # keys are cached before they are fetched again (an unknown key ID always
+    # triggers a fetch, so a key rotation never waits for this).
+    auth_clock_skew_seconds: int = 120
+    auth_jwks_cache_seconds: int = 3600
+    # SAP's calls (/api/events/pr, /api/events/csv) are switched separately:
+    # they come from VZI's CPI, not from a person, and how CPI authenticates is
+    # decision D2 in the RBAC plan. "off" keeps them open as today; "entra"
+    # requires an application token carrying the Sap.Events.Write role.
+    sap_events_auth: Literal["off", "entra"] = "off"
 
     # --- Initiative 13: End-to-End Spares Utilisation Tracking. ---
     # Root directory for platform-owned (non-SAP) reference data -- currently
