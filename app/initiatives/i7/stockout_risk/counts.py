@@ -39,7 +39,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.initiatives.i7.kpi_formulas.resolved import Formulas, load_active
-from app.initiatives.i7.kpi_formulas.sql import at_risk_sql
+from app.initiatives.i7.kpi_formulas.sql import stockout_rule
 from app.models.i7_features import MaterialFeature
 from app.models.i7_recommendation import Recommendation
 from app.models.i7_staging import StagedStock
@@ -121,26 +121,10 @@ def stockout_risk_counts(
         Recommendation.sap_plant_code.label("sap_plant_code"),
     ).distinct().subquery()  # one row per material-plant, however many recommendations it has
 
-    # Every figure a judgement needs must be present and usable. A missing one makes the whole
-    # expression NULL, which the CASEs below count as "not evaluated" -- never as safe.
-    valid_usage = and_(usage.window_days > 0, usage.consumption_90d >= 0)
-    valid_lead_time = feature.lead_time_days > 0
-    valid_stock = and_(
-        on_hand.c.on_hand.is_not(None),
-        on_hand.c.on_hand >= 0,
-        on_hand.c.blank_locations == 0,
-    )
-    evaluated = and_(valid_usage, valid_lead_time, valid_stock)
-    at_risk = and_(
-        evaluated,
-        at_risk_sql(
-            formulas,
-            usage_in_window=usage.consumption_90d,
-            window_days=usage.window_days,
-            lead_time_days=feature.lead_time_days,
-            stock_on_hand=on_hand.c.on_hand,
-        ),
-    )
+    # Every figure the rule uses must be present and usable. A missing one makes the rule unknown, which the
+    # CASEs below count as "not evaluated" -- never as safe. See ``stockout_rule`` for what that means.
+    rule, evaluated = stockout_rule(formulas, usage=usage, feature=feature, on_hand=on_hand)
+    at_risk = and_(evaluated, rule)
 
     source = (
         select(

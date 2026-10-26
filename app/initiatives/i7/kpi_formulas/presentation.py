@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.initiatives.i7.kpi_formulas import expression
 from app.initiatives.i7.kpi_formulas.definitions import (
+    ADOPTION,
     EXCESS,
     KPI_TITLES,
     STOCKOUT,
@@ -37,6 +38,10 @@ def formula_lines(formulas: Formulas) -> dict[str, list[str]]:
             f"Excess value = {text('excess_value')}",
         ],
         WORKING_CAPITAL: [f"Working capital impact = {text('working_capital_value')}"],
+        ADOPTION: [
+            f"Adoption rate = {text('adoption_rate')}",
+            f"Adopted card counts = {text('adopted_card')}",
+        ],
     }
 
 

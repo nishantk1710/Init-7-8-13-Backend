@@ -214,6 +214,9 @@ class Figures:
     excess_count: int
     excess_opportunity: Decimal | None
     working_capital: Decimal | None
+    adoption_rate: Decimal | None
+    """As a percentage (75 = 75%); ``None`` when the formula cannot be worked out."""
+    counted_as_adopted: Decimal | None
 
 
 def figures(session: Session, formulas: Formulas) -> Figures:
@@ -230,6 +233,20 @@ def figures(session: Session, formulas: Formulas) -> Figures:
     ).scalar()
     capital = working_capital_sql(formulas)
     capital_total = session.execute(base.with_only_columns(func.sum(capital)).where(capital.is_not(None))).scalar()
+
+    from app.api.i7.adoption import adoption_counts
+    from app.initiatives.i7.kpi_formulas import expression
+
+    counts = adoption_counts(session)
+    adoption_values: dict[str, Decimal | None] = {
+        "adopted": Decimal(counts.adopted),
+        "partially_adopted": Decimal(counts.partially_adopted),
+        "not_adopted": Decimal(counts.not_adopted),
+        "pending": Decimal(counts.pending),
+        "tracked": Decimal(counts.tracked),
+    }
+    rate = expression.evaluate(formulas.parsed["adoption_rate"], adoption_values)
+    card = expression.evaluate(formulas.parsed["adopted_card"], adoption_values)
     return Figures(
         stockout_at_risk=stockout.at_risk,
         stockout_evaluated=stockout.evaluated,
@@ -237,6 +254,8 @@ def figures(session: Session, formulas: Formulas) -> Figures:
         excess_count=int(excess_count),
         excess_opportunity=Decimal(str(excess_total)) if excess_total is not None else None,
         working_capital=Decimal(str(capital_total)) if capital_total is not None else None,
+        adoption_rate=rate * 100 if isinstance(rate, Decimal) else None,
+        counted_as_adopted=card if isinstance(card, Decimal) else None,
     )
 
 

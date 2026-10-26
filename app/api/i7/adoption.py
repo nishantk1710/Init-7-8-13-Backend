@@ -18,6 +18,7 @@ one row rather than accumulating history (the ledger records the latest
 known reconciliation, not an append-only log of every request)."""
 
 from dataclasses import dataclass
+from decimal import Decimal
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Literal
 
@@ -27,6 +28,8 @@ from sqlalchemy.orm import Session
 
 from app.api.i7.deps import get_session, load_latest_recommendation
 from app.api.i7.recommendations import _apply_filters, _latest_only
+from app.initiatives.i7.kpi_formulas.expression import evaluate
+from app.initiatives.i7.kpi_formulas.resolved import load_active
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations.adoption import (
     evaluate_conversion_adoption,
@@ -341,6 +344,73 @@ def list_adoption(
     return AdoptionListResponse(items=items, total=total, page=page, page_size=page_size)
 
 
+@dataclass(frozen=True)
+class AdoptionCounts:
+    """The adoption ledger's counts over the recommendations that have something to adopt."""
+
+    tracked: int
+    adopted: int
+    partially_adopted: int
+    not_adopted: int
+
+    @property
+    def known(self) -> int:
+        return self.adopted + self.partially_adopted + self.not_adopted
+
+    @property
+    def pending(self) -> int:
+        """Everything SAP has no evidence about is pending, whether or not anyone has opened it: an UNKNOWN
+        ledger row says the same thing as no row at all."""
+        return max(self.tracked - self.known, 0)
+
+
+def adoption_counts(
+    session: Session,
+    *,
+    plant: str | None = None,
+    demand_type: str | None = None,
+    demand_class: str | None = None,
+    criticality_level: str | None = None,
+) -> AdoptionCounts:
+    def tracked(*columns):
+        """The newest recommendation per material-plant that has something to adopt -- the same
+        set GET /recommendations?actionable=true lists."""
+        return _latest_only(
+            _apply_filters(
+                select(*columns),
+                status=None,
+                plant=plant,
+                material=None,
+                demand_class=demand_class,
+                is_oar=None,
+                confidence=None,
+                criticality=None,
+                generated_from=None,
+                generated_to=None,
+                demand_type=demand_type,
+                criticality_level=criticality_level,
+                actionable=True,
+            )
+        )
+
+    total_tracked = session.execute(
+        select(func.count()).select_from(tracked(Recommendation.id).subquery())
+    ).scalar_one()
+    by_status = dict(
+        session.execute(
+            select(SapAdoptionResult.status, func.count())
+            .where(SapAdoptionResult.recommendation_id.in_(tracked(Recommendation.recommendation_id)))
+            .group_by(SapAdoptionResult.status)
+        ).all()
+    )
+    return AdoptionCounts(
+        tracked=total_tracked,
+        adopted=by_status.get("ADOPTED", 0),
+        partially_adopted=by_status.get("PARTIALLY_ADOPTED", 0),
+        not_adopted=by_status.get("NOT_ADOPTED", 0),
+    )
+
+
 @router.get(
     "/recommendations/adoption/summary",
     response_model=AdoptionSummary,
@@ -368,54 +438,34 @@ def get_adoption_summary(
         Query(description="The display level: CRITICAL / IMPACT / INSURANCE; Low is NORMAL, OBSOLETE or no tier."),
     ] = None,
 ) -> AdoptionSummary:
-    def tracked(*columns):
-        """The newest recommendation per material-plant that has something to adopt -- the same
-        set GET /recommendations?actionable=true lists."""
-        return _latest_only(
-            _apply_filters(
-                select(*columns),
-                status=None,
-                plant=plant,
-                material=None,
-                demand_class=demand_class,
-                is_oar=None,
-                confidence=None,
-                criticality=None,
-                generated_from=None,
-                generated_to=None,
-                demand_type=demand_type,
-                criticality_level=criticality_level,
-                actionable=True,
-            )
-        )
-
-    total_tracked = session.execute(
-        select(func.count()).select_from(tracked(Recommendation.id).subquery())
-    ).scalar_one()
-
-    counts = dict(
-        session.execute(
-            select(SapAdoptionResult.status, func.count())
-            .where(SapAdoptionResult.recommendation_id.in_(tracked(Recommendation.recommendation_id)))
-            .group_by(SapAdoptionResult.status)
-        ).all()
+    counts = adoption_counts(
+        session,
+        plant=plant,
+        demand_type=demand_type,
+        demand_class=demand_class,
+        criticality_level=criticality_level,
     )
-    adopted = counts.get("ADOPTED", 0)
-    partially_adopted = counts.get("PARTIALLY_ADOPTED", 0)
-    not_adopted = counts.get("NOT_ADOPTED", 0)
+    adopted, partially_adopted, not_adopted = counts.adopted, counts.partially_adopted, counts.not_adopted
+    pending = counts.pending
 
-    # Everything SAP has no evidence about is pending, whether or not anyone has
-    # opened it: an UNKNOWN ledger row says the same thing as no row at all.
-    known_count = adopted + partially_adopted + not_adopted
-    pending = max(total_tracked - known_count, 0)
-
-    # Rate is over KNOWN evidence only -- never counting pending rows as
-    # "observed and not adopted". An all-pending portfolio (the current state of
-    # this extract) reports None, not a fabricated 0%.
-    adoption_rate = round((adopted + partially_adopted) / known_count * 100, 1) if known_count > 0 else None
+    # The rate and the card's count are the formulas in force (the built-in ones unless somebody edited them
+    # on the Calculation page). A formula that cannot be worked out -- by default, a rate with nothing known
+    # to divide by -- gives None, never a fabricated 0%: an all-pending portfolio must read "not yet measured".
+    formulas = load_active(session)
+    figures = {
+        "adopted": Decimal(adopted),
+        "partially_adopted": Decimal(partially_adopted),
+        "not_adopted": Decimal(not_adopted),
+        "pending": Decimal(pending),
+        "tracked": Decimal(counts.tracked),
+    }
+    rate = evaluate(formulas.parsed["adoption_rate"], figures)
+    adoption_rate = round(float(rate * 100), 1) if isinstance(rate, Decimal) else None
+    card = evaluate(formulas.parsed["adopted_card"], figures)
+    counted_as_adopted = int(round(card)) if isinstance(card, Decimal) else None
 
     return AdoptionSummary(
-        total_evaluated=total_tracked,
+        total_evaluated=counts.tracked,
         by_status=[
             AdoptionStatusCount(status="ADOPTED", count=adopted),
             AdoptionStatusCount(status="PARTIALLY_ADOPTED", count=partially_adopted),
@@ -427,4 +477,5 @@ def get_adoption_summary(
         not_adopted_count=not_adopted,
         unknown_count=pending,
         adoption_rate_percentage=adoption_rate,
+        counted_as_adopted=counted_as_adopted,
     )
