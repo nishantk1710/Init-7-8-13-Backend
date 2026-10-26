@@ -1,12 +1,15 @@
-"""User-excluded donors: loading them, applying them, and finding the targets that are out of date.
+"""User-removed similar materials: loading them, applying them, finding the targets they touch.
 
-An exclusion removes ONE donor from ONE target's neighbour selection (``i7_oar_donor_exclusion``). It
-changes nothing about how a donor is scored or ranked: ``oar.service.finalise_target`` calls
-:func:`filter_scored` on the scored candidates it was given, before ``ranking.select_top_k``, so the
-next-best donor that was already scored takes the freed slot. Order and scores of the survivors are
-untouched.
+A removal takes ONE donor out of ONE target's similar materials (``i7_oar_donor_exclusion``) and **nothing
+takes its place**. The run selects its top-K exactly as it always did; :func:`split_excluded` then sets the
+removed ones aside, and the estimate, the confidence and the best similarity are built from the rest. A
+target that had five and lost one has four, which is what the reviewer saw when they removed it.
 
-Everything here is either a pure function or a read; the writes (add, restore) belong to
+Why after the top-K and not before: leaving the donor out of the candidates first would let the sixth-best
+candidate fill the slot -- a material the reviewer never looked at, chosen quietly. Setting it aside after
+the cut keeps the list the reviewer judged and removes only what they removed.
+
+Everything here is a pure function or a read. The writes (add, restore) belong to
 ``recommendations.oar_exclusions`` because they also have to refresh the recommendation.
 """
 
@@ -16,7 +19,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from app.models.i7_oar import OarDonorExclusion, OarNeighbour, OarTargetResult
+from app.models.i7_oar import OarDonorExclusion
 
 TargetKey = tuple[str, str]
 """``(sap_material_number, sap_plant_code)`` of a target."""
@@ -27,17 +30,19 @@ DonorKey = tuple[str, str]
 NO_EXCLUSIONS: frozenset[DonorKey] = frozenset()
 
 
-def filter_scored(scored: Sequence, excluded: Iterable[DonorKey]) -> list:
-    """The scored entries whose donor is not excluded, in their original order.
+def split_excluded(neighbours: Sequence, excluded: Iterable[DonorKey]) -> tuple[list, list]:
+    """``(kept, left_out)``: the ranked neighbours split by whether a user removed them.
 
-    An entry is ``(material, plant, score, same_circuit, extra)`` (``ranking.ScoredEntry``); only the
-    first two fields are read. Nothing is rescored or reordered, and an empty ``excluded`` returns an
-    equal list.
+    Order, rank and scores of every neighbour are untouched -- a neighbour is either in one list or the
+    other, never rebuilt -- and an empty ``excluded`` returns everything as ``kept``.
     """
     blocked = frozenset(excluded)
     if not blocked:
-        return list(scored)
-    return [entry for entry in scored if (entry[0], entry[1]) not in blocked]
+        return list(neighbours), []
+    kept, left_out = [], []
+    for neighbour in neighbours:
+        (left_out if (neighbour.material, neighbour.plant) in blocked else kept).append(neighbour)
+    return kept, left_out
 
 
 def load_active(session: Session) -> dict[TargetKey, frozenset[DonorKey]]:
@@ -79,60 +84,20 @@ def active_for_target(session: Session, material: str, plant: str) -> frozenset[
     return load_active_for(session, [(material, plant)]).get((material, plant), NO_EXCLUSIONS)
 
 
-def stale_targets(session: Session, oar_run_id: int) -> list[TargetKey]:
-    """Targets of this run whose stored selection no longer reflects their exclusions.
+def targets_with_exclusions(session: Session) -> list[TargetKey]:
+    """Every target that has ever had a similar material removed, active or since restored.
 
-    Two ways a target is stale, both cheap to see:
-
-    * an ACTIVE exclusion still names one of the donors stored as that target's neighbour -- the run
-      predates the decision, or was written without it;
-    * an exclusion was created or restored after the target's result was written
-      (``i7_oar_target.generated_at``) -- covers a restore, which leaves nothing to spot in the
-      neighbour rows. Compared in SQL, both sides stamped by the database clock.
-
-    Only targets that have an exclusion at all are ever candidates, so an unchanged population costs
-    two small queries.
+    Restored ones are included on purpose: a restore leaves the target needing a recalculation just as a
+    removal does. The list is as long as the number of materials a person has edited -- tens, not tens of
+    thousands -- so recalculating all of them from stored rows is cheap.
     """
-    stale: set[TargetKey] = set()
-
-    still_listed = session.execute(
-        select(OarDonorExclusion.sap_material_number, OarDonorExclusion.sap_plant_code)
-        .join(
-            OarNeighbour,
-            and_(
-                OarNeighbour.oar_run_id == oar_run_id,
-                OarNeighbour.sap_material_number == OarDonorExclusion.sap_material_number,
-                OarNeighbour.sap_plant_code == OarDonorExclusion.sap_plant_code,
-                OarNeighbour.neighbour_material == OarDonorExclusion.donor_material,
-                OarNeighbour.neighbour_plant == OarDonorExclusion.donor_plant,
-            ),
+    return sorted(
+        set(
+            session.execute(
+                select(OarDonorExclusion.sap_material_number, OarDonorExclusion.sap_plant_code)
+            ).all()
         )
-        .where(OarDonorExclusion.active_slot == OarDonorExclusion.ACTIVE_SLOT)
-        .distinct()
     )
-    stale.update((material, plant) for material, plant in still_listed)
-
-    changed_since = session.execute(
-        select(OarDonorExclusion.sap_material_number, OarDonorExclusion.sap_plant_code)
-        .join(
-            OarTargetResult,
-            and_(
-                OarTargetResult.oar_run_id == oar_run_id,
-                OarTargetResult.sap_material_number == OarDonorExclusion.sap_material_number,
-                OarTargetResult.sap_plant_code == OarDonorExclusion.sap_plant_code,
-            ),
-        )
-        .where(
-            or_(
-                OarDonorExclusion.created_at > OarTargetResult.generated_at,
-                OarDonorExclusion.restored_at > OarTargetResult.generated_at,
-            )
-        )
-        .distinct()
-    )
-    stale.update((material, plant) for material, plant in changed_since)
-
-    return sorted(stale)
 
 
 def excluded_for(

@@ -1,13 +1,16 @@
 """A user removes a similar material from one target: persistence, builds, recalculation, approval.
 
-Runs the real pipeline (``run_oar_similarity`` -> engine -> ``finalise_target``), the real single-target
-refresh and the real recommendation builder on in-memory SQLite. Only the feature-store readers that
-feed the *population* are replaced with fixtures (as in ``test_oar_run.py``) and the embedding model
-with a deterministic fake.
+Removing one of five leaves four -- nothing takes its place. The figures are recalculated from the
+similar materials that remain, by the unchanged estimator, from the neighbours the run already stored.
 
-What is held fixed throughout: the estimator, scoring and ranking are never reimplemented here -- the
-expected answers come from calling ``service.evaluate_target`` (the exhaustive reference) with the same
-exclusion, so a test can only pass if the refresh and the batch path agree with the unchanged pipeline.
+Runs the real pipeline (``run_oar_similarity`` -> engine -> ``finalise_target``), the real recalculation and
+the real recommendation builder on in-memory SQLite. Only the feature-store readers that feed the
+*population* are replaced with fixtures (as in ``test_oar_run.py``) and the embedding model with a
+deterministic fake.
+
+The expected answers are never reimplemented here: they come from calling ``service.evaluate_target`` (the
+exhaustive reference) with the same exclusion, so a test can only pass if the recalculation done at
+click time agrees with what a full run produces for the same removal.
 """
 
 from __future__ import annotations
@@ -25,11 +28,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.core.config as config_module
-from app.api.i7.recommendations import get_embedding_provider
 from app.core.ai import AIError
 from app.core.config import Settings
 from app.core.db import get_db
-from app.initiatives.i7.oar import exclusions, refresh, repository, service
+from app.initiatives.i7.oar import exclusions, recalculate, repository, service
 from app.initiatives.i7.oar.retrieval import RetrievalConfig
 from app.initiatives.i7.oar.text_similarity import PrecomputedEmbeddingProvider
 from app.initiatives.i7.oar.types import CandidateAttributes, EstimateStatus
@@ -72,6 +74,7 @@ TWO_STAGE = dict(
     i7_oar_fused_pool=15,
     i7_oar_exhaustive_below=0,
 )
+TOP_K = POLICY.similarity.maximum_neighbours
 
 
 class FakeProvider:
@@ -103,7 +106,7 @@ def _attributes(rng: random.Random, number: str, donor: bool, *, uniform: bool =
     )
 
 
-def build_world(monkeypatch, *, donors: int, targets: int, uniform: bool = False, settings_overrides=None):
+def build_world(monkeypatch, *, donors: int, targets: int, uniform: bool = False):
     rng = random.Random(7)
     donor_rows = [_attributes(rng, f"D{i:04d}", True, uniform=uniform) for i in range(donors)]
     target_rows = [_attributes(rng, f"T{i:04d}", False, uniform=uniform) for i in range(targets)]
@@ -136,21 +139,12 @@ def build_world(monkeypatch, *, donors: int, targets: int, uniform: bool = False
         copy.create(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
 
-    settings = Settings(**(settings_overrides or TWO_STAGE))
-    for module in (service, refresh):
-        monkeypatch.setattr(module, "get_sessionmaker", lambda: factory)
+    settings = Settings(**TWO_STAGE)
+    monkeypatch.setattr(service, "get_sessionmaker", lambda: factory)
     monkeypatch.setattr(repository, "load_targets", lambda session: target_rows)
-    monkeypatch.setattr(
-        repository,
-        "load_targets_for",
-        lambda session, keys: [
-            t for t in target_rows if (t.sap_material_number, t.sap_plant_code) in set(keys)
-        ],
-    )
     monkeypatch.setattr(repository, "load_candidate_population", lambda session: donor_rows)
     monkeypatch.setattr(repository, "load_inventory_values", lambda session: inventory)
     monkeypatch.setattr(config_module, "get_settings", lambda: settings)
-    monkeypatch.setattr(oar_exclusions, "get_settings", lambda: settings)
 
     real_load_oar_inputs = recommendation_repository.load_oar_inputs
 
@@ -190,6 +184,7 @@ def world(monkeypatch):
 
 
 def _neighbours(factory, run_id, target):
+    """Every neighbour row the run stored for the target -- removed ones included -- best first."""
     with factory() as session:
         rows = session.execute(
             select(OarNeighbour)
@@ -208,7 +203,7 @@ def _target_row(factory, run_id, target):
         ).scalar_one()
         return (
             row.neighbour_count, row.estimate_status, row.safety_stock, row.rop, row.max_stock,
-            row.best_similarity,
+            row.best_similarity, row.confidence,
         )
 
 
@@ -222,7 +217,7 @@ def _all_other_rows(factory, run_id, skip):
     return {t: (_neighbours(factory, run_id, t), _target_row(factory, run_id, t)) for t in targets}
 
 
-def _pick_target(factory, run_id, *, at_least=5):
+def _pick_target(factory, run_id, *, at_least=TOP_K):
     with factory() as session:
         counts = session.execute(
             select(OarTargetResult.sap_material_number, OarTargetResult.neighbour_count)
@@ -276,8 +271,8 @@ def _recommendation(factory, recommendation_id):
         ).scalar_one()
 
 
-def _run(provider=None, **kwargs):
-    return service.run_oar_similarity(POLICY, provider=provider or FakeProvider(), **kwargs)
+def _run(**kwargs):
+    return service.run_oar_similarity(POLICY, provider=FakeProvider(), **kwargs)
 
 
 def _reference(world_, target_id, excluded):
@@ -294,6 +289,12 @@ def _reference(world_, target_id, excluded):
     )
 
 
+def _as_stored(score):
+    """A similarity as the database holds it: ``i7_oar_target.best_similarity`` is NUMERIC(9, 6), while a
+    pipeline result carries the full-precision value."""
+    return score.quantize(Decimal("0.000001"))
+
+
 def _exclude(world_, recommendation_id, donor, **kwargs):
     factory = world_[0]
     with factory() as session:
@@ -301,8 +302,7 @@ def _exclude(world_, recommendation_id, donor, **kwargs):
             select(Recommendation).where(Recommendation.recommendation_id == recommendation_id)
         ).scalar_one()
         return oar_exclusions.exclude_donor(
-            session, row, donor, "1300", actor_id=kwargs.pop("actor_id", "tester"),
-            provider=FakeProvider(), policy=POLICY, **kwargs,
+            session, row, donor, "1300", actor_id=kwargs.pop("actor_id", "tester"), policy=POLICY, **kwargs,
         )
 
 
@@ -312,22 +312,22 @@ def _restore(world_, recommendation_id, donor, actor_id="tester"):
         row = session.execute(
             select(Recommendation).where(Recommendation.recommendation_id == recommendation_id)
         ).scalar_one()
-        return oar_exclusions.restore_donor(
-            session, row, donor, "1300", actor_id=actor_id, provider=FakeProvider(), policy=POLICY
-        )
+        return oar_exclusions.restore_donor(session, row, donor, "1300", actor_id=actor_id, policy=POLICY)
 
 
-# --- The pure filter ---------------------------------------------------------------------------
+# --- The pure split ----------------------------------------------------------------------------
 
 
-def test_filter_scored_keeps_order_and_scores_and_drops_only_the_excluded_donor():
-    entries = [("A", "1", "score-a", None, {}), ("B", "1", "score-b", None, {}), ("C", "2", "score-c", None, {})]
-    kept = exclusions.filter_scored(entries, {("B", "1")})
-    assert kept == [entries[0], entries[2]]
-    assert kept[0] is entries[0]  # the very same entry, not rebuilt
-    assert exclusions.filter_scored(entries, set()) == entries
-    # only the exact material AND plant is dropped
-    assert exclusions.filter_scored(entries, {("C", "1")}) == entries
+def test_split_excluded_keeps_order_rank_and_scores_and_never_rebuilds_a_neighbour():
+    items = [SimpleNamespace(material=m, plant="1", rank=r) for r, m in enumerate("ABCD", start=1)]
+    kept, left_out = exclusions.split_excluded(items, {("B", "1")})
+    assert [n.material for n in kept] == ["A", "C", "D"]
+    assert [n.rank for n in kept] == [1, 3, 4]  # no renumbering: a rank is what the run gave it
+    assert [n.material for n in left_out] == ["B"]
+    assert kept[0] is items[0] and left_out[0] is items[1]  # the very same objects
+    assert exclusions.split_excluded(items, set()) == (items, [])
+    # only the exact material AND plant is set aside
+    assert exclusions.split_excluded(items, {("B", "2")})[1] == []
 
 
 # --- Persistence -------------------------------------------------------------------------------
@@ -347,35 +347,54 @@ def test_only_one_active_exclusion_per_target_and_donor_but_history_may_repeat(w
     with factory() as session:
         assert session.execute(select(func.count()).select_from(OarDonorExclusion)).scalar() == 2
         assert exclusions.load_active(session) == {("T0000", "1300"): frozenset({("D0001", "1300")})}
+        assert exclusions.targets_with_exclusions(session) == [("T0000", "1300")]
 
 
-# --- Future builds -----------------------------------------------------------------------------
+# --- Builds: the removed one is kept out and nothing takes its place -----------------------------
 
 
-def test_a_new_run_leaves_the_donor_out_and_the_next_best_takes_the_slot(world):
+def test_a_new_run_stores_the_removed_one_but_does_not_count_it_and_does_not_backfill(world):
     factory = world[0]
     first = _run()
     target = _pick_target(factory, first.run_id)
     before = _neighbours(factory, first.run_id, target)
+    assert len(before) == TOP_K
     removed = before[1][0]  # not the top one, so the rest keep their relative order
     _exclude_directly(factory, target, removed)
 
     second = _run(force=True)
 
-    after = _neighbours(factory, second.run_id, target)
     assert second.run_id != first.run_id
-    assert removed not in [n[0] for n in after]
-    assert len(after) == len(before)  # a replacement filled the slot
-    assert [n[0] for n in after if n[0] in {b[0] for b in before}] == [
-        b[0] for b in before if b[0] != removed
-    ]  # survivors keep their order
-    replacement = next(n for n in after if n[0] not in {b[0] for b in before})
-    assert replacement[3] <= min(b[3] for b in before)  # it was ranked below every original neighbour
+    # the run selected the same top-K it always does, and stored all of it
+    assert _neighbours(factory, second.run_id, target) == before
+    # but only four are counted -- nobody was brought in to replace the removed one
+    stored = _target_row(factory, second.run_id, target)
+    assert stored[0] == TOP_K - 1
+    reference = _reference(world, target, {(removed, "1300")})
+    assert [n.material for n in reference.neighbours] == [b[0] for b in before if b[0] != removed]
+    assert [n.rank for n in reference.neighbours] == [b[2] for b in before if b[0] != removed]
+    assert stored[1:5] == (
+        reference.estimate.status.value, reference.estimate.safety_stock, reference.estimate.rop,
+        reference.estimate.max_stock,
+    )
+    assert stored[5] == _as_stored(reference.best_similarity) and stored[6] == reference.confidence.value
     # nobody else's result moved
     assert _all_other_rows(factory, second.run_id, target) == _all_other_rows(factory, first.run_id, target)
 
 
-def test_exhaustive_and_two_stage_builds_apply_the_exclusion_identically(world):
+def test_removing_the_top_donor_moves_the_best_similarity_down_to_the_next_one(world):
+    factory = world[0]
+    first = _run()
+    target = _pick_target(factory, first.run_id)
+    before = _neighbours(factory, first.run_id, target)
+    _exclude_directly(factory, target, before[0][0])
+
+    second = _run(force=True)
+
+    assert _target_row(factory, second.run_id, target)[5] == before[1][3]
+
+
+def test_exhaustive_and_two_stage_builds_apply_the_removal_identically(world):
     factory = world[0]
     first = _run()
     target = _pick_target(factory, first.run_id)
@@ -388,72 +407,41 @@ def test_exhaustive_and_two_stage_builds_apply_the_exclusion_identically(world):
     assert _target_row(factory, two_stage.run_id, target) == _target_row(factory, exhaustive.run_id, target)
 
 
-def test_a_reused_run_is_brought_up_to_date_for_the_excluded_target_only(world):
+def test_a_reused_run_is_brought_up_to_date_for_the_removed_target_only(world):
     factory = world[0]
     first = _run()
     target = _pick_target(factory, first.run_id)
     before = _neighbours(factory, first.run_id, target)
-    removed = before[0][0]
     others = _all_other_rows(factory, first.run_id, target)
-    _exclude_directly(factory, target, removed)  # saved after the run, run inputs unchanged
+    _exclude_directly(factory, target, before[0][0])  # saved after the run, run inputs unchanged
 
     again = _run()
 
     assert again.reused_existing is True and again.run_id == first.run_id
     assert again.refreshed_targets == 1
-    after = _neighbours(factory, first.run_id, target)
-    assert removed not in [n[0] for n in after]
-    assert len(after) == len(before)
+    assert _neighbours(factory, first.run_id, target) == before  # the stored rows are never touched
+    assert _target_row(factory, first.run_id, target)[0] == TOP_K - 1
     assert _all_other_rows(factory, first.run_id, target) == others
     assert _run().refreshed_targets == 0  # and it is not redone every time
 
 
-def test_a_fresh_run_and_a_reused_run_give_the_same_target_result(world):
+def test_a_reused_run_and_a_fresh_run_give_the_same_figures(world):
     factory = world[0]
     first = _run()
     target = _pick_target(factory, first.run_id)
-    removed = _neighbours(factory, first.run_id, target)[0][0]
-    _exclude_directly(factory, target, removed)
+    _exclude_directly(factory, target, _neighbours(factory, first.run_id, target)[1][0])
 
-    _run()  # reused + refreshed in place
-    refreshed = (_neighbours(factory, first.run_id, target), _target_row(factory, first.run_id, target))
+    _run()  # reused, recalculated in place from the stored rows
+    recalculated = _target_row(factory, first.run_id, target)
     fresh = _run(force=True)
 
-    assert refreshed == (_neighbours(factory, fresh.run_id, target), _target_row(factory, fresh.run_id, target))
-
-
-def test_the_refresh_falls_back_to_exhaustive_scoring_when_the_shortlist_runs_dry(monkeypatch):
-    tiny = dict(TWO_STAGE, i7_oar_structured_pool=1, i7_oar_semantic_pool=1, i7_oar_fused_pool=5)
-    world_ = build_world(monkeypatch, donors=120, targets=9, settings_overrides=tiny)
-    factory, _, _, _, settings = world_
-    first = _run()
-    target = _pick_target(factory, first.run_id)
-    # three of the five winners: the five-donor shortlist cannot refill the list from what it scored
-    removed_donors = {(n[0], "1300") for n in _neighbours(factory, first.run_id, target)[:3]}
-
-    with factory() as session:
-        run = session.get(OarRun, first.run_id)
-        results = refresh.compute(
-            session, run, {(target, "1300"): frozenset(removed_donors)},
-            policy=POLICY, provider=FakeProvider(), config=RetrievalConfig.from_settings(settings),
-            settings=settings,
-        )
-    result = results[(target, "1300")]
-
-    assert result.used_exhaustive_fallback is True
-    assert not removed_donors & {(n.material, n.plant) for n in result.outcome.neighbours}
-    assert len(result.outcome.neighbours) == POLICY.similarity.maximum_neighbours
-    reference = _reference(world_, target, removed_donors)
-    assert [(n.material, n.rank) for n in result.outcome.neighbours] == [
-        (n.material, n.rank) for n in reference.neighbours
-    ]
-    assert result.outcome.estimate == reference.estimate
+    assert recalculated == _target_row(factory, fresh.run_id, target)
 
 
 # --- Remove / restore, recalculation -----------------------------------------------------------
 
 
-def test_removing_a_donor_reselects_neighbours_and_recalculates_with_the_unchanged_estimator(world):
+def test_removing_recalculates_from_the_rest_and_matches_what_a_full_run_produces(world):
     factory = world[0]
     first = _run()
     target = _pick_target(factory, first.run_id)
@@ -466,22 +454,23 @@ def test_removing_a_donor_reselects_neighbours_and_recalculates_with_the_unchang
     outcome = _exclude(world, recommendation_id, removed, reason="not comparable")
 
     reference = _reference(world, target, {(removed, "1300")})
-    after = _neighbours(factory, first.run_id, target)
-    assert [(m, p) for m, p, *_ in after] == [(n.material, n.plant) for n in reference.neighbours]
-    assert removed not in [n[0] for n in after] and len(after) == len(before)
-    # the stored target result is exactly what the unchanged estimator returns for those neighbours
+    # the stored neighbour rows are exactly what they were: a removal changes nothing in them
+    assert _neighbours(factory, first.run_id, target) == before
+    # and the figures are what the unchanged pipeline gives for the same four
     stored = _target_row(factory, first.run_id, target)
+    assert stored[0] == TOP_K - 1
     assert stored[1] == reference.estimate.status.value == "SUCCESS"
     assert stored[2:5] == (
         reference.estimate.safety_stock, reference.estimate.rop, reference.estimate.max_stock
     )
+    assert stored[5] == _as_stored(reference.best_similarity) and stored[6] == reference.confidence.value
     # the recommendation follows, with its workflow state and lineage untouched
     row = _recommendation(factory, recommendation_id)
     assert (row.recommended_safety_stock, row.recommended_rop, row.recommended_max_stock) == (
         Decimal(reference.estimate.safety_stock), Decimal(reference.estimate.rop),
         Decimal(reference.estimate.max_stock),
     )
-    assert row.oar_neighbour_count == len(after)
+    assert row.oar_neighbour_count == TOP_K - 1
     assert (row.status, row.chain_index, row.oar_run_id, row.feature_run_id) == (
         old.status, old.chain_index, old.oar_run_id, old.feature_run_id
     )
@@ -504,7 +493,56 @@ def test_removing_a_donor_reselects_neighbours_and_recalculates_with_the_unchang
     assert _all_other_rows(factory, first.run_id, target) == others  # no other target moved
 
 
-def test_the_same_donor_stays_eligible_for_a_different_target(world):
+def test_removing_needs_no_scoring_and_no_embedding_model(world, monkeypatch):
+    factory = world[0]
+    first = _run()
+    target = _pick_target(factory, first.run_id)
+    recommendation_id = _seed_recommendation(factory, first.run_id, target)
+
+    def scoring_must_not_run(*args, **kwargs):
+        raise AssertionError("removing a similar material must not score or embed anything")
+
+    monkeypatch.setattr(service, "prepare_embeddings", scoring_must_not_run)
+    monkeypatch.setattr(service, "evaluate_target", scoring_must_not_run)
+    monkeypatch.setattr(repository, "load_candidate_population", scoring_must_not_run)
+
+    _exclude(world, recommendation_id, _neighbours(factory, first.run_id, target)[0][0])
+
+    assert _target_row(factory, first.run_id, target)[0] == TOP_K - 1
+
+
+def test_it_works_on_a_run_made_by_an_older_algorithm_version(world):
+    factory = world[0]
+    first = _run()
+    target = _pick_target(factory, first.run_id)
+    recommendation_id = _seed_recommendation(factory, first.run_id, target)
+    with factory() as session:
+        session.get(OarRun, first.run_id).algorithm_version = "oar-similarity-old"
+        session.commit()
+
+    _exclude(world, recommendation_id, _neighbours(factory, first.run_id, target)[0][0])
+
+    assert _target_row(factory, first.run_id, target)[0] == TOP_K - 1
+
+
+def test_a_run_made_under_a_different_policy_is_refused_and_nothing_is_saved(world):
+    factory = world[0]
+    first = _run()
+    target = _pick_target(factory, first.run_id)
+    recommendation_id = _seed_recommendation(factory, first.run_id, target)
+    with factory() as session:
+        session.get(OarRun, first.run_id).policy_version = 999
+        session.commit()
+
+    with pytest.raises(oar_exclusions.OarExclusionError) as refused:
+        _exclude(world, recommendation_id, _neighbours(factory, first.run_id, target)[0][0])
+
+    assert (refused.value.status_code, refused.value.code) == (409, "OAR_RUN_NOT_CURRENT")
+    with factory() as session:
+        assert session.execute(select(func.count()).select_from(OarDonorExclusion)).scalar() == 0
+
+
+def test_the_same_donor_stays_counted_for_a_different_target(world):
     factory = world[0]
     first = _run()
     with factory() as session:
@@ -524,16 +562,11 @@ def test_the_same_donor_stays_eligible_for_a_different_target(world):
 
     second = _run(force=True)
 
-    with factory() as session:
-        sharing = set(
-            session.execute(
-                select(OarNeighbour.sap_material_number).where(
-                    OarNeighbour.oar_run_id == second.run_id, OarNeighbour.neighbour_material == donor
-                )
-            ).scalars()
-        )
-    assert excluded_for not in sharing  # gone from the target it was removed from
-    assert still_served in sharing  # and still lent to the other one
+    # stored for both (the run selected it for both), but counted only for the one it was not removed from
+    reference_other = _reference(world, still_served, set())
+    assert donor in [n.material for n in reference_other.neighbours]
+    assert _target_row(factory, second.run_id, still_served) == _target_row(factory, first.run_id, still_served)
+    assert _target_row(factory, second.run_id, excluded_for)[0] == len(_neighbours(factory, first.run_id, excluded_for)) - 1
 
 
 def test_removing_twice_is_refused_and_creates_no_second_row(world):
@@ -552,7 +585,7 @@ def test_removing_twice_is_refused_and_creates_no_second_row(world):
         assert session.execute(select(func.count()).select_from(OarDonorExclusion)).scalar() == 1
 
 
-def test_a_donor_that_is_not_a_neighbour_cannot_be_removed(world):
+def test_a_material_that_is_not_one_of_the_similar_materials_cannot_be_removed(world):
     factory = world[0]
     first = _run()
     target = _pick_target(factory, first.run_id)
@@ -566,13 +599,14 @@ def test_a_donor_that_is_not_a_neighbour_cannot_be_removed(world):
     assert (refused.value.status_code, refused.value.code) == (404, "DONOR_NOT_A_NEIGHBOUR")
 
 
-def test_restoring_keeps_the_audit_row_and_puts_the_donor_back_where_the_ranking_says(world):
+def test_restoring_counts_it_again_at_its_old_rank_and_keeps_the_audit_row(world):
     factory = world[0]
     first = _run()
     target = _pick_target(factory, first.run_id)
     recommendation_id = _seed_recommendation(factory, first.run_id, target)
     original = _neighbours(factory, first.run_id, target)
     original_target = _target_row(factory, first.run_id, target)
+    original_recommendation = _recommendation(factory, recommendation_id)
     removed = original[0][0]
     _exclude(world, recommendation_id, removed)
 
@@ -586,6 +620,8 @@ def test_restoring_keeps_the_audit_row_and_puts_the_donor_back_where_the_ranking
         assert row.restored_by == "restorer" and row.restored_at is not None and row.created_by == "tester"
         assert exclusions.load_active(session) == {}
     recommendation = _recommendation(factory, recommendation_id)
+    assert recommendation.recommended_rop == original_recommendation.recommended_rop
+    assert recommendation.oar_neighbour_count == TOP_K
     assert recommendation.current_version == 3  # removed, then restored: each is a recorded change
     # and it can be removed again: a second history row, a new active one
     _exclude(world, recommendation_id, removed)
@@ -608,48 +644,49 @@ def test_restoring_something_that_is_not_excluded_is_refused(world):
 # --- Minimum neighbours ------------------------------------------------------------------------
 
 
-def test_a_removal_that_would_leave_too_few_donors_is_refused_and_saves_nothing(monkeypatch):
-    world_ = build_world(monkeypatch, donors=2, targets=1, uniform=True)
-    factory = world_[0]
+def test_removal_stops_at_the_minimum_and_the_refusal_saves_nothing(world):
+    factory = world[0]
     first = _run()
-    target = "T0000"
-    assert _target_row(factory, first.run_id, target)[0] == 2, "fixture must give exactly two donors"
+    target = _pick_target(factory, first.run_id)
     recommendation_id = _seed_recommendation(factory, first.run_id, target)
-    neighbours_before = _neighbours(factory, first.run_id, target)
-    target_before = _target_row(factory, first.run_id, target)
-    recommendation_before = _recommendation(factory, recommendation_id)
+    minimum = POLICY.similarity.minimum_neighbours
+    donors = [n[0] for n in _neighbours(factory, first.run_id, target)]
+
+    for donor in donors[: TOP_K - minimum]:  # five down to the minimum of two
+        _exclude(world, recommendation_id, donor)
+    assert _target_row(factory, first.run_id, target)[0] == minimum
+    at_minimum = (_target_row(factory, first.run_id, target), _recommendation(factory, recommendation_id))
 
     with pytest.raises(oar_exclusions.OarExclusionError) as refused:
-        _exclude(world_, recommendation_id, neighbours_before[0][0])
+        _exclude(world, recommendation_id, donors[TOP_K - minimum])
 
     error = refused.value
     assert (error.status_code, error.code) == (409, "INSUFFICIENT_NEIGHBOURS_AFTER_EXCLUSION")
-    assert error.details["minimum_neighbours"] == POLICY.similarity.minimum_neighbours == 2
-    assert error.details["remaining_neighbours"] == 1
+    assert error.details["minimum_neighbours"] == minimum == 2
+    assert error.details["remaining_neighbours"] == minimum - 1
     with factory() as session:
-        assert session.execute(select(func.count()).select_from(OarDonorExclusion)).scalar() == 0
-        assert session.execute(select(func.count()).select_from(RecommendationVersion)).scalar() == 0
-    assert _neighbours(factory, first.run_id, target) == neighbours_before
-    assert _target_row(factory, first.run_id, target) == target_before
+        assert session.execute(select(func.count()).select_from(OarDonorExclusion)).scalar() == TOP_K - minimum
+    assert _target_row(factory, first.run_id, target) == at_minimum[0]
     after = _recommendation(factory, recommendation_id)
     assert (after.recommended_rop, after.current_version, after.status) == (
-        recommendation_before.recommended_rop, recommendation_before.current_version,
-        recommendation_before.status,
+        at_minimum[1].recommended_rop, at_minimum[1].current_version, at_minimum[1].status
     )
 
 
-def test_a_later_build_with_too_few_donors_left_reports_the_existing_not_evaluable_status(monkeypatch):
+def test_a_later_build_with_too_few_left_reports_the_existing_not_evaluable_status(monkeypatch):
     world_ = build_world(monkeypatch, donors=2, targets=1, uniform=True)
     factory = world_[0]
     first = _run()
+    assert _target_row(factory, first.run_id, "T0000")[0] == 2, "fixture must give exactly two donors"
     _exclude_directly(factory, "T0000", _neighbours(factory, first.run_id, "T0000")[0][0])
 
     second = _run(force=True)
 
     row = _target_row(factory, second.run_id, "T0000")
-    assert row[0] == 1  # the excluded donor is not used to make up the number
+    assert row[0] == 1  # one is counted; the removed one is not replaced and not used to make up the number
     assert row[1] == EstimateStatus.NOT_EVALUABLE_INSUFFICIENT_NEIGHBOURS.value
     assert row[2:5] == (None, None, None)  # nothing fabricated
+    assert len(_neighbours(factory, second.run_id, "T0000")) == 2  # both still stored
 
 
 # --- Approval protection -----------------------------------------------------------------------
@@ -686,10 +723,10 @@ def test_a_recommendation_sent_back_for_rework_may_be_changed_and_stays_sent_bac
     assert _recommendation(factory, recommendation_id).status == "SENT_BACK"
 
 
-# --- The generation run ------------------------------------------------------------------------
+# --- The generation step -----------------------------------------------------------------------
 
 
-def test_generating_recommendations_honours_an_exclusion_saved_after_the_run(world):
+def test_generating_recommendations_honours_a_removal_saved_after_the_run(world):
     factory = world[0]
     first = _run()
     target = _pick_target(factory, first.run_id)
@@ -699,17 +736,14 @@ def test_generating_recommendations_honours_an_exclusion_saved_after_the_run(wor
     _exclude_directly(factory, target, removed)  # saved by something other than the API
 
     with factory() as session:
-        oar_exclusions.apply_exclusions_before_generation(
-            session, first.run_id, POLICY, provider=FakeProvider()
-        )
+        oar_exclusions.apply_exclusions_before_generation(session, first.run_id, POLICY)
 
     reference = _reference(world, target, {(removed, "1300")})
-    assert removed not in [n[0] for n in _neighbours(factory, first.run_id, target)]
     row = _recommendation(factory, open_id)
     assert row.recommended_rop == Decimal(reference.estimate.rop)
-    assert row.oar_neighbour_count == len(reference.neighbours)
+    assert row.oar_neighbour_count == TOP_K - 1
     assert row.current_version == old.current_version + 1
-    # the top donor is gone, so the best similarity the recommendation reports has moved with it
+    # the top donor is not counted, so the best similarity the recommendation reports has moved with it
     assert row.oar_best_similarity != old.oar_best_similarity
 
 
@@ -722,9 +756,7 @@ def test_generation_leaves_a_submitted_recommendation_alone(world):
     _exclude_directly(factory, target, _neighbours(factory, first.run_id, target)[0][0])
 
     with factory() as session:
-        oar_exclusions.apply_exclusions_before_generation(
-            session, first.run_id, POLICY, provider=FakeProvider()
-        )
+        oar_exclusions.apply_exclusions_before_generation(session, first.run_id, POLICY)
 
     row = _recommendation(factory, approved_id)
     assert (row.recommended_rop, row.recommended_safety_stock, row.current_version, row.status) == (
@@ -732,19 +764,15 @@ def test_generation_leaves_a_submitted_recommendation_alone(world):
     )
 
 
-def test_a_refresh_is_refused_when_the_run_is_no_longer_the_current_one(world):
-    factory, _, _, _, settings = world
+def test_applying_removals_twice_changes_nothing_the_second_time(world):
+    factory = world[0]
     first = _run()
     target = _pick_target(factory, first.run_id)
+    _exclude_directly(factory, target, _neighbours(factory, first.run_id, target)[0][0])
     with factory() as session:
-        session.add(FeatureBuildRun(status="succeeded", policy_id="p", policy_version=1))
-        session.commit()
-        run = session.get(OarRun, first.run_id)
-        with pytest.raises(refresh.RunNotCurrentError, match="newer feature run"):
-            refresh.compute(
-                session, run, {(target, "1300"): frozenset()}, policy=POLICY, provider=FakeProvider(),
-                config=RetrievalConfig.from_settings(settings), settings=settings,
-            )
+        assert recalculate.apply_to_run(session, first.run_id, POLICY) == 1
+    with factory() as session:
+        assert recalculate.apply_to_run(session, first.run_id, POLICY) == 0
 
 
 # --- The API -----------------------------------------------------------------------------------
@@ -759,16 +787,14 @@ def client(world):
             yield session
 
     app.dependency_overrides[get_db] = _session
-    app.dependency_overrides[get_embedding_provider] = lambda: FakeProvider()
     # the API builds its policy the way a run does; the fixture's matrix is what the run used
-    monkeypatch_policy = oar_exclusions._default_policy
+    original_policy = oar_exclusions._default_policy
     oar_exclusions._default_policy = lambda: POLICY
     try:
         yield TestClient(app)
     finally:
-        oar_exclusions._default_policy = monkeypatch_policy
+        oar_exclusions._default_policy = original_policy
         app.dependency_overrides.pop(get_db, None)
-        app.dependency_overrides.pop(get_embedding_provider, None)
 
 
 def test_the_api_takes_the_actor_from_the_request_identity_not_the_body(world, client):
@@ -776,7 +802,8 @@ def test_the_api_takes_the_actor_from_the_request_identity_not_the_body(world, c
     first = _run()
     target = _pick_target(factory, first.run_id)
     recommendation_id = _seed_recommendation(factory, first.run_id, target)
-    donor = _neighbours(factory, first.run_id, target)[0][0]
+    stored = _neighbours(factory, first.run_id, target)
+    donor = stored[1][0]
     url = f"/api/v1/i7/recommendations/{recommendation_id}/similar-materials/exclusions"
 
     smuggled = client.post(url, json={"donor_material": donor, "donor_plant": "1300", "actor_id": "mallory"})
@@ -793,8 +820,11 @@ def test_the_api_takes_the_actor_from_the_request_identity_not_the_body(world, c
     assert body["status"] == "READY_FOR_REVIEW" and body["current_version"] == 2
     similar = body["similar_materials"]
     assert donor not in [n["material"] for n in similar["neighbours"]]
-    assert [(e["material"], e["excluded_by"], e["reason"]) for e in similar["excluded"]] == [
-        (donor, "alice", "wrong part family")
+    # four are listed, numbered 1..4 in the order the run ranked them -- nothing was added
+    assert [n["material"] for n in similar["neighbours"]] == [s[0] for s in stored if s[0] != donor]
+    assert [n["rank"] for n in similar["neighbours"]] == list(range(1, TOP_K))
+    assert [(e["material"], e["rank"], e["excluded_by"], e["reason"]) for e in similar["excluded"]] == [
+        (donor, stored[1][2], "alice", "wrong part family")
     ]
     assert similar["can_edit"] is True and similar["minimum_neighbours"] == 2
 
@@ -805,8 +835,9 @@ def test_the_api_takes_the_actor_from_the_request_identity_not_the_body(world, c
         f"{url}/restore", json={"donor_material": donor, "donor_plant": "1300"}, headers={"X-Actor-Id": "bob"}
     )
     assert restored.status_code == 200, restored.text
-    assert donor in [n["material"] for n in restored.json()["similar_materials"]["neighbours"]]
-    assert restored.json()["similar_materials"]["excluded"] == []
+    back = restored.json()["similar_materials"]
+    assert [n["material"] for n in back["neighbours"]] == [s[0] for s in stored]
+    assert back["excluded"] == []
     with factory() as session:
         row = session.execute(select(OarDonorExclusion)).scalar_one()
         assert (row.created_by, row.restored_by) == ("alice", "bob")

@@ -206,15 +206,16 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
     ),
     ("/api/v1/i7/recommendations/{recommendation_id}/similar-materials/exclusions", "post"): (
         "Remove one similar material from an OAR recommendation's material -> "
-        "i7_oar_donor_exclusion, then re-selects that material's neighbours (i7_oar_neighbour, "
-        "i7_oar_target) and recalculates the i7_recommendation values, with an "
-        "i7_recommendation_version snapshot of the old ones. Only READY_FOR_REVIEW / SENT_BACK; "
-        "refused if too few similar materials would remain. Reads SAP-derived staging, calls no SAP API."
+        "i7_oar_donor_exclusion, then recalculates that material's figures from the similar materials "
+        "that remain (i7_oar_target; the stored i7_oar_neighbour rows are not changed) and the "
+        "i7_recommendation values, with an i7_recommendation_version snapshot of the old ones. Nothing "
+        "takes the removed material's place. Only READY_FOR_REVIEW / SENT_BACK; refused if too few "
+        "similar materials would remain. Calls no SAP API."
     ),
     ("/api/v1/i7/recommendations/{recommendation_id}/similar-materials/exclusions/restore", "post"): (
         "Restore a removed similar material -> i7_oar_donor_exclusion (the row is kept, marked "
-        "restored, never deleted -- hence a POST: the API has no DELETE), then the same re-selection "
-        "and recalculation as removing. Same approval states. Calls no SAP API."
+        "restored, never deleted -- hence a POST: the API has no DELETE), then the same recalculation "
+        "as removing, with the material counted again. Same approval states. Calls no SAP API."
     ),
     ("/api/v1/i7/reports/quarterly/generate", "post"): (
         "Generate (or regenerate) the I07 Quarterly Deep-Dive Report -> "

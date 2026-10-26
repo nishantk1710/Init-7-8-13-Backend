@@ -1,24 +1,23 @@
 """Removing a similar material from an OAR recommendation, and putting it back.
 
-A reviewer who does not want a donor counted for one target removes it. This module is the one place
-that decision is carried out, so the API, the generation run and the tests all go through the same code:
+A reviewer who does not want a similar material counted for one target removes it, and **nothing takes its
+place**: the reorder point, safety stock and max stock are recalculated from the ones that remain.
 
-    remove(D)  ->  re-select the target's neighbours without D (``oar.refresh``: the pipeline the run
-                   used, so the next-best donor takes D's slot)
+    remove(D)  ->  the target's stored neighbours minus the removed ones, through the unchanged estimator
                ->  refuse, saving nothing, if that does not leave an evaluable estimate
-               ->  one transaction: the exclusion row, the target's neighbour and result rows, and the
-                   recommendation's values
+               ->  one transaction: the exclusion row, the target's result row, the recommendation's values
 
-Nothing here scores or ranks anything. The estimate that comes back is ``estimate.calculate``'s, so the
-minimum-neighbour rule, the weighted median, the rounding and the max-stock floor are the ones every
-other OAR result went through. The Min-Max conversion decision is not touched either: it is read from
-the feature row by ``builder.build_oar_recommendation``, exactly as when the recommendation was made.
+Nothing here scores, ranks or searches anything (``oar.recalculate`` reads the neighbours the run stored),
+so it is immediate, needs no embedding model and works on a run of any algorithm version. The estimate
+that comes back is ``estimate.calculate``'s, so the minimum-neighbour rule, the weighted median, the
+rounding and the max-stock floor are the ones every other OAR result went through. The Min-Max conversion
+decision is not touched either: it is read from the feature row by ``builder.build_oar_recommendation``,
+exactly as when the recommendation was made.
 
-**Who may do it.** Only while the recommendation has not been submitted: READY_FOR_REVIEW, or
-SENT_BACK for rework. Once it is in the approval chain, approved or executed, its numbers are what an
-approver signed, so the request is refused with 409 rather than changed underneath them.
-:func:`authorize_exclusion` is the hook where a role check belongs; see its docstring for what is, and
-is not, enforced today.
+**Who may do it.** Only while the recommendation has not been submitted: READY_FOR_REVIEW, or SENT_BACK for
+rework. Once it is in the approval chain, approved or executed, its numbers are what an approver signed, so
+the request is refused with 409 rather than changed underneath them. :func:`authorize_exclusion` is the hook
+where a role check belongs; see its docstring for what is, and is not, enforced today.
 """
 
 import logging
@@ -29,11 +28,8 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.initiatives.i7.oar import exclusions as exclusions_module
-from app.initiatives.i7.oar import refresh as refresh_module
-from app.initiatives.i7.oar.retrieval import RetrievalConfig
-from app.initiatives.i7.oar.text_similarity import BgeEmbeddingProvider, EmbeddingProvider
+from app.initiatives.i7.oar import recalculate as recalculate_module
 from app.initiatives.i7.oar.types import EstimateStatus
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations import builder, rationale, repository
@@ -47,7 +43,7 @@ logger = logging.getLogger(__name__)
 EDITABLE_STATUSES = frozenset(
     {LifecycleStatus.READY_FOR_REVIEW.value, LifecycleStatus.SENT_BACK.value}
 )
-"""Statuses in which a donor may be removed or restored: before submission, or sent back for rework."""
+"""Statuses in which a similar material may be removed or restored: before submission, or sent back."""
 
 _SYNCABLE_STATUSES = EDITABLE_STATUSES | {LifecycleStatus.NOT_EVALUABLE.value}
 """Statuses the generation run may bring back in line with their target. NOT_EVALUABLE is included
@@ -82,7 +78,6 @@ class OarExclusionError(Exception):
 class ExclusionOutcome:
     recommendation: Recommendation
     exclusion: OarDonorExclusion
-    used_exhaustive_fallback: bool
 
 
 def authorize_exclusion(actor_id: str, recommendation: Recommendation) -> None:
@@ -131,66 +126,41 @@ def _default_policy() -> PolicyDocument:
     return default_policy()
 
 
-def default_provider() -> EmbeddingProvider:
-    """The embedding provider an OAR run uses by default."""
-    return BgeEmbeddingProvider(batch_size=get_settings().i7_oar_embedding_batch_size)
-
-
-def _reselect(
+def _recalculate(
     session: Session,
     recommendation: Recommendation,
     excluded: frozenset[exclusions_module.DonorKey],
-    *,
     policy: PolicyDocument,
-    provider: EmbeddingProvider,
-) -> refresh_module.TargetRefresh:
-    """The target's neighbours and estimate with exactly ``excluded`` left out. Writes nothing."""
+) -> recalculate_module.Recalculated:
+    """The target's figures with exactly ``excluded`` set aside. Writes nothing."""
     key = (recommendation.sap_material_number, recommendation.sap_plant_code)
-    settings = get_settings()
     run = session.get(OarRun, recommendation.oar_run_id)
     if run is None:
         raise OarExclusionError(409, "OAR_RUN_MISSING", f"OAR run {recommendation.oar_run_id} no longer exists.")
     try:
-        results = refresh_module.compute(
-            session,
-            run,
-            {key: excluded},
-            policy=policy,
-            provider=provider,
-            config=RetrievalConfig.from_settings(settings),
-            settings=settings,
-        )
-    except refresh_module.RefreshError as exc:
+        recalculate_module.check_policy_matches_run(run, policy)
+    except recalculate_module.RecalculationError as exc:
         raise OarExclusionError(409, exc.code, str(exc)) from exc
-    if key not in results:
-        raise OarExclusionError(
-            409,
-            refresh_module.TargetNotInRunError.code,
-            f"{key[0]}/{key[1]} is not an OAR target in the current data, so its similar materials "
-            "cannot be re-selected.",
-        )
-    return results[key]
+    return recalculate_module.recalculate(session, run.id, key, excluded, policy)
 
 
-def _require_evaluable(refreshed: refresh_module.TargetRefresh, policy: PolicyDocument, action: str) -> None:
-    """Refuse unless the re-selected target still has an estimate -- and say why not.
+def _require_evaluable(result: recalculate_module.Recalculated, policy: PolicyDocument, action: str) -> None:
+    """Refuse unless the target still has an estimate -- and say why not.
 
     Covers the minimum-neighbour rule (``policy.similarity.minimum_neighbours``, never a literal here)
-    and a donor set none of whose members can lend values. A stale number is never reported as fresh.
+    and a set none of whose members can lend values. A stale number is never reported as fresh.
     """
-    outcome = refreshed.outcome
-    if outcome.estimate.status is EstimateStatus.SUCCESS:
+    if result.estimate.status is EstimateStatus.SUCCESS:
         return
     minimum = policy.similarity.minimum_neighbours
     raise OarExclusionError(
         409,
         "INSUFFICIENT_NEIGHBOURS_AFTER_EXCLUSION",
-        f"Cannot {action}: {len(outcome.neighbours)} similar material(s) would be left and at least "
-        f"{minimum} are needed to size this recommendation ({outcome.estimate.status.value}). "
-        "Nothing was changed.",
-        remaining_neighbours=len(outcome.neighbours),
+        f"Cannot {action}: {len(result.kept)} similar material(s) would be left and at least {minimum} "
+        f"are needed to size this recommendation ({result.estimate.status.value}). Nothing was changed.",
+        remaining_neighbours=len(result.kept),
         minimum_neighbours=minimum,
-        estimate_status=outcome.estimate.status.value,
+        estimate_status=result.estimate.status.value,
     )
 
 
@@ -255,7 +225,6 @@ def exclude_donor(
     *,
     actor_id: str,
     reason: str | None = None,
-    provider: EmbeddingProvider | None = None,
     policy: PolicyDocument | None = None,
 ) -> ExclusionOutcome:
     """Remove one similar material from this recommendation's target. Commits, or raises and saves nothing."""
@@ -263,7 +232,6 @@ def exclude_donor(
     authorize_exclusion(actor, recommendation)
     _require_editable(recommendation)
     policy = policy or _default_policy()
-    provider = provider or default_provider()
     key = (recommendation.sap_material_number, recommendation.sap_plant_code)
     donor = (donor_material, donor_plant)
 
@@ -288,8 +256,8 @@ def exclude_donor(
             f"{donor_material}/{donor_plant} is not one of this material's similar materials.",
         )
 
-    refreshed = _reselect(session, recommendation, active | {donor}, policy=policy, provider=provider)
-    _require_evaluable(refreshed, policy, "remove this similar material")
+    result = _recalculate(session, recommendation, active | {donor}, policy)
+    _require_evaluable(result, policy, "remove this similar material")
 
     try:
         if exclusions_module.active_for_target(session, *key) != active:
@@ -321,7 +289,7 @@ def exclude_donor(
                 "DONOR_ALREADY_EXCLUDED",
                 f"{donor_material}/{donor_plant} is already excluded for this material.",
             ) from exc
-        refresh_module.persist(session, recommendation.oar_run_id, refreshed.outcome)
+        recalculate_module.write(session, recommendation.oar_run_id, key, result)
         refresh_recommendation(
             session,
             recommendation,
@@ -334,7 +302,7 @@ def exclude_donor(
     except Exception:
         session.rollback()
         raise
-    return ExclusionOutcome(recommendation, exclusion, refreshed.used_exhaustive_fallback)
+    return ExclusionOutcome(recommendation, exclusion)
 
 
 def restore_donor(
@@ -344,19 +312,18 @@ def restore_donor(
     donor_plant: str,
     *,
     actor_id: str,
-    provider: EmbeddingProvider | None = None,
     policy: PolicyDocument | None = None,
 ) -> ExclusionOutcome:
-    """Make an excluded similar material eligible again. The exclusion row is kept, marked restored.
+    """Count a removed similar material again. The exclusion row is kept, marked restored.
 
-    The donor is not forced back in: it re-enters the target's neighbours only if the unchanged ranking
-    puts it in the top-K again, after any donor that was chosen in its place.
+    The material comes back at the rank and score the run gave it -- those were stored, nothing is
+    searched or scored again -- and the figures are recalculated from every similar material that is
+    not removed.
     """
     actor = _clean_actor(actor_id)
     authorize_exclusion(actor, recommendation)
     _require_editable(recommendation)
     policy = policy or _default_policy()
-    provider = provider or default_provider()
     key = (recommendation.sap_material_number, recommendation.sap_plant_code)
     donor = (donor_material, donor_plant)
 
@@ -375,8 +342,8 @@ def restore_donor(
         )
 
     active = exclusions_module.active_for_target(session, *key)
-    refreshed = _reselect(session, recommendation, active - {donor}, policy=policy, provider=provider)
-    _require_evaluable(refreshed, policy, "restore this similar material")
+    result = _recalculate(session, recommendation, active - {donor}, policy)
+    _require_evaluable(result, policy, "restore this similar material")
 
     try:
         if exclusions_module.active_for_target(session, *key) != active:
@@ -390,7 +357,7 @@ def restore_donor(
         exclusion.restored_at = func.now()
         exclusion.active_slot = exclusion.id
         session.flush()
-        refresh_module.persist(session, recommendation.oar_run_id, refreshed.outcome)
+        recalculate_module.write(session, recommendation.oar_run_id, key, result)
         refresh_recommendation(
             session,
             recommendation,
@@ -402,16 +369,16 @@ def restore_donor(
     except Exception:
         session.rollback()
         raise
-    return ExclusionOutcome(recommendation, exclusion, refreshed.used_exhaustive_fallback)
+    return ExclusionOutcome(recommendation, exclusion)
 
 
 def _in_line_with_target(row: Recommendation, target: OarTargetResult) -> bool:
     """Whether the recommendation still reflects its target's stored result.
 
-    Equal numbers are not enough: a replacement donor can give the very same median, and the row's
-    explanation and trace were still written from the donors that are gone. So the best similarity and
-    confidence must agree too, and a row written before its target's result was last written (both
-    stamped by the database clock) is out of date whatever the numbers say.
+    Equal numbers are not enough: removing a similar material can leave the median where it was, and the
+    row's explanation and trace were still written from the set that is gone. So the best similarity and
+    confidence must agree too, and a row written before its target's result was last written (both stamped
+    by the database clock) is out of date whatever the numbers say.
     """
     if not (
         row.oar_neighbour_count == target.neighbour_count
@@ -430,13 +397,12 @@ def _in_line_with_target(row: Recommendation, target: OarTargetResult) -> bool:
 
 
 def sync_recommendations(session: Session, oar_run_id: int, policy: PolicyDocument) -> int:
-    """Bring unsubmitted recommendations back in line with their target's result, where an exclusion exists.
+    """Bring unsubmitted recommendations back in line with their target's result, where a removal exists.
 
     ``generate_recommendations`` leaves an existing row alone (its identity has not changed), so a target
-    re-selected afterwards -- by a reused run's refresh -- would leave the row holding the old donors'
-    numbers. Only targets that have an exclusion at all, and only rows nobody has submitted, are looked
-    at; a submitted one is reported in the log and left, because an approver is already holding it.
-    Returns how many rows were rebuilt. Commits.
+    recalculated afterwards would leave the row holding the old set's numbers. Only targets that have a
+    removal at all, and only rows nobody has submitted, are looked at; a submitted one is reported in the
+    log and left, because an approver is already holding it. Returns how many rows were rebuilt. Commits.
     """
     has_exclusion = (
         select(OarDonorExclusion.id)
@@ -463,8 +429,8 @@ def sync_recommendations(session: Session, oar_run_id: int, policy: PolicyDocume
             continue
         if row.status not in _SYNCABLE_STATUSES:
             logger.warning(
-                "recommendation %s is %s and no longer matches its OAR result after a donor exclusion; "
-                "left unchanged because it is already in the approval workflow",
+                "recommendation %s is %s and no longer matches its OAR result after a removed similar "
+                "material; left unchanged because it is already in the approval workflow",
                 row.recommendation_id,
                 row.status,
             )
@@ -474,7 +440,7 @@ def sync_recommendations(session: Session, oar_run_id: int, policy: PolicyDocume
             row,
             policy,
             changed_by="oar-generation",
-            reason="Recalculated after a similar-material exclusion",
+            reason="Recalculated after a similar-material removal",
         )
         rebuilt += 1
     session.commit()
@@ -487,8 +453,7 @@ def apply_to_latest_oar_run(policy: PolicyDocument | None = None) -> None:
     A step of its own, called by ``scripts/run_full_pipeline.py``, rather than part of
     ``generate_recommendations``: that function reads in one session and writes in another with no
     database connection held while explanations are written, and a test pins that sequence. Anything
-    else that generates recommendations should call this first. Does nothing when there is no OAR
-    run. Raises if a target that needs re-selecting cannot be (see ``apply_exclusions_before_generation``).
+    else that generates recommendations should call this first. Does nothing when there is no OAR run.
     """
     from app.core.db import get_sessionmaker
 
@@ -499,30 +464,12 @@ def apply_to_latest_oar_run(policy: PolicyDocument | None = None) -> None:
             apply_exclusions_before_generation(session, run_id, policy)
 
 
-def apply_exclusions_before_generation(
-    session: Session,
-    oar_run_id: int,
-    policy: PolicyDocument,
-    provider: EmbeddingProvider | None = None,
-) -> None:
-    """What must run before recommendations are generated from an OAR run: no saved decision is skipped.
+def apply_exclusions_before_generation(session: Session, oar_run_id: int, policy: PolicyDocument) -> None:
+    """What must run before recommendations are generated from an OAR run: no saved removal is skipped.
 
-    Re-selects any target whose stored neighbours still contain an excluded donor (or predate an
-    exclusion), then rebuilds the unsubmitted recommendations that no longer match their target.
-    Free when nothing has been excluded: two small queries.
-
-    ``provider`` defaults to the one an OAR run uses. If the run was made with the embedding model and
-    this host does not have it, the refresh raises (see ``oar.refresh.check_run_is_current``) -- the
-    generation run fails loudly rather than build from a selection that ignores a user's decision.
+    Recalculates every target that has had a similar material removed or restored, from the neighbours the
+    run stored, then rebuilds the unsubmitted recommendations that no longer match their target. Free when
+    nothing has been removed: one small query.
     """
-    if exclusions_module.stale_targets(session, oar_run_id):
-        settings = get_settings()
-        refresh_module.refresh_stale_targets(
-            session,
-            oar_run_id,
-            policy=policy,
-            provider=provider or default_provider(),
-            config=RetrievalConfig.from_settings(settings),
-            settings=settings,
-        )
+    recalculate_module.apply_to_run(session, oar_run_id, policy)
     sync_recommendations(session, oar_run_id, policy)
