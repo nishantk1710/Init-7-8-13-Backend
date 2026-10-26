@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_sessionmaker
 from app.initiatives.i7.oar import engine as engine_module
 from app.initiatives.i7.oar import exclusions as exclusions_module
-from app.initiatives.i7.oar import repository, service
+from app.initiatives.i7.oar import repository, service, text_match
 from app.initiatives.i7.oar.embedding_store import SqlEmbeddingStore
 from app.initiatives.i7.oar.exclusions import DonorKey, TargetKey
 from app.initiatives.i7.oar.retrieval import RetrievalConfig
@@ -61,6 +61,42 @@ class TargetNotInRunError(RefreshError):
 class TargetRefresh:
     outcome: OarResult
     used_exhaustive_fallback: bool
+
+
+class StoredVectorsProvider:
+    """Stands in for the embedding model on a host that does not have it, using only what is stored.
+
+    The App Service does not carry ``sentence-transformers`` (the heavy half of the text stack,
+    ``requirements-oar-text.txt``), but the run that made the neighbours stored every description's vector
+    in ``i7_oar_embedding`` under this model name and version. Reading them back reproduces the run's own
+    vectors exactly -- the cache key covers the text, the model, its version and the preprocessing rule.
+
+    It can never *create* a vector: ``encode`` returns ``None``, so a description with no stored vector
+    makes ``EmbeddingCache.ensure`` give up and :func:`compute` refuse, rather than score that pair
+    without its text or invent one. Takes the place of the real provider only when that is unavailable.
+    """
+
+    is_available = True
+
+    def __init__(self, model_name: str, model_version: str) -> None:
+        self.model_name = model_name
+        self.model_version = model_version
+
+    def encode(self, texts):  # noqa: ARG002 - the point is that it cannot
+        return None
+
+
+def _provider_for_run(run: OarRun, provider: EmbeddingProvider) -> EmbeddingProvider:
+    """The real provider when it works; otherwise the run's own stored vectors, if the run used text."""
+    if provider.is_available:
+        return provider
+    if (
+        run.embedding_model
+        and run.embedding_model_version != service.NO_EMBEDDING_MODEL_VERSION
+        and text_match.available()  # the fuzzy half of the text score still has to be computed here
+    ):
+        return StoredVectorsProvider(run.embedding_model, run.embedding_model_version)
+    return provider
 
 
 def _latest(session: Session, table: str) -> int | None:
@@ -115,6 +151,7 @@ def compute(
     like if D were removed?" before deciding to save the removal.
     """
     keys = list(excluded_by_target)
+    provider = _provider_for_run(run, provider)
     check_run_is_current(session, run, policy=policy, provider=provider, config=config)
 
     targets = repository.load_targets_for(session, keys)
@@ -131,6 +168,14 @@ def compute(
         store=store,
         batch_size=settings.i7_oar_embedding_batch_size,
     )
+    if embeddings is None and run.embedding_model_version != service.NO_EMBEDDING_MODEL_VERSION:
+        # The run scored descriptions; without a vector for every one of them here the text dimension
+        # would drop out and the refreshed target would be scored differently from every other one.
+        raise RunNotCurrentError(
+            f"OAR run {run.id} was scored with description embeddings, and this host has neither the "
+            "embedding model nor a stored vector for every description. Run the OAR step where the model "
+            "is installed (it also stores the vectors), or install requirements-oar-text.txt here."
+        )
     scoring_provider = PrecomputedEmbeddingProvider(embeddings, provider.model_name, provider.model_version)
 
     def exhaustive(target) -> OarResult:

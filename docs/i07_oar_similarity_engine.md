@@ -328,6 +328,10 @@ Min-Max conversion changes: the donor is dropped from the *scored* candidates in
   the exhaustive reference when the shortlist cannot fill Top-K once the donor is gone. The target's
   `i7_oar_neighbour` and `i7_oar_target` rows in its run are rewritten and the recommendation's
   values rebuilt (the old figures are kept as a `RecommendationVersion`).
+* **No embedding model needed on the host.** The App Service has `rapidfuzz` but not
+  `sentence-transformers`. The refresh reads back the vectors the run stored in `i7_oar_embedding`
+  (`refresh.StoredVectorsProvider`: same key, so the same vectors) and refuses -- never scores without
+  text -- if any description has none. The run itself must be made where the model is installed.
 * **Refused, saving nothing (409)** when the re-selected estimate is not `SUCCESS` (fewer than
   `SimilarityPolicy.minimum_neighbours`, or no inventory-eligible donor left), when the recommendation
   is not `READY_FOR_REVIEW` / `SENT_BACK`, or when the run can no longer be refreshed in place (a newer

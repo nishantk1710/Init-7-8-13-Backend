@@ -747,6 +747,70 @@ def test_a_refresh_is_refused_when_the_run_is_no_longer_the_current_one(world):
             )
 
 
+# --- A host without the embedding model (the App Service) --------------------------------------
+
+
+class NoModelHere:
+    """What the App Service has: the library for fuzzy text, not sentence-transformers."""
+
+    model_name = "BAAI/bge-base-en-v1.5"
+    model_version = "BAAI/bge-base-en-v1.5+match-norm-1"
+    is_available = False
+
+    def encode(self, texts):
+        return None
+
+
+def _compute_for(world_, run_id, target, excluded, provider):
+    factory, _, _, _, settings = world_
+    with factory() as session:
+        run = session.get(OarRun, run_id)
+        return refresh.compute(
+            session, run, {(target, "1300"): frozenset(excluded)}, policy=POLICY, provider=provider,
+            config=RetrievalConfig.from_settings(settings), settings=settings,
+        )[(target, "1300")]
+
+
+def test_a_host_without_the_model_reselects_from_the_vectors_the_run_stored(world):
+    factory = world[0]
+    first = _run()
+    target = _pick_target(factory, first.run_id)
+    removed = {(_neighbours(factory, first.run_id, target)[0][0], "1300")}
+
+    with_model = _compute_for(world, first.run_id, target, removed, FakeProvider())
+    without_model = _compute_for(world, first.run_id, target, removed, NoModelHere())
+
+    assert [(n.material, n.rank, n.score.combined) for n in without_model.outcome.neighbours] == [
+        (n.material, n.rank, n.score.combined) for n in with_model.outcome.neighbours
+    ]
+    assert without_model.outcome.estimate == with_model.outcome.estimate
+    assert not removed & {(n.material, n.plant) for n in without_model.outcome.neighbours}
+
+
+def test_without_the_model_the_stored_vectors_must_cover_every_description(world):
+    factory = world[0]
+    first = _run()
+    target = _pick_target(factory, first.run_id)
+    with factory() as session:
+        session.query(OarEmbedding).delete()  # nothing stored, and no model to make them
+        session.commit()
+
+    with pytest.raises(refresh.RunNotCurrentError, match="neither the embedding model nor a stored vector"):
+        _compute_for(world, first.run_id, target, set(), NoModelHere())
+
+
+def test_an_older_algorithm_run_is_refused_even_when_the_vectors_are_there(world):
+    factory = world[0]
+    first = _run()
+    target = _pick_target(factory, first.run_id)
+    with factory() as session:
+        session.get(OarRun, first.run_id).algorithm_version = "oar-similarity-old"
+        session.commit()
+
+    with pytest.raises(refresh.RunNotCurrentError, match="algorithm version differs"):
+        _compute_for(world, first.run_id, target, set(), FakeProvider())
+
+
 # --- The API -----------------------------------------------------------------------------------
 
 
