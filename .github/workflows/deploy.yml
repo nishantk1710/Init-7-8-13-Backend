@@ -1,5 +1,12 @@
 # Backend deployment to Azure App Service (app-vzi-aicom-nonprod-san).
 #
+# NONPROD ONLY, FROM THE dev BRANCH
+#
+# Merges to dev deploy here. main no longer deploys from GitHub: it is mirrored
+# to Azure DevOps (mirror-to-devops.yml), and azure-pipelines.yml deploys it to
+# production behind an approval. Nothing in this file can reach prod -- the
+# publish profile it uses is nonprod's.
+#
 # WHAT CHANGED, AND WHY IT MATTERS
 #
 # The previous version of this file was written before VZI's Azure existed and
@@ -46,7 +53,7 @@ name: Deploy backend
 
 on:
   push:
-    branches: [main]
+    branches: [dev]
     paths:
       - "**"
       - "!**.md"

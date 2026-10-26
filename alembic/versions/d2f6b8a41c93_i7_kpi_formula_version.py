@@ -1,7 +1,7 @@
 """i7_kpi_formula_version: editable Overview KPI formulas
 
 Revision ID: d2f6b8a41c93
-Revises: c5e1a9d37b24
+Revises: e7b3d9a25c61
 Create Date: 2026-10-26
 
 One row per Save & Apply of the Overview KPI formulas. A new table only -- nothing existing changes, and
@@ -15,7 +15,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "d2f6b8a41c93"
-down_revision: Union[str, Sequence[str], None] = "c5e1a9d37b24"
+down_revision: Union[str, Sequence[str], None] = "e7b3d9a25c61"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

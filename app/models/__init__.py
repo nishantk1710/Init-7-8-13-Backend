@@ -17,7 +17,7 @@ from app.models.csv_extract import CsvExtractRequest
 from app.models.i7_features import DecliningDemandEvaluation, FeatureBuildRun, MaterialFeature
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun, SegmentModelDecision
 from app.models.i7_inventory import InventoryCalculation, InventoryRun
-from app.models.i7_oar import OarEmbedding, OarNeighbour, OarRun, OarTargetResult
+from app.models.i7_oar import OarDonorExclusion, OarEmbedding, OarNeighbour, OarRun, OarTargetResult
 from app.models.i7_recommendation import (
     ApprovalLedgerEntry,
     Recommendation,

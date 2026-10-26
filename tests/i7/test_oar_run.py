@@ -36,7 +36,7 @@ from app.initiatives.i7.policy.thresholds import SimilarityPolicy
 from app.models.base import Base
 from app.models.i7_features import FeatureBuildRun
 from app.models.i7_inventory import InventoryRun
-from app.models.i7_oar import OarEmbedding, OarNeighbour, OarRun, OarTargetResult
+from app.models.i7_oar import OarDonorExclusion, OarEmbedding, OarNeighbour, OarRun, OarTargetResult
 
 POLICY = PolicyDocument(
     service_level=load_mock_service_level_policy(),
@@ -100,6 +100,7 @@ def world(monkeypatch):
         tables=[
             FeatureBuildRun.__table__, InventoryRun.__table__, OarRun.__table__,
             OarNeighbour.__table__, OarEmbedding.__table__,
+            OarDonorExclusion.__table__,  # a run reads the active exclusions (none here)
         ],
     )
     # i7_oar_target cannot be built from the model as it stands on main: its

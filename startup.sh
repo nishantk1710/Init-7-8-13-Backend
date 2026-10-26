@@ -103,6 +103,56 @@ else
     echo "startup: skipping migrations (RUN_MIGRATIONS_ON_STARTUP is not 'true')"
 fi
 
+# --- OAR text packages (optional) -----------------------------------------
+#
+# torch + sentence-transformers (requirements-oar-text.txt, about 1.3 GB unpacked) are not in
+# requirements.txt: CI must not pull torch, and a rebuild must not reinstall it. They live in /home as
+# ONE archive and are unpacked onto the container's local disk here.
+#
+# Why an archive and not the packages themselves in /home: /home is a network share, and torch is tens
+# of thousands of small files. `import torch` from there took 1m45s (7s of CPU, the rest waiting on the
+# share) -- past gunicorn's 120s --timeout for the first request that needed the model. From local disk
+# it takes about 8s. One large file reads fast; many small ones do not.
+#
+# Build the archive once, from the App Service SSH console. The exact steps are in
+# docs/i07_oar_similarity_engine.md ("Installing the model on the App Service"); in short:
+#     python -m pip freeze > /tmp/constraints.txt
+#     python -m pip install --target /tmp/oar-text -c /tmp/constraints.txt -r requirements-oar-text.txt
+#     tar -C /tmp -cf /home/site/oar-text.tar oar-text
+#
+# Entirely optional and never fatal: no archive means no model, and the app runs as it always did (the
+# OAR single-target refresh then uses the vectors a run stored -- see oar/refresh.py). A failure here only
+# logs a warning. The archive is unpacked only when /tmp/oar-text is missing, i.e. once per container.
+#
+# HF_HOME defaults to a folder under /home so the ~440 MB of model weights are fetched once, not on
+# every restart. Both can be overridden with app settings.
+OAR_TEXT_ARCHIVE="${OAR_TEXT_ARCHIVE:-/home/site/oar-text.tar}"
+OAR_TEXT_DIR=/tmp/oar-text
+if [ -f "$OAR_TEXT_ARCHIVE" ]; then
+    if [ ! -d "$OAR_TEXT_DIR" ]; then
+        echo "startup: unpacking OAR text packages from $OAR_TEXT_ARCHIVE"
+        # Unpacked beside the target and moved into place, so an interrupted unpack is never mistaken
+        # for a complete one on the next start.
+        if rm -rf /tmp/oar-text.unpack \
+            && mkdir -p /tmp/oar-text.unpack \
+            && tar -xf "$OAR_TEXT_ARCHIVE" -C /tmp/oar-text.unpack \
+            && mv /tmp/oar-text.unpack/oar-text "$OAR_TEXT_DIR"; then
+            rm -rf /tmp/oar-text.unpack
+            echo "startup: OAR text packages unpacked"
+        else
+            rm -rf /tmp/oar-text.unpack "$OAR_TEXT_DIR"
+            echo "startup: WARNING - could not unpack $OAR_TEXT_ARCHIVE; OAR text similarity is off on this instance" >&2
+        fi
+    fi
+    if [ -d "$OAR_TEXT_DIR" ]; then
+        export PYTHONPATH="$OAR_TEXT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+        export HF_HOME="${HF_HOME:-/home/site/hf}"
+        echo "startup: OAR text packages on PYTHONPATH (HF_HOME=$HF_HOME)"
+    fi
+else
+    echo "startup: no OAR text archive at $OAR_TEXT_ARCHIVE; embedding model not installed"
+fi
+
 # --- Server ---------------------------------------------------------------
 #
 # gunicorn supervises; uvicorn workers actually speak ASGI. A worker that dies
