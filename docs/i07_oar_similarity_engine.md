@@ -176,6 +176,24 @@ consumers, so it is left for a business decision.
   the text dimension reports `NOT_AVAILABLE_NO_MODEL` and scores renormalise over structured and business.
   The model is about 440 MB, downloaded from Hugging Face on first use: set `HF_HOME` to a folder under `/home`
   on App Service so it survives a restart. Vectors are 768 x float32 = 3 KB each.
+* **Installing the model on the App Service, once, without reinstalling on every deploy.** The packages are
+  about 1.3 GB and tens of thousands of small files. Installed under `/home` (a network share) `import torch`
+  took 1m45s, longer than gunicorn's 120 s timeout, so they are kept as one archive in `/home` and
+  `startup.sh` unpacks it to `/tmp/oar-text` at container start (about 8 s to import from there). Build the
+  archive once from the App Service SSH console:
+
+  ```bash
+  cd /home/site/wwwroot    # or the /tmp/<hash> folder that holds app/main.py
+  python -m pip freeze > /tmp/constraints.txt          # keeps every shared package at the app's own version
+  python -m pip install --target /tmp/oar-text -c /tmp/constraints.txt -r requirements-oar-text.txt
+  export HF_HOME=/home/site/hf
+  PYTHONPATH=/tmp/oar-text python -c "from app.initiatives.i7.oar.text_similarity import BgeEmbeddingProvider as B; print(B().is_available)"   # True; also downloads the weights
+  tar -C /tmp -cf /home/site/oar-text.tar oar-text
+  ```
+
+  Redo it only if `requirements.txt` changes a package that `torch` / `sentence-transformers` also use. No
+  archive means no model and no error: the app runs as before, and removing a similar material then uses the
+  vectors the OAR run stored (`oar/refresh.py`). The run itself must still be made where the model exists.
 * **One embedding per unique normalised description per model version.** The
   layers are the per-run memory map, then `i7_oar_embedding` in Azure SQL,
   then the model in bounded batches (`I7_OAR_EMBEDDING_BATCH_SIZE`).
