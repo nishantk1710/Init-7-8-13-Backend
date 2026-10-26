@@ -481,13 +481,31 @@ def sync_recommendations(session: Session, oar_run_id: int, policy: PolicyDocume
     return rebuilt
 
 
+def apply_to_latest_oar_run(policy: PolicyDocument | None = None) -> None:
+    """The pipeline step that sits between the OAR run and ``generate_recommendations``.
+
+    A step of its own, called by ``scripts/run_full_pipeline.py``, rather than part of
+    ``generate_recommendations``: that function reads in one session and writes in another with no
+    database connection held while explanations are written, and a test pins that sequence. Anything
+    else that generates recommendations should call this first. Does nothing when there is no OAR
+    run. Raises if a target that needs re-selecting cannot be (see ``apply_exclusions_before_generation``).
+    """
+    from app.core.db import get_sessionmaker
+
+    policy = policy or _default_policy()
+    with get_sessionmaker()() as session:
+        run_id = repository.latest_oar_run(session)
+        if run_id is not None:
+            apply_exclusions_before_generation(session, run_id, policy)
+
+
 def apply_exclusions_before_generation(
     session: Session,
     oar_run_id: int,
     policy: PolicyDocument,
     provider: EmbeddingProvider | None = None,
 ) -> None:
-    """What ``generate_recommendations`` runs before it reads the OAR run: no saved decision is skipped.
+    """What must run before recommendations are generated from an OAR run: no saved decision is skipped.
 
     Re-selects any target whose stored neighbours still contain an excluded donor (or predate an
     exclusion), then rebuilds the unsubmitted recommendations that no longer match their target.

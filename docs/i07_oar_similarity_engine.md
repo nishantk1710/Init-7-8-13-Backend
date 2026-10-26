@@ -333,9 +333,10 @@ Min-Max conversion changes: the donor is dropped from the *scored* candidates in
   is not `READY_FOR_REVIEW` / `SENT_BACK`, or when the run can no longer be refreshed in place (a newer
   feature or inventory run, a different policy, algorithm, retrieval configuration or embedding model).
 * **A reused run does not ignore it.** The run key does not include exclusions, so
-  `run_oar_similarity` (reuse branch) and `generate_recommendations` re-select any target whose stored
-  neighbours still contain an excluded donor or predate an exclusion, then rebuild its unsubmitted
-  recommendation. A new or forced run applies them in `finalise_target`. A later build with too few
+  `run_oar_similarity` (reuse branch) and the pipeline step `oar_exclusions.apply_to_latest_oar_run`
+  (run by `scripts/run_full_pipeline.py` just before Phase 7; anything else that generates
+  recommendations should call it too) re-select any target whose stored neighbours still contain an
+  excluded donor or predate an exclusion, then rebuild its unsubmitted recommendation. A new or forced run applies them in `finalise_target`. A later build with too few
   donors left reports the existing `NOT_EVALUABLE_INSUFFICIENT_NEIGHBOURS`.
 * **Identity is not authenticated.** `created_by` / `restored_by` come from the `X-Actor-Id` header
   (`app/api/i7/actor.py`), which a caller can set to anything, and no role is checked

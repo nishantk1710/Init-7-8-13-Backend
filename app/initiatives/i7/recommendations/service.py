@@ -212,15 +212,6 @@ def generate_recommendations(policy: PolicyDocument | None = None) -> Recommenda
         with session_factory() as session:
             inventory_run_id = repository.latest_inventory_run(session)
             oar_run_id = repository.latest_oar_run(session)
-            if oar_run_id is not None:
-                # A donor a user removed from a material must not come back because the OAR run was
-                # reused: re-select any target whose stored neighbours predate the decision, and bring
-                # its unsubmitted recommendation into line. Free when nothing has been excluded. Raises
-                # (failing this run, loudly) rather than build from a selection that undoes the decision.
-                # Imported here: oar_exclusions imports this module for the row mapping.
-                from app.initiatives.i7.recommendations import oar_exclusions
-
-                oar_exclusions.apply_exclusions_before_generation(session, oar_run_id, policy)
             # Pinned to the selected inventory run's own forecast_run_id, not
             # independently re-derived from the latest feature run: the two
             # can drift apart once the feature store has advanced past the
