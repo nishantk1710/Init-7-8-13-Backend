@@ -16,6 +16,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.i7.deps import get_session, load_latest_recommendation
+from app.initiatives.i7.kpi_formulas.resolved import load_active
+from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql, working_capital_sql
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations import routing
 from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
@@ -724,14 +726,14 @@ def get_recommendation_summary(
     # The Overview's Working Capital Impact: the reorder point, not the safety stock. Same sign and
     # the same "priced, current and recommended all present" rule as above, so a row missing any of
     # the three is left out of the sum rather than read as zero.
+    #
+    # The formula is the saved one when somebody edited it (Inventory Planning > KPI formulas), else the
+    # rule above. A formula that cannot be worked out for a row (a missing input, a division by zero)
+    # gives NULL, which SUM leaves out -- the same "left out, not read as zero" as the IS NOT NULL list.
+    formulas = load_active(session)
+    working_capital = working_capital_sql(formulas)
     net_rop_value_row = session.execute(
-        base.with_only_columns(
-            func.sum(Recommendation.unit_price * (Recommendation.current_rop - Recommendation.recommended_rop))
-        ).where(
-            Recommendation.unit_price.isnot(None),
-            Recommendation.current_rop.isnot(None),
-            Recommendation.recommended_rop.isnot(None),
-        )
+        base.with_only_columns(func.sum(working_capital)).where(working_capital.is_not(None))
     ).scalar()
 
     # --- High Stockout Risk: stock on hand < average daily consumption x lead time --
@@ -748,26 +750,21 @@ def get_recommendation_summary(
         status=status,
         is_oar=is_oar,
         confidence=confidence,
+        formulas=formulas,
     )
 
     # --- Excess Inventory Candidates: current Max Stock > recommended ------
-    # I07-derived proxy (2026-09-22): any positive gap counts, no minimum
-    # margin -- see RecommendationSummaryStats.excess_inventory_candidates_count.
-    excess_base = base.where(
-        Recommendation.current_max_stock.isnot(None),
-        Recommendation.recommended_max_stock.isnot(None),
-        Recommendation.current_max_stock > Recommendation.recommended_max_stock,
-    )
+    # I07-derived proxy (2026-09-22): by default any positive gap counts, no minimum
+    # margin -- see RecommendationSummaryStats.excess_inventory_candidates_count. The condition and the
+    # value are the saved formulas when somebody edited them; a comparison that is unknown (a missing
+    # level) is not true, so the row is not a candidate.
+    excess_base = base.where(excess_condition_sql(formulas))
     excess_inventory_count = session.execute(
         select(func.count()).select_from(excess_base.subquery())
     ).scalar_one()
+    excess_value = excess_value_sql(formulas)
     excess_opportunity_row = session.execute(
-        excess_base.with_only_columns(
-            func.sum(
-                Recommendation.unit_price
-                * (Recommendation.current_max_stock - Recommendation.recommended_max_stock)
-            )
-        ).where(Recommendation.unit_price.isnot(None))
+        excess_base.with_only_columns(func.sum(excess_value)).where(excess_value.is_not(None))
     ).scalar()
 
     return RecommendationSummaryStats(

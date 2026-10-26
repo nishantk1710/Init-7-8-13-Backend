@@ -209,6 +209,20 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "i7_quarterly_report. Idempotent per quarter: overwrites rather than "
         "duplicating."
     ),
+    ("/api/v1/i7/kpi-formulas/apply", "post"): (
+        "Save & Apply the Overview KPI formulas -> i7_kpi_formula_version. A new version row each time; its "
+        "status moves applying -> active -> superseded (the one deliberate in-place change, so the history "
+        "says which version was live). When the usage window changed it also rebuilds the derived "
+        "i7_stockout_risk_input, which is rebuilt whole by design."
+    ),
+    ("/api/v1/i7/kpi-formulas/reset", "post"): (
+        "Go back to the built-in KPI formulas -> a new i7_kpi_formula_version row holding the defaults; "
+        "never deletes the history."
+    ),
+    ("/api/v1/i7/kpi-formulas/preview", "post"): (
+        "A POST only because the draft formulas are the body: it WRITES NOTHING. It validates the draft "
+        "and counts the portfolio under it."
+    ),
 }
 
 
