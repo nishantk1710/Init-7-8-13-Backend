@@ -91,7 +91,7 @@ _PLANT_SCOPE_M = sql_predicate("m.plant")
 
 _PR_QUERY = """
     SELECT purchase_requisition, item_of_requisition, material, plant,
-           quantity_requested, requisition_date, purchase_order, purchase_order_item
+           quantity_requested, requisition_date, purchase_order, purchase_order_item, deletion_indicator
     FROM n_eban
     WHERE purchase_requisition <> '' AND material <> '' AND plant <> '' AND {plant_scope}
       {pr_filter}
@@ -120,6 +120,11 @@ def _to_pr_row(record: Any) -> Row:
         # PO join is driven from the EKPO side, never from this field.
         "Ebeln": ebeln,
         "Ebelp": ebelp,
+        # EBAN-LOEKZ ("X": the requisition item is deleted). Carried, not
+        # filtered here: app/initiatives/i13/po_lines.py decides what a deleted
+        # requisition means. Read strictly, like EKPO's flags, so a reader that
+        # forgets the column fails instead of reading every PR as live.
+        "Loekz": (record.deletion_indicator or "").strip().upper(),
     }
 
 

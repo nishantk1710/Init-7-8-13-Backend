@@ -147,11 +147,14 @@ class LifecycleStatus(str, Enum):
     ``RESERVED`` -- the reservation names no PR (RESB.BANFN empty);
     ``PR_NOT_FOUND`` -- it names one the EBAN extract does not hold;
     ``PR_SHARED`` -- it names one that several reservations name, so whose
-    procurement it is cannot be told."""
+    procurement it is cannot be told;
+    ``PR_DELETED`` -- it names one SAP deleted (EBAN-LOEKZ) before any PO
+    ordered it."""
 
     RESERVED = "RESERVED"
     PR_NOT_FOUND = "PR_NOT_FOUND"
     PR_SHARED = "PR_SHARED"
+    PR_DELETED = "PR_DELETED"
     PR_CREATED = "PR_CREATED"
     ORDERED = "ORDERED"
     PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED"
@@ -238,6 +241,9 @@ class ReservationPrLinkStatus(str, Enum):
     # are deliberately left unpopulated rather than guessed -- see
     # reservation_ledger.py's module docstring.
     CONSOLIDATION_UNRESOLVED = "CONSOLIDATION_UNRESOLVED"
+    # The PR is in the extract but SAP deleted it (EBAN-LOEKZ = X) and no PO
+    # line orders it: known, and nothing will come of it (UAT, 26 Oct 2026).
+    PR_DELETED = "PR_DELETED"
 
 
 @dataclass(frozen=True)

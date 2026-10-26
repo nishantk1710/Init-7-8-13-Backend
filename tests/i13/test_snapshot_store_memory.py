@@ -84,6 +84,8 @@ class Pr(NamedTuple):
     requisition_date: str
     purchase_order: str | None
     purchase_order_item: str | None
+    # EBAN-LOEKZ (app/initiatives/i13/po_lines.py): a live requisition here.
+    deletion_indicator: str | None = None
 
 
 class Po(NamedTuple):
