@@ -305,6 +305,43 @@ retrieval.** The current code's top neighbours included donors with no material
 group and no description. Their 0.98 rested on unit of measure "EA" plus a
 nearby price, which the new rule refuses.
 
+## Removing a similar material for one target
+
+A reviewer can remove one similar material (donor) from one target's list, and restore it.
+Nothing about scoring, weights, thresholds, hard filters, ranking, `estimate.py` or the
+Min-Max conversion changes: the donor is dropped from the *scored* candidates inside
+`finalise_target`, before Top-K, so the next-best already-scored donor takes the slot.
+
+| Piece | Where |
+| --- | --- |
+| Decision, persisted per target and donor, restore keeps the row | `i7_oar_donor_exclusion` (`app/models/i7_oar.py`), migration `e7b3d9a25c61` |
+| Filter (pure) and loaders, stale-target detection | `app/initiatives/i7/oar/exclusions.py` |
+| Applied by every build path | `service.finalise_target(excluded=...)`; `engine.evaluate_targets(exclusions=...)`; `run_oar_similarity` loads them once |
+| Re-select ONE target through the same pipeline | `app/initiatives/i7/oar/refresh.py` |
+| Remove / restore, recalculate, approval guard | `app/initiatives/i7/recommendations/oar_exclusions.py` |
+| Endpoints | `POST /api/v1/i7/recommendations/{id}/similar-materials/exclusions` and `.../exclusions/restore` |
+
+* **At most one active exclusion per target and donor.** `active_slot` is 0 while active and the
+  row's own id once restored, so the unique constraint allows any number of restored rows beside
+  one active row.
+* **Replacement donor.** Remove and restore re-run only that target: two-stage retrieval first, and
+  the exhaustive reference when the shortlist cannot fill Top-K once the donor is gone. The target's
+  `i7_oar_neighbour` and `i7_oar_target` rows in its run are rewritten and the recommendation's
+  values rebuilt (the old figures are kept as a `RecommendationVersion`).
+* **Refused, saving nothing (409)** when the re-selected estimate is not `SUCCESS` (fewer than
+  `SimilarityPolicy.minimum_neighbours`, or no inventory-eligible donor left), when the recommendation
+  is not `READY_FOR_REVIEW` / `SENT_BACK`, or when the run can no longer be refreshed in place (a newer
+  feature or inventory run, a different policy, algorithm, retrieval configuration or embedding model).
+* **A reused run does not ignore it.** The run key does not include exclusions, so
+  `run_oar_similarity` (reuse branch) and `generate_recommendations` re-select any target whose stored
+  neighbours still contain an excluded donor or predate an exclusion, then rebuild its unsubmitted
+  recommendation. A new or forced run applies them in `finalise_target`. A later build with too few
+  donors left reports the existing `NOT_EVALUABLE_INSUFFICIENT_NEIGHBOURS`.
+* **Identity is not authenticated.** `created_by` / `restored_by` come from the `X-Actor-Id` header
+  (`app/api/i7/actor.py`), which a caller can set to anything, and no role is checked
+  (`oar_exclusions.authorize_exclusion` is the empty hook for Entra ID). These rows are not a verified
+  audit trail until that lands.
+
 ## Known limitations
 
 * **Real accuracy is unvalidated.** There are no expert-labelled pairs yet.
