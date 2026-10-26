@@ -1,0 +1,89 @@
+# Production deployment of the backend (app-vzi-aicom-prod-san), from Azure
+# DevOps.
+#
+# HOW CODE GETS HERE
+#
+#   GitHub main is mirrored into this repository by
+#   .github/workflows/mirror-to-devops.yml on every merge, and GitHub main only
+#   receives release PRs from dev -- commits that already ran on nonprod. Nothing
+#   is committed to this repository directly.
+#
+# WHAT THIS DOES
+#
+#   Package the commit (tracked files only, so never .env or .venv) -> wait for
+#   approval on environment aicom-prod -> zip deploy to prod -> smoke checks.
+#   No test stage: the same commit passed GitHub CI on its way through dev and
+#   main. Nonprod is untouched: it deploys from GitHub dev, and no nonprod
+#   credential exists in Azure DevOps.
+#
+#   No migration step either. The build agent has no network path to the
+#   private SQL server; migrations run inside the App Service on start-up
+#   (RUN_MIGRATIONS_ON_STARTUP=true on prod).
+#
+# REQUIRED IN AZURE DEVOPS
+#
+#   * Variable group backend-prod: API_DEPLOY_USER, API_DEPLOY_PASSWORD (secret),
+#     API_HOST, API_SCM_HOST.
+#   * Environment aicom-prod, with the approval check.
+#
+# Rollback: open an earlier successful run and "Rerun stage" on Deploy_prod --
+# it redeploys that run's exact package.
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    exclude: ["**/*.md"]
+
+# PRs are not built here; review and CI happen on GitHub before the mirror.
+pr: none
+
+stages:
+  - stage: Package
+    jobs:
+      - job: package
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+          - bash: git archive --format=zip -o "$(Build.ArtifactStagingDirectory)/backend.zip" HEAD
+            displayName: Package tracked files
+          - publish: $(Build.ArtifactStagingDirectory)/backend.zip
+            artifact: backend
+
+  - stage: Deploy_prod
+    dependsOn: Package
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    variables:
+      - group: backend-prod
+    jobs:
+      - deployment: api
+        environment: aicom-prod
+        pool:
+          vmImage: ubuntu-latest
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                # The backend artifact is downloaded to $(Pipeline.Workspace)/backend.
+                - template: pipelines/zipdeploy.yml
+                  parameters:
+                    package: $(Pipeline.Workspace)/backend/backend.zip
+                    user: $(API_DEPLOY_USER)
+                    password: $(API_DEPLOY_PASSWORD)
+                    scmHost: $(API_SCM_HOST)
+
+                # Dependency-free: proves the process started. Generous retries
+                # because the first start runs migrations and builds the views.
+                - bash: |
+                    curl --fail --silent --show-error --retry 40 --retry-delay 15 --retry-all-errors \
+                      "https://$(API_HOST)/api/health"
+                  displayName: Smoke check -- liveness
+
+                # Touches the database, storage and the model. Reported, not
+                # fatal: the body says which dependency is unhappy.
+                - bash: |
+                    curl --silent --show-error --fail-with-body --retry 5 --retry-delay 10 \
+                      "https://$(API_HOST)/api/ready" \
+                      || echo "##vso[task.logissue type=warning]/api/ready is not green yet -- see the body above"
+                  displayName: Smoke check -- readiness (informational)
