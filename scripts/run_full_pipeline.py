@@ -305,7 +305,17 @@ def run_phases(skip: set[str], force: bool) -> dict:
 
     if "recommendations" not in skip:
         heading("PHASE 7 - RECOMMENDATIONS")
+        from app.initiatives.i7.recommendations import oar_exclusions
         from app.initiatives.i7.recommendations.service import generate_recommendations
+
+        # A similar material a user removed must not come back because the OAR run was reused: re-select
+        # any target whose neighbours predate the removal and bring its unsubmitted recommendation into
+        # line. Free when nothing has been removed.
+        try:
+            oar_exclusions.apply_to_latest_oar_run()
+        except Exception as exc:  # stop rather than generate from a selection that undoes a decision
+            print(f"\n  ERROR applying removed similar materials: {type(exc).__name__}: {exc}")
+            return results
 
         result = generate_recommendations()
         results["recommendations"] = result

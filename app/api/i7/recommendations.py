@@ -15,22 +15,27 @@ from sqlalchemy import Select, and_, case, exists, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.api.i7.actor import Actor, get_i7_actor
 from app.api.i7.deps import get_session, load_latest_recommendation
+from app.initiatives.i7.oar.text_similarity import EmbeddingProvider
 from app.initiatives.i7.policy import PolicyDocument
-from app.initiatives.i7.recommendations import routing
+from app.initiatives.i7.recommendations import oar_exclusions, routing
 from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
 from app.initiatives.i7.stockout_risk.counts import stockout_risk_counts
 from app.initiatives.i7.recommendations.consumption_history import monthly_consumption_history
 from app.models.i7_features import DecliningDemandEvaluation
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun
-from app.models.i7_oar import OarNeighbour
+from app.models.i7_oar import OarDonorExclusion, OarNeighbour
 from app.models.i7_recommendation import Recommendation
 from app.models.i7_staging import StagedMaterial, StagedMaterialPlant
-from app.schemas.i7.errors import bad_request
+from app.schemas.i7.errors import ApiError, bad_request
 from app.schemas.i7.recommendations import (
     CircuitCount,
     ConsumptionHistoryEntry,
     CriticalityCount,
+    ExcludedSimilarMaterial,
+    ExcludeSimilarMaterialRequest,
+    RestoreSimilarMaterialRequest,
     ForecastHistoryAggregatePoint,
     ForecastHistoryAggregateResponse,
     ForecastHistoryPoint,
@@ -43,6 +48,7 @@ from app.schemas.i7.recommendations import (
     RecommendationTrace,
     RiskCount,
     SimilarMaterial,
+    SimilarMaterialsChangeResponse,
     SimilarMaterialsResponse,
     StatusCount,
 )
@@ -918,8 +924,10 @@ SIMILAR_MATERIALS_LIMIT = 10
 def get_recommendation_similar_materials(
     recommendation_id: str, session: Annotated[Session, Depends(get_session)]
 ) -> SimilarMaterialsResponse:
-    row = load_latest_recommendation(session, recommendation_id)
+    return _similar_materials_response(session, load_latest_recommendation(session, recommendation_id))
 
+
+def _similar_materials_response(session: Session, row: Recommendation) -> SimilarMaterialsResponse:
     neighbours: list[OarNeighbour] = []
     if row.oar_run_id is not None:
         neighbours = list(
@@ -935,12 +943,42 @@ def get_recommendation_similar_materials(
             ).scalars()
         )
 
-    descriptions = _display_fields_for(session, {n.neighbour_material for n in neighbours})
+    removed = list(
+        session.execute(
+            select(OarDonorExclusion)
+            .where(
+                OarDonorExclusion.sap_material_number == row.sap_material_number,
+                OarDonorExclusion.sap_plant_code == row.sap_plant_code,
+                OarDonorExclusion.active_slot == OarDonorExclusion.ACTIVE_SLOT,
+            )
+            .order_by(OarDonorExclusion.id.desc())
+        ).scalars()
+    )
+    descriptions = _display_fields_for(
+        session, {n.neighbour_material for n in neighbours} | {e.donor_material for e in removed}
+    )
     current_stock = _current_sap_stock_for(session, {(n.neighbour_material, n.neighbour_plant) for n in neighbours})
     no_stock = (None, None, None)
+    blocked = oar_exclusions.edit_block_reason(row)
     return SimilarMaterialsResponse(
         sap_material_number=row.sap_material_number,
         sap_plant_code=row.sap_plant_code,
+        excluded=tuple(
+            ExcludedSimilarMaterial(
+                material=e.donor_material,
+                plant=e.donor_plant,
+                description=descriptions.get(e.donor_material, (None, None))[0],
+                similarity=e.donor_similarity,
+                rank=e.donor_rank,
+                reason=e.reason,
+                excluded_by=e.created_by,
+                excluded_at=e.created_at,
+            )
+            for e in removed
+        ),
+        can_edit=blocked is None,
+        edit_blocked_reason=blocked,
+        minimum_neighbours=PolicyDocument().similarity.minimum_neighbours,
         neighbours=tuple(
             SimilarMaterial(
                 rank=n.rank,
@@ -961,6 +999,102 @@ def get_recommendation_similar_materials(
             for n in neighbours
         ),
     )
+
+
+def get_embedding_provider() -> EmbeddingProvider:
+    """The provider the OAR run uses; a dependency so tests can supply a fake without loading the model."""
+    return oar_exclusions.default_provider()
+
+
+def _change_response(session: Session, row: Recommendation) -> SimilarMaterialsChangeResponse:
+    session.refresh(row)
+    return SimilarMaterialsChangeResponse(
+        recommendation_id=row.recommendation_id,
+        status=row.status,
+        current_version=row.current_version,
+        oar_estimate_status=row.oar_estimate_status,
+        oar_neighbour_count=row.oar_neighbour_count,
+        recommended_safety_stock=row.recommended_safety_stock,
+        recommended_rop=row.recommended_rop,
+        recommended_max_stock=row.recommended_max_stock,
+        similar_materials=_similar_materials_response(session, row),
+    )
+
+
+def _refused(exc: oar_exclusions.OarExclusionError) -> ApiError:
+    return ApiError(exc.status_code, exc.code, exc.message, exc.details)
+
+
+_EXCLUSION_ERRORS = {
+    404: {"description": "Recommendation, neighbour or exclusion not found"},
+    409: {
+        "description": "Not editable in this approval state, would leave too few similar materials, "
+        "already excluded, or the OAR run can no longer be refreshed in place"
+    },
+}
+
+
+@router.post(
+    "/recommendations/{recommendation_id}/similar-materials/exclusions",
+    response_model=SimilarMaterialsChangeResponse,
+    summary="Remove a similar material from this recommendation's material",
+    description="Stops one similar material (donor) being used for THIS material and plant, now and in "
+    "every later OAR run. The material's neighbours are re-selected by the same similarity pipeline the "
+    "run used, so the next-best donor takes the freed slot, and the recommendation's reorder point, "
+    "safety stock and max stock are recalculated by the unchanged estimator. Only while the "
+    "recommendation is READY_FOR_REVIEW or SENT_BACK (409 otherwise). Refused with 409, saving nothing, "
+    "if fewer than the required number of similar materials would remain. The user is taken from the "
+    "request identity, not the body; see app/api/i7/actor.py for what that does and does not prove.",
+    responses=_EXCLUSION_ERRORS,
+)
+def exclude_similar_material(
+    recommendation_id: str,
+    body: ExcludeSimilarMaterialRequest,
+    session: Annotated[Session, Depends(get_session)],
+    actor: Annotated[Actor, Depends(get_i7_actor)],
+    provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
+) -> SimilarMaterialsChangeResponse:
+    row = load_latest_recommendation(session, recommendation_id)
+    try:
+        oar_exclusions.exclude_donor(
+            session,
+            row,
+            body.donor_material,
+            body.donor_plant,
+            actor_id=actor.id,
+            reason=body.reason,
+            provider=provider,
+        )
+    except oar_exclusions.OarExclusionError as exc:
+        raise _refused(exc) from exc
+    return _change_response(session, row)
+
+
+@router.post(
+    "/recommendations/{recommendation_id}/similar-materials/exclusions/restore",
+    response_model=SimilarMaterialsChangeResponse,
+    summary="Restore a similar material that was removed",
+    description="Makes the donor eligible for this material again. A POST, not a DELETE: the API has no "
+    "DELETE by design, and the exclusion record is kept anyway, marked restored with who and when. The "
+    "material's neighbours are re-selected by the same pipeline, so the donor returns only if the "
+    "unchanged ranking puts it in the top-K. Same approval states and same refusals as removing.",
+    responses=_EXCLUSION_ERRORS,
+)
+def restore_similar_material(
+    recommendation_id: str,
+    body: RestoreSimilarMaterialRequest,
+    session: Annotated[Session, Depends(get_session)],
+    actor: Annotated[Actor, Depends(get_i7_actor)],
+    provider: Annotated[EmbeddingProvider, Depends(get_embedding_provider)],
+) -> SimilarMaterialsChangeResponse:
+    row = load_latest_recommendation(session, recommendation_id)
+    try:
+        oar_exclusions.restore_donor(
+            session, row, body.donor_material, body.donor_plant, actor_id=actor.id, provider=provider
+        )
+    except oar_exclusions.OarExclusionError as exc:
+        raise _refused(exc) from exc
+    return _change_response(session, row)
 
 
 @router.get(

@@ -104,6 +104,21 @@ def load_targets(session: Session) -> list[CandidateAttributes]:
     return [_to_attributes(row) for row in session.execute(text(_TARGET_SQL))]
 
 
+def load_targets_for(session: Session, keys: list[tuple[str, str]]) -> list[CandidateAttributes]:
+    """The OAR targets among these ``(material, plant)`` keys -- the same rows and the same shape
+    ``load_targets`` returns, for a refresh of one or a few targets rather than the whole population."""
+    found: list[CandidateAttributes] = []
+    for material, plant in keys:
+        found.extend(
+            _to_attributes(row)
+            for row in session.execute(
+                text(_TARGET_SQL + " AND f.sap_material_number = :material AND f.sap_plant_code = :plant"),
+                {"material": material, "plant": plant},
+            )
+        )
+    return found
+
+
 def load_candidate_population(session: Session) -> list[CandidateAttributes]:
     """Every classified material-plant (Phase 3's SUFFICIENT history status)
     whose current SAP ROP, safety stock and max stock are all above zero -- the

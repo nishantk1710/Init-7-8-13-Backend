@@ -21,7 +21,7 @@ unconfirmed business value this module refuses to guess.
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.i7_recommendation import Recommendation as RecommendationModel
 
@@ -117,6 +117,25 @@ class SimilarMaterial(BaseModel):
     (``inventory_eligible``) -- a neighbour can be similar yet lend nothing."""
 
 
+class ExcludedSimilarMaterial(BaseModel):
+    """A similar material a user removed from this recommendation's material, and who did it.
+
+    Not a neighbour that failed the similarity rules: those never appear in the list at all. This one
+    was eligible and ranked, and a person decided not to use it for this material only."""
+
+    model_config = ConfigDict(frozen=True)
+
+    material: str
+    plant: str
+    description: str | None
+    similarity: Decimal | None
+    """The score it had when it was removed."""
+    rank: int | None
+    reason: str | None
+    excluded_by: str
+    excluded_at: datetime | None
+
+
 class SimilarMaterialsResponse(BaseModel):
     """The most similar materials behind one OAR recommendation, best first.
 
@@ -128,6 +147,48 @@ class SimilarMaterialsResponse(BaseModel):
     sap_material_number: str
     sap_plant_code: str
     neighbours: tuple[SimilarMaterial, ...]
+    excluded: tuple[ExcludedSimilarMaterial, ...] = ()
+    """Similar materials a user removed for this material, newest first."""
+    can_edit: bool = False
+    """Whether a similar material may be removed or restored now (not yet submitted, or sent back)."""
+    edit_blocked_reason: str | None = None
+    minimum_neighbours: int | None = None
+    """How many similar materials the estimate needs; removing one that would leave fewer is refused."""
+
+
+class ExcludeSimilarMaterialRequest(BaseModel):
+    """Remove one similar material. The user is the authenticated actor, never a field here."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    donor_material: str = Field(min_length=1, max_length=40)
+    donor_plant: str = Field(min_length=1, max_length=8)
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class RestoreSimilarMaterialRequest(BaseModel):
+    """Make a removed similar material eligible again. The user is the authenticated actor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    donor_material: str = Field(min_length=1, max_length=40)
+    donor_plant: str = Field(min_length=1, max_length=8)
+
+
+class SimilarMaterialsChangeResponse(BaseModel):
+    """The recommendation after a similar material was removed or restored, freshly calculated."""
+
+    model_config = ConfigDict(frozen=True)
+
+    recommendation_id: str
+    status: str
+    current_version: int
+    oar_estimate_status: str | None
+    oar_neighbour_count: int | None
+    recommended_safety_stock: Decimal | None
+    recommended_rop: Decimal | None
+    recommended_max_stock: Decimal | None
+    similar_materials: SimilarMaterialsResponse
 
 
 class ForecastHistoryAggregatePoint(BaseModel):

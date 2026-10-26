@@ -31,12 +31,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Iterator, Sequence
+from typing import Iterator, Mapping, Sequence
 
 import numpy as np
 
 from app.initiatives.i7.oar import identity as identity_module
 from app.initiatives.i7.oar import text_match
+from app.initiatives.i7.oar.exclusions import excluded_for
 from app.initiatives.i7.oar.retrieval import (
     DonorIndex,
     RetrievalConfig,
@@ -110,8 +111,13 @@ def evaluate_targets(
     config: RetrievalConfig,
     index: DonorIndex | None = None,
     stats: EngineStats | None = None,
+    exclusions: Mapping[tuple[str, str], frozenset[tuple[str, str]]] | None = None,
 ) -> Iterator[OarResult]:
     """Every target's :class:`OarResult`, in input order.
+
+    ``exclusions`` maps a target to the donors a user removed from it (``oar.exclusions.load_active``).
+    They are applied inside ``finalise_target``, after scoring, so retrieval, scoring and ranking are
+    exactly what they were; ``None`` or an empty mapping changes nothing.
 
     ``provider`` is what exact scoring encodes with -- normally a
     ``PrecomputedEmbeddingProvider`` over ``embeddings``, so scoring never calls
@@ -243,4 +249,5 @@ def evaluate_targets(
                     identity_conflicts=shortlist.identity_conflicts,
                     identity_insufficient=shortlist.identity_insufficient,
                 ),
+                excluded=excluded_for(exclusions, target.sap_material_number, target.sap_plant_code),
             )

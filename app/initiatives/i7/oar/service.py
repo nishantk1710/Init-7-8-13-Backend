@@ -34,6 +34,7 @@ from app.initiatives.i7.oar import (
     confidence as confidence_module,
     eligibility,
     estimate as estimate_module,
+    exclusions as exclusions_module,
     identity,
     ranking,
     repository,
@@ -96,6 +97,8 @@ class OarRunResult:
     stage_totals: dict[str, int] = field(default_factory=dict)
     """Every ``StageCounts`` field summed over the run's targets, so how many candidates survived each step
     of retrieval is on record for the run as well as for each target."""
+    refreshed_targets: int = 0
+    """Targets of a REUSED run re-selected because a user's donor exclusion postdated them."""
 
 
 def _score_pair(
@@ -262,12 +265,17 @@ def finalise_target(
     retrieval: str,
     policy: PolicyDocument,
     tally: RetrievalTally | None = None,
+    excluded: frozenset[tuple[str, str]] = exclusions_module.NO_EXCLUSIONS,
 ) -> OarResult:
     """Ranking, confidence and the weighted estimate for one target.
 
     Shared by the exhaustive reference (:func:`evaluate_target`) and the
     two-stage engine (``oar.engine``), so the two can differ only in WHICH
     candidates were scored, never in what happens to the scores.
+
+    ``excluded`` is the donors a user removed from THIS target (``oar.exclusions``). They are dropped
+    from the scored candidates before ranking, so the next-best scored donor takes the slot; scores,
+    thresholds and order of the rest are untouched, and an empty set changes nothing at all.
     """
     if eligible_count == 0:
         return OarResult(
@@ -306,6 +314,9 @@ def finalise_target(
         )
 
     minimum_similarity = Decimal(str(policy.similarity.minimum_similarity))
+    candidates_before_exclusion = len(scored)
+    scored = exclusions_module.filter_scored(scored, excluded)
+    excluded_here = candidates_before_exclusion - len(scored)
     scored = ranking.unique_entries(scored)
     neighbours = ranking.select_top_k(
         scored, policy.similarity.maximum_neighbours, minimum_similarity=minimum_similarity
@@ -367,6 +378,9 @@ def finalise_target(
             f"{low_evidence} eligible candidate(s) refused for too little evidence "
             "(see SimilarityPolicy.minimum_evidence_features / identity_evidence_features)"
         )
+    if excluded_here:
+        note = f"{excluded_here} donor(s) left out by a user decision"
+        detail = f"{detail}; {note}" if detail else note
 
     return OarResult(
         sap_material_number=target.sap_material_number,
@@ -418,12 +432,13 @@ def evaluate_target(
     price_range: Decimal | None,
     inventory_values: dict[tuple[str, str], dict],
     policy: PolicyDocument,
+    excluded: frozenset[tuple[str, str]] = exclusions_module.NO_EXCLUSIONS,
 ) -> OarResult:
     """The full similarity pipeline for one cold-start target, exhaustively.
 
     Every eligible candidate gets the exact score. This is the reference the
     two-stage engine (``oar.engine.evaluate_targets``) is tested against, and
-    what ``I7_OAR_RETRIEVAL_MODE=exhaustive`` runs.
+    what ``I7_OAR_RETRIEVAL_MODE=exhaustive`` runs. ``excluded`` is this target's user-removed donors.
     """
     candidate_population, duplicates = dedupe_donors(candidate_population)
     eligible, rejections = eligibility.filter_candidates(
@@ -452,6 +467,7 @@ def evaluate_target(
         retrieval="exhaustive",
         policy=policy,
         tally=RetrievalTally(duplicates_dropped=duplicates),
+        excluded=excluded,
     )
 
 
@@ -645,12 +661,26 @@ def run_oar_similarity(
 
         if existing is not None and not force:
             logger.info("OAR run: inputs unchanged since run %d, reusing it", existing.id)
+            # The run key does not include the user's donor exclusions, so a reused run can predate one.
+            # Only the targets whose exclusions it does not yet reflect are re-selected (the same
+            # pipeline, one target at a time); the rest of the run is left exactly as it was.
+            from app.initiatives.i7.oar import refresh as refresh_module
+
+            refreshed = refresh_module.refresh_stale_targets(
+                session,
+                existing.id,
+                policy=policy,
+                provider=provider,
+                config=config,
+                settings=settings,
+            )
             return OarRunResult(
                 run_id=existing.id,
                 status=STATUS_SUCCEEDED,
                 targets_evaluated=existing.targets_evaluated,
                 reused_existing=True,
                 text_similarity_available=embedding_version != NO_EMBEDDING_MODEL_VERSION,
+                refreshed_targets=refreshed,
             )
 
         run = OarRun(
@@ -684,6 +714,7 @@ def run_oar_similarity(
             candidates = repository.load_candidate_population(session)
             price_span = repository.price_range(candidates)
             inventory_values = repository.load_inventory_values(session)
+            active_exclusions = exclusions_module.load_active(session)
 
         logger.info(
             "OAR run %d: %d targets, %d candidates in the donor population (%s)",
@@ -725,7 +756,15 @@ def run_oar_similarity(
         if config.mode == "exhaustive":
             outcomes = (
                 evaluate_target(
-                    target, candidates, scoring_provider, price_span, inventory_values, policy
+                    target,
+                    candidates,
+                    scoring_provider,
+                    price_span,
+                    inventory_values,
+                    policy,
+                    excluded=exclusions_module.excluded_for(
+                        active_exclusions, target.sap_material_number, target.sap_plant_code
+                    ),
                 )
                 for target in targets
             )
@@ -740,6 +779,7 @@ def run_oar_similarity(
                 policy=policy,
                 config=config,
                 stats=stats,
+                exclusions=active_exclusions,
             )
 
         write_batch = max(1, settings.i7_oar_write_batch_size)
