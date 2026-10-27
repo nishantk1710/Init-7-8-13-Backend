@@ -309,6 +309,14 @@ TABLES: dict[str, tuple[Col, ...]] = {
         # 2026; it reads ``n_dept_codes`` now. Text, not a key: it is not
         # padded, and some values are names (``BMW``, ``OAR``).
         _c("requisitioner", "AFNAM"),
+        # I08's open repair PRs (27-Oct-2026). BSART is labelled as EKKO labels
+        # it -- the same field, the same name. STATU says whether the PR has
+        # been turned into anything (on the 15-Oct extract's 12,369 80-series
+        # PR lines: B 9,874, N 2,346, A 149). MEINS is the PR's unit; the
+        # extract carries it (EA on 12,190 of those lines, then H, SET, MGQ).
+        _c("purchasing_doc_type", "BSART"),
+        _c("processing_status", "STATU"),
+        _c("base_unit_of_measure", "MEINS"),
     ),
     "mara": (
         _c("material", "MATNR", kind="key"),
@@ -339,6 +347,25 @@ TABLES: dict[str, tuple[Col, ...]] = {
         _c("moving_price", "VERPR", kind="num"),
         _c("valuation_type", "BWTAR"),
         _c("price_unit", "PEINH", kind="num"),
+        # LBKUM: the units valued on the row. I08 can read stock per condition
+        # from here instead of MCHB (I8_STOCK_CONDITION_SOURCE=MBEW). Measured
+        # 26-Oct-2026: it matches MARD on 717 of 730 stocked 80-series parts,
+        # and it also counts units the plant owns but has sent to a vendor.
+        _c("total_valuated_stock", "LBKUM", kind="num"),
+    ),
+    # Batch stock. I08 reads it for usable vs damaged stock on 80-series parts
+    # (27-Oct-2026): they are not batch-managed, but this SAP keeps one MCHB
+    # row per condition in CHARG (NEW, REFURBISHD, DAMAGED), and CLABS matches
+    # MARD's unrestricted total on all 730 stocked 80-series parts (26-Oct).
+    # Labels follow MARD's for the same meaning. LVORM was blank on every
+    # in-scope 80-series row of the 15-Oct extract (3,432 rows).
+    "mchb": (
+        _c("material", "MATNR", kind="key"),
+        _c("plant", "WERKS"),
+        _c("storage_location", "LGORT"),
+        _c("batch", "CHARG"),
+        _c("unrestricted", "CLABS", kind="num"),
+        _c("df_at_batch_level", "LVORM"),
     ),
     "makt": (
         _c("material", "MATNR", kind="key"),

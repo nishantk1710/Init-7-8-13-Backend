@@ -120,6 +120,31 @@ class I8Settings(BaseSettings):
     dispatch quantity being counted twice.
     """
 
+    # --- Repair orders and repair PRs (27-Oct-2026) ----------------------
+    #
+    # A repair starts as a repair ORDER -- a reservation whose line for the
+    # faulty unit carries the movement type below -- and that line names the
+    # repair PR raised from it. A repair PR is still open only when no live PO
+    # points back to it AND its reservation line is neither deleted nor
+    # final-issued AND the PR item itself is not deleted: all of them together
+    # give 108 open repair PRs on the 15-Oct extract, not the 122 a looser
+    # rule gives. Each value read from SAP is a setting, never a literal.
+
+    repair_reservation_movement_type: str = "543"
+    """RESB.BWART of a repair order's line for the faulty unit. 6,271 such
+    lines on in-scope 80-series parts on the 15-Oct extract."""
+
+    reservation_deleted_indicator: str = "X"
+    """RESB.XLOEK on a deleted reservation line (3,097 of those 6,271)."""
+
+    reservation_final_issue_indicator: str = "X"
+    """RESB.KZEAR on a final-issued reservation line (2,660 of those 6,271)."""
+
+    requisition_deleted_indicator: str = "X"
+    """EBAN.LOEKZ on a deleted PR item. NOT EKPO's 'L' (po_deleted_indicator):
+    the PR table marks deletion 'X' -- 4,820 of the 12,369 in-scope 80-series
+    PR lines on the 15-Oct extract, and none of them 'L'."""
+
     # --- Aging and overdue (W5.2) ----------------------------------------
 
     # Days past the schedule-line delivery date before a line counts as overdue.

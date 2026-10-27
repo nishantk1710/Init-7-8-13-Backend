@@ -86,10 +86,12 @@ VIEWS: tuple[str, ...] = (
     "v_eket",
     "v_ekbe",
     "v_eban",
+    "v_resb",
     "v_mseg",
     "v_lfa1",
     "v_zmm065",
     "v_mbew",
+    "v_mchb",
 )
 
 FUNCTIONS: tuple[str, ...] = ("sap_key", "sap_date", "sap_num", "in_scope_plant")

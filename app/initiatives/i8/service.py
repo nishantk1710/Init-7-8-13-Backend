@@ -100,6 +100,10 @@ SOURCE_TABLES: tuple[str, ...] = (
     "raw_ekpo",
     "raw_eket",
     "raw_eban",
+    # The repair order's reservation lines (v_resb) and stock per condition
+    # (v_mchb), read for open repair PRs and usable vs damaged stock from
+    # 27-Oct-2026. A reload of either changes what the snapshot holds.
+    "raw_resb",
     "raw_mseg",
     "raw_lfa1",
     # Read only by the coding screen's New Item Price (v_mbew), not by the
@@ -107,6 +111,7 @@ SOURCE_TABLES: tuple[str, ...] = (
     # fingerprint: the rebuild resets the cached coding screen, which would
     # otherwise keep serving last week's prices until a restart.
     "raw_mbew",
+    "raw_mchb",
     # What the monthly criticality uploads add up to; an upload writes an
     # ingestion_run row for it (app/integrations/criticality/reports.py).
     "criticality_current",
