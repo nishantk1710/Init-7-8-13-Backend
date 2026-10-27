@@ -13,7 +13,7 @@ from datetime import date
 from decimal import Decimal
 
 from app.initiatives.i8.reservation_assistant import build
-from tests.assistant.conftest import repair_line, universe_row
+from tests.assistant.conftest import repair_line, repair_request, universe_row
 
 TODAY = date(2026, 7, 31)
 
@@ -170,3 +170,103 @@ class TestTheStoredRecord:
         record = _assessment(lines=[repair_line(due_date=date(2025, 4, 24))]).as_record(TODAY)
         assert record["waitingBeatsBuying"] is None
         assert record["repairDueDateIsReliable"] is False
+
+
+class TestRequestsAndStockConditionInTheRecord:
+    """The 27-Oct-2026 keys (section 2.4). Added only: an older stored record
+    lacks them and is replayed as it was."""
+
+    _OLD_KEYS = {
+        "flow", "materialId", "plant", "description", "criticality", "headline",
+        "caveats", "repairableUnitExists", "sources", "stockOnHand", "stockIsUnknown",
+        "openRepairLines", "quantityUnderRepair", "soonestDueDate", "overdueLines",
+        "repairDueDateIsReliable", "newUnitLeadTimeDays", "waitingBeatsBuying",
+        "referenceDate", "openRepairs",
+    }
+
+    def _record(self, rows=None, lines=None, requests=None):
+        import json
+
+        assessment = build(
+            material_id="8000005632",
+            plant="1300",
+            universe_rows=rows if rows is not None else [universe_row()],
+            repair_lines=lines if lines is not None else [],
+            today=TODAY,
+            repair_requests=requests,
+            department_name={"10305": "Engineering"}.get,
+        )
+        record = assessment.as_record(TODAY)
+        assert json.loads(json.dumps(record)) == record
+        return record
+
+    def test_no_key_was_renamed_or_removed(self) -> None:
+        assert self._OLD_KEYS <= set(self._record())
+
+    def test_the_request_keys_and_their_types(self) -> None:
+        record = self._record(requests=[repair_request()])
+        assert record["repairableUnitExists"] is True
+        assert record["sources"] == ["REPAIR_REQUESTED"]
+        assert record["openRepairLines"] == 0
+        assert record["openRepairs"] == []
+        assert record["openRepairRequestLines"] == 1
+        assert record["openRepairRequests"] == [
+            {
+                "purchaseRequisition": "2000029113",
+                "item": "10",
+                "quantity": "1",
+                "requestedAt": "2025-12-04",
+                "daysSinceRequested": 239,
+                "department": "10305",
+                "departmentName": "Engineering",
+                "repairOrder": "940000004981",
+            }
+        ]
+        assert "requested, not yet ordered (requested 239 days ago)" in record["headline"]
+
+    def test_switched_off_counts_no_requests(self) -> None:
+        record = self._record(requests=None)
+        assert record["openRepairRequestLines"] == 0
+        assert record["openRepairRequests"] == []
+        assert record["repairableUnitExists"] is False
+
+    def test_known_condition_stock_keys(self) -> None:
+        row = universe_row(
+            stock_on_hand=Decimal("3"),
+            usable_stock=Decimal("2"),
+            damaged_stock=Decimal("1"),
+            stock_by_condition=(("DAMAGED", Decimal("1")), ("NEW", Decimal("2"))),
+            stock_condition_source="MCHB",
+        )
+        record = self._record(rows=[row])
+        assert record["stockOnHand"] == "3"
+        assert record["usableStock"] == "2"
+        assert record["damagedStock"] == "1"
+        assert record["stockConditionKnown"] is True
+        assert record["stockSource"] == "MCHB"
+
+    def test_damaged_only_is_no_unit_in_the_record(self) -> None:
+        row = universe_row(
+            stock_on_hand=Decimal("2"),
+            usable_stock=Decimal("0"),
+            damaged_stock=Decimal("2"),
+            stock_by_condition=(("DAMAGED", Decimal("2")),),
+            stock_condition_source="MCHB",
+        )
+        record = self._record(rows=[row])
+        assert record["repairableUnitExists"] is False
+        assert record["usableStock"] == "0"
+        assert record["stockOnHand"] == "2"
+
+    def test_unknown_condition_falls_back_to_the_total(self) -> None:
+        record = self._record(rows=[universe_row(stock_on_hand=Decimal("3"))])
+        assert record["usableStock"] is None
+        assert record["damagedStock"] is None
+        assert record["stockConditionKnown"] is False
+        assert record["stockSource"] == "MARD"
+        assert record["repairableUnitExists"] is True
+
+    def test_no_stock_record_has_no_source(self) -> None:
+        record = self._record(rows=[universe_row(stock_on_hand=None)])
+        assert record["stockSource"] is None
+        assert record["stockIsUnknown"] is True

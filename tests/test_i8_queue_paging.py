@@ -1368,3 +1368,88 @@ class TestNoDeclarationOnARepairRequest:
         assert names() is False
         assert names(repairDocument="2000029101", repairItem="10") is True
         assert names(repairDocument="pr-2000029101", repairItem="10") is True
+
+
+class TestRepairableUnitRoute:
+    """GET /api/i8/repairable-unit counts open repair PRs only while the switch
+    is on, and splits usable from damaged stock -- as the assistant does."""
+
+    @staticmethod
+    def _universe_row(**overrides):
+        from app.initiatives.i8.universe import UniverseRow
+
+        fields = dict(
+            material_id="8000000001",
+            plant="1300",
+            description="Motor 1",
+            material_type="ZREP",
+            stock_on_hand=Decimal(0),
+            storage_locations=1,
+            reorder_point=None,
+            mrp_type="ND",
+            planned_delivery_days=30,
+            criticality=None,
+            open_repair_lines=0,
+            qty_under_repair=Decimal(0),
+            in_material_master=True,
+        )
+        fields.update(overrides)
+        return UniverseRow(**fields)
+
+    def _get(self, queues) -> dict:
+        response = queues.client.get(
+            "/api/i8/repairable-unit", params={"material": "8000000001", "plant": "1300"}
+        )
+        assert response.status_code == 200
+        return response.json()
+
+    def test_a_pr_only_part_has_a_unit_only_when_switched_on(self, queues, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "app.assistant.departments.name_for",
+            lambda code: {"10305": "Engineering"}.get(code or ""),
+        )
+        queues.universe = (self._universe_row(),)
+        queues.requests = (repair_request(1),)
+
+        off = self._get(queues)
+        assert off["exists"] is False
+        assert off["openRepairRequestLines"] == 0
+        assert off["requestEvidence"] == []
+
+        serve_requests(queues, repair_request(1))
+        on = self._get(queues)
+        assert on["exists"] is True
+        assert "REPAIR_REQUESTED" in on["sources"]
+        assert on["openRepairRequestLines"] == 1
+        assert on["requestEvidence"] == [
+            {
+                "purchaseRequisition": "2000029101",
+                "item": "10",
+                "quantity": "2",
+                "requestedAt": "2026-09-01",
+                "daysSinceRequested": 47,
+                "department": "10305",
+                "departmentName": "Engineering",
+                "repairOrder": "4000123",
+            }
+        ]
+
+    def test_damaged_only_stock_is_no_unit(self, queues) -> None:
+        queues.universe = (
+            self._universe_row(
+                stock_on_hand=Decimal(2),
+                usable_stock=Decimal(0),
+                damaged_stock=Decimal(2),
+                stock_by_condition=(("DAMAGED", Decimal(2)),),
+                stock_condition_source="MCHB",
+            ),
+        )
+
+        body = self._get(queues)
+
+        assert body["exists"] is False
+        assert body["stockOnHand"] == "2"
+        assert body["usableStock"] == "0"
+        assert body["damagedStock"] == "2"
+        assert body["stockConditionKnown"] is True
+        assert body["stockSource"] == "MCHB"

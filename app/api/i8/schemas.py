@@ -1108,6 +1108,21 @@ class RepairEvidenceItem(I8Model):
     dispatched: bool
 
 
+class RepairRequestEvidenceItem(I8Model):
+    """One open repair PR with no PO yet (since 27-Oct-2026). Served only while
+    ``I8_REPAIR_REQUESTS_ENABLED`` is on. ``departmentName`` is null when the
+    department list does not name the code; show the code."""
+
+    purchase_requisition: str
+    item: str
+    quantity: Decimal
+    requested_at: date | None = None
+    days_since_requested: int | None = None
+    department: str | None = None
+    department_name: str | None = None
+    repair_order: str | None = None
+
+
 class RepairableUnitResponse(I8Model):
     """FR-6's answer, with the evidence behind it.
 
@@ -1132,6 +1147,19 @@ class RepairableUnitResponse(I8Model):
     caveats: list[str]
     evidence: list[RepairEvidenceItem]
     reference_date: date
+    # Since 27-Oct-2026, defaulted so an older client reads the old shape.
+    # ``stockOnHand`` stays the plant total; ``exists`` counts usable units
+    # where the condition is known.
+    open_repair_request_lines: int = 0
+    """Open repair PRs counted; 0 while the switch is off."""
+    request_evidence: list[RepairRequestEvidenceItem] = []
+    usable_stock: Decimal | None = None
+    """New and refurbished units; null when the condition is unknown."""
+    damaged_stock: Decimal | None = None
+    stock_condition_known: bool = False
+    stock_source: str | None = None
+    """``MCHB`` / ``MBEW``; ``MARD`` when only the total is known; null with
+    no stock record."""
 
 
 class ExceptionEventRequest(I8Model):

@@ -38,6 +38,7 @@ from app.api.i8.mappers import (
     declaration_facets,
     declaration_item,
     declaration_meta,
+    department_name,
     exception_facets,
     exception_history_entry,
     exception_item,
@@ -68,6 +69,7 @@ from app.api.i8.schemas import (
     RepairableUnitResponse,
     RepairDetail,
     RepairEvidenceItem,
+    RepairRequestEvidenceItem,
     SAPDocumentReference,
     SnapshotInfo,
     UniverseDetail,
@@ -1412,6 +1414,7 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
 )
 def get_repairable_unit(
     snapshot: SnapshotDep,
+    cfg: SettingsDep,
     material: Annotated[str, Query(description="Material number, padded or stripped")],
     plant: Annotated[str | None, Query(description="Plant code. Omitted means every plant.")] = None,
 ) -> RepairableUnitResponse:
@@ -1421,6 +1424,9 @@ def get_repairable_unit(
     the overdue counts here agree with the register screen beside it. That is
     the right trade on a frozen July extract; when the source becomes live it
     is ``get_snapshot``'s caching that has to change, not this route.
+
+    Open repair PRs count only while ``I8_REPAIR_REQUESTS_ENABLED`` is on, as
+    in the assistant (since 27-Oct-2026), so the two cannot disagree.
     """
     verdict = assess_repairable_unit(
         material_id=material,
@@ -1428,6 +1434,8 @@ def get_repairable_unit(
         universe_rows=snapshot.universe,
         repair_lines=snapshot.lines,
         today=snapshot.reference_date,
+        repair_requests=snapshot.repair_requests if cfg.repair_requests_enabled else None,
+        department_name=department_name,
     )
     return RepairableUnitResponse(
         material_id=verdict.material_id,
@@ -1460,6 +1468,24 @@ def get_repairable_unit(
             for item in verdict.evidence
         ],
         reference_date=snapshot.reference_date,
+        open_repair_request_lines=verdict.open_repair_request_lines,
+        request_evidence=[
+            RepairRequestEvidenceItem(
+                purchase_requisition=item.purchase_requisition,
+                item=item.item,
+                quantity=item.quantity,
+                requested_at=item.requested_on,
+                days_since_requested=item.days_since_requested,
+                department=item.department,
+                department_name=item.department_name,
+                repair_order=item.repair_order,
+            )
+            for item in verdict.request_evidence
+        ],
+        usable_stock=verdict.usable_stock,
+        damaged_stock=verdict.damaged_stock,
+        stock_condition_known=verdict.stock_condition_known,
+        stock_source=verdict.stock_source,
     )
 
 

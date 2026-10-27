@@ -50,10 +50,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from app.initiatives.i8.material_number import normalise
 from app.initiatives.i8.register import RepairLine
+
+if TYPE_CHECKING:
+    from app.initiatives.i8.requisitions import RepairRequest
 from app.initiatives.i8.repairable_unit import RepairableUnitVerdict
 from app.initiatives.i8.repairable_unit import assess as assess_repairable_unit
 from app.initiatives.i8.universe import UniverseRow
@@ -233,6 +236,27 @@ class I08Assessment:
                 }
                 for item in self.verdict.evidence
             ],
+            # Since 27-Oct-2026: open repair PRs and the usable/damaged split.
+            # Added, never renamed: records are replayed word for word, and an
+            # older one simply lacks these keys.
+            "openRepairRequestLines": self.verdict.open_repair_request_lines,
+            "openRepairRequests": [
+                {
+                    "purchaseRequisition": item.purchase_requisition,
+                    "item": item.item,
+                    "quantity": _number(item.quantity),
+                    "requestedAt": _iso(item.requested_on),
+                    "daysSinceRequested": item.days_since_requested,
+                    "department": item.department,
+                    "departmentName": item.department_name,
+                    "repairOrder": item.repair_order,
+                }
+                for item in self.verdict.request_evidence
+            ],
+            "usableStock": _number(self.verdict.usable_stock),
+            "damagedStock": _number(self.verdict.damaged_stock),
+            "stockConditionKnown": self.verdict.stock_condition_known,
+            "stockSource": self.verdict.stock_source,
         }
 
 
@@ -256,12 +280,17 @@ def build(
     universe_rows: Sequence[UniverseRow],
     repair_lines: Sequence[RepairLine],
     today: date,
+    repair_requests: Sequence[RepairRequest] | None = None,
+    department_name: Callable[[str | None], str | None] | None = None,
 ) -> I08Assessment:
     """Assemble the I08 assessment for one material at one plant.
 
     Takes the whole snapshot's rows and narrows them here, for the same reason
     ``repairable_unit.assess`` does: the matching rule belongs in one place, and
     this function delegates to that one rather than repeating it.
+
+    ``repair_requests`` and ``department_name`` are passed straight through:
+    ``None`` requests means the caller's switch is off and PRs are not counted.
     """
     material_key = normalise(material_id) or ""
     plant_key = (plant or "").strip()
@@ -272,6 +301,8 @@ def build(
         universe_rows=universe_rows,
         repair_lines=repair_lines,
         today=today,
+        repair_requests=repair_requests,
+        department_name=department_name,
     )
 
     rows = [

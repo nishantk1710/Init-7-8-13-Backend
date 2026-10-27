@@ -48,7 +48,7 @@ from enum import Enum
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
-from app.assistant import ids
+from app.assistant import departments, ids
 from app.assistant import narrative as narrative_module
 from app.assistant.models import AssistantSession, AssistantTurn
 from app.assistant.narrative import write as write_narrative
@@ -63,6 +63,7 @@ from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.quantity import QuantitySuggestion, build_quantity_config, suggest
 from app.initiatives.i13.reservation_assistant import build as build_i13_assessment
 from app.initiatives.i13.watch import age_watch_row
+from app.initiatives.i8.config import get_i8_settings
 from app.initiatives.i8.reservation_assistant import build as build_i08_assessment
 from app.initiatives.i8.service import get_snapshot
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
@@ -144,12 +145,21 @@ def _assessment_for(
     """
     if routed.flow is Flow.I08:
         snapshot = get_snapshot(db)
+        # Open repair PRs are always in the snapshot; they count in the
+        # verdict only while I8_REPAIR_REQUESTS_ENABLED is on (since
+        # 27-Oct-2026), so the backend can ship before the screens that show
+        # them. None, not (), when off: "not counted" is not "none open".
+        repair_requests = (
+            snapshot.repair_requests if get_i8_settings().repair_requests_enabled else None
+        )
         return build_i08_assessment(
             material_id=routed.material_id,
             plant=routed.plant,
             universe_rows=snapshot.universe,
             repair_lines=snapshot.lines,
             today=today,
+            repair_requests=repair_requests,
+            department_name=departments.name_for,
         )
 
     movement_repository = PostgresMovementRepository(db)

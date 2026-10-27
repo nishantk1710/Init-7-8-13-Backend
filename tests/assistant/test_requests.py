@@ -56,7 +56,7 @@ from app.initiatives.i8.reservation_assistant import build as build_i08
 from app.models.base import Base
 from app.models.i13_session_link import SessionReservationLink
 from app.shared.material_scope import MaterialScope
-from tests.assistant.conftest import TODAY, repair_line, universe_row, watch_metric
+from tests.assistant.conftest import TODAY, repair_line, repair_request, universe_row, watch_metric
 
 PLANT = "1300"
 ACTOR = "coordinator-1"
@@ -442,6 +442,50 @@ class TestPreview:
         with factory() as db:
             [line] = request_service.preview(db, [(OAR_NORMAL, PLANT)], today=TODAY)
         assert line.suggestion.quantity == Decimal("8")
+
+
+class TestPreviewCountsRepairRequests:
+    """The real ``_assessment_for``: open repair PRs count in the verdict only
+    while I8_REPAIR_REQUESTS_ENABLED is on (27-Oct-2026)."""
+
+    @pytest.fixture
+    def preview_pr_only(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from app.initiatives.i8.config import get_i8_settings
+
+        snapshot = SimpleNamespace(
+            universe=[universe_row(material_id=REPAIR_NONE, stock_on_hand=Decimal("0"))],
+            lines=[],
+            repair_requests=(repair_request(material_id=REPAIR_NONE),),
+        )
+        monkeypatch.setattr(request_service, "route", lambda db, material, plant: _routed(material))
+        monkeypatch.setattr(session_module, "get_snapshot", lambda db: snapshot)
+        monkeypatch.setattr(departments, "_names", {"10305": "Engineering"})
+
+        def run(enabled: bool):
+            cfg = get_i8_settings().model_copy(update={"repair_requests_enabled": enabled})
+            monkeypatch.setattr(session_module, "get_i8_settings", lambda: cfg)
+            [line] = request_service.preview(None, [(REPAIR_NONE, PLANT)], today=TODAY)
+            return line
+
+        return run
+
+    def test_switched_on_a_pr_only_part_has_a_unit(self, preview_pr_only) -> None:
+        line = preview_pr_only(True)
+        assert line.kind == "i08"
+        assert line.unit_exists is True
+        assert line.facts["openRepairRequestLines"] == 1
+        [request] = line.facts["openRepairRequests"]
+        assert request["purchaseRequisition"] == "2000029113"
+        assert request["departmentName"] == "Engineering"
+        assert line.facts["openRepairLines"] == 0
+
+    def test_switched_off_it_does_not(self, preview_pr_only) -> None:
+        line = preview_pr_only(False)
+        assert line.unit_exists is False
+        assert line.facts["openRepairRequestLines"] == 0
+        assert line.facts["openRepairRequests"] == []
 
 
 def test_the_window_runs_until_the_quantity_is_used_up() -> None:

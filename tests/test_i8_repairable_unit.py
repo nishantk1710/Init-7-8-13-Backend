@@ -91,13 +91,23 @@ def _repair_line(**overrides):
     return RepairLine(**defaults)
 
 
-def _assess(universe_rows=(), repair_lines=(), material="8000005632", plant="1300"):
+def _assess(
+    universe_rows=(),
+    repair_lines=(),
+    material="8000005632",
+    plant="1300",
+    repair_requests=None,
+    department_name=None,
+):
     return repairable_unit.assess(
         material_id=material,
         plant=plant,
         universe_rows=universe_rows,
         repair_lines=repair_lines,
         today=TODAY,
+        repair_requests=repair_requests,
+        department_name=department_name,
+        usable_conditions=("NEW", "REFURBISHD"),
     )
 
 
@@ -285,3 +295,271 @@ class TestMaterialMatching:
             plant="1300",
         )
         assert verdict.is_repairable_material is False
+
+
+# --- 27-Oct-2026: open repair PRs and the usable/damaged split ----------------
+
+
+def _repair_request(**overrides):
+    from tests.assistant.conftest import repair_request
+
+    return repair_request(**overrides)
+
+
+def _known(usable=None, damaged=None, source="MCHB", **conditions):
+    """A universe row with condition rows: ``conditions`` maps code to units."""
+    by_condition = tuple(sorted((c, Decimal(v)) for c, v in conditions.items()))
+    return dict(
+        usable_stock=Decimal(usable) if usable is not None else Decimal(0),
+        damaged_stock=Decimal(damaged) if damaged is not None else Decimal(0),
+        stock_by_condition=by_condition,
+        stock_condition_source=source,
+    )
+
+
+class TestRepairRequests:
+    """A repair PR with no PO yet: 108 on the 15-Oct extract, invisible to the
+    PO-only register. Counted only when the caller passes them."""
+
+    def test_a_pr_only_part_has_a_unit_only_when_requests_are_passed(self) -> None:
+        rows = [_universe_row()]
+        off = _assess(universe_rows=rows, repair_requests=None)
+        on = _assess(universe_rows=rows, repair_requests=[_repair_request()])
+        assert off.exists is False
+        assert off.request_evidence == ()
+        assert on.exists is True
+        assert UnitSource.REPAIR_REQUESTED in on.sources
+        assert on.open_repair_request_lines == 1
+
+    def test_the_evidence_carries_what_the_record_states(self) -> None:
+        names = {"10305": "Engineering"}
+        verdict = _assess(
+            universe_rows=[_universe_row()],
+            repair_requests=[_repair_request()],
+            department_name=names.get,
+        )
+        [item] = verdict.request_evidence
+        assert item.purchase_requisition == "2000029113"
+        assert item.item == "10"
+        assert item.quantity == Decimal("1")
+        assert item.requested_on == date(2025, 12, 4)
+        assert item.days_since_requested == 239
+        assert item.department == "10305"
+        assert item.department_name == "Engineering"
+        assert item.repair_order == "940000004981"
+
+    def test_an_unnamed_department_is_shown_by_code(self) -> None:
+        verdict = _assess(
+            universe_rows=[_universe_row()],
+            repair_requests=[_repair_request()],
+            department_name=lambda code: None,
+        )
+        assert verdict.request_evidence[0].department == "10305"
+        assert verdict.request_evidence[0].department_name is None
+
+    def test_another_part_s_or_plant_s_requests_are_not_counted(self) -> None:
+        verdict = _assess(
+            universe_rows=[_universe_row()],
+            repair_requests=[
+                _repair_request(material_id="8000009999"),
+                _repair_request(plant="1500"),
+            ],
+        )
+        assert verdict.exists is False
+        assert verdict.request_evidence == ()
+
+    def test_one_request_headline_and_caveat(self) -> None:
+        verdict = _assess(universe_rows=[_universe_row()], repair_requests=[_repair_request()])
+        assert (
+            "There is 1 repair requested, not yet ordered (requested 239 days ago)."
+            in verdict.headline
+        )
+        assert (
+            "A requested repair has no PO yet, so there is no date for its return."
+            in verdict.caveats
+        )
+
+    def test_several_requests_name_the_oldest(self) -> None:
+        verdict = _assess(
+            universe_rows=[_universe_row()],
+            repair_requests=[
+                _repair_request(item="20", requested_on=date(2026, 7, 30)),
+                _repair_request(item="10"),
+                _repair_request(item="30", requested_on=None),
+            ],
+        )
+        assert [e.item for e in verdict.request_evidence] == ["10", "20", "30"]
+        assert (
+            "There are 3 repairs requested, not yet ordered "
+            "(the oldest requested 239 days ago)." in verdict.headline
+        )
+
+    def test_with_a_repair_po_too_the_no_date_caveat_is_not_given(self) -> None:
+        verdict = _assess(
+            universe_rows=[_universe_row()],
+            repair_lines=[_repair_line()],
+            repair_requests=[_repair_request(item="20")],
+        )
+        assert verdict.sources == (UnitSource.ON_REPAIR_ORDER, UnitSource.REPAIR_REQUESTED)
+        assert verdict.open_repair_lines == 1
+        assert not any("no PO yet" in note for note in verdict.caveats)
+        # Each clause is its own sentence (it used to read ". and there").
+        assert ". and there" not in verdict.headline
+        assert ". There is 1 repair requested" in verdict.headline
+
+    def test_counted_and_none_says_no_open_repair(self) -> None:
+        counted = _assess(universe_rows=[_universe_row()], repair_requests=[])
+        not_counted = _assess(universe_rows=[_universe_row()], repair_requests=None)
+        assert counted.headline.endswith("no stock available and no open repair.")
+        assert not_counted.headline.endswith("no stock available and no open repair PO.")
+
+
+class TestUsableAndDamagedStock:
+    """MCHB by default: NEW 1,667 / REFURBISHD 975 / DAMAGED 790 on 15-Oct."""
+
+    def test_usable_stock_counts_and_damaged_is_named_but_not_counted(self) -> None:
+        verdict = _assess(
+            universe_rows=[
+                _universe_row(
+                    stock_on_hand=Decimal("3"),
+                    **_known(usable=2, damaged=1, NEW=1, REFURBISHD=1, DAMAGED=1),
+                )
+            ]
+        )
+        assert verdict.exists is True
+        assert verdict.sources == (UnitSource.STOCK,)
+        assert verdict.stock_condition_known is True
+        assert verdict.stock_source == "MCHB"
+        assert (verdict.usable_stock, verdict.damaged_stock) == (Decimal(2), Decimal(1))
+        assert verdict.stock_on_hand == Decimal(3)
+        assert verdict.headline.startswith(
+            "There are 2 usable in stock at plant 1300 (1 new, 1 refurbished); "
+            "1 damaged unit is not counted."
+        )
+
+    def test_one_condition_gives_no_breakdown_and_no_damaged_clause(self) -> None:
+        verdict = _assess(
+            universe_rows=[_universe_row(stock_on_hand=Decimal("1"), **_known(usable=1, NEW=1))]
+        )
+        assert verdict.headline.startswith("There is 1 usable in stock at plant 1300.")
+        assert "(" not in verdict.headline.split(".")[0]
+        assert "damaged" not in verdict.headline
+
+    def test_damaged_only_is_not_a_unit(self) -> None:
+        verdict = _assess(
+            universe_rows=[
+                _universe_row(stock_on_hand=Decimal("2"), **_known(usable=0, damaged=2, DAMAGED=2))
+            ]
+        )
+        assert verdict.exists is False
+        assert verdict.has_stock is True  # the MARD total, unchanged
+        assert verdict.has_usable_stock is False
+        assert UnitSource.STOCK not in verdict.sources
+        assert verdict.headline == (
+            "No repairable unit exists for 8000005632 at plant 1300: no usable "
+            "stock (2 damaged units are not counted) and no open repair PO."
+        )
+
+    def test_scrap_is_neither_usable_nor_damaged(self) -> None:
+        verdict = _assess(
+            universe_rows=[
+                _universe_row(
+                    stock_on_hand=None,
+                    **_known(usable=0, damaged=0, source="MBEW", SCRAP=4),
+                )
+            ]
+        )
+        assert verdict.exists is False
+        assert verdict.stock_source == "MBEW"
+        assert verdict.headline.endswith("no stock available and no open repair PO.")
+        # MBEW said something, so this is not "no stock record".
+        assert not any("No stock record exists" in note for note in verdict.caveats)
+
+    def test_condition_unknown_falls_back_to_the_total(self) -> None:
+        verdict = _assess(universe_rows=[_universe_row(stock_on_hand=Decimal("3"))])
+        assert verdict.exists is True
+        assert verdict.stock_condition_known is False
+        assert verdict.stock_source == "MARD"
+        assert (verdict.usable_stock, verdict.damaged_stock) == (None, None)
+        assert verdict.headline.startswith(
+            "There are 3 in stock at plant 1300 (condition unknown)."
+        )
+        assert (
+            "The stock record does not say which units are usable and which are damaged."
+            in verdict.caveats
+        )
+
+    def test_a_zero_total_with_no_condition_rows_has_no_condition_caveat(self) -> None:
+        """1,516 MARD rows with no MCHB rows on 15-Oct, all LABST 0."""
+        verdict = _assess(universe_rows=[_universe_row(stock_on_hand=Decimal("0"))])
+        assert verdict.stock_source == "MARD"
+        assert not any("usable and which are damaged" in n for n in verdict.caveats)
+
+    def test_no_stock_record_has_no_source(self) -> None:
+        verdict = _assess(universe_rows=[_universe_row(stock_on_hand=None)])
+        assert verdict.stock_source is None
+        assert verdict.stock_condition_known is False
+        assert "cannot tell" in verdict.headline
+
+    def test_condition_rows_all_zero_are_known_and_zero(self) -> None:
+        verdict = _assess(
+            universe_rows=[
+                _universe_row(stock_on_hand=Decimal("0"), **_known(usable=0, damaged=0, NEW=0))
+            ]
+        )
+        assert verdict.stock_condition_known is True
+        assert (verdict.usable_stock, verdict.damaged_stock) == (Decimal(0), Decimal(0))
+        assert verdict.exists is False
+
+    def test_a_plant_holding_unsplit_stock_makes_the_split_unknown(self) -> None:
+        """Across plants, a total never mixes split and unsplit units."""
+        verdict = _assess(
+            universe_rows=[
+                _universe_row(plant="1300", stock_on_hand=Decimal("2"), **_known(usable=2, NEW=2)),
+                _universe_row(plant="1500", stock_on_hand=Decimal("1")),
+            ],
+            plant=None,
+        )
+        assert verdict.stock_condition_known is False
+        assert verdict.stock_source == "MARD"
+        assert verdict.stock_on_hand == Decimal(3)
+
+    def test_a_plant_with_a_zero_total_does_not_spoil_the_split(self) -> None:
+        verdict = _assess(
+            universe_rows=[
+                _universe_row(plant="1300", stock_on_hand=Decimal("2"), **_known(usable=2, NEW=2)),
+                _universe_row(plant="1500", stock_on_hand=Decimal("0")),
+            ],
+            plant=None,
+        )
+        assert verdict.stock_condition_known is True
+        assert verdict.usable_stock == Decimal(2)
+
+    def test_the_breakdown_follows_the_configured_order(self) -> None:
+        verdict = repairable_unit.assess(
+            material_id="8000005632",
+            plant="1300",
+            universe_rows=[
+                _universe_row(
+                    stock_on_hand=Decimal("3"),
+                    **_known(usable=3, NEW=1, REFURBISHD=2),
+                )
+            ],
+            repair_lines=(),
+            today=TODAY,
+            usable_conditions=("REFURBISHD", "NEW"),
+        )
+        assert verdict.usable_breakdown == (("REFURBISHD", Decimal(2)), ("NEW", Decimal(1)))
+        assert "(2 refurbished, 1 new)" in verdict.headline
+
+    def test_the_breakdown_defaults_to_the_setting(self) -> None:
+        verdict = repairable_unit.assess(
+            material_id="8000005632",
+            plant="1300",
+            universe_rows=[
+                _universe_row(stock_on_hand=Decimal("2"), **_known(usable=2, NEW=1, REFURBISHD=1))
+            ],
+            repair_lines=(),
+            today=TODAY,
+        )
+        assert [c for c, _ in verdict.usable_breakdown] == ["NEW", "REFURBISHD"]
