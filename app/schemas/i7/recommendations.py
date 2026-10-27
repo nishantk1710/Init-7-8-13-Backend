@@ -381,6 +381,25 @@ class ImpactInfo(BaseModel):
     max_stock_delta: Decimal | None = None
 
 
+def working_capital_impact(row: RecommendationModel) -> Decimal | None:
+    """The row's Value change: ``unit_price * (current_rop - recommended_rop)``.
+
+    The same rule, and the same sign, as the Overview's Working Capital Impact card
+    (``net_rop_value_impact`` in ``GET /recommendations/summary``, which sums this per row in SQL):
+    positive releases working capital (the recommended reorder point is lower), negative ties more up.
+
+    ``None`` -- never 0 -- when the impact could not be calculated: the recommendation is blocked
+    (``NOT_EVALUABLE``), its impact is not ``AVAILABLE``, or the price or either reorder point is
+    missing. A genuine 0 means the reorder point does not change. A caller that read ``None`` as 0
+    would claim "no change" for a figure that was never worked out.
+    """
+    if row.status == "NOT_EVALUABLE" or row.impact_status != "AVAILABLE":
+        return None
+    if row.unit_price is None or row.current_rop is None or row.recommended_rop is None:
+        return None
+    return row.unit_price * (row.current_rop - row.recommended_rop)
+
+
 class GovernanceInfo(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -456,9 +475,11 @@ class RecommendationSummary(BaseModel):
     recommended: StockParameters
     impact: ImpactInfo
     unit_price: Decimal | None = None
-    """Added so the list endpoint's own Value-change column can price
-    ``impact.safety_stock_delta`` without a second (detail) request per row --
+    """Carried on the list so a row can show its price without a second (detail) request --
     the same reasoning as ``current``/``recommended``/``impact`` above."""
+    working_capital_impact: Decimal | None = None
+    """The Value-change column, worked out here (see :func:`working_capital_impact`) so the row and the
+    Working Capital Impact card cannot disagree. ``None`` means it could not be calculated, not 0."""
     currency: str | None = None
     """ISO code ``unit_price`` is in, as SAP's valuation data states it (MBEW
     WAERS). ``None`` when SAP supplies no currency -- a client must not assume
@@ -490,6 +511,7 @@ class RecommendationSummary(BaseModel):
             chain_index=row.chain_index,
             route=list(route),
             unit_price=row.unit_price,
+            working_capital_impact=working_capital_impact(row),
             currency=currency,
             current=StockParameters(
                 safety_stock=row.current_safety_stock,
@@ -692,6 +714,8 @@ class RecommendationDetail(BaseModel):
     unit_price: Decimal | None = None
     """Feature-store (Phase 3) field, available on both the normal and OAR
     path regardless of history status."""
+    working_capital_impact: Decimal | None = None
+    """Same figure as :attr:`RecommendationSummary.working_capital_impact`; ``None`` means not calculable."""
     currency: str | None = None
     """ISO code ``unit_price`` is in (MBEW WAERS); ``None`` when SAP supplies none."""
 
@@ -734,6 +758,7 @@ class RecommendationDetail(BaseModel):
             plant=row.sap_plant_code,
             circuit=row.circuit,
             unit_price=row.unit_price,
+            working_capital_impact=working_capital_impact(row),
             currency=currency,
             current=StockParameters(
                 safety_stock=row.current_safety_stock,
