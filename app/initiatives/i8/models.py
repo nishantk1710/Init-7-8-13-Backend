@@ -406,3 +406,47 @@ class ExceptionEvent(Base):
 
     def __repr__(self) -> str:
         return f"<ExceptionEvent {self.id} {self.exception_id} {self.kind} by {self.actor}>"
+
+
+class Notification(Base):
+    """One notification logged for an exception-queue item (FR-11).
+
+    FR-11 asks for notification "through the exception queue and email". The
+    queue half already exists; this is the record of WHAT should be sent, kept
+    apart from the sending so the two can ship separately. Logged once per
+    exception id, the first time the check finds that item actionable -- not
+    on every read, and never for an item raised before its control existed.
+
+    The row is not an exception: the item is still recomputed on every read.
+    It copies the type, severity, title and part as they stood when first
+    found, because that is what a notification says, and an email sent
+    tomorrow must say what was found today.
+
+    ``emailed_at`` is reserved for the email sender (not built on 27-Oct-2026)
+    and is null on every row until then.
+    """
+
+    __tablename__ = "i8_notification"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    exception_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    """The exception's deterministic id. Unique: the second detection of the
+    same finding is not a second notification."""
+
+    exception_type: Mapped[str] = mapped_column(String(64), index=True)
+    severity: Mapped[str] = mapped_column(String(16))
+    title: Mapped[str] = mapped_column(Text)
+    material_id: Mapped[str] = mapped_column(String(40))
+    plant: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    channel: Mapped[str] = mapped_column(String(16), default="EMAIL")
+    logged_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    emailed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<Notification {self.exception_id} {self.exception_type}>"

@@ -44,6 +44,7 @@ from app.api.i8.mappers import (
     exception_item,
     exception_meta,
     material_descriptions,
+    notification_item,
     register_facets,
     register_meta,
     repair_chain,
@@ -67,6 +68,7 @@ from app.api.i8.schemas import (
     ExceptionQueueItem,
     ExceptionResponse,
     MaterialReference,
+    NotificationResponse,
     RepairChain,
     RegisterResponse,
     RegisterViewCounts,
@@ -111,6 +113,7 @@ from app.initiatives.i8.exception_state import (
 )
 from app.initiatives.i8.exceptions import ExceptionItem
 from app.initiatives.i8.material_number import is_eighty_series, normalise
+from app.initiatives.i8.notifications import list_notifications, log_new as log_new_notifications
 from app.initiatives.i8.register import RepairLine
 from app.initiatives.i8.repairable_unit import assess as assess_repairable_unit
 from app.initiatives.i8.requisitions import NOT_ORDERED, PR_RAISED, RepairRequest
@@ -1167,6 +1170,10 @@ def get_exceptions(
     # still raised, and resolving it because the caller looked away would
     # close somebody else's work.
     auto_resolve(db, (i.id for i in items))
+    # Same moment, same items, for the same reason: the read is the only time
+    # the platform learns a finding exists. Logs each actionable item of a
+    # notified type once, ever; never raises (see notifications.py).
+    log_new_notifications(db, items, cfg)
 
     excluded_types = _type_set(exclude_type)
     excluded = tuple(i for i in items if i.type in excluded_types)
@@ -1260,6 +1267,37 @@ def get_exceptions(
         facets=facets,
         reference_date=snapshot.reference_date,
         type_counts=dict(type_counts),
+    )
+
+
+@router.get(
+    "/notifications",
+    response_model=NotificationResponse,
+    summary="FR-11 notifications logged for exceptions, newest first",
+)
+def get_notifications(
+    cfg: SettingsDep,
+    db: DbDep,
+    type_filter: str | None = Query(
+        None, alias="type", description="Exception type, e.g. OVERDUE_REPAIR"
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, alias="pageSize", ge=1),
+) -> NotificationResponse:
+    """One notification per exception, logged the first time the queue found
+    it actionable. Nothing is emailed yet, so ``emailed`` is false throughout.
+    """
+    size = min(page_size, cfg.max_page_size)
+    wanted = type_filter.strip().upper() if type_filter and type_filter.strip() else None
+    rows, total, types = list_notifications(
+        db, page=page, page_size=size, exception_type=wanted
+    )
+    return NotificationResponse(
+        items=[notification_item(r) for r in rows],
+        total=total,
+        page=page,
+        page_size=size,
+        types=types,
     )
 
 

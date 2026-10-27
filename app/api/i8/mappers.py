@@ -27,6 +27,7 @@ from app.api.i8.schemas import (
     LifecycleStage,
     LineException,
     MaterialReference,
+    NotificationItem,
     PlantReference,
     RegisterFacets,
     RegisterMeta,
@@ -63,7 +64,7 @@ from app.initiatives.i8.exception_state import (
     ExceptionWorkState,
     canonical_status,
 )
-from app.initiatives.i8.models import ExceptionEvent, RepairAttestation
+from app.initiatives.i8.models import ExceptionEvent, Notification, RepairAttestation
 from app.initiatives.i8.register import RegisterStats, RepairLine
 from app.initiatives.i8.requisitions import NOT_ORDERED, PR_RAISED, RepairRequest
 from app.initiatives.i8.service import Snapshot
@@ -767,6 +768,23 @@ def exception_item(
         owner=work.owner,
         still_detected=still_detected,
         history=[exception_history_entry(e) for e in work.history],
+    )
+
+
+def notification_item(row: Notification) -> NotificationItem:
+    """A logged notification on the wire. ``emailed`` follows ``emailed_at``,
+    which nothing sets until the email sender exists."""
+    return NotificationItem(
+        id=row.id,
+        exception_id=row.exception_id,
+        type=row.exception_type,
+        severity=row.severity,
+        title=row.title,
+        material_id=row.material_id,
+        plant=row.plant,
+        logged_at=row.logged_at,
+        channel="EMAIL",
+        emailed=row.emailed_at is not None,
     )
 
 

@@ -338,6 +338,18 @@ class I8Settings(BaseSettings):
     # Automation" rather than accused, exactly as a pre-cutover repair line is.
     justification_cutover_date: str = ""
 
+    # --- Notifications (FR-11) --------------------------------------------
+
+    # Exception types that log a notification the first time an item of that
+    # type is found actionable (not raised before its control existed). FR-11
+    # asks for notification "through the exception queue and email": the log is
+    # written from 27-Oct-2026, the email sender comes later and reads the same
+    # rows. Comma separated; a type not named here is still queued, only not
+    # notified. Kept to the four checks that ask somebody to act on a line.
+    notification_types: str = (
+        "OVERDUE_REPAIR,MISSING_ATTESTATION,MISSING_SESSION_ID,UNJUSTIFIED_ACQUISITION"
+    )
+
     # --- Coding candidates (W5.5) -----------------------------------------
 
     # The repair language that makes a PO line worth screening.
@@ -529,6 +541,12 @@ class I8Settings(BaseSettings):
         return tuple(
             c.strip().upper() for c in self.fault_categories.split(",") if c.strip()
         )
+
+    @property
+    def notification_type_list(self) -> tuple[str, ...]:
+        """The notified exception types, upper-cased and de-duplicated in
+        order. Blank turns notification logging off."""
+        return _conditions(self.notification_types)
 
     @property
     def series_prefix_list(self) -> tuple[str, ...]:

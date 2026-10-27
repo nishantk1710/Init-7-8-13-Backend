@@ -912,6 +912,35 @@ class ExceptionResponse(I8Model):
     Optional so an older client ignores it."""
 
 
+# --- Notifications (FR-11) ------------------------------------------------
+
+
+class NotificationItem(I8Model):
+    """One logged notification: an exception as it stood when first found
+    actionable. Nothing is emailed yet, so ``emailed`` is false on every row
+    until the sender exists."""
+
+    id: str
+    exception_id: str
+    type: str
+    severity: str
+    title: str
+    material_id: str
+    plant: str | None = None
+    logged_at: datetime
+    channel: Literal["EMAIL"] = "EMAIL"
+    emailed: bool = False
+
+
+class NotificationResponse(I8Model):
+    items: list[NotificationItem]
+    total: int
+    page: int
+    page_size: int
+    types: list[str] = Field(default_factory=list)
+    """The types that have been logged, for the screen's type filter."""
+
+
 # --- Coding candidates (W5.5) ---------------------------------------------
 
 
