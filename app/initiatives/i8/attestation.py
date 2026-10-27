@@ -45,7 +45,7 @@ UI collapses them.
 from __future__ import annotations
 
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
@@ -118,6 +118,22 @@ class AttestationDraft:
     """
     repair_item: str | None = None
     """EKPO.EBELP of that line. Both or neither; half a key matches nothing."""
+    attestor_name: str | None = None
+    """The name the person typed (27-Oct-2026). Not a sign-in: until Entra is
+    wired the server-set ``attestor`` is a placeholder, and an audit record
+    should at least say who claimed to make it."""
+    amendment_reason: str | None = None
+    """Why an amendment replaces its original. Required with ``supersedes``:
+    a correction with no reason reads as a quiet rewrite of the record."""
+    repair_document_type: str | None = None
+    """'PO' (EKPO line, the default) or 'PR' (an open repair PR with no PO yet:
+    ``repair_document`` is then EBAN.BANFN and ``repair_item`` BNFPO). Only
+    stored when the declaration is bound."""
+
+
+REPAIR_DOCUMENT_TYPES = ("PO", "PR")
+AMENDMENT_REASON_REQUIRED = "Say why this declaration is being amended."
+ATTESTOR_NAME_MAX = 128
 
 
 def validate(
@@ -207,6 +223,30 @@ def validate(
             "repair line"
         )
 
+    supersedes = (draft.supersedes or "").strip() or None
+    amendment_reason = (draft.amendment_reason or "").strip() or None
+    if supersedes is not None and amendment_reason is None:
+        raise AttestationError(AMENDMENT_REASON_REQUIRED)
+
+    document_type = (draft.repair_document_type or "").strip().upper() or None
+    if document_type is not None and document_type not in REPAIR_DOCUMENT_TYPES:
+        raise AttestationError(
+            f"repairDocumentType {draft.repair_document_type!r} must be one of "
+            f"{', '.join(REPAIR_DOCUMENT_TYPES)}"
+        )
+    # A type only means something on a bound declaration; PO is the default
+    # because every binding before 27-Oct-2026 was a PO line.
+    if repair_document is None:
+        document_type = None
+    elif document_type is None:
+        document_type = "PO"
+
+    attestor_name = (draft.attestor_name or "").strip() or None
+    if attestor_name is not None and len(attestor_name) > ATTESTOR_NAME_MAX:
+        raise AttestationError(
+            f"attestorName is longer than {ATTESTOR_NAME_MAX} characters"
+        )
+
     return AttestationDraft(
         # Normalised before storing. Ruling 5.1: an attestation typed against
         # '000000008000005632' and a repair line read as '8000005632' are about
@@ -220,9 +260,12 @@ def validate(
         recommendation=recommendation,
         serial_number=(draft.serial_number or "").strip() or None,
         evidence_reference=(draft.evidence_reference or "").strip() or None,
-        supersedes=(draft.supersedes or "").strip() or None,
+        supersedes=supersedes,
         repair_document=repair_document,
         repair_item=repair_item,
+        attestor_name=attestor_name,
+        amendment_reason=amendment_reason,
+        repair_document_type=document_type,
     )
 
 
@@ -233,16 +276,25 @@ def record(
     attestor: str,
     cfg: I8Settings | None = None,
     known_materials: Collection[str] | None = None,
+    session_id: str | None = None,
+    commit: bool = True,
 ) -> RepairAttestation:
     """Store one attestation and return it. Never updates anything.
 
+    ``commit=False`` only flushes: the assistant records a declaration in the
+    same transaction as the turn that answered it (27-Oct-2026), so a request
+    that fails on a later line leaves neither behind.
+
     ``attestor`` is passed separately from the draft on purpose: it comes from
-    the authenticated caller, not from the request body.
+    the authenticated caller, not from the request body. ``session_id`` is the
+    same kind of value: set only by server-side callers (the assistant, which
+    knows the session it is running), never from the public POST body.
     """
     cfg = cfg or get_i8_settings()
     clean = validate(draft, cfg, known_materials=known_materials)
     repair_document = clean.repair_document
     repair_item = clean.repair_item
+    repair_document_type = clean.repair_document_type
 
     if clean.supersedes is not None:
         original = db.get(RepairAttestation, clean.supersedes)
@@ -268,6 +320,10 @@ def record(
         if repair_document is None:
             repair_document = original.repair_document
             repair_item = original.repair_item
+            # Rows from before 27-Oct-2026 carry no type; every one is a PO line.
+            repair_document_type = (
+                (original.repair_document_type or "PO") if repair_document else None
+            )
 
     attestation = RepairAttestation(
         material_id=clean.material_id,
@@ -282,20 +338,26 @@ def record(
         # Server-set, UTC. Not client-supplied -- the value of the record is
         # that the time is not the attestor's to choose.
         attested_at=datetime.now(timezone.utc),
-        # Always null today. Linking an attestation to its assistant session is
-        # FR-4 / FR-8 and ours; nothing supplies the id yet -- the reservation
-        # that would carry it (RESB.BEDNR) is not exposed.
-        session_id=None,
+        # FR-4 / FR-8: the assistant session the declaration was made in.
+        # Server-set like the attestor; null for a declaration made on a
+        # register screen.
+        session_id=session_id,
         # FR-4's link to the repair PR or PO, when the screen that recorded
         # this knew which line it was for. Null for a part declared before
         # anything was raised against it; those fall back to the date window.
         repair_document=repair_document,
         repair_item=repair_item,
         supersedes=clean.supersedes,
+        repair_document_type=repair_document_type,
+        attestor_name=clean.attestor_name,
+        amendment_reason=clean.amendment_reason,
     )
     db.add(attestation)
-    db.commit()
-    db.refresh(attestation)
+    if commit:
+        db.commit()
+        db.refresh(attestation)
+    else:
+        db.flush()
 
     logger.info(
         "I08 attestation %s recorded: %s at %s, %s, by %s%s",
@@ -373,9 +435,48 @@ class AttestationCoverage:
     #: be able to say which it is.
     bound: frozenset[tuple[str, str]] = frozenset()
 
+    # --- since 27-Oct-2026: how each line is linked, and the repair PRs ----
+
+    #: (document, item) -> how the covering declaration was matched: ``BOUND``
+    #: (it names the line, or the repair PR the line was ordered from) or
+    #: ``WINDOW`` (material + plant + date window), or ``REFERENCE``: the
+    #: R-reference typed on the repair order names the assistant visit the
+    #: declaration was made in.
+    links: dict[tuple[str, str], str] = field(default_factory=dict)
+
+    #: (BANFN, BNFPO) -> the declaration covering an open repair PR with no PO
+    #: yet. Kept apart from ``covered``: a PR and a PO are different documents,
+    #: and the missing-declaration check reads PO lines only.
+    requests_covered: dict[tuple[str, str], RepairAttestation] = field(default_factory=dict)
+
+    #: (BANFN, BNFPO) for repair PRs checked and found with no declaration.
+    requests_uncovered: set[tuple[str, str]] = field(default_factory=set)
+
+    #: (BANFN, BNFPO) -> ``REFERENCE``, ``BOUND`` or ``WINDOW``, as ``links``.
+    request_links: dict[tuple[str, str], str] = field(default_factory=dict)
+
     @property
     def checked(self) -> int:
         return len(self.covered) + len(self.uncovered)
+
+
+#: How a declaration was matched to a repair line or PR.
+LINK_BOUND = "BOUND"
+LINK_REFERENCE = "REFERENCE"
+LINK_WINDOW = "WINDOW"
+
+
+def _part(material: str | None, plant: str | None) -> tuple[str, str]:
+    """A material+plant pair compared with a numeric material's leading zeros
+    stripped on both sides."""
+    material = (material or "").strip()
+    return (material.lstrip("0") or material, (plant or "").strip())
+
+
+def _item(item: str | None) -> str:
+    """An item number as keys compare it: '00010' and '10' are one item."""
+    item = (item or "").strip()
+    return item.lstrip("0") or item
 
 
 def _within_window(
@@ -497,6 +598,9 @@ def coverage(
     db: Session,
     lines,
     cfg: I8Settings | None = None,
+    *,
+    requests=(),
+    references=(),
 ) -> AttestationCoverage:
     """Match every repair line to an attestation, in one pass.
 
@@ -523,6 +627,21 @@ def coverage(
     lines were raised between 2018 and 2026 while a declaration is stamped
     today, so every one of 5,155 lines read Required however many declarations
     were recorded against them.
+
+    Since 27-Oct-2026 a declaration may name a repair PR instead of a PO line.
+    It covers that PR's row while the PR has no PO, and the PO line ordered from
+    it once one exists (EKPO.BANFN/BNFPO) -- the same repair, a later document.
+    ``requests`` (the open repair PRs with no PO yet) are matched the same two
+    ways, dated by the PR date.
+
+    Since 27-Oct-2026 there is a rule before both: ``references`` are the
+    snapshot's ``repair_references`` -- (BANFN, BNFPO, session_id, reference)
+    read off the repair order's line text. A repair PR whose 543 line names a
+    session with a current declaration for the same material and plant is
+    covered by that declaration (``REFERENCE``), and so is the PO ordered from
+    it. It comes first because it is the documents themselves saying which
+    visit the repair came from; a declaration naming the line is a person
+    choosing one afterwards.
     """
     cfg = cfg or get_i8_settings()
     window = timedelta(days=cfg.attestation_window_days)
@@ -531,8 +650,15 @@ def coverage(
     # the handful of rows this control has ever produced -- there is nothing to
     # gain from narrowing it, and a per-line query is what this is avoiding.
     by_key: dict[tuple[str, str], list[RepairAttestation]] = {}
-    by_line: dict[tuple[str, str], RepairAttestation] = {}
+    # (type, document, item): a PO line and a PR are different documents
+    # whose numbers could in principle coincide.
+    by_line: dict[tuple[str, str, str], RepairAttestation] = {}
+    # session_id -> that visit's current declarations, newest first.
+    by_session: dict[str, list[RepairAttestation]] = {}
     for attestation in find(db, include_superseded=False):
+        session_id = getattr(attestation, "session_id", None)
+        if session_id:
+            by_session.setdefault(session_id, []).append(attestation)
         by_key.setdefault((attestation.material_id, attestation.plant), []).append(
             attestation
         )
@@ -540,21 +666,53 @@ def coverage(
             # `find` returns newest first and nothing superseded, so the first
             # one seen for a line is the one in force.
             by_line.setdefault(
-                (attestation.repair_document, attestation.repair_item), attestation
+                (
+                    getattr(attestation, "repair_document_type", None) or "PO",
+                    attestation.repair_document,
+                    _item(attestation.repair_item),
+                ),
+                attestation,
             )
+
+    # (BANFN, BNFPO) -> the sessions its repair order's text names.
+    referenced: dict[tuple[str, str], list[str]] = {}
+    for banfn, bnfpo, session_id, _reference in references:
+        referenced.setdefault((banfn, _item(bnfpo)), []).append(session_id)
+
+    def by_reference(pr_number, pr_item, material_id, plant) -> RepairAttestation | None:
+        """Rule 0: the newest current declaration from a session the repair
+        order names, for this same material and plant."""
+        if not pr_number or not pr_item:
+            return None
+        part = _part(material_id, plant)
+        for session_id in referenced.get((pr_number, _item(pr_item)), ()):
+            for attestation in by_session.get(session_id, ()):
+                if _part(attestation.material_id, attestation.plant) == part:
+                    return attestation
+        return None
 
     covered: dict[tuple[str, str], RepairAttestation] = {}
     uncovered: set[tuple[str, str]] = set()
     bound: set[tuple[str, str]] = set()
+    links: dict[tuple[str, str], str] = {}
 
     for line in lines:
+        referenced_by = by_reference(line.pr_number, line.pr_item, line.material_id, line.plant)
+        if referenced_by is not None:
+            covered[line.key] = referenced_by
+            links[line.key] = LINK_REFERENCE
+            continue
         # Checked BEFORE the plant guard: a declaration that names this line
-        # covers it whatever else is missing, because somebody stated outright
-        # that this is the line they assessed.
-        named = by_line.get(line.key)
+        # -- or the repair PR it was ordered from -- covers it whatever else is
+        # missing, because somebody stated outright that this is the repair
+        # they assessed.
+        named = by_line.get(("PO", line.purchasing_document, _item(line.item)))
+        if named is None and line.pr_number and line.pr_item:
+            named = by_line.get(("PR", line.pr_number, _item(line.pr_item)))
         if named is not None:
             covered[line.key] = named
             bound.add(line.key)
+            links[line.key] = LINK_BOUND
             continue
 
         if line.plant is None:
@@ -574,16 +732,51 @@ def coverage(
         )
         if match is not None:
             covered[line.key] = match
+            links[line.key] = LINK_WINDOW
         else:
             uncovered.add(line.key)
 
+    requests_covered: dict[tuple[str, str], RepairAttestation] = {}
+    requests_uncovered: set[tuple[str, str]] = set()
+    request_links: dict[tuple[str, str], str] = {}
+    for request in requests:
+        referenced_by = by_reference(
+            request.purchase_requisition, request.item, request.material_id, request.plant
+        )
+        if referenced_by is not None:
+            requests_covered[request.key] = referenced_by
+            request_links[request.key] = LINK_REFERENCE
+            continue
+        named = by_line.get(("PR", request.purchase_requisition, _item(request.item)))
+        if named is not None:
+            requests_covered[request.key] = named
+            request_links[request.key] = LINK_BOUND
+            continue
+        if request.plant is None:
+            continue
+        match = next(
+            (
+                a
+                for a in by_key.get((request.material_id, request.plant), [])
+                if _within_window(a.attested_at, request.requested_on, window)
+            ),
+            None,
+        )
+        if match is not None:
+            requests_covered[request.key] = match
+            request_links[request.key] = LINK_WINDOW
+        else:
+            requests_uncovered.add(request.key)
+
     logger.info(
         "I08 attestation coverage: %d of %d repair lines covered "
-        "(%d by the declaration naming the line, %d by the +/-%dd window)",
+        "(%d by the R-reference on the repair order, %d by the declaration naming "
+        "the line, %d by the +/-%dd window)",
         len(covered),
         len(covered) + len(uncovered),
+        sum(1 for link in links.values() if link == LINK_REFERENCE),
         len(bound),
-        len(covered) - len(bound),
+        sum(1 for link in links.values() if link == LINK_WINDOW),
         cfg.attestation_window_days,
     )
     return AttestationCoverage(
@@ -591,4 +784,8 @@ def coverage(
         uncovered=uncovered,
         window_days=cfg.attestation_window_days,
         bound=frozenset(bound),
+        links=links,
+        requests_covered=requests_covered,
+        requests_uncovered=requests_uncovered,
+        request_links=request_links,
     )

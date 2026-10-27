@@ -78,10 +78,21 @@ logger = get_logger(__name__)
 
 #: The views a snapshot build reads. Not v_ekbe since 19-Oct-2026: the
 #: register follows SAP's "Delivery completed" flag, not goods receipts.
+#: v_resb and v_eban since 27-Oct-2026: the open repair PRs (requisitions.py).
+#: v_mchb and v_mbew since 27-Oct-2026: stock per condition (universe.py) --
+#: only the one I8_STOCK_CONDITION_SOURCE names is staged; see CONDITION_STOCK.
 VIEWS: tuple[str, ...] = (
     "v_ekpo", "v_ekko", "v_eket", "v_mseg", "v_lfa1",
     "v_mara", "v_makt", "v_marc", "v_mard", "v_zmm065",
+    "v_resb", "v_eban", "v_mchb", "v_mbew",
 )
+
+#: I8_STOCK_CONDITION_SOURCE -> (view, normalised table, its plant column).
+#: MBEW's plant is its valuation area (valuation is at plant level here).
+CONDITION_STOCK: dict[str, tuple[str, str, str]] = {
+    "MCHB": ("v_mchb", "n_mchb", "plant"),
+    "MBEW": ("v_mbew", "n_mbew", "valuation_area"),
+}
 
 
 @dataclass(frozen=True)
@@ -134,7 +145,7 @@ _FILES: dict[str, str] = {
     "v_mard": "13_v_mard.sql", "v_ekko": "20_v_ekko.sql", "v_ekpo": "21_v_ekpo.sql",
     "v_eket": "22_v_eket.sql", "v_ekbe": "23_v_ekbe.sql", "v_eban": "24_v_eban.sql",
     "v_mseg": "30_v_mseg.sql", "v_lfa1": "31_v_lfa1.sql", "v_zmm065": "32_v_zmm065.sql",
-    "v_mbew": "33_v_mbew.sql",
+    "v_mbew": "33_v_mbew.sql", "v_resb": "25_v_resb.sql", "v_mchb": "34_v_mchb.sql",
 }
 _HEAD = re.compile(r"(?is)\bCREATE\s+OR\s+ALTER\s+VIEW\s+\w+\s+AS\s")
 
@@ -263,8 +274,33 @@ def _stage(db: Session, cfg: I8Settings) -> Sources:
     on_staged_po = "IN (SELECT ebeln FROM #i8s_docs)"
     stage("v_ekko", {"n_ekko": _narrow(db, "ekko", "n_ekko", f"{_key('purchasing_document')} {on_staged_po}")})
     stage("v_eket", {"n_eket": _narrow(db, "eket", "n_eket", f"{_key('purchasing_document')} {on_staged_po}")})
+    # Open repair PRs (27-Oct-2026). RESB: the repair orders' lines for the
+    # faulty unit -- the movement type is a setting written in as a literal
+    # (no bind parameter, see _materialise) and compared exactly, as the view
+    # passes the column through unchanged; 6,271 of the in-scope rows on the
+    # 15-Oct extract are 543 lines on 80-series parts. EBAN: the in-scope
+    # 80-series PR lines (12,369 then), which holds every PR those lines name
+    # and, later, the new-buy PRs too. requisitions.py applies the exact rules.
+    # Since 27-Oct-2026 every other 80-series line WITH TEXT is kept too: the
+    # job's reservation line names the assistant session there
+    # (session_jobs.py); the movement-type rule stays in Python. Staged ahead
+    # of MSEG, whose narrowing reads these reservation numbers. And every
+    # job (consumption) line, text or not: one with none is the
+    # MISSING_SESSION_ID finding (session_jobs.unreferenced_lines).
+    stage("v_resb", {"n_resb": _narrow(
+        db, "resb", "n_resb",
+        f"{_in_scope()} AND {_series('material', cfg)} "
+        f"AND (movement_type IN ({_literal(cfg.repair_reservation_movement_type)}, "
+        f"{_literal(cfg.job_issue_movement_type)}) "
+        f"OR COALESCE(text, '') <> '')",
+    )})
+    # MSEG: the staged POs' movements, plus (27-Oct-2026) those posted against a
+    # staged reservation line with text -- the job's 261/262 (session_jobs.py).
+    # Readers filter by PO or by reservation, so neither sees the other's rows.
     stage("v_mseg", {"n_mseg": _narrow(
-        db, "mseg", "n_mseg", f"{_in_scope()} AND {_key('purchase_order')} {on_staged_po}"
+        db, "mseg", "n_mseg",
+        f"{_in_scope()} AND ({_key('purchase_order')} {on_staged_po} "
+        f"OR {_key('reservation')} IN (SELECT rsnum FROM {views['v_resb']} WHERE sgtxt IS NOT NULL))",
     )})
     # Vendor names are only ever looked up for an EKKO header's supplier.
     stage("v_lfa1", {"n_lfa1": _narrow(
@@ -289,6 +325,17 @@ def _stage(db: Session, cfg: I8Settings) -> Sources:
         )
         for table in OPTIONAL_REPORT_TABLES
     })
+
+    stage("v_eban", {"n_eban": _narrow(db, "eban", "n_eban", f"{_in_scope()} AND {_series('material', cfg)}")})
+
+    # Stock per condition (27-Oct-2026): only the configured source, in scope
+    # and 80-series, as MARD is narrowed. 3,432 in-scope 80-series MCHB rows on
+    # the 15-Oct extract. Named #i8b_/#i8s_, apart from the coding screen's
+    # #i8cb_mbew / #i8cs_v_mbew, so the two never drop each other's copy.
+    view, table, plant = CONDITION_STOCK[cfg.stock_condition_source]
+    stage(view, {table: _narrow(
+        db, table.removeprefix("n_"), table, f"{_in_scope(plant)} AND {_series('material', cfg)}"
+    )})
 
     # What the register reports as scanned: v_ekpo's rows with a PO and an
     # item, counted over the unfiltered source with the view's own predicates.
@@ -323,7 +370,7 @@ def staged_sources(db: Session, cfg: I8Settings, *, enabled: bool = True) -> Ite
         for table in [*sources.views.values(), "#i8s_docs", "#i8s_mats"]:
             db.execute(text(f"DROP TABLE IF EXISTS {table}"))
         for name in ("ekpo", "ekko", "eket", "mseg", "lfa1", "mara", "makt", "mard", "marc",
-                     "criticality_current"):
+                     "criticality_current", "resb", "eban", "mchb", "mbew"):
             db.execute(text(f"DROP TABLE IF EXISTS #i8b_{name}"))
 
 

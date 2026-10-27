@@ -116,6 +116,8 @@ class FakeLine:
         self.pr_number = "PR1"
         self.pr_item = "10"
         self.requisitioner = "10316"
+        # The repair PR's department (27-Oct-2026); None = that PR not read.
+        self.pr_department = None
         # Read by overdue_repairs(). Default ON_TIME so every existing test
         # keeps testing what it was written to test.
         self.overdue_status = overdue_status
@@ -165,11 +167,42 @@ class TestValidation:
             ({"material_id": "1000000123"}, "80-series"),
             ({"plant": "1600"}, "outside the platform's scope"),
             ({"quantity": Decimal(1001)}, "typo"),
+            # 27-Oct-2026: an amendment says why; the document type is PO or PR.
+            ({"supersedes": "ATT-1"}, "Say why this declaration is being amended"),
+            ({"supersedes": "ATT-1", "amendment_reason": "  "}, "Say why"),
+            (
+                {"repair_document": "4500000001", "repair_item": "10",
+                 "repair_document_type": "SO"},
+                "repairDocumentType",
+            ),
+            ({"attestor_name": "x" * 129}, "attestorName"),
         ],
     )
     def test_rejects(self, overrides, expected) -> None:
         with pytest.raises(AttestationError, match=expected):
             validate(a_draft(**overrides))
+
+    def test_a_bound_declaration_defaults_to_a_po_line(self) -> None:
+        clean = validate(a_draft(repair_document="4500000001", repair_item="10"))
+        assert clean.repair_document_type == "PO"
+
+    def test_a_pr_binding_and_the_typed_fields_survive(self) -> None:
+        clean = validate(
+            a_draft(
+                repair_document="2000029101",
+                repair_item="10",
+                repair_document_type="pr",
+                attestor_name="  A. Rao ",
+                supersedes="ATT-1",
+                amendment_reason=" Stripped down. ",
+            )
+        )
+        assert clean.repair_document_type == "PR"
+        assert clean.attestor_name == "A. Rao"
+        assert clean.amendment_reason == "Stripped down."
+
+    def test_an_unbound_declaration_has_no_document_type(self) -> None:
+        assert validate(a_draft(repair_document_type="PR")).repair_document_type is None
 
     def test_the_quantity_ceiling_is_configuration(self) -> None:
         from app.initiatives.i8.config import I8Settings
@@ -481,7 +514,9 @@ class TestDeclarationQueue:
             [line], self._coverage(covered={line.key: fake_attestation(recommendation)})
         )
         assert rows[0].status == "Flagged"
-        assert rows[0].is_outstanding
+        # Not outstanding since 27-Oct-2026: it has its declaration, and the
+        # finding is an exception rather than a wait for somebody to declare.
+        assert not rows[0].is_outstanding
         assert rows[0].condition == CONDITION_LABELS[Recommendation(recommendation)]
 
     def test_pending_is_never_emitted(self, fake_attestation) -> None:
@@ -498,7 +533,8 @@ class TestDeclarationQueue:
             uncovered={lines[1].key},
         )
         assert {r.status for r in build_queue(lines, cover)} == {"Completed", "Required"}
-        assert set(STATUS_NOTES) == {"Required", "Completed", "Flagged"}
+        # Historical (27-Oct-2026) is a label for pre-cutover rows, not a stage.
+        assert set(STATUS_NOTES) == {"Required", "Completed", "Flagged", "Historical"}
 
     def test_the_row_carries_no_source(self) -> None:
         """Manual / MRP-generated is not in FR-4, and SAP cannot answer it:
@@ -626,22 +662,25 @@ class TestMissingAttestationException:
         assert stats.actionable == 0
         assert stats.attestation_cutover_date == date(2026, 10, 1)
 
-    def test_the_type_column_is_open_for_the_ones_we_do_not_raise(self) -> None:
-        """MISSING_SESSION_ID is FR-8 and ours, and is not raised until
-        RESB.BEDNR is exposed. It is declared so adding it is a detector, not a
-        migration -- and the API says which are actually raised, so an empty
-        count is distinguishable from an unimplemented check."""
-        assert {t.value for t in ExceptionType} > {t.value for t in RAISED_BY_I8}
+    def test_every_declared_type_is_now_raised(self) -> None:
+        """MISSING_SESSION_ID is FR-8 and ours. It was declared and not raised
+        until 27-Oct-2026, when the R-reference typed on the job's reservation
+        line was read back; the API still says which are actually raised, so
+        an empty count is distinguishable from an unimplemented check."""
+        assert {t.value for t in ExceptionType} == {t.value for t in RAISED_BY_I8}
         assert RAISED_BY_I8 == frozenset(
             {
                 ExceptionType.MISSING_ATTESTATION,
                 ExceptionType.UNJUSTIFIED_ACQUISITION,
                 ExceptionType.OVERDUE_REPAIR,
+                # The declaration findings, raised since 27-Oct-2026.
+                ExceptionType.REPAIRED_AGAINST_ASSESSMENT,
+                ExceptionType.REPAIR_PR_NOT_DECLARED,
+                ExceptionType.DECLARED_NO_REPAIR_PR,
+                # Job reservation lines with no R-reference, since 27-Oct-2026.
+                ExceptionType.MISSING_SESSION_ID,
             }
         )
-        # The one still declared and not raised. When this stops being true the
-        # assertion above fails first, which is the intended order.
-        assert ExceptionType.MISSING_SESSION_ID not in RAISED_BY_I8
 
     def test_an_overdue_open_line_is_raised(self) -> None:
         """FR-9 asks for overdue "as an explicit dashboard exception state".
@@ -789,6 +828,7 @@ class TestTheWritePath:
                 recommendation="SCRAP",
                 condition_description="On strip-down, casing cracked.",
                 supersedes=original.id,
+                amendment_reason="Stripped down.",
             ),
             attestor="two",
         )
@@ -805,7 +845,11 @@ class TestTheWritePath:
 
     def test_an_amendment_must_point_at_something(self, db) -> None:
         with pytest.raises(AttestationError, match="does not exist"):
-            record(db, a_draft(supersedes="ATT-NOPE"), attestor="tester")
+            record(
+                db,
+                a_draft(supersedes="ATT-NOPE", amendment_reason="Typo."),
+                attestor="tester",
+            )
 
     def test_an_amendment_cannot_move_the_part(self, db) -> None:
         """Otherwise the chain would read as one part's history when it is two."""
@@ -813,7 +857,11 @@ class TestTheWritePath:
         with pytest.raises(AttestationError, match="same material and plant"):
             record(
                 db,
-                a_draft(material_id="8000009999", supersedes=original.id),
+                a_draft(
+                    material_id="8000009999",
+                    supersedes=original.id,
+                    amendment_reason="Wrong part.",
+                ),
                 attestor="two",
             )
 
@@ -914,7 +962,11 @@ class TestTheApi:
         original = client.post(ATTESTATIONS, json=self.body()).json()
         amendment = client.post(
             ATTESTATIONS,
-            json=self.body(recommendation="SCRAP", supersedes=original["id"]),
+            json=self.body(
+                recommendation="SCRAP",
+                supersedes=original["id"],
+                amendmentReason="Stripped down.",
+            ),
         ).json()
 
         listed = client.get(f"{ATTESTATIONS}?materialId=8000005632").json()
@@ -927,7 +979,12 @@ class TestTheApi:
     def test_current_only_hides_superseded_rows(self) -> None:
         original = client.post(ATTESTATIONS, json=self.body()).json()
         client.post(
-            ATTESTATIONS, json=self.body(recommendation="SCRAP", supersedes=original["id"])
+            ATTESTATIONS,
+            json=self.body(
+                recommendation="SCRAP",
+                supersedes=original["id"],
+                amendmentReason="Stripped down.",
+            ),
         )
         current = client.get(f"{ATTESTATIONS}?materialId=8000005632&currentOnly=true").json()
         assert current["total"] == 1
@@ -1082,16 +1139,31 @@ class TestAgainstTheSeededRegister:
         assert meta["bySeverity"] == {"warning": meta["total"]}
 
     def test_unjustified_acquisitions_against_the_seeded_register(self) -> None:
-        """2,331 new 80-series purchases, each matched against the repairs SAP
-        still has open at the same plant. None has a justification -- the
-        control did not exist when they were bought."""
+        """The new 80-series purchases -- new-buy PRs and direct PO lines since
+        27-Oct-2026 -- each matched against the repairs SAP still has open at
+        the same plant, PO lines and repair PRs alike. None has a justification
+        -- the control did not exist when they were bought.
+
+        Was 2,331 PO lines on the July seed. Measured on the 15-Oct extract:
+        5,192 purchases (5,131 new-buy PRs, 61 direct PO lines) and 30 raised.
+        The count depends on which extract is seeded, so it is not pinned."""
         body = client.get(f"{EXCEPTIONS}?type=UNJUSTIFIED_ACQUISITION&pageSize=500").json()
-        assert body["meta"]["acquisitionsChecked"] == 2331
+        assert body["meta"]["acquisitionsChecked"] > 0
         assert body["meta"]["byType"].get("UNJUSTIFIED_ACQUISITION", 0) == body["total"]
         assert "UNJUSTIFIED_ACQUISITION" in body["meta"]["typesRaised"]
         for item in body["items"]:
-            assert item["acquisitionLine"]["documentNumber"]
-            assert item["repairLine"]["documentNumber"] != item["acquisitionLine"]["documentNumber"]
+            purchase, repair = item["acquisitionLine"], item["repairLine"]
+            assert purchase["documentNumber"]
+            assert purchase["type"] in {"PR", "PO"} and repair["type"] in {"PR", "PO"}
+            assert (purchase["type"], purchase["documentNumber"], purchase["line"]) != (
+                repair["type"],
+                repair["documentNumber"],
+                repair["line"],
+            )
+            prefix = "PR-" if purchase["type"] == "PR" else ""
+            assert item["id"] == (
+                f"EX-UNJUSTIFIED_ACQUISITION-{prefix}{purchase['documentNumber']}-{purchase['line']}"
+            )
         missing = client.get(f"{EXCEPTIONS}?type=MISSING_ATTESTATION&pageSize=1").json()
         assert missing["items"][0]["acquisitionLine"] is None
 
@@ -1281,9 +1353,7 @@ class TestTheLifecycleTimelineAttestedStage:
         assert stage["occurredAt"] is None
         # It must not read as a forgotten field. It should say there is no
         # assessment, and that this is expected rather than a data gap.
-        assert "no recorded assessment" in stage["evidence"]
-        assert "/api/i8/exceptions" in stage["evidence"]
-        assert "Hook only" not in stage["evidence"]
+        assert stage["evidence"] == "Not declared yet."
 
     def test_with_an_attestation_it_carries_the_real_evidence(self) -> None:
         from app.core.db import get_sessionmaker

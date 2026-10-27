@@ -32,10 +32,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 
+from app.assistant import departments
 from app.core.logging import get_logger
 from app.initiatives.i8.attestation import CONDITION_LABELS, AttestationCoverage, Recommendation
 from app.initiatives.i8.models import RepairAttestation
 from app.initiatives.i8.register import RepairLine
+from app.initiatives.i8.requisitions import PR_RAISED, RepairRequest
 
 logger = get_logger(__name__)
 
@@ -51,6 +53,13 @@ STATUS_NOTES: dict[str, str] = {
     "Flagged": (
         "An attestation covers this line but did NOT find the part repairable "
         "-- it is being repaired anyway, or was."
+    ),
+    # 27-Oct-2026: raised before the attestation cutover, when no declaration
+    # was asked for. Labelled, never required -- the same rule the
+    # missing-declaration check already applies.
+    "Historical": (
+        "Raised before declarations were required, and none covers it. Not "
+        "waiting on anybody."
     ),
 }
 
@@ -123,17 +132,62 @@ class DeclarationRow:
     Every row is a repair SAP still has open: a closed one leaves the register,
     and this queue with it."""
 
+    requester_name: str | None = None
+    """The department name for ``requester``, when the department list has
+    the code. None when it does not: the code is shown alone, never a guess."""
+
+    repair_document_type: str = "PO"
+    """``PO`` for a repair PO line, ``PR`` for an open repair PR with no PO
+    yet (27-Oct-2026). On a PR row ``repair_document``/``repair_item`` are the
+    PR's BANFN/BNFPO -- what the declaration form sends to bind to it."""
+
+    declaration_link: str | None = None
+    """How the covering declaration was matched: ``BOUND``, ``REFERENCE`` or
+    ``WINDOW``. None when nothing covers the row."""
+
     @property
     def is_outstanding(self) -> bool:
-        return self.status in ("Required", "Flagged")
+        # Required only since 27-Oct-2026: a Flagged row has a declaration,
+        # and its finding is an exception, not a wait for somebody to declare.
+        return self.status == "Required"
 
 
-def _next_action(status: str, line: RepairLine, attestation: RepairAttestation | None) -> str:
+def _is_historical(raised_on: date | None, cutover: date | None) -> bool:
+    """Raised before the attestation cutover: no declaration was asked for.
+    No cutover set, or no date, means not historical -- the same rule as
+    ``exceptions.is_pre_automation``."""
+    return cutover is not None and raised_on is not None and raised_on < cutover
+
+
+def _status(attestation: RepairAttestation | None, historical: bool) -> tuple[str, str | None]:
+    """The row's status and the condition it shows."""
+    if attestation is None:
+        return ("Historical" if historical else "Required"), None
+    if attestation.recommendation == Recommendation.REPAIRABLE.value:
+        return "Completed", CONDITION_LABELS[Recommendation.REPAIRABLE]
+    # Assessed, but not as repairable -- and it went for repair anyway. That is
+    # a real finding, not a missing record, so it is Flagged rather than
+    # Required.
+    return "Flagged", CONDITION_LABELS[Recommendation(attestation.recommendation)]
+
+
+def _next_action(status: str, line, attestation: RepairAttestation | None) -> str:
     """What a person should do about this row, in a sentence they can act on.
 
     Every row is on a repair SAP still has open, so the part is out for repair
-    and a declaration can still be made or reconsidered.
+    -- or, on a PR row, about to be -- and a declaration can still be made or
+    reconsidered.
     """
+    if status == "Historical":
+        return (
+            "None required. This repair was raised before declarations were "
+            "asked for; declare it if the part's condition is known."
+        )
+    if status == "Required" and isinstance(line, RepairRequest):
+        return (
+            "Declare the condition of this part. A repair has been asked for "
+            "and no assessment is on record."
+        )
     if status == "Required":
         return (
             "Declare the condition of this part. It is out for repair now "
@@ -154,29 +208,29 @@ def _next_action(status: str, line: RepairLine, attestation: RepairAttestation |
 def build_queue(
     lines,
     coverage: AttestationCoverage,
+    *,
+    requests=(),
+    cutover: date | None = None,
 ) -> list[DeclarationRow]:
     """The declaration queue for a set of repair lines.
 
     Takes the coverage computed once per refresh rather than querying per line
     -- 1,225 lines is a page load, not a batch job.
+
+    ``requests`` are the open repair PRs with no PO yet, passed only while the
+    register serves them; each gets a row after the PO lines (27-Oct-2026).
+    ``cutover`` is the attestation cutover: an undeclared row raised before it
+    reads ``Historical`` (a PO line by its raised date, a PR by its PR date).
+    The requester is the department that raised the repair PR -- on a PO row
+    the PR it was ordered from, falling back to the PO line's own requisitioner
+    when that PR was not read.
     """
     rows: list[DeclarationRow] = []
 
     for line in lines:
         attestation = coverage.covered.get(line.key)
-
-        if attestation is None:
-            status = "Required"
-            condition = None
-        elif attestation.recommendation == Recommendation.REPAIRABLE.value:
-            status = "Completed"
-            condition = CONDITION_LABELS[Recommendation.REPAIRABLE]
-        else:
-            # Assessed, but not as repairable -- and it went for repair anyway.
-            # That is a real finding, not a missing record, so it is Flagged
-            # rather than Required.
-            status = "Flagged"
-            condition = CONDITION_LABELS[Recommendation(attestation.recommendation)]
+        status, condition = _status(attestation, _is_historical(line.raised_at, cutover))
+        requester = line.pr_department or line.requisitioner
 
         rows.append(
             DeclarationRow(
@@ -186,7 +240,9 @@ def build_queue(
                 plant=line.plant,
                 pr_number=line.pr_number,
                 pr_item=line.pr_item,
-                requester=line.requisitioner,
+                requester=requester,
+                requester_name=departments.name_for(requester),
+                declaration_link=coverage.links.get(line.key),
                 related_repair_id=f"{line.purchasing_document}-{line.item}",
                 repair_document=line.purchasing_document,
                 repair_item=line.item,
@@ -200,6 +256,35 @@ def build_queue(
                 condition=condition,
                 next_action=_next_action(status, line, attestation),
                 created_at=line.raised_at,
+            )
+        )
+
+    for request in requests:
+        attestation = coverage.requests_covered.get(request.key)
+        status, condition = _status(attestation, _is_historical(request.requested_on, cutover))
+        rows.append(
+            DeclarationRow(
+                id=f"D-{request.row_id}",
+                material_id=request.material_id,
+                description=request.description,
+                plant=request.plant,
+                pr_number=request.purchase_requisition,
+                pr_item=request.item,
+                requester=request.department,
+                requester_name=departments.name_for(request.department),
+                related_repair_id=request.row_id,
+                repair_document=request.purchase_requisition,
+                repair_item=request.item,
+                repair_document_type="PR",
+                declaration_link=coverage.request_links.get(request.key),
+                repair_status=PR_RAISED,
+                status=status,
+                declaration_id=attestation.id if attestation else None,
+                declared_by=attestation.attestor if attestation else None,
+                declared_at=attestation.attested_at if attestation else None,
+                condition=condition,
+                next_action=_next_action(status, request, attestation),
+                created_at=request.requested_on,
             )
         )
 

@@ -38,7 +38,32 @@ from typing import Any
 # payload would still construct, the field has a default -- but it was built
 # before RFQs were left out, and would go on serving the RFQ line as open until
 # the source data next changed. Raising the version makes the deploy rebuild.
-CODEC_VERSION = 3
+#
+# 4 since 27-Oct-2026 (the I08 complete-flow branch; later items on it extend
+# this note rather than raising the version again): the Snapshot gained
+# repair_requests (requisitions.RepairRequest, the open repair PRs with no PO
+# yet) and RegisterStats their counts. A version-3 payload would construct --
+# both default -- but would serve no repair PRs until the source data next
+# changed. On the same branch UniverseRow gained its stock split by condition
+# (usable_stock, damaged_stock, stock_by_condition, stock_condition_source) and
+# UniverseStats with_stock_condition; a version-3 payload would serve every
+# part's split as unknown until the next rebuild. And NewAcquisition gained
+# document_type and requested_by: the purchases are now the new-buy PRs and the
+# direct PO lines, so a version-3 payload's acquisitions -- PO lines dated by an
+# ERDAT the live data does not carry -- would go on checking nothing.
+#
+# 5 since 27-Oct-2026 (phases 2-3 of the same branch; later shape changes on it
+# extend this note): RepairLine gained pr_requested_on and pr_department, its
+# repair PR's date and department. A version-4 payload would construct -- both
+# default -- but every PO row would lose its requester until the next rebuild.
+# The Snapshot gained repair_references (the R-reference on the repair order,
+# as plain tuples); a version-4 payload would link no declaration that way.
+# And session_jobs (session_jobs.SessionJob, the job reservation lines naming a
+# session, with their 261/262); a version-4 payload would show no job.
+# And unreferenced_lines (session_jobs.UnreferencedLine, the job lines with no
+# R-reference) with session_check_start; a version-4 payload raises no
+# MISSING_SESSION_ID until the next rebuild.
+CODEC_VERSION = 5
 _ALLOWED = "app.initiatives.i8."
 
 

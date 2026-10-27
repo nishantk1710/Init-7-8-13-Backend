@@ -87,6 +87,12 @@ def preview(body: PreviewRequest, db: DbDep, settings: SettingsDep) -> PreviewRe
             ReasonCategoryModel(value=c, label=c.replace("_", " ").title())
             for c in settings.assistant_justification_reason_category_list
         ],
+        # As the conversation's declaration form offers them (script).
+        fault_categories=[choice.value for choice in script.fault_category_choices()],
+        recommendations=[
+            ReasonCategoryModel(value=choice.value, label=choice.label)
+            for choice in script.recommendation_choices()
+        ],
         lines=[
             PreviewLineModel(
                 material_id=line.material_id,
@@ -142,6 +148,7 @@ def create_request(
             seen_suggested_quantity=line.seen_suggested_quantity,
             # Sent at all, as opposed to sent as null ("no suggestion was shown").
             check_seen="seen_suggested_quantity" in line.model_fields_set,
+            declaration=line.declaration.as_answer() if line.declaration else None,
         )
         for line in body.lines
     ]
