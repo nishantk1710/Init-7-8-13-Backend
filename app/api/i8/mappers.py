@@ -715,6 +715,7 @@ def exception_item(
         detail=item.detail,
         raised_at=item.raised_at,
         pre_automation=item.pre_automation,
+        declaration_id=item.declaration_id,
         status=work.status,
         owner=work.owner,
         still_detected=still_detected,

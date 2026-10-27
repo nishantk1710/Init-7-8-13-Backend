@@ -806,6 +806,11 @@ class ExceptionQueueItem(I8Model):
     explained by when it was raised rather than by anyone failing to act.
     Always false while no cutover date is configured."""
 
+    declaration_id: str | None = None
+    """The condition declaration the finding is about, on the two
+    declaration-based types (``REPAIRED_AGAINST_ASSESSMENT``,
+    ``DECLARED_NO_REPAIR_PR``). Null on every other type. Since 27-Oct-2026."""
+
     # --- FR-11: the state people put it in ------------------------------
     #
     # The item above is recomputed on every read; everything below is stored

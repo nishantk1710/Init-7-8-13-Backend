@@ -288,6 +288,12 @@ class I8Settings(BaseSettings):
     # lines on the other.
     attestation_cutover_date: str = ""
 
+    # Days a repair PR may wait for a declaration, and a Repairable declaration
+    # for its repair PR, before either gap is raised as an exception
+    # (REPAIR_PR_NOT_DECLARED, DECLARED_NO_REPAIR_PR; 27-Oct-2026). Without a
+    # grace every PR raised this morning would read as a miss.
+    declaration_grace_days: int = 14
+
     # The largest quantity one attestation may record. A typo guard, not a
     # business rule: every repair line in the July extract is for quantity 1,
     # and the largest quantity on ANY 80-series PO line is 400. The table is

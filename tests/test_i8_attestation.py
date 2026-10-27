@@ -673,6 +673,10 @@ class TestMissingAttestationException:
                 ExceptionType.MISSING_ATTESTATION,
                 ExceptionType.UNJUSTIFIED_ACQUISITION,
                 ExceptionType.OVERDUE_REPAIR,
+                # The declaration findings, raised since 27-Oct-2026.
+                ExceptionType.REPAIRED_AGAINST_ASSESSMENT,
+                ExceptionType.REPAIR_PR_NOT_DECLARED,
+                ExceptionType.DECLARED_NO_REPAIR_PR,
             }
         )
         # The one still declared and not raised. When this stops being true the

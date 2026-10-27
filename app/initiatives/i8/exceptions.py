@@ -68,6 +68,20 @@ the session's R-reference read back off the reservation: requesters type it
 into the reservation text (RESB.SGTXT), which the read layer already carries
 (26-Oct-2026), and the detector is built in phase 3 of the complete-flow plan.
 It stays in :class:`ExceptionType` so adding it is new code, not a migration.
+
+Three declaration findings (27-Oct-2026)
+----------------------------------------
+``REPAIRED_AGAINST_ASSESSMENT``: a repair PO line or repair PR whose current
+declaration says Beyond economical repair or Scrap. The declaration queue
+showed these as "Flagged" and nothing else did; the finding belongs here, where
+someone can own and close it.
+
+``REPAIR_PR_NOT_DECLARED``: an open repair PR, raised on or after the
+attestation cutover, older than ``I8_DECLARATION_GRACE_DAYS`` and with no
+declaration. ``DECLARED_NO_REPAIR_PR``: the other half of the same gap -- a
+Repairable declaration older than the grace days with no repair PR or PO for
+the part at the plant raised on or after it. Both are counted against the
+snapshot's reference date, the date every other age in I08 is counted from.
 """
 
 from __future__ import annotations
@@ -88,7 +102,12 @@ from app.initiatives.i8.acquisitions import (
     open_repair_at,
     repairs_by_material_plant,
 )
-from app.initiatives.i8.attestation import AttestationCoverage
+from app.initiatives.i8.attestation import (
+    CONDITION_LABELS,
+    LINK_WINDOW,
+    AttestationCoverage,
+    Recommendation,
+)
 from app.initiatives.i8.register import RepairLine
 from app.initiatives.i8.requisitions import RepairRequest
 
@@ -103,6 +122,17 @@ class ExceptionType(str, Enum):
 
     MISSING_ATTESTATION = "MISSING_ATTESTATION"
     """A repair line with no condition-to-repair attestation. FR-4 / FR-8."""
+
+    REPAIRED_AGAINST_ASSESSMENT = "REPAIRED_AGAINST_ASSESSMENT"
+    """A part declared beyond economical repair or scrap, sent for repair
+    anyway. Since 27-Oct-2026."""
+
+    REPAIR_PR_NOT_DECLARED = "REPAIR_PR_NOT_DECLARED"
+    """An open repair PR older than the grace days with no declaration."""
+
+    DECLARED_NO_REPAIR_PR = "DECLARED_NO_REPAIR_PR"
+    """A Repairable declaration older than the grace days with no repair PR or
+    PO for the same part and plant raised on or after it."""
 
     MISSING_SESSION_ID = "MISSING_SESSION_ID"
     """FR-8, an 80-series reservation with no valid session id. Not raised yet:
@@ -130,6 +160,9 @@ RAISED_BY_I8: frozenset[ExceptionType] = frozenset(
         ExceptionType.MISSING_ATTESTATION,
         ExceptionType.UNJUSTIFIED_ACQUISITION,
         ExceptionType.OVERDUE_REPAIR,
+        ExceptionType.REPAIRED_AGAINST_ASSESSMENT,
+        ExceptionType.REPAIR_PR_NOT_DECLARED,
+        ExceptionType.DECLARED_NO_REPAIR_PR,
     }
 )
 
@@ -190,6 +223,11 @@ class ExceptionItem:
     acquisition_document_type: str = PURCHASE_ORDER
     """``PO`` or ``PR``: what ``acquisition_document``/``acquisition_item``
     name -- since 27-Oct-2026 usually a new-buy PR."""
+
+    declaration_id: str | None = None
+    """The declaration the finding is about, on ``REPAIRED_AGAINST_ASSESSMENT``
+    and ``DECLARED_NO_REPAIR_PR``. ``DECLARED_NO_REPAIR_PR`` names no repair
+    line -- there is none, which is the finding -- so its document is blank."""
 
     @property
     def repair_reference(self) -> str:
@@ -527,6 +565,196 @@ def unjustified_acquisitions(
     return items
 
 
+# --- Declaration findings (27-Oct-2026) -----------------------------------
+
+#: The verdicts that say "do not repair this part".
+_NOT_FOR_REPAIR = frozenset(
+    {Recommendation.BEYOND_ECONOMICAL_REPAIR.value, Recommendation.SCRAP.value}
+)
+
+
+def _declared_by(attestation) -> str:
+    """The typed name when there is one, else the signed-in user."""
+    return getattr(attestation, "attestor_name", None) or attestation.attestor
+
+
+def _against_item(document_type, document, item, row, raised_at, attestation, link):
+    verdict = CONDITION_LABELS[Recommendation(attestation.recommendation)]
+    what = "repair PR" if document_type == PURCHASE_REQUISITION else "repair line"
+    matched = (
+        " The declaration was matched by part, plant and date rather than named on it."
+        if link == LINK_WINDOW
+        else ""
+    )
+    return ExceptionItem(
+        id=(
+            f"EX-{ExceptionType.REPAIRED_AGAINST_ASSESSMENT.value}-"
+            f"{document_reference(document_type, document, item)}"
+        ),
+        type=ExceptionType.REPAIRED_AGAINST_ASSESSMENT.value,
+        severity=Severity.WARNING.value,
+        material_id=row.material_id,
+        description=row.description,
+        plant=row.plant,
+        purchasing_document=document,
+        item=item,
+        title="Sent for repair against the assessment",
+        detail=(
+            f"{_declared_by(attestation)} declared this part {verdict} on "
+            f"{_day(attestation.attested_at.date(), 'an unknown date')} "
+            f"(declaration {attestation.id}), but this {what} sends it for repair."
+            f"{matched} Confirm the repair is wanted, or amend the declaration."
+        ),
+        raised_at=raised_at,
+        repair_document_type=document_type,
+        declaration_id=attestation.id,
+    )
+
+
+def repaired_against_assessment(
+    lines, coverage: AttestationCoverage, *, requests: Sequence[RepairRequest] = ()
+) -> list[ExceptionItem]:
+    """Raise REPAIRED_AGAINST_ASSESSMENT for every repair PO line or repair PR
+    whose covering declaration is Beyond economical repair or Scrap."""
+    items: list[ExceptionItem] = []
+    for line in sorted(lines, key=lambda line: (line.purchasing_document, line.item)):
+        attestation = coverage.covered.get(line.key)
+        if attestation is None or attestation.recommendation not in _NOT_FOR_REPAIR:
+            continue
+        items.append(
+            _against_item(
+                PURCHASE_ORDER, line.purchasing_document, line.item, line,
+                line.raised_at, attestation, coverage.links.get(line.key),
+            )
+        )
+    for request in sorted(requests, key=lambda request: request.key):
+        attestation = coverage.requests_covered.get(request.key)
+        if attestation is None or attestation.recommendation not in _NOT_FOR_REPAIR:
+            continue
+        items.append(
+            _against_item(
+                PURCHASE_REQUISITION, request.purchase_requisition, request.item, request,
+                request.requested_on, attestation, coverage.request_links.get(request.key),
+            )
+        )
+    return items
+
+
+def undeclared_repair_requests(
+    requests: Sequence[RepairRequest],
+    coverage: AttestationCoverage,
+    *,
+    reference_date: date,
+    grace_days: int,
+    cutover: date | None = None,
+) -> list[ExceptionItem]:
+    """Raise REPAIR_PR_NOT_DECLARED for every open repair PR checked and found
+    with no declaration, raised more than ``grace_days`` ago.
+
+    A PR raised before the cutover is Historical -- no declaration was asked
+    for -- and a PR with no date cannot be aged, so neither is raised.
+    """
+    items: list[ExceptionItem] = []
+    for request in sorted(requests, key=lambda request: request.key):
+        if request.key not in coverage.requests_uncovered or request.requested_on is None:
+            continue
+        if cutover is not None and request.requested_on < cutover:
+            continue
+        waited = (reference_date - request.requested_on).days
+        if waited <= grace_days:
+            continue
+        by = f" by department {request.department}" if request.department else ""
+        items.append(
+            ExceptionItem(
+                id=(
+                    f"EX-{ExceptionType.REPAIR_PR_NOT_DECLARED.value}-"
+                    f"{document_reference(PURCHASE_REQUISITION, request.purchase_requisition, request.item)}"
+                ),
+                type=ExceptionType.REPAIR_PR_NOT_DECLARED.value,
+                severity=Severity.WARNING.value,
+                material_id=request.material_id,
+                description=request.description,
+                plant=request.plant,
+                purchasing_document=request.purchase_requisition,
+                item=request.item,
+                title="Repair asked for, condition not declared",
+                detail=(
+                    f"This repair was asked for on {_day(request.requested_on, 'an unknown date')}"
+                    f"{by}, {waited} days ago, and no condition declaration is on record "
+                    f"for it or for material {request.material_id} at plant {request.plant} "
+                    f"within {coverage.window_days} days. A declaration is expected within "
+                    f"{grace_days} days of the repair being asked for."
+                ),
+                raised_at=request.requested_on,
+                repair_document_type=PURCHASE_REQUISITION,
+            )
+        )
+    return items
+
+
+def declarations_without_repair(
+    declarations,
+    lines,
+    requests: Sequence[RepairRequest],
+    *,
+    reference_date: date,
+    grace_days: int,
+) -> list[ExceptionItem]:
+    """Raise DECLARED_NO_REPAIR_PR for every current Repairable declaration
+    older than ``grace_days`` with no repair PR or PO for its part and plant
+    raised on or after the day it was made.
+
+    ``declarations`` are the current ones (nothing superseded). A declaration
+    that names a repair PR or PO line is not checked: naming one is only
+    accepted while it is open in the register, so its repair exists. A PO
+    line's date is its PR's date when the PR was read, else the PO line's own.
+    """
+    raised: dict[tuple[str, str | None], list[date]] = {}
+    for line in lines:
+        on = line.pr_requested_on or line.raised_at
+        if on is not None:
+            raised.setdefault((line.material_id, line.plant), []).append(on)
+    for request in requests:
+        if request.requested_on is not None:
+            raised.setdefault((request.material_id, request.plant), []).append(request.requested_on)
+
+    items: list[ExceptionItem] = []
+    for attestation in sorted(declarations, key=lambda a: a.id):
+        if attestation.recommendation != Recommendation.REPAIRABLE.value:
+            continue
+        if attestation.repair_document and attestation.repair_item:
+            continue
+        on = attestation.attested_at.date()
+        waited = (reference_date - on).days
+        if waited <= grace_days:
+            continue
+        if any(day >= on for day in raised.get((attestation.material_id, attestation.plant), ())):
+            continue
+        items.append(
+            ExceptionItem(
+                id=f"EX-{ExceptionType.DECLARED_NO_REPAIR_PR.value}-{attestation.id}",
+                type=ExceptionType.DECLARED_NO_REPAIR_PR.value,
+                severity=Severity.WARNING.value,
+                material_id=attestation.material_id,
+                description=None,
+                plant=attestation.plant,
+                purchasing_document="",
+                item="",
+                title="Declared repairable, no repair asked for",
+                detail=(
+                    f"{_declared_by(attestation)} declared material {attestation.material_id} "
+                    f"at plant {attestation.plant} Repairable on {_day(on, 'an unknown date')} "
+                    f"(declaration {attestation.id}), {waited} days ago, and no open repair "
+                    "PR or PO for that part at that plant has been raised since. Raise the "
+                    "repair, or amend the declaration if the part is not going for repair."
+                ),
+                raised_at=on,
+                declaration_id=attestation.id,
+            )
+        )
+    return items
+
+
 @dataclass(frozen=True)
 class ExceptionStats:
     """Counts, with the rule that produced them attached.
@@ -574,12 +802,20 @@ def build_exceptions(
     justification_cutover: date | None = None,
     overdue_grace_days: int = 7,
     repair_requests: Sequence[RepairRequest] = (),
+    served_requests: Sequence[RepairRequest] = (),
+    declarations=(),
+    reference_date: date | None = None,
+    declaration_grace_days: int = 14,
 ) -> tuple[list[ExceptionItem], ExceptionStats]:
     """The whole exception queue for one snapshot, and its counts.
 
     ``repair_requests`` (the open repair PRs with no PO yet) are read only as
     repairs a purchase overlapped: nothing is declared on them in phase 1, so
-    no other check looks at them.
+    no other check looks at them -- except, since 27-Oct-2026, as the repairs
+    a Repairable declaration is waiting for. ``served_requests`` are the repair
+    PRs the register serves and the coverage checked; the PR findings read
+    those. ``declarations`` are the current declarations. The two grace-day
+    checks run only when ``reference_date`` is given.
     """
     items = missing_attestations(lines, coverage, cutover=cutover)
     items += unjustified_acquisitions(
@@ -591,6 +827,22 @@ def build_exceptions(
         repair_requests=repair_requests,
     )
     items += overdue_repairs(lines, grace_days=overdue_grace_days)
+    items += repaired_against_assessment(lines, coverage, requests=served_requests)
+    if reference_date is not None:
+        items += undeclared_repair_requests(
+            served_requests,
+            coverage,
+            reference_date=reference_date,
+            grace_days=declaration_grace_days,
+            cutover=cutover,
+        )
+        items += declarations_without_repair(
+            declarations,
+            lines,
+            repair_requests,
+            reference_date=reference_date,
+            grace_days=declaration_grace_days,
+        )
 
     by_type: dict[str, int] = {}
     by_severity: dict[str, int] = {}

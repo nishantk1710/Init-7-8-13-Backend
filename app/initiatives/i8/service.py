@@ -56,6 +56,7 @@ from app.initiatives.i8.acquisitions import (
     load_new_acquisitions,
 )
 from app.initiatives.i8.attestation import AttestationCoverage, coverage as attestation_coverage
+from app.initiatives.i8.attestation import find as find_attestations
 from app.initiatives.i8.coding_candidates import CodingCandidate, ScreenStats, screen
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.declarations import DeclarationRow, build_queue
@@ -723,6 +724,11 @@ def build_attestation_view(
         # Every open repair PR, served or not: a purchase that overlapped one
         # bought new while a repair was open whatever the register shows.
         repair_requests=snapshot.repair_requests,
+        served_requests=requests,
+        # A second read of the attestation table; it holds a handful of rows.
+        declarations=find_attestations(db, include_superseded=False),
+        reference_date=snapshot.reference_date,
+        declaration_grace_days=cfg.declaration_grace_days,
     )
     by_line = justifications_by_line(snapshot.lines, justifications, exceptions)
     logger.info("I08 register justifications: %s", justification_counts(by_line))
