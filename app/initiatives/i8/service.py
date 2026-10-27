@@ -74,6 +74,7 @@ from app.initiatives.i8.register import (
     open_repair_index,
     timed_step,
 )
+from app.initiatives.i8.repair_references import load_repair_references
 from app.initiatives.i8.requisitions import RepairRequest, fetch_repair_order_lines, load_repair_requests
 from app.initiatives.i8.staged import staged_sources
 from app.initiatives.i8.universe import UniverseRow, UniverseStats, load_universe
@@ -198,6 +199,12 @@ class Snapshot:
     repair with no PO yet is served only where it is asked for. Always built;
     ``I8_REPAIR_REQUESTS_ENABLED`` decides only whether it is served."""
 
+    repair_references: tuple[tuple[str, str, str, str], ...] = ()
+    """(BANFN, BNFPO, session_id, reference): the assistant reference typed on
+    a repair order's 543 line, resolved to a session for the same part
+    (repair_references.py, 27-Oct-2026). How a declaration made in that visit
+    covers the repair PR and the PO ordered from it."""
+
     def line(self, document: str, item: str) -> RepairLine | None:
         """One repair line by its (EBELN, EBELP) key."""
         return self._lines_by_key.get((document, item))
@@ -293,6 +300,8 @@ def build_snapshot(
             acquisitions = load_new_acquisitions(
                 db, cfg, candidates=candidates, reservation_lines=reservation_lines, sources=sources
             )
+            # Before the lines are let go: their text carries the R-reference.
+            repair_references = load_repair_references(db, reservation_lines, cfg)
             del reservation_lines
             register_stats = replace(
                 register_stats,
@@ -327,6 +336,7 @@ def build_snapshot(
         source_fingerprint=source.fingerprint,
         source_loaded_at=source.loaded_at,
         repair_requests=repair_requests,
+        repair_references=repair_references,
     )
 
 
@@ -710,7 +720,9 @@ def build_attestation_view(
     cfg = cfg or get_i8_settings()
     # The open repair PRs are declared on only while the register serves them.
     requests = snapshot.repair_requests if cfg.repair_requests_enabled else ()
-    cover = attestation_coverage(db, snapshot.lines, cfg, requests=requests)
+    cover = attestation_coverage(
+        db, snapshot.lines, cfg, requests=requests, references=getattr(snapshot, "repair_references", ())
+    )
     justifications = load_justifications(db)
     exceptions, exception_stats = build_exceptions(
         snapshot.lines,

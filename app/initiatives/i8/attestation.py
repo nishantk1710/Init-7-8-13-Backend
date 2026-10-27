@@ -439,8 +439,9 @@ class AttestationCoverage:
 
     #: (document, item) -> how the covering declaration was matched: ``BOUND``
     #: (it names the line, or the repair PR the line was ordered from) or
-    #: ``WINDOW`` (material + plant + date window). ``REFERENCE`` -- the
-    #: R-reference typed on the repair order -- arrives with that link.
+    #: ``WINDOW`` (material + plant + date window), or ``REFERENCE``: the
+    #: R-reference typed on the repair order names the assistant visit the
+    #: declaration was made in.
     links: dict[tuple[str, str], str] = field(default_factory=dict)
 
     #: (BANFN, BNFPO) -> the declaration covering an open repair PR with no PO
@@ -451,7 +452,7 @@ class AttestationCoverage:
     #: (BANFN, BNFPO) for repair PRs checked and found with no declaration.
     requests_uncovered: set[tuple[str, str]] = field(default_factory=set)
 
-    #: (BANFN, BNFPO) -> ``BOUND`` or ``WINDOW``, as ``links``.
+    #: (BANFN, BNFPO) -> ``REFERENCE``, ``BOUND`` or ``WINDOW``, as ``links``.
     request_links: dict[tuple[str, str], str] = field(default_factory=dict)
 
     @property
@@ -463,6 +464,13 @@ class AttestationCoverage:
 LINK_BOUND = "BOUND"
 LINK_REFERENCE = "REFERENCE"
 LINK_WINDOW = "WINDOW"
+
+
+def _part(material: str | None, plant: str | None) -> tuple[str, str]:
+    """A material+plant pair compared with a numeric material's leading zeros
+    stripped on both sides."""
+    material = (material or "").strip()
+    return (material.lstrip("0") or material, (plant or "").strip())
 
 
 def _item(item: str | None) -> str:
@@ -592,6 +600,7 @@ def coverage(
     cfg: I8Settings | None = None,
     *,
     requests=(),
+    references=(),
 ) -> AttestationCoverage:
     """Match every repair line to an attestation, in one pass.
 
@@ -624,6 +633,15 @@ def coverage(
     it once one exists (EKPO.BANFN/BNFPO) -- the same repair, a later document.
     ``requests`` (the open repair PRs with no PO yet) are matched the same two
     ways, dated by the PR date.
+
+    Since 27-Oct-2026 there is a rule before both: ``references`` are the
+    snapshot's ``repair_references`` -- (BANFN, BNFPO, session_id, reference)
+    read off the repair order's line text. A repair PR whose 543 line names a
+    session with a current declaration for the same material and plant is
+    covered by that declaration (``REFERENCE``), and so is the PO ordered from
+    it. It comes first because it is the documents themselves saying which
+    visit the repair came from; a declaration naming the line is a person
+    choosing one afterwards.
     """
     cfg = cfg or get_i8_settings()
     window = timedelta(days=cfg.attestation_window_days)
@@ -635,7 +653,12 @@ def coverage(
     # (type, document, item): a PO line and a PR are different documents
     # whose numbers could in principle coincide.
     by_line: dict[tuple[str, str, str], RepairAttestation] = {}
+    # session_id -> that visit's current declarations, newest first.
+    by_session: dict[str, list[RepairAttestation]] = {}
     for attestation in find(db, include_superseded=False):
+        session_id = getattr(attestation, "session_id", None)
+        if session_id:
+            by_session.setdefault(session_id, []).append(attestation)
         by_key.setdefault((attestation.material_id, attestation.plant), []).append(
             attestation
         )
@@ -651,12 +674,34 @@ def coverage(
                 attestation,
             )
 
+    # (BANFN, BNFPO) -> the sessions its repair order's text names.
+    referenced: dict[tuple[str, str], list[str]] = {}
+    for banfn, bnfpo, session_id, _reference in references:
+        referenced.setdefault((banfn, _item(bnfpo)), []).append(session_id)
+
+    def by_reference(pr_number, pr_item, material_id, plant) -> RepairAttestation | None:
+        """Rule 0: the newest current declaration from a session the repair
+        order names, for this same material and plant."""
+        if not pr_number or not pr_item:
+            return None
+        part = _part(material_id, plant)
+        for session_id in referenced.get((pr_number, _item(pr_item)), ()):
+            for attestation in by_session.get(session_id, ()):
+                if _part(attestation.material_id, attestation.plant) == part:
+                    return attestation
+        return None
+
     covered: dict[tuple[str, str], RepairAttestation] = {}
     uncovered: set[tuple[str, str]] = set()
     bound: set[tuple[str, str]] = set()
     links: dict[tuple[str, str], str] = {}
 
     for line in lines:
+        referenced_by = by_reference(line.pr_number, line.pr_item, line.material_id, line.plant)
+        if referenced_by is not None:
+            covered[line.key] = referenced_by
+            links[line.key] = LINK_REFERENCE
+            continue
         # Checked BEFORE the plant guard: a declaration that names this line
         # -- or the repair PR it was ordered from -- covers it whatever else is
         # missing, because somebody stated outright that this is the repair
@@ -695,6 +740,13 @@ def coverage(
     requests_uncovered: set[tuple[str, str]] = set()
     request_links: dict[tuple[str, str], str] = {}
     for request in requests:
+        referenced_by = by_reference(
+            request.purchase_requisition, request.item, request.material_id, request.plant
+        )
+        if referenced_by is not None:
+            requests_covered[request.key] = referenced_by
+            request_links[request.key] = LINK_REFERENCE
+            continue
         named = by_line.get(("PR", request.purchase_requisition, _item(request.item)))
         if named is not None:
             requests_covered[request.key] = named
@@ -718,11 +770,13 @@ def coverage(
 
     logger.info(
         "I08 attestation coverage: %d of %d repair lines covered "
-        "(%d by the declaration naming the line, %d by the +/-%dd window)",
+        "(%d by the R-reference on the repair order, %d by the declaration naming "
+        "the line, %d by the +/-%dd window)",
         len(covered),
         len(covered) + len(uncovered),
+        sum(1 for link in links.values() if link == LINK_REFERENCE),
         len(bound),
-        len(covered) - len(bound),
+        sum(1 for link in links.values() if link == LINK_WINDOW),
         cfg.attestation_window_days,
     )
     return AttestationCoverage(

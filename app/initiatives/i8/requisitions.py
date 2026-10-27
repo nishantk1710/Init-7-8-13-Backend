@@ -315,8 +315,9 @@ _RESERVATION_SQL = """
 -- no PR yet are read too (27-Oct-2026): the new-purchase check needs every
 -- repair order's reservation number to tell a repair PR from a new-buy one
 -- (acquisitions.repair_order_references); is_repair_reservation_line still
--- takes only the lines that name a PR here.
-select rsnum, rspos, matnr, werks, bwart, banfn, bnfpo, aufnr, xloek, kzear
+-- takes only the lines that name a PR here. The line text (SGTXT) carries the
+-- assistant's R-reference since 27-Oct-2026 (repair_references.py).
+select rsnum, rspos, matnr, werks, bwart, banfn, bnfpo, aufnr, xloek, kzear, sgtxt
 from v_resb
 where bwart = :movement_type
 """

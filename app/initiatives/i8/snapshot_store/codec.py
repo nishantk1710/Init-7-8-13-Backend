@@ -56,6 +56,8 @@ from typing import Any
 # extend this note): RepairLine gained pr_requested_on and pr_department, its
 # repair PR's date and department. A version-4 payload would construct -- both
 # default -- but every PO row would lose its requester until the next rebuild.
+# The Snapshot gained repair_references (the R-reference on the repair order,
+# as plain tuples); a version-4 payload would link no declaration that way.
 CODEC_VERSION = 5
 _ALLOWED = "app.initiatives.i8."
 
