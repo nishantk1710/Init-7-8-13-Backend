@@ -294,14 +294,32 @@ def _stage(db: Session, cfg: I8Settings) -> Sources:
         f"{_literal(cfg.job_issue_movement_type)}) "
         f"OR COALESCE(text, '') <> '')",
     )})
-    # MSEG: the staged POs' movements, plus (27-Oct-2026) those posted against a
-    # staged reservation line with text -- the job's 261/262 (session_jobs.py).
+    # MSEG: the staged POs' movements, plus (27-Oct-2026) the job's 261/262
+    # posted against a staged reservation line with text (session_jobs.py).
     # Readers filter by PO or by reservation, so neither sees the other's rows.
-    stage("v_mseg", {"n_mseg": _narrow(
-        db, "mseg", "n_mseg",
-        f"{_in_scope()} AND ({_key('purchase_order')} {on_staged_po} "
-        f"OR {_key('reservation')} IN (SELECT rsnum FROM {views['v_resb']} WHERE sgtxt IS NOT NULL))",
-    )})
+    #
+    # Two statements, never one WHERE with an OR. The first deploy (27-Oct-2026)
+    # put both lookups in one OR; SQL Server could not semi-join either side,
+    # re-scanned the staged reservations for every one of MSEG's ~3.5M rows and
+    # ran past the 600 s statement limit, so no I08 snapshot built on nonprod.
+    # Each half is now the shape the PO narrowing always had: one indexed temp
+    # table, one IN. The second half takes only the job movement types and only
+    # rows the first half did not (a movement with no PO, or another PO).
+    db.execute(text("DROP TABLE IF EXISTS #i8s_rsv"))
+    db.execute(text(
+        f"SELECT DISTINCT rsnum INTO #i8s_rsv FROM {views['v_resb']} "
+        "WHERE rsnum IS NOT NULL AND sgtxt IS NOT NULL"
+    ))
+    db.execute(text("CREATE CLUSTERED INDEX ix_i8s_rsv ON #i8s_rsv (rsnum)"))
+    mseg = _narrow(db, "mseg", "n_mseg", f"{_in_scope()} AND {_key('purchase_order')} {on_staged_po}")
+    job_types = f"{_literal(cfg.job_issue_movement_type)}, {_literal(cfg.job_return_movement_type)}"
+    db.execute(text(
+        f"INSERT INTO {mseg} SELECT * FROM n_mseg WHERE {_in_scope()} "
+        f"AND movement_type IN ({job_types}) "
+        f"AND {_key('reservation')} IN (SELECT rsnum FROM #i8s_rsv) "
+        f"AND ({_key('purchase_order')} IS NULL OR {_key('purchase_order')} NOT {on_staged_po})"
+    ))
+    stage("v_mseg", {"n_mseg": mseg})
     # Vendor names are only ever looked up for an EKKO header's supplier.
     stage("v_lfa1", {"n_lfa1": _narrow(
         db, "lfa1", "n_lfa1", f"{_key('vendor')} IN (SELECT lifnr FROM {views['v_ekko']} WHERE lifnr IS NOT NULL)"
@@ -367,7 +385,7 @@ def staged_sources(db: Session, cfg: I8Settings, *, enabled: bool = True) -> Ite
     try:
         yield sources
     finally:
-        for table in [*sources.views.values(), "#i8s_docs", "#i8s_mats"]:
+        for table in [*sources.views.values(), "#i8s_docs", "#i8s_mats", "#i8s_rsv"]:
             db.execute(text(f"DROP TABLE IF EXISTS {table}"))
         for name in ("ekpo", "ekko", "eket", "mseg", "lfa1", "mara", "makt", "mard", "marc",
                      "criticality_current", "resb", "eban", "mchb", "mbew"):

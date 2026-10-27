@@ -273,6 +273,28 @@ def test_only_the_configured_source_is_staged(monkeypatch, source, staged_name, 
     assert not any("#i8cb_mbew" in s or "#i8cs_v_mbew" in s for s in db.sql)
 
 
+def test_mseg_is_staged_without_an_or_across_the_two_lookups(monkeypatch) -> None:
+    """27-Oct-2026: one WHERE with "PO in staged POs OR reservation in staged
+    reservations" ran past SQL Server's 600 s limit on nonprod's ~3.5M MSEG
+    rows. Each half must be its own statement against an indexed temp table."""
+    from app.shared import optional_tables
+
+    monkeypatch.setattr(optional_tables, "existing", lambda db, tables: [])
+    db = _Recorder()
+    staged._stage(db, I8Settings(_env_file=None))
+
+    into = [s for s in db.sql if "SELECT * INTO #i8b_mseg " in s]
+    assert len(into) == 1 and "#i8s_docs" in into[0] and "reservation" not in into[0]
+    insert = [s for s in db.sql if s.startswith("INSERT INTO #i8b_mseg ")]
+    assert len(insert) == 1
+    assert "IN (SELECT rsnum FROM #i8s_rsv)" in insert[0]
+    assert "movement_type IN ('261', '262')" in insert[0]
+    assert any("CREATE CLUSTERED INDEX ix_i8s_rsv ON #i8s_rsv (rsnum)" in s for s in db.sql)
+    # The staged reservations are built before MSEG reads them.
+    first_rsv = next(i for i, s in enumerate(db.sql) if "INTO #i8s_rsv" in s)
+    assert first_rsv < db.sql.index(insert[0])
+
+
 # --- the rules echo and the stored snapshot ------------------------------------------------
 
 
