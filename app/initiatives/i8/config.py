@@ -24,9 +24,15 @@ from datetime import date
 from decimal import Decimal
 from functools import lru_cache
 
+from pydantic import ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.shared.plant_scope import PLANT_NAMES
+
+#: Where usable vs damaged stock can be read from (27-Oct-2026). MCHB is stock
+#: per batch, which on this SAP is stock per condition; MBEW is the valuation,
+#: split by condition for every 80-series part. See ``stock_condition_source``.
+STOCK_CONDITION_SOURCES: tuple[str, ...] = ("MCHB", "MBEW")
 
 
 class I8Settings(BaseSettings):
@@ -151,6 +157,32 @@ class I8Settings(BaseSettings):
     always builds them; this only decides whether they are served, so the
     backend can deploy before the frontend that renders a PR row (27-Oct-2026).
     Off by default: a frontend that predates PR rows would show them as POs."""
+
+    # --- Stock by condition (27-Oct-2026) ---------------------------------
+    #
+    # MARD says how many units a plant holds, not whether they are any use: a
+    # part with one DAMAGED unit on the shelf reads as "1 in stock". SAP keeps
+    # the condition alongside -- in MCHB's batch field and in MBEW's valuation
+    # type -- so the stock can be split into usable and damaged. The MARD total
+    # stays the stock on hand; the split is served beside it.
+
+    stock_condition_source: str = "MCHB"
+    """Where the split is read from: ``MCHB`` (stock per batch) or ``MBEW``
+    (the split valuation's units). MCHB by default, agreed 26-Oct-2026: its
+    unrestricted stock matches MARD on all 730 stocked 80-series parts of the
+    15-Oct extract. MBEW matches on 717 of them, because it also counts units
+    the plant owns but has sent to a vendor (8000004885 at 1500: MBEW DAMAGED
+    2, MCHB and MARD 0). Anything else is refused at startup."""
+
+    usable_stock_conditions: str = "NEW,REFURBISHD"
+    """Conditions counted as usable, comma-separated. REFURBISHD is SAP's
+    10-character spelling, not a typo. 15-Oct extract, in-scope 80-series MCHB
+    rows: NEW 1,667, REFURBISHD 975."""
+
+    damaged_stock_conditions: str = "DAMAGED"
+    """Conditions counted as damaged (790 MCHB rows on the 15-Oct extract).
+    MBEW also values SCRAP, which is neither usable nor damaged and so is
+    counted in neither."""
 
     # --- Aging and overdue (W5.2) ----------------------------------------
 
@@ -377,6 +409,45 @@ class I8Settings(BaseSettings):
     default_page_size: int = 50
     max_page_size: int = 500
 
+    @field_validator("stock_condition_source")
+    @classmethod
+    def _known_stock_condition_source(cls, value: str) -> str:
+        """Upper-cased, and one of :data:`STOCK_CONDITION_SOURCES` or a
+        startup error. Unlike the coding sources, a typo here is not dropped:
+        there is no safe fallback that would not quietly change every stock
+        figure the assistant quotes."""
+        name = value.strip().upper()
+        if name not in STOCK_CONDITION_SOURCES:
+            raise ValueError(
+                f"I8_STOCK_CONDITION_SOURCE must be one of {', '.join(STOCK_CONDITION_SOURCES)}, not {value!r}"
+            )
+        return name
+
+    @field_validator("damaged_stock_conditions")
+    @classmethod
+    def _conditions_counted_once(cls, value: str, info: ValidationInfo) -> str:
+        """A condition both usable and damaged would be counted twice. A field
+        validator, not a model one: a model validator's error quotes the whole
+        input, and that includes every other setting in the environment."""
+        usable = info.data.get("usable_stock_conditions")
+        both = set(_conditions(usable or "")) & set(_conditions(value))
+        if both:
+            raise ValueError(
+                "I8_USABLE_STOCK_CONDITIONS and I8_DAMAGED_STOCK_CONDITIONS both name " + ", ".join(sorted(both))
+            )
+        return value
+
+    @property
+    def usable_stock_condition_list(self) -> tuple[str, ...]:
+        """The usable conditions, upper-cased, de-duplicated, in the order
+        configured (the assistant's breakdown follows it)."""
+        return _conditions(self.usable_stock_conditions)
+
+    @property
+    def damaged_stock_condition_list(self) -> tuple[str, ...]:
+        """The damaged conditions, upper-cased, de-duplicated, in order."""
+        return _conditions(self.damaged_stock_conditions)
+
     @property
     def coding_candidate_source_list(self) -> tuple[str, ...]:
         """The configured sources, upper-cased and de-duplicated in order.
@@ -481,6 +552,12 @@ class I8Settings(BaseSettings):
         if not self.reference_date.strip():
             return None
         return date.fromisoformat(self.reference_date.strip())
+
+
+def _conditions(raw: str) -> tuple[str, ...]:
+    """A comma-separated condition list, upper-cased like the SAP values it is
+    compared with, blanks and repeats dropped."""
+    return tuple(dict.fromkeys(c.strip().upper() for c in raw.split(",") if c.strip()))
 
 
 @lru_cache

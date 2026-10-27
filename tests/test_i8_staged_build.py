@@ -15,7 +15,9 @@ out-of-scope plant, and ordinary lines the staging leaves out but the register
 still counts as scanned. And repair orders' reservation lines (RESB 543) naming
 repair PRs (EBAN) that cross every part of the open rule: one open, one with a
 live PO pointing back, one deleted, one whose repair-order line is final-issued,
-one on a non-80 part, one out of scope, and a 261 line that names no repair. EKBE is seeded because the views over it still exist
+one on a non-80 part, one out of scope, and a 261 line that names no repair. And stock per
+condition (MCHB): two conditions in two bins of one part, a damaged-only part, a row
+out of scope and a non-80 row. EKBE is seeded because the views over it still exist
 (I13 reads them); I08 has not read it since 19-Oct-2026.
 
 Needs a database (skipped without DATABASE_URL); creates and drops its own raw
@@ -62,6 +64,7 @@ RAW: dict[str, list[str]] = {
                  "KZEAR", "BDTER", "BDMNG", "MEINS"],
     "raw_eban": ["BANFN", "BNFPO", "LOEKZ", "TXZ01", "MATNR", "WERKS", "MENGE", "MEINS", "BADAT", "LFDAT",
                  "STATU", "BSART", "AFNAM", "RSNUM"],
+    "raw_mchb": ["MATNR", "WERKS", "LGORT", "CHARG", "CLABS"],
     # What the monthly criticality reports add up to (not a raw workbook table).
     "criticality_current": ["material", "material_raw", "plant", "criticality", "description", "mattyp", "mrp_type"],
 }
@@ -171,6 +174,15 @@ ROWS: dict[str, list[tuple]] = {
         ("0010000007", "00010", "", "PUMP", A, "1300", "1", "EA", "15.09.2026", "20.09.2026",
          "N", "ZMNP", "10305", "0001900007"),
     ],
+    "raw_mchb": [
+        # A at 1300: new and damaged in one bin, refurbished in another.
+        ("000000008000000001", "1300", "0001", "NEW", "2"),
+        (A, "1300", "0001", "DAMAGED", "1"),
+        (A, "1300", "0002", "REFURBISHD", "4"),
+        (C, "1500", "0001", "DAMAGED", "2"),  # damaged only
+        (A, "3000", "0001", "NEW", "50"),  # out of scope
+        (N, "1300", "0001", "", "9"),  # not an 80-series part
+    ],
     "criticality_current": [
         (A, A, "1300", "CRITICAL", "PUMP", "ZREP", "ND"),
         (N, N, "1300", "NORMAL", "GLOVES", "ERSA", "VB"),
@@ -271,6 +283,16 @@ def test_the_tenant_crosses_every_filter(built) -> None:
     assert direct.register_stats.requisitions_excluded_live_po == 1
     assert direct.register_stats.requisitions_excluded_deleted == 1
     assert direct.register_stats.requisitions_excluded_reservation_closed == 1
+    # Stock per condition (MCHB, the default): summed across bins, split by the
+    # configured conditions; B has no MCHB rows, so its split is unknown.
+    universe = {(r.material_id, r.plant): r for r in direct.universe}
+    assert universe[(A, "1300")].usable_stock == 6
+    assert universe[(A, "1300")].damaged_stock == 1
+    assert universe[(A, "1300")].stock_condition_source == "MCHB"
+    assert universe[(C, "1500")].usable_stock == 0
+    assert universe[(C, "1500")].damaged_stock == 2
+    assert universe[(B, "1500")].usable_stock is None
+    assert universe[(B, "1500")].stock_condition_source is None
 
 
 def test_repair_requests_are_identical(built) -> None:

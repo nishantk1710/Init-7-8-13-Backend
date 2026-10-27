@@ -1388,6 +1388,12 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
                 f"'{cfg.reservation_deleted_indicator}') nor final-issued (RESB.KZEAR "
                 f"not '{cfg.reservation_final_issue_indicator}')"
             ),
+            # Since 27-Oct-2026: where usable vs damaged stock is read from,
+            # and which conditions count as which. The stock on hand stays
+            # the MARD total either way.
+            "stockConditionSource": cfg.stock_condition_source,
+            "usableStockConditions": ", ".join(cfg.usable_stock_condition_list),
+            "damagedStockConditions": ", ".join(cfg.damaged_stock_condition_list),
         },
     )
 

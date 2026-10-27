@@ -79,11 +79,20 @@ logger = get_logger(__name__)
 #: The views a snapshot build reads. Not v_ekbe since 19-Oct-2026: the
 #: register follows SAP's "Delivery completed" flag, not goods receipts.
 #: v_resb and v_eban since 27-Oct-2026: the open repair PRs (requisitions.py).
+#: v_mchb and v_mbew since 27-Oct-2026: stock per condition (universe.py) --
+#: only the one I8_STOCK_CONDITION_SOURCE names is staged; see CONDITION_STOCK.
 VIEWS: tuple[str, ...] = (
     "v_ekpo", "v_ekko", "v_eket", "v_mseg", "v_lfa1",
     "v_mara", "v_makt", "v_marc", "v_mard", "v_zmm065",
-    "v_resb", "v_eban",
+    "v_resb", "v_eban", "v_mchb", "v_mbew",
 )
+
+#: I8_STOCK_CONDITION_SOURCE -> (view, normalised table, its plant column).
+#: MBEW's plant is its valuation area (valuation is at plant level here).
+CONDITION_STOCK: dict[str, tuple[str, str, str]] = {
+    "MCHB": ("v_mchb", "n_mchb", "plant"),
+    "MBEW": ("v_mbew", "n_mbew", "valuation_area"),
+}
 
 
 @dataclass(frozen=True)
@@ -306,6 +315,15 @@ def _stage(db: Session, cfg: I8Settings) -> Sources:
     )})
     stage("v_eban", {"n_eban": _narrow(db, "eban", "n_eban", f"{_in_scope()} AND {_series('material', cfg)}")})
 
+    # Stock per condition (27-Oct-2026): only the configured source, in scope
+    # and 80-series, as MARD is narrowed. 3,432 in-scope 80-series MCHB rows on
+    # the 15-Oct extract. Named #i8b_/#i8s_, apart from the coding screen's
+    # #i8cb_mbew / #i8cs_v_mbew, so the two never drop each other's copy.
+    view, table, plant = CONDITION_STOCK[cfg.stock_condition_source]
+    stage(view, {table: _narrow(
+        db, table.removeprefix("n_"), table, f"{_in_scope(plant)} AND {_series('material', cfg)}"
+    )})
+
     # What the register reports as scanned: v_ekpo's rows with a PO and an
     # item, counted over the unfiltered source with the view's own predicates.
     scanned = int(db.execute(text(
@@ -339,7 +357,7 @@ def staged_sources(db: Session, cfg: I8Settings, *, enabled: bool = True) -> Ite
         for table in [*sources.views.values(), "#i8s_docs", "#i8s_mats"]:
             db.execute(text(f"DROP TABLE IF EXISTS {table}"))
         for name in ("ekpo", "ekko", "eket", "mseg", "lfa1", "mara", "makt", "mard", "marc",
-                     "criticality_current", "resb", "eban"):
+                     "criticality_current", "resb", "eban", "mchb", "mbew"):
             db.execute(text(f"DROP TABLE IF EXISTS #i8b_{name}"))
 
 

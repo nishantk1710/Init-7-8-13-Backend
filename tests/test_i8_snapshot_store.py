@@ -105,6 +105,32 @@ def test_a_snapshot_without_repair_requests_still_round_trips() -> None:
     assert back.request("2000029113", "10") is None
 
 
+def test_the_universe_s_stock_split_round_trips() -> None:
+    """UniverseRow's split by condition (27-Oct-2026, codec 4): the pairs stay
+    tuples, the digits stay, and an unknown split stays None."""
+    split = universe_row(
+        stock_on_hand=Decimal("3.000"),
+        usable_stock=Decimal("2.000"),
+        damaged_stock=Decimal("1.000"),
+        stock_by_condition=(("DAMAGED", Decimal("1.000")), ("NEW", Decimal("2.000"))),
+        stock_condition_source="MCHB",
+    )
+    snapshot = _snapshot(
+        universe=(split, universe_row(plant="1500")),
+        universe_stats=UniverseStats(rows=2, materials=1, plants=2, with_stock_condition=1),
+    )
+    back = codec.decode(codec.encode(snapshot))
+
+    assert back == snapshot
+    row, unknown = back.universe
+    assert row.stock_by_condition == (("DAMAGED", Decimal("1.000")), ("NEW", Decimal("2.000")))
+    assert isinstance(row.stock_by_condition[0], tuple)
+    assert str(row.usable_stock) == "2.000"
+    assert row.stock_condition_source == "MCHB"
+    assert (unknown.usable_stock, unknown.damaged_stock, unknown.stock_by_condition) == (None, None, ())
+    assert back.universe_stats.with_stock_condition == 1
+
+
 def test_the_codec_constructs_only_i08_classes() -> None:
     import gzip
     import json

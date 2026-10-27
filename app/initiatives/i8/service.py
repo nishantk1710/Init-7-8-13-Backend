@@ -107,10 +107,11 @@ SOURCE_TABLES: tuple[str, ...] = (
     "raw_resb",
     "raw_mseg",
     "raw_lfa1",
-    # Read only by the coding screen's New Item Price (v_mbew), not by the
-    # snapshot build. Listed so a weekly MBEW reload still moves the
-    # fingerprint: the rebuild resets the cached coding screen, which would
-    # otherwise keep serving last week's prices until a restart.
+    # Read by the coding screen's New Item Price (v_mbew), and by the snapshot
+    # build for stock per condition when I8_STOCK_CONDITION_SOURCE=MBEW
+    # (27-Oct-2026; MCHB by default). Listed so a weekly MBEW reload still
+    # moves the fingerprint: the rebuild resets the cached coding screen, which
+    # would otherwise keep serving last week's prices until a restart.
     "raw_mbew",
     "raw_mchb",
     # What the monthly criticality uploads add up to; an upload writes an

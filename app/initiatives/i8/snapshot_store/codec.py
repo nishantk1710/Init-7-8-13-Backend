@@ -44,7 +44,10 @@ from typing import Any
 # repair_requests (requisitions.RepairRequest, the open repair PRs with no PO
 # yet) and RegisterStats their counts. A version-3 payload would construct --
 # both default -- but would serve no repair PRs until the source data next
-# changed.
+# changed. On the same branch UniverseRow gained its stock split by condition
+# (usable_stock, damaged_stock, stock_by_condition, stock_condition_source) and
+# UniverseStats with_stock_condition; a version-3 payload would serve every
+# part's split as unknown until the next rebuild.
 CODEC_VERSION = 4
 _ALLOWED = "app.initiatives.i8."
 

@@ -430,6 +430,8 @@ class TestSnapshotEndpoint:
         # A real boolean, not 1 or "true": the switch for serving repair PRs.
         assert isinstance(body["rules"]["repairRequestsEnabled"], bool)
         assert "RESB.BWART '543'" in body["rules"]["openRepairRequestRule"]
+        assert body["rules"]["stockConditionSource"] in ("MCHB", "MBEW")
+        assert "DAMAGED" in body["rules"]["damagedStockConditions"]
         assert body["repairRegister"]["totalLines"] == body["repairRegister"]["openLines"]
         # 3,605 before the two-plant scope ruling of 21-Sep-2026.
         assert body["universe"]["totalMaterials"] == 3145
