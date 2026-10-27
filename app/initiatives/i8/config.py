@@ -145,6 +145,13 @@ class I8Settings(BaseSettings):
     the PR table marks deletion 'X' -- 4,820 of the 12,369 in-scope 80-series
     PR lines on the 15-Oct extract, and none of them 'L'."""
 
+    repair_requests_enabled: bool = False
+    """Serve the open repair PRs: rows with no PO yet on the register, their
+    detail page, and (BE6) the PRs in the assistant's verdict. The snapshot
+    always builds them; this only decides whether they are served, so the
+    backend can deploy before the frontend that renders a PR row (27-Oct-2026).
+    Off by default: a frontend that predates PR rows would show them as POs."""
+
     # --- Aging and overdue (W5.2) ----------------------------------------
 
     # Days past the schedule-line delivery date before a line counts as overdue.

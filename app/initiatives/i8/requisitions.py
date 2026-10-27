@@ -67,6 +67,11 @@ ZERO = Decimal(0)
 # AT_VENDOR (register.py).
 PR_RAISED = "PR Raised"
 
+# The overdue status of a repair with no PO yet. Nothing has been ordered, so
+# there is no promised date to be late against -- not NO_DUE_DATE, which says
+# a PO exists without one. PO rows never carry it (aging.OVERDUE_STATES).
+NOT_ORDERED = "NOT_ORDERED"
+
 
 @dataclass(frozen=True)
 class RepairRequest:

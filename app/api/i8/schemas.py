@@ -212,10 +212,14 @@ class RepairChain(I8Model):
     Since 19-Oct-2026 the register serves no other kind: a line SAP has closed
     ("Delivery completed"), deleted or blocked is not in it, and goods receipts
     are not read -- so there is no receipt status, receipt date or received
-    quantity here."""
+    quantity here.
+
+    Since 27-Oct-2026 the register can also serve an open repair PR with no PO
+    yet (``lineKind`` ``PR``), behind ``I8_REPAIR_REQUESTS_ENABLED``."""
 
     id: str
-    """``{EBELN}-{EBELP}``. The register key, as one string."""
+    """``{EBELN}-{EBELP}``, or ``PR-{BANFN}-{BNFPO}`` on a PR row. The register
+    key, as one string."""
 
     material: MaterialReference
     plant: PlantReference | None = None
@@ -335,6 +339,19 @@ class RepairChain(I8Model):
     via the universe. Null where no source has a tier for the pair -- unknown,
     not NORMAL."""
 
+    # --- repair PRs with no PO yet (27-Oct-2026) ------------------------
+
+    line_kind: Literal["PO", "PR"] = "PO"
+    """``PR`` marks an open repair PR with no PO yet, served only while
+    ``I8_REPAIR_REQUESTS_ENABLED`` is on. Its id is ``PR-{BANFN}-{BNFPO}``,
+    ``repairPo`` and the vendor are null, ``repairStatus`` is ``PR Raised`` and
+    ``overdueStatus`` ``NOT_ORDERED``; days count from the PR date."""
+
+    requester_name: str | None = None
+    """The department name for ``requester``, when the department list has the
+    code. Null when it does not -- the code is shown alone, never a guess.
+    Filled on PR rows only for now; PO rows gain it in phase 2."""
+
 
 class RegisterMeta(I8Model):
     """The register's counts. Every line counted is open in SAP; the
@@ -371,6 +388,21 @@ class RegisterMeta(I8Model):
     excluded_rfq_lines: int = 0
     """Item-category-3 lines on a request for quotation (EKKO.BSART), which
     orders nothing."""
+
+    # The repair PRs with no PO yet, counted whether or not they are served
+    # (I8_REPAIR_REQUESTS_ENABLED): the lines above stay PO-only. Each PR left
+    # out is counted once, under the first of the three that applies.
+    open_repair_requests: int = 0
+    """Open repair PRs with no PO yet -- 108 on the 15-Oct extract."""
+
+    requisitions_excluded_deleted: int = 0
+    """Repair PRs whose item SAP has deleted (EBAN.LOEKZ)."""
+
+    requisitions_excluded_live_po: int = 0
+    """Repair PRs a live PO already points to -- those are register lines."""
+
+    requisitions_excluded_reservation_closed: int = 0
+    """Repair PRs whose repair-order line is deleted or final-issued."""
 
 
 class VendorOption(I8Model):
@@ -413,8 +445,11 @@ class RegisterViewCounts(I8Model):
     all: int
     overdue: int
     undeclared: int
+    """Never counts a PR row: there is nothing to declare against until phase 2."""
     at_vendor: int
     with_exceptions: int
+    not_ordered: int = 0
+    """Repair PRs with no PO yet. 0 while ``I8_REPAIR_REQUESTS_ENABLED`` is off."""
 
 
 class RegisterResponse(I8Model):
@@ -498,7 +533,11 @@ class AttestationRequest(I8Model):
 
     Omit it when assessing a part before anything has been raised for it.
     There is no purchase order to name in that moment, which is exactly why the
-    date window exists, and it stays the fallback for those."""
+    date window exists, and it stays the fallback for those.
+
+    Not a repair PR with no PO yet: a register PR row's ``PR-{BANFN}``, or an
+    open repair PR's own number, is refused with a 422 until phase 2 allows
+    declaring there (27-Oct-2026)."""
 
     repair_item: str | None = Field(default=None, max_length=10)
     """EKPO.EBELP of that line. Send with ``repairDocument`` or not at all --
@@ -1037,7 +1076,8 @@ class SnapshotInfo(I8Model):
     # warns about it at import time.
     repair_register: RegisterMeta
     universe: UniverseMeta
-    rules: dict[str, str | int]
+    # bool first: in a str|int union a flag would be served as 1.
+    rules: dict[str, bool | str | int]
     """The configuration actually in force, echoed back so a surprising number
     can be traced to a setting without reading the deployment."""
 

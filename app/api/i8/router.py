@@ -46,6 +46,8 @@ from app.api.i8.mappers import (
     register_facets,
     register_meta,
     repair_chain,
+    request_chain,
+    request_timeline,
     timeline,
     universe_item,
     universe_meta,
@@ -104,6 +106,7 @@ from app.initiatives.i8.exceptions import ExceptionItem
 from app.initiatives.i8.material_number import is_eighty_series, normalise
 from app.initiatives.i8.register import RepairLine
 from app.initiatives.i8.repairable_unit import assess as assess_repairable_unit
+from app.initiatives.i8.requisitions import NOT_ORDERED, PR_RAISED, RepairRequest
 from app.initiatives.i8.service import (
     AttestationView,
     Snapshot,
@@ -255,12 +258,43 @@ def _chain(
     )
 
 
+def _request_chain(
+    request: RepairRequest,
+    cfg: I8Settings,
+    lookup: dict[tuple[str, str | None], UniverseRow],
+    exceptions: Sequence[ExceptionItem] | None = None,
+) -> RepairChain:
+    """A repair PR's register row, with its material's stock position from the
+    universe -- the same lookups a PO row gets in :func:`_chain`."""
+    row = lookup.get((request.material_id, request.plant))
+    return request_chain(
+        request,
+        cfg,
+        stock_on_hand=row.stock_on_hand if row else None,
+        reorder_point=row.reorder_point if row else None,
+        new_unit_lead_time_days=row.planned_delivery_days if row else None,
+        criticality=row.criticality if row else None,
+        exceptions=exceptions,
+    )
+
+
 def _criticality_of(
-    line: RepairLine, lookup: dict[tuple[str, str | None], UniverseRow]
+    line: RepairLine | RepairRequest, lookup: dict[tuple[str, str | None], UniverseRow]
 ) -> str | None:
     """The rating a register row shows: its material's, at its plant."""
     row = lookup.get((line.material_id, line.plant))
     return row.criticality if row else None
+
+
+#: How a PR row's document is named on the detail route and in a declaration:
+#: ``PR-{BANFN}``, the register row id ``PR-{BANFN}-{BNFPO}`` split at its last
+#: hyphen.
+_REQUEST_PREFIX = "PR-"
+
+
+def _item_key(item: str) -> str:
+    """A PR item as the snapshot keys it: leading zeros stripped ('10')."""
+    return item.strip().lstrip("0") or item.strip()
 
 
 def _declaration_status_of(line: RepairLine, view: AttestationView) -> str:
@@ -416,7 +450,12 @@ def get_register(
     repair_status: str | None = Query(None, alias="status"),
     overdue_only: bool = Query(False, alias="overdueOnly"),
     overdue_status: str | None = Query(
-        None, alias="overdueStatus", description="OVERDUE, ON_TIME or NO_DUE_DATE"
+        None,
+        alias="overdueStatus",
+        description=(
+            "OVERDUE, ON_TIME or NO_DUE_DATE; NOT_ORDERED for the repair PRs "
+            "with no PO yet, when they are served"
+        ),
     ),
     criticality: str | None = Query(
         None,
@@ -446,8 +485,9 @@ def get_register(
         None,
         alias="view",
         description=(
-            "A quick view on top of the filters: overdue, undeclared, atVendor "
-            "or withExceptions. viewCounts counts each one before it is applied."
+            "A quick view on top of the filters: overdue, undeclared, atVendor, "
+            "withExceptions or notOrdered (repair PRs with no PO yet). "
+            "viewCounts counts each one before it is applied."
         ),
     ),
     exclude_exception_type: str | None = Query(
@@ -475,34 +515,56 @@ def get_register(
     ``meta`` describes the register whatever the filters. ``facets`` are taken
     before every filter, so a screen showing one page can still offer every
     value in its dropdowns.
+
+    Since 27-Oct-2026, while ``I8_REPAIR_REQUESTS_ENABLED`` is on, the open
+    repair PRs with no PO yet follow the PO rows (``lineKind`` ``PR``). The
+    ``meta`` line counts stay PO-only; it counts the PRs separately, served or
+    not.
     """
     page_size = min(page_size or cfg.default_page_size, cfg.max_page_size)
     lookup = _stock_lookup(snapshot)
     raised = _raised_by_line(view, _type_set(exclude_exception_type))
 
     lines = snapshot.lines
-    facets = register_facets(lines, cfg, lambda line: _criticality_of(line, lookup))
+    # The open repair PRs with no PO yet, served after every PO row while the
+    # switch is on. Never read while it is off, so the register is then exactly
+    # what it was before they existed. Every filter below narrows them by what
+    # their row shows: no vendor, PR Raised, NOT_ORDERED, Required, days from
+    # the PR date, no exceptions.
+    requests = snapshot.repair_requests if cfg.repair_requests_enabled else ()
+    facets = register_facets(
+        lines, cfg, lambda row: _criticality_of(row, lookup), requests=requests
+    )
 
     if plant:
         lines = tuple(line for line in lines if line.plant == plant)
+        requests = tuple(r for r in requests if r.plant == plant)
     if vendor:
         wanted_vendor = vendor.strip()
         if wanted_vendor.lower() == "none":
             lines = tuple(line for line in lines if not line.vendor)
         else:
             lines = tuple(line for line in lines if line.vendor == wanted_vendor)
+            requests = ()
     if material:
         key = normalise(material)
         lines = tuple(line for line in lines if line.material_id == key)
+        requests = tuple(r for r in requests if r.material_id == key)
     if repair_status:
         lines = tuple(line for line in lines if line.repair_status == repair_status)
+        if repair_status != PR_RAISED:
+            requests = ()
     if aging_bucket:
         lines = tuple(line for line in lines if line.aging_bucket == aging_bucket)
+        requests = tuple(r for r in requests if r.aging_bucket == aging_bucket)
     if overdue_only:
         lines = tuple(line for line in lines if line.is_overdue)
+        requests = ()
     if overdue_status:
         wanted_overdue = overdue_status.strip().upper()
         lines = tuple(line for line in lines if line.overdue_status == wanted_overdue)
+        if wanted_overdue != NOT_ORDERED:
+            requests = ()
     if criticality:
         # The rating the row shows, at the line's own plant. This used to
         # match any plant's rating for the material, so a filter could return
@@ -510,11 +572,15 @@ def get_register(
         wanted_rating = criticality.strip().upper()
         if wanted_rating == "NONE":
             lines = tuple(line for line in lines if not _criticality_of(line, lookup))
+            requests = tuple(r for r in requests if not _criticality_of(r, lookup))
         else:
             lines = tuple(
                 line
                 for line in lines
                 if (_criticality_of(line, lookup) or "").upper() == wanted_rating
+            )
+            requests = tuple(
+                r for r in requests if (_criticality_of(r, lookup) or "").upper() == wanted_rating
             )
     if declaration_status:
         wanted_declaration = declaration_status.strip().lower()
@@ -523,6 +589,9 @@ def get_register(
             for line in lines
             if _declaration_status_of(line, view).lower() == wanted_declaration
         )
+        # A PR row's cell reads Required: nothing can be declared on it yet.
+        if wanted_declaration != "required":
+            requests = ()
     if stage_aging_bucket:
         bands = cfg.aging_band_boundaries_list
         lines = tuple(
@@ -530,8 +599,11 @@ def get_register(
             for line in lines
             if band_of(line.days_in_current_stage, bands) == stage_aging_bucket
         )
+        # Nothing has moved since the PR was raised: its stage is as old as it.
+        requests = tuple(r for r in requests if band_of(r.days_open, bands) == stage_aging_bucket)
     if with_exceptions:
         lines = tuple(line for line in lines if raised.get(line.key))
+        requests = ()
     if q and q.strip():
         needle = q.strip().lower()
         lines = tuple(
@@ -546,21 +618,37 @@ def get_register(
                 (f"{line.pr_number}/{line.pr_item}" if line.pr_item else line.pr_number),
             )
         )
+        requests = tuple(
+            r
+            for r in requests
+            if _matches(
+                needle,
+                r.material_id,
+                r.description,
+                r.row_id,
+                f"{r.purchase_requisition}/{r.item}",
+            )
+        )
 
     # The quick views: what the screen's preset buttons select, counted over
-    # the filtered lines before one of them is applied.
+    # the filtered lines before one of them is applied. A PR row is in none of
+    # them but its own: nothing is ordered, so nothing is overdue or at the
+    # vendor, no check reads it, and it is not "undeclared" while there is no
+    # way to declare on it (phase 2). The PO tests below see PO lines only.
     view_tests = {
         "overdue": lambda line: line.overdue_status == "OVERDUE",
         "undeclared": lambda line: _declaration_status_of(line, view) != "Completed",
         "atVendor": lambda line: line.repair_status == "At Vendor",
         "withExceptions": lambda line: bool(raised.get(line.key)),
+        "notOrdered": lambda line: False,
     }
     view_counts = RegisterViewCounts(
-        all=len(lines),
+        all=len(lines) + len(requests),
         overdue=sum(1 for line in lines if view_tests["overdue"](line)),
         undeclared=sum(1 for line in lines if view_tests["undeclared"](line)),
         at_vendor=sum(1 for line in lines if view_tests["atVendor"](line)),
         with_exceptions=sum(1 for line in lines if view_tests["withExceptions"](line)),
+        not_ordered=len(requests),
     )
     if quick_view:
         test = view_tests.get(quick_view)
@@ -571,12 +659,19 @@ def get_register(
                 detail=f"Unknown view {quick_view!r}; use one of {', '.join(view_tests)}.",
             )
         lines = tuple(line for line in lines if test(line))
+        if quick_view != "notOrdered":
+            requests = ()
 
-    page_lines, total = _paginate(lines, page, page_size)
+    # PO rows first, then the PRs in the snapshot's order (PR date, number,
+    # item), so a page boundary falls the same way on every request.
+    rows: tuple[RepairLine | RepairRequest, ...] = (*lines, *requests)
+    page_rows, total = _paginate(rows, page, page_size)
     return RegisterResponse(
         items=[
-            _chain(line, cfg, lookup, view, exceptions=raised.get(line.key, []))
-            for line in page_lines
+            _request_chain(row, cfg, lookup, exceptions=[])
+            if isinstance(row, RepairRequest)
+            else _chain(row, cfg, lookup, view, exceptions=raised.get(row.key, []))
+            for row in page_rows
         ],
         page=page,
         page_size=page_size,
@@ -600,6 +695,29 @@ def get_repair_line(
     cfg: SettingsDep,
     view: AttestationViewDep,
 ) -> RepairDetail:
+    """One register row and its timeline.
+
+    ``document`` ``PR-{BANFN}`` names an open repair PR with no PO yet -- the
+    register row id split at its last hyphen. Served only while
+    ``I8_REPAIR_REQUESTS_ENABLED`` is on; otherwise, or for a PR that is not
+    open, 404 like any unknown line.
+    """
+    if document.upper().startswith(_REQUEST_PREFIX):
+        request = (
+            snapshot.request(document[len(_REQUEST_PREFIX) :].strip(), _item_key(item))
+            if cfg.repair_requests_enabled
+            else None
+        )
+        if request is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No open repair request {document}/{item}.",
+            )
+        return RepairDetail(
+            line=_request_chain(request, cfg, _stock_lookup(snapshot)),
+            timeline=request_timeline(request, snapshot.reference_date),
+        )
+
     line = snapshot.line(document, item)
     if line is None:
         raise HTTPException(
@@ -623,6 +741,19 @@ def get_repair_line(
 # --- W5.3: attestation, declarations and exceptions ------------------------
 
 
+def _names_a_repair_request(body: AttestationRequest, snapshot: Snapshot) -> bool:
+    """Whether a declaration names a repair PR with no PO yet: a ``PR-``
+    document (the register's PR row id), or the (BANFN, BNFPO) of an open
+    repair PR that is not also a register PO line."""
+    document = (body.repair_document or "").strip()
+    item = (body.repair_item or "").strip()
+    if document.upper().startswith(_REQUEST_PREFIX):
+        return True
+    if not document or not item or snapshot.line(document, item) is not None:
+        return False
+    return snapshot.request(document, _item_key(item)) is not None
+
+
 @router.post(
     "/attestations",
     response_model=Attestation,
@@ -644,7 +775,18 @@ def post_attestation(
     An attestation is never updated. To correct one, POST again with
     ``supersedes`` set to the original's id -- that creates a new row, leaves
     the original readable, and the pair is the audit trail.
+
+    A declaration against a repair PR with no PO yet is refused with a 422
+    before anything is written -- the register's PR row id, or the key of an
+    open repair PR that is not a PO line. Phase 2 will allow it; until then a
+    declaration there would be stored against a line no check reads. Checked
+    whether or not PR rows are served.
     """
+    if _names_a_repair_request(body, snapshot):
+        raise HTTPException(
+            status_code=422,
+            detail="Declaring on a repair request with no PO yet is not available.",
+        )
     draft = AttestationDraft(
         material_id=body.material_id,
         plant=body.plant,
@@ -1234,6 +1376,18 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
             # them. See app.initiatives.i8.aging.bucket_labels.
             "agingBands": ", ".join(bucket_labels(cfg.aging_band_boundaries_list)),
             "codingCandidateConfidenceThreshold": cfg.coding_candidate_confidence_threshold,
+            # Since 27-Oct-2026: whether the open repair PRs with no PO yet are
+            # served, and the rule that finds them -- always built, so the
+            # meta counts them either way.
+            "repairRequestsEnabled": cfg.repair_requests_enabled,
+            "openRepairRequestRule": (
+                f"a repair-order line (RESB.BWART '{cfg.repair_reservation_movement_type}') "
+                f"names the PR; the PR item is not deleted (EBAN.LOEKZ not "
+                f"'{cfg.requisition_deleted_indicator}'); no live PO points to it; and "
+                f"one such line is neither deleted (RESB.XLOEK not "
+                f"'{cfg.reservation_deleted_indicator}') nor final-issued (RESB.KZEAR "
+                f"not '{cfg.reservation_final_issue_indicator}')"
+            ),
         },
     )
 

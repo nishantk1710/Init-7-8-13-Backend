@@ -40,7 +40,8 @@ from app.api.i8.schemas import (
     UnjustifiedPurchase,
     VendorOption,
 )
-from app.initiatives.i8.aging import days_between
+from app.assistant import departments
+from app.initiatives.i8.aging import NO_LEAD_TIME, days_between
 from app.initiatives.i8.attestation import CONDITION_LABELS, Recommendation
 from app.initiatives.i8.coding_candidates import (
     CodingCandidate,
@@ -58,6 +59,7 @@ from app.initiatives.i8.exception_state import (
 )
 from app.initiatives.i8.models import ExceptionEvent, RepairAttestation
 from app.initiatives.i8.register import RegisterStats, RepairLine
+from app.initiatives.i8.requisitions import NOT_ORDERED, PR_RAISED, RepairRequest
 from app.initiatives.i8.service import Snapshot
 from app.initiatives.i8.universe import UniverseRow, UniverseStats
 
@@ -185,6 +187,76 @@ def repair_chain(
             [line_exception(item) for item in exceptions] if exceptions is not None else None
         ),
     )
+
+
+def request_chain(
+    request: RepairRequest,
+    cfg: I8Settings,
+    *,
+    stock_on_hand=None,
+    reorder_point=None,
+    new_unit_lead_time_days: int | None = None,
+    criticality: str | None = None,
+    exceptions: Sequence[ExceptionItem] | None = None,
+) -> RepairChain:
+    """One register row for an open repair PR with no PO yet.
+
+    The same row shape as :func:`repair_chain`, so the screen needs no second
+    table: what a PO line has and a PR does not -- the PO, the vendor, a
+    promised date, a dispatch -- is null, and the days count from the PR date.
+    Stock, reorder point and criticality come from the universe exactly as for
+    a PO row: they belong to the material at the plant, not to the document.
+
+    The declaration status is "Required" (FR-4 does ask for one), but phase 1
+    offers no way to declare against a PR, so the register never counts the
+    row as undeclared. ``exceptions`` is an empty list on the listing -- no
+    check reads PR rows -- and None on the detail page, as for a PO row.
+    """
+    return RepairChain(
+        id=request.row_id,
+        material=MaterialReference(
+            material_id=request.material_id,
+            material_code=request.material_id,
+            description=request.description,
+        ),
+        plant=plant_reference(request.plant, cfg),
+        stock_on_hand=stock_on_hand,
+        reorder_point=reorder_point,
+        qty_under_repair=request.quantity,
+        repair_pr=SAPDocumentReference(
+            type="PR", document_number=request.purchase_requisition, line=request.item
+        ),
+        repair_po=None,
+        vendor=None,
+        vendor_name=None,
+        repair_status=PR_RAISED,
+        declaration_status="Required",
+        overdue_status=NOT_ORDERED,
+        lead_time_status=NO_LEAD_TIME,
+        days_open=request.days_open,
+        aging_bucket=request.aging_bucket,
+        # Nothing has moved since the PR was raised, so the current stage is
+        # as old as the request.
+        days_in_current_stage=request.days_open,
+        raised_at=request.requested_on,
+        unit=request.unit,
+        new_unit_lead_time_days=new_unit_lead_time_days,
+        criticality=criticality,
+        requester=request.department,
+        requester_name=department_name(request.department),
+        exceptions=(
+            [line_exception(item) for item in exceptions] if exceptions is not None else None
+        ),
+        line_kind="PR",
+    )
+
+
+def department_name(code: str | None) -> str | None:
+    """A department code's name from the list the assistant keeps, or None.
+
+    Never waits for that list to load: a row shown with its code alone is
+    better than a slow register."""
+    return departments.name_for(code)
 
 
 def repair_justification(value: LineJustification) -> RepairJustification:
@@ -342,6 +414,42 @@ def timeline(
     return stages
 
 
+def request_timeline(request: RepairRequest, today) -> list[LifecycleStage]:
+    """The lifecycle of a repair PR with no PO yet: requested, and the two
+    stages it is waiting on, each saying plainly that it has not happened.
+
+    The department is named when the department list has its code, and shown
+    as the code alone otherwise -- never guessed.
+    """
+    requested = f"Repair PR {request.purchase_requisition}/{request.item}"
+    if request.department:
+        name = department_name(request.department)
+        requested += f", requested by department {request.department}" + (
+            f" ({name})" if name else ""
+        )
+    return [
+        LifecycleStage(
+            stage="pr_raised",
+            label="Repair requested",
+            occurred_at=request.requested_on,
+            evidence=f"{requested}.",
+            days_since=days_between(request.requested_on, today),
+        ),
+        LifecycleStage(
+            stage="attested",
+            label="Condition declared",
+            occurred_at=None,
+            evidence="Not declared yet.",
+        ),
+        LifecycleStage(
+            stage="po_raised",
+            label="Repair PO raised",
+            occurred_at=None,
+            evidence="No PO yet.",
+        ),
+    ]
+
+
 def universe_meta(stats: UniverseStats) -> UniverseMeta:
     return UniverseMeta(
         total_rows=stats.rows,
@@ -365,19 +473,26 @@ def register_meta(stats: RegisterStats) -> RegisterMeta:
 def register_facets(
     lines: Sequence[RepairLine],
     cfg: I8Settings,
-    criticality_of: Callable[[RepairLine], str | None],
+    criticality_of: Callable[[RepairLine | RepairRequest], str | None],
+    requests: Sequence[RepairRequest] = (),
 ) -> RegisterFacets:
-    """The plants, vendors, repair statuses and criticalities among ``lines``.
+    """The plants, vendors, repair statuses and criticalities among ``lines``
+    and the served repair PRs, ``requests``.
 
-    ``criticality_of`` is the rating the line shows -- its material's at its
-    plant -- so the dropdown offers exactly what the column displays.
+    ``criticality_of`` is the rating the row shows -- its material's at its
+    plant -- so the dropdown offers exactly what the column displays. A PR row
+    has no vendor, so any PR makes ``vendor=none`` worth offering.
     """
-    criticalities = [criticality_of(line) for line in lines]
+    criticalities = [criticality_of(row) for row in (*lines, *requests)]
     return RegisterFacets(
-        plants=_plant_options((line.plant for line in lines), cfg),
+        plants=_plant_options(
+            (*(line.plant for line in lines), *(request.plant for request in requests)), cfg
+        ),
         vendors=_vendor_options((line.vendor, line.vendor_name) for line in lines),
-        has_unknown_vendor=any(not line.vendor for line in lines),
-        repair_statuses=sorted({line.repair_status for line in lines}),
+        has_unknown_vendor=bool(requests) or any(not line.vendor for line in lines),
+        repair_statuses=sorted(
+            {line.repair_status for line in lines} | ({PR_RAISED} if requests else set())
+        ),
         criticalities=sorted({c for c in criticalities if c}),
         has_unrated=any(not c for c in criticalities),
     )
