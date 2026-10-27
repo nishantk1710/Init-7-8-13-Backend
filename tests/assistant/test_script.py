@@ -111,6 +111,30 @@ class TestI08Shape:
         # transcript: the card from the question above is still on screen.
         assert step.facts is None
 
+    def test_the_justification_says_what_a_reason_does(self) -> None:
+        """Section 2.5 (27-Oct-2026): a reason buys nothing, and the desk that
+        raises the purchase request never sees it. The frontend's request
+        builder shows the same text, so it is pinned word for word."""
+        step = i08_step({script.I08_ASSESSMENT: {"choice": script.PROCEED_NEW}})
+        assert script.I08_REASON_NOTE == (
+            "Your reason is kept on the platform. It doesn't buy anything: the "
+            "reservation takes whatever usable stock the plant has, and a new unit "
+            "is bought only when MRP or an inventory controller raises a purchase "
+            "request. The desk that raises it won't see your reason."
+        )
+        first, _, rest = step.prompt.partition("\n\n")
+        assert rest == script.I08_REASON_NOTE
+        # The first line is the request on its own: the request builder quotes
+        # it when a reason is missing.
+        assert first.startswith("Understood -- the platform does not block anything.")
+        assert "in stock or on repair" in first
+        assert "\n" not in first
+
+    def test_using_the_existing_unit_covers_a_requested_repair_too(self) -> None:
+        step = i08_step({})
+        [existing] = [c for c in step.choices if c.value == script.USE_EXISTING]
+        assert existing.description == "A unit in stock or on repair covers this need."
+
     def test_the_justification_ends_the_conversation(self) -> None:
         step = i08_step(
             {

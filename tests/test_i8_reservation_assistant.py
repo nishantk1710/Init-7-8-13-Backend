@@ -270,3 +270,100 @@ class TestRequestsAndStockConditionInTheRecord:
         record = self._record(rows=[universe_row(stock_on_hand=None)])
         assert record["stockSource"] is None
         assert record["stockIsUnknown"] is True
+
+
+class TestNeedDateAdvice:
+    """The need-date line (section 2.4, 27-Oct-2026). Off by default until SAP
+    confirms MRP counts an open repair PO as stock on the way."""
+
+    def _assessment(self, *, lines, enabled=True, requests=None):
+        return build(
+            material_id="8000005632",
+            plant="1300",
+            universe_rows=[universe_row()],
+            repair_lines=lines,
+            today=TODAY,
+            repair_requests=requests,
+            need_date_advice_enabled=enabled,
+        )
+
+    def test_off_by_default_says_nothing(self) -> None:
+        assessment = _assessment(lines=[repair_line(due_date=date(2026, 8, 10))])
+        assert assessment.need_date_advice(TODAY) is None
+        record = assessment.as_record(TODAY)
+        assert "needDateAdvice" in record
+        assert record["needDateAdvice"] is None
+
+    def test_switched_off_says_nothing_even_with_a_future_date(self) -> None:
+        assessment = self._assessment(
+            lines=[repair_line(due_date=date(2026, 8, 10))], enabled=False
+        )
+        assert assessment.as_record(TODAY)["needDateAdvice"] is None
+
+    def test_a_future_due_date_gives_the_sentence(self) -> None:
+        assessment = self._assessment(lines=[repair_line(due_date=date(2026, 8, 10))])
+        assert assessment.as_record(TODAY)["needDateAdvice"] == (
+            "A repaired unit is due back on 2026-08-10. If your job can wait, set "
+            "the need date after that, and no new unit is bought."
+        )
+
+    def test_a_date_due_today_still_counts(self) -> None:
+        assessment = self._assessment(lines=[repair_line(due_date=TODAY)])
+        assert "due back on 2026-07-31." in assessment.need_date_advice(TODAY)
+
+    def test_only_past_due_dates_give_nothing(self) -> None:
+        """An overdue date is a plan already missed, not a forecast."""
+        assessment = self._assessment(lines=[repair_line(due_date=date(2025, 4, 24))])
+        assert assessment.need_date_advice(TODAY) is None
+
+    def test_the_soonest_date_not_yet_passed_is_used(self) -> None:
+        """Not the verdict's soonest due date, which here is the overdue one."""
+        assessment = self._assessment(
+            lines=[
+                repair_line(item="00010", due_date=date(2025, 4, 24)),
+                repair_line(item="00020", due_date=date(2026, 9, 15)),
+                repair_line(item="00030", due_date=date(2026, 8, 20)),
+            ]
+        )
+        assert assessment.repair_due_date == date(2025, 4, 24)
+        assert "due back on 2026-08-20." in assessment.need_date_advice(TODAY)
+
+    def test_a_repair_with_no_due_date_gives_nothing(self) -> None:
+        assessment = self._assessment(lines=[repair_line(due_date=None)])
+        assert assessment.need_date_advice(TODAY) is None
+
+    def test_a_requested_repair_alone_gives_nothing(self) -> None:
+        """A repair PR has no PO, so no date for its return."""
+        assessment = self._assessment(lines=[], requests=[repair_request()])
+        assert assessment.verdict.exists is True
+        assert assessment.as_record(TODAY)["needDateAdvice"] is None
+
+
+def test_the_rules_echo_the_need_date_switch(monkeypatch) -> None:
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from app.api.i8 import router
+    from app.initiatives.i8.config import I8Settings
+    from app.initiatives.i8.register import RegisterStats
+    from app.initiatives.i8.universe import UniverseStats
+
+    monkeypatch.setattr(router, "get_criticality_source", lambda: SimpleNamespace(name="fake"))
+    snapshot = SimpleNamespace(
+        reference_date=date(2026, 10, 1),
+        built_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+        build_seconds=1.0,
+        source_loaded_at=None,
+        register_stats=RegisterStats(total_lines=0, open_lines=0),
+        universe_stats=UniverseStats(rows=0, materials=0, plants=0),
+    )
+    for enabled in (False, True):
+        cfg = I8Settings(_env_file=None, need_date_advice_enabled=enabled)
+        rules = router.get_snapshot_info(snapshot, cfg).model_dump(by_alias=True)["rules"]
+        assert rules["needDateAdviceEnabled"] is enabled
+
+
+def test_the_need_date_switch_is_off_by_default() -> None:
+    from app.initiatives.i8.config import I8Settings
+
+    assert I8Settings(_env_file=None).need_date_advice_enabled is False

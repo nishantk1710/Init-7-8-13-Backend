@@ -488,6 +488,45 @@ class TestPreviewCountsRepairRequests:
         assert line.facts["openRepairRequests"] == []
 
 
+class TestPreviewNeedDateAdvice:
+    """The real ``_assessment_for`` passes I8_NEED_DATE_ADVICE_ENABLED through
+    (27-Oct-2026); off, the stored facts carry a null line."""
+
+    @pytest.fixture
+    def preview_with_repair(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from app.initiatives.i8.config import get_i8_settings
+
+        snapshot = SimpleNamespace(
+            universe=[universe_row(material_id=REPAIR_NONE, stock_on_hand=Decimal("0"))],
+            lines=[repair_line(material_id=REPAIR_NONE, due_date=date(2026, 8, 10))],
+            repair_requests=(),
+        )
+        monkeypatch.setattr(request_service, "route", lambda db, material, plant: _routed(material))
+        monkeypatch.setattr(session_module, "get_snapshot", lambda db: snapshot)
+
+        def run(enabled: bool):
+            cfg = get_i8_settings().model_copy(update={"need_date_advice_enabled": enabled})
+            monkeypatch.setattr(session_module, "get_i8_settings", lambda: cfg)
+            [line] = request_service.preview(None, [(REPAIR_NONE, PLANT)], today=TODAY)
+            return line
+
+        return run
+
+    def test_switched_on_the_facts_carry_the_line(self, preview_with_repair) -> None:
+        line = preview_with_repair(True)
+        assert line.facts["needDateAdvice"] == (
+            "A repaired unit is due back on 2026-08-10. If your job can wait, set "
+            "the need date after that, and no new unit is bought."
+        )
+
+    def test_switched_off_they_do_not(self, preview_with_repair) -> None:
+        line = preview_with_repair(False)
+        assert line.unit_exists is True
+        assert line.facts["needDateAdvice"] is None
+
+
 def test_the_window_runs_until_the_quantity_is_used_up() -> None:
     assert request_service.suggested_window(Decimal("4"), Decimal("0.5"), date(2026, 10, 15)) == (
         date(2026, 10, 15), date(2027, 6, 15), 8,

@@ -1396,6 +1396,9 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
             "stockConditionSource": cfg.stock_condition_source,
             "usableStockConditions": ", ".join(cfg.usable_stock_condition_list),
             "damagedStockConditions": ", ".join(cfg.damaged_stock_condition_list),
+            # Since 27-Oct-2026: whether the assistant gives the need-date
+            # line (off until SAP confirms how MRP treats an open repair PO).
+            "needDateAdviceEnabled": cfg.need_date_advice_enabled,
         },
     )
 

@@ -149,8 +149,9 @@ def _assessment_for(
         # verdict only while I8_REPAIR_REQUESTS_ENABLED is on (since
         # 27-Oct-2026), so the backend can ship before the screens that show
         # them. None, not (), when off: "not counted" is not "none open".
+        i8_settings = get_i8_settings()
         repair_requests = (
-            snapshot.repair_requests if get_i8_settings().repair_requests_enabled else None
+            snapshot.repair_requests if i8_settings.repair_requests_enabled else None
         )
         return build_i08_assessment(
             material_id=routed.material_id,
@@ -160,6 +161,9 @@ def _assessment_for(
             today=today,
             repair_requests=repair_requests,
             department_name=departments.name_for,
+            # Off until SAP confirms MRP counts an open repair PO as stock on
+            # the way (27-Oct-2026).
+            need_date_advice_enabled=i8_settings.need_date_advice_enabled,
         )
 
     movement_repository = PostgresMovementRepository(db)

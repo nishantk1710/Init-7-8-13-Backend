@@ -75,6 +75,19 @@ NOT_NEEDED = "not_needed"
 ACCEPT_SUGGESTED = "accept_suggested"
 KEEP_REQUESTED = "keep_requested"
 
+#: What recording "I want a new one" does, said under the I08 justification
+#: prompt. The frontend shows the same text under its request builder
+#: (FE ``i08-facts-format.ts``); change both together. A reason recorded here
+#: never reaches SAP: the reservation takes whatever usable stock the plant
+#: has, and a new unit is bought only when MRP or an inventory controller
+#: raises a purchase request -- people who never see the reason.
+I08_REASON_NOTE = (
+    "Your reason is kept on the platform. It doesn't buy anything: the "
+    "reservation takes whatever usable stock the plant has, and a new unit is "
+    "bought only when MRP or an inventory controller raises a purchase request. "
+    "The desk that raises it won't see your reason."
+)
+
 
 def _reason_field(categories: Sequence[str], label: str) -> Field:
     """The reason-category picker, built from configuration.
@@ -164,7 +177,9 @@ def _i08(
                 Choice(
                     value=USE_EXISTING,
                     label="No -- I will use the existing unit",
-                    description="The repaired or in-stock unit covers this need.",
+                    # "On repair" covers a requested repair with no PO yet
+                    # (27-Oct-2026): "repaired" claimed a unit already fixed.
+                    description="A unit in stock or on repair covers this need.",
                 ),
                 Choice(
                     value=PROCEED_NEW,
@@ -199,10 +214,13 @@ def _i08(
         return Step(
             id=I08_JUSTIFICATION,
             kind=StepKind.FORM,
+            # The first line stays the request: the request builder quotes
+            # it alone when a reason is missing. The note under it says
+            # what the reason does and does not do (27-Oct-2026).
             prompt=(
                 "Understood -- the platform does not block anything. Please "
-                "record why a new unit is needed despite the one already "
-                "available."
+                "record why a new unit is needed despite the one in stock or "
+                "on repair.\n\n" + I08_REASON_NOTE
             ),
             fields=(
                 _reason_field(reason_categories, "Why a new unit is needed"),

@@ -184,6 +184,15 @@ class I8Settings(BaseSettings):
     MBEW also values SCRAP, which is neither usable nor damaged and so is
     counted in neither."""
 
+    # --- The assistant's need-date line (27-Oct-2026) ----------------------
+
+    need_date_advice_enabled: bool = False
+    """Tell the requester, when an open repair PO is due back on or after
+    today, to set the reservation's need date after that date so no new unit
+    is bought. Off until SAP confirms that MRP counts an open repair PO as
+    stock on the way: if it does not, MRP raises a purchase request whatever
+    the need date says, and the advice would be wrong."""
+
     # --- Aging and overdue (W5.2) ----------------------------------------
 
     # Days past the schedule-line delivery date before a line counts as overdue.
