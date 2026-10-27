@@ -1082,16 +1082,31 @@ class TestAgainstTheSeededRegister:
         assert meta["bySeverity"] == {"warning": meta["total"]}
 
     def test_unjustified_acquisitions_against_the_seeded_register(self) -> None:
-        """2,331 new 80-series purchases, each matched against the repairs SAP
-        still has open at the same plant. None has a justification -- the
-        control did not exist when they were bought."""
+        """The new 80-series purchases -- new-buy PRs and direct PO lines since
+        27-Oct-2026 -- each matched against the repairs SAP still has open at
+        the same plant, PO lines and repair PRs alike. None has a justification
+        -- the control did not exist when they were bought.
+
+        Was 2,331 PO lines on the July seed. Measured on the 15-Oct extract:
+        5,192 purchases (5,131 new-buy PRs, 61 direct PO lines) and 30 raised.
+        The count depends on which extract is seeded, so it is not pinned."""
         body = client.get(f"{EXCEPTIONS}?type=UNJUSTIFIED_ACQUISITION&pageSize=500").json()
-        assert body["meta"]["acquisitionsChecked"] == 2331
+        assert body["meta"]["acquisitionsChecked"] > 0
         assert body["meta"]["byType"].get("UNJUSTIFIED_ACQUISITION", 0) == body["total"]
         assert "UNJUSTIFIED_ACQUISITION" in body["meta"]["typesRaised"]
         for item in body["items"]:
-            assert item["acquisitionLine"]["documentNumber"]
-            assert item["repairLine"]["documentNumber"] != item["acquisitionLine"]["documentNumber"]
+            purchase, repair = item["acquisitionLine"], item["repairLine"]
+            assert purchase["documentNumber"]
+            assert purchase["type"] in {"PR", "PO"} and repair["type"] in {"PR", "PO"}
+            assert (purchase["type"], purchase["documentNumber"], purchase["line"]) != (
+                repair["type"],
+                repair["documentNumber"],
+                repair["line"],
+            )
+            prefix = "PR-" if purchase["type"] == "PR" else ""
+            assert item["id"] == (
+                f"EX-UNJUSTIFIED_ACQUISITION-{prefix}{purchase['documentNumber']}-{purchase['line']}"
+            )
         missing = client.get(f"{EXCEPTIONS}?type=MISSING_ATTESTATION&pageSize=1").json()
         assert missing["items"][0]["acquisitionLine"] is None
 

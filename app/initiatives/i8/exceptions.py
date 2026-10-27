@@ -57,14 +57,17 @@ Two detectors, one queue
 ------------------------
 ``UNJUSTIFIED_ACQUISITION`` (FR-8) is raised beside ``MISSING_ATTESTATION``: a
 new 80-series unit bought while a repair of the same part was open at the same
-plant, with no NEW_ACQUISITION justification recorded near it. The purchases
-and the repairs they overlapped come from :mod:`app.initiatives.i8.acquisitions`,
+plant, with no NEW_ACQUISITION justification recorded near it. Since
+27-Oct-2026 the purchase is usually a new-buy PR, and the repair it overlapped
+may be a repair PR with no PO yet; the item says which kind each document is.
+The purchases and the repairs come from :mod:`app.initiatives.i8.acquisitions`,
 which also says why stock on hand cannot be judged for a past purchase.
 
-``MISSING_SESSION_ID`` (FR-8) is ours too and is **not raised yet**, for one
-reason outside this repository: it needs the session id read back off the
-reservation, and RESB.BEDNR is not exposed on ReservationItemSet. It stays in
-:class:`ExceptionType` so adding the detector is new code, not a migration.
+``MISSING_SESSION_ID`` (FR-8) is ours too and is **not raised yet**. It needs
+the session's R-reference read back off the reservation: requesters type it
+into the reservation text (RESB.SGTXT), which the read layer already carries
+(26-Oct-2026), and the detector is built in phase 3 of the complete-flow plan.
+It stays in :class:`ExceptionType` so adding it is new code, not a migration.
 """
 
 from __future__ import annotations
@@ -76,13 +79,18 @@ from enum import Enum
 
 from app.core.logging import get_logger
 from app.initiatives.i8.acquisitions import (
+    PURCHASE_ORDER,
+    PURCHASE_REQUISITION,
     JustificationRecord,
     NewAcquisition,
+    OpenRepair,
+    document_reference,
     open_repair_at,
     repairs_by_material_plant,
 )
 from app.initiatives.i8.attestation import AttestationCoverage
 from app.initiatives.i8.register import RepairLine
+from app.initiatives.i8.requisitions import RepairRequest
 
 logger = get_logger(__name__)
 
@@ -98,7 +106,8 @@ class ExceptionType(str, Enum):
 
     MISSING_SESSION_ID = "MISSING_SESSION_ID"
     """FR-8, an 80-series reservation with no valid session id. Not raised yet:
-    blocked on RESB.BEDNR being exposed on ReservationItemSet (SAP team)."""
+    the R-reference comes from the reservation text (RESB.SGTXT), and the
+    detector is built in phase 3."""
 
     UNJUSTIFIED_ACQUISITION = "UNJUSTIFIED_ACQUISITION"
     """FR-8, a new unit bought while a repair was open, with no justification."""
@@ -170,8 +179,23 @@ class ExceptionItem:
 
     acquisition_document: str | None = None
     acquisition_item: str | None = None
-    """``UNJUSTIFIED_ACQUISITION`` only: the purchase line that bought the new
-    unit. ``purchasing_document``/``item`` are then the repair it overlapped."""
+    """``UNJUSTIFIED_ACQUISITION`` only: the purchase that bought the new unit.
+    ``purchasing_document``/``item`` are then the repair it overlapped."""
+
+    repair_document_type: str = PURCHASE_ORDER
+    """``PO`` or ``PR``: what ``purchasing_document``/``item`` name. ``PR`` only
+    for an ``UNJUSTIFIED_ACQUISITION`` whose repair has no PO yet; the document
+    is then the bare PR number."""
+
+    acquisition_document_type: str = PURCHASE_ORDER
+    """``PO`` or ``PR``: what ``acquisition_document``/``acquisition_item``
+    name -- since 27-Oct-2026 usually a new-buy PR."""
+
+    @property
+    def repair_reference(self) -> str:
+        """The repair as the register names its row: ``{EBELN}-{EBELP}``, or
+        ``PR-{BANFN}-{BNFPO}`` for a repair PR with no PO yet."""
+        return document_reference(self.repair_document_type, self.purchasing_document, self.item)
 
 
 def _day(value: date | None, missing: str) -> str:
@@ -360,7 +384,7 @@ def _justified(
 
     Either one recorded against this exception's id, or one for the same
     material and plant within ``window_days`` of the purchase, either side --
-    the assistant normally records the reason before the PO is raised.
+    the assistant normally records the reason before the purchase is raised.
     """
     for record in justifications:
         if record.exception_id == exception_id:
@@ -375,6 +399,38 @@ def _justified(
     return False
 
 
+def _purchase_phrase(acquisition: NewAcquisition) -> str:
+    """``requested on 14 Mar 2026 (PR 1000201234/10)``: a PR is a request to
+    buy, a direct PO an order."""
+    if acquisition.document_type == PURCHASE_REQUISITION:
+        verb, label = "requested", "PR"
+    else:
+        verb, label = "ordered", "PO"
+    return (
+        f"{verb} on {_day(acquisition.raised_at, 'an unknown date')} "
+        f"({label} {acquisition.purchasing_document}/{acquisition.item})"
+    )
+
+
+def _repair_phrase(repair: OpenRepair) -> str:
+    """``repair PR 2000029113/10, requested 04 Feb 2026``."""
+    if repair.document_type == PURCHASE_REQUISITION:
+        verb, label = "requested", "PR"
+    else:
+        verb, label = "raised", "PO"
+    return (
+        f"repair {label} {repair.document}/{repair.item}, "
+        f"{verb} {_day(repair.raised_at, 'on an unknown date')}"
+    )
+
+
+def acquisition_exception_id(acquisition: NewAcquisition) -> str:
+    """``EX-UNJUSTIFIED_ACQUISITION-{EBELN}-{EBELP}`` for a direct PO -- the id
+    such an item has always had -- and ``EX-UNJUSTIFIED_ACQUISITION-PR-{BANFN}-
+    {BNFPO}`` for a PR, so the two number series can never share an id."""
+    return f"EX-{ExceptionType.UNJUSTIFIED_ACQUISITION.value}-{acquisition.reference}"
+
+
 def unjustified_acquisitions(
     acquisitions: Sequence[NewAcquisition],
     lines: Sequence[RepairLine],
@@ -382,16 +438,22 @@ def unjustified_acquisitions(
     *,
     window_days: int,
     cutover: date | None = None,
+    repair_requests: Sequence[RepairRequest] = (),
 ) -> list[ExceptionItem]:
     """Raise UNJUSTIFIED_ACQUISITION for every new purchase of a part that was
     already out for repair at the same plant, with no justification near it.
+
+    The repairs are the open repair PO lines and, since 27-Oct-2026, the open
+    repair PRs with no PO yet (``repair_requests``) -- whether or not the
+    register serves them: a repair somebody has asked SAP for is open whatever
+    screen shows it.
 
     A purchase with no overlapping repair is not an exception -- buying a part
     nobody is repairing is ordinary procurement. ``cutover`` labels purchases
     raised before the justification control existed, exactly as
     :func:`missing_attestations` labels pre-cutover repair lines.
     """
-    repairs = repairs_by_material_plant(lines)
+    repairs = repairs_by_material_plant(lines, repair_requests)
     items: list[ExceptionItem] = []
 
     for acquisition in sorted(acquisitions, key=lambda a: a.key):
@@ -399,10 +461,7 @@ def unjustified_acquisitions(
         if repair is None:
             continue
 
-        exception_id = (
-            f"EX-{ExceptionType.UNJUSTIFIED_ACQUISITION.value}-"
-            f"{acquisition.purchasing_document}-{acquisition.item}"
-        )
+        exception_id = acquisition_exception_id(acquisition)
         if _justified(acquisition, exception_id, justifications, window_days):
             continue
 
@@ -410,9 +469,6 @@ def unjustified_acquisitions(
             cutover is not None
             and acquisition.raised_at is not None
             and acquisition.raised_at < cutover
-        )
-        bought = (
-            acquisition.raised_at.isoformat() if acquisition.raised_at else "an unknown date"
         )
 
         items.append(
@@ -426,8 +482,11 @@ def unjustified_acquisitions(
                 material_id=acquisition.material_id,
                 description=acquisition.description or repair.description,
                 plant=acquisition.plant,
-                purchasing_document=repair.purchasing_document,
+                purchasing_document=repair.document,
                 item=repair.item,
+                # Written for the people working the queue, as
+                # missing_attestations is: no table or field names, no rule
+                # names, dates as 08 May 2025.
                 title=(
                     "Raised before Spares Automation"
                     if historical
@@ -435,36 +494,34 @@ def unjustified_acquisitions(
                 ),
                 detail=(
                     (
-                        f"Purchase {acquisition.purchasing_document}/{acquisition.item} "
-                        f"was raised on {bought}, before the justification control "
-                        f"was introduced on {cutover.isoformat() if cutover else 'the cutover date'}. "
-                        "No reason is on record because none was asked for at the "
-                        "time; this is not an outstanding action."
+                        f"A new unit was {_purchase_phrase(acquisition)}, before "
+                        "reasons for buying new were first asked for on "
+                        f"{_day(cutover, 'the cutover date')}. No reason is on record "
+                        "because none was asked for at the time, so nothing needs doing."
                     )
                     if historical
                     else (
-                        f"Purchase {acquisition.purchasing_document}/{acquisition.item} "
-                        f"bought a new unit of {acquisition.material_id} at plant "
-                        f"{acquisition.plant} on {bought}, while repair "
-                        f"{repair.purchasing_document}/{repair.item}, raised "
-                        f"{repair.raised_at.isoformat() if repair.raised_at else 'on an unknown date'}, "
-                        f"was open -- and SAP still has it open. No NEW_ACQUISITION "
-                        f"justification was recorded for this material and plant "
-                        f"within {window_days} days of the purchase."
+                        f"A new unit was {_purchase_phrase(acquisition)} while a repair "
+                        f"of the same part ({_repair_phrase(repair)}) was still open, "
+                        f"and no reason was recorded within {window_days} days."
                     )
                 ),
                 raised_at=acquisition.raised_at,
                 pre_automation=historical,
                 acquisition_document=acquisition.purchasing_document,
                 acquisition_item=acquisition.item,
+                repair_document_type=repair.document_type,
+                acquisition_document_type=acquisition.document_type,
             )
         )
 
     logger.info(
         "I08 exceptions: %d UNJUSTIFIED_ACQUISITION of %d new purchases checked "
-        "(%d pre-automation)",
+        "against %d open repair lines and %d open repair PRs (%d pre-automation)",
         len(items),
         len(acquisitions),
+        len(lines),
+        len(repair_requests),
         sum(1 for i in items if i.pre_automation),
     )
     return items
@@ -499,7 +556,8 @@ class ExceptionStats:
     traced to the rule that produced it. None means none is configured."""
 
     acquisitions_checked: int = 0
-    """New 80-series purchase lines the UNJUSTIFIED_ACQUISITION check ran over."""
+    """New 80-series purchases -- new-buy PRs and direct PO lines -- the
+    UNJUSTIFIED_ACQUISITION check ran over."""
 
     justification_window_days: int = 0
     justification_cutover_date: date | None = None
@@ -515,8 +573,14 @@ def build_exceptions(
     justification_window_days: int = 30,
     justification_cutover: date | None = None,
     overdue_grace_days: int = 7,
+    repair_requests: Sequence[RepairRequest] = (),
 ) -> tuple[list[ExceptionItem], ExceptionStats]:
-    """The whole exception queue for one snapshot, and its counts."""
+    """The whole exception queue for one snapshot, and its counts.
+
+    ``repair_requests`` (the open repair PRs with no PO yet) are read only as
+    repairs a purchase overlapped: nothing is declared on them in phase 1, so
+    no other check looks at them.
+    """
     items = missing_attestations(lines, coverage, cutover=cutover)
     items += unjustified_acquisitions(
         acquisitions,
@@ -524,6 +588,7 @@ def build_exceptions(
         justifications,
         window_days=justification_window_days,
         cutover=justification_cutover,
+        repair_requests=repair_requests,
     )
     items += overdue_repairs(lines, grace_days=overdue_grace_days)
 

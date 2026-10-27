@@ -277,8 +277,9 @@ def repair_justification(value: LineJustification) -> RepairJustification:
         unjustified_purchases=[
             UnjustifiedPurchase(
                 exception_id=item.id,
+                # A new-buy PR or a direct PO line (27-Oct-2026), as found.
                 purchase=SAPDocumentReference(
-                    type="PO",
+                    type=item.acquisition_document_type,
                     document_number=item.acquisition_document or "",
                     line=item.acquisition_item,
                 ),
@@ -675,12 +676,15 @@ def exception_item(
             description=item.description,
         ),
         plant=plant_reference(item.plant, cfg),
+        # The document kinds as the finding names them: a repair PR with no PO
+        # yet is the bare PR number with type PR, and the purchase is usually a
+        # new-buy PR (27-Oct-2026). Every other check names a PO line.
         repair_line=SAPDocumentReference(
-            type="PO", document_number=item.purchasing_document, line=item.item
+            type=item.repair_document_type, document_number=item.purchasing_document, line=item.item
         ),
         acquisition_line=(
             SAPDocumentReference(
-                type="PO",
+                type=item.acquisition_document_type,
                 document_number=item.acquisition_document,
                 line=item.acquisition_item,
             )

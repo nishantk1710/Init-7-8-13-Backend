@@ -299,8 +299,11 @@ class I8Settings(BaseSettings):
     # How far from a new purchase's raised date a NEW_ACQUISITION justification
     # may sit and still count as covering it. Symmetric, like the attestation
     # window and for the same reason: material + plant + a date is the only key
-    # both sides share until RESB.BEDNR carries the session id. The assistant
-    # normally records the reason before the PO is raised, sometimes after.
+    # both sides share. And it stays the only one: the purchase is a new-buy PR
+    # (since 27-Oct-2026), raised by the MRP and inventory desks with no
+    # reservation behind it -- 3 of 6,259 on 80-series parts name one (measured
+    # 26-Oct-2026) -- so no session reference can ever reach it. The assistant
+    # normally records the reason before the purchase is raised, sometimes after.
     #
     # A PROPOSAL, NOT A CONFIRMED RULE -- it mirrors attestation_window_days so
     # the two controls are measured the same way until VZI says otherwise.
@@ -308,10 +311,11 @@ class I8Settings(BaseSettings):
 
     # The date the justification control starts applying. Blank means no
     # cutover. Separate from attestation_cutover_date because the two controls
-    # go live with different things -- the form with the platform, the
-    # justification prompt with the reservation BAdI -- and may not share a
-    # date. A purchase raised before it is labelled "before Spares Automation"
-    # rather than accused, exactly as a pre-cutover repair line is.
+    # go live with different things and may not share a date. Ruled 26-Oct-2026:
+    # no VZI cutover dates; each check starts from its feature's release date,
+    # so set this at deploy time to the day the purchase-request check is
+    # released. A purchase raised before it is labelled "before Spares
+    # Automation" rather than accused, exactly as a pre-cutover repair line is.
     justification_cutover_date: str = ""
 
     # --- Coding candidates (W5.5) -----------------------------------------

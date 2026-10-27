@@ -52,8 +52,8 @@ from app.core.logging import get_logger
 from app.initiatives.i8.acquisitions import (
     NEW_ACQUISITION_KIND,
     NewAcquisition,
-    find_new_acquisitions,
     load_justifications,
+    load_new_acquisitions,
 )
 from app.initiatives.i8.attestation import AttestationCoverage, coverage as attestation_coverage
 from app.initiatives.i8.coding_candidates import CodingCandidate, ScreenStats, screen
@@ -72,7 +72,7 @@ from app.initiatives.i8.register import (
     open_repair_index,
     timed_step,
 )
-from app.initiatives.i8.requisitions import RepairRequest, load_repair_requests
+from app.initiatives.i8.requisitions import RepairRequest, fetch_repair_order_lines, load_repair_requests
 from app.initiatives.i8.staged import staged_sources
 from app.initiatives.i8.universe import UniverseRow, UniverseStats, load_universe
 from app.models import IngestionRun
@@ -177,8 +177,10 @@ class Snapshot:
     universe_stats: UniverseStats
 
     acquisitions: tuple[NewAcquisition, ...] = ()
-    """New 80-series purchase lines, for the UNJUSTIFIED_ACQUISITION check.
-    From the same EKPO pull as the register, so it shares its lifetime."""
+    """New 80-series purchases, for the UNJUSTIFIED_ACQUISITION check: the
+    new-buy PRs and the direct PO lines with no PR behind them (since
+    27-Oct-2026; acquisitions.py). Built with the register, so it shares its
+    lifetime."""
 
     source_fingerprint: str = ""
     """What :data:`SOURCE_TABLES` looked like when this build started. A
@@ -264,12 +266,24 @@ def build_snapshot(
             lines, register_stats = load_repair_lines(
                 db, cfg, today=reference_date, candidates=candidates, sources=sources
             )
-            acquisitions = find_new_acquisitions(candidates, cfg)
+            # The repair orders' lines, read once: they name the open repair
+            # PRs, and they tell a repair PR from a new-buy one.
+            reservation_lines = fetch_repair_order_lines(db, cfg, sources=sources)
             # Before the EKPO pull is let go: a PR is open only while no live
             # PO line points back to it, and those lines are in this pull.
             repair_requests, request_stats = load_repair_requests(
-                db, cfg, reference_date=reference_date, candidates=candidates, sources=sources
+                db,
+                cfg,
+                reference_date=reference_date,
+                candidates=candidates,
+                sources=sources,
+                reservation_lines=reservation_lines,
             )
+            # The new-buy PRs, and the direct PO lines in the same pull.
+            acquisitions = load_new_acquisitions(
+                db, cfg, candidates=candidates, reservation_lines=reservation_lines, sources=sources
+            )
+            del reservation_lines
             register_stats = replace(
                 register_stats,
                 open_repair_requests=request_stats.open_repair_requests,
@@ -695,6 +709,9 @@ def build_attestation_view(
         justification_window_days=cfg.justification_window_days,
         justification_cutover=cfg.justification_cutover_date_value,
         overdue_grace_days=cfg.overdue_grace_days,
+        # Every open repair PR, served or not: a purchase that overlapped one
+        # bought new while a repair was open whatever the register shows.
+        repair_requests=snapshot.repair_requests,
     )
     by_line = justifications_by_line(snapshot.lines, justifications, exceptions)
     logger.info("I08 register justifications: %s", justification_counts(by_line))

@@ -174,7 +174,8 @@ class UnjustifiedPurchase(I8Model):
     """A new unit bought while the line was out, with no reason on record.
 
     The same finding as the ``UNJUSTIFIED_ACQUISITION`` exception, which
-    ``exception_id`` names.
+    ``exception_id`` names. ``purchase`` is a new-buy PR (type ``PR``) or a
+    direct PO line (type ``PO``).
     """
 
     exception_id: str
@@ -491,7 +492,8 @@ class AttestationRequest(I8Model):
     -- an audit record whose author and timestamp are the author's to choose is
     not an audit record. The third is always null for now: linking an
     attestation to its session is FR-4 / FR-8 and ours, but nothing supplies the
-    id until the reservation carries it (RESB.BEDNR, not yet exposed).
+    id yet: it will come from the R-reference typed into the reservation text
+    (RESB.SGTXT), built in phase 3.
     """
 
     # Lengths are the column widths in app/initiatives/i8/models.py. Without
@@ -747,11 +749,14 @@ class ExceptionQueueItem(I8Model):
     plant: PlantReference | None = None
     repair_line: SAPDocumentReference
     """The repair line the exception is about. For ``UNJUSTIFIED_ACQUISITION``
-    it is the repair that was open when the new unit was bought."""
+    it is the repair that was open when the new unit was bought: a repair PO
+    line (type ``PO``) or, since 27-Oct-2026, a repair PR with no PO yet (type
+    ``PR``, the bare PR number and item). Every other type names a PO line."""
 
     acquisition_line: SAPDocumentReference | None = None
-    """``UNJUSTIFIED_ACQUISITION`` only: the purchase line that bought a new
-    unit while ``repairLine`` was still out. Null for every other type."""
+    """``UNJUSTIFIED_ACQUISITION`` only: the purchase that bought a new unit
+    while ``repairLine`` was still out -- a new-buy PR (type ``PR``) or a direct
+    PO line with no PR behind it (type ``PO``). Null for every other type."""
 
     title: str
     detail: str
@@ -814,11 +819,12 @@ class ExceptionMeta(I8Model):
     types_raised: list[str]
     """Which exception types I08 actually raises, so a caller can tell an empty
     count from an unimplemented check. ``MISSING_SESSION_ID`` is declared and
-    not raised: it needs the session id read back off the reservation, and
-    RESB.BEDNR is not exposed on ReservationItemSet yet."""
+    not raised: it needs the session's R-reference read back off the
+    reservation text (RESB.SGTXT), which is built in phase 3."""
 
     acquisitions_checked: int = 0
-    """New 80-series purchase lines the UNJUSTIFIED_ACQUISITION check ran over."""
+    """New 80-series purchases -- new-buy PRs and direct PO lines -- the
+    UNJUSTIFIED_ACQUISITION check ran over."""
 
     justification_window_days: int = 0
     """How far from a purchase a NEW_ACQUISITION justification may sit and

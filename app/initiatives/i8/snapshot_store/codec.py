@@ -47,7 +47,10 @@ from typing import Any
 # changed. On the same branch UniverseRow gained its stock split by condition
 # (usable_stock, damaged_stock, stock_by_condition, stock_condition_source) and
 # UniverseStats with_stock_condition; a version-3 payload would serve every
-# part's split as unknown until the next rebuild.
+# part's split as unknown until the next rebuild. And NewAcquisition gained
+# document_type and requested_by: the purchases are now the new-buy PRs and the
+# direct PO lines, so a version-3 payload's acquisitions -- PO lines dated by an
+# ERDAT the live data does not carry -- would go on checking nothing.
 CODEC_VERSION = 4
 _ALLOWED = "app.initiatives.i8."
 

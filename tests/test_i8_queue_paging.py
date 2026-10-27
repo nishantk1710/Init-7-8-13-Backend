@@ -1453,3 +1453,67 @@ class TestRepairableUnitRoute:
         assert body["damagedStock"] == "2"
         assert body["stockConditionKnown"] is True
         assert body["stockSource"] == "MCHB"
+
+
+# --- Bought new while a repair was open: PRs on both sides (27-Oct-2026) ------
+
+
+def bought_new(n: int, *, repair_type: str, acquisition_type: str = "PR", **overrides) -> ExceptionItem:
+    """An UNJUSTIFIED_ACQUISITION whose repair is PR ``20000291{n}/10`` (no PO
+    yet) or PO line ``45000000{n}-10``, bought on new-buy PR ``10002012{n}/10``."""
+    repair_document = f"20000291{n:02d}" if repair_type == "PR" else f"45000000{n:02d}"
+    purchase = f"10002012{n:02d}" if acquisition_type == "PR" else f"41001000{n:02d}"
+    prefix = "PR-" if acquisition_type == "PR" else ""
+    return exception(
+        n,
+        type="UNJUSTIFIED_ACQUISITION",
+        id=f"EX-UNJUSTIFIED_ACQUISITION-{prefix}{purchase}-10",
+        purchasing_document=repair_document,
+        acquisition_document=purchase,
+        acquisition_item="10",
+        repair_document_type=repair_type,
+        acquisition_document_type=acquisition_type,
+        **overrides,
+    )
+
+
+class TestBoughtNewOnPurchaseRequests:
+    def test_the_wire_names_each_document_by_its_kind(self, queues) -> None:
+        queues.exceptions = (bought_new(1, repair_type="PR"), bought_new(2, repair_type="PO", acquisition_type="PO"))
+
+        items = {i["id"]: i for i in queues.client.get(EXCEPTIONS).json()["items"]}
+
+        on_pr = items["EX-UNJUSTIFIED_ACQUISITION-PR-1000201201-10"]
+        # The repair PR's number is bare: the frontend builds 'PR-{BANFN}-{BNFPO}'.
+        assert on_pr["repairLine"] == {"type": "PR", "documentNumber": "2000029101", "line": "10"}
+        assert on_pr["acquisitionLine"] == {"type": "PR", "documentNumber": "1000201201", "line": "10"}
+        on_po = items["EX-UNJUSTIFIED_ACQUISITION-4100100002-10"]
+        assert on_po["repairLine"] == {"type": "PO", "documentNumber": "4500000002", "line": "10"}
+        assert on_po["acquisitionLine"] == {"type": "PO", "documentNumber": "4100100002", "line": "10"}
+
+    def test_the_repair_filter_takes_the_pr_row_id(self, queues) -> None:
+        queues.exceptions = (bought_new(1, repair_type="PR"), exception(2))
+
+        def found(repair: str) -> list[str]:
+            return ids(queues.client.get(EXCEPTIONS, params={"repair": repair}).json())
+
+        assert found("PR-2000029101-10") == ["EX-UNJUSTIFIED_ACQUISITION-PR-1000201201-10"]
+        assert found("PR-2000029101") == ["EX-UNJUSTIFIED_ACQUISITION-PR-1000201201-10"]
+        # The bare number is a PO line's form: it never finds the PR's finding.
+        assert found("2000029101-10") == []
+        assert found("4500000002-10") == ["EX-MISSING_ATTESTATION-4500000002-10"]
+        assert found("4500000002") == ["EX-MISSING_ATTESTATION-4500000002-10"]
+
+    def test_search_finds_the_pr_repair_as_its_row_is_named(self, queues) -> None:
+        queues.exceptions = (bought_new(1, repair_type="PR"), exception(2))
+
+        body = queues.client.get(EXCEPTIONS, params={"q": "pr-2000029101-10"}).json()
+
+        assert ids(body) == ["EX-UNJUSTIFIED_ACQUISITION-PR-1000201201-10"]
+
+    def test_a_pr_repairs_finding_never_lands_on_a_po_line_sharing_its_number(self, queues) -> None:
+        # A PO line numbered like the repair PR: the finding is about the PR.
+        queues.lines = (repair_line(1, purchasing_document="2000029101"), repair_line(2))
+        queues.exceptions = (bought_new(1, repair_type="PR"), bought_new(2, repair_type="PO"))
+
+        assert ids(listing(queues, withExceptions=True)) == ["4500000002-10"]

@@ -283,8 +283,9 @@ def record(
         # that the time is not the attestor's to choose.
         attested_at=datetime.now(timezone.utc),
         # Always null today. Linking an attestation to its assistant session is
-        # FR-4 / FR-8 and ours; nothing supplies the id yet -- the reservation
-        # that would carry it (RESB.BEDNR) is not exposed.
+        # FR-4 / FR-8 and ours; nothing supplies the id yet -- it will come
+        # from the R-reference typed into the reservation text (RESB.SGTXT),
+        # built in phase 3.
         session_id=None,
         # FR-4's link to the repair PR or PO, when the screen that recorded
         # this knew which line it was for. Null for a part declared before

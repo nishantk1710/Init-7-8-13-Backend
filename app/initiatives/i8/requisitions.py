@@ -309,13 +309,16 @@ def _build_request(
 # --- the loader ----------------------------------------------------------------
 
 _RESERVATION_SQL = """
--- The repair orders' lines for the faulty unit that name a PR. The movement
--- type is a bound setting, not a literal; the deletion and final-issue flags
--- are read here and judged in Python (requisitions.is_reservation_line_closed).
+-- The repair orders' lines for the faulty unit. The movement type is a bound
+-- setting, not a literal; the deletion and final-issue flags are read here and
+-- judged in Python (requisitions.is_reservation_line_closed). Lines that name
+-- no PR yet are read too (27-Oct-2026): the new-purchase check needs every
+-- repair order's reservation number to tell a repair PR from a new-buy one
+-- (acquisitions.repair_order_references); is_repair_reservation_line still
+-- takes only the lines that name a PR here.
 select rsnum, rspos, matnr, werks, bwart, banfn, bnfpo, aufnr, xloek, kzear
 from v_resb
 where bwart = :movement_type
-  and banfn is not null
 """
 
 _REQUISITION_SQL = """
@@ -328,6 +331,21 @@ where banfn in :requisitions
 """
 
 
+def fetch_repair_order_lines(
+    db: Session, cfg: I8Settings | None = None, *, sources: Sources | None = None
+) -> list[Mapping]:
+    """Every repair order's line for the faulty unit (``v_resb``), read once
+    per build: the open repair PRs and the new-purchase check both use them."""
+    cfg = cfg or get_i8_settings()
+    with timed_step("repair-order reservation lines (RESB)"):
+        return list(
+            db.execute(
+                text(reading(_RESERVATION_SQL, sources)),
+                {"movement_type": cfg.repair_reservation_movement_type},
+            ).mappings()
+        )
+
+
 def load_repair_requests(
     db: Session,
     cfg: I8Settings | None = None,
@@ -335,6 +353,7 @@ def load_repair_requests(
     reference_date: date,
     candidates: Sequence[Mapping],
     sources: Sources | None = None,
+    reservation_lines: Sequence[Mapping] | None = None,
 ) -> tuple[tuple[RepairRequest, ...], RequestStats]:
     """The open repair PRs, read in three batches and classified in Python.
 
@@ -344,23 +363,24 @@ def load_repair_requests(
     repair PR is on an 80-series part -- so EKPO is not read a second time.
     The headers are read only for the POs that do point back, through the
     register's own header query.
+
+    ``reservation_lines`` are the repair-order lines when the caller has read
+    them already (:func:`fetch_repair_order_lines`); None reads them here.
     """
     cfg = cfg or get_i8_settings()
 
-    with timed_step("repair-order reservation lines (RESB)"):
-        resb_rows = list(
-            db.execute(
-                text(reading(_RESERVATION_SQL, sources)),
-                {"movement_type": cfg.repair_reservation_movement_type},
-            ).mappings()
-        )
+    resb_rows = (
+        list(reservation_lines)
+        if reservation_lines is not None
+        else fetch_repair_order_lines(db, cfg, sources=sources)
+    )
     named = sorted({row["banfn"] for row in resb_rows if row["banfn"]})
     with timed_step("repair PRs (EBAN)"):
         eban_rows = (
             fetch_in_chunks(db, reading(_REQUISITION_SQL, sources), "requisitions", named) if named else []
         )
 
-    wanted = {(row["banfn"], row["bnfpo"]) for row in resb_rows}
+    wanted = {(row["banfn"], row["bnfpo"]) for row in resb_rows if row["banfn"]}
     back_pointers = index_back_pointers(
         row for row in candidates if (row["banfn"], row["bnfpo"]) in wanted
     )

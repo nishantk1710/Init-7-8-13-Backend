@@ -15,7 +15,8 @@ out-of-scope plant, and ordinary lines the staging leaves out but the register
 still counts as scanned. And repair orders' reservation lines (RESB 543) naming
 repair PRs (EBAN) that cross every part of the open rule: one open, one with a
 live PO pointing back, one deleted, one whose repair-order line is final-issued,
-one on a non-80 part, one out of scope, and a 261 line that names no repair. And stock per
+one on a non-80 part, one out of scope, and a 261 line that names no repair -- whose PR is
+therefore a new-buy purchase, beside a direct PO line with no PR. And stock per
 condition (MCHB): two conditions in two bins of one part, a damaged-only part, a row
 out of scope and a non-80 row. EKBE is seeded because the views over it still exist
 (I13 reads them); I08 has not read it since 19-Oct-2026.
@@ -273,7 +274,15 @@ def test_the_tenant_crosses_every_filter(built) -> None:
     assert direct.register_stats.excluded_delivery_completed_lines == 1
     assert direct.register_stats.excluded_blocked_lines == 1
     assert direct.register_stats.candidates_scanned == 8  # every in-scope line with a PO and an item
-    assert {(a.purchasing_document, a.item) for a in direct.acquisitions} == {("4500000010", "10")}
+    # New purchases (27-Oct-2026): the direct PO line with no PR, dated by its
+    # header, and the one PR item no repair order names or reserved for (its
+    # reservation holds only a 261). The repair PRs, the deleted one and the
+    # non-80 and out-of-scope ones are not purchases.
+    by_acquisition = {a.key: a for a in direct.acquisitions}
+    assert set(by_acquisition) == {("PO", "4500000010", "10"), ("PR", "10000007", "10")}
+    assert by_acquisition[("PO", "4500000010", "10")].raised_at == date(2026, 9, 1)
+    assert by_acquisition[("PR", "10000007", "10")].raised_at == date(2026, 9, 15)
+    assert by_acquisition[("PR", "10000007", "10")].requested_by == "10305"
     assert {(r.material_id, r.plant) for r in direct.universe} >= {(A, "1300"), (B, "1500"), (C, "1500")}
     # Open repair PRs: only 10000002/10; one excluded under each part of the rule.
     assert [r.key for r in direct.repair_requests] == [("10000002", "10")]

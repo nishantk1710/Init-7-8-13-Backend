@@ -77,6 +77,7 @@ from app.api.i8.schemas import (
 )
 from app.core.config import get_settings
 from app.core.db import get_db
+from app.initiatives.i8.acquisitions import PURCHASE_ORDER
 from app.initiatives.i8.aging import aging_bucket as band_of
 from app.initiatives.i8.aging import bucket_labels
 from app.initiatives.i8.attestation import (
@@ -315,10 +316,14 @@ def _raised_by_line(
     One pass over the queue per request, so the register can fill its
     Exceptions column -- and filter on it -- for any page without the screen
     loading the whole queue to join it in the browser.
+
+    PO lines only. A bought-new finding whose repair is a PR with no PO yet
+    names the PR number; keyed in with the PO lines, it could land on a PO line
+    that shares the number, and a PR row shows no exceptions in phase 1.
     """
     by_line: dict[tuple[str, str], list[ExceptionItem]] = {}
     for item in view.exceptions:
-        if item.type not in excluded_types:
+        if item.type not in excluded_types and item.repair_document_type == PURCHASE_ORDER:
             by_line.setdefault((item.purchasing_document, item.item), []).append(item)
     return by_line
 
@@ -988,8 +993,9 @@ def get_exceptions(
     repair: str | None = Query(
         None,
         description=(
-            "One repair line, as the register keys it -- '4500000677-20'. "
-            "Everything raised against that line, whatever the check."
+            "One repair line, as the register keys it -- '4500000677-20', or "
+            "'PR-2000029113-10' for a repair PR with no PO yet. Everything "
+            "raised against that line, whatever the check."
         ),
     ),
     status_filter: str | None = Query(
@@ -1069,12 +1075,16 @@ def get_exceptions(
     if plant:
         items = tuple(i for i in items if i.plant == plant)
     if repair:
+        # The repair as the register names its row: '{EBELN}-{EBELP}', or
+        # 'PR-{BANFN}-{BNFPO}' for a repair PR with no PO yet (a bought-new
+        # finding can name one). A bare document -- 'PR-{BANFN}' for a PR --
+        # matches every line of it.
         wanted_line = repair.strip()
         items = tuple(
             i
             for i in items
-            if f"{i.purchasing_document}-{i.item}" == wanted_line
-            or i.purchasing_document == wanted_line
+            if i.repair_reference == wanted_line
+            or i.repair_reference.rsplit("-", 1)[0] == wanted_line
         )
     if actionable_only:
         items = tuple(i for i in items if not i.pre_automation)
@@ -1088,7 +1098,7 @@ def get_exceptions(
                 i.id,
                 i.material_id,
                 i.description,
-                f"{i.purchasing_document}-{i.item}",
+                i.repair_reference,
             )
         )
 
