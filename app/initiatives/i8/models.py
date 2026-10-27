@@ -158,6 +158,23 @@ class RepairAttestation(Base):
     backwards gives the full history; the row with nothing pointing at it is
     the current view."""
 
+    # --- 27-Oct-2026: who typed it, why it was amended, what it names -----
+
+    repair_document_type: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    """'PO' or 'PR' for a bound declaration: whether ``repair_document`` is a
+    repair PO (EKPO.EBELN) or an open repair PR with no PO yet (EBAN.BANFN).
+    Null on unbound rows, and on bound rows written before the column existed,
+    which are all PO lines."""
+
+    attestor_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    """The name the person typed. Not a sign-in -- ``attestor`` stays the
+    server-set identity -- but until Entra is wired it is the only name the
+    record carries."""
+
+    amendment_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """Why this amendment replaces the row it ``supersedes``. Required for
+    amendments from 27-Oct-2026; null on originals."""
+
     __table_args__ = (
         # The exception check's access pattern, in one index: "is there an
         # attestation for this material at this plant, and when?" runs once per

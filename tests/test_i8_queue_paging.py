@@ -1313,61 +1313,124 @@ def declaration_body(**overrides) -> dict:
         "plant": "1300",
         "quantity": "1",
         "conditionDescription": "Bearing noise",
-        "faultCategory": "MECHANICAL",
+        "faultCategory": "BEARING_FAILURE",
         "recommendation": "REPAIRABLE",
     }
     body.update(overrides)
     return body
 
 
-class TestNoDeclarationOnARepairRequest:
-    """Phase 2 will allow it; until then it is refused before anything is
-    written -- the history table is all this database holds, so a write
-    attempt would fail some other way."""
+class TestDeclarationBindingRules:
+    """POST /attestations binds to a repair PO line or (27-Oct-2026) an open
+    repair PR, and refuses a binding that is not open, is for another part, or
+    already has a current declaration."""
 
-    REFUSAL = "Declaring on a repair request with no PO yet is not available."
+    @pytest.fixture
+    def declares(self, queues, factory):
+        from app.initiatives.i8.models import RepairAttestation
 
-    def test_the_pr_row_id_is_refused(self, queues) -> None:
-        response = queues.client.post(
-            ATTESTATIONS,
-            json=declaration_body(repairDocument="PR-2000029101", repairItem="10"),
+        RepairAttestation.__table__.create(factory.kw["bind"])
+        queues.universe = (SimpleNamespace(material_id="8000000001"),)
+        queues.lines = (repair_line(1),)
+        return queues
+
+    def _post(self, queues, **overrides):
+        return queues.client.post(ATTESTATIONS, json=declaration_body(**overrides))
+
+    def test_a_po_line_binds_with_its_type_and_typed_name(self, declares) -> None:
+        response = self._post(
+            declares, repairDocument="4500000001", repairItem="00010", attestorName=" A. Rao "
+        )
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert (body["repairDocument"], body["repairItem"]) == ("4500000001", "10")
+        assert body["repairDocumentType"] == "PO"
+        assert body["attestorName"] == "A. Rao"
+        assert body["sessionId"] is None
+
+    def test_an_open_repair_pr_binds_by_its_own_key_or_row_id(self, declares) -> None:
+        serve_requests(declares, repair_request(1))
+
+        response = self._post(
+            declares, repairDocument="PR-2000029101", repairItem="00010"
+        )
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert (body["repairDocument"], body["repairItem"]) == ("2000029101", "10")
+        assert body["repairDocumentType"] == "PR"
+
+    def test_a_pr_is_not_open_in_the_register_while_pr_rows_are_off(self, declares) -> None:
+        declares.requests = (repair_request(1),)
+
+        response = self._post(
+            declares, repairDocument="2000029101", repairItem="10", repairDocumentType="PR"
         )
 
         assert response.status_code == 422
-        assert response.json()["detail"] == self.REFUSAL
+        assert response.json()["detail"] == "That repair line is not open in the register."
 
-    def test_an_open_repair_prs_own_key_is_refused_switch_on_or_off(self, queues) -> None:
-        queues.requests = (repair_request(1),)
+    def test_an_unknown_po_line_is_not_open(self, declares) -> None:
+        response = self._post(declares, repairDocument="4500009999", repairItem="10")
 
-        response = queues.client.post(
-            ATTESTATIONS,
-            json=declaration_body(repairDocument="2000029101", repairItem="00010"),
+        assert response.status_code == 422
+        assert response.json()["detail"] == "That repair line is not open in the register."
+
+    def test_a_declaration_for_another_part_is_refused(self, declares) -> None:
+        response = self._post(
+            declares, materialId="8000000002", repairDocument="4500000001", repairItem="10"
         )
 
         assert response.status_code == 422
-        assert response.json()["detail"] == self.REFUSAL
-
-    def test_a_po_line_or_an_unknown_document_is_not_a_repair_request(self) -> None:
-        from app.api.i8.router import _names_a_repair_request
-        from app.api.i8.schemas import AttestationRequest
-
-        line = repair_line(1)
-        request = repair_request(1)
-        snapshot = SimpleNamespace(
-            line=lambda document, item: line if (document, item) == line.key else None,
-            request=lambda banfn, bnfpo: request if (banfn, bnfpo) == request.key else None,
+        assert response.json()["detail"] == (
+            "This declaration is for 8000000002 at 1300, but that repair line is "
+            "for 8000000001 at 1300."
         )
 
-        def names(**overrides) -> bool:
-            return _names_a_repair_request(
-                AttestationRequest.model_validate(declaration_body(**overrides)), snapshot
-            )
+    def test_a_second_declaration_on_a_line_must_amend_the_first(self, declares) -> None:
+        first = self._post(declares, repairDocument="4500000001", repairItem="10").json()
 
-        assert names(repairDocument="4500000001", repairItem="10") is False
-        assert names(repairDocument="2000029199", repairItem="10") is False
-        assert names() is False
-        assert names(repairDocument="2000029101", repairItem="10") is True
-        assert names(repairDocument="pr-2000029101", repairItem="10") is True
+        second = self._post(declares, repairDocument="4500000001", repairItem="10")
+        assert second.status_code == 422
+        assert second.json()["detail"] == (
+            f"This line already has declaration {first['id']}. Amend it instead."
+        )
+
+        no_reason = self._post(
+            declares, repairDocument="4500000001", repairItem="10", supersedes=first["id"]
+        )
+        assert no_reason.status_code == 422
+        assert no_reason.json()["detail"] == "Say why this declaration is being amended."
+
+        amended = self._post(
+            declares,
+            repairDocument="4500000001",
+            repairItem="10",
+            supersedes=first["id"],
+            amendmentReason="Casing cracked on strip-down.",
+            recommendation="SCRAP",
+        )
+        assert amended.status_code == 201, amended.text
+        assert amended.json()["amendmentReason"] == "Casing cracked on strip-down."
+
+    def test_an_unbound_amendment_inherits_the_line_and_its_type(self, declares) -> None:
+        serve_requests(declares, repair_request(1))
+        first = self._post(
+            declares, repairDocument="2000029101", repairItem="10", repairDocumentType="PR"
+        ).json()
+
+        amended = self._post(declares, supersedes=first["id"], amendmentReason="Re-checked.")
+
+        assert amended.status_code == 201, amended.text
+        body = amended.json()
+        assert (body["repairDocument"], body["repairDocumentType"]) == ("2000029101", "PR")
+
+    def test_the_body_cannot_set_the_session(self, declares) -> None:
+        response = self._post(declares, sessionId="S-123")
+
+        assert response.status_code == 201, response.text
+        assert response.json()["sessionId"] is None
 
 
 class TestRepairableUnitRoute:

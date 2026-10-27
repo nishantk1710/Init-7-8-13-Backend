@@ -165,11 +165,42 @@ class TestValidation:
             ({"material_id": "1000000123"}, "80-series"),
             ({"plant": "1600"}, "outside the platform's scope"),
             ({"quantity": Decimal(1001)}, "typo"),
+            # 27-Oct-2026: an amendment says why; the document type is PO or PR.
+            ({"supersedes": "ATT-1"}, "Say why this declaration is being amended"),
+            ({"supersedes": "ATT-1", "amendment_reason": "  "}, "Say why"),
+            (
+                {"repair_document": "4500000001", "repair_item": "10",
+                 "repair_document_type": "SO"},
+                "repairDocumentType",
+            ),
+            ({"attestor_name": "x" * 129}, "attestorName"),
         ],
     )
     def test_rejects(self, overrides, expected) -> None:
         with pytest.raises(AttestationError, match=expected):
             validate(a_draft(**overrides))
+
+    def test_a_bound_declaration_defaults_to_a_po_line(self) -> None:
+        clean = validate(a_draft(repair_document="4500000001", repair_item="10"))
+        assert clean.repair_document_type == "PO"
+
+    def test_a_pr_binding_and_the_typed_fields_survive(self) -> None:
+        clean = validate(
+            a_draft(
+                repair_document="2000029101",
+                repair_item="10",
+                repair_document_type="pr",
+                attestor_name="  A. Rao ",
+                supersedes="ATT-1",
+                amendment_reason=" Stripped down. ",
+            )
+        )
+        assert clean.repair_document_type == "PR"
+        assert clean.attestor_name == "A. Rao"
+        assert clean.amendment_reason == "Stripped down."
+
+    def test_an_unbound_declaration_has_no_document_type(self) -> None:
+        assert validate(a_draft(repair_document_type="PR")).repair_document_type is None
 
     def test_the_quantity_ceiling_is_configuration(self) -> None:
         from app.initiatives.i8.config import I8Settings
@@ -789,6 +820,7 @@ class TestTheWritePath:
                 recommendation="SCRAP",
                 condition_description="On strip-down, casing cracked.",
                 supersedes=original.id,
+                amendment_reason="Stripped down.",
             ),
             attestor="two",
         )
@@ -805,7 +837,11 @@ class TestTheWritePath:
 
     def test_an_amendment_must_point_at_something(self, db) -> None:
         with pytest.raises(AttestationError, match="does not exist"):
-            record(db, a_draft(supersedes="ATT-NOPE"), attestor="tester")
+            record(
+                db,
+                a_draft(supersedes="ATT-NOPE", amendment_reason="Typo."),
+                attestor="tester",
+            )
 
     def test_an_amendment_cannot_move_the_part(self, db) -> None:
         """Otherwise the chain would read as one part's history when it is two."""
@@ -813,7 +849,11 @@ class TestTheWritePath:
         with pytest.raises(AttestationError, match="same material and plant"):
             record(
                 db,
-                a_draft(material_id="8000009999", supersedes=original.id),
+                a_draft(
+                    material_id="8000009999",
+                    supersedes=original.id,
+                    amendment_reason="Wrong part.",
+                ),
                 attestor="two",
             )
 
@@ -914,7 +954,11 @@ class TestTheApi:
         original = client.post(ATTESTATIONS, json=self.body()).json()
         amendment = client.post(
             ATTESTATIONS,
-            json=self.body(recommendation="SCRAP", supersedes=original["id"]),
+            json=self.body(
+                recommendation="SCRAP",
+                supersedes=original["id"],
+                amendmentReason="Stripped down.",
+            ),
         ).json()
 
         listed = client.get(f"{ATTESTATIONS}?materialId=8000005632").json()
@@ -927,7 +971,12 @@ class TestTheApi:
     def test_current_only_hides_superseded_rows(self) -> None:
         original = client.post(ATTESTATIONS, json=self.body()).json()
         client.post(
-            ATTESTATIONS, json=self.body(recommendation="SCRAP", supersedes=original["id"])
+            ATTESTATIONS,
+            json=self.body(
+                recommendation="SCRAP",
+                supersedes=original["id"],
+                amendmentReason="Stripped down.",
+            ),
         )
         current = client.get(f"{ATTESTATIONS}?materialId=8000005632&currentOnly=true").json()
         assert current["total"] == 1

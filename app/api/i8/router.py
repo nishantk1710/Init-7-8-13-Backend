@@ -748,17 +748,76 @@ def get_repair_line(
 # --- W5.3: attestation, declarations and exceptions ------------------------
 
 
-def _names_a_repair_request(body: AttestationRequest, snapshot: Snapshot) -> bool:
-    """Whether a declaration names a repair PR with no PO yet: a ``PR-``
-    document (the register's PR row id), or the (BANFN, BNFPO) of an open
-    repair PR that is not also a register PO line."""
+NOT_OPEN_IN_REGISTER = "That repair line is not open in the register."
+
+
+def _bound_line(
+    body: AttestationRequest, snapshot: Snapshot, cfg: I8Settings
+) -> tuple[str, str, str, str, str | None] | None:
+    """The register line a declaration names, as (type, document, item,
+    material, plant), or None for an unbound declaration.
+
+    Raises the 422 when the named line is not open in the register. A PR is
+    open in the register only while PR rows are served. A ``PR-`` document (the
+    register's PR row id) names a repair PR whatever type is sent. Half a key
+    is left to :func:`validate`, which says so in its own words.
+    """
     document = (body.repair_document or "").strip()
     item = (body.repair_item or "").strip()
+    if not document or not item:
+        return None
+    is_request = body.repair_document_type == "PR"
     if document.upper().startswith(_REQUEST_PREFIX):
-        return True
-    if not document or not item or snapshot.line(document, item) is not None:
-        return False
-    return snapshot.request(document, _item_key(item)) is not None
+        is_request = True
+        document = document[len(_REQUEST_PREFIX) :].strip()
+    if is_request:
+        request = (
+            snapshot.request(document, _item_key(item))
+            if cfg.repair_requests_enabled
+            else None
+        )
+        if request is None:
+            raise HTTPException(status_code=422, detail=NOT_OPEN_IN_REGISTER)
+        return ("PR", *request.key, request.material_id, request.plant)
+    line = snapshot.line(document, item) or snapshot.line(document, _item_key(item))
+    if line is None:
+        raise HTTPException(status_code=422, detail=NOT_OPEN_IN_REGISTER)
+    return ("PO", *line.key, line.material_id, line.plant)
+
+
+def _check_binding(
+    body: AttestationRequest,
+    bound: tuple[str, str, str, str, str | None],
+    db: Session,
+) -> None:
+    """The declaration must be for the bound line's part and plant, and a line
+    with a current declaration takes an amendment of it, not a second one --
+    two current answers for one line is the ambiguity the binding removes."""
+    kind, document, item, material, plant = bound
+    own_material = normalise(body.material_id) or body.material_id.strip()
+    own_plant = (body.plant or "").strip()
+    if own_material != material or (plant is not None and own_plant != plant):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"This declaration is for {own_material} at {own_plant}, but that "
+                f"repair line is for {material} at {plant or 'no plant'}."
+            ),
+        )
+    current = [
+        row
+        for row in find_attestations(
+            db, material_id=material, plant=own_plant, include_superseded=False
+        )
+        if row.repair_document == document
+        and row.repair_item == item
+        and (row.repair_document_type or "PO") == kind
+    ]
+    if current and (body.supersedes or "").strip() not in {row.id for row in current}:
+        raise HTTPException(
+            status_code=422,
+            detail=f"This line already has declaration {current[0].id}. Amend it instead.",
+        )
 
 
 @router.post(
@@ -783,17 +842,15 @@ def post_attestation(
     ``supersedes`` set to the original's id -- that creates a new row, leaves
     the original readable, and the pair is the audit trail.
 
-    A declaration against a repair PR with no PO yet is refused with a 422
-    before anything is written -- the register's PR row id, or the key of an
-    open repair PR that is not a PO line. Phase 2 will allow it; until then a
-    declaration there would be stored against a line no check reads. Checked
-    whether or not PR rows are served.
+    A declaration may name a repair PO line or (``repairDocumentType`` 'PR',
+    27-Oct-2026) an open repair PR with no PO yet. The named line must be open
+    in the register and be for the same part and plant, and a line that
+    already has a current declaration takes an amendment of it -- each a 422
+    before anything is written. The stored key is the register's own.
     """
-    if _names_a_repair_request(body, snapshot):
-        raise HTTPException(
-            status_code=422,
-            detail="Declaring on a repair request with no PO yet is not available.",
-        )
+    bound = _bound_line(body, snapshot, cfg)
+    if bound is not None:
+        _check_binding(body, bound, db)
     draft = AttestationDraft(
         material_id=body.material_id,
         plant=body.plant,
@@ -804,8 +861,11 @@ def post_attestation(
         serial_number=body.serial_number,
         evidence_reference=body.evidence_reference,
         supersedes=body.supersedes,
-        repair_document=body.repair_document,
-        repair_item=body.repair_item,
+        repair_document=bound[1] if bound else body.repair_document,
+        repair_item=bound[2] if bound else body.repair_item,
+        repair_document_type=bound[0] if bound else body.repair_document_type,
+        attestor_name=body.attestor_name,
+        amendment_reason=body.amendment_reason,
     )
     try:
         # The attestor comes from the caller, never from the body.

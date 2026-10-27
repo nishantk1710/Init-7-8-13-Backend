@@ -118,6 +118,22 @@ class AttestationDraft:
     """
     repair_item: str | None = None
     """EKPO.EBELP of that line. Both or neither; half a key matches nothing."""
+    attestor_name: str | None = None
+    """The name the person typed (27-Oct-2026). Not a sign-in: until Entra is
+    wired the server-set ``attestor`` is a placeholder, and an audit record
+    should at least say who claimed to make it."""
+    amendment_reason: str | None = None
+    """Why an amendment replaces its original. Required with ``supersedes``:
+    a correction with no reason reads as a quiet rewrite of the record."""
+    repair_document_type: str | None = None
+    """'PO' (EKPO line, the default) or 'PR' (an open repair PR with no PO yet:
+    ``repair_document`` is then EBAN.BANFN and ``repair_item`` BNFPO). Only
+    stored when the declaration is bound."""
+
+
+REPAIR_DOCUMENT_TYPES = ("PO", "PR")
+AMENDMENT_REASON_REQUIRED = "Say why this declaration is being amended."
+ATTESTOR_NAME_MAX = 128
 
 
 def validate(
@@ -207,6 +223,30 @@ def validate(
             "repair line"
         )
 
+    supersedes = (draft.supersedes or "").strip() or None
+    amendment_reason = (draft.amendment_reason or "").strip() or None
+    if supersedes is not None and amendment_reason is None:
+        raise AttestationError(AMENDMENT_REASON_REQUIRED)
+
+    document_type = (draft.repair_document_type or "").strip().upper() or None
+    if document_type is not None and document_type not in REPAIR_DOCUMENT_TYPES:
+        raise AttestationError(
+            f"repairDocumentType {draft.repair_document_type!r} must be one of "
+            f"{', '.join(REPAIR_DOCUMENT_TYPES)}"
+        )
+    # A type only means something on a bound declaration; PO is the default
+    # because every binding before 27-Oct-2026 was a PO line.
+    if repair_document is None:
+        document_type = None
+    elif document_type is None:
+        document_type = "PO"
+
+    attestor_name = (draft.attestor_name or "").strip() or None
+    if attestor_name is not None and len(attestor_name) > ATTESTOR_NAME_MAX:
+        raise AttestationError(
+            f"attestorName is longer than {ATTESTOR_NAME_MAX} characters"
+        )
+
     return AttestationDraft(
         # Normalised before storing. Ruling 5.1: an attestation typed against
         # '000000008000005632' and a repair line read as '8000005632' are about
@@ -220,9 +260,12 @@ def validate(
         recommendation=recommendation,
         serial_number=(draft.serial_number or "").strip() or None,
         evidence_reference=(draft.evidence_reference or "").strip() or None,
-        supersedes=(draft.supersedes or "").strip() or None,
+        supersedes=supersedes,
         repair_document=repair_document,
         repair_item=repair_item,
+        attestor_name=attestor_name,
+        amendment_reason=amendment_reason,
+        repair_document_type=document_type,
     )
 
 
@@ -233,16 +276,20 @@ def record(
     attestor: str,
     cfg: I8Settings | None = None,
     known_materials: Collection[str] | None = None,
+    session_id: str | None = None,
 ) -> RepairAttestation:
     """Store one attestation and return it. Never updates anything.
 
     ``attestor`` is passed separately from the draft on purpose: it comes from
-    the authenticated caller, not from the request body.
+    the authenticated caller, not from the request body. ``session_id`` is the
+    same kind of value: set only by server-side callers (the assistant, which
+    knows the session it is running), never from the public POST body.
     """
     cfg = cfg or get_i8_settings()
     clean = validate(draft, cfg, known_materials=known_materials)
     repair_document = clean.repair_document
     repair_item = clean.repair_item
+    repair_document_type = clean.repair_document_type
 
     if clean.supersedes is not None:
         original = db.get(RepairAttestation, clean.supersedes)
@@ -268,6 +315,10 @@ def record(
         if repair_document is None:
             repair_document = original.repair_document
             repair_item = original.repair_item
+            # Rows from before 27-Oct-2026 carry no type; every one is a PO line.
+            repair_document_type = (
+                (original.repair_document_type or "PO") if repair_document else None
+            )
 
     attestation = RepairAttestation(
         material_id=clean.material_id,
@@ -282,17 +333,19 @@ def record(
         # Server-set, UTC. Not client-supplied -- the value of the record is
         # that the time is not the attestor's to choose.
         attested_at=datetime.now(timezone.utc),
-        # Always null today. Linking an attestation to its assistant session is
-        # FR-4 / FR-8 and ours; nothing supplies the id yet -- it will come
-        # from the R-reference typed into the reservation text (RESB.SGTXT),
-        # built in phase 3.
-        session_id=None,
+        # FR-4 / FR-8: the assistant session the declaration was made in.
+        # Server-set like the attestor; null for a declaration made on a
+        # register screen.
+        session_id=session_id,
         # FR-4's link to the repair PR or PO, when the screen that recorded
         # this knew which line it was for. Null for a part declared before
         # anything was raised against it; those fall back to the date window.
         repair_document=repair_document,
         repair_item=repair_item,
         supersedes=clean.supersedes,
+        repair_document_type=repair_document_type,
+        attestor_name=clean.attestor_name,
+        amendment_reason=clean.amendment_reason,
     )
     db.add(attestation)
     db.commit()

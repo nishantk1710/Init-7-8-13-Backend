@@ -561,6 +561,11 @@ def attestation_item(
         repair_item=row.repair_item,
         supersedes=row.supersedes,
         superseded_by=superseded_by,
+        attestor_name=row.attestor_name,
+        amendment_reason=row.amendment_reason,
+        repair_document_type=(
+            (row.repair_document_type or "PO") if row.repair_document else None
+        ),
         covers_repair_lines=covers_repair_lines,
         coverage_note=coverage_note,
     )

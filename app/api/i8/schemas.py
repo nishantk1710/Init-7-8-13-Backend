@@ -490,10 +490,8 @@ class AttestationRequest(I8Model):
     Note what is NOT here: ``attestor``, ``attestedAt`` and ``sessionId``. The
     first two are set by the server from the authenticated caller and the clock
     -- an audit record whose author and timestamp are the author's to choose is
-    not an audit record. The third is always null for now: linking an
-    attestation to its session is FR-4 / FR-8 and ours, but nothing supplies the
-    id yet: it will come from the R-reference typed into the reservation text
-    (RESB.SGTXT), built in phase 3.
+    not an audit record. The third is set only by the assistant, which knows the
+    session a declaration is made in (27-Oct-2026); a body cannot claim one.
     """
 
     # Lengths are the column widths in app/initiatives/i8/models.py. Without
@@ -537,13 +535,26 @@ class AttestationRequest(I8Model):
     There is no purchase order to name in that moment, which is exactly why the
     date window exists, and it stays the fallback for those.
 
-    Not a repair PR with no PO yet: a register PR row's ``PR-{BANFN}``, or an
-    open repair PR's own number, is refused with a 422 until phase 2 allows
-    declaring there (27-Oct-2026)."""
+    With ``repairDocumentType`` 'PR' it is an open repair PR with no PO yet
+    (EBAN.BANFN; a register PR row's ``PR-{BANFN}`` is accepted too). The line
+    must be open in the register and be for the same material and plant, and a
+    line that already has a current declaration takes an amendment, not a
+    second one -- each refused with a 422 (27-Oct-2026)."""
 
     repair_item: str | None = Field(default=None, max_length=10)
-    """EKPO.EBELP of that line. Send with ``repairDocument`` or not at all --
-    half a key identifies no line and is rejected with a 422."""
+    """EKPO.EBELP (or EBAN.BNFPO) of that line. Send with ``repairDocument`` or
+    not at all -- half a key identifies no line and is rejected with a 422."""
+
+    repair_document_type: Literal["PO", "PR"] | None = None
+    """What ``repairDocument`` names: a repair PO line (the default) or an open
+    repair PR with no PO yet."""
+
+    attestor_name: str | None = Field(default=None, max_length=128)
+    """The name the person typed. Not a sign-in."""
+
+    amendment_reason: str | None = None
+    """Why this amendment replaces the declaration it ``supersedes``. Required
+    with ``supersedes``: 422 without it."""
 
 
 class Attestation(I8Model):
@@ -577,6 +588,11 @@ class Attestation(I8Model):
 
     supersedes: str | None = None
     superseded_by: str | None = None
+    attestor_name: str | None = None
+    """The name the person typed (27-Oct-2026); null on older rows."""
+    amendment_reason: str | None = None
+    repair_document_type: Literal["PO", "PR"] | None = None
+    """Null when unbound; 'PO' for bound rows written before the column."""
     """Set when a later amendment replaces this one. The original is never
     removed or edited -- this is how a reader knows it is not current."""
 
