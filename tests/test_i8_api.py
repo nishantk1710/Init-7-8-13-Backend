@@ -403,15 +403,14 @@ class TestRegisterEndpoint:
         body = client.get(f"{REGISTER}/{document}/{item}").json()
         stages = [stage["stage"] for stage in body["timeline"]]
         # No "received": every line served is open in SAP. No "removed"
-        # either since 27-Oct-2026: SAP has no record of removal.
-        assert stages == [
-            "attested",
-            "po_raised",
-            "dispatched",
-            "at_vendor",
-        ]
+        # either since 27-Oct-2026: SAP has no record of removal. The repair
+        # starts at its request when the PO names a PR (27-Oct-2026).
+        assert stages in (
+            ["attested", "po_raised", "dispatched", "at_vendor"],
+            ["pr_raised", "attested", "po_raised", "dispatched", "at_vendor"],
+        )
         # The PO stage names the repair PO it was built from.
-        po_raised = body["timeline"][1]
+        po_raised = next(s for s in body["timeline"] if s["stage"] == "po_raised")
         assert f"Repair PO {document}/" in po_raised["evidence"]
 
     def test_an_unknown_line_is_404(self) -> None:

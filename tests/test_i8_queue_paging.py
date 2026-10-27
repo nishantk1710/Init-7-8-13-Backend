@@ -1302,7 +1302,9 @@ class TestRepairLineDetail:
 
         assert response.status_code == 200
         timeline = response.json()["timeline"]
+        # The repair starts at its request since 27-Oct-2026.
         assert [(s["stage"], s["label"]) for s in timeline] == [
+            ("pr_raised", "Repair requested"),
             ("attested", "Condition declared"),
             ("po_raised", "Repair PO raised"),
             ("dispatched", "Sent to vendor"),

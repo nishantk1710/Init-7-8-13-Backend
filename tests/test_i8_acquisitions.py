@@ -646,7 +646,8 @@ class TestUnjustifiedAcquisition:
 
     def test_it_is_now_a_raised_type(self) -> None:
         assert ExceptionType.UNJUSTIFIED_ACQUISITION in RAISED_BY_I8
-        assert ExceptionType.MISSING_SESSION_ID not in RAISED_BY_I8
+        # Raised too since 27-Oct-2026 (job lines with no R-reference).
+        assert ExceptionType.MISSING_SESSION_ID in RAISED_BY_I8
 
     def test_other_checks_name_po_lines(self) -> None:
         line = repair()

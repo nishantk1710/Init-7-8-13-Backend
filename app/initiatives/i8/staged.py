@@ -284,11 +284,14 @@ def _stage(db: Session, cfg: I8Settings) -> Sources:
     # Since 27-Oct-2026 every other 80-series line WITH TEXT is kept too: the
     # job's reservation line names the assistant session there
     # (session_jobs.py); the movement-type rule stays in Python. Staged ahead
-    # of MSEG, whose narrowing reads these reservation numbers.
+    # of MSEG, whose narrowing reads these reservation numbers. And every
+    # job (consumption) line, text or not: one with none is the
+    # MISSING_SESSION_ID finding (session_jobs.unreferenced_lines).
     stage("v_resb", {"n_resb": _narrow(
         db, "resb", "n_resb",
         f"{_in_scope()} AND {_series('material', cfg)} "
-        f"AND (movement_type = {_literal(cfg.repair_reservation_movement_type)} "
+        f"AND (movement_type IN ({_literal(cfg.repair_reservation_movement_type)}, "
+        f"{_literal(cfg.job_issue_movement_type)}) "
         f"OR COALESCE(text, '') <> '')",
     )})
     # MSEG: the staged POs' movements, plus (27-Oct-2026) those posted against a

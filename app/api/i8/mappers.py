@@ -42,7 +42,13 @@ from app.api.i8.schemas import (
 )
 from app.assistant import departments
 from app.initiatives.i8.aging import NO_LEAD_TIME, days_between
-from app.initiatives.i8.attestation import CONDITION_LABELS, Recommendation
+from app.initiatives.i8.attestation import (
+    CONDITION_LABELS,
+    LINK_BOUND,
+    LINK_REFERENCE,
+    LINK_WINDOW,
+    Recommendation,
+)
 from app.initiatives.i8.coding_candidates import (
     CodingCandidate,
     ScreenStats,
@@ -338,8 +344,58 @@ def _at_vendor_evidence(line: RepairLine) -> str:
     )
 
 
+def _requested_evidence(document: str, item: str, department: str | None) -> str:
+    """``Repair PR {BANFN}/{BNFPO}``, and the department that asked for it --
+    named when the department list has its code, the code alone otherwise."""
+    requested = f"Repair PR {document}/{item}"
+    if department:
+        name = department_name(department)
+        requested += f", requested by department {department}" + (f" ({name})" if name else "")
+    return f"{requested}."
+
+
+def _declared_stage(
+    attestation: RepairAttestation | None, today, link: str | None, reference: str | None
+) -> LifecycleStage:
+    """The declaration stage, saying how the declaration was matched (since
+    27-Oct-2026): it names the line, the R-reference typed on the repair order
+    names the assistant visit it was made in, or it is a part declared at the
+    same plant within the date window -- three strengths of claim."""
+    if attestation is None:
+        return LifecycleStage(
+            stage="attested", label="Condition declared", occurred_at=None, evidence="Not declared yet."
+        )
+    evidence = (
+        f"Declaration {attestation.id}: "
+        f"{CONDITION_LABELS[Recommendation(attestation.recommendation)]}"
+        f" ({attestation.fault_category.replace('_', ' ').lower()}), "
+        f"by {_person(getattr(attestation, 'attestor_name', None) or attestation.attestor)}."
+    )
+    if link == LINK_BOUND:
+        evidence += " It names this repair."
+    elif link == LINK_REFERENCE:
+        evidence += (
+            f" Linked by the R-reference {reference} typed on the repair order."
+            if reference
+            else " Linked by the R-reference typed on the repair order."
+        )
+    elif link == LINK_WINDOW:
+        evidence += " Matched by material and plant within the declaration window."
+    return LifecycleStage(
+        stage="attested",
+        label="Condition declared",
+        occurred_at=attestation.attested_at.date(),
+        evidence=evidence,
+        days_since=days_between(attestation.attested_at.date(), today),
+    )
+
+
 def timeline(
-    line: RepairLine, today, attestation: RepairAttestation | None = None
+    line: RepairLine,
+    today,
+    attestation: RepairAttestation | None = None,
+    link: str | None = None,
+    reference: str | None = None,
 ) -> list[LifecycleStage]:
     """The lifecycle, stage by stage, with the evidence for each.
 
@@ -360,31 +416,23 @@ def timeline(
     whole point of the stage: "nobody assessed this part" and "we have not
     looked" are different statements.
     """
-    stages: list[LifecycleStage] = [
-        LifecycleStage(
-            stage="attested",
-            label="Condition declared",
-            occurred_at=attestation.attested_at.date() if attestation else None,
-            evidence=(
-                (
-                    f"Declaration {attestation.id}: "
-                    f"{CONDITION_LABELS[Recommendation(attestation.recommendation)]}"
-                    f" ({attestation.fault_category.replace('_', ' ').lower()}), "
-                    f"by {_person(attestation.attestor)}"
-                )
-                if attestation
-                else (
-                    "No condition declaration is on record for this line. Until "
-                    "this platform there was nowhere to record one, so most older "
-                    "repairs have none."
-                )
-            ),
-            days_since=(
-                days_between(attestation.attested_at.date(), today)
-                if attestation
-                else None
-            ),
-        ),
+    stages: list[LifecycleStage] = []
+    # The repair starts at the request (27-Oct-2026): the PR the PO was
+    # ordered from, when the register knows it.
+    if line.pr_number:
+        stages.append(
+            LifecycleStage(
+                stage="pr_raised",
+                label="Repair requested",
+                occurred_at=getattr(line, "pr_requested_on", None),
+                evidence=_requested_evidence(
+                    line.pr_number, line.pr_item or "", getattr(line, "pr_department", None)
+                ),
+                days_since=days_between(getattr(line, "pr_requested_on", None), today),
+            )
+        )
+    stages += [
+        _declared_stage(attestation, today, link, reference),
         LifecycleStage(
             stage="po_raised",
             label="Repair PO raised",
@@ -421,33 +469,25 @@ def timeline(
     return stages
 
 
-def request_timeline(request: RepairRequest, today) -> list[LifecycleStage]:
-    """The lifecycle of a repair PR with no PO yet: requested, and the two
-    stages it is waiting on, each saying plainly that it has not happened.
-
-    The department is named when the department list has its code, and shown
-    as the code alone otherwise -- never guessed.
+def request_timeline(
+    request: RepairRequest,
+    today,
+    attestation: RepairAttestation | None = None,
+    link: str | None = None,
+    reference: str | None = None,
+) -> list[LifecycleStage]:
+    """The lifecycle of a repair PR with no PO yet: requested, declared (or
+    not yet), and the PO it is waiting on, saying plainly it has not happened.
     """
-    requested = f"Repair PR {request.purchase_requisition}/{request.item}"
-    if request.department:
-        name = department_name(request.department)
-        requested += f", requested by department {request.department}" + (
-            f" ({name})" if name else ""
-        )
     return [
         LifecycleStage(
             stage="pr_raised",
             label="Repair requested",
             occurred_at=request.requested_on,
-            evidence=f"{requested}.",
+            evidence=_requested_evidence(request.purchase_requisition, request.item, request.department),
             days_since=days_between(request.requested_on, today),
         ),
-        LifecycleStage(
-            stage="attested",
-            label="Condition declared",
-            occurred_at=None,
-            evidence="Not declared yet.",
-        ),
+        _declared_stage(attestation, today, link, reference),
         LifecycleStage(
             stage="po_raised",
             label="Repair PO raised",
@@ -716,6 +756,13 @@ def exception_item(
         raised_at=item.raised_at,
         pre_automation=item.pre_automation,
         declaration_id=item.declaration_id,
+        reservation_line=(
+            SAPDocumentReference(
+                type="RESERVATION", document_number=item.reservation_document, line=item.reservation_item
+            )
+            if item.reservation_document
+            else None
+        ),
         status=work.status,
         owner=work.owner,
         still_detected=still_detected,
@@ -770,6 +817,7 @@ def exception_meta(
         acquisitions_checked=stats.acquisitions_checked,
         justification_window_days=stats.justification_window_days,
         justification_cutover_date=stats.justification_cutover_date,
+        session_check_start_date=stats.session_check_start_date,
     )
 
 

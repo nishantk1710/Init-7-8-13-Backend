@@ -76,9 +76,15 @@ from app.initiatives.i8.register import (
 )
 from app.initiatives.i8.repair_references import load_repair_references
 from app.initiatives.i8.requisitions import RepairRequest, fetch_repair_order_lines, load_repair_requests
-from app.initiatives.i8.session_jobs import SessionJob, load_session_jobs
+from app.initiatives.i8.session_jobs import (
+    SessionJob,
+    UnreferencedLine,
+    load_session_jobs,
+    load_unreferenced_lines,
+)
 from app.initiatives.i8.staged import staged_sources
 from app.initiatives.i8.universe import UniverseRow, UniverseStats, load_universe
+from app.initiatives.i13.session_link import go_live_date
 from app.models import IngestionRun
 from app.shared.snapshot_builds import exclusive_build
 
@@ -211,6 +217,15 @@ class Snapshot:
     their 261 issues and 262 returns (session_jobs.py, 27-Oct-2026). Served on
     the session page; nothing else reads them."""
 
+    unreferenced_lines: tuple[UnreferencedLine, ...] = ()
+    """The 80-series job lines needed on or after ``session_check_start``
+    whose text leads to no assistant session: MISSING_SESSION_ID
+    (session_jobs.py, 27-Oct-2026)."""
+
+    session_check_start: date | None = None
+    """From when those lines were checked: ``I8_SESSION_CHECK_START_DATE``,
+    else the I13 go-live date. None on a snapshot built before the check."""
+
     def line(self, document: str, item: str) -> RepairLine | None:
         """One repair line by its (EBELN, EBELP) key."""
         return self._lines_by_key.get((document, item))
@@ -311,6 +326,9 @@ def build_snapshot(
             del reservation_lines
             # The job each assistant session was for: its own reservation line.
             session_jobs = load_session_jobs(db, cfg, sources=sources)
+            # Job lines that should name a session and do not.
+            session_check_start = cfg.session_check_start_date_value or go_live_date(db)
+            unreferenced = load_unreferenced_lines(db, session_check_start, cfg, sources=sources)
             register_stats = replace(
                 register_stats,
                 open_repair_requests=request_stats.open_repair_requests,
@@ -346,6 +364,8 @@ def build_snapshot(
         repair_requests=repair_requests,
         repair_references=repair_references,
         session_jobs=session_jobs,
+        unreferenced_lines=unreferenced,
+        session_check_start=session_check_start,
     )
 
 
@@ -750,6 +770,8 @@ def build_attestation_view(
         declarations=find_attestations(db, include_superseded=False),
         reference_date=snapshot.reference_date,
         declaration_grace_days=cfg.declaration_grace_days,
+        unreferenced_lines=getattr(snapshot, "unreferenced_lines", ()),
+        session_check_start=getattr(snapshot, "session_check_start", None),
     )
     by_line = justifications_by_line(snapshot.lines, justifications, exceptions)
     logger.info("I08 register justifications: %s", justification_counts(by_line))

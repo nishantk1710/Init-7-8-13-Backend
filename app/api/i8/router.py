@@ -307,6 +307,17 @@ def _item_key(item: str) -> str:
     return item.strip().lstrip("0") or item.strip()
 
 
+def _reference_typed(snapshot: Snapshot, banfn: str | None, bnfpo: str | None) -> str | None:
+    """The R-reference typed on the repair order of this PR, as read
+    (repair_references.py) -- for the timeline's "how it is linked" line."""
+    if not banfn or not bnfpo:
+        return None
+    for ref_banfn, ref_bnfpo, _, ref_text in getattr(snapshot, "repair_references", ()):
+        if ref_banfn == banfn and _item_key(ref_bnfpo) == _item_key(bnfpo):
+            return ref_text
+    return None
+
+
 def _declaration_status_of(line: RepairLine, view: AttestationView) -> str:
     """What a register row's Declaration Status cell says: the queue row's
     status, or "Required" for a line the queue has no row for -- the default
@@ -746,7 +757,13 @@ def get_repair_line(
             )
         return RepairDetail(
             line=_request_chain(request, cfg, _stock_lookup(snapshot), view=view),
-            timeline=request_timeline(request, snapshot.reference_date),
+            timeline=request_timeline(
+                request,
+                snapshot.reference_date,
+                getattr(view.coverage, "requests_covered", {}).get(request.key),
+                getattr(view.coverage, "request_links", {}).get(request.key),
+                _reference_typed(snapshot, request.purchase_requisition, request.item),
+            ),
         )
 
     line = snapshot.line(document, item)
@@ -758,7 +775,11 @@ def get_repair_line(
     return RepairDetail(
         line=_chain(line, cfg, _stock_lookup(snapshot), view),
         timeline=timeline(
-            line, snapshot.reference_date, view.coverage.covered.get(line.key)
+            line,
+            snapshot.reference_date,
+            view.coverage.covered.get(line.key),
+            getattr(view.coverage, "links", {}).get(line.key),
+            _reference_typed(snapshot, line.pr_number, line.pr_item),
         ),
     )
 

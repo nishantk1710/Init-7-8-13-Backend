@@ -33,6 +33,8 @@ from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.repair_references import sessions_named
 from app.initiatives.i8.staged import Sources, reading
 from app.initiatives.i13.session_link import (
+    INVALID_SESSION,
+    MISSING_SESSION,
     RequestLine,
     SessionInfo,
     load_request_lines,
@@ -217,3 +219,109 @@ def load_session_jobs(
         len(movements),
     )
     return jobs
+
+
+# --- MISSING_SESSION_ID: job lines with no R-reference (27-Oct-2026) ----------
+
+
+@dataclass(frozen=True)
+class UnreferencedLine:
+    """A job (consumption) reservation line on an 80-series part whose text
+    leads back to no assistant session for its part and plant."""
+
+    reservation: str
+    item: str
+    order: str | None
+    material: str
+    plant: str | None
+    requirement_date: date | None
+    finding: str
+    """``MISSING_SESSION`` (nothing session-like typed) or ``INVALID_SESSION``
+    (a mistyped ID, or one naming no session for this part) -- the I13
+    ``session_status`` outcomes, so both screens judge a line the same way."""
+    typed: str | None = None
+    """The line text, on ``INVALID_SESSION`` only: what was typed."""
+
+
+def is_consumption_line(resb_row: Mapping, cfg: I8Settings) -> bool:
+    """A live job line on an 80-series part: the issue movement type, not
+    deleted. On the 15-Oct extract 10,187 such lines were 261s on 80-series
+    parts, 2,954 deleted, and 87 of the rest carried any text at all."""
+    material = (resb_row.get("matnr") or "").lstrip("0")
+    return (
+        resb_row.get("bwart") == cfg.job_issue_movement_type
+        and bool(resb_row.get("rsnum"))
+        and resb_row.get("xloek") != cfg.reservation_deleted_indicator
+        and material.startswith(cfg.series_prefix_list)
+    )
+
+
+def _in_check(row: Mapping, cfg: I8Settings, start: date) -> bool:
+    """A consumption line needed on or after the check started. A line with no
+    requirement date cannot be placed either side of it, so is not judged."""
+    needed = _date(row.get("bdter"))
+    return is_consumption_line(row, cfg) and needed is not None and needed >= start
+
+
+def unreferenced_lines(
+    rows: Iterable[Mapping],
+    sessions: Mapping[str, SessionInfo],
+    request_lines: Mapping[str, list[RequestLine]],
+    cfg: I8Settings,
+    start: date,
+) -> tuple[UnreferencedLine, ...]:
+    """Pure: the consumption lines needed on or after ``start`` whose text
+    names no session -- or request line -- for the same part and plant."""
+    found: dict[tuple[str, str], UnreferencedLine] = {}
+    for row in rows:
+        if not _in_check(row, cfg, start):
+            continue
+        typed = (row.get("sgtxt") or "").strip()
+        if typed and sessions_named(typed, row.get("matnr"), row.get("werks"), sessions, request_lines):
+            continue
+        ids, refs = session_ids_in(typed), request_refs_in(typed)
+        invalid = bool(ids.valid or ids.invalid or refs.valid or refs.invalid)
+        key = (row["rsnum"], _item(row.get("rspos")))
+        found.setdefault(
+            key,
+            UnreferencedLine(
+                reservation=key[0],
+                item=key[1],
+                order=row.get("aufnr") or None,
+                material=row.get("matnr") or "",
+                plant=row.get("werks"),
+                requirement_date=_date(row.get("bdter")),
+                finding=INVALID_SESSION if invalid else MISSING_SESSION,
+                typed=typed if invalid else None,
+            ),
+        )
+    return tuple(found[key] for key in sorted(found))
+
+
+_CONSUMPTION_SQL = """
+-- Every staged reservation line; the job lines (issue movement type, not
+-- deleted, 80-series) are picked in Python (session_jobs.is_consumption_line).
+select rsnum, rspos, matnr, werks, bwart, aufnr, bdter, sgtxt, xloek
+from v_resb
+"""
+
+
+def load_unreferenced_lines(
+    db: Session, start: date, cfg: I8Settings | None = None, *, sources: Sources | None = None
+) -> tuple[UnreferencedLine, ...]:
+    """Read the job lines and judge their text. Sessions and request lines are
+    read only for the valid IDs typed on lines inside the check."""
+    cfg = cfg or get_i8_settings()
+    rows = [row for row in db.execute(text(reading(_CONSUMPTION_SQL, sources))).mappings() if _in_check(row, cfg, start)]
+    session_ids = {sid for row in rows for sid in session_ids_in(row["sgtxt"]).valid}
+    request_ids = {ref.request_id for row in rows for ref in request_refs_in(row["sgtxt"]).valid}
+    sessions = load_sessions(db, session_ids) if session_ids else {}
+    request_lines = load_request_lines(db, request_ids) if request_ids else {}
+    found = unreferenced_lines(rows, sessions, request_lines, cfg, start)
+    logger.info(
+        "I08 job lines with no R-reference: %d of %d checked from %s",
+        len(found),
+        len(rows),
+        start.isoformat(),
+    )
+    return found

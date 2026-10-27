@@ -63,11 +63,13 @@ may be a repair PR with no PO yet; the item says which kind each document is.
 The purchases and the repairs come from :mod:`app.initiatives.i8.acquisitions`,
 which also says why stock on hand cannot be judged for a past purchase.
 
-``MISSING_SESSION_ID`` (FR-8) is ours too and is **not raised yet**. It needs
-the session's R-reference read back off the reservation: requesters type it
-into the reservation text (RESB.SGTXT), which the read layer already carries
-(26-Oct-2026), and the detector is built in phase 3 of the complete-flow plan.
-It stays in :class:`ExceptionType` so adding it is new code, not a migration.
+``MISSING_SESSION_ID`` (FR-8) is raised since 27-Oct-2026: a job
+(consumption) reservation line on an 80-series part, needed on or after
+``I8_SESSION_CHECK_START_DATE`` (blank: the I13 go-live date), whose text
+(RESB.SGTXT) carries no R-reference leading back to an assistant session for
+that part and plant. A mistyped reference is told apart from none at all, as
+I13 does (``session_link.session_status``). The lines are judged at snapshot
+build (``session_jobs.unreferenced_lines``); this module only words them.
 
 Three declaration findings (27-Oct-2026)
 ----------------------------------------
@@ -110,15 +112,13 @@ from app.initiatives.i8.attestation import (
 )
 from app.initiatives.i8.register import RepairLine
 from app.initiatives.i8.requisitions import RepairRequest
+from app.initiatives.i13.session_link import INVALID_SESSION
 
 logger = get_logger(__name__)
 
 
 class ExceptionType(str, Enum):
-    """Every exception the queue can carry. All three are I08's -- FR-4 and FR-8.
-
-    ``MISSING_SESSION_ID`` is declared and not yet raised; see the module note.
-    """
+    """Every exception the queue can carry, all I08's -- FR-4 and FR-8."""
 
     MISSING_ATTESTATION = "MISSING_ATTESTATION"
     """A repair line with no condition-to-repair attestation. FR-4 / FR-8."""
@@ -135,9 +135,8 @@ class ExceptionType(str, Enum):
     PO for the same part and plant raised on or after it."""
 
     MISSING_SESSION_ID = "MISSING_SESSION_ID"
-    """FR-8, an 80-series reservation with no valid session id. Not raised yet:
-    the R-reference comes from the reservation text (RESB.SGTXT), and the
-    detector is built in phase 3."""
+    """FR-8, an 80-series job reservation line with no valid R-reference in
+    its text (RESB.SGTXT). Raised since 27-Oct-2026; see the module note."""
 
     UNJUSTIFIED_ACQUISITION = "UNJUSTIFIED_ACQUISITION"
     """FR-8, a new unit bought while a repair was open, with no justification."""
@@ -163,6 +162,7 @@ RAISED_BY_I8: frozenset[ExceptionType] = frozenset(
         ExceptionType.REPAIRED_AGAINST_ASSESSMENT,
         ExceptionType.REPAIR_PR_NOT_DECLARED,
         ExceptionType.DECLARED_NO_REPAIR_PR,
+        ExceptionType.MISSING_SESSION_ID,
     }
 )
 
@@ -228,6 +228,11 @@ class ExceptionItem:
     """The declaration the finding is about, on ``REPAIRED_AGAINST_ASSESSMENT``
     and ``DECLARED_NO_REPAIR_PR``. ``DECLARED_NO_REPAIR_PR`` names no repair
     line -- there is none, which is the finding -- so its document is blank."""
+
+    reservation_document: str | None = None
+    reservation_item: str | None = None
+    """``MISSING_SESSION_ID`` only: the reservation line (RSNUM, RSPOS) with
+    no R-reference. It names no repair line, so the document is blank."""
 
     @property
     def repair_reference(self) -> str:
@@ -755,6 +760,48 @@ def declarations_without_repair(
     return items
 
 
+def missing_session_ids(lines, start: date | None = None) -> list[ExceptionItem]:
+    """Raise MISSING_SESSION_ID for each job reservation line judged at build
+    (``session_jobs.UnreferencedLine``). The text says whether nothing was
+    typed or what was typed leads nowhere -- different fixes for the planner."""
+    since = f" since {_day(start, '')}" if start else ""
+    items: list[ExceptionItem] = []
+    for line in lines:
+        where = f" (order {line.order})" if line.order else ""
+        if line.finding == INVALID_SESSION:
+            title = "Reservation reference does not lead to a session"
+            told = (
+                f"Its text reads \"{line.typed}\", which names no assistant session or "
+                f"request for material {line.material} at plant {line.plant or 'unknown'} -- "
+                "a mistyped or wrong reference."
+            )
+        else:
+            title = "Reservation with no session reference"
+            told = "Its text carries no assistant reference at all."
+        items.append(
+            ExceptionItem(
+                id=f"EX-{ExceptionType.MISSING_SESSION_ID.value}-R-{line.reservation}-{line.item}",
+                type=ExceptionType.MISSING_SESSION_ID.value,
+                severity=Severity.WARNING.value,
+                material_id=line.material,
+                description=None,
+                plant=line.plant,
+                purchasing_document="",
+                item="",
+                title=title,
+                detail=(
+                    f"Reservation {line.reservation}/{line.item}{where}, needed on "
+                    f"{_day(line.requirement_date, 'an unknown date')}. {told} Reservations "
+                    f"for this part are expected to carry the session's reference{since}."
+                ),
+                raised_at=line.requirement_date,
+                reservation_document=line.reservation,
+                reservation_item=line.item,
+            )
+        )
+    return items
+
+
 @dataclass(frozen=True)
 class ExceptionStats:
     """Counts, with the rule that produced them attached.
@@ -789,6 +836,7 @@ class ExceptionStats:
 
     justification_window_days: int = 0
     justification_cutover_date: date | None = None
+    session_check_start_date: date | None = None
 
 
 def build_exceptions(
@@ -806,6 +854,8 @@ def build_exceptions(
     declarations=(),
     reference_date: date | None = None,
     declaration_grace_days: int = 14,
+    unreferenced_lines=(),
+    session_check_start: date | None = None,
 ) -> tuple[list[ExceptionItem], ExceptionStats]:
     """The whole exception queue for one snapshot, and its counts.
 
@@ -844,6 +894,8 @@ def build_exceptions(
             grace_days=declaration_grace_days,
         )
 
+    items += missing_session_ids(unreferenced_lines, session_check_start)
+
     by_type: dict[str, int] = {}
     by_severity: dict[str, int] = {}
     for item in items:
@@ -864,5 +916,6 @@ def build_exceptions(
         acquisitions_checked=len(acquisitions),
         justification_window_days=justification_window_days,
         justification_cutover_date=justification_cutover,
+        session_check_start_date=session_check_start,
     )
     return items, stats

@@ -662,12 +662,12 @@ class TestMissingAttestationException:
         assert stats.actionable == 0
         assert stats.attestation_cutover_date == date(2026, 10, 1)
 
-    def test_the_type_column_is_open_for_the_ones_we_do_not_raise(self) -> None:
-        """MISSING_SESSION_ID is FR-8 and ours, and is not raised until
-        RESB.BEDNR is exposed. It is declared so adding it is a detector, not a
-        migration -- and the API says which are actually raised, so an empty
-        count is distinguishable from an unimplemented check."""
-        assert {t.value for t in ExceptionType} > {t.value for t in RAISED_BY_I8}
+    def test_every_declared_type_is_now_raised(self) -> None:
+        """MISSING_SESSION_ID is FR-8 and ours. It was declared and not raised
+        until 27-Oct-2026, when the R-reference typed on the job's reservation
+        line was read back; the API still says which are actually raised, so
+        an empty count is distinguishable from an unimplemented check."""
+        assert {t.value for t in ExceptionType} == {t.value for t in RAISED_BY_I8}
         assert RAISED_BY_I8 == frozenset(
             {
                 ExceptionType.MISSING_ATTESTATION,
@@ -677,11 +677,10 @@ class TestMissingAttestationException:
                 ExceptionType.REPAIRED_AGAINST_ASSESSMENT,
                 ExceptionType.REPAIR_PR_NOT_DECLARED,
                 ExceptionType.DECLARED_NO_REPAIR_PR,
+                # Job reservation lines with no R-reference, since 27-Oct-2026.
+                ExceptionType.MISSING_SESSION_ID,
             }
         )
-        # The one still declared and not raised. When this stops being true the
-        # assertion above fails first, which is the intended order.
-        assert ExceptionType.MISSING_SESSION_ID not in RAISED_BY_I8
 
     def test_an_overdue_open_line_is_raised(self) -> None:
         """FR-9 asks for overdue "as an explicit dashboard exception state".
@@ -1354,9 +1353,7 @@ class TestTheLifecycleTimelineAttestedStage:
         assert stage["occurredAt"] is None
         # It must not read as a forgotten field. It should say there is no
         # assessment, and that this is expected rather than a data gap.
-        assert "no recorded assessment" in stage["evidence"]
-        assert "/api/i8/exceptions" in stage["evidence"]
-        assert "Hook only" not in stage["evidence"]
+        assert stage["evidence"] == "Not declared yet."
 
     def test_with_an_attestation_it_carries_the_real_evidence(self) -> None:
         from app.core.db import get_sessionmaker

@@ -811,6 +811,11 @@ class ExceptionQueueItem(I8Model):
     declaration-based types (``REPAIRED_AGAINST_ASSESSMENT``,
     ``DECLARED_NO_REPAIR_PR``). Null on every other type. Since 27-Oct-2026."""
 
+    reservation_line: SAPDocumentReference | None = None
+    """``MISSING_SESSION_ID`` only: the reservation line (type ``RESERVATION``,
+    RSNUM and RSPOS) whose text carries no valid R-reference; ``repairLine`` is
+    then blank. Null on every other type. Since 27-Oct-2026."""
+
     # --- FR-11: the state people put it in ------------------------------
     #
     # The item above is recomputed on every read; everything below is stored
@@ -857,9 +862,8 @@ class ExceptionMeta(I8Model):
 
     types_raised: list[str]
     """Which exception types I08 actually raises, so a caller can tell an empty
-    count from an unimplemented check. ``MISSING_SESSION_ID`` is declared and
-    not raised: it needs the session's R-reference read back off the
-    reservation text (RESB.SGTXT), which is built in phase 3."""
+    count from an unimplemented check. ``MISSING_SESSION_ID`` is raised since
+    27-Oct-2026."""
 
     acquisitions_checked: int = 0
     """New 80-series purchases -- new-buy PRs and direct PO lines -- the
@@ -872,6 +876,11 @@ class ExceptionMeta(I8Model):
     justification_cutover_date: date | None = None
     """The cutover the acquisition counts were measured against. Null means
     none is configured."""
+
+    session_check_start_date: date | None = None
+    """From when job reservation lines were checked for an R-reference
+    (MISSING_SESSION_ID): the setting, else the I13 go-live date. Null on a
+    snapshot built before the check. Since 27-Oct-2026."""
 
 
 class ExceptionFacets(I8Model):

@@ -302,6 +302,12 @@ class I8Settings(BaseSettings):
     # grace every PR raised this morning would read as a miss.
     declaration_grace_days: int = 14
 
+    # From when an 80-series job reservation line must carry the assistant's
+    # R-reference in its text (MISSING_SESSION_ID, 27-Oct-2026). Blank falls
+    # back to the I13 go-live date: before the assistant existed nobody could
+    # type one. Set to the release date at deploy.
+    session_check_start_date: str = ""
+
     # The largest quantity one attestation may record. A typo guard, not a
     # business rule: every repair line in the July extract is for quantity 1,
     # and the largest quantity on ANY 80-series PO line is 400. The table is
@@ -557,6 +563,14 @@ class I8Settings(BaseSettings):
         if not self.attestation_cutover_date.strip():
             return None
         return date.fromisoformat(self.attestation_cutover_date.strip())
+
+    @property
+    def session_check_start_date_value(self) -> date | None:
+        """``session_check_start_date`` as a date, or None meaning "use the
+        I13 go-live date". Invalid input raises, like the cutover."""
+        if not self.session_check_start_date.strip():
+            return None
+        return date.fromisoformat(self.session_check_start_date.strip())
 
     @property
     def justification_cutover_date_value(self) -> date | None:

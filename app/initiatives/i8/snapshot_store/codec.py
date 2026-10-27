@@ -60,6 +60,9 @@ from typing import Any
 # as plain tuples); a version-4 payload would link no declaration that way.
 # And session_jobs (session_jobs.SessionJob, the job reservation lines naming a
 # session, with their 261/262); a version-4 payload would show no job.
+# And unreferenced_lines (session_jobs.UnreferencedLine, the job lines with no
+# R-reference) with session_check_start; a version-4 payload raises no
+# MISSING_SESSION_ID until the next rebuild.
 CODEC_VERSION = 5
 _ALLOWED = "app.initiatives.i8."
 
