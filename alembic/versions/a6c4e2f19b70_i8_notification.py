@@ -13,10 +13,8 @@ become a second notification, and the writer relies on that.
 
 Portable constructs only -- this creates identically on Postgres and Azure SQL.
 
-Revises ``f3a9c1e57d20``, this branch's head on 27-Oct-2026. origin/dev adds
-``d2f6b8a41c93`` on top of main's head, so when this branch is merged into dev
-the chain must be re-pointed there (see ``f3a9c1e57d20``) and this revision
-stays after it.
+Revises ``f3a9c1e57d20`` (I08 declaration columns), which itself follows dev's
+``d2f6b8a41c93``.
 
 Revision ID: a6c4e2f19b70
 Revises: f3a9c1e57d20

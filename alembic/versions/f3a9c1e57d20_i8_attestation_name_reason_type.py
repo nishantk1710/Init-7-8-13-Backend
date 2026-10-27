@@ -17,12 +17,12 @@ Additive only: three nullable columns. Nothing is rewritten, so the
 append-only guarantee and the UPDATE trigger on this table are untouched.
 Portable constructs only -- this applies identically on Postgres and Azure SQL.
 
-Revises ``e7b3d9a25c61``, main's head on 27-Oct-2026. origin/dev adds
-``d2f6b8a41c93`` on top of that head, so re-point ``down_revision`` at it when
-this branch is merged into dev.
+Revises ``d2f6b8a41c93`` (I07 KPI formula versions), dev's head on 27-Oct-2026.
+Written against main's ``e7b3d9a25c61`` and re-pointed when the branch was
+rebased onto dev, so the chain has one head.
 
 Revision ID: f3a9c1e57d20
-Revises: e7b3d9a25c61
+Revises: d2f6b8a41c93
 Create Date: 2026-10-27 12:00:00.000000
 
 """
@@ -34,7 +34,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'f3a9c1e57d20'
-down_revision: Union[str, Sequence[str], None] = 'e7b3d9a25c61'
+down_revision: Union[str, Sequence[str], None] = 'd2f6b8a41c93'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
