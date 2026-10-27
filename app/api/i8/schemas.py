@@ -1235,3 +1235,42 @@ class ExceptionEventRequest(I8Model):
     """What was said, or why the status moved. Required to close an item (a 422
     without it), optional to reopen one: a history of bare closes explains
     nothing later."""
+
+
+# --- The job an assistant session was for (27-Oct-2026) --------------------
+
+
+class JobMovementItem(I8Model):
+    posted_on: date | None = None
+    quantity: float | None = None
+
+
+class SessionJobReservation(I8Model):
+    """One job reservation line whose text names the session."""
+
+    reservation: str
+    item: str
+    order: str | None = None
+    material: str
+    plant: str | None = None
+    quantity: float | None = None
+    requirement_date: date | None = None
+    issued: list[JobMovementItem] = Field(default_factory=list)
+    returned: list[JobMovementItem] = Field(default_factory=list)
+    """Back to stock: posted on the receipt day, not when the unit came off."""
+
+
+class SessionJobRepair(I8Model):
+    """A repair PR or PO whose repair-order line carries the same reference."""
+
+    row_id: str
+    type: Literal["PR", "PO"]
+    document: str
+    item: str
+    status: str
+
+
+class SessionJobResponse(I8Model):
+    session_id: str
+    reservations: list[SessionJobReservation] = Field(default_factory=list)
+    repairs: list[SessionJobRepair] = Field(default_factory=list)

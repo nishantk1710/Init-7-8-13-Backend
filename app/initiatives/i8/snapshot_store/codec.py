@@ -58,6 +58,8 @@ from typing import Any
 # default -- but every PO row would lose its requester until the next rebuild.
 # The Snapshot gained repair_references (the R-reference on the repair order,
 # as plain tuples); a version-4 payload would link no declaration that way.
+# And session_jobs (session_jobs.SessionJob, the job reservation lines naming a
+# session, with their 261/262); a version-4 payload would show no job.
 CODEC_VERSION = 5
 _ALLOWED = "app.initiatives.i8."
 

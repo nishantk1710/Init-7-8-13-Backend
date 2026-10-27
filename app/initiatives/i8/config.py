@@ -126,6 +126,14 @@ class I8Settings(BaseSettings):
     dispatch quantity being counted twice.
     """
 
+    job_issue_movement_type: str = "261"
+    """Goods issue to the job's order: the part leaving the stores against the
+    job's reservation (session_jobs.py, 27-Oct-2026)."""
+
+    job_return_movement_type: str = "262"
+    """The reversal of that issue -- the part back to stock. Posted on the
+    receipt day, not when the unit left the machine (measured 26-Oct-2026)."""
+
     # --- Repair orders and repair PRs (27-Oct-2026) ----------------------
     #
     # A repair starts as a repair ORDER -- a reservation whose line for the

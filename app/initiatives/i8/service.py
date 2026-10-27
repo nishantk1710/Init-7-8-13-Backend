@@ -76,6 +76,7 @@ from app.initiatives.i8.register import (
 )
 from app.initiatives.i8.repair_references import load_repair_references
 from app.initiatives.i8.requisitions import RepairRequest, fetch_repair_order_lines, load_repair_requests
+from app.initiatives.i8.session_jobs import SessionJob, load_session_jobs
 from app.initiatives.i8.staged import staged_sources
 from app.initiatives.i8.universe import UniverseRow, UniverseStats, load_universe
 from app.models import IngestionRun
@@ -205,6 +206,11 @@ class Snapshot:
     (repair_references.py, 27-Oct-2026). How a declaration made in that visit
     covers the repair PR and the PO ordered from it."""
 
+    session_jobs: tuple[SessionJob, ...] = ()
+    """The job reservation lines whose text names an assistant session, with
+    their 261 issues and 262 returns (session_jobs.py, 27-Oct-2026). Served on
+    the session page; nothing else reads them."""
+
     def line(self, document: str, item: str) -> RepairLine | None:
         """One repair line by its (EBELN, EBELP) key."""
         return self._lines_by_key.get((document, item))
@@ -303,6 +309,8 @@ def build_snapshot(
             # Before the lines are let go: their text carries the R-reference.
             repair_references = load_repair_references(db, reservation_lines, cfg)
             del reservation_lines
+            # The job each assistant session was for: its own reservation line.
+            session_jobs = load_session_jobs(db, cfg, sources=sources)
             register_stats = replace(
                 register_stats,
                 open_repair_requests=request_stats.open_repair_requests,
@@ -337,6 +345,7 @@ def build_snapshot(
         source_loaded_at=source.loaded_at,
         repair_requests=repair_requests,
         repair_references=repair_references,
+        session_jobs=session_jobs,
     )
 
 

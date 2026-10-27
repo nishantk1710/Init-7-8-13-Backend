@@ -54,6 +54,10 @@ from app.api.i8.mappers import (
     universe_meta,
 )
 from app.api.i8.schemas import (
+    JobMovementItem,
+    SessionJobRepair,
+    SessionJobReservation,
+    SessionJobResponse,
     Attestation,
     AttestationRequest,
     AttestationResponse,
@@ -1668,4 +1672,86 @@ def _exception_response(
         owner=work.owner,
         still_detected=False,
         history=[exception_history_entry(e) for e in work.history],
+    )
+
+
+# --- The job an assistant session was for (27-Oct-2026) --------------------
+
+
+def _stripped(item: str | None) -> str:
+    item = (item or "").strip()
+    return item.lstrip("0") or item
+
+
+def session_job_repairs(snapshot: Snapshot, session_id: str, *, requests_served: bool) -> list[SessionJobRepair]:
+    """The repair PRs -- and the PO lines ordered from them -- whose repair
+    order's line text names this session (snapshot.repair_references). A PR
+    is listed only while the register serves PR rows, so its link opens."""
+    named = {
+        (banfn, _stripped(bnfpo))
+        for banfn, bnfpo, sid, _ in getattr(snapshot, "repair_references", ())
+        if sid == session_id
+    }
+    if not named:
+        return []
+    repairs = [
+        SessionJobRepair(
+            row_id=f"{line.purchasing_document}-{line.item}",
+            type="PO",
+            document=line.purchasing_document,
+            item=line.item,
+            status=line.repair_status,
+        )
+        for line in snapshot.lines
+        if line.pr_number and (line.pr_number, _stripped(line.pr_item)) in named
+    ]
+    if requests_served:
+        repairs += [
+            SessionJobRepair(
+                row_id=request.row_id,
+                type="PR",
+                document=request.purchase_requisition,
+                item=request.item,
+                status=PR_RAISED,
+            )
+            for request in snapshot.repair_requests
+            if (request.purchase_requisition, _stripped(request.item)) in named
+        ]
+    return repairs
+
+
+@router.get(
+    "/sessions/{session_id}/job",
+    response_model=SessionJobResponse,
+    summary="The job an assistant session was for: its reservation, 261/262, and repairs",
+)
+def get_session_job(
+    session_id: str, snapshot: SnapshotDep, cfg: SettingsDep, db: DbDep
+) -> SessionJobResponse:
+    """Read from the snapshot only: the job's reservation lines and their
+    movements were narrowed and read at build time (session_jobs.py), so this
+    route runs no SAP query at all -- one lookup that the session exists."""
+    from app.initiatives.i13.session_link import load_sessions
+
+    if not load_sessions(db, [session_id]):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such assistant session.")
+    reservations = [
+        SessionJobReservation(
+            reservation=job.reservation,
+            item=job.item,
+            order=job.order,
+            material=job.material,
+            plant=job.plant,
+            quantity=job.quantity,
+            requirement_date=job.requirement_date,
+            issued=[JobMovementItem(posted_on=m.posted_on, quantity=m.quantity) for m in job.issued],
+            returned=[JobMovementItem(posted_on=m.posted_on, quantity=m.quantity) for m in job.returned],
+        )
+        for job in getattr(snapshot, "session_jobs", ())
+        if job.session_id == session_id
+    ]
+    return SessionJobResponse(
+        session_id=session_id,
+        reservations=reservations,
+        repairs=session_job_repairs(snapshot, session_id, requests_served=cfg.repair_requests_enabled),
     )

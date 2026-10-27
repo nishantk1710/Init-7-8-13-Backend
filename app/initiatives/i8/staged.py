@@ -274,8 +274,30 @@ def _stage(db: Session, cfg: I8Settings) -> Sources:
     on_staged_po = "IN (SELECT ebeln FROM #i8s_docs)"
     stage("v_ekko", {"n_ekko": _narrow(db, "ekko", "n_ekko", f"{_key('purchasing_document')} {on_staged_po}")})
     stage("v_eket", {"n_eket": _narrow(db, "eket", "n_eket", f"{_key('purchasing_document')} {on_staged_po}")})
+    # Open repair PRs (27-Oct-2026). RESB: the repair orders' lines for the
+    # faulty unit -- the movement type is a setting written in as a literal
+    # (no bind parameter, see _materialise) and compared exactly, as the view
+    # passes the column through unchanged; 6,271 of the in-scope rows on the
+    # 15-Oct extract are 543 lines on 80-series parts. EBAN: the in-scope
+    # 80-series PR lines (12,369 then), which holds every PR those lines name
+    # and, later, the new-buy PRs too. requisitions.py applies the exact rules.
+    # Since 27-Oct-2026 every other 80-series line WITH TEXT is kept too: the
+    # job's reservation line names the assistant session there
+    # (session_jobs.py); the movement-type rule stays in Python. Staged ahead
+    # of MSEG, whose narrowing reads these reservation numbers.
+    stage("v_resb", {"n_resb": _narrow(
+        db, "resb", "n_resb",
+        f"{_in_scope()} AND {_series('material', cfg)} "
+        f"AND (movement_type = {_literal(cfg.repair_reservation_movement_type)} "
+        f"OR COALESCE(text, '') <> '')",
+    )})
+    # MSEG: the staged POs' movements, plus (27-Oct-2026) those posted against a
+    # staged reservation line with text -- the job's 261/262 (session_jobs.py).
+    # Readers filter by PO or by reservation, so neither sees the other's rows.
     stage("v_mseg", {"n_mseg": _narrow(
-        db, "mseg", "n_mseg", f"{_in_scope()} AND {_key('purchase_order')} {on_staged_po}"
+        db, "mseg", "n_mseg",
+        f"{_in_scope()} AND ({_key('purchase_order')} {on_staged_po} "
+        f"OR {_key('reservation')} IN (SELECT rsnum FROM {views['v_resb']} WHERE sgtxt IS NOT NULL))",
     )})
     # Vendor names are only ever looked up for an EKKO header's supplier.
     stage("v_lfa1", {"n_lfa1": _narrow(
@@ -301,18 +323,6 @@ def _stage(db: Session, cfg: I8Settings) -> Sources:
         for table in OPTIONAL_REPORT_TABLES
     })
 
-    # Open repair PRs (27-Oct-2026). RESB: the repair orders' lines for the
-    # faulty unit -- the movement type is a setting written in as a literal
-    # (no bind parameter, see _materialise) and compared exactly, as the view
-    # passes the column through unchanged; 6,271 of the in-scope rows on the
-    # 15-Oct extract are 543 lines on 80-series parts. EBAN: the in-scope
-    # 80-series PR lines (12,369 then), which holds every PR those lines name
-    # and, later, the new-buy PRs too. requisitions.py applies the exact rules.
-    stage("v_resb", {"n_resb": _narrow(
-        db, "resb", "n_resb",
-        f"{_in_scope()} AND movement_type = {_literal(cfg.repair_reservation_movement_type)} "
-        f"AND {_series('material', cfg)}",
-    )})
     stage("v_eban", {"n_eban": _narrow(db, "eban", "n_eban", f"{_in_scope()} AND {_series('material', cfg)}")})
 
     # Stock per condition (27-Oct-2026): only the configured source, in scope

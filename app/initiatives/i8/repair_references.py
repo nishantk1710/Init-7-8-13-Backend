@@ -64,6 +64,33 @@ def _naming_rows(rows: Iterable[Mapping], cfg: I8Settings) -> list[Mapping]:
     ]
 
 
+def sessions_named(
+    text: str,
+    material: str | None,
+    plant: str | None,
+    sessions: Mapping[str, SessionInfo],
+    request_lines: Mapping[str, list[RequestLine]],
+) -> list[tuple[str, str]]:
+    """(session_id, reference as found) for every session a reservation
+    line's text names for the line's own material and plant. Shared by the
+    repair order's 543 line and, since 27-Oct-2026, the job's 261 line
+    (session_jobs.py), so the two read the R-reference the same way."""
+    part = _part(material, plant)
+    named: list[tuple[str, str]] = []
+    for session_id in session_ids_in(text).valid:
+        info = sessions.get(session_id)
+        if info is not None and _part(info.material, info.plant) == part:
+            named.append((session_id, session_id))
+    for ref in request_refs_in(text).valid:
+        line = next(
+            (line for line in request_lines.get(ref.request_id, ()) if _part(line.material, line.plant) == part),
+            None,
+        )
+        if line is not None:
+            named.append((line.session_id, f"{ref.request_id}/{line.line_no}"))
+    return named
+
+
 def resolve_repair_references(
     rows: Iterable[Mapping],
     sessions: Mapping[str, SessionInfo],
@@ -79,26 +106,11 @@ def resolve_repair_references(
     cfg = cfg or get_i8_settings()
     found: dict[tuple[str, str, str], RepairReference] = {}
     for row in _naming_rows(rows, cfg):
-        part = _part(row.get("matnr"), row.get("werks"))
         banfn, bnfpo = row["banfn"], _item(row["bnfpo"])
-        for session_id in session_ids_in(row["sgtxt"]).valid:
-            info = sessions.get(session_id)
-            if info is not None and _part(info.material, info.plant) == part:
-                found.setdefault((banfn, bnfpo, session_id), (banfn, bnfpo, session_id, session_id))
-        for ref in request_refs_in(row["sgtxt"]).valid:
-            line = next(
-                (
-                    line
-                    for line in request_lines.get(ref.request_id, ())
-                    if _part(line.material, line.plant) == part
-                ),
-                None,
-            )
-            if line is not None:
-                found.setdefault(
-                    (banfn, bnfpo, line.session_id),
-                    (banfn, bnfpo, line.session_id, f"{ref.request_id}/{line.line_no}"),
-                )
+        for session_id, ref_text in sessions_named(
+            row["sgtxt"], row.get("matnr"), row.get("werks"), sessions, request_lines
+        ):
+            found.setdefault((banfn, bnfpo, session_id), (banfn, bnfpo, session_id, ref_text))
     return tuple(sorted(found.values()))
 
 
