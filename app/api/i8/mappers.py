@@ -181,7 +181,11 @@ def repair_chain(
         declared_at=declaration.declared_at if declaration else None,
         condition=declaration.condition if declaration else None,
         next_action=declaration.next_action if declaration else None,
-        requester=line.requisitioner,
+        # The department that raised the repair PR (27-Oct-2026), falling back
+        # to the PO line's own requisitioner when that PR was not read.
+        requester=line.pr_department or line.requisitioner,
+        requester_name=department_name(line.pr_department or line.requisitioner),
+        declaration_link=declaration.declaration_link if declaration else None,
         justification=repair_justification(justification) if justification else None,
         exceptions=(
             [line_exception(item) for item in exceptions] if exceptions is not None else None
@@ -198,6 +202,7 @@ def request_chain(
     new_unit_lead_time_days: int | None = None,
     criticality: str | None = None,
     exceptions: Sequence[ExceptionItem] | None = None,
+    declaration: DeclarationRow | None = None,
 ) -> RepairChain:
     """One register row for an open repair PR with no PO yet.
 
@@ -207,10 +212,11 @@ def request_chain(
     Stock, reorder point and criticality come from the universe exactly as for
     a PO row: they belong to the material at the plant, not to the document.
 
-    The declaration status is "Required" (FR-4 does ask for one), but phase 1
-    offers no way to declare against a PR, so the register never counts the
-    row as undeclared. ``exceptions`` is an empty list on the listing -- no
-    check reads PR rows -- and None on the detail page, as for a PO row.
+    ``declaration`` is the PR's queue row, when the caller has the view: since
+    27-Oct-2026 a PR can be declared on, and its status, who declared, when
+    and the condition come from it. Without one the status is "Required".
+    ``exceptions`` is an empty list on the listing and None on the detail
+    page, as for a PO row.
     """
     return RepairChain(
         id=request.row_id,
@@ -230,7 +236,13 @@ def request_chain(
         vendor=None,
         vendor_name=None,
         repair_status=PR_RAISED,
-        declaration_status="Required",
+        declaration_status=declaration.status if declaration else "Required",
+        declaration_id=declaration.declaration_id if declaration else None,
+        declared_by=declaration.declared_by if declaration else None,
+        declared_at=declaration.declared_at if declaration else None,
+        condition=declaration.condition if declaration else None,
+        next_action=declaration.next_action if declaration else None,
+        declaration_link=declaration.declaration_link if declaration else None,
         overdue_status=NOT_ORDERED,
         lead_time_status=NO_LEAD_TIME,
         days_open=request.days_open,
@@ -588,6 +600,8 @@ def declaration_item(row: DeclarationRow, cfg: I8Settings) -> DeclarationItem:
         ),
         plant=plant_reference(row.plant, cfg),
         requester=row.requester,
+        requester_name=row.requester_name,
+        repair_document_type=row.repair_document_type,
         related_repair_id=row.related_repair_id,
         vendor=row.vendor,
         vendor_name=row.vendor_name,
@@ -596,7 +610,8 @@ def declaration_item(row: DeclarationRow, cfg: I8Settings) -> DeclarationItem:
             SAPDocumentReference(
                 type="PO", document_number=row.repair_document, line=row.repair_item
             )
-            if row.repair_document
+            # A PR row's repair document is the PR, already served as ``pr``.
+            if row.repair_document and row.repair_document_type == "PO"
             else None
         ),
         status=row.status,

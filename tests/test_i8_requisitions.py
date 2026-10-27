@@ -307,6 +307,17 @@ class TestTheLoader:
         assert "from #i8s_v_resb" in db.calls[0][0]
         assert "from #i8s_v_eban" in db.calls[1][0]
 
+    def test_it_also_reads_the_po_lines_prs_and_hands_every_pr_back(self) -> None:
+        """27-Oct-2026: the register takes each PO line's PR date and
+        department from the same EBAN read."""
+        db = _Db([resb()], [eban(), eban("7")], [])
+        read: dict = {}
+        load_repair_requests(
+            db, CFG, reference_date=TODAY, candidates=[], also_read=["7", None], requisitions_out=read
+        )
+        assert sorted(db.calls[1][1]["requisitions"]) == ["2000029113", "7"]
+        assert sorted(read) == [("2000029113", "10"), ("7", "10")]
+
     def test_nothing_to_read_reads_nothing_more(self) -> None:
         db = _Db([], [], [])
         requests, stats = load_repair_requests(db, CFG, reference_date=TODAY, candidates=[ekpo()])

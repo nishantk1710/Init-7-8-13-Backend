@@ -45,7 +45,7 @@ UI collapses them.
 from __future__ import annotations
 
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
@@ -427,9 +427,40 @@ class AttestationCoverage:
     #: be able to say which it is.
     bound: frozenset[tuple[str, str]] = frozenset()
 
+    # --- since 27-Oct-2026: how each line is linked, and the repair PRs ----
+
+    #: (document, item) -> how the covering declaration was matched: ``BOUND``
+    #: (it names the line, or the repair PR the line was ordered from) or
+    #: ``WINDOW`` (material + plant + date window). ``REFERENCE`` -- the
+    #: R-reference typed on the repair order -- arrives with that link.
+    links: dict[tuple[str, str], str] = field(default_factory=dict)
+
+    #: (BANFN, BNFPO) -> the declaration covering an open repair PR with no PO
+    #: yet. Kept apart from ``covered``: a PR and a PO are different documents,
+    #: and the missing-declaration check reads PO lines only.
+    requests_covered: dict[tuple[str, str], RepairAttestation] = field(default_factory=dict)
+
+    #: (BANFN, BNFPO) for repair PRs checked and found with no declaration.
+    requests_uncovered: set[tuple[str, str]] = field(default_factory=set)
+
+    #: (BANFN, BNFPO) -> ``BOUND`` or ``WINDOW``, as ``links``.
+    request_links: dict[tuple[str, str], str] = field(default_factory=dict)
+
     @property
     def checked(self) -> int:
         return len(self.covered) + len(self.uncovered)
+
+
+#: How a declaration was matched to a repair line or PR.
+LINK_BOUND = "BOUND"
+LINK_REFERENCE = "REFERENCE"
+LINK_WINDOW = "WINDOW"
+
+
+def _item(item: str | None) -> str:
+    """An item number as keys compare it: '00010' and '10' are one item."""
+    item = (item or "").strip()
+    return item.lstrip("0") or item
 
 
 def _within_window(
@@ -551,6 +582,8 @@ def coverage(
     db: Session,
     lines,
     cfg: I8Settings | None = None,
+    *,
+    requests=(),
 ) -> AttestationCoverage:
     """Match every repair line to an attestation, in one pass.
 
@@ -577,6 +610,12 @@ def coverage(
     lines were raised between 2018 and 2026 while a declaration is stamped
     today, so every one of 5,155 lines read Required however many declarations
     were recorded against them.
+
+    Since 27-Oct-2026 a declaration may name a repair PR instead of a PO line.
+    It covers that PR's row while the PR has no PO, and the PO line ordered from
+    it once one exists (EKPO.BANFN/BNFPO) -- the same repair, a later document.
+    ``requests`` (the open repair PRs with no PO yet) are matched the same two
+    ways, dated by the PR date.
     """
     cfg = cfg or get_i8_settings()
     window = timedelta(days=cfg.attestation_window_days)
@@ -585,7 +624,9 @@ def coverage(
     # the handful of rows this control has ever produced -- there is nothing to
     # gain from narrowing it, and a per-line query is what this is avoiding.
     by_key: dict[tuple[str, str], list[RepairAttestation]] = {}
-    by_line: dict[tuple[str, str], RepairAttestation] = {}
+    # (type, document, item): a PO line and a PR are different documents
+    # whose numbers could in principle coincide.
+    by_line: dict[tuple[str, str, str], RepairAttestation] = {}
     for attestation in find(db, include_superseded=False):
         by_key.setdefault((attestation.material_id, attestation.plant), []).append(
             attestation
@@ -594,21 +635,31 @@ def coverage(
             # `find` returns newest first and nothing superseded, so the first
             # one seen for a line is the one in force.
             by_line.setdefault(
-                (attestation.repair_document, attestation.repair_item), attestation
+                (
+                    getattr(attestation, "repair_document_type", None) or "PO",
+                    attestation.repair_document,
+                    _item(attestation.repair_item),
+                ),
+                attestation,
             )
 
     covered: dict[tuple[str, str], RepairAttestation] = {}
     uncovered: set[tuple[str, str]] = set()
     bound: set[tuple[str, str]] = set()
+    links: dict[tuple[str, str], str] = {}
 
     for line in lines:
         # Checked BEFORE the plant guard: a declaration that names this line
-        # covers it whatever else is missing, because somebody stated outright
-        # that this is the line they assessed.
-        named = by_line.get(line.key)
+        # -- or the repair PR it was ordered from -- covers it whatever else is
+        # missing, because somebody stated outright that this is the repair
+        # they assessed.
+        named = by_line.get(("PO", line.purchasing_document, _item(line.item)))
+        if named is None and line.pr_number and line.pr_item:
+            named = by_line.get(("PR", line.pr_number, _item(line.pr_item)))
         if named is not None:
             covered[line.key] = named
             bound.add(line.key)
+            links[line.key] = LINK_BOUND
             continue
 
         if line.plant is None:
@@ -628,8 +679,34 @@ def coverage(
         )
         if match is not None:
             covered[line.key] = match
+            links[line.key] = LINK_WINDOW
         else:
             uncovered.add(line.key)
+
+    requests_covered: dict[tuple[str, str], RepairAttestation] = {}
+    requests_uncovered: set[tuple[str, str]] = set()
+    request_links: dict[tuple[str, str], str] = {}
+    for request in requests:
+        named = by_line.get(("PR", request.purchase_requisition, _item(request.item)))
+        if named is not None:
+            requests_covered[request.key] = named
+            request_links[request.key] = LINK_BOUND
+            continue
+        if request.plant is None:
+            continue
+        match = next(
+            (
+                a
+                for a in by_key.get((request.material_id, request.plant), [])
+                if _within_window(a.attested_at, request.requested_on, window)
+            ),
+            None,
+        )
+        if match is not None:
+            requests_covered[request.key] = match
+            request_links[request.key] = LINK_WINDOW
+        else:
+            requests_uncovered.add(request.key)
 
     logger.info(
         "I08 attestation coverage: %d of %d repair lines covered "
@@ -645,4 +722,8 @@ def coverage(
         uncovered=uncovered,
         window_days=cfg.attestation_window_days,
         bound=frozenset(bound),
+        links=links,
+        requests_covered=requests_covered,
+        requests_uncovered=requests_uncovered,
+        request_links=request_links,
     )

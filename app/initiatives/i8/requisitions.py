@@ -354,8 +354,17 @@ def load_repair_requests(
     candidates: Sequence[Mapping],
     sources: Sources | None = None,
     reservation_lines: Sequence[Mapping] | None = None,
+    also_read: Iterable[str] = (),
+    requisitions_out: dict[tuple[str, str], Mapping] | None = None,
 ) -> tuple[tuple[RepairRequest, ...], RequestStats]:
     """The open repair PRs, read in three batches and classified in Python.
+
+    ``also_read`` names more PRs to read in the same EBAN batch -- the repair
+    PO lines' own PRs (EKPO.BANFN), which are repair PRs too but may no longer
+    have an open 543 line naming them. ``requisitions_out``, when given, is
+    filled with every PR row read, keyed (BANFN, BNFPO), open or not: the
+    register takes each PO line's PR date and department from it
+    (27-Oct-2026), so EBAN is read once per build.
 
     ``candidates`` is the EKPO pull the snapshot build already holds (with
     ``banfn``, ``bnfpo``, ``loekz``): it carries every PO line that could point
@@ -374,7 +383,7 @@ def load_repair_requests(
         if reservation_lines is not None
         else fetch_repair_order_lines(db, cfg, sources=sources)
     )
-    named = sorted({row["banfn"] for row in resb_rows if row["banfn"]})
+    named = sorted({row["banfn"] for row in resb_rows if row["banfn"]} | {b for b in also_read if b})
     with timed_step("repair PRs (EBAN)"):
         eban_rows = (
             fetch_in_chunks(db, reading(_REQUISITION_SQL, sources), "requisitions", named) if named else []
@@ -392,6 +401,10 @@ def load_repair_requests(
             else {}
         )
 
+    if requisitions_out is not None:
+        requisitions_out.update(
+            ((row["banfn"], row["bnfpo"]), row) for row in eban_rows if row["banfn"] and row["bnfpo"]
+        )
     requests, stats = classify_repair_requests(
         resb_rows, eban_rows, back_pointers, headers, cfg, reference_date
     )

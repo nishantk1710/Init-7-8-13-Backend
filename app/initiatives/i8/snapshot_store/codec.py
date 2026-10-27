@@ -51,7 +51,12 @@ from typing import Any
 # document_type and requested_by: the purchases are now the new-buy PRs and the
 # direct PO lines, so a version-3 payload's acquisitions -- PO lines dated by an
 # ERDAT the live data does not carry -- would go on checking nothing.
-CODEC_VERSION = 4
+#
+# 5 since 27-Oct-2026 (phases 2-3 of the same branch; later shape changes on it
+# extend this note): RepairLine gained pr_requested_on and pr_department, its
+# repair PR's date and department. A version-4 payload would construct -- both
+# default -- but every PO row would lose its requester until the next rebuild.
+CODEC_VERSION = 5
 _ALLOWED = "app.initiatives.i8."
 
 

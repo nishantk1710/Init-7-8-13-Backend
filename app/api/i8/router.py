@@ -266,9 +266,11 @@ def _request_chain(
     cfg: I8Settings,
     lookup: dict[tuple[str, str | None], UniverseRow],
     exceptions: Sequence[ExceptionItem] | None = None,
+    view: AttestationView | None = None,
 ) -> RepairChain:
     """A repair PR's register row, with its material's stock position from the
-    universe -- the same lookups a PO row gets in :func:`_chain`."""
+    universe -- the same lookups a PO row gets in :func:`_chain` -- and its
+    declaration from the attestation view."""
     row = lookup.get((request.material_id, request.plant))
     return request_chain(
         request,
@@ -278,6 +280,7 @@ def _request_chain(
         new_unit_lead_time_days=row.planned_delivery_days if row else None,
         criticality=row.criticality if row else None,
         exceptions=exceptions,
+        declaration=_request_declaration(request, view) if view else None,
     )
 
 
@@ -305,6 +308,19 @@ def _declaration_status_of(line: RepairLine, view: AttestationView) -> str:
     status, or "Required" for a line the queue has no row for -- the default
     ``repair_chain`` applies."""
     row = view.declaration_by_line.get(line.key)
+    return row.status if row is not None else "Required"
+
+
+def _request_declaration(request: RepairRequest, view: AttestationView):
+    """A repair PR's declaration-queue row. Its ``related_repair_id`` is the
+    PR's row id ``PR-{BANFN}-{BNFPO}``, so the view's index holds it under
+    (``PR-{BANFN}``, BNFPO) -- apart from every PO line's key."""
+    return view.declaration_by_line.get(tuple(request.row_id.rsplit("-", 1)))
+
+
+def _request_declaration_status(request: RepairRequest, view: AttestationView) -> str:
+    """The same for a repair PR row (27-Oct-2026: PRs can be declared on)."""
+    row = _request_declaration(request, view)
     return row.status if row is not None else "Required"
 
 
@@ -472,7 +488,7 @@ def get_register(
         ),
     ),
     declaration_status: str | None = Query(
-        None, alias="declarationStatus", description="Required, Completed or Flagged"
+        None, alias="declarationStatus", description="Required, Completed, Flagged or Historical"
     ),
     aging_bucket: str | None = Query(None, alias="agingBucket"),
     stage_aging_bucket: str | None = Query(
@@ -596,9 +612,9 @@ def get_register(
             for line in lines
             if _declaration_status_of(line, view).lower() == wanted_declaration
         )
-        # A PR row's cell reads Required: nothing can be declared on it yet.
-        if wanted_declaration != "required":
-            requests = ()
+        requests = tuple(
+            r for r in requests if _request_declaration_status(r, view).lower() == wanted_declaration
+        )
     if stage_aging_bucket:
         bands = cfg.aging_band_boundaries_list
         lines = tuple(
@@ -638,13 +654,14 @@ def get_register(
         )
 
     # The quick views: what the screen's preset buttons select, counted over
-    # the filtered lines before one of them is applied. A PR row is in none of
-    # them but its own: nothing is ordered, so nothing is overdue or at the
-    # vendor, no check reads it, and it is not "undeclared" while there is no
-    # way to declare on it (phase 2). The PO tests below see PO lines only.
+    # the filtered lines before one of them is applied. A PR row is in its own
+    # and, since 27-Oct-2026, "undeclared": nothing is ordered, so nothing is
+    # overdue or at the vendor and no check reads it, but it can be declared on.
+    # "Undeclared" is Required only -- Historical is not waiting, and Flagged
+    # has its declaration. The PO tests below see PO lines only.
     view_tests = {
         "overdue": lambda line: line.overdue_status == "OVERDUE",
-        "undeclared": lambda line: _declaration_status_of(line, view) != "Completed",
+        "undeclared": lambda line: _declaration_status_of(line, view) == "Required",
         "atVendor": lambda line: line.repair_status == "At Vendor",
         "withExceptions": lambda line: bool(raised.get(line.key)),
         "notOrdered": lambda line: False,
@@ -652,7 +669,8 @@ def get_register(
     view_counts = RegisterViewCounts(
         all=len(lines) + len(requests),
         overdue=sum(1 for line in lines if view_tests["overdue"](line)),
-        undeclared=sum(1 for line in lines if view_tests["undeclared"](line)),
+        undeclared=sum(1 for line in lines if view_tests["undeclared"](line))
+        + sum(1 for r in requests if _request_declaration_status(r, view) == "Required"),
         at_vendor=sum(1 for line in lines if view_tests["atVendor"](line)),
         with_exceptions=sum(1 for line in lines if view_tests["withExceptions"](line)),
         not_ordered=len(requests),
@@ -666,7 +684,9 @@ def get_register(
                 detail=f"Unknown view {quick_view!r}; use one of {', '.join(view_tests)}.",
             )
         lines = tuple(line for line in lines if test(line))
-        if quick_view != "notOrdered":
+        if quick_view == "undeclared":
+            requests = tuple(r for r in requests if _request_declaration_status(r, view) == "Required")
+        elif quick_view != "notOrdered":
             requests = ()
 
     # PO rows first, then the PRs in the snapshot's order (PR date, number,
@@ -675,7 +695,7 @@ def get_register(
     page_rows, total = _paginate(rows, page, page_size)
     return RegisterResponse(
         items=[
-            _request_chain(row, cfg, lookup, exceptions=[])
+            _request_chain(row, cfg, lookup, exceptions=[], view=view)
             if isinstance(row, RepairRequest)
             else _chain(row, cfg, lookup, view, exceptions=raised.get(row.key, []))
             for row in page_rows
@@ -721,7 +741,7 @@ def get_repair_line(
                 detail=f"No open repair request {document}/{item}.",
             )
         return RepairDetail(
-            line=_request_chain(request, cfg, _stock_lookup(snapshot)),
+            line=_request_chain(request, cfg, _stock_lookup(snapshot), view=view),
             timeline=request_timeline(request, snapshot.reference_date),
         )
 
@@ -975,7 +995,7 @@ def get_declarations(
     status_filter: str | None = Query(
         None,
         alias="status",
-        description="Required, Completed or Flagged",
+        description="Required, Completed, Flagged or Historical",
     ),
     outstanding_only: bool = Query(
         False,

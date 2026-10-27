@@ -116,6 +116,8 @@ class FakeLine:
         self.pr_number = "PR1"
         self.pr_item = "10"
         self.requisitioner = "10316"
+        # The repair PR's department (27-Oct-2026); None = that PR not read.
+        self.pr_department = None
         # Read by overdue_repairs(). Default ON_TIME so every existing test
         # keeps testing what it was written to test.
         self.overdue_status = overdue_status
@@ -512,7 +514,9 @@ class TestDeclarationQueue:
             [line], self._coverage(covered={line.key: fake_attestation(recommendation)})
         )
         assert rows[0].status == "Flagged"
-        assert rows[0].is_outstanding
+        # Not outstanding since 27-Oct-2026: it has its declaration, and the
+        # finding is an exception rather than a wait for somebody to declare.
+        assert not rows[0].is_outstanding
         assert rows[0].condition == CONDITION_LABELS[Recommendation(recommendation)]
 
     def test_pending_is_never_emitted(self, fake_attestation) -> None:
@@ -529,7 +533,8 @@ class TestDeclarationQueue:
             uncovered={lines[1].key},
         )
         assert {r.status for r in build_queue(lines, cover)} == {"Completed", "Required"}
-        assert set(STATUS_NOTES) == {"Required", "Completed", "Flagged"}
+        # Historical (27-Oct-2026) is a label for pre-cutover rows, not a stage.
+        assert set(STATUS_NOTES) == {"Required", "Completed", "Flagged", "Historical"}
 
     def test_the_row_carries_no_source(self) -> None:
         """Manual / MRP-generated is not in FR-4, and SAP cannot answer it:

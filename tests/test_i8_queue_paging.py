@@ -224,7 +224,7 @@ def queues(factory):
             # What the register reads off the view: each line's queue row by
             # its key, and its justification (none here).
             declaration_by_line={
-                tuple(row.related_repair_id.split("-", 1)): row for row in state.declarations
+                tuple(row.related_repair_id.rsplit("-", 1)): row for row in state.declarations
             },
             justifications={},
         )
@@ -820,16 +820,18 @@ class TestQuickViews:
         assert overdue["total"] == 1
         assert overdue["viewCounts"] == everything["viewCounts"]
 
-    def test_not_declared_is_required_and_flagged(self, queues) -> None:
-        """A Flagged line was declared not repairable and sent anyway: it still
-        wants somebody, so it is not declared in the sense the button means."""
-        queues.lines = (repair_line(1), repair_line(2), repair_line(3))
+    def test_not_declared_is_required_only(self, queues) -> None:
+        """27-Oct-2026: a Flagged line has its declaration (its finding is an
+        exception), and a Historical one was raised before declarations were
+        asked for -- neither is waiting for somebody to declare."""
+        queues.lines = (repair_line(1), repair_line(2), repair_line(3), repair_line(4))
         queues.declarations = (
             declaration(1, status="Completed"),
             declaration(2, status="Flagged"),
+            declaration(4, status="Historical"),
         )
 
-        assert ids(listing(queues, view="undeclared")) == ["4500000002-10", "4500000003-10"]
+        assert ids(listing(queues, view="undeclared")) == ["4500000003-10"]
 
     def test_an_unknown_view_is_refused(self, queues) -> None:
         queues.lines = (repair_line(1),)
@@ -1000,8 +1002,11 @@ class TestRepairRequestsSwitchedOff:
         assert listing(queues, status="PR Raised")["total"] == 0
         assert listing(queues, q="2000029101")["total"] == 0
 
-    def test_a_po_row_says_it_is_a_po_line_and_names_no_department(self, queues) -> None:
-        """Department names on PO rows are phase 2."""
+    def test_a_po_row_says_it_is_a_po_line_and_names_no_unknown_department(
+        self, queues, monkeypatch
+    ) -> None:
+        """A department the list does not know is its code alone."""
+        monkeypatch.setattr("app.assistant.departments.name_for", lambda code: None)
         queues.lines = (repair_line(1),)
 
         row = listing(queues)["items"][0]
@@ -1198,7 +1203,9 @@ class TestRepairRequestFilters:
 
 
 class TestNotOrderedView:
-    def test_counted_alone_and_never_as_undeclared(self, queues) -> None:
+    def test_counted_alone_and_as_undeclared(self, queues) -> None:
+        """27-Oct-2026: a PR row can be declared on, so an undeclared one
+        counts as undeclared too."""
         queues.lines = (repair_line(1), repair_line(2, overdue_status="OVERDUE"))
         queues.exceptions = (exception(1),)
         serve_requests(queues, repair_request(1), repair_request(2))
@@ -1206,7 +1213,7 @@ class TestNotOrderedView:
         assert listing(queues)["viewCounts"] == {
             "all": 4,
             "overdue": 1,
-            "undeclared": 2,
+            "undeclared": 4,
             "atVendor": 2,
             "withExceptions": 1,
             "notOrdered": 2,
@@ -1217,7 +1224,7 @@ class TestNotOrderedView:
         serve_requests(queues, repair_request(1))
 
         assert ids(listing(queues, view="notOrdered")) == ["PR-2000029101-10"]
-        assert ids(listing(queues, view="undeclared")) == ["4500000001-10"]
+        assert ids(listing(queues, view="undeclared")) == ["4500000001-10", "PR-2000029101-10"]
         assert ids(listing(queues, view="atVendor")) == ["4500000001-10"]
         assert listing(queues, view="overdue")["total"] == 0
         assert listing(queues, view="withExceptions")["total"] == 0
@@ -1580,3 +1587,66 @@ class TestBoughtNewOnPurchaseRequests:
         queues.exceptions = (bought_new(1, repair_type="PR"), bought_new(2, repair_type="PO"))
 
         assert ids(listing(queues, withExceptions=True)) == ["4500000002-10"]
+
+
+class TestDeclarationsOnTheRegister:
+    """27-Oct-2026: PO rows name the department of their repair PR, PR rows
+    carry their own declaration, and every row says how it was linked."""
+
+    def test_a_po_row_names_the_department_of_its_repair_pr(self, queues, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "app.assistant.departments.name_for",
+            lambda code: {"10305": "Engineering"}.get(code or ""),
+        )
+        queues.lines = (repair_line(1, pr_department="10305"), repair_line(2))
+
+        rows = listing(queues)["items"]
+
+        # Line 2's PR was not read: its own requisitioner, as before.
+        assert [(r["requester"], r["requesterName"]) for r in rows] == [
+            ("10305", "Engineering"),
+            ("10316", None),
+        ]
+
+    def test_a_po_row_says_how_its_declaration_was_linked(self, queues) -> None:
+        queues.lines = (repair_line(1), repair_line(2))
+        queues.declarations = (
+            declaration(1, status="Completed", declaration_link="BOUND"),
+            declaration(2, status="Historical"),
+        )
+
+        rows = listing(queues)["items"]
+
+        assert [(r["declarationStatus"], r["declarationLink"]) for r in rows] == [
+            ("Completed", "BOUND"),
+            ("Historical", None),
+        ]
+
+    def test_a_pr_row_carries_its_declaration(self, queues) -> None:
+        serve_requests(queues, repair_request(1), repair_request(2))
+        queues.declarations = (
+            declaration(
+                1,
+                id="D-PR-2000029101-10",
+                related_repair_id="PR-2000029101-10",
+                repair_document_type="PR",
+                status="Completed",
+                declaration_id="att-1",
+                declared_by="A. Planner",
+                condition="Repairable",
+                declaration_link="WINDOW",
+            ),
+        )
+
+        body = listing(queues)
+        first, second = body["items"]
+
+        assert (first["declarationStatus"], first["declarationId"], first["declarationLink"]) == (
+            "Completed",
+            "att-1",
+            "WINDOW",
+        )
+        assert second["declarationStatus"] == "Required"
+        assert body["viewCounts"]["undeclared"] == 1
+        assert ids(listing(queues, view="undeclared")) == ["PR-2000029102-10"]
+        assert ids(listing(queues, declarationStatus="Completed")) == ["PR-2000029101-10"]

@@ -251,7 +251,7 @@ class RepairChain(I8Model):
     can disagree on the same row and neither overrides the other.
     """
 
-    declaration_status: Literal["Required", "Completed", "Flagged"] = (
+    declaration_status: Literal["Required", "Completed", "Flagged", "Historical"] = (
         "Required"
     )
     """W5.3 owns this. Served as the hook, never computed here."""
@@ -351,7 +351,14 @@ class RepairChain(I8Model):
     requester_name: str | None = None
     """The department name for ``requester``, when the department list has the
     code. Null when it does not -- the code is shown alone, never a guess.
-    Filled on PR rows only for now; PO rows gain it in phase 2."""
+    On a PO row ``requester`` is the department of the repair PR it was
+    ordered from (27-Oct-2026)."""
+
+    declaration_link: Literal["BOUND", "REFERENCE", "WINDOW"] | None = None
+    """How the covering declaration was matched: it names this line or its
+    repair PR (``BOUND``), the R-reference on the repair order
+    (``REFERENCE``), or material + plant + date window (``WINDOW``). Null when
+    nothing covers the row."""
 
 
 class RegisterMeta(I8Model):
@@ -653,8 +660,18 @@ class DeclarationItem(I8Model):
     plant: PlantReference | None = None
 
     requester: str | None = None
-    """EKPO.AFNAM, and a CODE rather than a name -- no person directory was
-    delivered. Displayed as a code, the same way an unnamed vendor is."""
+    """The department code that raised the repair PR (the PO row's PR, since
+    27-Oct-2026; the PO line's own requisitioner when that PR was not read).
+    A CODE rather than a name; ``requesterName`` names it when known."""
+
+    requester_name: str | None = None
+    """The department name for ``requester``. Null when unknown -- the code is
+    shown alone, never a guess."""
+
+    repair_document_type: Literal["PO", "PR"] = "PO"
+    """``PR`` for an open repair PR with no PO yet (id ``D-PR-{BANFN}-{BNFPO}``,
+    ``relatedRepairId`` ``PR-{BANFN}-{BNFPO}``, ``repairPo`` null). Declare on
+    it with ``repairDocumentType`` ``PR`` and ``pr`` as the document."""
 
     related_repair_id: str
     vendor: str | None = None
@@ -675,7 +692,7 @@ class DeclarationItem(I8Model):
     ``relatedRepairId`` is the same thing as one string. This is served
     alongside it so the declaration form can send FR-4's link to the repair PO
     as data rather than splitting that string on a hyphen."""
-    status: Literal["Required", "Completed", "Flagged"]
+    status: Literal["Required", "Completed", "Flagged", "Historical"]
     """No "Pending": that would mean "submitted, awaiting sign-off", and no such
     state exists -- there is no approval workflow in SAP, here or in the FRS."""
 
@@ -694,7 +711,8 @@ class DeclarationMeta(I8Model):
     total: int
     by_status: dict[str, int]
     outstanding: int
-    """Required + Flagged -- the rows that want somebody's attention."""
+    """Required only since 27-Oct-2026 -- the rows waiting for somebody to
+    declare. A Flagged row has its declaration; its finding is an exception."""
 
     attestation_window_days: int
     """The matching rule that produced these statuses. Never quote a count

@@ -69,6 +69,7 @@ from app.initiatives.i8.register import (
     RepairLine,
     fetch_candidate_lines,
     load_repair_lines,
+    with_requisition_details,
     open_repair_index,
     timed_step,
 )
@@ -271,6 +272,10 @@ def build_snapshot(
             reservation_lines = fetch_repair_order_lines(db, cfg, sources=sources)
             # Before the EKPO pull is let go: a PR is open only while no live
             # PO line points back to it, and those lines are in this pull.
+            # The same EBAN read also gives every PO line its PR's date and
+            # department (27-Oct-2026): the queue's requester is the
+            # department that asked for the repair.
+            requisitions: dict = {}
             repair_requests, request_stats = load_repair_requests(
                 db,
                 cfg,
@@ -278,7 +283,11 @@ def build_snapshot(
                 candidates=candidates,
                 sources=sources,
                 reservation_lines=reservation_lines,
+                also_read=(line.pr_number for line in lines if line.pr_number),
+                requisitions_out=requisitions,
             )
+            lines = with_requisition_details(lines, requisitions)
+            del requisitions
             # The new-buy PRs, and the direct PO lines in the same pull.
             acquisitions = load_new_acquisitions(
                 db, cfg, candidates=candidates, reservation_lines=reservation_lines, sources=sources
@@ -698,7 +707,9 @@ def build_attestation_view(
     """Match every repair line against the attestation table, and every new
     purchase against the justifications. Always does the work."""
     cfg = cfg or get_i8_settings()
-    cover = attestation_coverage(db, snapshot.lines, cfg)
+    # The open repair PRs are declared on only while the register serves them.
+    requests = snapshot.repair_requests if cfg.repair_requests_enabled else ()
+    cover = attestation_coverage(db, snapshot.lines, cfg, requests=requests)
     justifications = load_justifications(db)
     exceptions, exception_stats = build_exceptions(
         snapshot.lines,
@@ -717,7 +728,14 @@ def build_attestation_view(
     logger.info("I08 register justifications: %s", justification_counts(by_line))
     return AttestationView(
         coverage=cover,
-        declarations=tuple(build_queue(snapshot.lines, cover)),
+        declarations=tuple(
+            build_queue(
+                snapshot.lines,
+                cover,
+                requests=requests,
+                cutover=cfg.attestation_cutover_date_value,
+            )
+        ),
         exceptions=tuple(exceptions),
         exception_stats=exception_stats,
         built_at=datetime.now(timezone.utc),

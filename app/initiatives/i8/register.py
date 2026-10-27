@@ -69,7 +69,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 
@@ -195,6 +195,18 @@ class RepairLine:
     days_in_current_stage: int | None
     days_remaining: int | None
     aging_bucket: str | None
+
+    # --- the repair PR this line was ordered from (27-Oct-2026) -----------
+    pr_requested_on: date | None = None
+    """EBAN.BADAT of ``pr_number``/``pr_item``: when the repair was asked for.
+    Filled by the snapshot build from the PRs the requisition loader reads
+    (:func:`with_requisition_details`); None when the PR was not read, never
+    guessed from the PO date."""
+
+    pr_department: str | None = None
+    """EBAN.AFNAM of that PR: the 5-digit department code that raised the
+    repair, the same code a PR row shows. The queue's requester. A code; the
+    name is looked up where it is served."""
 
     @property
     def is_overdue(self) -> bool:
@@ -843,3 +855,28 @@ def open_repair_index(
         count, qty = index.get(key, (0, ZERO))
         index[key] = (count + 1, qty + line.qty_under_repair)
     return index
+
+def with_requisition_details(
+    lines: Sequence[RepairLine],
+    requisitions: Mapping[tuple[str, str], Mapping],
+) -> list[RepairLine]:
+    """Each line with its repair PR's date and department filled in.
+
+    ``requisitions`` maps (BANFN, BNFPO) to a PR row with ``badat`` and
+    ``afnam`` -- the rows the requisition loader reads anyway (27-Oct-2026), so
+    EBAN is not read twice. A line whose PR is not among them keeps None: the
+    PR was not read, which is not the same as "no department".
+    """
+    out: list[RepairLine] = []
+    for line in lines:
+        pr = (
+            requisitions.get((line.pr_number, line.pr_item))
+            if line.pr_number and line.pr_item
+            else None
+        )
+        out.append(
+            replace(line, pr_requested_on=pr["badat"], pr_department=pr["afnam"])
+            if pr is not None
+            else line
+        )
+    return out
