@@ -277,8 +277,13 @@ def record(
     cfg: I8Settings | None = None,
     known_materials: Collection[str] | None = None,
     session_id: str | None = None,
+    commit: bool = True,
 ) -> RepairAttestation:
     """Store one attestation and return it. Never updates anything.
+
+    ``commit=False`` only flushes: the assistant records a declaration in the
+    same transaction as the turn that answered it (27-Oct-2026), so a request
+    that fails on a later line leaves neither behind.
 
     ``attestor`` is passed separately from the draft on purpose: it comes from
     the authenticated caller, not from the request body. ``session_id`` is the
@@ -348,8 +353,11 @@ def record(
         amendment_reason=clean.amendment_reason,
     )
     db.add(attestation)
-    db.commit()
-    db.refresh(attestation)
+    if commit:
+        db.commit()
+        db.refresh(attestation)
+    else:
+        db.flush()
 
     logger.info(
         "I08 attestation %s recorded: %s at %s, %s, by %s%s",

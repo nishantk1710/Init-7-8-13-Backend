@@ -20,8 +20,12 @@ What each flow asks
 **I08** -- a repair may already be open for this part.
 
     assessment + "do you still want to buy new?"
-      -> no  : done, the advice was taken
-      -> yes : why? (FR-7 justification) -> done
+      -> no  : (declare?) -> done, the advice was taken
+      -> yes : why? (FR-7 justification) -> (declare?) -> done
+    no unit at all : (declare?) -> done
+
+    (declare?) = "are you taking out a faulty unit that should go for
+    repair?" -> yes : the FR-4 declaration form -> done; no -> done.
 
 **I13** -- this part is planned on demand, so what is the plan?
 
@@ -53,12 +57,15 @@ from typing import Any, Mapping, Sequence
 
 from app.assistant.router import Flow
 from app.assistant.steps import Choice, Field, FieldType, Step, StepKind
+from app.initiatives.i8.config import get_i8_settings
 from app.initiatives.i13.quantity import QuantitySuggestion
 
 # --- Step ids. Stable across wording changes; see Step.id. -----------------
 
 I08_ASSESSMENT = "i08_assessment"
 I08_JUSTIFICATION = "i08_justification"
+I08_DECLARE_CHOICE = "i08_declare_choice"
+I08_DECLARATION = "i08_declaration"
 I08_DONE = "i08_done"
 
 I13_ASSESSMENT = "i13_assessment"
@@ -74,6 +81,17 @@ PROCEED = "proceed"
 NOT_NEEDED = "not_needed"
 ACCEPT_SUGGESTED = "accept_suggested"
 KEEP_REQUESTED = "keep_requested"
+DECLARE = "declare"
+SKIP_DECLARATION = "skip"
+
+#: The three assessments, as the declaration form labels them. Values are
+#: ``attestation.Recommendation``'s; the labels match the register's
+#: ``DeclarationCondition`` so the same unit reads the same on both screens.
+RECOMMENDATION_LABELS: tuple[tuple[str, str], ...] = (
+    ("REPAIRABLE", "Repairable"),
+    ("BEYOND_ECONOMICAL_REPAIR", "Beyond economical repair"),
+    ("SCRAP", "Scrap"),
+)
 
 #: What recording "I want a new one" does, said under the I08 justification
 #: prompt. The frontend shows the same text under its request builder
@@ -144,6 +162,92 @@ def _terminal(step_id: str, session_id: str, message: str) -> Step:
 # --- Initiative 08 ---------------------------------------------------------
 
 
+def fault_category_choices() -> tuple[Choice, ...]:
+    """The configured fault categories, labelled as the request builder shows them."""
+    return tuple(
+        Choice(value=category, label=category.replace("_", " ").title())
+        for category in get_i8_settings().fault_category_list
+    )
+
+
+def recommendation_choices() -> tuple[Choice, ...]:
+    return tuple(Choice(value=value, label=label) for value, label in RECOMMENDATION_LABELS)
+
+
+def _declaration_or_end(
+    *,
+    session_id: str,
+    answers: Mapping[str, dict[str, Any]],
+    ending: str,
+    facts: dict[str, Any] | None = None,
+) -> Step:
+    """Option B (27-Oct-2026): declare the faulty unit in the same visit.
+
+    The person taking a unit out of the machine is the one standing in front
+    of it, and this is the one moment the platform reliably has them. Asked on
+    every I08 path -- whether or not a unit already exists says nothing about
+    whether the one coming off is repairable. ``ending`` is the terminal text
+    the path would have given without the question, so skipping changes nothing.
+    """
+    if I08_DECLARE_CHOICE not in answers:
+        return Step(
+            id=I08_DECLARE_CHOICE,
+            kind=StepKind.CHOICE,
+            prompt="Are you taking out a faulty unit that should go for repair?",
+            choices=(
+                Choice(
+                    value=DECLARE,
+                    label="Yes -- declare it now",
+                    description="Record its condition, so the repair can be checked against it.",
+                ),
+                Choice(value=SKIP_DECLARATION, label="No"),
+            ),
+            # Only on the first step of a conversation with nothing to
+            # challenge: elsewhere the card is already a few lines up.
+            facts=facts,
+        )
+    if answers[I08_DECLARE_CHOICE].get("choice") == DECLARE and I08_DECLARATION not in answers:
+        return Step(
+            id=I08_DECLARATION,
+            kind=StepKind.FORM,
+            prompt="Describe the faulty unit you are taking out.",
+            fields=(
+                Field(name="quantity", label="Quantity", type=FieldType.NUMBER, default=1),
+                Field(
+                    name="condition_description",
+                    label="Condition",
+                    type=FieldType.TEXTAREA,
+                    help_text="What is wrong with it, as you see it.",
+                ),
+                Field(
+                    name="fault_category",
+                    label="Fault",
+                    type=FieldType.SELECT,
+                    options=fault_category_choices(),
+                ),
+                Field(
+                    name="recommendation",
+                    label="Assessment",
+                    type=FieldType.SELECT,
+                    options=recommendation_choices(),
+                ),
+                Field(
+                    name="attestor_name",
+                    label="Your name (typed, not a sign-in)",
+                    type=FieldType.TEXT,
+                ),
+                Field(
+                    name="evidence_reference",
+                    label="Evidence reference",
+                    type=FieldType.TEXT,
+                    required=False,
+                    help_text="A photo or report reference, if there is one.",
+                ),
+            ),
+        )
+    return _terminal(I08_DONE, session_id, ending)
+
+
 def _i08(
     *,
     session_id: str,
@@ -160,10 +264,14 @@ def _i08(
             # Nothing to challenge. Going ahead is the right answer, so asking
             # "are you sure?" would be theatre -- and a question with only one
             # sensible answer trains people to click through the next one.
-            return _terminal(
-                I08_DONE,
-                session_id,
-                f"{headline} Nothing here suggests holding off, so go ahead.",
+            #
+            # The declaration question is still asked, and as the first step
+            # it carries the card the terminal used to sit under.
+            return _declaration_or_end(
+                session_id=session_id,
+                answers=answers,
+                ending=f"{headline} Nothing here suggests holding off, so go ahead.",
+                facts=facts,
             )
 
         return Step(
@@ -201,10 +309,10 @@ def _i08(
         )
 
     if answers[I08_ASSESSMENT].get("choice") == USE_EXISTING:
-        return _terminal(
-            I08_DONE,
-            session_id,
-            "Recorded -- you are using the unit that already exists rather than "
+        return _declaration_or_end(
+            session_id=session_id,
+            answers=answers,
+            ending="Recorded -- you are using the unit that already exists rather than "
             "buying another. That decision is what this platform exists to "
             "capture.",
         )
@@ -232,11 +340,13 @@ def _i08(
             # question above is still visible a few lines up.
         )
 
-    return _terminal(
-        I08_DONE,
-        session_id,
-        "Recorded, with your reason. Nothing is blocked -- the reservation is "
-        "yours to make.",
+    return _declaration_or_end(
+        session_id=session_id,
+        answers=answers,
+        ending=(
+            "Recorded, with your reason. Nothing is blocked -- the reservation is "
+            "yours to make."
+        ),
     )
 
 
