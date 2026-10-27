@@ -19,6 +19,7 @@ from app.core.config import get_settings
 from app.initiatives.i8 import service
 from app.initiatives.i8.acquisitions import NewAcquisition
 from app.initiatives.i8.register import RegisterStats
+from app.initiatives.i8.requisitions import RepairRequest
 from app.initiatives.i8.snapshot_store import codec, lifecycle, store
 from app.initiatives.i8.universe import UniverseStats
 from tests.assistant.conftest import repair_line, universe_row
@@ -38,6 +39,8 @@ def _snapshot(**overrides) -> service.Snapshot:
             open_lines=2,
             candidates_scanned=805336,
             excluded_delivery_completed_lines=644,
+            open_repair_requests=1,
+            requisitions_excluded_live_po=2296,
         ),
         universe=(universe_row(), universe_row(plant="1500", reorder_point=Decimal("2.5"), criticality=None)),
         universe_stats=UniverseStats(rows=2, materials=1, plants=2, by_source={"mara": 1, "ekpo": 1}),
@@ -46,6 +49,26 @@ def _snapshot(**overrides) -> service.Snapshot:
         ),
         source_fingerprint="raw_ekpo:7:2026-10-01 05:00:00|date:2026-10-01",
         source_loaded_at=datetime(2026, 10, 1, 5, 0, tzinfo=timezone.utc),
+        repair_requests=(
+            RepairRequest(
+                purchase_requisition="2000029113",
+                item="10",
+                material_id="8000003325",
+                plant="1300",
+                description="BEARING ASSEMBLY",
+                quantity=Decimal("1.000"),
+                unit="EA",
+                requested_on=date(2026, 9, 1),
+                need_date=None,
+                department="10305",
+                requisition_status="N",
+                document_type="ZMNP",
+                repair_order="940000004981",
+                reservation="1916164",
+                days_open=30,
+                aging_bucket="16-30",
+            ),
+        ),
     )
     fields.update(overrides)
     return service.Snapshot(**fields)
@@ -64,6 +87,22 @@ def test_the_codec_round_trips_a_snapshot_exactly() -> None:
     assert str(back.lines[1].net_price) == "1.000"
     assert back.universe_stats.by_source == {"mara": 1, "ekpo": 1}
     assert back.line(*snapshot.lines[0].key) == snapshot.lines[0]
+    # The open repair PRs (codec 4, 27-Oct-2026): kept apart from the PO lines,
+    # digits and all, and found by their own key.
+    assert isinstance(back.repair_requests, tuple)
+    assert isinstance(back.repair_requests[0], RepairRequest)
+    assert str(back.repair_requests[0].quantity) == "1.000"
+    assert back.request("2000029113", "10") == snapshot.repair_requests[0]
+    assert back.request("2000029113", "20") is None
+    assert back.register_stats.requisitions_excluded_live_po == 2296
+
+
+def test_a_snapshot_without_repair_requests_still_round_trips() -> None:
+    """The field defaults, so a snapshot built with none is still exact."""
+    snapshot = _snapshot(repair_requests=())
+    back = codec.decode(codec.encode(snapshot))
+    assert back == snapshot
+    assert back.request("2000029113", "10") is None
 
 
 def test_the_codec_constructs_only_i08_classes() -> None:

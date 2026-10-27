@@ -102,8 +102,9 @@ ZERO = Decimal(0)
 # union's other members are never emitted:
 #
 #   "PR Raised"           the register is built from PO lines, so a PO always
-#                         exists by construction. A requisition with no PO yet
-#                         is W5.3/W5.5 territory, not this read model.
+#                         exists by construction. A repair PR with no PO yet
+#                         is found by requisitions.py (27-Oct-2026), which
+#                         owns that status (requisitions.PR_RAISED).
 #   "Received", "Closed"  not since 19-Oct-2026: a line SAP has closed is not
 #                         in the register, and goods receipts are not read.
 #
@@ -680,6 +681,26 @@ class RegisterStats:
     """Item-category-3 lines on a request for quotation (EKKO.BSART), left out
     of every figure above: an RFQ orders nothing. Counted only when not already
     deleted, closed or blocked: 1 on the 15-Oct data."""
+
+    # --- open repair PRs with no PO yet (requisitions.py, 27-Oct-2026) ---
+    #
+    # Not in any figure above: those count PO lines only. Filled by the
+    # snapshot build from requisitions.RequestStats, whether or not the PRs are
+    # served (I8_REPAIR_REQUESTS_ENABLED). Each excluded PR is counted once,
+    # under the first of these it fails, in this order.
+
+    open_repair_requests: int = 0
+    """Repair PRs still open with no PO yet: 108 on the 15-Oct data."""
+
+    requisitions_excluded_deleted: int = 0
+    """Repair PRs SAP has deleted (EBAN.LOEKZ)."""
+
+    requisitions_excluded_live_po: int = 0
+    """Repair PRs a live PO line points back to -- these are in the register
+    as PO lines once open, or were closed there."""
+
+    requisitions_excluded_reservation_closed: int = 0
+    """Repair PRs whose repair-order lines are all deleted or final-issued."""
 
 
 def load_repair_lines(

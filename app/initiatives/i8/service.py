@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 
 from sqlalchemy import func, select
@@ -72,6 +72,7 @@ from app.initiatives.i8.register import (
     open_repair_index,
     timed_step,
 )
+from app.initiatives.i8.requisitions import RepairRequest, load_repair_requests
 from app.initiatives.i8.staged import staged_sources
 from app.initiatives.i8.universe import UniverseRow, UniverseStats, load_universe
 from app.models import IngestionRun
@@ -185,9 +186,24 @@ class Snapshot:
     source_loaded_at: datetime | None = None
     """When the newest of those tables last loaded successfully."""
 
+    repair_requests: tuple[RepairRequest, ...] = ()
+    """Open repair PRs with no PO yet (requisitions.py), ordered by PR date.
+    Kept apart from ``lines`` on purpose: every reader of ``lines`` -- the
+    declaration queue, the exceptions, the assistant -- means PO lines, and a
+    repair with no PO yet is served only where it is asked for. Always built;
+    ``I8_REPAIR_REQUESTS_ENABLED`` decides only whether it is served."""
+
     def line(self, document: str, item: str) -> RepairLine | None:
         """One repair line by its (EBELN, EBELP) key."""
         return self._lines_by_key.get((document, item))
+
+    def request(self, purchase_requisition: str, item: str) -> RepairRequest | None:
+        """One open repair PR by its (BANFN, BNFPO) key."""
+        cached = self.__dict__.get("_request_index")
+        if cached is None:
+            cached = {request.key: request for request in self.repair_requests}
+            object.__setattr__(self, "_request_index", cached)
+        return cached.get((purchase_requisition, item))
 
     def material(self, material_id: str) -> tuple[UniverseRow, ...]:
         """Every plant row for one material. Empty if it is not repairable."""
@@ -248,6 +264,18 @@ def build_snapshot(
                 db, cfg, today=reference_date, candidates=candidates, sources=sources
             )
             acquisitions = find_new_acquisitions(candidates, cfg)
+            # Before the EKPO pull is let go: a PR is open only while no live
+            # PO line points back to it, and those lines are in this pull.
+            repair_requests, request_stats = load_repair_requests(
+                db, cfg, reference_date=reference_date, candidates=candidates, sources=sources
+            )
+            register_stats = replace(
+                register_stats,
+                open_repair_requests=request_stats.open_repair_requests,
+                requisitions_excluded_deleted=request_stats.requisitions_excluded_deleted,
+                requisitions_excluded_live_po=request_stats.requisitions_excluded_live_po,
+                requisitions_excluded_reservation_closed=request_stats.requisitions_excluded_reservation_closed,
+            )
             del candidates
             with timed_step("repairable universe"):
                 universe, universe_stats = load_universe(
@@ -256,9 +284,10 @@ def build_snapshot(
 
     elapsed = time.monotonic() - started
     logger.info(
-        "I08 snapshot built in %.2fs: %d open repair lines, %d universe rows",
+        "I08 snapshot built in %.2fs: %d open repair lines, %d open repair PRs, %d universe rows",
         elapsed,
         len(lines),
+        len(repair_requests),
         len(universe),
     )
     return Snapshot(
@@ -272,6 +301,7 @@ def build_snapshot(
         acquisitions=tuple(acquisitions),
         source_fingerprint=source.fingerprint,
         source_loaded_at=source.loaded_at,
+        repair_requests=repair_requests,
     )
 
 

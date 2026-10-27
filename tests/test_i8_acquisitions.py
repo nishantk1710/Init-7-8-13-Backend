@@ -153,7 +153,7 @@ class TestDeletedAndBlockedLines:
 
     def test_no_loekz_or_item_category_literal_in_the_logic(self) -> None:
         """Same discipline as the repair convention: the values are settings."""
-        for name in ("register.py", "acquisitions.py"):
+        for name in ("register.py", "acquisitions.py", "requisitions.py"):
             tree = ast.parse(
                 (pathlib.Path("app/initiatives/i8") / name).read_text(encoding="utf-8")
             )

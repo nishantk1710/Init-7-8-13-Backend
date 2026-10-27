@@ -38,7 +38,14 @@ from typing import Any
 # payload would still construct, the field has a default -- but it was built
 # before RFQs were left out, and would go on serving the RFQ line as open until
 # the source data next changed. Raising the version makes the deploy rebuild.
-CODEC_VERSION = 3
+#
+# 4 since 27-Oct-2026 (the I08 complete-flow branch; later items on it extend
+# this note rather than raising the version again): the Snapshot gained
+# repair_requests (requisitions.RepairRequest, the open repair PRs with no PO
+# yet) and RegisterStats their counts. A version-3 payload would construct --
+# both default -- but would serve no repair PRs until the source data next
+# changed.
+CODEC_VERSION = 4
 _ALLOWED = "app.initiatives.i8."
 
 

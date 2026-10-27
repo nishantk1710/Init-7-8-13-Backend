@@ -78,9 +78,11 @@ logger = get_logger(__name__)
 
 #: The views a snapshot build reads. Not v_ekbe since 19-Oct-2026: the
 #: register follows SAP's "Delivery completed" flag, not goods receipts.
+#: v_resb and v_eban since 27-Oct-2026: the open repair PRs (requisitions.py).
 VIEWS: tuple[str, ...] = (
     "v_ekpo", "v_ekko", "v_eket", "v_mseg", "v_lfa1",
     "v_mara", "v_makt", "v_marc", "v_mard", "v_zmm065",
+    "v_resb", "v_eban",
 )
 
 
@@ -290,6 +292,20 @@ def _stage(db: Session, cfg: I8Settings) -> Sources:
         for table in OPTIONAL_REPORT_TABLES
     })
 
+    # Open repair PRs (27-Oct-2026). RESB: the repair orders' lines for the
+    # faulty unit -- the movement type is a setting written in as a literal
+    # (no bind parameter, see _materialise) and compared exactly, as the view
+    # passes the column through unchanged; 6,271 of the in-scope rows on the
+    # 15-Oct extract are 543 lines on 80-series parts. EBAN: the in-scope
+    # 80-series PR lines (12,369 then), which holds every PR those lines name
+    # and, later, the new-buy PRs too. requisitions.py applies the exact rules.
+    stage("v_resb", {"n_resb": _narrow(
+        db, "resb", "n_resb",
+        f"{_in_scope()} AND movement_type = {_literal(cfg.repair_reservation_movement_type)} "
+        f"AND {_series('material', cfg)}",
+    )})
+    stage("v_eban", {"n_eban": _narrow(db, "eban", "n_eban", f"{_in_scope()} AND {_series('material', cfg)}")})
+
     # What the register reports as scanned: v_ekpo's rows with a PO and an
     # item, counted over the unfiltered source with the view's own predicates.
     scanned = int(db.execute(text(
@@ -323,7 +339,7 @@ def staged_sources(db: Session, cfg: I8Settings, *, enabled: bool = True) -> Ite
         for table in [*sources.views.values(), "#i8s_docs", "#i8s_mats"]:
             db.execute(text(f"DROP TABLE IF EXISTS {table}"))
         for name in ("ekpo", "ekko", "eket", "mseg", "lfa1", "mara", "makt", "mard", "marc",
-                     "criticality_current"):
+                     "criticality_current", "resb", "eban"):
             db.execute(text(f"DROP TABLE IF EXISTS #i8b_{name}"))
 
 
