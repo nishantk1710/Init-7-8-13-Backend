@@ -218,7 +218,9 @@ def queues(factory):
             declarations=state.declarations,
             exceptions=state.exceptions,
             exception_stats=stats_of(state.exceptions),
-            coverage=SimpleNamespace(window_days=30),
+            # No declaration covers any line here: the PO detail route reads
+            # ``covered`` for the timeline's declaration stage.
+            coverage=SimpleNamespace(window_days=30, covered={}),
             # What the register reads off the view: each line's queue row by
             # its key, and its justification (none here).
             declaration_by_line={
@@ -1280,6 +1282,26 @@ class TestRepairRequestDetail:
 
         assert queues.client.get(f"{REGISTER}/PR-2000029199/10").status_code == 404
         assert queues.client.get(f"{REGISTER}/PR-2000029101/20").status_code == 404
+
+
+class TestRepairLineDetail:
+    def test_the_timeline_has_no_removed_from_machine_stage(self, queues) -> None:
+        # Dropped 27-Oct-2026 (ruled 26-Oct): SAP has no record of a unit
+        # coming off a machine that names the repair PO, so the stage was
+        # blank on every line.
+        queues.lines = (repair_line(1, dispatched_at=date(2026, 9, 5)),)
+
+        response = queues.client.get(f"{REGISTER}/4500000001/10")
+
+        assert response.status_code == 200
+        timeline = response.json()["timeline"]
+        assert [(s["stage"], s["label"]) for s in timeline] == [
+            ("attested", "Condition declared"),
+            ("po_raised", "Repair PO raised"),
+            ("dispatched", "Sent to vendor"),
+            ("at_vendor", "At vendor"),
+        ]
+        assert not any("machine" in s["evidence"] for s in timeline)
 
 
 ATTESTATIONS = "/api/i8/attestations"

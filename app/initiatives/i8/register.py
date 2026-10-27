@@ -56,10 +56,12 @@ What the data will and will not support
 ---------------------------------------
 Stages 3 to 5 of the lifecycle (PO raised, dispatched, at vendor) can be
 assembled per PO line. Stage 6, received, is not shown: a line in the register
-has not been closed, and a closed one is not in it. Stages 1 and 2 -- removal
-from the machine (MSEG 261 / 201) and the condition attestation -- cannot: those
-movements carry no PO reference whatsoever, and W5.3 owns the attestation. They
-are deliberately left out of v1 rather than linked by a guess.
+has not been closed, and a closed one is not in it. Removal from the machine
+(MSEG 261 / 201) is not a stage at all since 27-Oct-2026 (ruled 26-Oct): those
+movements carry no PO reference whatsoever, so SAP has no record of removal
+that could be tied to a line, and the stage was dropped rather than linked by a
+guess. The condition declaration comes from this platform's own attestations,
+not from SAP.
 """
 
 from __future__ import annotations

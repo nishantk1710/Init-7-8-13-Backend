@@ -402,18 +402,17 @@ class TestRegisterEndpoint:
         document, _, item = first["id"].rpartition("-")
         body = client.get(f"{REGISTER}/{document}/{item}").json()
         stages = [stage["stage"] for stage in body["timeline"]]
-        # No "received": every line served is open in SAP.
+        # No "received": every line served is open in SAP. No "removed"
+        # either since 27-Oct-2026: SAP has no record of removal.
         assert stages == [
-            "removed",
             "attested",
             "po_raised",
             "dispatched",
             "at_vendor",
         ]
-        # The stages the data cannot support say so, rather than being absent.
-        removed = body["timeline"][0]
-        assert removed["occurredAt"] is None
-        assert "does not name the repair PO" in removed["evidence"]
+        # The PO stage names the repair PO it was built from.
+        po_raised = body["timeline"][1]
+        assert f"Repair PO {document}/" in po_raised["evidence"]
 
     def test_an_unknown_line_is_404(self) -> None:
         assert client.get(f"{REGISTER}/9999999999/10").status_code == 404

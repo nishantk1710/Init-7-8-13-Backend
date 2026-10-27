@@ -330,30 +330,24 @@ def timeline(
 ) -> list[LifecycleStage]:
     """The lifecycle, stage by stage, with the evidence for each.
 
-    Stage 1 -- removal from the machine -- is present as explicitly unavailable
-    rather than omitted. A reader should be able to see that it was considered
-    and why it cannot be shown, instead of wondering whether it was forgotten.
+    There is no "Removed from machine" stage since 27-Oct-2026 (ruled 26-Oct):
+    SAP keeps no record of a unit coming off a machine -- the goods issue to
+    the machine (261/201) names no repair PO, and on the 19-Oct measurement the
+    stage was empty on every line by construction. "Condition declared" and the
+    replacement issue tell that part of the story, so the stage was dropped
+    rather than shown permanently blank.
 
     There is no "received" stage since 19-Oct-2026: every line served here is
     open in SAP, and goods receipts are not read. The line leaves the register
     when SAP marks it "Delivery completed".
 
-    **Stage 2 is no longer a hook.** It read "W5.3 owns this. Hook only." until
-    W5.3 landed; it now carries the real attestation where one covers this line,
+    **The declaration stage is no longer a hook.** It read "W5.3 owns this.
+    Hook only." until W5.3 landed; it now carries the real attestation where one covers this line,
     and says what was searched for where none does. That distinction is the
     whole point of the stage: "nobody assessed this part" and "we have not
     looked" are different statements.
     """
     stages: list[LifecycleStage] = [
-        LifecycleStage(
-            stage="removed",
-            label="Removed from machine",
-            occurred_at=None,
-            evidence=(
-                "Not tracked: SAP's goods issue to the machine (movement 261/201) "
-                "does not name the repair PO, so it cannot be tied to this line."
-            ),
-        ),
         LifecycleStage(
             stage="attested",
             label="Condition declared",
