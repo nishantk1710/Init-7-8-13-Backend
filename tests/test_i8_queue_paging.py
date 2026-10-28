@@ -164,6 +164,17 @@ def exception(n: int, type: str = "MISSING_ATTESTATION", **overrides) -> Excepti
     return ExceptionItem(**fields)
 
 
+def test_a_line_exception_says_whether_it_was_raised_before_go_live() -> None:
+    """28-Oct-2026: the register counts only what is to act on, so each line
+    exception carries the flag instead of the screen guessing from severity."""
+    from app.api.i8.mappers import line_exception
+
+    earlier = line_exception(exception(1, severity="info", pre_automation=True))
+    current = line_exception(exception(2, type="OVERDUE_REPAIR"))
+    assert earlier.model_dump(by_alias=True)["preAutomation"] is True
+    assert current.model_dump(by_alias=True)["preAutomation"] is False
+
+
 def stats_of(items: tuple[ExceptionItem, ...]) -> ExceptionStats:
     """The counts the real build would have made over ``items``."""
     by_type: dict[str, int] = {}
@@ -912,11 +923,13 @@ class TestLineExceptions:
                 "id": "EX-MISSING_ATTESTATION-4500000001-10",
                 "type": "MISSING_ATTESTATION",
                 "severity": "warning",
+                "preAutomation": False,
             },
             {
                 "id": "EX-OVERDUE_REPAIR-4500000001-10",
                 "type": "OVERDUE_REPAIR",
                 "severity": "critical",
+                "preAutomation": False,
             },
         ]
         # Checked and clean is an empty list. Null would mean "not computed",

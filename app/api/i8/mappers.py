@@ -577,7 +577,9 @@ def register_facets(
 
 
 def line_exception(item: ExceptionItem) -> LineException:
-    return LineException(id=item.id, type=item.type, severity=item.severity)
+    return LineException(
+        id=item.id, type=item.type, severity=item.severity, pre_automation=item.pre_automation
+    )
 
 
 # --- W5.3: attestation, declarations, exceptions --------------------------

@@ -212,6 +212,9 @@ class LineException(I8Model):
     id: str
     type: str
     severity: Literal["info", "warning", "critical"]
+    pre_automation: bool = False
+    """Raised before the check's start date: labelled, not work to do. The
+    register's Exceptions column counts only the others (28-Oct-2026)."""
 
 
 class RepairChain(I8Model):
