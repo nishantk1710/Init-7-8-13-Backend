@@ -48,8 +48,9 @@ object ID only.
 
 from __future__ import annotations
 
+import os
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -176,12 +177,12 @@ def _signing_key(token: str) -> Any:
     us. Tests replace this function with one returning their own key.
     """
     settings = get_settings()
-    cache_key = (settings.azure_tenant_id, settings.auth_jwks_cache_seconds)
+    cache_key = (settings.entra_tenant_id, settings.auth_jwks_cache_seconds)
     with _jwks_lock:
         client = _jwks_clients.get(cache_key)
         if client is None:
             client = jwt.PyJWKClient(
-                _jwks_url(settings.azure_tenant_id),
+                _jwks_url(settings.entra_tenant_id),
                 cache_jwk_set=True,
                 lifespan=max(settings.auth_jwks_cache_seconds, 60),
                 timeout=10,
@@ -198,15 +199,47 @@ def configuration_problem() -> str | None:
     settings = get_settings()
     missing = [
         name
-        for name, value in (("AZURE_TENANT_ID", settings.azure_tenant_id), ("AZURE_CLIENT_ID", settings.azure_client_id))
+        for name, value in (
+            ("ENTRA_TENANT_ID", settings.entra_tenant_id),
+            ("ENTRA_API_CLIENT_ID", settings.entra_api_client_id),
+        )
         if not value.strip()
     ]
     return f"{' and '.join(missing)} not set" if missing else None
 
 
+#: What lets the Azure SDK use AZURE_CLIENT_ID as a service principal's ID, the
+#: way it is meant: any one of these makes it a client-credentials login.
+_SERVICE_PRINCIPAL_VARIABLES = ("AZURE_CLIENT_SECRET", "AZURE_CLIENT_CERTIFICATE_PATH", "AZURE_FEDERATED_TOKEN_FILE")
+
+
+def azure_sdk_identity_warning(environ: Mapping[str, str] | None = None) -> str | None:
+    """Why storage and Key Vault sign-in will fail, or None.
+
+    ``AZURE_CLIENT_ID`` belongs to the Azure SDK. On its own, without a secret,
+    certificate or federated token beside it, ``DefaultAzureCredential`` takes
+    it as the client ID of a user-assigned managed identity and asks App
+    Service for that identity. Sign-in used to read the API app registration's
+    ID from it; on prod that made every storage call fail with "managed
+    identity configuration not found ... invalid_scope" (28 Oct 2026), which
+    is why sign-in now reads ``ENTRA_API_CLIENT_ID``. Logged at start-up so a
+    leftover setting names itself instead of surfacing as a storage error.
+    """
+    environ = os.environ if environ is None else environ
+    if not environ.get("AZURE_CLIENT_ID", "").strip():
+        return None
+    if any(environ.get(name, "").strip() for name in _SERVICE_PRINCIPAL_VARIABLES):
+        return None
+    return (
+        "AZURE_CLIENT_ID is set: the Azure SDK takes it as a user-assigned managed identity, so storage and "
+        "Key Vault sign-in fail unless one with that client ID is attached to this app. The API app "
+        "registration's ID for sign-in belongs in ENTRA_API_CLIENT_ID."
+    )
+
+
 def accepted_audiences() -> list[str]:
     settings = get_settings()
-    client_id = settings.azure_client_id.strip()
+    client_id = settings.entra_api_client_id.strip()
     extra = [a.strip() for a in settings.auth_audience.split(",") if a.strip()]
     return list(dict.fromkeys([client_id, f"api://{client_id}", *extra]))
 
@@ -219,7 +252,7 @@ def validate_token(token: str) -> dict[str, Any]:
     with the configured clock skew, and that ``tid`` is the tenant.
     """
     settings = get_settings()
-    tenant = settings.azure_tenant_id.strip()
+    tenant = settings.entra_tenant_id.strip()
     try:
         header = jwt.get_unverified_header(token)
     except jwt.PyJWTError as exc:

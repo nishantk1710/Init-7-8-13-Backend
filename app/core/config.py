@@ -551,8 +551,13 @@ class Settings(BaseSettings):
     # registration (spares-ai-api-<env>). Both are required once AUTH_ENABLED
     # is true; without them every protected request answers 503 rather than
     # being let through.
-    azure_tenant_id: str = ""
-    azure_client_id: str = ""
+    #
+    # Not AZURE_TENANT_ID / AZURE_CLIENT_ID: those are the Azure SDK's own
+    # variables, and DefaultAzureCredential (storage, Key Vault) takes
+    # AZURE_CLIENT_ID as a user-assigned managed identity. Holding the app
+    # registration's ID there broke storage on prod (28 Oct 2026).
+    entra_tenant_id: str = ""
+    entra_api_client_id: str = ""
     # Extra accepted token audiences, comma-separated. The client ID and
     # api://<client ID> are always accepted: a v2 access token carries the bare
     # client ID as its audience (measured on spares-ai-api-prod, 26 Oct 2026),

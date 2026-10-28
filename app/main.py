@@ -19,6 +19,7 @@ from app.api.router import api_router
 from app.core.config import Settings, get_settings
 from app.core.db import pool_status
 from app.core.logging import configure_logging, get_logger
+from app.core.security import azure_sdk_identity_warning
 from app.schemas.i7.errors import ApiError, ErrorBody, ErrorResponse
 from app.initiatives.i13 import snapshot as i13_snapshot
 
@@ -279,6 +280,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Credentials"] = "true"
         return response
+
+    identity_warning = azure_sdk_identity_warning()
+    if identity_warning:
+        logger.warning(identity_warning)
 
     logger.info(
         "%s v%s ready (env=%s, api_prefix=%s, cors=%s)",

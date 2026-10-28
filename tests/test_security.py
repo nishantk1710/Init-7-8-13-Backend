@@ -12,6 +12,8 @@ and the rollback, so it must behave exactly as before sign-in existed.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
@@ -208,11 +210,24 @@ class TestTokenValidation:
     def test_misconfigured_fails_closed(self, auth_enabled, monkeypatch):
         from app.core.config import get_settings
 
-        monkeypatch.setenv("AZURE_TENANT_ID", "")
+        monkeypatch.setenv("ENTRA_TENANT_ID", "")
         get_settings.cache_clear()
         r = client.get("/api/me", headers=auth_headers())
         assert r.status_code == 503
-        assert "AZURE_TENANT_ID" in r.json()["detail"]
+        assert "ENTRA_TENANT_ID" in r.json()["detail"]
+
+    def test_the_azure_sdk_names_no_longer_configure_sign_in(self, auth_enabled, monkeypatch):
+        """The old names are not read: AZURE_CLIENT_ID is the Azure SDK's, not ours."""
+        from app.core.config import get_settings
+
+        monkeypatch.setenv("ENTRA_TENANT_ID", "")
+        monkeypatch.setenv("ENTRA_API_CLIENT_ID", "")
+        monkeypatch.setenv("AZURE_TENANT_ID", TEST_TENANT)
+        monkeypatch.setenv("AZURE_CLIENT_ID", TEST_CLIENT_ID)
+        get_settings.cache_clear()
+        r = client.get("/api/me", headers=auth_headers())
+        assert r.status_code == 503
+        assert "(ENTRA_TENANT_ID and ENTRA_API_CLIENT_ID not set)" in r.json()["detail"]
 
     def test_token_validated_once_per_request(self, auth_enabled, monkeypatch):
         calls = []
@@ -340,6 +355,53 @@ def test_role_catalogue_matches_the_app_registration():
         "Sap.Events.Write",
     }
     assert Roles.SAP_EVENTS_WRITE not in USER_ROLES
+
+
+# ---------------------------------------------------------------------------
+# AZURE_CLIENT_ID belongs to the Azure SDK, not to sign-in
+# ---------------------------------------------------------------------------
+
+SERVICE_PRINCIPAL_VARIABLES = ("AZURE_CLIENT_SECRET", "AZURE_CLIENT_CERTIFICATE_PATH", "AZURE_FEDERATED_TOKEN_FILE")
+
+
+class TestAzureSdkIdentityWarning:
+    def test_quiet_when_unset(self):
+        assert security.azure_sdk_identity_warning({}) is None
+        assert security.azure_sdk_identity_warning({"AZURE_CLIENT_ID": "  "}) is None
+
+    def test_warns_when_set_on_its_own(self):
+        """Prod on 28 Oct 2026: the app registration's ID, with no secret beside it."""
+        warning = security.azure_sdk_identity_warning({"AZURE_CLIENT_ID": TEST_CLIENT_ID, "AZURE_TENANT_ID": TEST_TENANT})
+        assert warning is not None
+        assert "managed identity" in warning
+        assert "ENTRA_API_CLIENT_ID" in warning
+
+    @pytest.mark.parametrize("name", SERVICE_PRINCIPAL_VARIABLES)
+    def test_quiet_for_a_service_principal(self, name):
+        assert security.azure_sdk_identity_warning({"AZURE_CLIENT_ID": TEST_CLIENT_ID, name: "set"}) is None
+
+    def test_tenant_alone_is_harmless(self):
+        assert security.azure_sdk_identity_warning({"AZURE_TENANT_ID": TEST_TENANT}) is None
+
+    def test_reads_the_process_environment_by_default(self, monkeypatch):
+        for name in SERVICE_PRINCIPAL_VARIABLES:
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("AZURE_CLIENT_ID", TEST_CLIENT_ID)
+        assert security.azure_sdk_identity_warning() is not None
+        monkeypatch.delenv("AZURE_CLIENT_ID")
+        assert security.azure_sdk_identity_warning() is None
+
+    def test_logged_at_start_up(self, monkeypatch, caplog):
+        from app.main import create_app
+
+        # create_app() reconfigures logging, which would remove caplog's handler.
+        monkeypatch.setattr("app.main.configure_logging", lambda settings: None)
+        for name in SERVICE_PRINCIPAL_VARIABLES:
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("AZURE_CLIENT_ID", TEST_CLIENT_ID)
+        with caplog.at_level(logging.WARNING, logger="app.main"):
+            create_app()
+        assert any("AZURE_CLIENT_ID is set" in record.getMessage() for record in caplog.records)
 
 
 # ---------------------------------------------------------------------------

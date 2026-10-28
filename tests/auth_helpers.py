@@ -98,8 +98,8 @@ def _configure(monkeypatch: pytest.MonkeyPatch, **env: str) -> None:
 
     for name, value in env.items():
         monkeypatch.setenv(name, value)
-    monkeypatch.setenv("AZURE_TENANT_ID", TEST_TENANT)
-    monkeypatch.setenv("AZURE_CLIENT_ID", TEST_CLIENT_ID)
+    monkeypatch.setenv("ENTRA_TENANT_ID", TEST_TENANT)
+    monkeypatch.setenv("ENTRA_API_CLIENT_ID", TEST_CLIENT_ID)
     monkeypatch.setattr(security, "_signing_key", lambda token: PUBLIC_KEY)
     user_directory.forget_all()
     get_settings.cache_clear()
