@@ -54,7 +54,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.initiatives.i7.reporting.baseline_comparison import compare_metric
-from app.initiatives.i7.reporting.period import resolve_quarter
+from app.initiatives.i7.reporting.period import resolve_period
 from app.initiatives.i7.reporting.quarter_management import build_quarter_management
 from app.initiatives.i7.reporting.source_activity import build_source_activity
 from app.models.i7_features import MaterialFeature
@@ -96,7 +96,7 @@ REPORT_VERSION = "1.2"
 
 
 def _exclusive_end(period_end):
-    """``period_end`` from :func:`resolve_quarter` is inclusive (the last
+    """``period_end`` from :func:`resolve_period` is inclusive (the last
     calendar day) -- timestamp columns are ``DateTime``, so a bare
     ``<= period_end`` would silently exclude any row timestamped later than
     midnight on that day. One day is added here, once, so every filter below
@@ -126,17 +126,33 @@ def _population_count(session: Session, base, column) -> PopulationCount:
     )
 
 
-def generate_quarterly_report(session: Session, quarter: str) -> QuarterlyReport:
-    """Assemble the I07 Quarterly Deep-Dive Report for ``quarter`` (e.g.
-    ``"Q3 2026"``) from current table state.
+def generate_quarterly_report(
+    session: Session,
+    quarter: str,
+    *,
+    today: date | None = None,
+    generated_at: datetime | None = None,
+) -> QuarterlyReport:
+    """Assemble the I07 Deep-Dive Report for ``quarter`` (e.g. ``"Q3 2026"``, or a single month such as
+    ``"Oct 2026"`` -- the parameter keeps its old name) from current table state.
 
     Every aggregate is scoped to rows generated/computed within
     ``[period_start, period_end]`` on that table's own most meaningful
     timestamp column (see the module docstring), except where a section is
     genuinely quarter-independent (documented at that section's assembly
     point below).
+
+    ``today`` and ``generated_at`` exist so a caller can say what day the report is being written *on*; omitted,
+    both are the real clock, which is what the API, the CLI and production always get. They are the only two
+    clock reads in this module: everything downstream (``build_quarter_management`` and the period helpers it
+    calls) receives ``today`` explicitly, so one value here is the whole report's "now" -- whether the period is
+    complete, the reporting cutoff, which months have ended, stockout staleness, the status distribution's
+    ``measured_on`` and ``metadata.generated_at``. Used by the nightly quarterly step (an injected ``now``) and by
+    ``python -m app.reporting.preview_quarterly`` (a simulated date, never saved).
     """
-    period_start, period_end = resolve_quarter(quarter)
+    today = today or date.today()
+    generated_at = generated_at or datetime.now(timezone.utc)
+    period_start, period_end = resolve_period(quarter)  # a quarter ("Q3 2026") or a single month ("Oct 2026")
     exclusive_end = _exclusive_end(period_end)
     logger.info(
         "i7.reporting.quarterly.generate.start",
@@ -202,14 +218,14 @@ def generate_quarterly_report(session: Session, quarter: str) -> QuarterlyReport
     # The management view: the period's activity by month, the KPI cards, the position, the status distribution, the
     # forecast by month and the data coverage -- all from one set of definitions (see quarter_management.py).
     management = build_quarter_management(
-        session, period_start, period_end, today=date.today(), source_activity=source_activity
+        session, period_start, period_end, today=today, source_activity=source_activity
     )
 
     metadata = ReportMetadata(
         quarter=quarter,
         period_start=period_start,
         period_end=period_end,
-        generated_at=datetime.now(timezone.utc),
+        generated_at=generated_at,
         report_version=REPORT_VERSION,
     )
 
@@ -550,7 +566,7 @@ def _management_summary_section() -> ManagementSummary:
             )
         ),
         stockout_risk_distribution=UndefinedManagementMetric(
-            reason="Same gap as Critical Stockout Risk above -- no severity-tier classification exists."
+            reason="Same gap as High Stockout Risk above -- no severity-tier classification exists."
         ),
         stockout_risk_trend=UndefinedManagementMetric(
             reason=(
