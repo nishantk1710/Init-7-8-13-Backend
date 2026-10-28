@@ -92,7 +92,7 @@ def build_report_workbook(meta: dict[str, Any], report: dict[str, Any]) -> Bytes
     rows.append(["Plans", "Planned Overdue", plans["plan_breach_count"], None])
     rows.append(["Plans", "Non-AI", plans["no_plan_count"], None])
     rows.append(["Received not issued", f"OAR materials ({grni['threshold_days']}+ days)", grni["position_count"], None])
-    rows.append(["Received not issued", "Reservation lines", grni["open_line_count"], None])
+    rows.append(["Received not issued", "PO lines", grni["open_line_count"], None])
     for status, count in exc["by_status"].items():
         rows.append(["Procurement exceptions by status", _label(EXCEPTION_STATUS, status), count, None])
     for kind, count in exc["by_type"].items():
@@ -101,9 +101,9 @@ def build_report_workbook(meta: dict[str, Any], report: dict[str, Any]) -> Bytes
 
     _table(
         book.create_sheet("Received not issued"),
-        ["Material", "Description", "Plant", "Reservation", "PO number", "Outstanding qty", "Days since GR"],
+        ["Material", "Description", "Plant", "PO line", "In stock (not issued)", "Days since GR"],
         [
-            [g["material"], g["description"], g["plant"], g["reservation"], g["po_number"],
+            [g["material"], g["description"], g["plant"], g["po_line"],
              g["outstanding_quantity"], g["days_since_gr"]]
             for g in grni["longest_waiting"]
         ],

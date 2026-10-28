@@ -17,11 +17,11 @@ attached only when one deterministically references that PR -- exactly
 silently drop every PR that has no reservation pointing to it -- a real
 grain change the old contract's callers do not expect.
 
-New capability the old CSV-backed version never had: because the reservation
-lookup here goes through ``postgres_reservation.py``'s real RSNUM/RSPOS ->
-goods-issue query, ``issued_quantity`` actually resolves for real data where
-a matching reservation exists, instead of always mocking the same synthetic
-chain.
+``issued_quantity`` on a PO line comes from ``stock_issue_matching``: the
+issues of the reservation that raised its PR (RESB-BANFN/BNFPO -> MSEG-RSNUM/
+RSPOS) where one exists, else the stock issued out of the material's
+deliveries, oldest delivery first -- the only way to see issues against stock
+material (OAR), whose PRs no reservation raises. ``issue_match`` says which.
 
 Do not add new fields or behaviour here. This module exists to stop being
 necessary, not to grow -- new work belongs in ``procurement_chain.py``/
@@ -30,6 +30,7 @@ necessary, not to grow -- new work belongs in ``procurement_chain.py``/
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
@@ -40,6 +41,7 @@ from app.initiatives.i13.models import AttributionStatus, PartialLedgerEntry
 from app.initiatives.i13.movements import ISSUE_TYPES, event_dates, net_quantity
 from app.initiatives.i13.po_lines import PoLineState, po_line_states
 from app.initiatives.i13.procurement_chain import build_procurement_chain
+from app.initiatives.i13.stock_issue_matching import IssueMatch, PoKey, PoLineIssues, po_line_issues
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
 from app.shared.material_scope import MaterialScope, classify_material_scope
@@ -61,6 +63,9 @@ class LedgerUtilisationStatus(str, Enum):
     NOT_ISSUED = "NOT_ISSUED"
     PARTIALLY_ISSUED = "PARTIALLY_ISSUED"
     FULLY_ISSUED = "FULLY_ISSUED"
+    # Delivered before the earliest goods movement the extract holds: what was
+    # issued out of it then cannot be seen (stock_issue_matching).
+    BEFORE_ISSUE_HISTORY = "BEFORE_ISSUE_HISTORY"
 
 
 class LinkageStatus(str, Enum):
@@ -105,6 +110,13 @@ class LegacyLedgerEntry:
     attribution_status: AttributionStatus | None = None
     attribution_evidence: str | None = None
 
+    #: How the issued quantity was found (stock_issue_matching.IssueMatch);
+    #: None for a line with nothing received and no reservation behind it.
+    issue_match: IssueMatch | None = None
+    delivery_count: int = 0
+    next_planned_issue_date: date | None = None
+    next_planned_issue_quantity: Decimal | None = None
+
 
 DELIVERY_STATES = ("DELIVERED", "PARTIAL", "NOT_DELIVERED", "CLOSED", "NOT_AN_ORDER", "NO_PO")
 """The procurement view's delivery filter -- the frontend's
@@ -143,7 +155,11 @@ def _procurement_status(
     return ProcurementStatus.RECEIVED
 
 
-def _utilisation_status(issued_qty: Decimal, received_qty: Decimal) -> LedgerUtilisationStatus:
+def _utilisation_status(
+    issued_qty: Decimal, received_qty: Decimal, issue_match: IssueMatch | None = None
+) -> LedgerUtilisationStatus:
+    if issue_match is IssueMatch.BEFORE_ISSUE_HISTORY:
+        return LedgerUtilisationStatus.BEFORE_ISSUE_HISTORY
     if issued_qty <= 0:
         return LedgerUtilisationStatus.NOT_ISSUED
     if issued_qty < received_qty:
@@ -156,8 +172,10 @@ def _to_legacy_entry(
     reservation_by_pr: dict[tuple[str, str], Row],
     gi_by_reservation: dict[tuple[str, str], list[Row]],
     line_states: dict[tuple[str, str], PoLineState] | None = None,
+    line_issues: Mapping[PoKey, PoLineIssues] | None = None,
 ) -> LegacyLedgerEntry:
     reservation = reservation_by_pr.get((entry.pr_number, entry.pr_item)) if entry.pr_number and entry.pr_item else None
+    line = (line_issues or {}).get((entry.po_number, entry.po_item)) if entry.po_number else None
 
     if reservation is not None:
         reservation_number, reservation_item = reservation["Rsnum"], reservation["Rspos"]
@@ -170,6 +188,10 @@ def _to_legacy_entry(
         issued_qty = Decimal("0")
         first_gi_date = latest_gi_date = None
         reservation_source = "UNAVAILABLE"
+    if line is not None:
+        # A PO line's issues: its reservation's, or the stock it delivered.
+        issued_qty = line.issued_quantity
+        first_gi_date, latest_gi_date = line.first_issue_date, line.last_issue_date
 
     if reservation is not None:
         linkage_status = LinkageStatus.RESERVATION_LINKED
@@ -202,9 +224,15 @@ def _to_legacy_entry(
             entry.ordered_quantity,
             (line_states or {}).get((entry.po_number, entry.po_item)) if entry.po_number else None,
         ),
-        utilisation_status=_utilisation_status(issued_qty, entry.received_quantity),
+        utilisation_status=_utilisation_status(
+            issued_qty, entry.received_quantity, line.issue_match if line is not None else None
+        ),
         linkage_status=linkage_status,
         data_source=f"reservation:{reservation_source},pr:LIVE,po:LIVE,gr:LIVE,gi:LIVE",
+        issue_match=line.issue_match if line is not None else None,
+        delivery_count=line.delivery_count if line is not None else 0,
+        next_planned_issue_date=line.next_planned_issue_date if line is not None else None,
+        next_planned_issue_quantity=line.next_planned_issue_quantity if line is not None else None,
     )
     attribution = attribute_consumption_legacy(legacy)
     return replace(legacy, attribution_status=attribution.status, attribution_evidence=attribution.evidence)
@@ -226,6 +254,17 @@ def attribute_consumption_legacy(entry: LegacyLedgerEntry) -> _AttributionResult
             AttributionStatus.RESERVATION_LINK,
             f"Rsnum {entry.reservation_number}/{entry.reservation_item} matched to goods issue",
         )
+    if entry.issued_quantity > 0 and entry.issue_match is IssueMatch.OLDEST_DELIVERY_FIRST:
+        return _AttributionResult(
+            AttributionStatus.PROCUREMENT_LINK,
+            f"PO {entry.po_number}/{entry.po_item} received; {entry.issued_quantity} issued from stock, "
+            "counted against the oldest delivery first",
+        )
+    if entry.issue_match is IssueMatch.BEFORE_ISSUE_HISTORY:
+        return _AttributionResult(
+            AttributionStatus.PROCUREMENT_LINK,
+            f"PO {entry.po_number}/{entry.po_item} received before the goods-movement history starts",
+        )
     if entry.received_quantity > 0:
         return _AttributionResult(
             AttributionStatus.PROCUREMENT_LINK, f"PO {entry.po_number}/{entry.po_item} received, not yet issued"
@@ -243,7 +282,19 @@ def build_legacy_ledger(
     material: str | None = None,
     plant: str | None = None,
     include_out_of_scope: bool = False,
+    movement_repository: Any = None,
+    line_issues: Mapping[PoKey, PoLineIssues] | None = None,
+    history_start: date | None = None,
 ) -> list[LegacyLedgerEntry]:
+    """``line_issues`` (``stock_issue_matching.po_line_issues``) when a caller
+    already has them; else they are matched here from ``movement_repository``.
+    With neither, a PO line's issues come from a reservation only, as before
+    stock matching existed."""
+    if line_issues is None and movement_repository is not None:
+        line_issues = po_line_issues(
+            procurement_repository, reservation_repository, movement_repository,
+            material=material, plant=plant, history_start=history_start,
+        )
     procurement_entries = build_procurement_chain(procurement_repository, material=material, plant=plant)
 
     reservations = reservation_repository.get_reservations(material=material, plant=plant)
@@ -264,5 +315,23 @@ def build_legacy_ledger(
             scope = classify_material_scope(material_scope_index.get((entry.material, entry.plant)))
             if scope is not MaterialScope.OAR:
                 continue
-        entries.append(_to_legacy_entry(entry, reservation_by_pr, gi_by_reservation, line_states))
+        entries.append(_to_legacy_entry(entry, reservation_by_pr, gi_by_reservation, line_states, line_issues))
     return entries
+
+
+def grni_lines(
+    entries: Iterable[LegacyLedgerEntry], *, as_of: date, threshold_days: int
+) -> Iterator[tuple[LegacyLedgerEntry, Decimal, int]]:
+    """(line, still in stock, days since its last goods receipt) for each PO
+    line received at least ``threshold_days`` ago with stock not yet issued
+    -- FRS FR-6, per PO line. A line delivered before the goods-movement
+    history is left out: whether it was issued cannot be seen."""
+    for entry in entries:
+        if not entry.po_number or entry.latest_gr_date is None:
+            continue
+        if entry.issue_match is IssueMatch.BEFORE_ISSUE_HISTORY:
+            continue
+        outstanding = entry.received_quantity - entry.issued_quantity
+        age = (as_of - entry.latest_gr_date).days
+        if outstanding > 0 and age >= threshold_days:
+            yield entry, outstanding, age

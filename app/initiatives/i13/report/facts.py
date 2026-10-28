@@ -111,7 +111,7 @@ def _grni(snapshot: I13Snapshot | SqlSnapshot, plant: str | None):
     items = [
         item
         for item in snapshot.grni_entries
-        if item.ledger.material_scope is MaterialScope.OAR and (not plant or item.ledger.plant == plant)
+        if item.material_scope is MaterialScope.OAR and (not plant or item.ledger.plant == plant)
     ]
     return len(items), items[:TOP_N]
 
@@ -203,8 +203,7 @@ def build_report_facts(
                     "material": g.ledger.material,
                     "description": _describe(names, g.ledger.material),
                     "plant": plant_label(g.ledger.plant),
-                    "reservation": f"{g.ledger.reservation_number}/{g.ledger.reservation_item}",
-                    "po_number": g.ledger.po_number,
+                    "po_line": f"{g.ledger.po_number}/{g.ledger.po_item}",
                     "outstanding_quantity": _num(g.outstanding_quantity),
                     "days_since_gr": g.days_since_gr,
                 }

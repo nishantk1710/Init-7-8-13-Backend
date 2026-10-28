@@ -7,8 +7,8 @@ call ``compute_watch_metrics`` and serialize the result.
 
 Postgres-backed: composes W3.5 (``movement_metrics.py``), W6.1
 (``procurement_chain.py``, for open-PO quantity) and W6.2
-(``reservation_ledger.py``, for acquired/issued quantities and GR-not-issued)
-rather than reading a gateway/CSV directly, and never recomputes aging or
+(``reservation_ledger.py``, for acquired/issued quantities) and the PO lines'
+goods issues (``stock_issue_matching.py``, for GR-not-issued) rather than reading a gateway/CSV directly, and never recomputes aging or
 consumption itself -- see each helper below for exactly which upstream module
 owns which number.
 
@@ -23,6 +23,7 @@ without re-deriving the W2.4 classification.
 """
 
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -39,6 +40,7 @@ from app.initiatives.i13.plans import load_consumption_plans
 from app.initiatives.i13.po_lines import po_line_states
 from app.initiatives.i13.procurement_chain import build_procurement_chain
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
+from app.initiatives.i13.stock_issue_matching import IssueMatch, PoKey, PoLineIssues, po_line_issues
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
@@ -114,12 +116,18 @@ def _open_po_quantity_by_material_plant(
 
 
 def _gr_not_issued(
-    entries: list[ReservationLedgerEntry], *, threshold_days: int, as_of: date
+    entries: list[PoLineIssues], *, threshold_days: int, as_of: date
 ) -> tuple[bool, int | None, date | None, Decimal, Decimal, Decimal]:
+    """Over a material-plant's PO lines: the ones with received stock not yet
+    issued, the oldest last goods receipt among them deciding the flag. A line
+    delivered before the goods-movement history is left out -- whether it was
+    issued cannot be seen (``ledger_compat.grni_lines``, the same rule)."""
     outstanding = [
         e
         for e in entries
-        if e.last_gr_date is not None and (e.received_quantity or Decimal("0")) - e.issued_quantity > 0
+        if e.last_gr_date is not None
+        and e.issue_match is not IssueMatch.BEFORE_ISSUE_HISTORY
+        and (e.received_quantity or Decimal("0")) - e.issued_quantity > 0
     ]
     if not outstanding:
         return False, None, None, Decimal("0"), Decimal("0"), Decimal("0")
@@ -148,7 +156,11 @@ def compute_watch_metrics(
     plant: str | None = None,
     as_of: date | None = None,
     db: Session | None = None,
+    line_issues: Mapping[PoKey, PoLineIssues] | None = None,
+    history_start: date | None = None,
 ) -> list[WatchMetric]:
+    """``line_issues`` when the caller already matched them
+    (``stock_issue_matching.po_line_issues``); else matched here."""
     as_of = as_of or date.today()
     calculated_at = datetime.now(timezone.utc)
 
@@ -174,6 +186,16 @@ def compute_watch_metrics(
         include_out_of_scope=True,
     )
     ledger_by_key = _group_ledger_by_material_plant(ledger_entries)
+
+    if line_issues is None:
+        line_issues = po_line_issues(
+            procurement_repository, reservation_repository, movement_repository,
+            material=material, plant=plant, history_start=history_start,
+        )
+    lines_by_key: dict[tuple[str, str], list[PoLineIssues]] = defaultdict(list)
+    for line in line_issues.values():
+        if (not material or line.material == material) and (not plant or line.plant == plant):
+            lines_by_key[(line.material, line.plant)].append(line)
 
     # `db` is optional and defaults to None, so a caller with no database --
     # every unit test here uses fake repositories -- gets the reference CSV
@@ -216,7 +238,7 @@ def compute_watch_metrics(
 
         entries = ledger_by_key.get(key, [])
         flag, days_since_gr, relevant_gr_date, gr_received, gr_issued, gr_outstanding = _gr_not_issued(
-            entries, threshold_days=config.watch.gr_not_issued_threshold_days, as_of=as_of
+            lines_by_key.get(key, []), threshold_days=config.watch.gr_not_issued_threshold_days, as_of=as_of
         )
 
         received_quantity = sum((e.received_quantity or Decimal("0") for e in entries), Decimal("0"))

@@ -8,8 +8,9 @@ rebuild per request without it.
 
 * **GRNI** applies the rule WATCH already applies per material-plant
   (``watch._gr_not_issued``: received - issued > 0 and the last GR at least
-  ``I13_GR_NOT_ISSUED_THRESHOLD_DAYS`` old), per reservation-ledger entry.
-  FRS FR-6; no new rule.
+  ``I13_GR_NOT_ISSUED_THRESHOLD_DAYS`` old), per PO line -- issued being the
+  line's reservation's issues or the stock issued out of its deliveries,
+  oldest first (``stock_issue_matching``). FRS FR-6.
 * **Usage patterns** are the net monthly goods issues and receipts from the
   same reversal-aware movement netting WATCH's consumption uses. The history
   is only as deep as the delivered MSEG extract (blocker B4), so the response
@@ -40,23 +41,29 @@ def _grni_response(item: GrniEntry, threshold_days: int) -> GrniEntryResponse:
     entry = item.ledger
     return GrniEntryResponse(
         ledger_id=entry.ledger_id,
-        reservation_number=entry.reservation_number,
-        reservation_item=entry.reservation_item,
         material=entry.material,
         plant=entry.plant,
-        material_scope=entry.material_scope.value,
+        material_scope=item.material_scope.value,
         pr_number=entry.pr_number,
+        pr_item=entry.pr_item,
         po_number=entry.po_number,
         po_item=entry.po_item,
-        received_quantity=entry.received_quantity or Decimal("0"),
+        reservation_number=entry.reservation_number,
+        reservation_item=entry.reservation_item,
+        received_quantity=entry.received_quantity,
         issued_quantity=entry.issued_quantity,
         outstanding_quantity=item.outstanding_quantity,
         first_gr_date=entry.first_gr_date,
-        last_gr_date=entry.last_gr_date,
+        last_gr_date=entry.latest_gr_date,
         days_since_gr=item.days_since_gr,
         threshold_days=threshold_days,
-        requirement_date=entry.requirement_date,
-        lifecycle_status=entry.lifecycle_status.value,
+        delivery_count=entry.delivery_count,
+        first_issue_date=entry.first_gi_date,
+        last_issue_date=entry.latest_gi_date,
+        issue_match=entry.issue_match,
+        next_planned_issue_date=entry.next_planned_issue_date,
+        next_planned_issue_quantity=entry.next_planned_issue_quantity,
+        utilisation_status=entry.utilisation_status,
     )
 
 
@@ -85,7 +92,7 @@ def list_grni(
     items = [
         item
         for item in snapshot.grni_entries
-        if (include_out_of_scope or item.ledger.material_scope is MaterialScope.OAR)
+        if (include_out_of_scope or item.material_scope is MaterialScope.OAR)
         and (not plant or item.ledger.plant == plant)
         and (not material or item.ledger.material == material)
         and (min_days is None or item.days_since_gr >= min_days)
