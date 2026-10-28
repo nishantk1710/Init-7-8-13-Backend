@@ -200,7 +200,7 @@ class I08Assessment:
             )
             return (
                 f"{opening} That repair was due {overdue_by} days ago and still "
-                f"has not arrived, so its date is no longer a forecast -- chase "
+                f"has not arrived, so its date is no longer a forecast: chase "
                 f"it before relying on it.{tail}"
             )
 
@@ -218,11 +218,11 @@ class I08Assessment:
         if comparison:
             return (
                 f"{opening} That repair is due in {days_until_repair} days, "
-                f"against {buying} to buy a new one -- waiting looks faster."
+                f"against {buying} to buy a new one, so waiting looks faster."
             )
         return (
             f"{opening} That repair is not due for {days_until_repair} days, "
-            f"which is longer than the {buying} a new one takes -- buying may "
+            f"which is longer than the {buying} a new one takes, so buying may "
             "genuinely be the faster route here."
         )
 
@@ -290,6 +290,14 @@ class I08Assessment:
             "damagedStock": _number(self.verdict.damaged_stock),
             "stockConditionKnown": self.verdict.stock_condition_known,
             "stockSource": self.verdict.stock_source,
+            # Since 28-Oct-2026: the usable units by condition, in the
+            # configured order (NEW, then REFURBISHD), so a screen can say
+            # "1 refurbished" rather than "1 usable". Empty when the condition
+            # is unknown, or when no usable unit is on the shelf.
+            "usableBreakdown": [
+                {"condition": condition, "quantity": _number(units)}
+                for condition, units in self.verdict.usable_breakdown
+            ],
             # Since 27-Oct-2026, stored as served: whether the switch was on
             # is part of what the requester was told.
             "needDateAdvice": self.need_date_advice(today),

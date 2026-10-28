@@ -354,7 +354,7 @@ class RepairableUnitVerdict:
             if self.stock_is_unknown and not self.stock_condition_known:
                 return (
                     f"No repair is open for {self.material_id} at plant "
-                    f"{self.plant}, and no stock record exists for it there -- "
+                    f"{self.plant}, and no stock record exists for it there, "
                     "so we cannot tell whether stock is available. Worth a "
                     "physical check before buying new."
                 )
@@ -419,7 +419,7 @@ class RepairableUnitVerdict:
         if self.open_repair_lines and not any(e.dispatched for e in self.evidence):
             notes.append(
                 "A repair being open means the purchase order exists, not that "
-                "the unit has physically reached the vendor -- no dispatch "
+                "the unit has physically reached the vendor: no dispatch "
                 "movement is recorded against it."
             )
 
@@ -434,7 +434,7 @@ class RepairableUnitVerdict:
         if missing_vendor:
             notes.append(
                 f"{missing_vendor} repair vendor"
-                f"{'' if missing_vendor == 1 else 's'} shown by code only -- the "
+                f"{'' if missing_vendor == 1 else 's'} shown by code only: the "
                 "supplier master does not cover them."
             )
 

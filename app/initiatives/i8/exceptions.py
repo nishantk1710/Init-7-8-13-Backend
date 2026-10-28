@@ -417,6 +417,19 @@ def overdue_repairs(lines, *, grace_days: int) -> list[ExceptionItem]:
     return items
 
 
+def _within_justification_window(
+    record: JustificationRecord, acquisition: NewAcquisition, window_days: int
+) -> bool:
+    """Same material, same plant, and the purchase within ``window_days`` of
+    the reason, either side."""
+    return (
+        record.material_id == acquisition.material_id
+        and record.plant == acquisition.plant
+        and acquisition.raised_at is not None
+        and abs((record.recorded_on - acquisition.raised_at).days) <= window_days
+    )
+
+
 def _justified(
     acquisition: NewAcquisition,
     exception_id: str,
@@ -432,14 +445,59 @@ def _justified(
     for record in justifications:
         if record.exception_id == exception_id:
             return True
-        if (
-            record.material_id == acquisition.material_id
-            and record.plant == acquisition.plant
-            and acquisition.raised_at is not None
-            and abs((record.recorded_on - acquisition.raised_at).days) <= window_days
-        ):
+        if _within_justification_window(record, acquisition, window_days):
             return True
     return False
+
+
+def purchases_answered(
+    justifications: Sequence[JustificationRecord],
+    acquisitions: Sequence[NewAcquisition],
+    *,
+    window_days: int,
+) -> dict[str, NewAcquisition]:
+    """Justification id -> the new purchase it answers, by :func:`_justified`'s
+    own rule read the other way (28-Oct-2026: the Justifications screen's
+    Purchase column).
+
+    A reason recorded against a bought-new finding's id answers that purchase.
+    Otherwise it answers a purchase of the same part at the same plant within
+    the window; when several are, the one nearest in date, a purchase raised
+    on or after the reason before one raised before it (the assistant records
+    the reason first). A reason with no entry has no purchase yet.
+
+    Every new purchase counts, not only those that overlapped an open repair:
+    the question is whether a purchase followed the reason, and a repair
+    closed since does not undo the purchase.
+    """
+    by_finding = {acquisition_exception_id(a): a for a in acquisitions}
+    by_part: dict[tuple[str, str | None], list[NewAcquisition]] = {}
+    for acquisition in acquisitions:
+        by_part.setdefault((acquisition.material_id, acquisition.plant), []).append(acquisition)
+
+    answered: dict[str, NewAcquisition] = {}
+    for record in justifications:
+        if record.id is None:
+            continue
+        named = by_finding.get(record.exception_id) if record.exception_id else None
+        if named is not None:
+            answered[record.id] = named
+            continue
+        near = [
+            a
+            for a in by_part.get((record.material_id, record.plant), ())
+            if _within_justification_window(record, a, window_days)
+        ]
+        if near:
+            answered[record.id] = min(
+                near,
+                key=lambda a: (
+                    abs((a.raised_at - record.recorded_on).days),  # type: ignore[operator]
+                    a.raised_at < record.recorded_on,  # type: ignore[operator]
+                    a.key,
+                ),
+            )
+    return answered
 
 
 def _purchase_phrase(acquisition: NewAcquisition) -> str:

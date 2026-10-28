@@ -118,6 +118,19 @@ class TestQueue:
         assert not row.is_outstanding
         assert row.declaration_link == "WINDOW"
 
+    def test_a_row_names_the_session_its_declaration_was_made_in(self, stored) -> None:
+        """28-Oct-2026: the repair page links to the assistant visit."""
+        in_visit = repair_line(1, raised_at=date(2026, 9, 1))
+        on_screen = repair_line(2, raised_at=date(2026, 9, 1))
+        bare = repair_line(3, raised_at=date(2026, 9, 1))
+        stored.append(declared(1, on=date(2026, 9, 2), session_id="S7K2M4P8Q1"))
+        stored.append(declared(2, on=date(2026, 9, 2), session_id=None))
+        cover = coverage(None, [in_visit, on_screen, bare], CFG)
+
+        rows = build_queue([in_visit, on_screen, bare], cover)
+
+        assert [r.declaration_session_id for r in rows] == ["S7K2M4P8Q1", None, None]
+
     def test_pr_rows_name_the_pr_and_its_department(self, stored, monkeypatch) -> None:
         monkeypatch.setattr(
             "app.assistant.departments.name_for", lambda code: {"10305": "Engineering"}.get(code or "")

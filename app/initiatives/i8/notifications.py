@@ -29,7 +29,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.initiatives.i8.config import I8Settings
-from app.initiatives.i8.exceptions import ExceptionItem
+from app.initiatives.i8.exceptions import ExceptionItem, ExceptionType
 from app.initiatives.i8.models import Notification
 
 logger = logging.getLogger(__name__)
@@ -107,6 +107,34 @@ def log_new(db: Session, items: Iterable[ExceptionItem], cfg: I8Settings) -> int
         return 0
     logger.info("I08 notifications: %d new notification(s) logged", len(new_ids))
     return len(new_ids)
+
+
+#: The checks whose exception id ends in the repair line it is about, in the
+#: register's form (``{EBELN}-{EBELP}`` or ``PR-{BANFN}-{BNFPO}``). A bought-new
+#: finding's id names the purchase instead, and the declaration and session
+#: checks name no repair line at all.
+_ID_NAMES_REPAIR_LINE = frozenset(
+    {
+        ExceptionType.MISSING_ATTESTATION.value,
+        ExceptionType.OVERDUE_REPAIR.value,
+        ExceptionType.REPAIRED_AGAINST_ASSESSMENT.value,
+        ExceptionType.REPAIR_PR_NOT_DECLARED.value,
+    }
+)
+
+
+def repair_line_of(row: Notification, current: ExceptionItem | None = None) -> str | None:
+    """The repair line a logged notification is about, or None.
+
+    From the exception as the queue raises it now, when it still does; else
+    read back from the exception id, for the checks whose id carries it.
+    """
+    if current is not None:
+        return current.repair_reference if current.purchasing_document else None
+    prefix = f"EX-{row.exception_type}-"
+    if row.exception_type in _ID_NAMES_REPAIR_LINE and row.exception_id.startswith(prefix):
+        return row.exception_id[len(prefix):] or None
+    return None
 
 
 def list_notifications(

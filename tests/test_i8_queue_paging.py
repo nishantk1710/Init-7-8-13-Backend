@@ -102,16 +102,21 @@ def register_stats(lines: tuple[RepairLine, ...]) -> RegisterStats:
     return RegisterStats(total_lines=len(lines), open_lines=len(lines))
 
 
-def rating(material_id: str, plant: str, criticality: str | None) -> SimpleNamespace:
+def rating(material_id: str, plant: str, criticality: str | None, **overrides) -> SimpleNamespace:
     """A universe row: the material's position at one plant."""
-    return SimpleNamespace(
+    fields = dict(
         material_id=material_id,
         plant=plant,
         criticality=criticality,
         stock_on_hand=None,
         reorder_point=None,
         planned_delivery_days=None,
+        usable_stock=None,
+        damaged_stock=None,
+        stock_condition_source=None,
     )
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
 
 
 def declaration(n: int, **overrides) -> DeclarationRow:
@@ -157,6 +162,17 @@ def exception(n: int, type: str = "MISSING_ATTESTATION", **overrides) -> Excepti
     )
     fields.update(overrides)
     return ExceptionItem(**fields)
+
+
+def test_a_line_exception_says_whether_it_was_raised_before_go_live() -> None:
+    """28-Oct-2026: the register counts only what is to act on, so each line
+    exception carries the flag instead of the screen guessing from severity."""
+    from app.api.i8.mappers import line_exception
+
+    earlier = line_exception(exception(1, severity="info", pre_automation=True))
+    current = line_exception(exception(2, type="OVERDUE_REPAIR"))
+    assert earlier.model_dump(by_alias=True)["preAutomation"] is True
+    assert current.model_dump(by_alias=True)["preAutomation"] is False
 
 
 def stats_of(items: tuple[ExceptionItem, ...]) -> ExceptionStats:
@@ -416,6 +432,42 @@ class TestActionableOnly:
         # Both numbers stay in the meta: it describes the check, not the view.
         assert body["meta"]["total"] == 2
         assert body["meta"]["preAutomation"] == 1
+
+
+class TestPreAutomationOnly:
+    """28-Oct-2026: the queue's "Raised before go-live" view. Those items were
+    counted in the header but could not be seen anywhere."""
+
+    @pytest.fixture(autouse=True)
+    def rows(self, queues):
+        queues.exceptions = (
+            exception(1),
+            exception(2, pre_automation=True),
+            exception(3, type="UNJUSTIFIED_ACQUISITION", pre_automation=True),
+        )
+
+    def test_lists_only_what_predates_the_control(self, queues) -> None:
+        body = queues.client.get(EXCEPTIONS, params={"preAutomationOnly": "true"}).json()
+
+        assert ids(body) == [
+            "EX-MISSING_ATTESTATION-4500000002-10",
+            "EX-UNJUSTIFIED_ACQUISITION-4500000003-10",
+        ]
+        assert body["total"] == 2
+        # The tabs count what this view holds; the meta still describes the check.
+        assert body["typeCounts"] == {"MISSING_ATTESTATION": 1, "UNJUSTIFIED_ACQUISITION": 1}
+        assert body["meta"]["total"] == 3
+        assert (body["meta"]["preAutomation"], body["meta"]["actionable"]) == (2, 1)
+
+    def test_combines_with_the_type_tab(self, queues) -> None:
+        body = queues.client.get(
+            EXCEPTIONS, params={"preAutomationOnly": "true", "type": "UNJUSTIFIED_ACQUISITION"}
+        ).json()
+
+        assert ids(body) == ["EX-UNJUSTIFIED_ACQUISITION-4500000003-10"]
+
+    def test_off_by_default(self, queues) -> None:
+        assert queues.client.get(EXCEPTIONS).json()["total"] == 3
 
 
 class TestExcludeType:
@@ -871,11 +923,13 @@ class TestLineExceptions:
                 "id": "EX-MISSING_ATTESTATION-4500000001-10",
                 "type": "MISSING_ATTESTATION",
                 "severity": "warning",
+                "preAutomation": False,
             },
             {
                 "id": "EX-OVERDUE_REPAIR-4500000001-10",
                 "type": "OVERDUE_REPAIR",
                 "severity": "critical",
+                "preAutomation": False,
             },
         ]
         # Checked and clean is an empty list. Null would mean "not computed",
@@ -1040,10 +1094,10 @@ class TestRepairRequestRows:
             lambda code: {"10305": "Engineering"}.get(code or ""),
         )
         queues.universe = (
-            SimpleNamespace(
-                material_id="8000000001",
-                plant="1300",
-                criticality="CRITICAL",
+            rating(
+                "8000000001",
+                "1300",
+                "CRITICAL",
                 stock_on_hand=Decimal(3),
                 reorder_point=Decimal(1),
                 planned_delivery_days=60,
@@ -1652,3 +1706,77 @@ class TestDeclarationsOnTheRegister:
         assert body["viewCounts"]["undeclared"] == 1
         assert ids(listing(queues, view="undeclared")) == ["PR-2000029102-10"]
         assert ids(listing(queues, declarationStatus="Completed")) == ["PR-2000029101-10"]
+
+    def test_rows_name_the_assistant_session_of_their_declaration(self, queues) -> None:
+        """28-Oct-2026: the repair page links to the visit the declaration was
+        made in; a declaration made on a register screen has no session."""
+        queues.lines = (repair_line(1), repair_line(2), repair_line(3))
+        serve_requests(queues, repair_request(4))
+        queues.declarations = (
+            declaration(1, status="Completed", declaration_session_id="S7K2M4P8Q1"),
+            declaration(2, status="Completed"),
+            declaration(
+                4,
+                id="D-PR-2000029104-10",
+                related_repair_id="PR-2000029104-10",
+                repair_document_type="PR",
+                status="Completed",
+                declaration_session_id="SQ4X9B2T7M",
+            ),
+        )
+
+        rows = {r["id"]: r for r in listing(queues)["items"]}
+
+        assert rows["4500000001-10"]["declarationSessionId"] == "S7K2M4P8Q1"
+        assert rows["4500000002-10"]["declarationSessionId"] is None
+        assert rows["4500000003-10"]["declarationSessionId"] is None  # nothing covers it
+        assert rows["PR-2000029104-10"]["declarationSessionId"] == "SQ4X9B2T7M"
+
+
+class TestStockSplitOnTheRegister:
+    """28-Oct-2026: usable and damaged stock on each register row, from the
+    universe row of its material at its plant."""
+
+    def test_a_known_split_is_served(self, queues) -> None:
+        queues.lines = (repair_line(1),)
+        queues.universe = (
+            rating(
+                "8000000001", "1300", None,
+                stock_on_hand=Decimal(3), usable_stock=Decimal(2), damaged_stock=Decimal(1),
+                stock_condition_source="MCHB",
+            ),
+        )
+
+        [row] = listing(queues)["items"]
+
+        assert (Decimal(row["usableStock"]), Decimal(row["damagedStock"])) == (2, 1)
+        assert row["stockConditionKnown"] is True
+
+    def test_an_unknown_split_is_null_not_zero(self, queues) -> None:
+        queues.lines = (repair_line(1),)
+        queues.universe = (rating("8000000001", "1300", None, stock_on_hand=Decimal(3)),)
+
+        [row] = listing(queues)["items"]
+
+        assert (row["usableStock"], row["damagedStock"], row["stockConditionKnown"]) == (None, None, False)
+
+    def test_no_universe_row_is_null_throughout(self, queues) -> None:
+        queues.lines = (repair_line(1),)
+
+        [row] = listing(queues)["items"]
+
+        assert (row["usableStock"], row["damagedStock"], row["stockConditionKnown"]) == (None, None, None)
+
+    def test_a_pr_row_gets_the_same_split(self, queues) -> None:
+        serve_requests(queues, repair_request(1))
+        queues.universe = (
+            rating(
+                "8000000001", "1300", None,
+                usable_stock=Decimal(0), damaged_stock=Decimal(2), stock_condition_source="MCHB",
+            ),
+        )
+
+        [row] = listing(queues)["items"]
+
+        assert (Decimal(row["usableStock"]), Decimal(row["damagedStock"])) == (0, 2)
+        assert row["stockConditionKnown"] is True
