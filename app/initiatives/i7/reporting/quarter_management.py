@@ -177,12 +177,12 @@ def _cards(
         ),
     ]
 
-    # --- Critical stockout risk: a measurement on the usage build date -----------------------------
+    # --- High Stockout Risk: a measurement on the usage build date ---------------------------------
     if stockout.as_of is None or stockout.stale:
         cards.append(
             KpiCard(
                 key="critical_stockout_risk",
-                title="Critical stockout risk",
+                title="High Stockout Risk",
                 unit="material-plants",
                 value=None,
                 status=AvailabilityStatus.NOT_AVAILABLE,
@@ -198,7 +198,7 @@ def _cards(
         cards.append(
             KpiCard(
                 key="critical_stockout_risk",
-                title="Critical stockout risk",
+                title="High Stockout Risk",
                 unit="material-plants",
                 value=Decimal(stockout.at_risk),
                 status=AvailabilityStatus.AVAILABLE,

@@ -444,28 +444,34 @@ ALL = Batch("0", "9999999999")
 # it (the old VB rows now read EXCLUDED, not MIN_MAX). Row counts otherwise kept.
 # "lledger" and "watch" re-recorded 2026-10-20 in all three: they now store
 # their filter/sort columns beside the payload (kinds.RECORD_LAYOUT 2). Same rows.
+# "lledger", "grni", "watch" and "exception" re-recorded 2026-10-28: goods issued
+# per PO line now include stock issued out of its deliveries, oldest first
+# (stock_issue_matching), and GRNI is per PO line, not per reservation. lledger
+# keeps its rows; grni 35 -> 81 (mixed) and 0 -> 6 (giant_reservations), and the
+# GR-not-issued exceptions follow WATCH's flag: 137 -> 152 and 4434 -> 4435.
 EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
     "mixed": {
         "attrib": (294, "214738b080d76802"), "chain": (286, "636c21f9a8b8679e"),
-        "exception": (137, "8bb3e45bd8f2e431"), "grni": (35, "cc064da9a493ed3f"),
-        "lledger": (286, "633eac345001474d"), "movement": (186, "085dd35e7ee606ce"),
+        "exception": (152, "88cf86300dcd07c3"), "grni": (81, "72912b9a8298a299"),
+        "lledger": (286, "bb6eb5a92d41d6f9"), "movement": (186, "085dd35e7ee606ce"),
         "oarkey": (87, "cafeb8032728b5cb"), "reclass": (87, "4b90da3bcd2f2450"),
         "rledger": (294, "9bb3976d183c3a0e"), "usage": (134, "a4ef4d00cc908924"),
-        "watch": (192, "9b4a414134d20508"),
+        "watch": (192, "9cdd82c4433338d0"),
     },
     "giant_procurement": {
         "attrib": (3, "f77f2830ef44df9f"), "chain": (1483, "17e55edc51ed3706"),
-        "exception": (2, "635263fdeb4ddacc"), "lledger": (1483, "e52e170a109ac7ea"),
+        "exception": (2, "635263fdeb4ddacc"), "lledger": (1483, "a93eeb4dccddc3db"),
         "movement": (1, "e888732abb0b5eb0"), "oarkey": (1, "34de90e00df89cf2"),
         "reclass": (1, "796ae91ff3f6fa23"), "rledger": (3, "3e636498cefa3ea8"),
         "usage": (1, "ed89b5283468661c"), "watch": (1, "5ed9bb4c2ae856d7"),
     },
     "giant_reservations": {
         "attrib": (4481, "172a43e538fb60e0"), "chain": (12, "441a698e4314a2ad"),
-        "exception": (4434, "4268ba8060c97795"), "lledger": (12, "1f4d08631e05f3f6"),
+        "exception": (4435, "2a46b5743a731d76"), "grni": (6, "9dd86a35f35ae9f6"),
+        "lledger": (12, "ce8c39b941ae9377"),
         "movement": (1, "145d27f46ec8471e"), "oarkey": (1, "702ce6717c803e00"),
         "reclass": (1, "99733b38e83d2030"), "rledger": (4481, "906ccc961d424b9e"),
-        "usage": (1, "4db03c5965f3dd07"), "watch": (1, "95046445439c7ae5"),
+        "usage": (1, "4db03c5965f3dd07"), "watch": (1, "ed9f8edede78bcf3"),
     },
 }
 

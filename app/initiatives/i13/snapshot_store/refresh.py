@@ -10,7 +10,6 @@ version is untouched, so this costs about what one assessment costs.
 
 from __future__ import annotations
 
-from decimal import Decimal
 from pathlib import Path
 
 from sqlalchemy import delete, func, select
@@ -21,6 +20,7 @@ from app.core.logging import get_logger
 from app.initiatives.i13.config import get_i13_config
 from app.initiatives.i13.consumption_attribution import ConsumptionAttributionService
 from app.initiatives.i13.exceptions import exception_queue_from
+from app.initiatives.i13.ledger_compat import build_legacy_ledger, grni_lines
 from app.initiatives.i13.plans import load_captured_plans, load_reference_plans
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
 from app.initiatives.i13.session_link import sync_links
@@ -34,10 +34,12 @@ from app.initiatives.i13.snapshot_store.batch_repos import (
 )
 from app.initiatives.i13.snapshot_store.builder import RecordWriter
 from app.initiatives.i13.snapshot_store.lifecycle import ready_run
+from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.initiatives.i13.snapshot_store.work_tables import WorkTables
+from app.initiatives.i13.stock_issue_matching import po_line_issues
 from app.initiatives.i13.watch import compute_watch_metrics
 from app.models.i13_snapshot_store import I13SnapshotRecord as R
-from app.shared.material_scope import MaterialScope
+from app.shared.material_scope import MaterialScope, classify_material_scope
 
 logger = get_logger(__name__)
 
@@ -58,12 +60,17 @@ def refresh_material(db: Session, material: str, plant: str, *, reservations: bo
     procurement_repo = BatchProcurementRepository(db, work, batch)
     reservation_repo = BatchReservationRepository(db, work, batch)
     index = scope_index(db, work, batch)
+    # The whole tenant's history start, as the build used -- not this material's.
+    line_issues = po_line_issues(
+        procurement_repo, reservation_repo, movement_repo,
+        material=material, plant=plant, history_start=SqlSnapshot(db, run).recorded_history_start,
+    )
 
     watch = [
         m
         for m in compute_watch_metrics(
             movement_repo, procurement_repo, reservation_repo, index, config, data_dir,
-            material=material, plant=plant, as_of=run.reference_date, db=db,
+            material=material, plant=plant, as_of=run.reference_date, db=db, line_issues=line_issues,
         )
         if (m.material, m.plant) == (material, plant)
     ]
@@ -87,15 +94,19 @@ def refresh_material(db: Session, material: str, plant: str, *, reservations: bo
 
         oar = bool(watch) and watch[0].material_scope is MaterialScope.OAR
         pr_by_ledger = {e.ledger_id: e.pr_number for e in ledger}
-        threshold = config.watch.gr_not_issued_threshold_days
-        grni = []
-        for entry in ledger:
-            if entry.last_gr_date is None:
-                continue
-            outstanding = (entry.received_quantity or Decimal(0)) - entry.issued_quantity
-            age = (run.reference_date - entry.last_gr_date).days
-            if outstanding > 0 and age >= threshold:
-                grni.append(kinds.grni(entry, outstanding, age))
+        scope = classify_material_scope(index.get((material, plant))).value
+        grni = [
+            kinds.grni(entry, scope, outstanding, age)
+            for entry, outstanding, age in grni_lines(
+                build_legacy_ledger(
+                    procurement_repo, reservation_repo, index, material=material, plant=plant,
+                    include_out_of_scope=True, line_issues=line_issues,
+                ),
+                as_of=run.reference_date,
+                threshold_days=config.watch.gr_not_issued_threshold_days,
+            )
+            if (entry.material, entry.plant) == (material, plant)
+        ]
         key_plans = [p for p in reference_plans if (p.material, p.plant) == (material, plant)]
         queue = exception_queue_from(ledger, key_plans, watch, config, as_of=run.reference_date)
 

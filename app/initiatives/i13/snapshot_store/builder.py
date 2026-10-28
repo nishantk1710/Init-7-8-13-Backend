@@ -49,7 +49,7 @@ from app.core.logging import get_logger
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.consumption_attribution import ConsumptionAttributionService
 from app.initiatives.i13.exceptions import exception_queue_from
-from app.initiatives.i13.ledger_compat import build_legacy_ledger
+from app.initiatives.i13.ledger_compat import build_legacy_ledger, grni_lines
 from app.initiatives.i13.models import AgingBand, ProcurementChainDiagnostics
 from app.initiatives.i13.movement_metrics import compute_all_movement_metrics
 from app.initiatives.i13.plans import ConsumptionPlan, load_reference_plans
@@ -60,6 +60,7 @@ from app.initiatives.i13.procurement_chain import (
 from app.initiatives.i13.reclassification import build_reclassification_candidates
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
 from app.initiatives.i13.session_link import sync_links
+from app.initiatives.i13.stock_issue_matching import po_line_issues
 from app.initiatives.i13.snapshot_store import kinds, work_tables
 from app.initiatives.i13.snapshot_store.batch_repos import (
     Batch,
@@ -262,6 +263,15 @@ def _monthly(movements, keep_months: int, as_of: date):
     return {key: tuple(m for m in values if m.month >= first) for key, values in series.items()}
 
 
+def history_start_of(db: Session, work: WorkTables) -> date | None:
+    """The earliest goods-movement posting date in the work tables -- what the
+    whole tenant's issue history reaches back to, not one batch's."""
+    value = db.execute(text(f"SELECT MIN(posting_date) FROM {work.mov}")).scalar()
+    if value is None or value == "":
+        return None
+    return value if isinstance(value, date) else date.fromisoformat(str(value).strip())
+
+
 def _month_start(as_of: date, months_back: int) -> str:
     year, month = as_of.year, as_of.month - months_back
     while month <= 0:
@@ -289,6 +299,7 @@ def _build_batch(
     diagnostics: list[ProcurementChainDiagnostics],
     sgtxt_rows: list[dict],
     dated_only: bool = False,
+    history_start: date | None = None,
 ) -> None:
     """One batch's records. ``dated_only`` writes only the kinds measured
     against ``as_of`` (``DATED_KINDS``) -- what a re-age recomputes; the
@@ -304,6 +315,9 @@ def _build_batch(
     reservation_repo = BatchReservationRepository(db, work, batch, movements)
 
     index = scope_index(db, work, batch)
+    # Goods issued per PO line, for the ledger, WATCH's GRNI flag and the GRNI
+    # list alike -- matched while the movement history is still held.
+    line_issues = po_line_issues(procurement_repo, reservation_repo, movement_repo, history_start=history_start)
 
     def is_oar(material: str, plant: str) -> bool:
         return classify_material_scope(index.get((material, plant))) is MaterialScope.OAR
@@ -333,7 +347,8 @@ def _build_batch(
 
     watch = sorted(
         compute_watch_metrics(
-            movement_repo, procurement_repo, reservation_repo, index, config, data_dir, as_of=as_of, db=db
+            movement_repo, procurement_repo, reservation_repo, index, config, data_dir, as_of=as_of, db=db,
+            line_issues=line_issues,
         ),
         key=lambda m: (m.material, m.plant),
     )
@@ -361,6 +376,12 @@ def _build_batch(
     del movement_repo
     movements.drop_history()
 
+    # The procurement ledger is undated, but GRNI is measured from it, so a
+    # re-age computes it too -- it just does not store it.
+    procurement_lines = build_legacy_ledger(
+        procurement_repo, reservation_repo, index, include_out_of_scope=True, line_issues=line_issues
+    )
+    del line_issues
     if not dated_only:
         writer.write(kinds.chain(e, is_oar(e.material, e.plant)) for e in build_procurement_chain(procurement_repo))
         diagnostics.append(compute_chain_diagnostics(procurement_repo))
@@ -370,12 +391,20 @@ def _build_batch(
         }
         writer.write(
             kinds.lledger(e, is_oar(e.material, e.plant), pr_dates.get((e.pr_number, e.pr_item)))
-            for e in build_legacy_ledger(procurement_repo, reservation_repo, index, include_out_of_scope=True)
+            for e in procurement_lines
         )
         del pr_dates
+    # GRNI per PO line -- snapshot.I13Snapshot.grni_entries' rule.
+    writer.write(
+        kinds.grni(entry, classify_material_scope(index.get((entry.material, entry.plant))).value, outstanding, age)
+        for entry, outstanding, age in grni_lines(
+            procurement_lines, as_of=as_of, threshold_days=config.watch.gr_not_issued_threshold_days
+        )
+    )
+    del procurement_lines
 
-    # The reservation ledger is undated, but GRNI and the queue below are
-    # measured from it, so a re-age computes it too -- it just does not store it.
+    # The reservation ledger is undated, but the queue below is measured from
+    # it, so a re-age computes it too -- it just does not store it.
     ledger = build_reservation_ledger(
         reservation_repo, procurement_repo, material_scope_index=index, include_out_of_scope=True
     )
@@ -400,20 +429,6 @@ def _build_batch(
         # The SAP rows are all read now: release them with their repositories.
         del pr_by_ledger, reservation_rows
     del procurement_repo, reservation_repo, movements
-
-    # GRNI per ledger entry -- snapshot.I13Snapshot.grni_entries' rule.
-    threshold = config.watch.gr_not_issued_threshold_days
-
-    def grni_records(ledger):
-        for entry in ledger:
-            if entry.last_gr_date is None:
-                continue
-            outstanding = (entry.received_quantity or Decimal(0)) - entry.issued_quantity
-            age = (as_of - entry.last_gr_date).days
-            if outstanding > 0 and age >= threshold:
-                yield kinds.grni(entry, outstanding, age)
-
-    writer.write(grni_records(ledger))
 
     # The stored legacy queue: reference plans only, those of this batch.
     batch_plans = [p for p in reference_plans if batch.holds(p.material)]
@@ -476,6 +491,7 @@ def build(
     try:
         stats.work_rows = work_tables.create(db.connection(), work, log=log)
         stats.movement_history_start = db.execute(text(f"SELECT MIN(posting_date) FROM {work.mov}")).scalar()
+        history_start = history_start_of(db, work)
         db.commit()
 
         batches = plan_batches(db, work, settings.i13_build_batch_materials, settings.i13_build_batch_rows)
@@ -498,6 +514,7 @@ def build(
                 config=config, settings=settings, data_dir=data_dir, as_of=as_of,
                 reference_plans=reference_plans, all_plans=all_plans,
                 writer=writer, stats=stats, diagnostics=diagnostics, sgtxt_rows=sgtxt_rows,
+                history_start=history_start,
             )
             db.commit()
             gc.collect()
@@ -680,6 +697,7 @@ def reage(
     try:
         batches = plan_batches(db, work, settings.i13_build_batch_materials, settings.i13_build_batch_rows)
         stats.batches = len(batches)
+        history_start = history_start_of(db, work)
         reference_plans = load_reference_plans(data_dir)
         all_plans = list(reference_plans) + load_captured_plans(db)
         writer = RecordWriter(db, version)
@@ -691,6 +709,7 @@ def reage(
                 config=config, settings=settings, data_dir=data_dir, as_of=as_of,
                 reference_plans=reference_plans, all_plans=all_plans,
                 writer=writer, stats=stats, diagnostics=[], sgtxt_rows=[], dated_only=True,
+                history_start=history_start,
             )
             db.commit()
             gc.collect()

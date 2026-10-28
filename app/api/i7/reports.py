@@ -49,7 +49,7 @@ from sqlalchemy.orm import Session
 from app.api.i7.deps import get_session
 from app.core.logging import get_logger
 from app.initiatives.i7.reporting.report_export import build_quarterly_report_workbook
-from app.initiatives.i7.reporting.period import latest_closed_quarter
+from app.initiatives.i7.reporting.period import latest_closed_month, latest_closed_quarter, period_kind
 from app.initiatives.i7.reporting.repository import get_report, list_reports, save_report
 from app.initiatives.i7.reporting.service import generate_quarterly_report
 from app.schemas.i7.errors import bad_request, not_found
@@ -99,14 +99,15 @@ def list_quarterly_reports(
     "optional -- omit it (or POST an empty body) to generate the latest "
     "*closed* calendar quarter, which is what an external scheduler should "
     "call so it never has to compute a quarter itself (see "
-    "``period.latest_closed_quarter``); the response's ``metadata.quarter`` "
-    "always says which quarter actually ran.",
+    "``period.latest_closed_quarter``); send ``{\"period\": \"month\"}`` for the latest closed "
+    "calendar *month* instead, or ``{\"quarter\": \"Oct 2026\"}`` for a named month. The response's "
+    "``metadata.quarter`` always says which period actually ran.",
 )
 def generate_quarterly_report_endpoint(
     request: GenerateReportRequest, session: Annotated[Session, Depends(get_session)]
 ) -> QuarterlyReport:
     if request.quarter is None:
-        quarter = latest_closed_quarter()
+        quarter = latest_closed_month() if request.period == "month" else latest_closed_quarter()
         quarter_source = "latest_closed"
     else:
         quarter = request.quarter
@@ -194,7 +195,11 @@ def export_quarterly_report(
         )
     report = QuarterlyReport.from_report_json(row.report_json)
     workbook = build_quarterly_report_workbook(report)
-    filename = f"i7-quarterly-report-{quarter.replace(' ', '_')}.xlsx"
+    try:
+        kind = "monthly" if period_kind(quarter) == "month" else "quarterly"
+    except ValueError:
+        kind = "quarterly"
+    filename = f"i7-{kind}-report-{quarter.replace(' ', '_')}.xlsx"
     return StreamingResponse(
         workbook,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
