@@ -200,7 +200,7 @@ class I08Assessment:
             )
             return (
                 f"{opening} That repair was due {overdue_by} days ago and still "
-                f"has not arrived, so its date is no longer a forecast -- chase "
+                f"has not arrived, so its date is no longer a forecast: chase "
                 f"it before relying on it.{tail}"
             )
 
@@ -218,11 +218,11 @@ class I08Assessment:
         if comparison:
             return (
                 f"{opening} That repair is due in {days_until_repair} days, "
-                f"against {buying} to buy a new one -- waiting looks faster."
+                f"against {buying} to buy a new one, so waiting looks faster."
             )
         return (
             f"{opening} That repair is not due for {days_until_repair} days, "
-            f"which is longer than the {buying} a new one takes -- buying may "
+            f"which is longer than the {buying} a new one takes, so buying may "
             "genuinely be the faster route here."
         )
 

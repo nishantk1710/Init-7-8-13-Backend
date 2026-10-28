@@ -253,6 +253,20 @@ class TestEveryCase:
             (CONSUMABLE, "out_of_scope"), (OAR_NO_DATA, "data_gap"),
         ]
 
+    def test_every_closing_message_names_the_request_reference(self, created) -> None:
+        """28-Oct-2026: a request is one reservation, so every line's closing
+        message names the request reference and the header text, never the
+        line's own session ID and the item text."""
+        db, request_id, _ = created
+        for line in request_service.lines_of(db, request_id):
+            last = session_module.turns(db, line.id)[-1]
+            assert last.step_kind == "terminal", line.material_id
+            assert last.question.endswith(
+                f"Type the request reference {request_id} once into the reservation's "
+                "header text in SAP; SAP copies it to every item."
+            )
+            assert line.id not in last.question
+
     def test_every_line_carries_the_request_department(self, created) -> None:
         """One request, one department (UAT, 21 Oct): picked once, on every line."""
         db, request_id, _ = created

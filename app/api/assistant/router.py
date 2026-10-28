@@ -88,6 +88,7 @@ from app.assistant.models import (
     Justification,
     QuantitySuggestionRecord,
 )
+from app.assistant.script import reference_instruction
 from app.assistant.session import Origin, SessionError
 from app.assistant.steps import Step
 from app.assistant.turns import AnswerError
@@ -113,14 +114,20 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 #: the linkage had been checked and found absent.
 LINKAGE_NOTE = (
     "No reservation is linked to this session yet. The assistant runs while the "
-    "reservation is being created, so it has no document number to record -- the "
-    "requester types the session ID into the reservation's item text (SGTXT) in "
-    "SAP, and the link is made when a SAP extract carrying it is loaded."
+    "reservation is being created, so it has no document number to record. "
+    "{instruction} The link is made when a SAP extract carrying it is loaded."
 )
-LINKED_NOTE = (
-    "Linked through the reservation's item text (SGTXT), which carries this "
-    "session's ID."
-)
+LINKED_NOTE = "Linked: the reservation's item text in SAP carries this reference."
+
+
+def _linkage_note(session: AssistantSession, linked: bool) -> str:
+    """The trace's link sentence, naming the same reference and the same SAP
+    field as the conversation's closing message (one instruction, 28-Oct-2026)."""
+    if linked:
+        return LINKED_NOTE
+    return LINKAGE_NOTE.format(
+        instruction=reference_instruction(session.id, session.request_id)
+    )
 
 
 def _step_model(step: Step) -> StepModel:
@@ -657,7 +664,7 @@ def get_session(session_id: str, db: DbDep) -> SessionTraceResponse:
         justifications=[_justification_model(j) for j in justifications],
         declarations=[_declaration_model(d) for d in _session_declarations(db, session.id)],
         linked_reservations=[_linked_model(l) for l in links],
-        linkage_note=LINKED_NOTE if links else LINKAGE_NOTE,
+        linkage_note=_linkage_note(session, bool(links)),
     )
     attach_material_names([trace], field="material_id", wait_seconds=NAME_WAIT_SECONDS)
     return trace

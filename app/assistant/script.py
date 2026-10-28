@@ -124,7 +124,7 @@ def _reason_field(categories: Sequence[str], label: str) -> Field:
             Choice(value=category, label=category.replace("_", " ").title())
             for category in categories
         ),
-        help_text="Placeholder categories -- VZI's own list is not confirmed yet.",
+        help_text="Placeholder categories. VZI's own list is not confirmed yet.",
     )
 
 
@@ -140,21 +140,40 @@ _FREE_TEXT = Field(
 )
 
 
-def _terminal(step_id: str, session_id: str, message: str) -> Step:
+def reference_instruction(session_id: str, request_id: str | None = None) -> str:
+    """The one sentence that says which reference goes where in SAP.
+
+    A request is one SAP reservation: its reference is typed once into the
+    header text and SAP copies it to every item. A single session's reference
+    goes into the item text. One reference per conversation, named once
+    (28-Oct-2026): the closing message used to name the session reference and
+    the item text even on a request line, which the session page contradicted.
+    """
+    if request_id:
+        return (
+            f"Type the request reference {request_id} once into the reservation's "
+            "header text in SAP; SAP copies it to every item."
+        )
+    return (
+        f"Type the session reference {session_id} into the reservation's item "
+        "text in SAP."
+    )
+
+
+def _terminal(
+    step_id: str, session_id: str, message: str, request_id: str | None = None
+) -> Step:
     """The last step. Always hands back the session ID.
 
-    The ID is the only thing the requester has to carry out of this
+    The reference is the only thing the requester has to carry out of this
     conversation, so the instruction is explicit rather than implied by a field
-    appearing on screen.
+    appearing on screen. ``request_id`` is set on a line of a multi-material
+    request, whose reference is the request's, not the session's.
     """
     return Step(
         id=step_id,
         kind=StepKind.TERMINAL,
-        prompt=(
-            f"{message}\n\nYour session reference is {session_id}. Type it into "
-            "the reservation's item text in SAP (field SGTXT) so this advice can "
-            "be linked to what you actually reserve."
-        ),
+        prompt=f"{message}\n\n{reference_instruction(session_id, request_id)}",
         session_id=session_id,
     )
 
@@ -180,6 +199,7 @@ def _declaration_or_end(
     answers: Mapping[str, dict[str, Any]],
     ending: str,
     facts: dict[str, Any] | None = None,
+    request_id: str | None = None,
 ) -> Step:
     """Option B (27-Oct-2026): declare the faulty unit in the same visit.
 
@@ -197,7 +217,7 @@ def _declaration_or_end(
             choices=(
                 Choice(
                     value=DECLARE,
-                    label="Yes -- declare it now",
+                    label="Yes, declare it now",
                     description="Record its condition, so the repair can be checked against it.",
                 ),
                 Choice(value=SKIP_DECLARATION, label="No"),
@@ -245,7 +265,7 @@ def _declaration_or_end(
                 ),
             ),
         )
-    return _terminal(I08_DONE, session_id, ending)
+    return _terminal(I08_DONE, session_id, ending, request_id)
 
 
 def _i08(
@@ -255,6 +275,7 @@ def _i08(
     answers: Mapping[str, dict[str, Any]],
     today: date,
     reason_categories: Sequence[str],
+    request_id: str | None = None,
 ) -> Step:
     facts = assessment.as_record(today)
     headline = assessment.headline(today)
@@ -272,6 +293,7 @@ def _i08(
                 answers=answers,
                 ending=f"{headline} Nothing here suggests holding off, so go ahead.",
                 facts=facts,
+                request_id=request_id,
             )
 
         return Step(
@@ -284,14 +306,14 @@ def _i08(
             choices=(
                 Choice(
                     value=USE_EXISTING,
-                    label="No -- I will use the existing unit",
+                    label="No, I will use the existing unit",
                     # "On repair" covers a requested repair with no PO yet
                     # (27-Oct-2026): "repaired" claimed a unit already fixed.
                     description="A unit in stock or on repair covers this need.",
                 ),
                 Choice(
                     value=PROCEED_NEW,
-                    label="Yes -- I still need a new one",
+                    label="Yes, I still need a new one",
                     description="You will be asked why, and the reason is recorded.",
                 ),
             ),
@@ -312,9 +334,10 @@ def _i08(
         return _declaration_or_end(
             session_id=session_id,
             answers=answers,
-            ending="Recorded -- you are using the unit that already exists rather than "
+            ending="Recorded: you are using the unit that already exists rather than "
             "buying another. That decision is what this platform exists to "
             "capture.",
+            request_id=request_id,
         )
 
     # They are going ahead anyway. FR-7: reason category plus free text.
@@ -326,7 +349,7 @@ def _i08(
             # it alone when a reason is missing. The note under it says
             # what the reason does and does not do (27-Oct-2026).
             prompt=(
-                "Understood -- the platform does not block anything. Please "
+                "Understood. The platform does not block anything. Please "
                 "record why a new unit is needed despite the one in stock or "
                 "on repair.\n\n" + I08_REASON_NOTE
             ),
@@ -344,9 +367,10 @@ def _i08(
         session_id=session_id,
         answers=answers,
         ending=(
-            "Recorded, with your reason. Nothing is blocked -- the reservation is "
+            "Recorded, with your reason. Nothing is blocked: the reservation is "
             "yours to make."
         ),
+        request_id=request_id,
     )
 
 
@@ -361,8 +385,12 @@ def _i13(
     today: date,
     reason_categories: Sequence[str],
     suggestion: QuantitySuggestion | None,
+    request_id: str | None = None,
 ) -> Step:
     facts = assessment.as_record(today)
+
+    def done(message: str) -> Step:
+        return _terminal(I13_DONE, session_id, message, request_id)
 
     if I13_ASSESSMENT not in answers:
         return Step(
@@ -376,12 +404,12 @@ def _i13(
             choices=(
                 Choice(
                     value=PROCEED,
-                    label="Yes -- continue",
+                    label="Yes, continue",
                     description="You will be asked what the material is for.",
                 ),
                 Choice(
                     value=NOT_NEEDED,
-                    label="No -- I do not need it after all",
+                    label="No, I do not need it after all",
                     description="Nothing is captured beyond the advice you were shown.",
                 ),
             ),
@@ -390,10 +418,8 @@ def _i13(
         )
 
     if answers[I13_ASSESSMENT].get("choice") == NOT_NEEDED:
-        return _terminal(
-            I13_DONE,
-            session_id,
-            "Nothing captured -- you decided against the reservation. The advice "
+        return done(
+            "Nothing captured: you decided against the reservation. The advice "
             "you were shown is still recorded, which is how "
             "'advice given, not acted on' gets counted.",
         )
@@ -474,18 +500,14 @@ def _i13(
                 ),
                 facts=facts,
             )
-        return _terminal(
-            I13_DONE,
-            session_id,
+        return done(
             "Plan recorded"
             + (f" at {planned}" if planned is not None else "")
             + ", with your reason. No quantity suggestion could be made for this part.",
         )
 
     if not suggestion.is_override:
-        return _terminal(
-            I13_DONE,
-            session_id,
+        return done(
             f"Plan recorded. {suggestion.reason}",
         )
 
@@ -514,9 +536,7 @@ def _i13(
         )
 
     if answers[I13_QUANTITY].get("choice") == ACCEPT_SUGGESTED:
-        return _terminal(
-            I13_DONE,
-            session_id,
+        return done(
             f"Plan recorded at the suggested {suggestion.suggested_quantity}.",
         )
 
@@ -535,9 +555,7 @@ def _i13(
             facts=facts,
         )
 
-    return _terminal(
-        I13_DONE,
-        session_id,
+    return done(
         f"Plan recorded at {suggestion.requested_quantity}, with your reason.",
     )
 
@@ -551,8 +569,13 @@ def next_step(
     today: date,
     reason_categories: Sequence[str],
     suggestion: QuantitySuggestion | None = None,
+    request_id: str | None = None,
 ) -> Step:
     """The next thing to say, given everything answered so far.
+
+    ``request_id`` is the multi-material request the session is a line of, if
+    any: the closing message then names the request reference, not the
+    session's.
 
     ``answers`` is keyed by step id. Keying by id rather than by position means
     a script that gains a step in the middle does not misread conversations that
@@ -566,6 +589,7 @@ def next_step(
             answers=answers,
             today=today,
             reason_categories=reason_categories,
+            request_id=request_id,
         )
     if flow is Flow.I13:
         return _i13(
@@ -575,6 +599,7 @@ def next_step(
             today=today,
             reason_categories=reason_categories,
             suggestion=suggestion,
+            request_id=request_id,
         )
     raise ValueError(
         f"no script exists for flow {flow!r} -- a session should never have been "
