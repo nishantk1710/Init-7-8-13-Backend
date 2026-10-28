@@ -27,6 +27,7 @@ wait for ``I11LeadTimeProvider`` or a separate I11 dataset.
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -91,13 +92,17 @@ class GenerateReportRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     quarter: str | None = None
-    """E.g. ``"Q3 2026"`` -- validated against ``resolve_quarter``'s format
-    at the route, not here (keeps the parsing rule in one place). ``None``
+    """E.g. ``"Q3 2026"``, or a single month such as ``"Oct 2026"`` -- validated against ``resolve_period``'s
+    format at the route, not here (keeps the parsing rule in one place). ``None``
     (the field omitted entirely, or an empty JSON body) means "the latest
-    closed quarter" -- resolved server-side via
-    ``app.initiatives.i7.reporting.period.latest_closed_quarter`` so a caller
-    (a human, or an external scheduler) never has to compute a quarter
+    closed period of ``period``" -- resolved server-side via
+    ``app.initiatives.i7.reporting.period.latest_closed_period`` so a caller
+    (a human, or an external scheduler) never has to compute a period
     itself."""
+
+    period: Literal["quarter", "month"] = "quarter"
+    """Which kind of period "the latest closed" means when ``quarter`` is omitted: the latest closed calendar
+    quarter (the default, and what every existing caller gets) or the latest closed calendar month."""
 
 
 class GenerationStatusResponse(BaseModel):

@@ -190,7 +190,7 @@ def test_a_kpi_that_has_no_value_says_why_in_the_export(db):
     report = generated(db)
     header, body = table_after(workbook(report)["KPI Cards"], "Card")
     col = {name: i for i, name in enumerate(header)}
-    stockout = next(r for r in body if r[col["Card"]] == "Critical stockout risk")
+    stockout = next(r for r in body if r[col["Card"]] == "High Stockout Risk")
     assert stockout[col["Value"]] == NOT_AVAILABLE
     assert stockout[col["Status"]] == "NOT_AVAILABLE"
     assert stockout[col["Measured on"]] == NOT_AVAILABLE or stockout[col["Why not available"]] != ""
