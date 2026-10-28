@@ -18,7 +18,22 @@ from app.initiatives.i13.session_link import INVALID_SESSION, MISSING_SESSION, S
 
 CFG = get_i8_settings()
 START = date(2026, 9, 1)
-SESSION = ids.mint()
+def _mint_with_an_inner_digit() -> str:
+    """A real session ID with a digit before its last character.
+
+    The mistyped-ID test changes the last character. A string with no digit is
+    read as an ordinary word, never as a mistyped ID (session_link._session_shaped),
+    so an ID whose only digit is its last character turns into a "word" when
+    that character is changed: about 1 mint in 20, which made the test flaky
+    (failed the dev deploy run on 28-Oct-2026).
+    """
+    while True:
+        minted = ids.mint()
+        if any(character.isdigit() for character in minted[:-1]):
+            return minted
+
+
+SESSION = _mint_with_an_inner_digit()
 SESSIONS = {SESSION: SessionInfo(SESSION, "8000005632", "1300", False)}
 
 
