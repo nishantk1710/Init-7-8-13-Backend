@@ -114,7 +114,11 @@ from app.initiatives.i8.exception_state import (
 )
 from app.initiatives.i8.exceptions import ExceptionItem
 from app.initiatives.i8.material_number import is_eighty_series, normalise
-from app.initiatives.i8.notifications import list_notifications, log_new as log_new_notifications
+from app.initiatives.i8.notifications import (
+    list_notifications,
+    log_new as log_new_notifications,
+    repair_line_of,
+)
 from app.initiatives.i8.register import RepairLine
 from app.initiatives.i8.repairable_unit import assess as assess_repairable_unit
 from app.initiatives.i8.requisitions import NOT_ORDERED, PR_RAISED, RepairRequest
@@ -123,6 +127,7 @@ from app.initiatives.i8.service import (
     Snapshot,
     SnapshotBuilding,
     SnapshotFailed,
+    cached_attestation_view,
     cached_snapshot,
     get_attestation_view,
     get_coding_screen,
@@ -131,6 +136,7 @@ from app.initiatives.i8.service import (
 )
 from app.initiatives.i8.universe import UniverseRow
 from app.shared import get_criticality_source
+from app.shared.material_names import material_names
 
 router = APIRouter(prefix="/i8", tags=["i8 - refurbishable spares"])
 
@@ -1306,8 +1312,40 @@ def get_notifications(
     rows, total, types = list_notifications(
         db, page=page, page_size=size, exception_type=wanted
     )
+    # Labels for the page (28-Oct-2026), from what is already in memory: the
+    # exception queue as last built, the material names list and the snapshot.
+    # Nothing here builds or waits, so the log loads while I08 data is still
+    # being prepared -- with fewer labels.
+    view = cached_attestation_view()
+    on_page = {r.exception_id for r in rows}
+    current = (
+        {i.id: i for i in view.exceptions if i.id in on_page} if view is not None else {}
+    )
+    materials = {r.material_id for r in rows}
+    names = material_names(materials)
+    from_snapshot = material_descriptions(
+        cached_snapshot(), (m for m in materials if normalise(m) not in names)
+    )
+
+    def describe(row) -> str | None:
+        item = current.get(row.exception_id)
+        return (
+            names.get(normalise(row.material_id) or "")
+            or from_snapshot.get(row.material_id)
+            or (item.description if item is not None else None)
+        )
+
+    plant_names = cfg.plant_name_map
     return NotificationResponse(
-        items=[notification_item(r) for r in rows],
+        items=[
+            notification_item(
+                r,
+                repair_line=repair_line_of(r, current.get(r.exception_id)),
+                description=describe(r),
+                plant_name=plant_names.get(r.plant) if r.plant else None,
+            )
+            for r in rows
+        ],
         total=total,
         page=page,
         page_size=size,

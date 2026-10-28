@@ -958,6 +958,23 @@ class NotificationItem(I8Model):
     channel: Literal["EMAIL"] = "EMAIL"
     emailed: bool = False
 
+    # --- 28-Oct-2026: enough to tell the rows apart ----------------------
+    # Looked up when the log is read, not stored: the row keeps what it was
+    # logged with, and these are labels.
+
+    repair_line: str | None = None
+    """The repair line the finding is about, as the register names its row:
+    ``4500001719-10``, or ``PR-2000028756-10`` for a repair PR with no PO yet.
+    Null for a finding with no repair line (a declaration with no repair, a
+    reservation with no reference), and for a bought-new finding once it is
+    no longer raised."""
+
+    description: str | None = None
+    """The material's description, where one is known."""
+
+    plant_name: str | None = None
+    """The plant's name. Null when none is documented for the code."""
+
 
 class NotificationResponse(I8Model):
     items: list[NotificationItem]

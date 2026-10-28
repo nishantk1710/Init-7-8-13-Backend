@@ -820,6 +820,14 @@ def get_attestation_view(
         return _attestation_view
 
 
+def cached_attestation_view() -> AttestationView | None:
+    """The attestation view already built, or None. Never builds, never waits
+    and never reads the database: for a caller that only wants labels from it
+    (the notification log, 28-Oct-2026)."""
+    with _attestation_lock:
+        return _attestation_view
+
+
 def reset_attestation_view() -> None:
     """Drop the cached view. **Call this after recording an attestation.**
 

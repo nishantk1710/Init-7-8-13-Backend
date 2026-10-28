@@ -801,10 +801,20 @@ def exception_item(
     )
 
 
-def notification_item(row: Notification) -> NotificationItem:
+def notification_item(
+    row: Notification,
+    *,
+    repair_line: str | None = None,
+    description: str | None = None,
+    plant_name: str | None = None,
+) -> NotificationItem:
     """A logged notification on the wire. ``emailed`` follows ``emailed_at``,
-    which nothing sets until the email sender exists."""
+    which nothing sets until the email sender exists. The keyword fields are
+    labels the route looks up at read time (28-Oct-2026)."""
     return NotificationItem(
+        repair_line=repair_line,
+        description=description,
+        plant_name=plant_name,
         id=row.id,
         exception_id=row.exception_id,
         type=row.exception_type,
