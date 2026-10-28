@@ -39,6 +39,23 @@ BATCH_ROWS = 1000
 # (CDHDR's OBJECTID, at 90).
 INDEXED_COLUMN_CHARS = 450
 
+# A nonclustered index's whole key -- every column in it -- may be at most
+# 1700 bytes. Wider is created with a warning, and then any row whose key
+# really is wider fails to insert.
+MAX_INDEX_KEY_BYTES = 1700
+
+
+def key_column_chars(key_columns: int) -> int:
+    """Width, in nchars, of each column of a ``key_columns``-column index key.
+
+    As wide as fits: INDEXED_COLUMN_CHARS for one or two columns, narrowing
+    so the key never passes MAX_INDEX_KEY_BYTES -- 121 for CDPOS's seven,
+    still beyond any SAP key field (CDPOS's OBJECTID is 90).
+    """
+    if key_columns <= 0:
+        return INDEXED_COLUMN_CHARS
+    return min(INDEXED_COLUMN_CHARS, MAX_INDEX_KEY_BYTES // (2 * key_columns))
+
 
 def quote(identifier: str) -> str:
     """Bracket-quote an identifier, escaping any closing bracket.
@@ -54,14 +71,17 @@ def quote(identifier: str) -> str:
 class RawTableWriter:
     """Creates, describes, indexes and fills one raw table."""
 
-    def __init__(self, indexed_columns: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self, indexed_columns: tuple[str, ...] = (), *, indexed_chars: int = INDEXED_COLUMN_CHARS
+    ) -> None:
         # Needed at CREATE time, not just at index time: a column that will carry
         # an index has to be given a bounded width up front.
         self._indexed = set(indexed_columns)
+        self._indexed_chars = indexed_chars
 
     def _column_type(self, column: str) -> str:
         if column in self._indexed:
-            return f"nvarchar({INDEXED_COLUMN_CHARS})"
+            return f"nvarchar({self._indexed_chars})"
         return "nvarchar(max)"
 
     def create_table(self, cursor: Any, table: str, columns: list[str]) -> None:
@@ -106,6 +126,16 @@ class RawTableWriter:
             f"CREATE INDEX {quote(f'ix_{table}_{column}')} "
             f"ON {quote(table)} ({quote(column)})"
         )
+
+    def create_key_index(self, cursor: Any, table: str, columns: list[str]) -> None:
+        """One index over a whole key, in key order. After the rows are in.
+
+        What a merge matches on, so a merge seeks instead of reading the whole
+        table. Not unique: an extract can repeat a key and keeps rows with a
+        blank one, and refusing them here would refuse the load.
+        """
+        column_list = ", ".join(quote(column) for column in columns)
+        cursor.execute(f"CREATE INDEX {quote(f'ix_{table}_key')} ON {quote(table)} ({column_list})")
 
     def bulk_load(
         self, cursor: Any, table: str, columns: list[str], rows: Iterable[tuple]

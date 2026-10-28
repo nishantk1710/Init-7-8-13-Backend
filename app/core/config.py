@@ -91,6 +91,18 @@ class Settings(BaseSettings):
     # happens on our schedule instead of inside someone's request.
     database_pool_recycle_seconds: int = 1500
 
+    # Connections one worker keeps open, how many more it may open under a
+    # burst, and how long a request waits for one before failing. Requests and
+    # every background job share this pool, and each job's lock (delta, full
+    # refresh, snapshot builds, the I07 pipeline) holds a connection for its
+    # whole run. SQLAlchemy's own 5 + 10 ran out on nonprod on 14 Oct 2026
+    # with no load running ("QueuePool limit of size 5 overflow 10 reached").
+    # The ceiling is size + overflow per worker, times workers, times
+    # instances: keep that well under the database tier's worker limit.
+    database_pool_size: int = 10
+    database_max_overflow: int = 20
+    database_pool_timeout_seconds: int = 30
+
     # Attempts at opening a connection when Azure SQL drops it while it is being
     # set up -- "TCP Provider: Error code 0x68 (104)", a serverless database
     # waking (40613), a failover. Microsoft's guidance is to retry these: they
@@ -182,6 +194,17 @@ class Settings(BaseSettings):
     # hour per table to learn that.
     csv_delta_first_chunk_timeout_seconds: int = 300
     csv_delta_quiet_period_seconds: int = 120
+
+    # --- Key index on the raw tables ------------------------------------------
+    #
+    # Whether a CSV full load indexes raw_<table> on the set's identity key, so
+    # the merges into it seek instead of reading the whole table (app/ingest/
+    # csv_load.py, KEY INDEX). Off by default: every table is then built
+    # exactly as it always was -- every column nvarchar(max), no index -- and
+    # an environment changes only when it is switched on. Takes effect at a
+    # table's next full load; a table already loaded is never altered. Turn it
+    # on before the first data load of an environment that should have it.
+    raw_key_index_enabled: bool = False
 
     # --- Full refresh schedule -----------------------------------------------
     #

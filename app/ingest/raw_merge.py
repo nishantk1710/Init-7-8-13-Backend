@@ -108,7 +108,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Column, Engine, MetaData, Table, UnicodeText, inspect, text
+from sqlalchemy import Column, Engine, MetaData, Table, Unicode, UnicodeText, inspect, text
 
 from app.core.db import get_engine
 from app.core.logging import get_logger
@@ -373,6 +373,20 @@ def _table_exists(engine: Engine, table: str) -> bool:
     return inspect(engine).has_table(table)
 
 
+def staging_type(raw_type: Any) -> Any:
+    """The staging column type for a raw column of type ``raw_type``.
+
+    The raw column's own width where it has one -- the key columns the CSV
+    load indexes (``csv_load``, KEY INDEX) -- and unbounded text otherwise,
+    which is every column of a table built before that index existed. The
+    same type on both sides of the key match is what lets SQL Server seek the
+    index rather than read the whole table. ``None`` (no raw column yet) is
+    unbounded too.
+    """
+    length = getattr(raw_type, "length", None)
+    return Unicode(length) if isinstance(length, int) and length > 0 else UnicodeText
+
+
 def _column_type_sql(engine: Engine) -> str:
     return "nvarchar(max)" if engine.dialect.name == "mssql" else "TEXT"
 
@@ -455,8 +469,10 @@ def merge(
             )
         # A table created here gets the SAP field names -- the vocabulary the
         # CSV route uses, and one the normalise mapping lists.
+        raw_columns = inspect(engine).get_columns(table) if exists else []
+        raw_types = {c["name"]: c["type"] for c in raw_columns}
         present = (
-            [c["name"] for c in inspect(engine).get_columns(table)] if exists
+            [c["name"] for c in raw_columns] if exists
             else [sap_field(p.name) for p in spec.entity_set.properties]
         )
         vocabulary, resolved, missing_keys = resolve(spec, target_spec.table, present, aliases=owned)
@@ -519,7 +535,7 @@ def merge(
                 conn.execute(text(_add_column_sql(engine, table, column)))
 
             meta = MetaData()
-            stage = Table(staging, meta, *[Column(c, UnicodeText) for c in columns])
+            stage = Table(staging, meta, *[Column(c, staging_type(raw_types.get(c))) for c in columns])
             stage.drop(conn, checkfirst=True)
             stage.create(conn)
             conn.execute(stage.insert(), list(by_key.values()))

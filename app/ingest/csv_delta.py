@@ -54,7 +54,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import Column, Engine, MetaData, Table, UnicodeText, inspect, text
+from sqlalchemy import Column, Engine, MetaData, Table, inspect, text
 
 from app.core.config import Settings, get_settings
 from app.core.db import get_engine
@@ -63,7 +63,7 @@ from app.core.storage import Storage, get_storage
 from app.ingest import csv_load, csv_pull, sap_system
 from app.ingest.csv_tables import DATE_FORMAT, CsvTable, csv_table
 from app.ingest.manifest import spec_for
-from app.ingest.raw_merge import sap_field
+from app.ingest.raw_merge import sap_field, staging_type
 from app.ingest.watermarks import as_day, get_watermark, set_watermark
 from app.models.csv_extract import RECONCILE_INCREMENT, STATUS_OPEN, CsvExtractRequest
 from app.seed.sqlserver import quote
@@ -241,7 +241,9 @@ def merge_increment(
                 f"Build it first: python -m app.ingest --csv-pull --csv-load --table {spec.sap_table}"
             )
             return outcome
-        present = [c["name"] for c in inspect(engine).get_columns(table)]
+        raw_columns = inspect(engine).get_columns(table)
+        raw_types = {c["name"]: c["type"] for c in raw_columns}
+        present = [c["name"] for c in raw_columns]
         by_lower = {c.lower(): c for c in present}
 
         with csv_load._open_csv(storage, data_key) as (header, rows):
@@ -297,7 +299,8 @@ def merge_increment(
             for column in added:
                 conn.execute(text(add_sql.format(t=quote(table), c=quote(column))))
 
-            stage = Table(staging, MetaData(), *[Column(c, UnicodeText) for c in targets])
+            # The raw table's own widths, so the key match can seek its index.
+            stage = Table(staging, MetaData(), *[Column(c, staging_type(raw_types.get(c))) for c in targets])
             stage.drop(conn, checkfirst=True)
             stage.create(conn)
             conn.execute(stage.insert(), [dict(zip(targets, row)) for row in by_key.values()])
