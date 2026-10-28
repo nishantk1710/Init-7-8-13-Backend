@@ -72,7 +72,7 @@ from app.core.logging import get_logger
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.consumption_attribution import ConsumptionAttributionService
 from app.initiatives.i13.exceptions import exception_queue_from
-from app.initiatives.i13.ledger_compat import LegacyLedgerEntry, build_legacy_ledger
+from app.initiatives.i13.ledger_compat import LegacyLedgerEntry, build_legacy_ledger, grni_lines
 from app.initiatives.i13.models import (
     AgingBand,
     ConsumptionAttribution,
@@ -98,6 +98,7 @@ from app.initiatives.i13.procurement_chain import (
 from app.initiatives.i13.reclassification import build_reclassification_candidates
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
 from app.initiatives.i13.session_link import sync_links
+from app.initiatives.i13.stock_issue_matching import po_line_issues
 from app.initiatives.i13.watch import compute_watch_metrics
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
@@ -157,13 +158,16 @@ class MonthlyConsumption:
 
 @dataclass(frozen=True)
 class GrniEntry:
-    """One reservation-ledger entry that has been received and not issued for
-    at least the GR-not-issued threshold -- the per-entry form of WATCH's
-    ``gr_not_issued_flag`` (``watch._gr_not_issued``), FRS FR-6."""
+    """One PO line received at least the GR-not-issued threshold ago with
+    stock not yet issued -- the per-line form of WATCH's
+    ``gr_not_issued_flag`` (``watch._gr_not_issued``), FRS FR-6. Issued is
+    the line's own reservation's issues, or the stock issued out of its
+    deliveries oldest first (``stock_issue_matching``)."""
 
-    ledger: ReservationLedgerEntry
+    ledger: LegacyLedgerEntry
     outstanding_quantity: Decimal
     days_since_gr: int
+    material_scope: MaterialScope
 
 
 @dataclass(frozen=True)
@@ -245,20 +249,18 @@ class I13Snapshot:
 
     @cached_property
     def grni_entries(self) -> tuple[GrniEntry, ...]:
-        """Every reservation-ledger entry that meets the GRNI rule, oldest GR
-        first. Same predicate as ``watch._gr_not_issued``, stored per entry."""
+        """Every PO line that meets the GRNI rule, oldest GR first. Same
+        predicate as ``watch._gr_not_issued`` (``ledger_compat.grni_lines``)."""
         threshold = get_i13_config().watch.gr_not_issued_threshold_days
-        found: list[GrniEntry] = []
-        for entry in self.reservation_ledger:
-            if entry.last_gr_date is None:
-                continue
-            outstanding = (entry.received_quantity or Decimal("0")) - entry.issued_quantity
-            if outstanding <= 0:
-                continue
-            age = (self.reference_date - entry.last_gr_date).days
-            if age < threshold:
-                continue
-            found.append(GrniEntry(ledger=entry, outstanding_quantity=outstanding, days_since_gr=age))
+        found = [
+            GrniEntry(
+                ledger=entry, outstanding_quantity=outstanding, days_since_gr=age,
+                material_scope=self.scope_of(entry.material, entry.plant),
+            )
+            for entry, outstanding, age in grni_lines(
+                self.legacy_ledger, as_of=self.reference_date, threshold_days=threshold
+            )
+        ]
         found.sort(key=lambda g: (-g.days_since_gr, g.ledger.material, g.ledger.plant, g.ledger.ledger_id))
         return tuple(found)
 
@@ -448,6 +450,15 @@ def build_i13_snapshot(
             as_of=as_of,
         ),
     )
+    # Goods issued per PO line, matched once for the ledger, WATCH and GRNI.
+    history_start = min(
+        (r["BudatMkpf"] for r in movement_repo.get_movement_history() if r.get("BudatMkpf") is not None),
+        default=None,
+    )
+    line_issues = timed(
+        "PO line issues",
+        lambda: po_line_issues(procurement_repo, reservation_repo, movement_repo, history_start=history_start),
+    )
     procurement_chain = timed("procurement chain", lambda: build_procurement_chain(procurement_repo))
     chain_diagnostics = timed("chain diagnostics", lambda: compute_chain_diagnostics(procurement_repo))
     reservation_ledger = timed(
@@ -458,13 +469,16 @@ def build_i13_snapshot(
     )
     legacy_ledger = timed(
         "legacy ledger",
-        lambda: build_legacy_ledger(procurement_repo, reservation_repo, scope_index, include_out_of_scope=True),
+        lambda: build_legacy_ledger(
+            procurement_repo, reservation_repo, scope_index, include_out_of_scope=True, line_issues=line_issues
+        ),
     )
     # With `db`, so captured plans count towards acquired-vs-plan (gap G1).
     watch_metrics = timed(
         "WATCH metrics",
         lambda: compute_watch_metrics(
-            movement_repo, procurement_repo, reservation_repo, scope_index, config, data_dir, as_of=as_of, db=db
+            movement_repo, procurement_repo, reservation_repo, scope_index, config, data_dir, as_of=as_of, db=db,
+            line_issues=line_issues,
         ),
     )
     reference_plans = tuple(load_reference_plans(data_dir))
@@ -789,6 +803,7 @@ def refresh_material(db: Session, material: str, plant: str, *, reservations: bo
         plant=plant,
         as_of=snapshot.reference_date,
         db=db,
+        history_start=snapshot.movement_history_start,
     )
     fresh = next((m for m in metrics if (m.material, m.plant) == key), None)
 

@@ -33,6 +33,7 @@ from app.initiatives.i13.ledger_compat import LegacyLedgerEntry, build_legacy_le
 from app.initiatives.i13.snapshot import I13Snapshot
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.integrations.sap.postgres_material import fetch_material_scope_index
+from app.integrations.sap.postgres_movements import PostgresMovementRepository
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
 from app.schemas.i13 import LedgerCountsResponse, UtilisationLedgerEntryResponse
@@ -82,6 +83,7 @@ def _unstored_entries(
     return build_legacy_ledger(
         procurement_repo, reservation_repo, material_scope_index,
         material=material, plant=plant, include_out_of_scope=include_out_of_scope,
+        movement_repository=PostgresMovementRepository(db),
     )
 
 
@@ -183,7 +185,8 @@ def get_ledger_entry(
     reservation_repo = PostgresReservationRepository(db)
     material_scope_index = fetch_material_scope_index(db)
     entries = build_legacy_ledger(
-        procurement_repo, reservation_repo, material_scope_index, include_out_of_scope=include_out_of_scope
+        procurement_repo, reservation_repo, material_scope_index, include_out_of_scope=include_out_of_scope,
+        movement_repository=PostgresMovementRepository(db),
     )
     for entry in entries:
         if entry.ledger_id == ledger_id:

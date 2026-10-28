@@ -17,7 +17,7 @@ chain       PartialLedgerEntry           rec_key ledger id, f1 lifecycle, f2 PR,
 attrib      ConsumptionAttribution       rec_key ledger id, f2 reservation, f3 PR
 reclass     ReclassificationCandidate    f1 candidate Y/N
 usage       monthly series + stock       f1 WATCH aging band, f2 material scope, n1 issued
-grni        GrniEntry                    rec_key ledger id, n1 days since GR
+grni        GrniEntry (a PO line)        rec_key ledger id, n1 days since GR
 exception   ExceptionQueueItem           rec_key id, f1 type, f2 status, n1 type rank
 =========== ============================ ===================================================
 
@@ -53,7 +53,8 @@ from app.initiatives.i13.snapshot_store import codec
 #: the build window) while the version already stored keeps serving -- unlike a
 #: change to a stored type, which makes that version unreadable at once.
 #: 2 (20 Oct 2026): lledger's statuses and sort date; watch's last movement.
-RECORD_LAYOUT = 2
+#: 3 (28 Oct 2026): grni holds a PO line (LegacyLedgerEntry) and its scope.
+RECORD_LAYOUT = 3
 
 WATCH = "watch"
 MOVEMENT = "movement"
@@ -196,10 +197,11 @@ def usage(
     return Record(USAGE, material, plant, scope == "OAR", codec.dumps(payload), f1=band, f2=scope, n1=total)
 
 
-def grni(entry: ReservationLedgerEntry, outstanding: Decimal, days: int) -> Record:
-    payload = codec.dumps([codec.encode(entry), str(outstanding), days])
+def grni(entry: LegacyLedgerEntry, scope: str, outstanding: Decimal, days: int) -> Record:
+    """One PO line of ``ledger_compat.grni_lines``; ``scope`` its MaterialScope value."""
+    payload = codec.dumps([codec.encode(entry), str(outstanding), days, scope])
     return Record(
-        GRNI, entry.material, entry.plant, entry.material_scope.value == "OAR", payload,
+        GRNI, entry.material, entry.plant, scope == "OAR", payload,
         rec_key=entry.ledger_id, n1=Decimal(days),
     )
 

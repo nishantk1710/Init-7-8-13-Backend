@@ -55,6 +55,7 @@ from app.initiatives.i13.snapshot import GrniEntry, MonthlyConsumption
 from app.initiatives.i13.snapshot_store import codec, kinds
 from app.initiatives.i13.summary import I13Summary
 from app.models.i13_snapshot_store import I13SnapshotRecord, I13SnapshotRun
+from app.shared.material_scope import MaterialScope
 
 T = TypeVar("T")
 Key = tuple[str, str]
@@ -430,12 +431,13 @@ class SqlSnapshot:
         )
         items = []
         for r in rows:
-            ledger, outstanding, days = json.loads(r.payload)
+            ledger, outstanding, days, scope = json.loads(r.payload)
             items.append(
                 GrniEntry(
-                    ledger=codec.decode(ReservationLedgerEntry, ledger),
+                    ledger=codec.decode(LegacyLedgerEntry, ledger),
                     outstanding_quantity=Decimal(outstanding),
                     days_since_gr=days,
+                    material_scope=MaterialScope(scope),
                 )
             )
         return items, total

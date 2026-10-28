@@ -195,8 +195,8 @@ def template_narrative(facts: dict[str, Any], *, note: str | None = None) -> Nar
         f"{_n(pos['NON_MOVING'])} non-moving OAR materials.",
         f"Plans: {_n(plans['plan_breach_count'])} Planned Overdue and {_n(plans['no_plan_count'])} "
         "Non-AI (reserved without a consumption plan).",
-        f"Received not issued: {_n(grni['open_line_count'])} reservation lines were received at least "
-        f"{grni['threshold_days']} days ago and have not been issued.",
+        f"Received not issued: {_n(grni['open_line_count'])} PO lines were received at least "
+        f"{grni['threshold_days']} days ago and still have stock not issued.",
         f"Procurement exceptions: {_n(status.get('ESCALATED', 0))} {EXCEPTION_STATUS['ESCALATED'].lower()}, "
         f"{_n(status.get('AWAITING_REQUESTER', 0))} {EXCEPTION_STATUS['AWAITING_REQUESTER'].lower()} and "
         f"{_n(status.get('OPEN', 0))} where the requester is not identified.",
@@ -206,8 +206,8 @@ def template_narrative(facts: dict[str, Any], *, note: str | None = None) -> Nar
         oldest = grni["longest_waiting"][0]
         name = oldest["description"] or oldest["material"]
         risks.append(
-            f"The longest-waiting received line ({name}, reservation {oldest['reservation']}) "
-            f"has not been issued for {oldest['days_since_gr']} days."
+            f"The longest-waiting received line ({name}, PO {oldest['po_line']}) "
+            f"has had stock not issued for {oldest['days_since_gr']} days."
         )
     if pos["NON_MOVING"]:
         risks.append("Non-moving OAR stock ties up working capital and may become obsolete.")

@@ -24,6 +24,7 @@ from app.initiatives.i13.models import (
     ReservationPrLinkStatus,
 )
 from app.initiatives.i13.ledger_compat import LedgerUtilisationStatus, LinkageStatus, ProcurementStatus
+from app.initiatives.i13.stock_issue_matching import IssueMatch
 from app.shared.material_scope import MaterialScope
 
 
@@ -218,6 +219,19 @@ class UtilisationLedgerEntryResponse(BaseModel):
 
     attribution_status: AttributionStatus | None = None
     attribution_evidence: str | None = None
+
+    issue_match: IssueMatch | None = None
+    """How ``issued_quantity`` was found: RESERVATION (the reservation that
+    raised the PR, exact), OLDEST_DELIVERY_FIRST (stock issued out of the
+    material's deliveries, oldest first) or BEFORE_ISSUE_HISTORY (delivered
+    before the goods-movement history starts). See
+    ``app.initiatives.i13.stock_issue_matching``."""
+    delivery_count: int = 0
+    """Goods receipts (EKBE 101, net of 102) on the PO line."""
+    next_planned_issue_date: date | None = None
+    """RESB-BDTER of the earliest open reservation expected to draw on this
+    line's stock still left."""
+    next_planned_issue_quantity: Decimal | None = None
 
 
 class ConsumptionAttributionResponse(BaseModel):
@@ -490,20 +504,24 @@ class SnapshotStatusResponse(BaseModel):
 
 
 class GrniEntryResponse(BaseModel):
-    """One reservation-ledger entry received and not issued for at least the
-    GR-not-issued threshold (FRS FR-6) -- the per-entry form of WATCH's flag."""
+    """One PO line received at least the GR-not-issued threshold ago with
+    stock not yet issued (FRS FR-6) -- the per-line form of WATCH's flag.
+    ``outstanding_quantity`` is what is still in stock out of the line's
+    deliveries; ``issue_match`` says how the issued part was found."""
 
     ledger_id: str
-    reservation_number: str
-    reservation_item: str
     material: str
     material_description: str | None = None
     """MAKT / ZMM065 name, where either has one -- see app.shared.material_names."""
     plant: str
     material_scope: str
     pr_number: str | None
-    po_number: str | None
-    po_item: str | None
+    pr_item: str | None = None
+    po_number: str
+    po_item: str
+    reservation_number: str | None = None
+    """Only when the line's PR was raised by a reservation (issue_match RESERVATION)."""
+    reservation_item: str | None = None
     received_quantity: Decimal
     issued_quantity: Decimal
     outstanding_quantity: Decimal
@@ -511,8 +529,13 @@ class GrniEntryResponse(BaseModel):
     last_gr_date: date
     days_since_gr: int
     threshold_days: int
-    requirement_date: date | None
-    lifecycle_status: str
+    delivery_count: int = 0
+    first_issue_date: date | None = None
+    last_issue_date: date | None = None
+    issue_match: IssueMatch | None = None
+    next_planned_issue_date: date | None = None
+    next_planned_issue_quantity: Decimal | None = None
+    utilisation_status: LedgerUtilisationStatus
 
 
 class MonthlyConsumptionResponse(BaseModel):
