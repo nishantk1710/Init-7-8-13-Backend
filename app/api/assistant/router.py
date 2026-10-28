@@ -58,6 +58,7 @@ from app.api.assistant.schemas import (
     JustificationFacets,
     JustificationListResponse,
     JustificationModel,
+    JustificationPurchaseModel,
     JustificationRequest,
     LinkedReservationModel,
     MaterialMatchModel,
@@ -772,6 +773,72 @@ def post_justification(
     return _justification_model(justification)
 
 
+def _requester_names(db: DbSession, session_ids: list[str | None]) -> dict[str, str]:
+    """session id -> the requester name typed on it, for one page in one query.
+
+    ``requested_for`` is the name the operator typed for whoever wants the
+    part. It is not identity, but until sign-in is wired it is the only name a
+    chat or request reason has: its author is the anonymous placeholder.
+    """
+    wanted = sorted({sid for sid in session_ids if sid})
+    if not wanted:
+        return {}
+    rows = db.execute(
+        select(AssistantSession.id, AssistantSession.requested_for).where(
+            AssistantSession.id.in_(wanted)
+        )
+    ).all()
+    return {sid: name.strip() for sid, name in rows if name and name.strip()}
+
+
+def _purchases_answered(
+    rows: list[Justification],
+) -> dict[str, JustificationPurchaseModel] | None:
+    """justification id -> the new purchase it answers, for NEW_ACQUISITION rows.
+
+    Read from the I08 snapshot already in memory, the same new purchases the
+    bought-new check reads; never builds or waits for one. None while no
+    snapshot has been built (just after a restart), so the caller can say
+    nothing was looked up rather than that nothing was bought.
+    """
+    from app.initiatives.i8.acquisitions import NEW_ACQUISITION_KIND, JustificationRecord
+    from app.initiatives.i8.config import get_i8_settings
+    from app.initiatives.i8.exceptions import purchases_answered
+    from app.initiatives.i8.material_number import normalise
+    from app.initiatives.i8.service import cached_snapshot
+
+    snapshot = cached_snapshot()
+    if snapshot is None:
+        return None
+    records = [
+        JustificationRecord(
+            material_id=normalise(row.material_id) or row.material_id,
+            plant=(row.plant or "").strip(),
+            recorded_on=row.recorded_at.date(),
+            exception_id=row.exception_id,
+            id=row.id,
+        )
+        for row in rows
+        if row.kind == NEW_ACQUISITION_KIND
+    ]
+    if not records:
+        return {}
+    answered = purchases_answered(
+        records,
+        getattr(snapshot, "acquisitions", ()),
+        window_days=get_i8_settings().justification_window_days,
+    )
+    return {
+        justification_id: JustificationPurchaseModel(
+            type=acquisition.document_type,
+            document_number=acquisition.purchasing_document,
+            line=acquisition.item,
+            raised_at=acquisition.raised_at,
+        )
+        for justification_id, acquisition in answered.items()
+    }
+
+
 @justifications_router.get(
     "",
     response_model=JustificationListResponse,
@@ -848,6 +915,13 @@ def list_justifications(
     total = db.execute(
         select(func.count()).select_from(Justification).where(*conditions)
     ).scalar_one()
+    items = [_justification_model(row) for row in rows]
+    names = _requester_names(db, [row.session_id for row in rows])
+    purchases = _purchases_answered(rows)
+    for item in items:
+        item.requester_name = names.get(item.session_id or "")
+        if purchases is not None and item.id in purchases:
+            item.purchase = purchases[item.id]
     facets = JustificationFacets(
         plants=sorted(
             db.execute(select(Justification.plant).where(*conditions).distinct()).scalars()
@@ -859,8 +933,9 @@ def list_justifications(
         ),
     )
     return JustificationListResponse(
-        items=[_justification_model(row) for row in rows],
+        items=items,
         total=total,
+        purchases_checked=purchases is not None,
         facets=facets,
         reason_categories=settings.assistant_justification_reason_category_list,
         note=(

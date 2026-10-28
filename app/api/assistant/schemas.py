@@ -325,6 +325,16 @@ class SuggestionModel(AssistantModel):
     suggested_at: datetime
 
 
+class JustificationPurchaseModel(AssistantModel):
+    """The new-buy PR or direct PO line a NEW_ACQUISITION reason answers."""
+
+    type: Literal["PR", "PO"]
+    document_number: str
+    line: str | None = None
+    raised_at: date | None = None
+    """The PR date, or the PO header's created-on date. Null when SAP has none."""
+
+
 class JustificationModel(AssistantModel):
     id: str
     session_id: str | None = None
@@ -336,6 +346,14 @@ class JustificationModel(AssistantModel):
     plant: str
     author: str
     recorded_at: datetime
+    requester_name: str | None = None
+    """The name typed as the requester on the session this reason was recorded
+    in (28-Oct-2026). Typed, not a sign-in; null when the reason has no session
+    or none was typed. Served by the justification list only."""
+    purchase: JustificationPurchaseModel | None = None
+    """NEW_ACQUISITION only, on the justification list: the new purchase this
+    reason answers under the bought-new check's rule. Null when no purchase has
+    matched yet, for other kinds, and when ``purchasesChecked`` is false."""
 
 
 class SessionDeclarationModel(AssistantModel):
@@ -497,6 +515,10 @@ class JustificationListResponse(AssistantModel):
     facets: JustificationFacets
     reason_categories: list[str]
     note: str
+    purchases_checked: bool = False
+    """Whether ``purchase`` was matched for this page. False only while the
+    I08 data is still being prepared after a restart: every ``purchase`` is
+    then null because nothing was looked up, not because nothing was bought."""
 
 
 # --- the free-text box (section 4.6) ---------------------------------------
