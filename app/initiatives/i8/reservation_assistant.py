@@ -290,6 +290,14 @@ class I08Assessment:
             "damagedStock": _number(self.verdict.damaged_stock),
             "stockConditionKnown": self.verdict.stock_condition_known,
             "stockSource": self.verdict.stock_source,
+            # Since 28-Oct-2026: the usable units by condition, in the
+            # configured order (NEW, then REFURBISHD), so a screen can say
+            # "1 refurbished" rather than "1 usable". Empty when the condition
+            # is unknown, or when no usable unit is on the shelf.
+            "usableBreakdown": [
+                {"condition": condition, "quantity": _number(units)}
+                for condition, units in self.verdict.usable_breakdown
+            ],
             # Since 27-Oct-2026, stored as served: whether the switch was on
             # is part of what the requester was told.
             "needDateAdvice": self.need_date_advice(today),
