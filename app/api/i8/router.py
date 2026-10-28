@@ -1126,6 +1126,15 @@ def get_exceptions(
         alias="actionableOnly",
         description="Leave out items raised before the control existed (preAutomation)",
     ),
+    pre_automation_only: bool = Query(
+        False,
+        alias="preAutomationOnly",
+        description=(
+            "Only the items raised before the control existed (preAutomation): "
+            "the queue's 'raised before go-live' view. The opposite of "
+            "actionableOnly; asking for both returns nothing."
+        ),
+    ),
     exclude_type: str | None = Query(
         None,
         alias="excludeType",
@@ -1200,6 +1209,8 @@ def get_exceptions(
         )
     if actionable_only:
         items = tuple(i for i in items if not i.pre_automation)
+    if pre_automation_only:
+        items = tuple(i for i in items if i.pre_automation)
     if q and q.strip():
         needle = q.strip().lower()
         items = tuple(

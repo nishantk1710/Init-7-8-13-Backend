@@ -418,6 +418,42 @@ class TestActionableOnly:
         assert body["meta"]["preAutomation"] == 1
 
 
+class TestPreAutomationOnly:
+    """28-Oct-2026: the queue's "Raised before go-live" view. Those items were
+    counted in the header but could not be seen anywhere."""
+
+    @pytest.fixture(autouse=True)
+    def rows(self, queues):
+        queues.exceptions = (
+            exception(1),
+            exception(2, pre_automation=True),
+            exception(3, type="UNJUSTIFIED_ACQUISITION", pre_automation=True),
+        )
+
+    def test_lists_only_what_predates_the_control(self, queues) -> None:
+        body = queues.client.get(EXCEPTIONS, params={"preAutomationOnly": "true"}).json()
+
+        assert ids(body) == [
+            "EX-MISSING_ATTESTATION-4500000002-10",
+            "EX-UNJUSTIFIED_ACQUISITION-4500000003-10",
+        ]
+        assert body["total"] == 2
+        # The tabs count what this view holds; the meta still describes the check.
+        assert body["typeCounts"] == {"MISSING_ATTESTATION": 1, "UNJUSTIFIED_ACQUISITION": 1}
+        assert body["meta"]["total"] == 3
+        assert (body["meta"]["preAutomation"], body["meta"]["actionable"]) == (2, 1)
+
+    def test_combines_with_the_type_tab(self, queues) -> None:
+        body = queues.client.get(
+            EXCEPTIONS, params={"preAutomationOnly": "true", "type": "UNJUSTIFIED_ACQUISITION"}
+        ).json()
+
+        assert ids(body) == ["EX-UNJUSTIFIED_ACQUISITION-4500000003-10"]
+
+    def test_off_by_default(self, queues) -> None:
+        assert queues.client.get(EXCEPTIONS).json()["total"] == 3
+
+
 class TestExcludeType:
     @pytest.fixture(autouse=True)
     def rows(self, queues):
