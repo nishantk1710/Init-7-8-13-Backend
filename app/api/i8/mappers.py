@@ -102,7 +102,23 @@ def universe_item(row: UniverseRow, cfg: I8Settings) -> UniverseItem:
         open_repair_lines=row.open_repair_lines,
         qty_under_repair=row.qty_under_repair,
         in_material_master=row.in_material_master,
+        usable_stock=row.usable_stock,
+        damaged_stock=row.damaged_stock,
     )
+
+
+def stock_split(row: UniverseRow | None) -> dict:
+    """The register row's stock split from its universe row (28-Oct-2026).
+
+    ``stock_condition_known`` is null when there is no universe row, so a row
+    with no stock record at all does not read as "condition unknown"."""
+    if row is None:
+        return {"usable_stock": None, "damaged_stock": None, "stock_condition_known": None}
+    return {
+        "usable_stock": row.usable_stock,
+        "damaged_stock": row.damaged_stock,
+        "stock_condition_known": row.stock_condition_source is not None,
+    }
 
 
 def repair_chain(
@@ -117,6 +133,9 @@ def repair_chain(
     declaration: DeclarationRow | None = None,
     justification: LineJustification | None = None,
     exceptions: Sequence[ExceptionItem] | None = None,
+    usable_stock=None,
+    damaged_stock=None,
+    stock_condition_known: bool | None = None,
 ) -> RepairChain:
     """One register row.
 
@@ -193,10 +212,14 @@ def repair_chain(
         requester=line.pr_department or line.requisitioner,
         requester_name=department_name(line.pr_department or line.requisitioner),
         declaration_link=declaration.declaration_link if declaration else None,
+        declaration_session_id=declaration.declaration_session_id if declaration else None,
         justification=repair_justification(justification) if justification else None,
         exceptions=(
             [line_exception(item) for item in exceptions] if exceptions is not None else None
         ),
+        usable_stock=usable_stock,
+        damaged_stock=damaged_stock,
+        stock_condition_known=stock_condition_known,
     )
 
 
@@ -210,6 +233,9 @@ def request_chain(
     criticality: str | None = None,
     exceptions: Sequence[ExceptionItem] | None = None,
     declaration: DeclarationRow | None = None,
+    usable_stock=None,
+    damaged_stock=None,
+    stock_condition_known: bool | None = None,
 ) -> RepairChain:
     """One register row for an open repair PR with no PO yet.
 
@@ -250,6 +276,7 @@ def request_chain(
         condition=declaration.condition if declaration else None,
         next_action=declaration.next_action if declaration else None,
         declaration_link=declaration.declaration_link if declaration else None,
+        declaration_session_id=declaration.declaration_session_id if declaration else None,
         overdue_status=NOT_ORDERED,
         lead_time_status=NO_LEAD_TIME,
         days_open=request.days_open,
@@ -267,6 +294,9 @@ def request_chain(
             [line_exception(item) for item in exceptions] if exceptions is not None else None
         ),
         line_kind="PR",
+        usable_stock=usable_stock,
+        damaged_stock=damaged_stock,
+        stock_condition_known=stock_condition_known,
     )
 
 

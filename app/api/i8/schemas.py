@@ -104,6 +104,13 @@ class UniverseItem(I8Model):
     """False for roughly nine in ten of the series -- the MARA extract is a
     slice, which is why detection is a rule and not a lookup."""
 
+    usable_stock: Decimal | None = None
+    """Units in a usable condition (new, refurbished) at this plant (28-Oct-2026).
+    Null when the part has no condition rows: unknown, never zero."""
+
+    damaged_stock: Decimal | None = None
+    """Units in a damaged condition at this plant. Null when unknown."""
+
 
 class UniverseSources(I8Model):
     """Distinct 80-series materials per source. Quoted with every total so no
@@ -359,6 +366,26 @@ class RepairChain(I8Model):
     repair PR (``BOUND``), the R-reference on the repair order
     (``REFERENCE``), or material + plant + date window (``WINDOW``). Null when
     nothing covers the row."""
+
+    # --- 28-Oct-2026: the stock split and the assistant visit ------------
+
+    usable_stock: Decimal | None = None
+    """Usable units (new, refurbished) of this material at this plant, from
+    the universe. Null when the condition is unknown or the pair has no
+    universe row."""
+
+    damaged_stock: Decimal | None = None
+    """Damaged units of this material at this plant. Null when unknown."""
+
+    stock_condition_known: bool | None = None
+    """True when the stock record says which units are usable and which are
+    damaged; false when only the total is known; null when the pair has no
+    universe row at all."""
+
+    declaration_session_id: str | None = None
+    """The assistant session the covering declaration was made in, when it was
+    made in one. Null for a declaration recorded on a register screen, and
+    when nothing covers the row."""
 
 
 class RegisterMeta(I8Model):

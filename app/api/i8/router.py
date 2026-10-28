@@ -50,6 +50,7 @@ from app.api.i8.mappers import (
     repair_chain,
     request_chain,
     request_timeline,
+    stock_split,
     timeline,
     universe_item,
     universe_meta,
@@ -265,6 +266,7 @@ def _chain(
         declaration=view.declaration_by_line.get(line.key) if view else None,
         justification=view.justifications.get(line.key) if view else None,
         exceptions=exceptions,
+        **stock_split(row),
     )
 
 
@@ -288,6 +290,7 @@ def _request_chain(
         criticality=row.criticality if row else None,
         exceptions=exceptions,
         declaration=_request_declaration(request, view) if view else None,
+        **stock_split(row),
     )
 
 
