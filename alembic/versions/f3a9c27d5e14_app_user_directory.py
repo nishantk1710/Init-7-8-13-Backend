@@ -8,8 +8,12 @@ the author of every write.
 A new table and nothing else -- no existing table is touched, so this is safe
 to run at start-up on a live database. Portable constructs only.
 
+Written on d2f6b8a41c93, which I08's attestation and notification migrations
+(f3a9c1e57d20, a6c4e2f19b70) also revise; moved after them, before it had run
+on any database, so the history keeps a single head.
+
 Revision ID: f3a9c27d5e14
-Revises: d2f6b8a41c93
+Revises: a6c4e2f19b70
 Create Date: 2026-10-26 13:00:00.000000
 
 """
@@ -21,7 +25,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'f3a9c27d5e14'
-down_revision: Union[str, Sequence[str], None] = 'd2f6b8a41c93'
+down_revision: Union[str, Sequence[str], None] = 'a6c4e2f19b70'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
