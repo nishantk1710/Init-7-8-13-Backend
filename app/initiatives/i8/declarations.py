@@ -145,6 +145,11 @@ class DeclarationRow:
     """How the covering declaration was matched: ``BOUND``, ``REFERENCE`` or
     ``WINDOW``. None when nothing covers the row."""
 
+    declaration_session_id: str | None = None
+    """The assistant session the covering declaration was made in (28-Oct-2026),
+    so the repair page can link to the visit. None for a declaration made on a
+    register screen, and when nothing covers the row."""
+
     @property
     def is_outstanding(self) -> bool:
         # Required only since 27-Oct-2026: a Flagged row has a declaration,
@@ -157,6 +162,13 @@ def _is_historical(raised_on: date | None, cutover: date | None) -> bool:
     No cutover set, or no date, means not historical -- the same rule as
     ``exceptions.is_pre_automation``."""
     return cutover is not None and raised_on is not None and raised_on < cutover
+
+
+def _session_of(attestation: RepairAttestation | None) -> str | None:
+    """The assistant session a declaration was made in, or None."""
+    if attestation is None:
+        return None
+    return getattr(attestation, "session_id", None) or None
 
 
 def _status(attestation: RepairAttestation | None, historical: bool) -> tuple[str, str | None]:
@@ -251,6 +263,7 @@ def build_queue(
                 repair_status=line.repair_status,
                 status=status,
                 declaration_id=attestation.id if attestation else None,
+                declaration_session_id=_session_of(attestation),
                 declared_by=attestation.attestor if attestation else None,
                 declared_at=attestation.attested_at if attestation else None,
                 condition=condition,
@@ -280,6 +293,7 @@ def build_queue(
                 repair_status=PR_RAISED,
                 status=status,
                 declaration_id=attestation.id if attestation else None,
+                declaration_session_id=_session_of(attestation),
                 declared_by=attestation.attestor if attestation else None,
                 declared_at=attestation.attested_at if attestation else None,
                 condition=condition,

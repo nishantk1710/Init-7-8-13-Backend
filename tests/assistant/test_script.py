@@ -138,7 +138,7 @@ class TestI08Shape:
         assert rest == script.I08_REASON_NOTE
         # The first line is the request on its own: the request builder quotes
         # it when a reason is missing.
-        assert first.startswith("Understood -- the platform does not block anything.")
+        assert first.startswith("Understood. The platform does not block anything.")
         assert "in stock or on repair" in first
         assert "\n" not in first
 
@@ -343,7 +343,77 @@ class TestTheSessionIdIsAlwaysHandedBack:
 
     def test_it_says_what_to_do_with_it(self) -> None:
         step = i08_step({script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}, **SKIP})
-        assert "Type it into the reservation's item text in SAP (field SGTXT)" in step.prompt
+        assert step.prompt.endswith(
+            f"Type the session reference {SESSION} into the reservation's item text in SAP."
+        )
+
+    def test_a_request_line_names_the_request_reference_once(self) -> None:
+        """28-Oct-2026: one reference, one field. A request line's reference is
+        the request's, typed once into the header text; the session ID is not
+        named at all, so the two cannot be confused."""
+        step = next_step(
+            flow=Flow.I08,
+            session_id=SESSION,
+            assessment=i08_assessment(),
+            answers={script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}, **SKIP},
+            today=TODAY,
+            reason_categories=CATEGORIES,
+            request_id="R4K7M2P9Q3",
+        )
+        assert step.is_terminal and step.session_id == SESSION
+        assert step.prompt.endswith(
+            "Type the request reference R4K7M2P9Q3 once into the reservation's header "
+            "text in SAP; SAP copies it to every item."
+        )
+        assert SESSION not in step.prompt and "item text" not in step.prompt
+
+    def test_the_i13_ending_names_the_request_reference_too(self) -> None:
+        step = next_step(
+            flow=Flow.I13,
+            session_id=SESSION,
+            assessment=i13_assessment(),
+            answers={script.I13_ASSESSMENT: {"choice": script.NOT_NEEDED}},
+            today=TODAY,
+            reason_categories=CATEGORIES,
+            request_id="R4K7M2P9Q3",
+        )
+        assert step.is_terminal
+        assert "request reference R4K7M2P9Q3 once into the reservation's header text" in step.prompt
+
+
+class TestNoDoubleDashes:
+    """28-Oct-2026: no ``--`` used as a dash in anything the assistant says."""
+
+    @pytest.mark.parametrize(
+        "answers",
+        [
+            {},
+            {script.I08_ASSESSMENT: {"choice": script.PROCEED_NEW}},
+            {script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}},
+            {script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}, **SKIP},
+            {
+                script.I08_ASSESSMENT: {"choice": script.PROCEED_NEW},
+                script.I08_JUSTIFICATION: {"reason_category": "OTHER", "free_text": "x"},
+                **SKIP,
+            },
+        ],
+    )
+    def test_i08_steps(self, answers) -> None:
+        step = i08_step(answers)
+        texts = [step.prompt, *(c.label for c in step.choices), *(c.description or "" for c in step.choices)]
+        texts += [f.help_text or "" for f in step.fields]
+        if step.facts:
+            texts += [step.facts["headline"], *step.facts["caveats"]]
+        assert not [t for t in texts if "--" in t]
+
+    @pytest.mark.parametrize(
+        "answers",
+        [{}, {script.I13_ASSESSMENT: {"choice": script.NOT_NEEDED}}],
+    )
+    def test_i13_steps(self, answers) -> None:
+        step = i13_step(answers)
+        texts = [step.prompt, *(c.label for c in step.choices), *(c.description or "" for c in step.choices)]
+        assert not [t for t in texts if "--" in t]
 
 
 class TestI08DeclaresTheFaultyUnit:
@@ -366,7 +436,7 @@ class TestI08DeclaresTheFaultyUnit:
         assert step.kind is StepKind.CHOICE
         assert step.prompt == "Are you taking out a faulty unit that should go for repair?"
         assert [(c.value, c.label) for c in step.choices] == [
-            ("declare", "Yes -- declare it now"),
+            ("declare", "Yes, declare it now"),
             ("skip", "No"),
         ]
         # The card is a few lines up already.

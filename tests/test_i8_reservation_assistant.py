@@ -244,6 +244,25 @@ class TestRequestsAndStockConditionInTheRecord:
         assert record["damagedStock"] == "1"
         assert record["stockConditionKnown"] is True
         assert record["stockSource"] == "MCHB"
+        assert record["usableBreakdown"] == [{"condition": "NEW", "quantity": "2"}]
+
+    def test_the_usable_breakdown_follows_the_configured_order(self) -> None:
+        row = universe_row(
+            stock_on_hand=Decimal("4"),
+            usable_stock=Decimal("3"),
+            damaged_stock=Decimal("1"),
+            stock_by_condition=(
+                ("REFURBISHD", Decimal("1")),
+                ("DAMAGED", Decimal("1")),
+                ("NEW", Decimal("2")),
+            ),
+            stock_condition_source="MCHB",
+        )
+        record = self._record(rows=[row])
+        assert record["usableBreakdown"] == [
+            {"condition": "NEW", "quantity": "2"},
+            {"condition": "REFURBISHD", "quantity": "1"},
+        ]
 
     def test_damaged_only_is_no_unit_in_the_record(self) -> None:
         row = universe_row(
@@ -265,6 +284,7 @@ class TestRequestsAndStockConditionInTheRecord:
         assert record["stockConditionKnown"] is False
         assert record["stockSource"] == "MARD"
         assert record["repairableUnitExists"] is True
+        assert record["usableBreakdown"] == []
 
     def test_no_stock_record_has_no_source(self) -> None:
         record = self._record(rows=[universe_row(stock_on_hand=None)])

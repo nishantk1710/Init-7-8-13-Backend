@@ -392,6 +392,7 @@ def current_step(
         today=today,
         reason_categories=settings.assistant_justification_reason_category_list,
         suggestion=suggestion,
+        request_id=session.request_id,
     )
     return step, assessment, suggestion
 

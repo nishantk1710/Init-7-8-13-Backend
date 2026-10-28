@@ -264,6 +264,36 @@ class TestResponseShapeMatchesTheFrontend:
         }
         assert counts["notOrdered"].default == 0
 
+    def test_the_28_oct_fields_are_optional(self) -> None:
+        """Added 28-Oct-2026 (stock split, the declaring session). Null by
+        default, so an older frontend reads a row as it did."""
+        from app.api.i8.schemas import RepairChain, UniverseItem
+
+        chain = {field.alias or name: field for name, field in RepairChain.model_fields.items()}
+        for name in ("usableStock", "damagedStock", "stockConditionKnown", "declarationSessionId"):
+            assert chain[name].default is None, name
+        item = {field.alias or name: field for name, field in UniverseItem.model_fields.items()}
+        for name in ("usableStock", "damagedStock"):
+            assert item[name].default is None, name
+
+    def test_a_universe_item_carries_its_stock_split(self) -> None:
+        from decimal import Decimal
+
+        from app.api.i8.mappers import universe_item
+        from app.initiatives.i8.config import get_i8_settings
+        from tests.assistant.conftest import universe_row
+
+        row = universe_row(
+            stock_on_hand=Decimal("3"),
+            usable_stock=Decimal("2"),
+            damaged_stock=Decimal("1"),
+            stock_condition_source="MCHB",
+        )
+        wire = universe_item(row, get_i8_settings()).model_dump(mode="json", by_alias=True)
+        assert (wire["usableStock"], wire["damagedStock"]) == ("2", "1")
+        unknown = universe_item(universe_row(), get_i8_settings()).model_dump(mode="json", by_alias=True)
+        assert (unknown["usableStock"], unknown["damagedStock"]) == (None, None)
+
     def test_the_repair_pr_switch_is_off_by_default(self) -> None:
         from app.initiatives.i8.config import I8Settings
 

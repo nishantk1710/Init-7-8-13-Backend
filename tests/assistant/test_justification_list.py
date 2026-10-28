@@ -12,7 +12,7 @@ no Azure database.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -224,3 +224,134 @@ class TestFacets:
 
         assert body["total"] == 0
         assert body["facets"] == {"plants": [], "reasonCategories": []}
+
+
+# --- 28-Oct-2026: who asked, and which purchase the reason answers ----------
+
+
+def session(sid: str, requested_for: str | None) -> AssistantSession:
+    return AssistantSession(
+        id=sid,
+        flow="i08",
+        material_id="8000004596",
+        plant="1300",
+        requested_for=requested_for,
+        eighty_series=True,
+        material_scope="EXCLUDED",
+        routing_reason="80-series",
+        requester="UNAUTHENTICATED-FRONTEND",
+        origin="PLATFORM",
+        issued_at=T0,
+        expires_at=T0 + timedelta(days=1),
+        assessment="{}",
+    )
+
+
+def bought(document: str, raised: date, *, document_type: str = "PR", material="8000004596", plant="1300"):
+    from decimal import Decimal
+
+    from app.initiatives.i8.acquisitions import NewAcquisition
+
+    return NewAcquisition(
+        purchasing_document=document,
+        item="10",
+        material_id=material,
+        plant=plant,
+        description="Pump",
+        ordered_qty=Decimal(1),
+        raised_at=raised,
+        document_type=document_type,
+    )
+
+
+@pytest.fixture
+def snapshot(monkeypatch):
+    """The in-memory I08 snapshot the list reads its purchases from."""
+    from types import SimpleNamespace
+
+    from app.initiatives.i8 import service
+
+    held = SimpleNamespace(acquisitions=())
+    monkeypatch.setattr(service, "cached_snapshot", lambda: held)
+    return held
+
+
+class TestRequesterName:
+    def test_is_the_name_typed_on_the_session(self, client, factory, snapshot):
+        seed(
+            factory,
+            session("S1", "J Miller"),
+            session("S2", None),
+            record(1, session_id="S1", author="UNAUTHENTICATED-FRONTEND"),
+            record(2, session_id="S2"),
+            record(3),
+        )
+
+        items = {i["id"]: i for i in client.get(URL).json()["items"]}
+
+        assert items["J0001"]["requesterName"] == "J Miller"
+        assert items["J0001"]["author"] == "UNAUTHENTICATED-FRONTEND"  # unchanged
+        assert items["J0002"]["requesterName"] is None
+        assert items["J0003"]["requesterName"] is None
+
+
+class TestPurchase:
+    def test_the_purchase_nearest_the_reason_within_the_window(self, client, factory, snapshot):
+        on = T0.date()
+        snapshot.acquisitions = (
+            bought("1000200001", on + timedelta(days=20)),
+            bought("1000200002", on + timedelta(days=3)),
+            bought("1000200003", on - timedelta(days=3)),  # as near, but before the reason
+            bought("1000200004", on + timedelta(days=60)),  # outside the window
+        )
+        seed(factory, record(0))
+
+        body = client.get(URL).json()
+
+        assert body["purchasesChecked"] is True
+        assert body["items"][0]["purchase"] == {
+            "type": "PR",
+            "documentNumber": "1000200002",
+            "line": "10",
+            "raisedAt": (on + timedelta(days=3)).isoformat(),
+        }
+
+    def test_a_reason_naming_a_finding_answers_that_purchase(self, client, factory, snapshot):
+        snapshot.acquisitions = (
+            bought("4100100009", date(2025, 1, 1), document_type="PO"),
+            bought("1000200002", T0.date()),
+        )
+        seed(factory, record(0, exception_id="EX-UNJUSTIFIED_ACQUISITION-4100100009-10"))
+
+        [item] = client.get(URL).json()["items"]
+
+        assert (item["purchase"]["type"], item["purchase"]["documentNumber"]) == ("PO", "4100100009")
+
+    def test_no_purchase_yet_is_null(self, client, factory, snapshot):
+        snapshot.acquisitions = (
+            bought("1000200001", T0.date(), plant="1500"),
+            bought("1000200002", T0.date(), material="8000009999"),
+        )
+        seed(factory, record(0))
+
+        body = client.get(URL).json()
+
+        assert body["purchasesChecked"] is True
+        assert body["items"][0]["purchase"] is None
+
+    def test_only_new_acquisition_reasons_get_one(self, client, factory, snapshot):
+        snapshot.acquisitions = (bought("1000200001", T0.date()),)
+        seed(factory, record(0, kind="QUANTITY_OVERRIDE"))
+
+        assert client.get(URL).json()["items"][0]["purchase"] is None
+
+    def test_says_when_nothing_was_looked_up(self, client, factory, monkeypatch):
+        from app.initiatives.i8 import service
+
+        monkeypatch.setattr(service, "cached_snapshot", lambda: None)
+        seed(factory, record(0))
+
+        body = client.get(URL).json()
+
+        assert body["purchasesChecked"] is False
+        assert body["items"][0]["purchase"] is None

@@ -240,3 +240,99 @@ class TestRoute:
         assert client.client.get(NOTIFICATIONS).json()["pageSize"] == 25
         capped = client.client.get(NOTIFICATIONS, params={"pageSize": 10_000}).json()
         assert capped["pageSize"] == 500
+
+
+class TestLabels:
+    """28-Oct-2026: the log names the repair line, the material description
+    and the plant name, so rows of the same type can be told apart. Looked up
+    when the log is read; nothing new is stored."""
+
+    @pytest.fixture
+    def labels(self, client, factory, monkeypatch):
+        from app.api.i8 import router as i8_router
+
+        state = SimpleNamespace(view=None, names={})
+        monkeypatch.setattr(i8_router, "cached_attestation_view", lambda: state.view)
+        monkeypatch.setattr(i8_router, "cached_snapshot", lambda: None)
+        monkeypatch.setattr(
+            i8_router, "material_names", lambda materials: {m: state.names[m] for m in materials if m in state.names}
+        )
+        state.client = client.client
+        state.factory = factory
+        return state
+
+    def _log(self, factory, *rows: tuple[str, str, str, str | None]) -> None:
+        with factory() as session:
+            for n, (exception_id, type_, material, plant) in enumerate(rows):
+                session.add(
+                    Notification(
+                        exception_id=exception_id,
+                        exception_type=type_,
+                        severity="warning",
+                        title="t",
+                        material_id=material,
+                        plant=plant,
+                        logged_at=datetime(2026, 10, 1 + n, tzinfo=timezone.utc),
+                    )
+                )
+            session.commit()
+
+    def _items(self, labels) -> dict[str, dict]:
+        body = labels.client.get(NOTIFICATIONS).json()
+        return {i["exceptionId"]: i for i in body["items"]}
+
+    def test_the_repair_line_is_read_back_from_the_id(self, labels) -> None:
+        self._log(
+            labels.factory,
+            ("EX-OVERDUE_REPAIR-4500001719-10", "OVERDUE_REPAIR", "8000000001", "1300"),
+            ("EX-MISSING_ATTESTATION-4500001720-20", "MISSING_ATTESTATION", "8000000002", "1500"),
+            ("EX-REPAIR_PR_NOT_DECLARED-PR-2000028756-10", "REPAIR_PR_NOT_DECLARED", "8000000003", "1300"),
+            ("EX-UNJUSTIFIED_ACQUISITION-PR-1000201201-10", "UNJUSTIFIED_ACQUISITION", "8000000004", "1300"),
+            ("EX-MISSING_SESSION_ID-R-1916164-1", "MISSING_SESSION_ID", "8000000005", "9999"),
+        )
+
+        items = self._items(labels)
+
+        assert items["EX-OVERDUE_REPAIR-4500001719-10"]["repairLine"] == "4500001719-10"
+        assert items["EX-MISSING_ATTESTATION-4500001720-20"]["repairLine"] == "4500001720-20"
+        assert items["EX-REPAIR_PR_NOT_DECLARED-PR-2000028756-10"]["repairLine"] == "PR-2000028756-10"
+        # A bought-new id names the purchase, not the repair; no queue in memory.
+        assert items["EX-UNJUSTIFIED_ACQUISITION-PR-1000201201-10"]["repairLine"] is None
+        assert items["EX-MISSING_SESSION_ID-R-1916164-1"]["repairLine"] is None
+        # Plant names: documented codes only.
+        assert items["EX-OVERDUE_REPAIR-4500001719-10"]["plantName"] == get_i8_settings().plant_name_map["1300"]
+        assert items["EX-MISSING_ATTESTATION-4500001720-20"]["plantName"] == get_i8_settings().plant_name_map["1500"]
+        assert items["EX-MISSING_SESSION_ID-R-1916164-1"]["plantName"] is None
+
+    def test_the_current_queue_names_a_bought_new_findings_repair(self, labels) -> None:
+        current = item(
+            4,
+            type="UNJUSTIFIED_ACQUISITION",
+            id="EX-UNJUSTIFIED_ACQUISITION-PR-1000201201-10",
+            purchasing_document="2000029101",
+            item="10",
+            repair_document_type="PR",
+            description="PUMP SEAL KIT",
+        )
+        labels.view = SimpleNamespace(exceptions=(current,))
+        self._log(labels.factory, (current.id, current.type, current.material_id, "1300"))
+
+        [row] = self._items(labels).values()
+
+        assert row["repairLine"] == "PR-2000029101-10"
+        # No name in the material list: the finding's own description.
+        assert row["description"] == "PUMP SEAL KIT"
+
+    def test_the_material_name_comes_first(self, labels) -> None:
+        labels.names = {"8000000001": "SEAL, MECHANICAL"}
+        labels.view = SimpleNamespace(exceptions=(item(1, type="OVERDUE_REPAIR", id="EX-OVERDUE_REPAIR-4500000001-10"),))
+        self._log(
+            labels.factory,
+            ("EX-OVERDUE_REPAIR-4500000001-10", "OVERDUE_REPAIR", "8000000001", "1300"),
+            ("EX-OVERDUE_REPAIR-4500000009-10", "OVERDUE_REPAIR", "8000000009", "1300"),
+        )
+
+        items = self._items(labels)
+
+        assert items["EX-OVERDUE_REPAIR-4500000001-10"]["description"] == "SEAL, MECHANICAL"
+        assert items["EX-OVERDUE_REPAIR-4500000009-10"]["description"] is None

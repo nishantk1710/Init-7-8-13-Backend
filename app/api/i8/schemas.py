@@ -104,6 +104,13 @@ class UniverseItem(I8Model):
     """False for roughly nine in ten of the series -- the MARA extract is a
     slice, which is why detection is a rule and not a lookup."""
 
+    usable_stock: Decimal | None = None
+    """Units in a usable condition (new, refurbished) at this plant (28-Oct-2026).
+    Null when the part has no condition rows: unknown, never zero."""
+
+    damaged_stock: Decimal | None = None
+    """Units in a damaged condition at this plant. Null when unknown."""
+
 
 class UniverseSources(I8Model):
     """Distinct 80-series materials per source. Quoted with every total so no
@@ -205,6 +212,9 @@ class LineException(I8Model):
     id: str
     type: str
     severity: Literal["info", "warning", "critical"]
+    pre_automation: bool = False
+    """Raised before the check's start date: labelled, not work to do. The
+    register's Exceptions column counts only the others (28-Oct-2026)."""
 
 
 class RepairChain(I8Model):
@@ -359,6 +369,26 @@ class RepairChain(I8Model):
     repair PR (``BOUND``), the R-reference on the repair order
     (``REFERENCE``), or material + plant + date window (``WINDOW``). Null when
     nothing covers the row."""
+
+    # --- 28-Oct-2026: the stock split and the assistant visit ------------
+
+    usable_stock: Decimal | None = None
+    """Usable units (new, refurbished) of this material at this plant, from
+    the universe. Null when the condition is unknown or the pair has no
+    universe row."""
+
+    damaged_stock: Decimal | None = None
+    """Damaged units of this material at this plant. Null when unknown."""
+
+    stock_condition_known: bool | None = None
+    """True when the stock record says which units are usable and which are
+    damaged; false when only the total is known; null when the pair has no
+    universe row at all."""
+
+    declaration_session_id: str | None = None
+    """The assistant session the covering declaration was made in, when it was
+    made in one. Null for a declaration recorded on a register screen, and
+    when nothing covers the row."""
 
 
 class RegisterMeta(I8Model):
@@ -930,6 +960,23 @@ class NotificationItem(I8Model):
     logged_at: datetime
     channel: Literal["EMAIL"] = "EMAIL"
     emailed: bool = False
+
+    # --- 28-Oct-2026: enough to tell the rows apart ----------------------
+    # Looked up when the log is read, not stored: the row keeps what it was
+    # logged with, and these are labels.
+
+    repair_line: str | None = None
+    """The repair line the finding is about, as the register names its row:
+    ``4500001719-10``, or ``PR-2000028756-10`` for a repair PR with no PO yet.
+    Null for a finding with no repair line (a declaration with no repair, a
+    reservation with no reference), and for a bought-new finding once it is
+    no longer raised."""
+
+    description: str | None = None
+    """The material's description, where one is known."""
+
+    plant_name: str | None = None
+    """The plant's name. Null when none is documented for the code."""
 
 
 class NotificationResponse(I8Model):

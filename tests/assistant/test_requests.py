@@ -253,6 +253,20 @@ class TestEveryCase:
             (CONSUMABLE, "out_of_scope"), (OAR_NO_DATA, "data_gap"),
         ]
 
+    def test_every_closing_message_names_the_request_reference(self, created) -> None:
+        """28-Oct-2026: a request is one reservation, so every line's closing
+        message names the request reference and the header text, never the
+        line's own session ID and the item text."""
+        db, request_id, _ = created
+        for line in request_service.lines_of(db, request_id):
+            last = session_module.turns(db, line.id)[-1]
+            assert last.step_kind == "terminal", line.material_id
+            assert last.question.endswith(
+                f"Type the request reference {request_id} once into the reservation's "
+                "header text in SAP; SAP copies it to every item."
+            )
+            assert line.id not in last.question
+
     def test_every_line_carries_the_request_department(self, created) -> None:
         """One request, one department (UAT, 21 Oct): picked once, on every line."""
         db, request_id, _ = created
@@ -762,6 +776,36 @@ class TestRoutes:
             [row] = db.execute(select(RepairAttestation)).scalars().all()
         assert (row.session_id, row.quantity, row.fault_category) == (sid, Decimal("2"), "SEAL_LEAK")
         assert row.evidence_reference is None
+
+    def test_the_session_trace_and_log_show_the_declaration(self, client) -> None:
+        """Contract 1 + 2 (28-Oct-2026): the trace lists the declaration made in
+        the visit; the log says which sessions declared and what."""
+        response = client.post("/api/assistant/requests", json=self._body(key="draft-trace", lines=[
+            {"materialId": REPAIR_NONE, "plant": PLANT, "declaration": {
+                "quantity": 1, "conditionDescription": "Seal leaking.", "faultCategory": "SEAL_LEAK",
+                "recommendation": "SCRAP", "attestorName": "J Miller", "evidenceReference": "PHOTO-7",
+            }},
+            {"materialId": REPAIR_EXISTING, "plant": PLANT, "decision": "use_existing"},
+        ]))
+        assert response.status_code == 201, response.text
+        declared_sid, other_sid = (line["sessionId"] for line in response.json()["lines"])
+
+        trace = client.get(f"/api/assistant/sessions/{declared_sid}").json()
+        [declaration] = trace["declarations"]
+        assert declaration["id"].startswith("ATT-")
+        assert (declaration["recommendation"], declaration["faultCategory"]) == ("SCRAP", "SEAL_LEAK")
+        assert declaration["conditionDescription"] == "Seal leaking."
+        assert Decimal(declaration["quantity"]) == Decimal("1")
+        assert (declaration["attestorName"], declaration["evidenceReference"]) == ("J Miller", "PHOTO-7")
+        assert (declaration["repairDocument"], declaration["repairItem"], declaration["repairDocumentType"]) == (
+            None, None, None,
+        )
+        assert declaration["attestedAt"]
+        assert client.get(f"/api/assistant/sessions/{other_sid}").json()["declarations"] == []
+
+        rows = {row["sessionId"]: row for row in client.get("/api/assistant/sessions").json()["items"]}
+        assert (rows[declared_sid]["declared"], rows[declared_sid]["declarationRecommendation"]) == (True, "SCRAP")
+        assert (rows[other_sid]["declared"], rows[other_sid]["declarationRecommendation"]) == (False, None)
 
     def test_create_then_read_back(self, client, monkeypatch) -> None:
         monkeypatch.setattr(departments, "_names", {"10100": "FINANCE-COMMERCIAL DEPARTMENT"})

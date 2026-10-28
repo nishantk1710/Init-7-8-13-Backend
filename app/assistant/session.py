@@ -416,6 +416,7 @@ def start(
         answers={},
         today=today,
         reason_categories=settings.assistant_justification_reason_category_list,
+        request_id=request_id,
     )
 
     # A conversation with nothing to ask -- a repairable part with no unit in
