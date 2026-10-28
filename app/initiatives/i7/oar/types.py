@@ -22,9 +22,15 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import NamedTuple
 
-ALGORITHM_VERSION = "oar-similarity-11"
+ALGORITHM_VERSION = "oar-similarity-12"
 """Identifies the similarity implementation behind a stored result. Not a
 semantic version -- nothing here maintains a release contract.
+
+``oar-similarity-12`` against ``-11``: HIGH confidence no longer requires a same-circuit neighbour
+(``ConfidencePolicy.oar_require_same_circuit_for_high``, now False). Circuit is not a data field anywhere, so with
+the requirement nothing could ever grade HIGH and every well-matched target was capped at MEDIUM; HIGH is now the
+Formula Reference's own band (5 or more neighbours, best similarity above 0.80). Neighbours, scores and estimates
+are unchanged -- only the stored confidence moves -- and a run stored under ``-11`` is not reused.
 
 ``oar-similarity-11`` against ``-10``: the text dimension is ``0.6 x BGE cosine + 0.4 x rapidfuzz
 (token_set_ratio + token_sort_ratio) / 2`` over normalised descriptions (``oar.text_match``), with BAAI/bge-base-en-v1.5 replacing
@@ -501,3 +507,8 @@ class OarResult(NamedTuple):
     stage_counts: StageCounts | None = None
     rejected_candidates: tuple[RejectedCandidate, ...] = ()
     """The best-scoring candidates refused on identity or evidence, highest combined score first."""
+    excluded_neighbours: tuple[Neighbour, ...] = ()
+    """Top-K donors a user removed for this target (``oar.exclusions``). They were ranked and selected like
+    any other, then left out: ``neighbours`` -- what the estimate, the confidence and the best similarity
+    are built from -- does not contain them, and nothing takes their place. Kept, with their original rank
+    and scores, so a restore can bring them back without scoring anything again."""

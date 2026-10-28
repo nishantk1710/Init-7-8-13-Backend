@@ -21,7 +21,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # dev deploys to nonprod (deploy.yml); main is mirrored to Azure DevOps and
+    # deployed to prod from there (mirror-to-devops.yml). Both are tested.
+    branches: [dev, main]
   pull_request:
 
 concurrency:

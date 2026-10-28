@@ -38,6 +38,8 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from app.api.i7.recommendations import _apply_filters, _not_smooth, _portfolio_currency
+from app.initiatives.i7.kpi_formulas.resolved import Formulas, load_active
+from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql, working_capital_sql
 from app.initiatives.i7.stockout_risk.counts import stockout_risk_counts
 from app.models.i7_recommendation import Recommendation
 from app.schemas.i7.reports import PositionFigures, StockoutPosition
@@ -135,9 +137,11 @@ def _population(period_start: date | None, exclusive_end: date, plant: str | Non
     ).where(Recommendation.id.in_(newest_in_period_ids(period_start, exclusive_end)), _not_smooth())
 
 
-def stockout_position(session: Session, base: Select, cutoff: date, plant: str | None = None) -> StockoutPosition:
+def stockout_position(
+    session: Session, base: Select, cutoff: date, plant: str | None = None, formulas: Formulas | None = None
+) -> StockoutPosition:
     """The stockout counts over ``base``, marked stale when the usage was built too far from ``cutoff``."""
-    counts = stockout_risk_counts(session, base, plant=plant)
+    counts = stockout_risk_counts(session, base, plant=plant, formulas=formulas)
     if counts.as_of is None:
         return StockoutPosition(
             at_risk=0,
@@ -174,32 +178,24 @@ def position_figures(
     base = _population(period_start, exclusive_end, plant)
     population = count_of(session, base)
 
-    excess_base = base.where(
-        Recommendation.current_max_stock.isnot(None),
-        Recommendation.recommended_max_stock.isnot(None),
-        Recommendation.current_max_stock > Recommendation.recommended_max_stock,
-    )
+    # The Overview's own formulas (the saved version, else the defaults), so the report and the Overview
+    # cannot disagree about a material-plant. The report stores the figures, not the formulas, so a later
+    # edit never rewrites a report already generated.
+    formulas = load_active(session)
+    excess_base = base.where(excess_condition_sql(formulas))
     excess_count = count_of(session, excess_base)
+    excess_value = excess_value_sql(formulas)
     excess_opportunity = session.execute(
-        excess_base.with_only_columns(
-            func.sum(Recommendation.unit_price * (Recommendation.current_max_stock - Recommendation.recommended_max_stock))
-        ).where(Recommendation.unit_price.isnot(None))
+        excess_base.with_only_columns(func.sum(excess_value)).where(excess_value.is_not(None))
     ).scalar()
 
-    priced = base.where(
-        Recommendation.unit_price.isnot(None),
-        Recommendation.current_rop.isnot(None),
-        Recommendation.recommended_rop.isnot(None),
-    )
-    net_rop = session.execute(
-        priced.with_only_columns(
-            func.sum(Recommendation.unit_price * (Recommendation.current_rop - Recommendation.recommended_rop))
-        )
-    ).scalar()
+    working_capital = working_capital_sql(formulas)
+    priced = base.where(working_capital.is_not(None))
+    net_rop = session.execute(priced.with_only_columns(func.sum(working_capital))).scalar()
 
     return PositionFigures(
         population=population,
-        stockout=stockout_position(session, base, cutoff, plant),
+        stockout=stockout_position(session, base, cutoff, plant, formulas),
         excess_count=excess_count,
         excess_opportunity=Decimal(excess_opportunity) if excess_opportunity is not None else None,
         net_rop_value_impact=Decimal(net_rop) if net_rop is not None else None,

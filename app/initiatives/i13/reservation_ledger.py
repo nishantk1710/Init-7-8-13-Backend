@@ -49,6 +49,7 @@ from app.initiatives.i13.models import (
     ReservationPrLinkStatus,
 )
 from app.initiatives.i13.movements import ISSUE_TYPES, event_dates, net_quantity
+from app.initiatives.i13.po_lines import pr_is_deleted
 from app.initiatives.i13.procurement_chain import build_procurement_chain, derive_lifecycle_status
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
@@ -72,6 +73,7 @@ _WITHOUT_PO = {
     ReservationPrLinkStatus.NO_PR_REFERENCE: LifecycleStatus.RESERVED,
     ReservationPrLinkStatus.PR_REFERENCE_UNRESOLVED: LifecycleStatus.PR_NOT_FOUND,
     ReservationPrLinkStatus.CONSOLIDATION_UNRESOLVED: LifecycleStatus.PR_SHARED,
+    ReservationPrLinkStatus.PR_DELETED: LifecycleStatus.PR_DELETED,
 }
 
 
@@ -86,6 +88,7 @@ def _attach_reservation(
     consolidation_pr_keys: set[tuple[str, str]],
     gi_by_reservation: dict[tuple[str, str], list[Row]],
     material_scope: MaterialScope,
+    deleted_pr_keys: frozenset[tuple[str, str]] = frozenset(),
 ) -> list[ReservationLedgerEntry]:
     rsnum, rspos = reservation["Rsnum"], reservation["Rspos"]
     material, plant = reservation["Matnr"], reservation["Werks"]
@@ -112,6 +115,10 @@ def _attach_reservation(
         if found:
             reservation_pr_link_status = ReservationPrLinkStatus.LINKED
             matched_procurement = list(found)
+        elif (banfn, bnfpo) in deleted_pr_keys:
+            # The procurement chain holds no line for a deleted PR no PO orders.
+            reservation_pr_link_status = ReservationPrLinkStatus.PR_DELETED
+            matched_procurement = [None]
         else:
             reservation_pr_link_status = ReservationPrLinkStatus.PR_REFERENCE_UNRESOLVED
             matched_procurement = [None]
@@ -219,6 +226,14 @@ def build_reservation_ledger(
         if entry.pr_number and entry.pr_item:
             procurement_index[(entry.pr_number, entry.pr_item)].append(entry)
 
+    # Same arguments as build_procurement_chain's read, so the repository's
+    # per-instance cache answers it.
+    deleted_pr_keys = frozenset(
+        (pr["Banfn"], pr["Bnfpo"])
+        for pr in procurement_repository.get_purchase_requisitions(pr_number=pr_number, material=material, plant=plant)
+        if pr_is_deleted(pr)
+    )
+
     gi_rows = reservation_repository.get_goods_issue_by_reservation(reservation_number=reservation_number)
     gi_by_reservation: dict[tuple[str, str], list[Row]] = defaultdict(list)
     for row in gi_rows:
@@ -229,5 +244,9 @@ def build_reservation_ledger(
         scope = classify_material_scope(material_scope_index.get((reservation["Matnr"], reservation["Werks"])))
         if not include_out_of_scope and scope is not MaterialScope.OAR:
             continue
-        entries.extend(_attach_reservation(reservation, procurement_index, consolidation_pr_keys, gi_by_reservation, scope))
+        entries.extend(
+            _attach_reservation(
+                reservation, procurement_index, consolidation_pr_keys, gi_by_reservation, scope, deleted_pr_keys
+            )
+        )
     return entries

@@ -204,6 +204,72 @@ class OarNeighbour(Base):
         )
 
 
+class OarDonorExclusion(Base):
+    """A user's decision that one donor must not be used for one target.
+
+    Keyed by the **target material-plant**, not by run: the decision has to survive every later OAR run,
+    so it cannot point at a run-scoped row, and there are no foreign keys. It never changes what the
+    similarity engine scores or how it ranks -- ``oar.service.finalise_target`` simply skips the donor
+    when it picks the final neighbours, so the next-best already-scored donor takes the slot.
+
+    A restore does not delete the row: ``restored_at`` / ``restored_by`` are filled in and
+    ``active_slot`` moves from 0 to the row's own id. ``active_slot`` is what makes "at most one active
+    exclusion per target and donor" a plain portable unique constraint -- every active row has 0, every
+    restored row has a value no other row can have, so any number of restored rows may coexist with one
+    active one.
+    """
+
+    __tablename__ = "i7_oar_donor_exclusion"
+    __table_args__ = (
+        UniqueConstraint(
+            "sap_material_number",
+            "sap_plant_code",
+            "donor_material",
+            "donor_plant",
+            "active_slot",
+            name="uq_i7_oar_donor_exclusion_active",
+        ),
+        Index("ix_i7_oar_donor_exclusion_target", "sap_material_number", "sap_plant_code"),
+    )
+
+    ACTIVE_SLOT = 0
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    sap_material_number: Mapped[str] = mapped_column(String(40))
+    sap_plant_code: Mapped[str] = mapped_column(String(8))
+    """The target the donor is removed from -- the exclusion applies to this material-plant only."""
+
+    donor_material: Mapped[str] = mapped_column(String(40))
+    donor_plant: Mapped[str] = mapped_column(String(8))
+
+    donor_similarity: Mapped[Decimal | None] = mapped_column(SCORE, nullable=True)
+    donor_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """The donor's score and rank when it was removed, so the list can still show what was removed
+    after the target's neighbour rows have been re-selected without it."""
+
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    created_by: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    restored_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    active_slot: Mapped[int] = mapped_column(Integer, default=ACTIVE_SLOT, server_default="0")
+
+    @property
+    def is_active(self) -> bool:
+        return self.active_slot == self.ACTIVE_SLOT
+
+    def __repr__(self) -> str:
+        return (
+            f"<OarDonorExclusion {self.sap_material_number}/{self.sap_plant_code} "
+            f"-/-> {self.donor_material}/{self.donor_plant} active={self.is_active}>"
+        )
+
+
 class OarEmbedding(Base):
     """A description embedding, kept so the next OAR run does not recompute it.
 

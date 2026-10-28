@@ -18,6 +18,7 @@ which candidates were scored; the tests hold them to identical output.
 """
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -34,6 +35,7 @@ from app.initiatives.i7.oar import (
     confidence as confidence_module,
     eligibility,
     estimate as estimate_module,
+    exclusions as exclusions_module,
     identity,
     ranking,
     repository,
@@ -96,6 +98,8 @@ class OarRunResult:
     stage_totals: dict[str, int] = field(default_factory=dict)
     """Every ``StageCounts`` field summed over the run's targets, so how many candidates survived each step
     of retrieval is on record for the run as well as for each target."""
+    refreshed_targets: int = 0
+    """Targets of a REUSED run re-selected because a user's donor exclusion postdated them."""
 
 
 def _score_pair(
@@ -250,6 +254,48 @@ def scored_entry(
     )
 
 
+LEFT_OUT_MARKER = "left out by a user decision"
+"""Ends the sentence ``left_out_note`` writes into a target's ``detail``; ``oar.recalculate`` looks for it to
+replace the note when the removals change."""
+
+
+def left_out_note(count: int) -> str:
+    return f"{count} similar material(s) {LEFT_OUT_MARKER}"
+
+
+def summarise_neighbours(
+    neighbours: Sequence[Neighbour], policy: PolicyDocument
+) -> tuple[OarConfidence, OarEstimate, Decimal | None]:
+    """Confidence, the weighted estimate and the best similarity for a neighbour set.
+
+    The one place those three are computed from neighbours, so a target built by a run
+    (:func:`finalise_target`) and one recalculated after a similar material was removed or restored
+    (``oar.recalculate``) go through the same calls with the same policy -- they cannot disagree.
+    """
+    minimum_similarity = Decimal(str(policy.similarity.minimum_similarity))
+    grade = confidence_module.grade(
+        list(neighbours),
+        policy.confidence.oar_high_minimum_neighbours,
+        Decimal(str(policy.confidence.oar_high_minimum_similarity)),
+        policy.confidence.oar_medium_minimum_neighbours,
+        Decimal(str(policy.confidence.oar_medium_minimum_similarity)),
+        require_same_circuit_for_high=policy.confidence.oar_require_same_circuit_for_high,
+    )
+    oar_estimate = estimate_module.calculate(
+        list(neighbours),
+        _oar_service_level_configured(policy),
+        minimum_neighbours=policy.similarity.minimum_neighbours,
+        minimum_similarity=minimum_similarity,
+        strategy=policy.similarity.estimator,
+        material_difference_ratio=Decimal(str(policy.similarity.estimator_material_difference_ratio)),
+    )
+    best = max(
+        (n.score.combined for n in neighbours if n.score.combined is not None),
+        default=None,
+    )
+    return grade, oar_estimate, best
+
+
 def finalise_target(
     target: CandidateAttributes,
     scored: list[tuple[str, str, CombinedScore, bool | None, dict]],
@@ -262,12 +308,19 @@ def finalise_target(
     retrieval: str,
     policy: PolicyDocument,
     tally: RetrievalTally | None = None,
+    excluded: frozenset[tuple[str, str]] = exclusions_module.NO_EXCLUSIONS,
 ) -> OarResult:
     """Ranking, confidence and the weighted estimate for one target.
 
     Shared by the exhaustive reference (:func:`evaluate_target`) and the
     two-stage engine (``oar.engine``), so the two can differ only in WHICH
     candidates were scored, never in what happens to the scores.
+
+    ``excluded`` is the donors a user removed from THIS target (``oar.exclusions``). The top-K is chosen
+    exactly as always; any removed donor in it is then set aside (``OarResult.excluded_neighbours``) and the
+    estimate, confidence and best similarity are built from the rest. Nothing takes the removed donor's
+    place, so a target with five that lost one has four. Scores, thresholds and order are untouched, and an
+    empty set changes nothing at all.
     """
     if eligible_count == 0:
         return OarResult(
@@ -307,12 +360,14 @@ def finalise_target(
 
     minimum_similarity = Decimal(str(policy.similarity.minimum_similarity))
     scored = ranking.unique_entries(scored)
-    neighbours = ranking.select_top_k(
+    top_k = ranking.select_top_k(
         scored, policy.similarity.maximum_neighbours, minimum_similarity=minimum_similarity
     )
-    identity_passes, floor_passes, final = ranking.stage_tally(
+    neighbours, left_out = exclusions_module.split_excluded(top_k, excluded)
+    identity_passes, floor_passes, _selected = ranking.stage_tally(
         scored, minimum_similarity, policy.similarity.maximum_neighbours
     )
+    final = len(neighbours)
     tally = tally or RetrievalTally()
     scored_conflicts = sum(1 for e in scored if e[2].identity is not None and e[2].identity.conflict)
     scored_insufficient = sum(
@@ -340,25 +395,7 @@ def finalise_target(
         score_floor_passes=floor_passes,
         final_neighbours=final,
     )
-    grade = confidence_module.grade(
-        neighbours,
-        policy.confidence.oar_high_minimum_neighbours,
-        Decimal(str(policy.confidence.oar_high_minimum_similarity)),
-        policy.confidence.oar_medium_minimum_neighbours,
-        Decimal(str(policy.confidence.oar_medium_minimum_similarity)),
-    )
-    oar_estimate = estimate_module.calculate(
-        list(neighbours),
-        _oar_service_level_configured(policy),
-        minimum_neighbours=policy.similarity.minimum_neighbours,
-        minimum_similarity=minimum_similarity,
-        strategy=policy.similarity.estimator,
-        material_difference_ratio=Decimal(str(policy.similarity.estimator_material_difference_ratio)),
-    )
-    best = max(
-        (n.score.combined for n in neighbours if n.score.combined is not None),
-        default=None,
-    )
+    grade, oar_estimate, best = summarise_neighbours(neighbours, policy)
 
     detail = None
     if low_evidence and len(neighbours) < policy.similarity.minimum_neighbours:
@@ -366,6 +403,8 @@ def finalise_target(
             f"{low_evidence} eligible candidate(s) refused for too little evidence "
             "(see SimilarityPolicy.minimum_evidence_features / identity_evidence_features)"
         )
+    if left_out:
+        detail = f"{detail}; {left_out_note(len(left_out))}" if detail else left_out_note(len(left_out))
 
     return OarResult(
         sap_material_number=target.sap_material_number,
@@ -385,6 +424,7 @@ def finalise_target(
         retrieval=retrieval,
         stage_counts=stage_counts,
         rejected_candidates=ranking.rejected_sample(scored, minimum_similarity),
+        excluded_neighbours=tuple(left_out),
     )
 
 
@@ -417,12 +457,13 @@ def evaluate_target(
     price_range: Decimal | None,
     inventory_values: dict[tuple[str, str], dict],
     policy: PolicyDocument,
+    excluded: frozenset[tuple[str, str]] = exclusions_module.NO_EXCLUSIONS,
 ) -> OarResult:
     """The full similarity pipeline for one cold-start target, exhaustively.
 
     Every eligible candidate gets the exact score. This is the reference the
     two-stage engine (``oar.engine.evaluate_targets``) is tested against, and
-    what ``I7_OAR_RETRIEVAL_MODE=exhaustive`` runs.
+    what ``I7_OAR_RETRIEVAL_MODE=exhaustive`` runs. ``excluded`` is this target's user-removed donors.
     """
     candidate_population, duplicates = dedupe_donors(candidate_population)
     eligible, rejections = eligibility.filter_candidates(
@@ -451,6 +492,7 @@ def evaluate_target(
         retrieval="exhaustive",
         policy=policy,
         tally=RetrievalTally(duplicates_dropped=duplicates),
+        excluded=excluded,
     )
 
 
@@ -644,12 +686,19 @@ def run_oar_similarity(
 
         if existing is not None and not force:
             logger.info("OAR run: inputs unchanged since run %d, reusing it", existing.id)
+            # The run key does not include the user's removed similar materials, so a reused run can
+            # predate one. Each target that has any is recalculated from the neighbours the run already
+            # stored, minus the removed ones -- no scoring, no model. Everything else is left as it was.
+            from app.initiatives.i7.oar import recalculate as recalculate_module
+
+            refreshed = recalculate_module.apply_to_run(session, existing.id, policy)
             return OarRunResult(
                 run_id=existing.id,
                 status=STATUS_SUCCEEDED,
                 targets_evaluated=existing.targets_evaluated,
                 reused_existing=True,
                 text_similarity_available=embedding_version != NO_EMBEDDING_MODEL_VERSION,
+                refreshed_targets=refreshed,
             )
 
         run = OarRun(
@@ -683,6 +732,7 @@ def run_oar_similarity(
             candidates = repository.load_candidate_population(session)
             price_span = repository.price_range(candidates)
             inventory_values = repository.load_inventory_values(session)
+            active_exclusions = exclusions_module.load_active(session)
 
         logger.info(
             "OAR run %d: %d targets, %d candidates in the donor population (%s)",
@@ -724,7 +774,15 @@ def run_oar_similarity(
         if config.mode == "exhaustive":
             outcomes = (
                 evaluate_target(
-                    target, candidates, scoring_provider, price_span, inventory_values, policy
+                    target,
+                    candidates,
+                    scoring_provider,
+                    price_span,
+                    inventory_values,
+                    policy,
+                    excluded=exclusions_module.excluded_for(
+                        active_exclusions, target.sap_material_number, target.sap_plant_code
+                    ),
                 )
                 for target in targets
             )
@@ -739,6 +797,7 @@ def run_oar_similarity(
                 policy=policy,
                 config=config,
                 stats=stats,
+                exclusions=active_exclusions,
             )
 
         write_batch = max(1, settings.i7_oar_write_batch_size)
@@ -763,8 +822,12 @@ def run_oar_similarity(
                         if value is not None:
                             result.stage_totals[name] = result.stage_totals.get(name, 0) + value
                 target_rows.append(_target_row(run_id, outcome))
+                # Every top-K donor is stored, including any a user removed (they are not part of
+                # ``neighbours``): the stored list is what the run selected, and a restore needs the removed
+                # donor's row and scores to bring it back without scoring anything again.
                 neighbour_rows.extend(
-                    _neighbour_row(run_id, outcome, neighbour) for neighbour in outcome.neighbours
+                    _neighbour_row(run_id, outcome, neighbour)
+                    for neighbour in (*outcome.neighbours, *outcome.excluded_neighbours)
                 )
                 result.targets_evaluated += 1
 

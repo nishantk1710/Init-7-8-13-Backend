@@ -317,7 +317,7 @@ class BatchProcurementRepository:
         return _read(
             self.db,
             "SELECT purchase_requisition, item_of_requisition, material, plant, quantity_requested, "
-            f"requisition_date, purchase_order, purchase_order_item FROM {self.work.pr} "
+            f"requisition_date, purchase_order, purchase_order_item, deletion_indicator FROM {self.work.pr} "
             f"WHERE {self.batch.predicate()} {extra}",
             {**self.batch.params(), **params},
             _to_pr_row,
@@ -344,7 +344,8 @@ class BatchProcurementRepository:
         return _read(
             self.db,
             "SELECT purchasing_document, item, purchase_requisition, item_of_requisition, material, plant, "
-            f"order_quantity FROM {self.work.po} WHERE {self.batch.predicate()} {extra}",
+            "order_quantity, delivery_completed, deletion_indicator, doc_type "
+            f"FROM {self.work.po} WHERE {self.batch.predicate()} {extra}",
             {**self.batch.params(), **params},
             _to_po_item_row,
             self._pool,

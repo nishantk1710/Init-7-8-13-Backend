@@ -178,9 +178,19 @@ def load_normal_inputs(session: Session, inventory_run_id: int, forecast_run_id:
     )
 
 
-def load_oar_inputs(session: Session, oar_run_id: int):
-    """Every OAR (ND / PD / blank) material-plant joined to its Phase 6 result."""
-    return list(session.execute(text(_OAR_SQL), {"oar_run_id": oar_run_id}))
+def load_oar_inputs(session: Session, oar_run_id: int, target: tuple[str, str] | None = None):
+    """Every OAR (ND / PD / blank) material-plant joined to its Phase 6 result.
+
+    ``target`` -- ``(material, plant)`` -- narrows it to that one material-plant, for rebuilding a single
+    recommendation after its similar materials changed; the row is the same shape either way."""
+    if target is None:
+        return list(session.execute(text(_OAR_SQL), {"oar_run_id": oar_run_id}))
+    return list(
+        session.execute(
+            text(_OAR_SQL + " AND f.sap_material_number = :material AND f.sap_plant_code = :plant"),
+            {"oar_run_id": oar_run_id, "material": target[0], "plant": target[1]},
+        )
+    )
 
 
 def load_uncovered_oar_targets(session: Session, oar_run_id: int):

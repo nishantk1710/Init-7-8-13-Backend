@@ -121,15 +121,24 @@ def _statements(w: WorkTables) -> list[tuple[str, str, list[str]]]:
         (
             w.pr,
             (f"SELECT {_key('purchase_requisition')}, item_of_requisition, {_key('material')}, {_key('plant')}, "
-            f"quantity_requested, requisition_date, purchase_order, purchase_order_item INTO {w.pr} "
+            f"quantity_requested, requisition_date, purchase_order, purchase_order_item, deletion_indicator INTO {w.pr} "
             f"FROM n_eban WHERE purchase_requisition <> '' AND material <> '' AND plant <> '' AND {plant}"),
             ["material, plant", "purchase_requisition"],
         ),
         (
+            # _PO_ITEM_QUERY's rows (postgres_procurement.py), the closed flags
+            # and the header's document type included: without them every line
+            # read as an open order here, whatever SAP said (UAT, 23 Oct 2026 --
+            # the 21 Oct ELIKZ/LOEKZ rule never reached a stored build).
             w.po,
             (f"SELECT {_key('purchasing_document')}, {_key('item')}, {_key('purchase_requisition')}, "
-            f"item_of_requisition, {_key('material')}, {_key('plant')}, order_quantity INTO {w.po} "
-            f"FROM n_ekpo WHERE purchasing_document <> '' AND material <> '' AND plant <> '' AND {plant}"),
+            f"item_of_requisition, {_key('material')}, {_key('plant')}, order_quantity, "
+            f"delivery_completed, deletion_indicator, doc_type INTO {w.po} "
+            "FROM n_ekpo LEFT JOIN ("
+            "SELECT purchasing_document AS header_document, MAX(purchasing_doc_type) AS doc_type "
+            "FROM n_ekko GROUP BY purchasing_document"
+            ") ekko ON ekko.header_document = n_ekpo.purchasing_document "
+            f"WHERE purchasing_document <> '' AND material <> '' AND plant <> '' AND {plant}"),
             ["material, plant", "purchasing_document, item", "purchase_requisition"],
         ),
         (

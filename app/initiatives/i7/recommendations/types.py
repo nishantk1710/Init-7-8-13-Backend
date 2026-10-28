@@ -163,9 +163,9 @@ override configured for a given tier."""
 
 OAR_APPROVAL_CHAIN: tuple[ApprovalRole, ...] = (
     ApprovalRole.INVENTORY_CONTROLLER,
-    ApprovalRole.COMMERCIAL_HEAD,
     ApprovalRole.ENGINEERING_HEAD,
     ApprovalRole.PLANT_HEAD,
+    ApprovalRole.COMMERCIAL_HEAD,
 )
 """The fixed, required route for OAR conversion recommendations. Every step
 is human-gated; no step may be skipped or auto-advance -- enforced by the

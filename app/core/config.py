@@ -518,10 +518,35 @@ class Settings(BaseSettings):
     # blocked by an unsigned service level.
     i7_dev_mock_max_stock: bool = False
 
-    # --- Reserved for future integrations. Not read by any code yet, and not
-    # --- required for startup. See app/core/security.py and app/integrations/.
+    # --- Sign-in: Microsoft Entra ID access tokens (app/core/security.py). ---
+    # Off by default, and off locally and in tests: with it off every request is
+    # served as today -- the author comes from the X-Actor-Id header and no role
+    # is checked -- so switching it on is a setting, not a deploy, and switching
+    # it back off is the rollback.
+    auth_enabled: bool = False
+    # The VZI tenant, and the Application (client) ID of the API's app
+    # registration (spares-ai-api-<env>). Both are required once AUTH_ENABLED
+    # is true; without them every protected request answers 503 rather than
+    # being let through.
     azure_tenant_id: str = ""
     azure_client_id: str = ""
+    # Extra accepted token audiences, comma-separated. The client ID and
+    # api://<client ID> are always accepted: a v2 access token carries the bare
+    # client ID as its audience (measured on spares-ai-api-prod, 26 Oct 2026),
+    # not the api:// URI the app registration displays.
+    auth_audience: str = ""
+    # The delegated scope a user's token must carry (Expose an API).
+    auth_required_scope: str = "access_as_user"
+    # Clock difference tolerated on exp/nbf/iat, and how long Entra's signing
+    # keys are cached before they are fetched again (an unknown key ID always
+    # triggers a fetch, so a key rotation never waits for this).
+    auth_clock_skew_seconds: int = 120
+    auth_jwks_cache_seconds: int = 3600
+    # SAP's calls (/api/events/pr, /api/events/csv) are switched separately:
+    # they come from VZI's CPI, not from a person, and how CPI authenticates is
+    # decision D2 in the RBAC plan. "off" keeps them open as today; "entra"
+    # requires an application token carrying the Sap.Events.Write role.
+    sap_events_auth: Literal["off", "entra"] = "off"
 
     # --- Initiative 13: End-to-End Spares Utilisation Tracking. ---
     # Root directory for platform-owned (non-SAP) reference data -- currently
@@ -871,6 +896,17 @@ class Settings(BaseSettings):
     # adds nothing to a material's open-PO quantity (UAT, 21 Oct 2026). See
     # app/initiatives/i13/watch.py. Part of the snapshot fingerprint.
     i13_open_po_respect_closed: bool = True
+    # A purchase requisition item SAP has deleted -- EBAN-LOEKZ = X -- that no
+    # PO line orders is not procurement: the ledger leaves it out, and a
+    # reservation naming it reads "PR deleted in SAP" (UAT, 26 Oct 2026). See
+    # app/initiatives/i13/po_lines.py. Part of the snapshot fingerprint.
+    i13_pr_respect_deleted: bool = True
+    # Purchasing document types (EKKO-BSART) that are not orders, so nothing is
+    # ever open on their lines: WK value and MK quantity contracts, AN requests
+    # for quotation, FPA (VZI's own agreement type, measured as an agreement:
+    # 3,564 of its 4,577 lines carry no quantity). UAT, 23 Oct 2026; see
+    # app/initiatives/i13/po_lines.py. Part of the snapshot fingerprint.
+    i13_non_order_doc_types: str = "WK,MK,AN,FPA"
 
     # Aging bands (days since last goods movement).
     i13_aging_fast_max_days: int = 365
@@ -1110,6 +1146,11 @@ class Settings(BaseSettings):
     def i13_oar_mrp_controller_set(self) -> frozenset[str]:
         """Normalised MRP controller (DISPO) codes that count as OAR materials."""
         return frozenset(code.strip().upper() for code in self.i13_oar_mrp_controllers.split(",") if code.strip())
+
+    @property
+    def i13_non_order_doc_type_set(self) -> frozenset[str]:
+        """Normalised EKKO-BSART codes whose lines are never open supply."""
+        return frozenset(code.strip().upper() for code in self.i13_non_order_doc_types.split(",") if code.strip())
 
     @property
     def assistant_justification_reason_category_list(self) -> list[str]:

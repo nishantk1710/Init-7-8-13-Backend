@@ -11,13 +11,14 @@ three private copies of an MSEG table would diverge within a week. Tables
 initiative.
 """
 
+from app.models.app_user import AppUser
 from app.models.base import Base
 from app.models.criticality_report import CriticalityCurrent, CriticalityReportRow, CriticalityReportUpload
 from app.models.csv_extract import CsvExtractRequest
 from app.models.i7_features import DecliningDemandEvaluation, FeatureBuildRun, MaterialFeature
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun, SegmentModelDecision
 from app.models.i7_inventory import InventoryCalculation, InventoryRun
-from app.models.i7_oar import OarEmbedding, OarNeighbour, OarRun, OarTargetResult
+from app.models.i7_oar import OarDonorExclusion, OarEmbedding, OarNeighbour, OarRun, OarTargetResult
 from app.models.i7_recommendation import (
     ApprovalLedgerEntry,
     Recommendation,
@@ -27,6 +28,7 @@ from app.models.i7_recommendation import (
 )
 from app.models.i7_pipeline import PipelineRun
 from app.models.i7_policy import PolicyVersion
+from app.models.i7_kpi_formula import KpiFormulaVersion
 from app.models.i7_kpi_snapshot import KpiSnapshot, KpiSnapshotLog
 from app.models.i7_reporting import QuarterlyReportRecord
 from app.models.i7_stockout_risk import StockoutRiskInput
@@ -91,6 +93,7 @@ __all__ = [
     "ActExceptionEventRecord",
     "ActExceptionRecord",
     "ActNotificationRecord",
+    "AppUser",
     "Base",
     "ConsumptionAttributionRecord",
     "CriticalityCurrent",

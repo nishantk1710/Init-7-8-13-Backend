@@ -661,6 +661,26 @@ def test_high_requires_a_same_circuit_neighbour():
     assert graded is OarConfidence.MEDIUM
 
 
+def test_high_without_the_circuit_condition_needs_only_count_and_similarity():
+    """Circuit is not a data field, so a policy that does not require it can still reach HIGH."""
+    unknown_circuit = neighbours_at(["0.90", "0.85", "0.82", "0.81", "0.81"], same_circuit=None)
+    graded = confidence.grade(
+        unknown_circuit, HIGH_N, HIGH_S, MED_N, MED_S, require_same_circuit_for_high=False
+    )
+    assert graded is OarConfidence.HIGH
+    # ...and the count and similarity bars still apply.
+    four = confidence.grade(
+        unknown_circuit[:4], HIGH_N, HIGH_S, MED_N, MED_S, require_same_circuit_for_high=False
+    )
+    assert four is OarConfidence.MEDIUM
+
+
+def test_default_policy_does_not_require_a_circuit_for_high():
+    from app.initiatives.i7.policy.thresholds import ConfidencePolicy
+
+    assert ConfidencePolicy().oar_require_same_circuit_for_high is False
+
+
 def test_no_neighbours_is_low():
     assert confidence.grade([], HIGH_N, HIGH_S, MED_N, MED_S) is OarConfidence.LOW
 

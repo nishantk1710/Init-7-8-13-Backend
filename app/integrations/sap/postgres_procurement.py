@@ -91,7 +91,7 @@ _PLANT_SCOPE_M = sql_predicate("m.plant")
 
 _PR_QUERY = """
     SELECT purchase_requisition, item_of_requisition, material, plant,
-           quantity_requested, requisition_date, purchase_order, purchase_order_item
+           quantity_requested, requisition_date, purchase_order, purchase_order_item, deletion_indicator
     FROM n_eban
     WHERE purchase_requisition <> '' AND material <> '' AND plant <> '' AND {plant_scope}
       {pr_filter}
@@ -120,6 +120,11 @@ def _to_pr_row(record: Any) -> Row:
         # PO join is driven from the EKPO side, never from this field.
         "Ebeln": ebeln,
         "Ebelp": ebelp,
+        # EBAN-LOEKZ ("X": the requisition item is deleted). Carried, not
+        # filtered here: app/initiatives/i13/po_lines.py decides what a deleted
+        # requisition means. Read strictly, like EKPO's flags, so a reader that
+        # forgets the column fails instead of reading every PR as live.
+        "Loekz": (record.deletion_indicator or "").strip().upper(),
     }
 
 
@@ -153,10 +158,18 @@ def fetch_purchase_requisitions(
 
 # --- Purchase order items (EKPO-equivalent) ---------------------------------
 
+# The document type (EKKO-BSART) comes from the header: a contract or a request
+# for quotation is not an order (app/initiatives/i13/po_lines.py). Grouped so a
+# header delivered twice cannot double a line; renamed so the filters below
+# stay unambiguous.
 _PO_ITEM_QUERY = """
     SELECT purchasing_document, item, purchase_requisition, item_of_requisition,
-           material, plant, order_quantity, delivery_completed, deletion_indicator
+           material, plant, order_quantity, delivery_completed, deletion_indicator, doc_type
     FROM n_ekpo
+    LEFT JOIN (
+        SELECT purchasing_document AS header_document, MAX(purchasing_doc_type) AS doc_type
+        FROM n_ekko GROUP BY purchasing_document
+    ) ekko ON ekko.header_document = n_ekpo.purchasing_document
     WHERE purchasing_document <> '' AND material <> '' AND plant <> '' AND {plant_scope}
       {po_filter}
       {pr_filter}
@@ -183,12 +196,14 @@ def _to_po_item_row(record: Any) -> Row:
         "Matnr": record.material.strip(),
         "Werks": record.plant.strip(),
         "Menge": _decimal(record.order_quantity),
-        # EKPO-ELIKZ ("X": delivery completed) and EKPO-LOEKZ ("L" deleted,
-        # "S" blocked). Carried, not filtered: the ledger still lists a closed
-        # line; only the open-PO quantity treats it as closed. getattr: rows
-        # built before these columns were read carry neither.
-        "Elikz": (getattr(record, "delivery_completed", None) or "").strip().upper(),
-        "Loekz": (getattr(record, "deletion_indicator", None) or "").strip().upper(),
+        # EKPO-ELIKZ ("X": delivery completed), EKPO-LOEKZ ("L" deleted, "S"
+        # blocked) and EKKO-BSART. Carried, not filtered: the ledger still
+        # lists a closed line or a contract, as such; see
+        # app/initiatives/i13/po_lines.py. Both readers -- this module's query
+        # and the snapshot build's work table -- select all three.
+        "Elikz": (record.delivery_completed or "").strip().upper(),
+        "Loekz": (record.deletion_indicator or "").strip().upper(),
+        "Bsart": (record.doc_type or "").strip().upper(),
     }
 
 

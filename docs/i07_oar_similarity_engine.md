@@ -176,6 +176,25 @@ consumers, so it is left for a business decision.
   the text dimension reports `NOT_AVAILABLE_NO_MODEL` and scores renormalise over structured and business.
   The model is about 440 MB, downloaded from Hugging Face on first use: set `HF_HOME` to a folder under `/home`
   on App Service so it survives a restart. Vectors are 768 x float32 = 3 KB each.
+* **Installing the model on the App Service, once, without reinstalling on every deploy.** The packages are
+  about 1.3 GB and tens of thousands of small files. Installed under `/home` (a network share) `import torch`
+  took 1m45s, longer than gunicorn's 120 s timeout, so they are kept as one archive in `/home` and
+  `startup.sh` unpacks it to `/tmp/oar-text` at container start (about 8 s to import from there). Build the
+  archive once from the App Service SSH console:
+
+  ```bash
+  cd /home/site/wwwroot    # or the /tmp/<hash> folder that holds app/main.py
+  python -m pip freeze > /tmp/constraints.txt          # keeps every shared package at the app's own version
+  python -m pip install --target /tmp/oar-text -c /tmp/constraints.txt -r requirements-oar-text.txt
+  export HF_HOME=/home/site/hf
+  PYTHONPATH=/tmp/oar-text python -c "from app.initiatives.i7.oar.text_similarity import BgeEmbeddingProvider as B; print(B().is_available)"   # True; also downloads the weights
+  tar -C /tmp -cf /home/site/oar-text.tar oar-text
+  ```
+
+  Redo it only if `requirements.txt` changes a package that `torch` / `sentence-transformers` also use. No
+  archive means no model and no error: the app runs as before. Removing a similar material never needs the
+  model (it recalculates from the stored neighbours, see "Removing a similar material for one target"); only
+  an OAR run does, so it must be made where the model exists.
 * **One embedding per unique normalised description per model version.** The
   layers are the per-run memory map, then `i7_oar_embedding` in Azure SQL,
   then the model in bounded batches (`I7_OAR_EMBEDDING_BATCH_SIZE`).
@@ -305,6 +324,55 @@ retrieval.** The current code's top neighbours included donors with no material
 group and no description. Their 0.98 rested on unit of measure "EA" plus a
 nearby price, which the new rule refuses.
 
+## Removing a similar material for one target
+
+A reviewer can remove one similar material from one target's list, and restore it. **Nothing takes its
+place**: a target that had five and lost one has four, and its reorder point, safety stock and max stock
+are recalculated from those four by the unchanged estimator. Scoring, weights, thresholds, hard filters,
+ranking, `estimate.py` and the Min-Max conversion are not touched.
+
+| Piece | Where |
+| --- | --- |
+| Decision, persisted per target and donor, restore keeps the row | `i7_oar_donor_exclusion` (`app/models/i7_oar.py`), migration `e7b3d9a25c61` |
+| Split a ranked list into counted and removed (pure), loaders | `app/initiatives/i7/oar/exclusions.py` |
+| Applied by every build path | `service.finalise_target(excluded=...)`; `engine.evaluate_targets(exclusions=...)`; `run_oar_similarity` loads them once |
+| Recalculate one target from its stored neighbours | `app/initiatives/i7/oar/recalculate.py` |
+| Remove / restore, approval guard, recommendation refresh | `app/initiatives/i7/recommendations/oar_exclusions.py` |
+| Endpoints | `POST /api/v1/i7/recommendations/{id}/similar-materials/exclusions` and `.../exclusions/restore` |
+
+* **After the cut, not before.** The run picks its top-K as it always did; `finalise_target` then sets any
+  removed donor aside (`OarResult.excluded_neighbours`) and builds the confidence, the estimate and the
+  best similarity (`service.summarise_neighbours`) from the rest. Leaving the donor out of the candidates
+  first would let the sixth-best fill the slot, a material the reviewer never looked at.
+* **Every top-K donor is stored, the removed one included.** `i7_oar_neighbour` holds what the run
+  selected and is never changed by a removal; the target's counted set is the stored rows minus the active
+  exclusions. That is what lets a restore bring a donor back at its old rank and score without scoring
+  anything. `i7_oar_target.neighbour_count` and the figures describe the counted set. The list shown to a
+  reviewer numbers the counted ones 1..n and shows the removed ones apart.
+* **Instant, and no model.** Remove and restore read the stored rows and call the estimator: no candidate
+  is scored, no donor pool is loaded, no embedding model or vector is touched, and it works on a run of
+  any algorithm version. The only check against the run is that its policy is the current one, because the
+  estimate depends on the policy (minimum neighbours, estimator, service level).
+* **At most one active exclusion per target and donor.** `active_slot` is 0 while active and the
+  row's own id once restored, so the unique constraint allows any number of restored rows beside
+  one active row.
+* **Refused, saving nothing (409)** when the recalculated estimate is not `SUCCESS` (fewer than
+  `SimilarityPolicy.minimum_neighbours` counted, or none that can lend values), when the recommendation is
+  not `READY_FOR_REVIEW` / `SENT_BACK`, or when the run was made under a different policy.
+* **A reused run does not ignore it.** The run key does not include removals, so `run_oar_similarity`
+  (reuse branch) and the pipeline step `oar_exclusions.apply_to_latest_oar_run` (run by
+  `scripts/run_full_pipeline.py` just before Phase 7; anything else that generates recommendations should
+  call it too) recalculate every target that has a removal from its stored rows, then rebuild its
+  unsubmitted recommendation. A new or forced run applies them in `finalise_target`. A later build with
+  too few left reports the existing `NOT_EVALUABLE_INSUFFICIENT_NEIGHBOURS`.
+* **Scores are recalculated from the stored six decimals.** `i7_oar_neighbour.combined_similarity` is
+  NUMERIC(9, 6), a run weights with the full-precision value, so a recalculation can differ from a run's
+  own audit trace (`estimate_trace`) in the far digits. The figures themselves are the same (a test holds
+  recalculation and a full run to the same answer).
+* **Identity is not authenticated.** `created_by` / `restored_by` come from the `X-Actor-Id` header
+  (`app/api/i7/actor.py`), which a caller can set to anything, and no role is checked
+  (`oar_exclusions.authorize_exclusion` is the empty hook for Entra ID). These rows are not a verified
+  audit trail until that lands.
 ## Known limitations
 
 * **Real accuracy is unvalidated.** There are no expert-labelled pairs yet.
