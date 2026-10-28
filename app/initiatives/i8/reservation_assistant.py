@@ -50,10 +50,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from app.initiatives.i8.material_number import normalise
 from app.initiatives.i8.register import RepairLine
+
+if TYPE_CHECKING:
+    from app.initiatives.i8.requisitions import RepairRequest
 from app.initiatives.i8.repairable_unit import RepairableUnitVerdict
 from app.initiatives.i8.repairable_unit import assess as assess_repairable_unit
 from app.initiatives.i8.universe import UniverseRow
@@ -84,6 +87,10 @@ class I08Assessment:
     new_unit_lead_time_days: int | None
     """MARC.PLIFZ -- calendar days to buy a new one. ``None`` where MARC has no
     row or the value is unmaintained, which is the majority of the universe."""
+
+    need_date_advice_enabled: bool = False
+    """``I8_NEED_DATE_ADVICE_ENABLED`` as it was when the assessment was built.
+    Appended with a default (27-Oct-2026): off means no need-date line."""
 
     @property
     def repair_due_date(self) -> date | None:
@@ -130,6 +137,35 @@ class I08Assessment:
             return None
 
         return days_until_repair <= self.new_unit_lead_time_days
+
+    def need_date_advice(self, today: date) -> str | None:
+        """The need-date line, or ``None``.
+
+        A reservation whose need date falls after a repaired unit's return can
+        be covered by that unit, so MRP has no shortfall to buy for -- provided
+        MRP counts the open repair PO as stock on the way. SAP has not confirmed
+        that yet, so the line is behind ``I8_NEED_DATE_ADVICE_ENABLED`` (off).
+
+        The date is the soonest open repair PO due back ON OR AFTER ``today``,
+        never :attr:`repair_due_date`: that one may already have passed, and a
+        missed date is not a forecast to plan a job around (see "Overdue dates
+        are the honest part" above). Repair PRs have no due date, so a part
+        with only those gets no line.
+        """
+        if not self.need_date_advice_enabled:
+            return None
+        upcoming = [
+            item.due_date
+            for item in self.verdict.evidence
+            if item.due_date is not None and item.due_date >= today
+        ]
+        if not upcoming:
+            return None
+        # ISO, as the headline gives due dates.
+        return (
+            f"A repaired unit is due back on {min(upcoming).isoformat()}. If your "
+            "job can wait, set the need date after that, and no new unit is bought."
+        )
 
     def headline(self, today: date) -> str:
         """The sentence of record, written to be read by the person reserving."""
@@ -233,6 +269,30 @@ class I08Assessment:
                 }
                 for item in self.verdict.evidence
             ],
+            # Since 27-Oct-2026: open repair PRs and the usable/damaged split.
+            # Added, never renamed: records are replayed word for word, and an
+            # older one simply lacks these keys.
+            "openRepairRequestLines": self.verdict.open_repair_request_lines,
+            "openRepairRequests": [
+                {
+                    "purchaseRequisition": item.purchase_requisition,
+                    "item": item.item,
+                    "quantity": _number(item.quantity),
+                    "requestedAt": _iso(item.requested_on),
+                    "daysSinceRequested": item.days_since_requested,
+                    "department": item.department,
+                    "departmentName": item.department_name,
+                    "repairOrder": item.repair_order,
+                }
+                for item in self.verdict.request_evidence
+            ],
+            "usableStock": _number(self.verdict.usable_stock),
+            "damagedStock": _number(self.verdict.damaged_stock),
+            "stockConditionKnown": self.verdict.stock_condition_known,
+            "stockSource": self.verdict.stock_source,
+            # Since 27-Oct-2026, stored as served: whether the switch was on
+            # is part of what the requester was told.
+            "needDateAdvice": self.need_date_advice(today),
         }
 
 
@@ -256,12 +316,20 @@ def build(
     universe_rows: Sequence[UniverseRow],
     repair_lines: Sequence[RepairLine],
     today: date,
+    repair_requests: Sequence[RepairRequest] | None = None,
+    department_name: Callable[[str | None], str | None] | None = None,
+    need_date_advice_enabled: bool = False,
 ) -> I08Assessment:
     """Assemble the I08 assessment for one material at one plant.
 
     Takes the whole snapshot's rows and narrows them here, for the same reason
     ``repairable_unit.assess`` does: the matching rule belongs in one place, and
     this function delegates to that one rather than repeating it.
+
+    ``repair_requests`` and ``department_name`` are passed straight through:
+    ``None`` requests means the caller's switch is off and PRs are not counted.
+    ``need_date_advice_enabled`` is the caller's ``I8_NEED_DATE_ADVICE_ENABLED``;
+    off (the default) means no need-date line.
     """
     material_key = normalise(material_id) or ""
     plant_key = (plant or "").strip()
@@ -272,6 +340,8 @@ def build(
         universe_rows=universe_rows,
         repair_lines=repair_lines,
         today=today,
+        repair_requests=repair_requests,
+        department_name=department_name,
     )
 
     rows = [
@@ -298,4 +368,5 @@ def build(
         criticality=criticality,
         verdict=verdict,
         new_unit_lead_time_days=lead_time,
+        need_date_advice_enabled=need_date_advice_enabled,
     )

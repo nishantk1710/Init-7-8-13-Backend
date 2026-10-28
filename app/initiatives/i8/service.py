@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 
 from sqlalchemy import func, select
@@ -52,10 +52,11 @@ from app.core.logging import get_logger
 from app.initiatives.i8.acquisitions import (
     NEW_ACQUISITION_KIND,
     NewAcquisition,
-    find_new_acquisitions,
     load_justifications,
+    load_new_acquisitions,
 )
 from app.initiatives.i8.attestation import AttestationCoverage, coverage as attestation_coverage
+from app.initiatives.i8.attestation import find as find_attestations
 from app.initiatives.i8.coding_candidates import CodingCandidate, ScreenStats, screen
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.declarations import DeclarationRow, build_queue
@@ -69,11 +70,21 @@ from app.initiatives.i8.register import (
     RepairLine,
     fetch_candidate_lines,
     load_repair_lines,
+    with_requisition_details,
     open_repair_index,
     timed_step,
 )
+from app.initiatives.i8.repair_references import load_repair_references
+from app.initiatives.i8.requisitions import RepairRequest, fetch_repair_order_lines, load_repair_requests
+from app.initiatives.i8.session_jobs import (
+    SessionJob,
+    UnreferencedLine,
+    load_session_jobs,
+    load_unreferenced_lines,
+)
 from app.initiatives.i8.staged import staged_sources
 from app.initiatives.i8.universe import UniverseRow, UniverseStats, load_universe
+from app.initiatives.i13.session_link import go_live_date
 from app.models import IngestionRun
 from app.shared.snapshot_builds import exclusive_build
 
@@ -100,13 +111,19 @@ SOURCE_TABLES: tuple[str, ...] = (
     "raw_ekpo",
     "raw_eket",
     "raw_eban",
+    # The repair order's reservation lines (v_resb) and stock per condition
+    # (v_mchb), read for open repair PRs and usable vs damaged stock from
+    # 27-Oct-2026. A reload of either changes what the snapshot holds.
+    "raw_resb",
     "raw_mseg",
     "raw_lfa1",
-    # Read only by the coding screen's New Item Price (v_mbew), not by the
-    # snapshot build. Listed so a weekly MBEW reload still moves the
-    # fingerprint: the rebuild resets the cached coding screen, which would
-    # otherwise keep serving last week's prices until a restart.
+    # Read by the coding screen's New Item Price (v_mbew), and by the snapshot
+    # build for stock per condition when I8_STOCK_CONDITION_SOURCE=MBEW
+    # (27-Oct-2026; MCHB by default). Listed so a weekly MBEW reload still
+    # moves the fingerprint: the rebuild resets the cached coding screen, which
+    # would otherwise keep serving last week's prices until a restart.
     "raw_mbew",
+    "raw_mchb",
     # What the monthly criticality uploads add up to; an upload writes an
     # ingestion_run row for it (app/integrations/criticality/reports.py).
     "criticality_current",
@@ -170,8 +187,10 @@ class Snapshot:
     universe_stats: UniverseStats
 
     acquisitions: tuple[NewAcquisition, ...] = ()
-    """New 80-series purchase lines, for the UNJUSTIFIED_ACQUISITION check.
-    From the same EKPO pull as the register, so it shares its lifetime."""
+    """New 80-series purchases, for the UNJUSTIFIED_ACQUISITION check: the
+    new-buy PRs and the direct PO lines with no PR behind them (since
+    27-Oct-2026; acquisitions.py). Built with the register, so it shares its
+    lifetime."""
 
     source_fingerprint: str = ""
     """What :data:`SOURCE_TABLES` looked like when this build started. A
@@ -180,9 +199,44 @@ class Snapshot:
     source_loaded_at: datetime | None = None
     """When the newest of those tables last loaded successfully."""
 
+    repair_requests: tuple[RepairRequest, ...] = ()
+    """Open repair PRs with no PO yet (requisitions.py), ordered by PR date.
+    Kept apart from ``lines`` on purpose: every reader of ``lines`` -- the
+    declaration queue, the exceptions, the assistant -- means PO lines, and a
+    repair with no PO yet is served only where it is asked for. Always built;
+    ``I8_REPAIR_REQUESTS_ENABLED`` decides only whether it is served."""
+
+    repair_references: tuple[tuple[str, str, str, str], ...] = ()
+    """(BANFN, BNFPO, session_id, reference): the assistant reference typed on
+    a repair order's 543 line, resolved to a session for the same part
+    (repair_references.py, 27-Oct-2026). How a declaration made in that visit
+    covers the repair PR and the PO ordered from it."""
+
+    session_jobs: tuple[SessionJob, ...] = ()
+    """The job reservation lines whose text names an assistant session, with
+    their 261 issues and 262 returns (session_jobs.py, 27-Oct-2026). Served on
+    the session page; nothing else reads them."""
+
+    unreferenced_lines: tuple[UnreferencedLine, ...] = ()
+    """The 80-series job lines needed on or after ``session_check_start``
+    whose text leads to no assistant session: MISSING_SESSION_ID
+    (session_jobs.py, 27-Oct-2026)."""
+
+    session_check_start: date | None = None
+    """From when those lines were checked: ``I8_SESSION_CHECK_START_DATE``,
+    else the I13 go-live date. None on a snapshot built before the check."""
+
     def line(self, document: str, item: str) -> RepairLine | None:
         """One repair line by its (EBELN, EBELP) key."""
         return self._lines_by_key.get((document, item))
+
+    def request(self, purchase_requisition: str, item: str) -> RepairRequest | None:
+        """One open repair PR by its (BANFN, BNFPO) key."""
+        cached = self.__dict__.get("_request_index")
+        if cached is None:
+            cached = {request.key: request for request in self.repair_requests}
+            object.__setattr__(self, "_request_index", cached)
+        return cached.get((purchase_requisition, item))
 
     def material(self, material_id: str) -> tuple[UniverseRow, ...]:
         """Every plant row for one material. Empty if it is not repairable."""
@@ -242,7 +296,46 @@ def build_snapshot(
             lines, register_stats = load_repair_lines(
                 db, cfg, today=reference_date, candidates=candidates, sources=sources
             )
-            acquisitions = find_new_acquisitions(candidates, cfg)
+            # The repair orders' lines, read once: they name the open repair
+            # PRs, and they tell a repair PR from a new-buy one.
+            reservation_lines = fetch_repair_order_lines(db, cfg, sources=sources)
+            # Before the EKPO pull is let go: a PR is open only while no live
+            # PO line points back to it, and those lines are in this pull.
+            # The same EBAN read also gives every PO line its PR's date and
+            # department (27-Oct-2026): the queue's requester is the
+            # department that asked for the repair.
+            requisitions: dict = {}
+            repair_requests, request_stats = load_repair_requests(
+                db,
+                cfg,
+                reference_date=reference_date,
+                candidates=candidates,
+                sources=sources,
+                reservation_lines=reservation_lines,
+                also_read=(line.pr_number for line in lines if line.pr_number),
+                requisitions_out=requisitions,
+            )
+            lines = with_requisition_details(lines, requisitions)
+            del requisitions
+            # The new-buy PRs, and the direct PO lines in the same pull.
+            acquisitions = load_new_acquisitions(
+                db, cfg, candidates=candidates, reservation_lines=reservation_lines, sources=sources
+            )
+            # Before the lines are let go: their text carries the R-reference.
+            repair_references = load_repair_references(db, reservation_lines, cfg)
+            del reservation_lines
+            # The job each assistant session was for: its own reservation line.
+            session_jobs = load_session_jobs(db, cfg, sources=sources)
+            # Job lines that should name a session and do not.
+            session_check_start = cfg.session_check_start_date_value or go_live_date(db)
+            unreferenced = load_unreferenced_lines(db, session_check_start, cfg, sources=sources)
+            register_stats = replace(
+                register_stats,
+                open_repair_requests=request_stats.open_repair_requests,
+                requisitions_excluded_deleted=request_stats.requisitions_excluded_deleted,
+                requisitions_excluded_live_po=request_stats.requisitions_excluded_live_po,
+                requisitions_excluded_reservation_closed=request_stats.requisitions_excluded_reservation_closed,
+            )
             del candidates
             with timed_step("repairable universe"):
                 universe, universe_stats = load_universe(
@@ -251,9 +344,10 @@ def build_snapshot(
 
     elapsed = time.monotonic() - started
     logger.info(
-        "I08 snapshot built in %.2fs: %d open repair lines, %d universe rows",
+        "I08 snapshot built in %.2fs: %d open repair lines, %d open repair PRs, %d universe rows",
         elapsed,
         len(lines),
+        len(repair_requests),
         len(universe),
     )
     return Snapshot(
@@ -267,6 +361,11 @@ def build_snapshot(
         acquisitions=tuple(acquisitions),
         source_fingerprint=source.fingerprint,
         source_loaded_at=source.loaded_at,
+        repair_requests=repair_requests,
+        repair_references=repair_references,
+        session_jobs=session_jobs,
+        unreferenced_lines=unreferenced,
+        session_check_start=session_check_start,
     )
 
 
@@ -648,7 +747,11 @@ def build_attestation_view(
     """Match every repair line against the attestation table, and every new
     purchase against the justifications. Always does the work."""
     cfg = cfg or get_i8_settings()
-    cover = attestation_coverage(db, snapshot.lines, cfg)
+    # The open repair PRs are declared on only while the register serves them.
+    requests = snapshot.repair_requests if cfg.repair_requests_enabled else ()
+    cover = attestation_coverage(
+        db, snapshot.lines, cfg, requests=requests, references=getattr(snapshot, "repair_references", ())
+    )
     justifications = load_justifications(db)
     exceptions, exception_stats = build_exceptions(
         snapshot.lines,
@@ -659,12 +762,29 @@ def build_attestation_view(
         justification_window_days=cfg.justification_window_days,
         justification_cutover=cfg.justification_cutover_date_value,
         overdue_grace_days=cfg.overdue_grace_days,
+        # Every open repair PR, served or not: a purchase that overlapped one
+        # bought new while a repair was open whatever the register shows.
+        repair_requests=snapshot.repair_requests,
+        served_requests=requests,
+        # A second read of the attestation table; it holds a handful of rows.
+        declarations=find_attestations(db, include_superseded=False),
+        reference_date=snapshot.reference_date,
+        declaration_grace_days=cfg.declaration_grace_days,
+        unreferenced_lines=getattr(snapshot, "unreferenced_lines", ()),
+        session_check_start=getattr(snapshot, "session_check_start", None),
     )
     by_line = justifications_by_line(snapshot.lines, justifications, exceptions)
     logger.info("I08 register justifications: %s", justification_counts(by_line))
     return AttestationView(
         coverage=cover,
-        declarations=tuple(build_queue(snapshot.lines, cover)),
+        declarations=tuple(
+            build_queue(
+                snapshot.lines,
+                cover,
+                requests=requests,
+                cutover=cfg.attestation_cutover_date_value,
+            )
+        ),
         exceptions=tuple(exceptions),
         exception_stats=exception_stats,
         built_at=datetime.now(timezone.utc),

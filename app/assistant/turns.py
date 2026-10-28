@@ -265,6 +265,41 @@ def _record_suggestion(
     return record
 
 
+def _declaration_draft(session: AssistantSession, answer: Mapping[str, Any]):
+    """I08 FR-4, option B: the faulty unit declared in the visit that removes it.
+
+    Unbound -- nothing has been raised for it yet -- and carrying the session
+    id, which is the exact key the date window only approximates. Material and
+    plant are the session's, never the answer's: the person declared the part
+    they were asked about. Validated here, before the turn is added, so a
+    refused declaration leaves no half-written turn behind.
+    """
+    from app.initiatives.i8 import attestation  # local: keeps the assistant import light
+
+    draft = attestation.AttestationDraft(
+        material_id=session.material_id,
+        plant=session.plant,
+        quantity=Decimal(answer["quantity"]),
+        condition_description=answer["condition_description"],
+        fault_category=answer["fault_category"],
+        recommendation=answer["recommendation"],
+        evidence_reference=answer.get("evidence_reference"),
+        attestor_name=answer.get("attestor_name"),
+    )
+    try:
+        attestation.validate(draft)
+    except attestation.AttestationError as error:
+        raise AnswerError(str(error)) from error
+    return draft
+
+
+def _record_declaration(db: DbSession, session: AssistantSession, draft, *, actor: str) -> None:
+    """Store the declaration, flushed rather than committed: it lands with the turn."""
+    from app.initiatives.i8 import attestation
+
+    attestation.record(db, draft, attestor=actor, session_id=session.id, commit=False)
+
+
 def _record_justification(
     db: DbSession,
     session: AssistantSession,
@@ -437,6 +472,9 @@ def answer(
         )
 
     cleaned = validate(step, payload, settings)
+    declaration = (
+        _declaration_draft(session, cleaned) if step.id == script.I08_DECLARATION else None
+    )
 
     turn = AssistantTurn(
         session_id=session.id,
@@ -455,6 +493,9 @@ def answer(
 
     if step.id == script.I13_CAPTURE_PLAN:
         _record_plan(db, session, cleaned, actor=actor)
+
+    elif step.id == script.I08_DECLARATION:
+        _record_declaration(db, session, declaration, actor=actor)
 
     elif step.id == script.I08_JUSTIFICATION:
         _record_justification(db, session, cleaned, kind="NEW_ACQUISITION", actor=actor)

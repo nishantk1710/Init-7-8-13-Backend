@@ -109,6 +109,56 @@ def test_every_i13_table_has_a_view() -> None:
         assert f"n_{table}" in sap_normalise.VIEWS
 
 
+# The 15-Oct-2026 extract's headers, trimmed to what I08's 27-Oct additions read.
+_LIVE_EBAN = ["MANDT", "BANFN", "BNFPO", "BSART", "LOEKZ", "STATU", "ERNAM", "AFNAM", "MATNR", "WERKS",
+              "MENGE", "MEINS", "BADAT", "EBELN", "EBELP", "RSNUM"]
+_LIVE_MCHB = ["MANDT", "MATNR", "WERKS", "LGORT", "CHARG", "LVORM", "ERSDA", "CLABS", "CUMLM", "CSPEM"]
+_LIVE_MBEW = ["MATNR", "BWKEY", "BWTAR", "LBKUM", "SALK3", "VPRSV", "VERPR", "STPRS", "PEINH", "BKLAS"]
+
+
+@pytest.mark.parametrize(
+    ("table", "present", "label", "expected"),
+    [
+        # I08's open repair PRs: document type, status, unit, reservation, requester.
+        ("eban", _LIVE_EBAN, "purchasing_doc_type", "BSART"),
+        ("eban", _LIVE_EBAN, "processing_status", "STATU"),
+        ("eban", _LIVE_EBAN, "base_unit_of_measure", "MEINS"),
+        ("eban", _LIVE_EBAN, "reservation", "RSNUM"),
+        ("eban", _LIVE_EBAN, "requisitioner", "AFNAM"),
+        ("eban", _LIVE_EBAN, "created_by", "ERNAM"),
+        # Stock per condition: MCHB by default, MBEW's LBKUM by a setting.
+        ("mchb", _LIVE_MCHB, "material", "MATNR"),
+        ("mchb", _LIVE_MCHB, "batch", "CHARG"),
+        ("mchb", _LIVE_MCHB, "unrestricted", "CLABS"),
+        ("mchb", _LIVE_MCHB, "df_at_batch_level", "LVORM"),
+        ("mbew", _LIVE_MBEW, "total_valuated_stock", "LBKUM"),
+        # An older delivery without the new columns: a gap, never a guess.
+        ("eban", ["BANFN", "BNFPO", "MATNR"], "processing_status", None),
+        ("mbew", ["MATNR", "BWKEY", "VERPR"], "total_valuated_stock", None),
+    ],
+)
+def test_the_columns_i08_reads_for_repair_prs_and_stock_resolve(table, present, label, expected) -> None:
+    assert _source(table, present, label) == expected
+
+
+def test_stock_quantities_are_numbers_and_the_material_is_a_key() -> None:
+    """CLABS and LBKUM go through the number transform (the extract writes US
+    grouping); MCHB's MATNR loses its padding like every other material."""
+    kinds = {c.label: c.kind for c in sap_normalise.TABLES["mchb"]}
+    assert kinds["unrestricted"] == "num" and kinds["material"] == "key"
+    assert {c.label: c.kind for c in sap_normalise.TABLES["mbew"]}["total_valuated_stock"] == "num"
+    sql = view_sql("mchb", _LIVE_MCHB, MSSQL, csv_number_format="us")
+    assert "REPLACE(TRIM([CLABS]), ',', '')" in sql
+    assert "n_mchb" in sap_normalise.VIEWS
+
+
+def test_no_table_names_a_label_twice() -> None:
+    """Two columns under one label would make the view fail to build."""
+    for table, cols in sap_normalise.TABLES.items():
+        labels = [c.label.lower() for c in cols]
+        assert len(labels) == len(set(labels)), table
+
+
 def test_the_department_list_reads_the_workbook_headers() -> None:
     """raw_dept_codes was loaded from Plant Dept Codes 1.XLSX as it stands:
     headers with spaces, which the view quotes and renames."""

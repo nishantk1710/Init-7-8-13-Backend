@@ -511,7 +511,7 @@ class TestNothingIsHardCoded:
         import pathlib
 
         checked = 0
-        for name in ("register.py", "universe.py", "service.py"):
+        for name in ("register.py", "universe.py", "service.py", "requisitions.py"):
             path = pathlib.Path("app/initiatives/i8") / name
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
@@ -527,7 +527,7 @@ class TestNothingIsHardCoded:
                 assert "X" not in literals, f"{name}: delivery-completed flag compared literally"
                 assert "AN" not in literals, f"{name}: RFQ document type compared literally"
             checked += 1
-        assert checked == 3
+        assert checked == 4
 
     def test_grace_period_is_configuration(self) -> None:
         assert I8Settings(_env_file=None, overdue_grace_days=0).overdue_grace_days == 0

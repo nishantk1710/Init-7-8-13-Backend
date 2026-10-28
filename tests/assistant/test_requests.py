@@ -52,11 +52,12 @@ from app.assistant.session import SessionError
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.initiatives.i13.reservation_assistant import build as build_i13
+from app.initiatives.i8.models import RepairAttestation
 from app.initiatives.i8.reservation_assistant import build as build_i08
 from app.models.base import Base
 from app.models.i13_session_link import SessionReservationLink
 from app.shared.material_scope import MaterialScope
-from tests.assistant.conftest import TODAY, repair_line, universe_row, watch_metric
+from tests.assistant.conftest import TODAY, repair_line, repair_request, universe_row, watch_metric
 
 PLANT = "1300"
 ACTOR = "coordinator-1"
@@ -69,7 +70,19 @@ _TABLES = [
     ConsumptionPlanRecord.__table__,
     QuantitySuggestionRecord.__table__,
     SessionReservationLink.__table__,
+    RepairAttestation.__table__,
 ]
+
+#: A faulty unit declared in the visit (option B, 27-Oct-2026), as the
+#: conversation's form keys it.
+DECLARED = {
+    "quantity": "1",
+    "condition_description": "Bearing seized, shaft scored.",
+    "fault_category": "BEARING_FAILURE",
+    "recommendation": "REPAIRABLE",
+    "attestor_name": "J Miller",
+    "evidence_reference": "PHOTO-12",
+}
 
 
 # --- the materials ---------------------------------------------------------------
@@ -444,6 +457,89 @@ class TestPreview:
         assert line.suggestion.quantity == Decimal("8")
 
 
+class TestPreviewCountsRepairRequests:
+    """The real ``_assessment_for``: open repair PRs count in the verdict only
+    while I8_REPAIR_REQUESTS_ENABLED is on (27-Oct-2026)."""
+
+    @pytest.fixture
+    def preview_pr_only(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from app.initiatives.i8.config import get_i8_settings
+
+        snapshot = SimpleNamespace(
+            universe=[universe_row(material_id=REPAIR_NONE, stock_on_hand=Decimal("0"))],
+            lines=[],
+            repair_requests=(repair_request(material_id=REPAIR_NONE),),
+        )
+        monkeypatch.setattr(request_service, "route", lambda db, material, plant: _routed(material))
+        monkeypatch.setattr(session_module, "get_snapshot", lambda db: snapshot)
+        monkeypatch.setattr(departments, "_names", {"10305": "Engineering"})
+
+        def run(enabled: bool):
+            cfg = get_i8_settings().model_copy(update={"repair_requests_enabled": enabled})
+            monkeypatch.setattr(session_module, "get_i8_settings", lambda: cfg)
+            [line] = request_service.preview(None, [(REPAIR_NONE, PLANT)], today=TODAY)
+            return line
+
+        return run
+
+    def test_switched_on_a_pr_only_part_has_a_unit(self, preview_pr_only) -> None:
+        line = preview_pr_only(True)
+        assert line.kind == "i08"
+        assert line.unit_exists is True
+        assert line.facts["openRepairRequestLines"] == 1
+        [request] = line.facts["openRepairRequests"]
+        assert request["purchaseRequisition"] == "2000029113"
+        assert request["departmentName"] == "Engineering"
+        assert line.facts["openRepairLines"] == 0
+
+    def test_switched_off_it_does_not(self, preview_pr_only) -> None:
+        line = preview_pr_only(False)
+        assert line.unit_exists is False
+        assert line.facts["openRepairRequestLines"] == 0
+        assert line.facts["openRepairRequests"] == []
+
+
+class TestPreviewNeedDateAdvice:
+    """The real ``_assessment_for`` passes I8_NEED_DATE_ADVICE_ENABLED through
+    (27-Oct-2026); off, the stored facts carry a null line."""
+
+    @pytest.fixture
+    def preview_with_repair(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from app.initiatives.i8.config import get_i8_settings
+
+        snapshot = SimpleNamespace(
+            universe=[universe_row(material_id=REPAIR_NONE, stock_on_hand=Decimal("0"))],
+            lines=[repair_line(material_id=REPAIR_NONE, due_date=date(2026, 8, 10))],
+            repair_requests=(),
+        )
+        monkeypatch.setattr(request_service, "route", lambda db, material, plant: _routed(material))
+        monkeypatch.setattr(session_module, "get_snapshot", lambda db: snapshot)
+
+        def run(enabled: bool):
+            cfg = get_i8_settings().model_copy(update={"need_date_advice_enabled": enabled})
+            monkeypatch.setattr(session_module, "get_i8_settings", lambda: cfg)
+            [line] = request_service.preview(None, [(REPAIR_NONE, PLANT)], today=TODAY)
+            return line
+
+        return run
+
+    def test_switched_on_the_facts_carry_the_line(self, preview_with_repair) -> None:
+        line = preview_with_repair(True)
+        assert line.facts["needDateAdvice"] == (
+            "A repaired unit is due back on 2026-08-10. If your job can wait, set "
+            "the need date after that, and no new unit is bought."
+        )
+
+    def test_switched_off_they_do_not(self, preview_with_repair) -> None:
+        line = preview_with_repair(False)
+        assert line.unit_exists is True
+        assert line.facts["needDateAdvice"] is None
+
+
 def test_the_window_runs_until_the_quantity_is_used_up() -> None:
     assert request_service.suggested_window(Decimal("4"), Decimal("0.5"), date(2026, 10, 15)) == (
         date(2026, 10, 15), date(2027, 6, 15), 8,
@@ -506,6 +602,86 @@ class TestTheConversation:
 # --- the routes ----------------------------------------------------------------------
 
 
+class TestDeclaringInTheVisit:
+    """Option B: the faulty unit is declared in the same visit, recorded as an
+    unbound attestation carrying the session id."""
+
+    def _start(self, db, settings, material=REPAIR_NONE):
+        return session_module.start(
+            db, material_id=material, plant=PLANT, requester=ACTOR, today=TODAY, settings=settings
+        )
+
+    def _answer(self, db, sid, payload, settings):
+        step, _ = turn_module.answer(db, sid, payload, actor=ACTOR, today=TODAY,
+                                     settings=settings, downstream=False)
+        return step
+
+    def test_no_unit_asks_the_declaration_instead_of_ending(self, factory, settings) -> None:
+        with factory() as db:
+            started = self._start(db, settings)
+            assert started.step.id == script.I08_DECLARE_CHOICE
+            step = self._answer(db, started.session.id, {"choice": "skip"}, settings)
+            assert step.is_terminal and "go ahead" in step.prompt
+            assert count(db, RepairAttestation) == 0
+
+    def test_the_turn_records_an_attestation_with_the_session_id(self, factory, settings) -> None:
+        with factory() as db:
+            started = self._start(db, settings)
+            sid = started.session.id
+            step = self._answer(db, sid, {"choice": "declare"}, settings)
+            assert step.id == script.I08_DECLARATION
+            assert count(db, RepairAttestation) == 0  # not until the form is answered
+            step = self._answer(db, sid, DECLARED, settings)
+            assert step.is_terminal
+            [row] = db.execute(select(RepairAttestation)).scalars().all()
+            assert (row.session_id, row.material_id, row.plant) == (sid, REPAIR_NONE, PLANT)
+            assert (row.repair_document, row.repair_item, row.repair_document_type) == (None, None, None)
+            assert (row.attestor, row.attestor_name) == (ACTOR, "J Miller")
+            assert (row.recommendation, row.fault_category, row.evidence_reference) == (
+                "REPAIRABLE", "BEARING_FAILURE", "PHOTO-12",
+            )
+            assert row.quantity == Decimal("1")
+
+    def test_a_bad_declaration_is_an_answer_error_and_writes_nothing(self, factory, settings) -> None:
+        with factory() as db:
+            started = self._start(db, settings)
+            sid = started.session.id
+            self._answer(db, sid, {"choice": "declare"}, settings)
+            with pytest.raises(turn_module.AnswerError):
+                self._answer(db, sid, {**DECLARED, "fault_category": "NOT_A_FAULT"}, settings)
+            db.rollback()
+            assert count(db, RepairAttestation) == 0
+            assert self._answer(db, sid, DECLARED, settings).is_terminal
+
+    def test_a_request_line_with_a_declaration_records_it(self, factory, settings) -> None:
+        with factory() as db:
+            created = create(
+                db,
+                [
+                    repair(REPAIR_EXISTING, "use_existing", declaration=dict(DECLARED)),
+                    repair(REPAIR_NONE, None),
+                ],
+                settings,
+            )
+            sessions = {s.material_id: s.id for s in request_service.lines_of(db, created.request.id)}
+            [row] = db.execute(select(RepairAttestation)).scalars().all()
+            assert (row.session_id, row.material_id) == (sessions[REPAIR_EXISTING], REPAIR_EXISTING)
+            assert row.attestor_name == "J Miller"
+
+    def test_a_request_without_one_records_none(self, factory, settings) -> None:
+        with factory() as db:
+            create(db, every_case(), settings)
+            assert count(db, RepairAttestation) == 0
+
+    def test_a_bad_declaration_refuses_the_whole_request(self, factory, settings) -> None:
+        with factory() as db:
+            with pytest.raises(request_service.RequestError, match=REPAIR_NONE):
+                create(db, [repair(REPAIR_NONE, None, declaration={**DECLARED, "recommendation": "MAYBE"})],
+                       settings)
+            db.rollback()
+            assert count(db, RepairAttestation) == 0
+
+
 class TestRoutes:
     @pytest.fixture
     def client(self, factory, settings, monkeypatch):
@@ -561,9 +737,31 @@ class TestRoutes:
         assert body["maxLines"] == 20
         assert body["reasonCategories"][0] == {"value": "URGENT_BREAKDOWN", "label": "Urgent Breakdown"}
         assert [c["value"] for c in body["reasonCategories"]] == settings_categories()
+        from app.initiatives.i8.config import get_i8_settings
+
+        assert body["faultCategories"] == list(get_i8_settings().fault_category_list)
+        assert body["recommendations"] == [
+            {"value": "REPAIRABLE", "label": "Repairable"},
+            {"value": "BEYOND_ECONOMICAL_REPAIR", "label": "Beyond economical repair"},
+            {"value": "SCRAP", "label": "Scrap"},
+        ]
         oar_line, consumable = body["lines"]
         assert oar_line["kind"] == "i13" and oar_line["suggestion"]["quantity"] == "8"
         assert consumable["kind"] == "out_of_scope"
+
+    def test_a_line_declaration_is_recorded_from_the_wire(self, client, factory) -> None:
+        response = client.post("/api/assistant/requests", json=self._body(key="draft-declare", lines=[
+            {"materialId": REPAIR_NONE, "plant": PLANT, "declaration": {
+                "quantity": 2, "conditionDescription": "Seal leaking.", "faultCategory": "SEAL_LEAK",
+                "recommendation": "REPAIRABLE", "attestorName": "J Miller",
+            }},
+        ]))
+        assert response.status_code == 201, response.text
+        sid = response.json()["lines"][0]["sessionId"]
+        with factory() as db:
+            [row] = db.execute(select(RepairAttestation)).scalars().all()
+        assert (row.session_id, row.quantity, row.fault_category) == (sid, Decimal("2"), "SEAL_LEAK")
+        assert row.evidence_reference is None
 
     def test_create_then_read_back(self, client, monkeypatch) -> None:
         monkeypatch.setattr(departments, "_names", {"10100": "FINANCE-COMMERCIAL DEPARTMENT"})

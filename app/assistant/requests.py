@@ -257,6 +257,10 @@ class LineAnswers:
     can be caught. ``None``: no suggestion was shown."""
     check_seen: bool = False
     """Whether ``seen_suggested_quantity`` was sent at all."""
+    declaration: dict[str, Any] | None = None
+    """I08 only: the faulty unit declared on this line (27-Oct-2026), keyed as
+    the conversation's ``i08_declaration`` form is. ``None``: nothing declared,
+    which answers "No" to the declaration question."""
 
 
 @dataclass
@@ -371,6 +375,12 @@ def _answer_for(step, line: LineAnswers, line_no: int) -> dict[str, Any]:
             first = step.prompt.split("\n")[0]
             raise RequestError(f"A reason is needed: {first}", line=line_no)
         return justification
+    if step.id == script.I08_DECLARE_CHOICE:
+        return {"choice": script.DECLARE if line.declaration else script.SKIP_DECLARATION}
+    if step.id == script.I08_DECLARATION:
+        # Replayed as the form's answer, so the same validation and recording
+        # run as in the conversation.
+        return dict(line.declaration or {})
     raise RequestError(f"Unexpected step {step.id} for {line.material_id}.", line=line_no)
 
 

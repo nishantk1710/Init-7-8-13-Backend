@@ -24,9 +24,15 @@ from datetime import date
 from decimal import Decimal
 from functools import lru_cache
 
+from pydantic import ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.shared.plant_scope import PLANT_NAMES
+
+#: Where usable vs damaged stock can be read from (27-Oct-2026). MCHB is stock
+#: per batch, which on this SAP is stock per condition; MBEW is the valuation,
+#: split by condition for every 80-series part. See ``stock_condition_source``.
+STOCK_CONDITION_SOURCES: tuple[str, ...] = ("MCHB", "MBEW")
 
 
 class I8Settings(BaseSettings):
@@ -119,6 +125,81 @@ class I8Settings(BaseSettings):
     side (SOBKZ null, SHKZG 'H'). Picking the vendor side is what stops every
     dispatch quantity being counted twice.
     """
+
+    job_issue_movement_type: str = "261"
+    """Goods issue to the job's order: the part leaving the stores against the
+    job's reservation (session_jobs.py, 27-Oct-2026)."""
+
+    job_return_movement_type: str = "262"
+    """The reversal of that issue -- the part back to stock. Posted on the
+    receipt day, not when the unit left the machine (measured 26-Oct-2026)."""
+
+    # --- Repair orders and repair PRs (27-Oct-2026) ----------------------
+    #
+    # A repair starts as a repair ORDER -- a reservation whose line for the
+    # faulty unit carries the movement type below -- and that line names the
+    # repair PR raised from it. A repair PR is still open only when no live PO
+    # points back to it AND its reservation line is neither deleted nor
+    # final-issued AND the PR item itself is not deleted: all of them together
+    # give 108 open repair PRs on the 15-Oct extract, not the 122 a looser
+    # rule gives. Each value read from SAP is a setting, never a literal.
+
+    repair_reservation_movement_type: str = "543"
+    """RESB.BWART of a repair order's line for the faulty unit. 6,271 such
+    lines on in-scope 80-series parts on the 15-Oct extract."""
+
+    reservation_deleted_indicator: str = "X"
+    """RESB.XLOEK on a deleted reservation line (3,097 of those 6,271)."""
+
+    reservation_final_issue_indicator: str = "X"
+    """RESB.KZEAR on a final-issued reservation line (2,660 of those 6,271)."""
+
+    requisition_deleted_indicator: str = "X"
+    """EBAN.LOEKZ on a deleted PR item. NOT EKPO's 'L' (po_deleted_indicator):
+    the PR table marks deletion 'X' -- 4,820 of the 12,369 in-scope 80-series
+    PR lines on the 15-Oct extract, and none of them 'L'."""
+
+    repair_requests_enabled: bool = False
+    """Serve the open repair PRs: rows with no PO yet on the register, their
+    detail page, and (BE6) the PRs in the assistant's verdict. The snapshot
+    always builds them; this only decides whether they are served, so the
+    backend can deploy before the frontend that renders a PR row (27-Oct-2026).
+    Off by default: a frontend that predates PR rows would show them as POs."""
+
+    # --- Stock by condition (27-Oct-2026) ---------------------------------
+    #
+    # MARD says how many units a plant holds, not whether they are any use: a
+    # part with one DAMAGED unit on the shelf reads as "1 in stock". SAP keeps
+    # the condition alongside -- in MCHB's batch field and in MBEW's valuation
+    # type -- so the stock can be split into usable and damaged. The MARD total
+    # stays the stock on hand; the split is served beside it.
+
+    stock_condition_source: str = "MCHB"
+    """Where the split is read from: ``MCHB`` (stock per batch) or ``MBEW``
+    (the split valuation's units). MCHB by default, agreed 26-Oct-2026: its
+    unrestricted stock matches MARD on all 730 stocked 80-series parts of the
+    15-Oct extract. MBEW matches on 717 of them, because it also counts units
+    the plant owns but has sent to a vendor (8000004885 at 1500: MBEW DAMAGED
+    2, MCHB and MARD 0). Anything else is refused at startup."""
+
+    usable_stock_conditions: str = "NEW,REFURBISHD"
+    """Conditions counted as usable, comma-separated. REFURBISHD is SAP's
+    10-character spelling, not a typo. 15-Oct extract, in-scope 80-series MCHB
+    rows: NEW 1,667, REFURBISHD 975."""
+
+    damaged_stock_conditions: str = "DAMAGED"
+    """Conditions counted as damaged (790 MCHB rows on the 15-Oct extract).
+    MBEW also values SCRAP, which is neither usable nor damaged and so is
+    counted in neither."""
+
+    # --- The assistant's need-date line (27-Oct-2026) ----------------------
+
+    need_date_advice_enabled: bool = False
+    """Tell the requester, when an open repair PO is due back on or after
+    today, to set the reservation's need date after that date so no new unit
+    is bought. Off until SAP confirms that MRP counts an open repair PO as
+    stock on the way: if it does not, MRP raises a purchase request whatever
+    the need date says, and the advice would be wrong."""
 
     # --- Aging and overdue (W5.2) ----------------------------------------
 
@@ -215,6 +296,18 @@ class I8Settings(BaseSettings):
     # lines on the other.
     attestation_cutover_date: str = ""
 
+    # Days a repair PR may wait for a declaration, and a Repairable declaration
+    # for its repair PR, before either gap is raised as an exception
+    # (REPAIR_PR_NOT_DECLARED, DECLARED_NO_REPAIR_PR; 27-Oct-2026). Without a
+    # grace every PR raised this morning would read as a miss.
+    declaration_grace_days: int = 14
+
+    # From when an 80-series job reservation line must carry the assistant's
+    # R-reference in its text (MISSING_SESSION_ID, 27-Oct-2026). Blank falls
+    # back to the I13 go-live date: before the assistant existed nobody could
+    # type one. Set to the release date at deploy.
+    session_check_start_date: str = ""
+
     # The largest quantity one attestation may record. A typo guard, not a
     # business rule: every repair line in the July extract is for quantity 1,
     # and the largest quantity on ANY 80-series PO line is 400. The table is
@@ -226,8 +319,11 @@ class I8Settings(BaseSettings):
     # How far from a new purchase's raised date a NEW_ACQUISITION justification
     # may sit and still count as covering it. Symmetric, like the attestation
     # window and for the same reason: material + plant + a date is the only key
-    # both sides share until RESB.BEDNR carries the session id. The assistant
-    # normally records the reason before the PO is raised, sometimes after.
+    # both sides share. And it stays the only one: the purchase is a new-buy PR
+    # (since 27-Oct-2026), raised by the MRP and inventory desks with no
+    # reservation behind it -- 3 of 6,259 on 80-series parts name one (measured
+    # 26-Oct-2026) -- so no session reference can ever reach it. The assistant
+    # normally records the reason before the purchase is raised, sometimes after.
     #
     # A PROPOSAL, NOT A CONFIRMED RULE -- it mirrors attestation_window_days so
     # the two controls are measured the same way until VZI says otherwise.
@@ -235,11 +331,24 @@ class I8Settings(BaseSettings):
 
     # The date the justification control starts applying. Blank means no
     # cutover. Separate from attestation_cutover_date because the two controls
-    # go live with different things -- the form with the platform, the
-    # justification prompt with the reservation BAdI -- and may not share a
-    # date. A purchase raised before it is labelled "before Spares Automation"
-    # rather than accused, exactly as a pre-cutover repair line is.
+    # go live with different things and may not share a date. Ruled 26-Oct-2026:
+    # no VZI cutover dates; each check starts from its feature's release date,
+    # so set this at deploy time to the day the purchase-request check is
+    # released. A purchase raised before it is labelled "before Spares
+    # Automation" rather than accused, exactly as a pre-cutover repair line is.
     justification_cutover_date: str = ""
+
+    # --- Notifications (FR-11) --------------------------------------------
+
+    # Exception types that log a notification the first time an item of that
+    # type is found actionable (not raised before its control existed). FR-11
+    # asks for notification "through the exception queue and email": the log is
+    # written from 27-Oct-2026, the email sender comes later and reads the same
+    # rows. Comma separated; a type not named here is still queued, only not
+    # notified. Kept to the four checks that ask somebody to act on a line.
+    notification_types: str = (
+        "OVERDUE_REPAIR,MISSING_ATTESTATION,MISSING_SESSION_ID,UNJUSTIFIED_ACQUISITION"
+    )
 
     # --- Coding candidates (W5.5) -----------------------------------------
 
@@ -345,6 +454,45 @@ class I8Settings(BaseSettings):
     default_page_size: int = 50
     max_page_size: int = 500
 
+    @field_validator("stock_condition_source")
+    @classmethod
+    def _known_stock_condition_source(cls, value: str) -> str:
+        """Upper-cased, and one of :data:`STOCK_CONDITION_SOURCES` or a
+        startup error. Unlike the coding sources, a typo here is not dropped:
+        there is no safe fallback that would not quietly change every stock
+        figure the assistant quotes."""
+        name = value.strip().upper()
+        if name not in STOCK_CONDITION_SOURCES:
+            raise ValueError(
+                f"I8_STOCK_CONDITION_SOURCE must be one of {', '.join(STOCK_CONDITION_SOURCES)}, not {value!r}"
+            )
+        return name
+
+    @field_validator("damaged_stock_conditions")
+    @classmethod
+    def _conditions_counted_once(cls, value: str, info: ValidationInfo) -> str:
+        """A condition both usable and damaged would be counted twice. A field
+        validator, not a model one: a model validator's error quotes the whole
+        input, and that includes every other setting in the environment."""
+        usable = info.data.get("usable_stock_conditions")
+        both = set(_conditions(usable or "")) & set(_conditions(value))
+        if both:
+            raise ValueError(
+                "I8_USABLE_STOCK_CONDITIONS and I8_DAMAGED_STOCK_CONDITIONS both name " + ", ".join(sorted(both))
+            )
+        return value
+
+    @property
+    def usable_stock_condition_list(self) -> tuple[str, ...]:
+        """The usable conditions, upper-cased, de-duplicated, in the order
+        configured (the assistant's breakdown follows it)."""
+        return _conditions(self.usable_stock_conditions)
+
+    @property
+    def damaged_stock_condition_list(self) -> tuple[str, ...]:
+        """The damaged conditions, upper-cased, de-duplicated, in order."""
+        return _conditions(self.damaged_stock_conditions)
+
     @property
     def coding_candidate_source_list(self) -> tuple[str, ...]:
         """The configured sources, upper-cased and de-duplicated in order.
@@ -395,6 +543,12 @@ class I8Settings(BaseSettings):
         )
 
     @property
+    def notification_type_list(self) -> tuple[str, ...]:
+        """The notified exception types, upper-cased and de-duplicated in
+        order. Blank turns notification logging off."""
+        return _conditions(self.notification_types)
+
+    @property
     def series_prefix_list(self) -> tuple[str, ...]:
         """The 80-series prefixes, parsed. Mirrors Settings.cors_origins."""
         return tuple(p.strip() for p in self.series_prefixes.split(",") if p.strip())
@@ -429,6 +583,14 @@ class I8Settings(BaseSettings):
         return date.fromisoformat(self.attestation_cutover_date.strip())
 
     @property
+    def session_check_start_date_value(self) -> date | None:
+        """``session_check_start_date`` as a date, or None meaning "use the
+        I13 go-live date". Invalid input raises, like the cutover."""
+        if not self.session_check_start_date.strip():
+            return None
+        return date.fromisoformat(self.session_check_start_date.strip())
+
+    @property
     def justification_cutover_date_value(self) -> date | None:
         """``justification_cutover_date`` as a date, or None meaning "not set".
 
@@ -449,6 +611,12 @@ class I8Settings(BaseSettings):
         if not self.reference_date.strip():
             return None
         return date.fromisoformat(self.reference_date.strip())
+
+
+def _conditions(raw: str) -> tuple[str, ...]:
+    """A comma-separated condition list, upper-cased like the SAP values it is
+    compared with, blanks and repeats dropped."""
+    return tuple(dict.fromkeys(c.strip().upper() for c in raw.split(",") if c.strip()))
 
 
 @lru_cache

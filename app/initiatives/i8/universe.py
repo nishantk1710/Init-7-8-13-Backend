@@ -37,12 +37,25 @@ holds no Gamsberg rows at all. Every one of these fields is therefore nullable,
 and a null is a correct answer meaning "this source does not know". None of them
 is ever defaulted -- an unknown criticality displayed as NORMAL is worse than
 one displayed as unknown.
+
+Usable and damaged stock (27-Oct-2026)
+--------------------------------------
+MARD's total counts every unit on the shelf, damaged ones included, so a part
+holding only a DAMAGED unit read as "1 in stock". SAP records each unit's
+condition beside it: in MCHB's batch field (the default source) or in MBEW's
+valuation type (``I8_STOCK_CONDITION_SOURCE``). One grouped read per build gives
+the stock per condition, and :func:`condition_stock` splits it into usable and
+damaged with the configured condition lists. ``stock_on_hand`` stays the MARD
+total; the split sits beside it, and is None -- unknown, not zero -- for a part
+with no condition rows. On the 15-Oct extract MCHB's total equals MARD's on all
+730 stocked 80-series parts, and the 1,516 MARD rows with no MCHB row all hold
+nothing.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -101,6 +114,23 @@ class UniverseRow:
     in_material_master: bool
     """Whether MARA knows this material at all. A data-completeness signal."""
 
+    usable_stock: Decimal | None = None
+    """Units in a usable condition (I8_USABLE_STOCK_CONDITIONS: new and
+    refurbished), from :attr:`stock_condition_source`. None when the part has
+    no condition rows -- unknown, never zero."""
+
+    damaged_stock: Decimal | None = None
+    """Units in a damaged condition (I8_DAMAGED_STOCK_CONDITIONS). None when
+    the part has no condition rows."""
+
+    stock_by_condition: tuple[tuple[str, Decimal], ...] = ()
+    """Every condition SAP holds for the part with its units, by condition
+    name -- including one counted as neither (MBEW's SCRAP). Empty when none."""
+
+    stock_condition_source: str | None = None
+    """``MCHB`` or ``MBEW``: where the split came from. None when the part has
+    no condition rows there, so only the MARD total is known."""
+
     @property
     def has_open_repair(self) -> bool:
         return self.open_repair_lines > 0
@@ -124,6 +154,8 @@ class UniverseStats:
 
     with_open_repair: int = 0
     in_material_master: int = 0
+    with_stock_condition: int = 0
+    """Rows whose stock is split by condition (27-Oct-2026)."""
 
 
 # Candidate rows, drawn from every source that names a material.
@@ -268,6 +300,98 @@ def fetch_universe_candidates(
     return rows
 
 
+# --- stock by condition (27-Oct-2026) -----------------------------------
+
+# One grouped read per build, chosen by I8_STOCK_CONDITION_SOURCE. Both give
+# (matnr, werks, stock_condition, quantity); which conditions are usable or
+# damaged is decided in Python (condition_stock), never here.
+#
+# MCHB: one row per storage location and condition, summed like MARD.
+# MBEW: one row per condition, plus a blank-BWTAR row aggregating them -- left
+# out here, and again by condition_stock, as it is no condition at all.
+CONDITION_STOCK_SQL: dict[str, str] = {
+    "MCHB": """
+select matnr, werks, charg as stock_condition, sum(clabs) as quantity
+from v_mchb
+where {matnr_like} and werks is not null
+group by matnr, werks, charg
+""",
+    "MBEW": """
+select matnr, bwkey as werks, bwtar as stock_condition, sum(lbkum) as quantity
+from v_mbew
+where {matnr_like} and bwkey is not null and bwtar is not null and bwtar <> ''
+group by matnr, bwkey, bwtar
+""",
+}
+
+
+@dataclass(frozen=True)
+class ConditionStock:
+    """One part's stock at one plant, split by condition."""
+
+    usable: Decimal
+    damaged: Decimal
+    by_condition: tuple[tuple[str, Decimal], ...]
+    source: str
+
+
+def condition_stock(
+    rows: Iterable[Mapping],
+    *,
+    source: str,
+    usable: Sequence[str],
+    damaged: Sequence[str],
+) -> dict[tuple[str, str | None], ConditionStock]:
+    """(material, plant) -> its stock split by condition.
+
+    ``rows`` carry ``matnr``, ``werks``, ``stock_condition`` and ``quantity``,
+    as :data:`CONDITION_STOCK_SQL` returns them. A row with no condition (MBEW's
+    blank-BWTAR aggregate, an unbatched MCHB row) or no readable quantity says
+    nothing about condition and is skipped; a part left with no rows gets no
+    entry, so its split stays unknown rather than zero. Conditions are compared
+    upper-cased, as the settings lists are. One counted as neither usable nor
+    damaged (MBEW's SCRAP) still appears in ``by_condition``.
+    """
+    usable_set, damaged_set = set(usable), set(damaged)
+    totals: dict[tuple[str, str | None], dict[str, Decimal]] = {}
+    for row in rows:
+        condition = (row["stock_condition"] or "").strip().upper()
+        quantity = row["quantity"]
+        if not condition or quantity is None:
+            continue
+        by_condition = totals.setdefault((row["matnr"], row["werks"]), {})
+        by_condition[condition] = by_condition.get(condition, Decimal(0)) + Decimal(quantity)
+
+    split: dict[tuple[str, str | None], ConditionStock] = {}
+    for key, by_condition in totals.items():
+        split[key] = ConditionStock(
+            usable=sum((q for c, q in by_condition.items() if c in usable_set), Decimal(0)),
+            damaged=sum((q for c, q in by_condition.items() if c in damaged_set), Decimal(0)),
+            by_condition=tuple(sorted(by_condition.items())),
+            source=source,
+        )
+    return split
+
+
+def fetch_condition_stock(
+    db: Session,
+    cfg: I8Settings,
+    matnr_like: str,
+    params: Mapping[str, str],
+    sources: Sources | None = None,
+) -> dict[tuple[str, str | None], ConditionStock]:
+    """The configured source's stock per condition, split -- one query."""
+    source = cfg.stock_condition_source
+    sql = reading(CONDITION_STOCK_SQL[source].replace("{matnr_like}", matnr_like), sources)
+    rows = db.execute(text(sql), params).mappings().all()
+    return condition_stock(
+        rows,
+        source=source,
+        usable=cfg.usable_stock_condition_list,
+        damaged=cfg.damaged_stock_condition_list,
+    )
+
+
 # (material, plant) -> (open repair lines, quantity out for repair)
 OpenRepairIndex = dict[tuple[str, str | None], tuple[int, Decimal]]
 
@@ -389,6 +513,7 @@ def load_universe(
         [(row["matnr"], row["werks"]) for row in repairable],
         source=criticality_source,
     )
+    conditions = fetch_condition_stock(db, cfg, matnr_like, pattern_params, sources)
 
     universe: list[UniverseRow] = []
     by_source = dict.fromkeys(SOURCES, 0)
@@ -399,6 +524,7 @@ def load_universe(
         material_id = row["matnr"]
         plant = row["werks"]
         open_lines, qty_under_repair = index.get((material_id, plant), (0, Decimal(0)))
+        condition = conditions.get((material_id, plant))
 
         universe.append(
             UniverseRow(
@@ -417,6 +543,10 @@ def load_universe(
                 open_repair_lines=open_lines,
                 qty_under_repair=qty_under_repair,
                 in_material_master=bool(row["in_mara"]),
+                usable_stock=condition.usable if condition else None,
+                damaged_stock=condition.damaged if condition else None,
+                stock_by_condition=condition.by_condition if condition else (),
+                stock_condition_source=condition.source if condition else None,
             )
         )
 
@@ -441,15 +571,19 @@ def load_universe(
         ),
         with_open_repair=sum(1 for r in universe if r.has_open_repair),
         in_material_master=sum(1 for r in universe if r.in_material_master),
+        with_stock_condition=sum(1 for r in universe if r.stock_condition_source is not None),
     )
     logger.info(
         "I08 universe: %d rows, %d materials, %d plants (MARA knows %d); "
-        "criticality on %d rows, %d of them inferred from another plant",
+        "criticality on %d rows, %d of them inferred from another plant; "
+        "stock split by condition (%s) on %d rows",
         stats.rows,
         stats.materials,
         stats.plants,
         stats.in_material_master,
         stats.with_criticality,
         stats.with_criticality_from_other_plant,
+        cfg.stock_condition_source,
+        stats.with_stock_condition,
     )
     return universe, stats

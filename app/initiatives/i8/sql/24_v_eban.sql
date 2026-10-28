@@ -33,16 +33,32 @@ select
     nullif(item_category, '')          as pstyp,
     nullif(short_text, '')             as txz01,
     sap_num(quantity_requested)        as menge,
--- No MEINS. EBAN's base unit is not one of the columns the extract
--- carries -- see the 'eban' vocabulary in app/shared/sap_normalise.py --
--- so selecting it here did not fail quietly, it stopped the whole view
--- from building. Nothing reads a unit off this view: the coding screen
--- wants the text, and the register takes its unit from EKPO.
+    -- The unit (MEINS) is at the END, not here: it was added on 27-Oct-2026,
+    -- once the normalise layer carried it, and `create or replace view` can
+    -- only add columns after the existing ones. Until then the 'eban'
+    -- vocabulary had no unit label, and selecting one stopped the whole view
+    -- from building.
     sap_date(requisition_date)         as badat,
     sap_date(delivery_date)            as lfdat,
     nullif(deletion_indicator, '')     as loekz,
     sap_key(purchase_order)            as ebeln,
     nullif(nullif(purchase_order_item, ''), '0') as ebelp,
-    sap_key(vendor)                    as lifnr
+    sap_key(vendor)                    as lifnr,
+    -- What I08 needs to find an open repair PR (27-Oct-2026): its document
+    -- type, its processing status and unit, the reservation it was raised
+    -- from, and who asked for it -- AFNAM holds the 5-digit department code
+    -- on every undeleted repair PR (2,418 of them, measured 26-Oct-2026).
+    -- Exposed, not filtered: the rules are settings applied in Python. Note
+    -- EBAN marks a deleted line 'X' in LOEKZ, not EKPO's 'L'
+    -- (I8_REQUISITION_DELETED_INDICATOR).
+    --
+    -- APPENDED AT THE END, and it has to stay that way -- `create or replace
+    -- view` can only add columns after the existing ones. See 21_v_ekpo.sql.
+    nullif(purchasing_doc_type, '')    as bsart,
+    nullif(processing_status, '')      as statu,
+    nullif(base_unit_of_measure, '')   as meins,
+    sap_key(reservation)               as rsnum,
+    nullif(requisitioner, '')          as afnam,
+    nullif(created_by, '')             as ernam
 from n_eban
 where in_scope_plant(plant);

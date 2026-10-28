@@ -39,7 +39,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from app.initiatives.i8.acquisitions import JustificationRecord
+from app.initiatives.i8.acquisitions import PURCHASE_ORDER, JustificationRecord
 from app.initiatives.i8.exceptions import ExceptionItem, ExceptionType
 from app.initiatives.i8.register import RepairLine
 
@@ -90,10 +90,16 @@ def by_line(
     for record in justifications:
         by_part.setdefault((record.material_id, record.plant), []).append(record)
 
-    missing: dict[tuple[str, str], list[ExceptionItem]] = {}
+    # Keyed by the repair's document type as well (27-Oct-2026): a finding
+    # whose repair is a PR with no PO yet names a PR number, and a PR number
+    # must never land on a PO line that happens to share it. The register's
+    # PR rows carry no Justification cell in phase 1.
+    missing: dict[tuple[str, str, str], list[ExceptionItem]] = {}
     for item in exceptions:
         if item.type == ExceptionType.UNJUSTIFIED_ACQUISITION.value:
-            missing.setdefault((item.purchasing_document, item.item), []).append(item)
+            missing.setdefault(
+                (item.repair_document_type, item.purchasing_document, item.item), []
+            ).append(item)
 
     result: dict[tuple[str, str], LineJustification] = {}
     for line in lines:
@@ -110,7 +116,7 @@ def by_line(
                 reverse=True,
             )
         )
-        unjustified = tuple(missing.get(line.key, ()))
+        unjustified = tuple(missing.get((PURCHASE_ORDER, *line.key), ()))
         if recorded or unjustified:
             result[line.key] = LineJustification(recorded=recorded, unjustified=unjustified)
     return result

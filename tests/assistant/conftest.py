@@ -18,6 +18,7 @@ from app.initiatives.i13.act.domain import CrossPlantStockInfo
 from app.initiatives.i13.models import AcquiredVsPlanStatus, AgingBand, WatchMetric
 from app.initiatives.i13.reservation_assistant import build as build_i13
 from app.initiatives.i8.register import RepairLine
+from app.initiatives.i8.requisitions import RepairRequest
 from app.initiatives.i8.reservation_assistant import build as build_i08
 from app.initiatives.i8.universe import UniverseRow
 from app.shared.material_scope import MaterialScope
@@ -86,6 +87,30 @@ def repair_line(**overrides) -> RepairLine:
     )
     defaults.update(overrides)
     return RepairLine(**defaults)
+
+
+def repair_request(**overrides) -> RepairRequest:
+    """An OPEN repair PR with no PO yet, as the snapshot holds it."""
+    defaults = dict(
+        purchase_requisition="2000029113",
+        item="10",
+        material_id="8000005632",
+        plant="1300",
+        description="Pump repair",
+        quantity=Decimal("1"),
+        unit="EA",
+        requested_on=date(2025, 12, 4),
+        need_date=None,
+        department="10305",
+        requisition_status="N",
+        document_type="ZMNP",
+        repair_order="940000004981",
+        reservation="1916164",
+        days_open=None,
+        aging_bucket=None,
+    )
+    defaults.update(overrides)
+    return RepairRequest(**defaults)
 
 
 def watch_metric(**overrides) -> WatchMetric:
@@ -158,6 +183,7 @@ __all__ = [
     "i08_assessment",
     "i13_assessment",
     "repair_line",
+    "repair_request",
     "universe_row",
     "watch_metric",
 ]

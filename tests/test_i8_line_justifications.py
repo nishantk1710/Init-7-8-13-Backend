@@ -206,6 +206,44 @@ class TestMissing:
         )
         assert by_line([line], [], [missing_attestation]) == {}
 
+    def test_a_finding_on_a_repair_pr_never_lands_on_a_po_line_with_its_number(self) -> None:
+        """Since 27-Oct-2026 the repair a purchase overlapped can be a PR with
+        no PO yet; its number is a PR number, whatever PO line shares it."""
+        from app.initiatives.i8.requisitions import RepairRequest
+
+        line = repair(purchasing_document="2000029113")
+        request = RepairRequest(
+            purchase_requisition="2000029113",
+            item="10",
+            material_id="8000000001",
+            plant="1300",
+            description=None,
+            quantity=Decimal(1),
+            unit="EA",
+            requested_on=RAISED,
+            need_date=None,
+            department=None,
+            requisition_status=None,
+            document_type=None,
+            repair_order=None,
+            reservation=None,
+            days_open=None,
+            aging_bucket=None,
+        )
+        bought = NewAcquisition(
+            purchasing_document="1000201234",
+            item="10",
+            material_id="8000000001",
+            plant="1300",
+            description=None,
+            ordered_qty=Decimal(1),
+            raised_at=date(2026, 5, 10),
+            document_type="PR",
+        )
+        [item] = unjustified_acquisitions([bought], [line], [], window_days=30, repair_requests=[request])
+        assert (item.repair_document_type, item.purchasing_document, item.item) == ("PR", "2000029113", "10")
+        assert by_line([line], [], [item]) == {}
+
 
 # --- what the register row carries -----------------------------------------
 
@@ -275,8 +313,32 @@ class TestTheRegisterRow:
         [bought] = cell.unjustified_purchases
         assert bought.exception_id == item.id
         assert (bought.purchase.document_number, bought.purchase.line) == ("4100100001", "10")
+        assert bought.purchase.type == "PO"
         assert bought.raised_at == date(2026, 5, 10)
         assert bought.pre_automation is False
+
+    def test_a_new_buy_pr_is_named_as_a_pr(self) -> None:
+        line = repair()
+        pr = NewAcquisition(
+            purchasing_document="1000201234",
+            item="10",
+            material_id="8000005632",
+            plant="1300",
+            description=None,
+            ordered_qty=Decimal(1),
+            raised_at=date(2026, 5, 10),
+            document_type="PR",
+        )
+        [item] = unjustified_acquisitions([pr], [line], [], window_days=30)
+        cell = repair_chain(line, CFG, justification=LineJustification(unjustified=(item,))).justification
+        assert cell is not None
+        [bought] = cell.unjustified_purchases
+        assert bought.exception_id == "EX-UNJUSTIFIED_ACQUISITION-PR-1000201234-10"
+        assert (bought.purchase.type, bought.purchase.document_number, bought.purchase.line) == (
+            "PR",
+            "1000201234",
+            "10",
+        )
 
     def test_no_justification_is_null_not_empty(self) -> None:
         assert repair_chain(repair(), CFG).justification is None

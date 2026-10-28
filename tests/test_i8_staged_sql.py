@@ -52,10 +52,63 @@ def test_every_managed_view_has_a_body_to_stage() -> None:
         assert (SQL_DIR / script).exists(), f"{view}: no {script}"
 
 
-@pytest.mark.parametrize("view", [*staged.VIEWS, "v_eban", "v_mbew"])
+@pytest.mark.parametrize("view", [*staged.VIEWS, "v_eban", "v_mbew", "v_resb", "v_mchb"])
 def test_no_staged_view_calls_a_helper(view) -> None:
     body = staged.inline_helpers(staged._body(view))
     assert not re.search(r"(?i)\bdbo\.\w+\(", body), body
+
+
+def test_the_new_views_are_managed_and_staged_in_order() -> None:
+    """v_resb (repair-order reservations) and v_mchb (stock per condition),
+    added 27-Oct-2026. Listed in VIEWS so ``drop`` owns them, in _FILES so a
+    staged read finds their SQL; the views read through ``n_<table>``."""
+    from app.initiatives.i8.views import VIEWS
+
+    assert staged._FILES["v_resb"] == "25_v_resb.sql"
+    assert staged._FILES["v_mchb"] == "34_v_mchb.sql"
+    assert VIEWS.index("v_eban") < VIEWS.index("v_resb") < VIEWS.index("v_mseg")
+    assert VIEWS[-1] == "v_mchb"
+    assert "from n_resb" in _normal(staged._body("v_resb"))
+    assert "from n_mchb" in _normal(staged._body("v_mchb"))
+
+
+@pytest.mark.parametrize(
+    ("view", "columns"),
+    [
+        ("v_resb", ["rsnum", "rspos", "matnr", "matnr_raw", "werks", "lgort", "bwart", "banfn", "bnfpo",
+                    "aufnr", "xloek", "kzear", "bdter", "bdmng", "meins", "enmng", "sgtxt"]),
+        ("v_mchb", ["matnr", "matnr_raw", "werks", "lgort", "charg", "clabs"]),
+    ],
+)
+def test_the_new_views_expose_their_columns(view, columns) -> None:
+    aliases = re.findall(r"(?i)\bas\s+(\w+)\s*(?:,|\bfrom\b)", _normal(staged._body(view)))
+    assert aliases == columns
+
+
+@pytest.mark.parametrize(
+    ("view", "appended"),
+    [
+        # Appended, never inserted: Postgres `create or replace view` can only
+        # add columns after the existing ones (27-Oct-2026 additions).
+        ("v_eban", ["bsart", "statu", "meins", "rsnum", "afnam", "ernam"]),
+        ("v_mbew", ["lbkum"]),
+        ("v_mseg", ["aufnr", "rsnum", "rspos"]),
+    ],
+)
+def test_new_columns_are_appended_at_the_end(view, appended) -> None:
+    body = re.sub(r"--[^\n]*", "", staged._body(view))
+    aliases = re.findall(r"(?i)\bas\s+(\w+)\s*(?:,|\bfrom\b)", _normal(body))
+    assert aliases[-len(appended):] == appended
+    assert len(set(aliases)) == len(aliases), f"{view}: a column is named twice"
+
+
+@pytest.mark.parametrize("view", ["v_resb", "v_mseg"])
+def test_the_order_column_is_quoted_and_kept_out_of_the_helpers(view) -> None:
+    """``order`` is a keyword on both engines, and the staged inliner takes a
+    bare column only -- so it is read as ``nullif("order", '')``."""
+    body = staged._body(view)
+    assert re.search(r"""nullif\("order",\s*''\)\s+as\s+aufnr""", body, re.I), body
+    staged.inline_helpers(body)  # and it still inlines
 
 
 @pytest.mark.parametrize("name", sorted(staged.INLINE_HELPERS))

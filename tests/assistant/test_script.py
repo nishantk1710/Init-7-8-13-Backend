@@ -48,6 +48,18 @@ def i08_step(answers, assessment=None):
     )
 
 
+#: "No" to the declaration question -- every I08 path asks it before the end.
+SKIP = {script.I08_DECLARE_CHOICE: {"choice": script.SKIP_DECLARATION}}
+DECLARATION = {
+    "quantity": "1",
+    "condition_description": "Bearing seized.",
+    "fault_category": "BEARING_FAILURE",
+    "recommendation": "REPAIRABLE",
+    "attestor_name": "J Miller",
+    "evidence_reference": None,
+}
+
+
 def i13_step(answers, assessment=None, suggestion=None):
     return next_step(
         flow=Flow.I13,
@@ -98,7 +110,7 @@ class TestI08Shape:
         assert step.facts["headline"] not in step.prompt
 
     def test_taking_the_advice_ends_the_conversation(self) -> None:
-        step = i08_step({script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}})
+        step = i08_step({script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}, **SKIP})
         assert step.is_terminal
         assert step.session_id == SESSION
 
@@ -111,6 +123,30 @@ class TestI08Shape:
         # transcript: the card from the question above is still on screen.
         assert step.facts is None
 
+    def test_the_justification_says_what_a_reason_does(self) -> None:
+        """Section 2.5 (27-Oct-2026): a reason buys nothing, and the desk that
+        raises the purchase request never sees it. The frontend's request
+        builder shows the same text, so it is pinned word for word."""
+        step = i08_step({script.I08_ASSESSMENT: {"choice": script.PROCEED_NEW}})
+        assert script.I08_REASON_NOTE == (
+            "Your reason is kept on the platform. It doesn't buy anything: the "
+            "reservation takes whatever usable stock the plant has, and a new unit "
+            "is bought only when MRP or an inventory controller raises a purchase "
+            "request. The desk that raises it won't see your reason."
+        )
+        first, _, rest = step.prompt.partition("\n\n")
+        assert rest == script.I08_REASON_NOTE
+        # The first line is the request on its own: the request builder quotes
+        # it when a reason is missing.
+        assert first.startswith("Understood -- the platform does not block anything.")
+        assert "in stock or on repair" in first
+        assert "\n" not in first
+
+    def test_using_the_existing_unit_covers_a_requested_repair_too(self) -> None:
+        step = i08_step({})
+        [existing] = [c for c in step.choices if c.value == script.USE_EXISTING]
+        assert existing.description == "A unit in stock or on repair covers this need."
+
     def test_the_justification_ends_the_conversation(self) -> None:
         step = i08_step(
             {
@@ -119,6 +155,7 @@ class TestI08Shape:
                     "reason_category": "URGENT_BREAKDOWN",
                     "free_text": "Mill 3 down.",
                 },
+                **SKIP,
             }
         )
         assert step.is_terminal
@@ -130,6 +167,10 @@ class TestI08SkipsTheChallengeWhenThereIsNothingToChallenge:
         through the next one."""
         assessment = i08_assessment(rows=[universe_row(stock_on_hand=Decimal("0"))], lines=[])
         step = i08_step({}, assessment)
+        # The only question left is the declaration, and it carries the card.
+        assert step.id == script.I08_DECLARE_CHOICE
+        assert step.facts is not None
+        step = i08_step(SKIP, assessment)
         assert step.is_terminal
         assert "go ahead" in step.prompt
 
@@ -271,10 +312,16 @@ class TestNothingIsEverBlocked:
     @pytest.mark.parametrize(
         "answers",
         [
-            {script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}},
+            {script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}, **SKIP},
             {
                 script.I08_ASSESSMENT: {"choice": script.PROCEED_NEW},
                 script.I08_JUSTIFICATION: {"reason_category": "OTHER", "free_text": "x"},
+                **SKIP,
+            },
+            {
+                script.I08_ASSESSMENT: {"choice": script.USE_EXISTING},
+                script.I08_DECLARE_CHOICE: {"choice": script.DECLARE},
+                script.I08_DECLARATION: DECLARATION,
             },
         ],
     )
@@ -290,13 +337,85 @@ class TestTheSessionIdIsAlwaysHandedBack:
     """It is the only thing the requester has to carry out of the conversation."""
 
     def test_the_terminal_step_carries_the_id(self) -> None:
-        step = i08_step({script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}})
+        step = i08_step({script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}, **SKIP})
         assert step.session_id == SESSION
         assert SESSION in step.prompt
 
     def test_it_says_what_to_do_with_it(self) -> None:
-        step = i08_step({script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}})
+        step = i08_step({script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}, **SKIP})
         assert "Type it into the reservation's item text in SAP (field SGTXT)" in step.prompt
+
+
+class TestI08DeclaresTheFaultyUnit:
+    """Option B (27-Oct-2026): the declaration is asked after the decision and
+    any justification, and in place of the immediate end when no unit exists."""
+
+    @pytest.mark.parametrize(
+        "answers",
+        [
+            {script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}},
+            {
+                script.I08_ASSESSMENT: {"choice": script.PROCEED_NEW},
+                script.I08_JUSTIFICATION: {"reason_category": "OTHER", "free_text": "x"},
+            },
+        ],
+    )
+    def test_it_is_asked_after_the_decision(self, answers) -> None:
+        step = i08_step(answers)
+        assert step.id == script.I08_DECLARE_CHOICE
+        assert step.kind is StepKind.CHOICE
+        assert step.prompt == "Are you taking out a faulty unit that should go for repair?"
+        assert [(c.value, c.label) for c in step.choices] == [
+            ("declare", "Yes -- declare it now"),
+            ("skip", "No"),
+        ]
+        # The card is a few lines up already.
+        assert step.facts is None
+
+    def test_going_ahead_asks_the_reason_first(self) -> None:
+        step = i08_step({script.I08_ASSESSMENT: {"choice": script.PROCEED_NEW}})
+        assert step.id == script.I08_JUSTIFICATION
+
+    def test_declare_opens_the_form(self) -> None:
+        from app.initiatives.i8.config import get_i8_settings
+
+        step = i08_step(
+            {
+                script.I08_ASSESSMENT: {"choice": script.USE_EXISTING},
+                script.I08_DECLARE_CHOICE: {"choice": script.DECLARE},
+            }
+        )
+        assert step.id == script.I08_DECLARATION
+        assert step.kind is StepKind.FORM
+        fields = {f.name: f for f in step.fields}
+        assert list(fields) == [
+            "quantity", "condition_description", "fault_category",
+            "recommendation", "attestor_name", "evidence_reference",
+        ]
+        assert fields["quantity"].default == 1
+        assert not fields["evidence_reference"].required
+        assert fields["attestor_name"].label == "Your name (typed, not a sign-in)"
+        assert [o.value for o in fields["fault_category"].options] == list(
+            get_i8_settings().fault_category_list
+        )
+        assert [(o.value, o.label) for o in fields["recommendation"].options] == [
+            ("REPAIRABLE", "Repairable"),
+            ("BEYOND_ECONOMICAL_REPAIR", "Beyond economical repair"),
+            ("SCRAP", "Scrap"),
+        ]
+
+    def test_the_end_after_declaring_is_the_same_as_after_skipping(self) -> None:
+        decided = {script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}}
+        skipped = i08_step({**decided, **SKIP})
+        declared = i08_step(
+            {
+                **decided,
+                script.I08_DECLARE_CHOICE: {"choice": script.DECLARE},
+                script.I08_DECLARATION: DECLARATION,
+            }
+        )
+        assert skipped.is_terminal and declared.is_terminal
+        assert skipped.prompt == declared.prompt
 
 
 class TestReasonCategoriesAreConfiguration:

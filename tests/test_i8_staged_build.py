@@ -12,7 +12,13 @@ zero-padded differently in EKPO and MSEG, a deleted, a blocked and a
 delivery-completed line (the three SAP-closed kinds the register leaves out), a
 541 with its plant-side twin and one with item '0', lines and stock at an
 out-of-scope plant, and ordinary lines the staging leaves out but the register
-still counts as scanned. EKBE is seeded because the views over it still exist
+still counts as scanned. And repair orders' reservation lines (RESB 543) naming
+repair PRs (EBAN) that cross every part of the open rule: one open, one with a
+live PO pointing back, one deleted, one whose repair-order line is final-issued,
+one on a non-80 part, one out of scope, and a 261 line that names no repair -- whose PR is
+therefore a new-buy purchase, beside a direct PO line with no PR. And stock per
+condition (MCHB): two conditions in two bins of one part, a damaged-only part, a row
+out of scope and a non-80 row. EKBE is seeded because the views over it still exist
 (I13 reads them); I08 has not read it since 19-Oct-2026.
 
 Needs a database (skipped without DATABASE_URL); creates and drops its own raw
@@ -55,6 +61,11 @@ RAW: dict[str, list[str]] = {
     "raw_mseg": ["MBLNR", "MJAHR", "ZEILE", "BWART", "MATNR", "WERKS", "LGORT", "MENGE", "BUDAT_MKPF",
                  "SOBKZ", "LIFNR", "SHKZG", "EBELN", "EBELP"],
     "raw_lfa1": ["LIFNR", "NAME1", "LAND1"],
+    "raw_resb": ["RSNUM", "RSPOS", "MATNR", "WERKS", "LGORT", "BWART", "BANFN", "BNFPO", "AUFNR", "XLOEK",
+                 "KZEAR", "BDTER", "BDMNG", "MEINS"],
+    "raw_eban": ["BANFN", "BNFPO", "LOEKZ", "TXZ01", "MATNR", "WERKS", "MENGE", "MEINS", "BADAT", "LFDAT",
+                 "STATU", "BSART", "AFNAM", "RSNUM"],
+    "raw_mchb": ["MATNR", "WERKS", "LGORT", "CHARG", "CLABS"],
     # What the monthly criticality reports add up to (not a raw workbook table).
     "criticality_current": ["material", "material_raw", "plant", "criticality", "description", "mattyp", "mrp_type"],
 }
@@ -131,6 +142,48 @@ ROWS: dict[str, list[tuple]] = {
     ],
     "raw_lfa1": [("0000100234", "ACME ROTATING", "ZA"), ("100235", "BETA VALVES", "ZA"),
                  ("0000100236", "GAMMA SUPPLY", "ZA"), ("0000999999", "NOBODY", "ZA")],
+    "raw_resb": [
+        # Repair-order lines (543), each naming its repair PR.
+        ("0001900001", "0001", "000000008000000001", "1300", "0001", "543", "0010000001", "00010",
+         "940000000001", "", "", "01.06.2026", "1", "EA"),  # PO 4100000001/10 points back
+        ("0001900002", "0001", A, "1300", "0001", "543", "0010000002", "00010",
+         "940000000002", "", "", "15.09.2026", "1", "EA"),  # open, no PO yet
+        ("0001900003", "0001", A, "1300", "0001", "543", "0010000003", "00010",
+         "940000000003", "", "", "15.09.2026", "1", "EA"),  # the PR is deleted
+        ("0001900004", "0001", B, "1500", "0001", "543", "0010000004", "00010",
+         "940000000004", "", "X", "15.09.2026", "1", "EA"),  # final-issued
+        ("0001900005", "0001", N, "1300", "0001", "543", "0010000005", "00010",
+         "940000000005", "", "", "15.09.2026", "1", "EA"),  # not an 80-series part
+        ("0001900006", "0001", A, "3000", "0001", "543", "0010000006", "00010",
+         "940000000006", "", "", "15.09.2026", "1", "EA"),  # out of scope
+        ("0001900007", "0001", A, "1300", "0001", "261", "0010000007", "00010",
+         "", "", "", "15.09.2026", "1", "EA"),  # a maintenance order: not a repair
+    ],
+    "raw_eban": [
+        ("0010000001", "00010", "", "PUMP REPAIR", A, "1300", "1", "EA", "01.06.2026", "05.06.2026",
+         "B", "ZMNP", "10305", "0001900001"),
+        ("0010000002", "00010", "", "PUMP REPAIR", "000000008000000001", "1300", "2", "EA", "15.09.2026",
+         "20.09.2026", "N", "ZMNP", "10305", "0001900002"),
+        ("0010000003", "00010", "X", "PUMP REPAIR", A, "1300", "1", "EA", "15.09.2026", "20.09.2026",
+         "N", "ZMNP", "10305", "0001900003"),
+        ("0010000004", "00010", "", "VALVE REPAIR", B, "1500", "1", "EA", "15.09.2026", "20.09.2026",
+         "N", "ZMNP", "40301", "0001900004"),
+        ("0010000005", "00010", "", "GLOVES", N, "1300", "1", "PR", "15.09.2026", "20.09.2026",
+         "N", "ZMNP", "10305", "0001900005"),
+        ("0010000006", "00010", "", "PUMP REPAIR", A, "3000", "1", "EA", "15.09.2026", "20.09.2026",
+         "N", "ZMNP", "10305", "0001900006"),
+        ("0010000007", "00010", "", "PUMP", A, "1300", "1", "EA", "15.09.2026", "20.09.2026",
+         "N", "ZMNP", "10305", "0001900007"),
+    ],
+    "raw_mchb": [
+        # A at 1300: new and damaged in one bin, refurbished in another.
+        ("000000008000000001", "1300", "0001", "NEW", "2"),
+        (A, "1300", "0001", "DAMAGED", "1"),
+        (A, "1300", "0002", "REFURBISHD", "4"),
+        (C, "1500", "0001", "DAMAGED", "2"),  # damaged only
+        (A, "3000", "0001", "NEW", "50"),  # out of scope
+        (N, "1300", "0001", "", "9"),  # not an 80-series part
+    ],
     "criticality_current": [
         (A, A, "1300", "CRITICAL", "PUMP", "ZREP", "ND"),
         (N, N, "1300", "NORMAL", "GLOVES", "ERSA", "VB"),
@@ -221,8 +274,40 @@ def test_the_tenant_crosses_every_filter(built) -> None:
     assert direct.register_stats.excluded_delivery_completed_lines == 1
     assert direct.register_stats.excluded_blocked_lines == 1
     assert direct.register_stats.candidates_scanned == 8  # every in-scope line with a PO and an item
-    assert {(a.purchasing_document, a.item) for a in direct.acquisitions} == {("4500000010", "10")}
+    # New purchases (27-Oct-2026): the direct PO line with no PR, dated by its
+    # header, and the one PR item no repair order names or reserved for (its
+    # reservation holds only a 261). The repair PRs, the deleted one and the
+    # non-80 and out-of-scope ones are not purchases.
+    by_acquisition = {a.key: a for a in direct.acquisitions}
+    assert set(by_acquisition) == {("PO", "4500000010", "10"), ("PR", "10000007", "10")}
+    assert by_acquisition[("PO", "4500000010", "10")].raised_at == date(2026, 9, 1)
+    assert by_acquisition[("PR", "10000007", "10")].raised_at == date(2026, 9, 15)
+    assert by_acquisition[("PR", "10000007", "10")].requested_by == "10305"
     assert {(r.material_id, r.plant) for r in direct.universe} >= {(A, "1300"), (B, "1500"), (C, "1500")}
+    # Open repair PRs: only 10000002/10; one excluded under each part of the rule.
+    assert [r.key for r in direct.repair_requests] == [("10000002", "10")]
+    assert direct.repair_requests[0].repair_order == "940000000002"
+    assert direct.repair_requests[0].days_open == 16
+    assert direct.register_stats.open_repair_requests == 1
+    assert direct.register_stats.requisitions_excluded_live_po == 1
+    assert direct.register_stats.requisitions_excluded_deleted == 1
+    assert direct.register_stats.requisitions_excluded_reservation_closed == 1
+    # Stock per condition (MCHB, the default): summed across bins, split by the
+    # configured conditions; B has no MCHB rows, so its split is unknown.
+    universe = {(r.material_id, r.plant): r for r in direct.universe}
+    assert universe[(A, "1300")].usable_stock == 6
+    assert universe[(A, "1300")].damaged_stock == 1
+    assert universe[(A, "1300")].stock_condition_source == "MCHB"
+    assert universe[(C, "1500")].usable_stock == 0
+    assert universe[(C, "1500")].damaged_stock == 2
+    assert universe[(B, "1500")].usable_stock is None
+    assert universe[(B, "1500")].stock_condition_source is None
+
+
+def test_repair_requests_are_identical(built) -> None:
+    direct, staged, again = built
+    assert _plain(staged.repair_requests) == _plain(direct.repair_requests)
+    assert _plain(again.repair_requests) == _plain(direct.repair_requests)
 
 
 def test_repair_lines_are_identical(built) -> None:

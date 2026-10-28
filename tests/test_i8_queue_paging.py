@@ -39,11 +39,13 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.i8.router import attestation_view_dependency, snapshot_dependency
 from app.core.db import get_db
+from app.initiatives.i8.config import get_i8_settings
 from app.initiatives.i8.declarations import DeclarationRow
 from app.initiatives.i8.exception_state import assign, set_status
 from app.initiatives.i8.exceptions import ExceptionItem, ExceptionStats
 from app.initiatives.i8.models import ExceptionEvent
 from app.initiatives.i8.register import RegisterStats, RepairLine
+from app.initiatives.i8.requisitions import RepairRequest
 
 DECLARATIONS = "/api/i8/declarations"
 EXCEPTIONS = "/api/i8/exceptions"
@@ -196,7 +198,16 @@ def queues(factory):
     from app.main import create_app
 
     app = create_app()
-    state = SimpleNamespace(declarations=(), exceptions=(), lines=(), universe=(), stats=None)
+    state = SimpleNamespace(
+        declarations=(),
+        exceptions=(),
+        lines=(),
+        universe=(),
+        stats=None,
+        requests=(),
+        # The repair PRs are served only when a test switches them on.
+        cfg=get_i8_settings().model_copy(update={"repair_requests_enabled": False}),
+    )
 
     def _db():
         with factory() as session:
@@ -207,11 +218,13 @@ def queues(factory):
             declarations=state.declarations,
             exceptions=state.exceptions,
             exception_stats=stats_of(state.exceptions),
-            coverage=SimpleNamespace(window_days=30),
+            # No declaration covers any line here: the PO detail route reads
+            # ``covered`` for the timeline's declaration stage.
+            coverage=SimpleNamespace(window_days=30, covered={}),
             # What the register reads off the view: each line's queue row by
             # its key, and its justification (none here).
             declaration_by_line={
-                tuple(row.related_repair_id.split("-", 1)): row for row in state.declarations
+                tuple(row.related_repair_id.rsplit("-", 1)): row for row in state.declarations
             },
             justifications={},
         )
@@ -222,11 +235,19 @@ def queues(factory):
             lines=state.lines,
             universe=state.universe,
             register_stats=state.stats or register_stats(state.lines),
+            repair_requests=state.requests,
+            line=lambda document, item: next(
+                (line for line in state.lines if line.key == (document, item)), None
+            ),
+            request=lambda banfn, bnfpo: next(
+                (r for r in state.requests if r.key == (banfn, bnfpo)), None
+            ),
         )
 
     app.dependency_overrides[get_db] = _db
     app.dependency_overrides[snapshot_dependency] = _snapshot
     app.dependency_overrides[attestation_view_dependency] = _view
+    app.dependency_overrides[get_i8_settings] = lambda: state.cfg
     # No `with`: entering the context runs the lifespan against the real database.
     state.client = TestClient(app)
     yield state
@@ -783,6 +804,8 @@ class TestQuickViews:
             "undeclared": 2,
             "atVendor": 1,
             "withExceptions": 1,
+            # Repair PRs with no PO yet: none served while the switch is off.
+            "notOrdered": 0,
         }
 
     def test_a_view_narrows_the_list_but_not_the_counts(self, queues) -> None:
@@ -797,16 +820,18 @@ class TestQuickViews:
         assert overdue["total"] == 1
         assert overdue["viewCounts"] == everything["viewCounts"]
 
-    def test_not_declared_is_required_and_flagged(self, queues) -> None:
-        """A Flagged line was declared not repairable and sent anyway: it still
-        wants somebody, so it is not declared in the sense the button means."""
-        queues.lines = (repair_line(1), repair_line(2), repair_line(3))
+    def test_not_declared_is_required_only(self, queues) -> None:
+        """27-Oct-2026: a Flagged line has its declaration (its finding is an
+        exception), and a Historical one was raised before declarations were
+        asked for -- neither is waiting for somebody to declare."""
+        queues.lines = (repair_line(1), repair_line(2), repair_line(3), repair_line(4))
         queues.declarations = (
             declaration(1, status="Completed"),
             declaration(2, status="Flagged"),
+            declaration(4, status="Historical"),
         )
 
-        assert ids(listing(queues, view="undeclared")) == ["4500000002-10", "4500000003-10"]
+        assert ids(listing(queues, view="undeclared")) == ["4500000003-10"]
 
     def test_an_unknown_view_is_refused(self, queues) -> None:
         queues.lines = (repair_line(1),)
@@ -914,3 +939,716 @@ class TestRegisterFacets:
         assert facets["repairStatuses"] == ["At Vendor", "PO Issued"]
         assert facets["criticalities"] == ["CRITICAL"]
         assert facets["hasUnrated"] is True
+
+
+# --- Repair PRs with no PO yet (27-Oct-2026) --------------------------------
+
+
+def repair_request(n: int, **overrides) -> RepairRequest:
+    """Open repair PR ``20000291{n}/10`` of material ``80000000{n}`` at 1300,
+    raised on 01-Sep-2026 by department 10305, with no PO yet."""
+    fields = dict(
+        purchase_requisition=f"20000291{n:02d}",
+        item="10",
+        material_id=f"80000000{n:02d}",
+        plant="1300",
+        description=f"Motor {n}",
+        quantity=Decimal(2),
+        unit="EA",
+        requested_on=date(2026, 9, 1),
+        need_date=None,
+        department="10305",
+        requisition_status="B",
+        document_type="ZMNP",
+        repair_order="4000123",
+        reservation="0001234",
+        days_open=47,
+        aging_bucket="31-60",
+    )
+    fields.update(overrides)
+    return RepairRequest(**fields)
+
+
+def serve_requests(queues, *requests: RepairRequest) -> None:
+    """Put ``requests`` in the snapshot and switch on serving them."""
+    queues.requests = requests
+    queues.cfg = queues.cfg.model_copy(update={"repair_requests_enabled": True})
+
+
+class TestRepairRequestsSwitchedOff:
+    """Off by default, the register is exactly what it was before PR rows
+    existed -- only the meta says how many there are."""
+
+    def test_lists_no_pr_rows_and_counts_none_in_the_views(self, queues) -> None:
+        queues.lines = (repair_line(1),)
+        queues.requests = (repair_request(1),)
+        queues.stats = RegisterStats(total_lines=1, open_lines=1, open_repair_requests=1)
+
+        body = listing(queues)
+
+        assert ids(body) == ["4500000001-10"]
+        assert body["total"] == 1
+        assert body["viewCounts"]["all"] == 1
+        assert body["viewCounts"]["notOrdered"] == 0
+        assert "PR Raised" not in body["facets"]["repairStatuses"]
+        # Counted whether or not served; the line totals stay PO-only.
+        assert body["meta"]["openRepairRequests"] == 1
+        assert body["meta"]["totalLines"] == body["meta"]["openLines"] == 1
+
+    def test_the_view_and_the_filters_find_nothing(self, queues) -> None:
+        queues.requests = (repair_request(1),)
+
+        assert listing(queues, view="notOrdered")["total"] == 0
+        assert listing(queues, status="PR Raised")["total"] == 0
+        assert listing(queues, q="2000029101")["total"] == 0
+
+    def test_a_po_row_says_it_is_a_po_line_and_names_no_unknown_department(
+        self, queues, monkeypatch
+    ) -> None:
+        """A department the list does not know is its code alone."""
+        monkeypatch.setattr("app.assistant.departments.name_for", lambda code: None)
+        queues.lines = (repair_line(1),)
+
+        row = listing(queues)["items"][0]
+
+        assert row["lineKind"] == "PO"
+        assert row["requesterName"] is None
+
+
+class TestRepairRequestRows:
+    def test_follow_every_po_row_in_the_snapshot_order(self, queues) -> None:
+        queues.lines = (repair_line(1), repair_line(2))
+        serve_requests(
+            queues, repair_request(1), repair_request(2, item="20"), repair_request(3)
+        )
+
+        body = listing(queues)
+
+        assert ids(body) == [
+            "4500000001-10",
+            "4500000002-10",
+            "PR-2000029101-10",
+            "PR-2000029102-20",
+            "PR-2000029103-10",
+        ]
+        assert body["total"] == 5
+        assert [item["lineKind"] for item in body["items"]] == ["PO", "PO", "PR", "PR", "PR"]
+
+    def test_a_pr_row_is_the_repair_with_nothing_ordered(self, queues, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "app.assistant.departments.name_for",
+            lambda code: {"10305": "Engineering"}.get(code or ""),
+        )
+        queues.universe = (
+            SimpleNamespace(
+                material_id="8000000001",
+                plant="1300",
+                criticality="CRITICAL",
+                stock_on_hand=Decimal(3),
+                reorder_point=Decimal(1),
+                planned_delivery_days=60,
+            ),
+        )
+        serve_requests(queues, repair_request(1))
+
+        row = listing(queues)["items"][0]
+
+        assert row["id"] == "PR-2000029101-10"
+        assert row["lineKind"] == "PR"
+        assert row["repairPr"] == {"type": "PR", "documentNumber": "2000029101", "line": "10"}
+        assert row["repairPo"] is None
+        assert row["vendor"] is None
+        assert row["vendorName"] is None
+        assert row["poIssuedAt"] is None
+        assert row["repairStatus"] == "PR Raised"
+        assert row["overdueStatus"] == "NOT_ORDERED"
+        assert row["declarationStatus"] == "Required"
+        assert row["raisedAt"] == "2026-09-01"
+        assert row["daysOpen"] == row["daysInCurrentStage"] == 47
+        assert row["agingBucket"] == "31-60"
+        assert Decimal(row["qtyUnderRepair"]) == 2
+        assert row["requester"] == "10305"
+        assert row["requesterName"] == "Engineering"
+        # The material's position at the plant, as on a PO row.
+        assert row["criticality"] == "CRITICAL"
+        assert Decimal(row["stockOnHand"]) == 3
+        assert Decimal(row["reorderPoint"]) == 1
+        # No check reads a PR row: checked and clean, not "not checked".
+        assert row["exceptions"] == []
+
+    def test_an_unknown_department_is_its_code_alone(self, queues, monkeypatch) -> None:
+        monkeypatch.setattr("app.assistant.departments.name_for", lambda code: None)
+        serve_requests(queues, repair_request(1), repair_request(2, department=None))
+
+        rows = listing(queues)["items"]
+
+        assert [(r["requester"], r["requesterName"]) for r in rows] == [
+            ("10305", None),
+            (None, None),
+        ]
+
+    def test_meta_line_counts_stay_po_only(self, queues) -> None:
+        queues.lines = (repair_line(1),)
+        queues.stats = RegisterStats(
+            total_lines=1,
+            open_lines=1,
+            open_repair_requests=2,
+            requisitions_excluded_deleted=48,
+            requisitions_excluded_live_po=2310,
+            requisitions_excluded_reservation_closed=14,
+        )
+        serve_requests(queues, repair_request(1), repair_request(2))
+
+        meta = listing(queues)["meta"]
+
+        assert meta["totalLines"] == meta["openLines"] == 1
+        assert meta["openRepairRequests"] == 2
+        assert meta["requisitionsExcludedDeleted"] == 48
+        assert meta["requisitionsExcludedLivePo"] == 2310
+        assert meta["requisitionsExcludedReservationClosed"] == 14
+
+    def test_paging_runs_across_the_boundary(self, queues) -> None:
+        queues.lines = tuple(repair_line(n) for n in range(1, 4))
+        serve_requests(queues, repair_request(1), repair_request(2))
+
+        second = listing(queues, page=2, pageSize=2)
+        third = listing(queues, page=3, pageSize=2)
+
+        assert ids(second) == ["4500000003-10", "PR-2000029101-10"]
+        assert ids(third) == ["PR-2000029102-10"]
+        assert second["total"] == third["total"] == 5
+
+
+class TestRepairRequestFilters:
+    @pytest.fixture(autouse=True)
+    def rows(self, queues):
+        queues.lines = (repair_line(1), repair_line(2, plant="1500"))
+        serve_requests(
+            queues,
+            repair_request(1),
+            repair_request(2, plant="1500", days_open=10, aging_bucket="0-15"),
+        )
+
+    def test_status_pr_raised_lists_the_prs_only(self, queues) -> None:
+        assert ids(listing(queues, status="PR Raised")) == [
+            "PR-2000029101-10",
+            "PR-2000029102-10",
+        ]
+        assert ids(listing(queues, status="At Vendor")) == ["4500000001-10", "4500000002-10"]
+
+    def test_not_ordered_is_an_overdue_status_of_its_own(self, queues) -> None:
+        assert ids(listing(queues, overdueStatus="not_ordered")) == [
+            "PR-2000029101-10",
+            "PR-2000029102-10",
+        ]
+        assert ids(listing(queues, overdueStatus="ON_TIME")) == [
+            "4500000001-10",
+            "4500000002-10",
+        ]
+        assert listing(queues, overdueOnly=True)["total"] == 0
+
+    def test_plant_material_and_aging(self, queues) -> None:
+        assert ids(listing(queues, plant="1500")) == ["4500000002-10", "PR-2000029102-10"]
+        assert ids(listing(queues, material="8000000001")) == [
+            "4500000001-10",
+            "PR-2000029101-10",
+        ]
+        assert ids(listing(queues, agingBucket="0-15")) == ["PR-2000029102-10"]
+        assert ids(listing(queues, stageAgingBucket="0-15")) == ["PR-2000029102-10"]
+
+    def test_a_pr_row_has_no_vendor(self, queues) -> None:
+        assert ids(listing(queues, vendor="none")) == ["PR-2000029101-10", "PR-2000029102-10"]
+        assert ids(listing(queues, vendor="100234")) == ["4500000001-10", "4500000002-10"]
+
+    def test_declaration_status_reads_required(self, queues) -> None:
+        queues.declarations = (
+            declaration(1, status="Completed"),
+            declaration(2, status="Completed"),
+        )
+
+        assert ids(listing(queues, declarationStatus="required")) == [
+            "PR-2000029101-10",
+            "PR-2000029102-10",
+        ]
+        assert ids(listing(queues, declarationStatus="Completed")) == [
+            "4500000001-10",
+            "4500000002-10",
+        ]
+
+    def test_no_check_raises_anything_on_a_pr_row(self, queues) -> None:
+        queues.exceptions = (exception(1),)
+
+        assert ids(listing(queues, withExceptions=True)) == ["4500000001-10"]
+
+    def test_criticality(self, queues) -> None:
+        queues.universe = (rating("8000000002", "1500", "CRITICAL"),)
+
+        assert ids(listing(queues, criticality="CRITICAL")) == [
+            "4500000002-10",
+            "PR-2000029102-10",
+        ]
+
+    @pytest.mark.parametrize(
+        "q", ["2000029101", "2000029101/10", "PR-2000029101-10", "pr-2000029101", "motor 1"]
+    )
+    def test_search_finds_the_pr_by_its_number(self, queues, q) -> None:
+        assert ids(listing(queues, q=q)) == ["PR-2000029101-10"]
+
+    def test_facets_offer_what_the_pr_rows_show(self, queues) -> None:
+        facets = listing(queues, plant="1300")["facets"]
+
+        assert "PR Raised" in facets["repairStatuses"]
+        assert facets["hasUnknownVendor"] is True
+        assert [p["plantId"] for p in facets["plants"]] == ["1300", "1500"]
+
+
+class TestNotOrderedView:
+    def test_counted_alone_and_as_undeclared(self, queues) -> None:
+        """27-Oct-2026: a PR row can be declared on, so an undeclared one
+        counts as undeclared too."""
+        queues.lines = (repair_line(1), repair_line(2, overdue_status="OVERDUE"))
+        queues.exceptions = (exception(1),)
+        serve_requests(queues, repair_request(1), repair_request(2))
+
+        assert listing(queues)["viewCounts"] == {
+            "all": 4,
+            "overdue": 1,
+            "undeclared": 4,
+            "atVendor": 2,
+            "withExceptions": 1,
+            "notOrdered": 2,
+        }
+
+    def test_lists_the_prs_and_the_other_views_leave_them_out(self, queues) -> None:
+        queues.lines = (repair_line(1),)
+        serve_requests(queues, repair_request(1))
+
+        assert ids(listing(queues, view="notOrdered")) == ["PR-2000029101-10"]
+        assert ids(listing(queues, view="undeclared")) == ["4500000001-10", "PR-2000029101-10"]
+        assert ids(listing(queues, view="atVendor")) == ["4500000001-10"]
+        assert listing(queues, view="overdue")["total"] == 0
+        assert listing(queues, view="withExceptions")["total"] == 0
+
+    def test_counts_after_the_filters(self, queues) -> None:
+        serve_requests(queues, repair_request(1), repair_request(2, plant="1500"))
+
+        assert listing(queues, plant="1500")["viewCounts"]["notOrdered"] == 1
+
+
+class TestRepairRequestDetail:
+    def test_answers_with_the_row_and_its_three_stages(self, queues, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "app.assistant.departments.name_for",
+            lambda code: {"10305": "Engineering"}.get(code or ""),
+        )
+        serve_requests(queues, repair_request(1))
+
+        response = queues.client.get(f"{REGISTER}/PR-2000029101/10")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["line"]["id"] == "PR-2000029101-10"
+        assert body["line"]["lineKind"] == "PR"
+        assert body["line"]["exceptions"] is None
+        assert [(s["stage"], s["label"], s["occurredAt"]) for s in body["timeline"]] == [
+            ("pr_raised", "Repair requested", "2026-09-01"),
+            ("attested", "Condition declared", None),
+            ("po_raised", "Repair PO raised", None),
+        ]
+        assert body["timeline"][0]["evidence"] == (
+            "Repair PR 2000029101/10, requested by department 10305 (Engineering)."
+        )
+        assert body["timeline"][0]["daysSince"] == 47
+        assert body["timeline"][1]["evidence"] == "Not declared yet."
+        assert body["timeline"][2]["evidence"] == "No PO yet."
+
+    def test_names_no_department_it_does_not_know(self, queues, monkeypatch) -> None:
+        monkeypatch.setattr("app.assistant.departments.name_for", lambda code: None)
+        serve_requests(queues, repair_request(1), repair_request(2, department=None))
+
+        first = queues.client.get(f"{REGISTER}/PR-2000029101/10").json()
+        second = queues.client.get(f"{REGISTER}/PR-2000029102/10").json()
+
+        assert first["timeline"][0]["evidence"] == (
+            "Repair PR 2000029101/10, requested by department 10305."
+        )
+        assert second["timeline"][0]["evidence"] == "Repair PR 2000029102/10."
+
+    def test_a_zero_padded_item_finds_the_same_pr(self, queues) -> None:
+        serve_requests(queues, repair_request(1))
+
+        assert queues.client.get(f"{REGISTER}/PR-2000029101/00010").status_code == 200
+
+    def test_is_404_while_switched_off(self, queues) -> None:
+        queues.requests = (repair_request(1),)
+
+        assert queues.client.get(f"{REGISTER}/PR-2000029101/10").status_code == 404
+
+    def test_an_unknown_pr_is_404(self, queues) -> None:
+        serve_requests(queues, repair_request(1))
+
+        assert queues.client.get(f"{REGISTER}/PR-2000029199/10").status_code == 404
+        assert queues.client.get(f"{REGISTER}/PR-2000029101/20").status_code == 404
+
+
+class TestRepairLineDetail:
+    def test_the_timeline_has_no_removed_from_machine_stage(self, queues) -> None:
+        # Dropped 27-Oct-2026 (ruled 26-Oct): SAP has no record of a unit
+        # coming off a machine that names the repair PO, so the stage was
+        # blank on every line.
+        queues.lines = (repair_line(1, dispatched_at=date(2026, 9, 5)),)
+
+        response = queues.client.get(f"{REGISTER}/4500000001/10")
+
+        assert response.status_code == 200
+        timeline = response.json()["timeline"]
+        # The repair starts at its request since 27-Oct-2026.
+        assert [(s["stage"], s["label"]) for s in timeline] == [
+            ("pr_raised", "Repair requested"),
+            ("attested", "Condition declared"),
+            ("po_raised", "Repair PO raised"),
+            ("dispatched", "Sent to vendor"),
+            ("at_vendor", "At vendor"),
+        ]
+        assert not any("machine" in s["evidence"] for s in timeline)
+
+
+ATTESTATIONS = "/api/i8/attestations"
+
+
+def declaration_body(**overrides) -> dict:
+    body = {
+        "materialId": "8000000001",
+        "plant": "1300",
+        "quantity": "1",
+        "conditionDescription": "Bearing noise",
+        "faultCategory": "BEARING_FAILURE",
+        "recommendation": "REPAIRABLE",
+    }
+    body.update(overrides)
+    return body
+
+
+class TestDeclarationBindingRules:
+    """POST /attestations binds to a repair PO line or (27-Oct-2026) an open
+    repair PR, and refuses a binding that is not open, is for another part, or
+    already has a current declaration."""
+
+    @pytest.fixture
+    def declares(self, queues, factory):
+        from app.initiatives.i8.models import RepairAttestation
+
+        RepairAttestation.__table__.create(factory.kw["bind"])
+        queues.universe = (SimpleNamespace(material_id="8000000001"),)
+        queues.lines = (repair_line(1),)
+        return queues
+
+    def _post(self, queues, **overrides):
+        return queues.client.post(ATTESTATIONS, json=declaration_body(**overrides))
+
+    def test_a_po_line_binds_with_its_type_and_typed_name(self, declares) -> None:
+        response = self._post(
+            declares, repairDocument="4500000001", repairItem="00010", attestorName=" A. Rao "
+        )
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert (body["repairDocument"], body["repairItem"]) == ("4500000001", "10")
+        assert body["repairDocumentType"] == "PO"
+        assert body["attestorName"] == "A. Rao"
+        assert body["sessionId"] is None
+
+    def test_an_open_repair_pr_binds_by_its_own_key_or_row_id(self, declares) -> None:
+        serve_requests(declares, repair_request(1))
+
+        response = self._post(
+            declares, repairDocument="PR-2000029101", repairItem="00010"
+        )
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert (body["repairDocument"], body["repairItem"]) == ("2000029101", "10")
+        assert body["repairDocumentType"] == "PR"
+
+    def test_a_pr_is_not_open_in_the_register_while_pr_rows_are_off(self, declares) -> None:
+        declares.requests = (repair_request(1),)
+
+        response = self._post(
+            declares, repairDocument="2000029101", repairItem="10", repairDocumentType="PR"
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == "That repair line is not open in the register."
+
+    def test_an_unknown_po_line_is_not_open(self, declares) -> None:
+        response = self._post(declares, repairDocument="4500009999", repairItem="10")
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == "That repair line is not open in the register."
+
+    def test_a_declaration_for_another_part_is_refused(self, declares) -> None:
+        response = self._post(
+            declares, materialId="8000000002", repairDocument="4500000001", repairItem="10"
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == (
+            "This declaration is for 8000000002 at 1300, but that repair line is "
+            "for 8000000001 at 1300."
+        )
+
+    def test_a_second_declaration_on_a_line_must_amend_the_first(self, declares) -> None:
+        first = self._post(declares, repairDocument="4500000001", repairItem="10").json()
+
+        second = self._post(declares, repairDocument="4500000001", repairItem="10")
+        assert second.status_code == 422
+        assert second.json()["detail"] == (
+            f"This line already has declaration {first['id']}. Amend it instead."
+        )
+
+        no_reason = self._post(
+            declares, repairDocument="4500000001", repairItem="10", supersedes=first["id"]
+        )
+        assert no_reason.status_code == 422
+        assert no_reason.json()["detail"] == "Say why this declaration is being amended."
+
+        amended = self._post(
+            declares,
+            repairDocument="4500000001",
+            repairItem="10",
+            supersedes=first["id"],
+            amendmentReason="Casing cracked on strip-down.",
+            recommendation="SCRAP",
+        )
+        assert amended.status_code == 201, amended.text
+        assert amended.json()["amendmentReason"] == "Casing cracked on strip-down."
+
+    def test_an_unbound_amendment_inherits_the_line_and_its_type(self, declares) -> None:
+        serve_requests(declares, repair_request(1))
+        first = self._post(
+            declares, repairDocument="2000029101", repairItem="10", repairDocumentType="PR"
+        ).json()
+
+        amended = self._post(declares, supersedes=first["id"], amendmentReason="Re-checked.")
+
+        assert amended.status_code == 201, amended.text
+        body = amended.json()
+        assert (body["repairDocument"], body["repairDocumentType"]) == ("2000029101", "PR")
+
+    def test_the_body_cannot_set_the_session(self, declares) -> None:
+        response = self._post(declares, sessionId="S-123")
+
+        assert response.status_code == 201, response.text
+        assert response.json()["sessionId"] is None
+
+
+class TestRepairableUnitRoute:
+    """GET /api/i8/repairable-unit counts open repair PRs only while the switch
+    is on, and splits usable from damaged stock -- as the assistant does."""
+
+    @staticmethod
+    def _universe_row(**overrides):
+        from app.initiatives.i8.universe import UniverseRow
+
+        fields = dict(
+            material_id="8000000001",
+            plant="1300",
+            description="Motor 1",
+            material_type="ZREP",
+            stock_on_hand=Decimal(0),
+            storage_locations=1,
+            reorder_point=None,
+            mrp_type="ND",
+            planned_delivery_days=30,
+            criticality=None,
+            open_repair_lines=0,
+            qty_under_repair=Decimal(0),
+            in_material_master=True,
+        )
+        fields.update(overrides)
+        return UniverseRow(**fields)
+
+    def _get(self, queues) -> dict:
+        response = queues.client.get(
+            "/api/i8/repairable-unit", params={"material": "8000000001", "plant": "1300"}
+        )
+        assert response.status_code == 200
+        return response.json()
+
+    def test_a_pr_only_part_has_a_unit_only_when_switched_on(self, queues, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "app.assistant.departments.name_for",
+            lambda code: {"10305": "Engineering"}.get(code or ""),
+        )
+        queues.universe = (self._universe_row(),)
+        queues.requests = (repair_request(1),)
+
+        off = self._get(queues)
+        assert off["exists"] is False
+        assert off["openRepairRequestLines"] == 0
+        assert off["requestEvidence"] == []
+
+        serve_requests(queues, repair_request(1))
+        on = self._get(queues)
+        assert on["exists"] is True
+        assert "REPAIR_REQUESTED" in on["sources"]
+        assert on["openRepairRequestLines"] == 1
+        assert on["requestEvidence"] == [
+            {
+                "purchaseRequisition": "2000029101",
+                "item": "10",
+                "quantity": "2",
+                "requestedAt": "2026-09-01",
+                "daysSinceRequested": 47,
+                "department": "10305",
+                "departmentName": "Engineering",
+                "repairOrder": "4000123",
+            }
+        ]
+
+    def test_damaged_only_stock_is_no_unit(self, queues) -> None:
+        queues.universe = (
+            self._universe_row(
+                stock_on_hand=Decimal(2),
+                usable_stock=Decimal(0),
+                damaged_stock=Decimal(2),
+                stock_by_condition=(("DAMAGED", Decimal(2)),),
+                stock_condition_source="MCHB",
+            ),
+        )
+
+        body = self._get(queues)
+
+        assert body["exists"] is False
+        assert body["stockOnHand"] == "2"
+        assert body["usableStock"] == "0"
+        assert body["damagedStock"] == "2"
+        assert body["stockConditionKnown"] is True
+        assert body["stockSource"] == "MCHB"
+
+
+# --- Bought new while a repair was open: PRs on both sides (27-Oct-2026) ------
+
+
+def bought_new(n: int, *, repair_type: str, acquisition_type: str = "PR", **overrides) -> ExceptionItem:
+    """An UNJUSTIFIED_ACQUISITION whose repair is PR ``20000291{n}/10`` (no PO
+    yet) or PO line ``45000000{n}-10``, bought on new-buy PR ``10002012{n}/10``."""
+    repair_document = f"20000291{n:02d}" if repair_type == "PR" else f"45000000{n:02d}"
+    purchase = f"10002012{n:02d}" if acquisition_type == "PR" else f"41001000{n:02d}"
+    prefix = "PR-" if acquisition_type == "PR" else ""
+    return exception(
+        n,
+        type="UNJUSTIFIED_ACQUISITION",
+        id=f"EX-UNJUSTIFIED_ACQUISITION-{prefix}{purchase}-10",
+        purchasing_document=repair_document,
+        acquisition_document=purchase,
+        acquisition_item="10",
+        repair_document_type=repair_type,
+        acquisition_document_type=acquisition_type,
+        **overrides,
+    )
+
+
+class TestBoughtNewOnPurchaseRequests:
+    def test_the_wire_names_each_document_by_its_kind(self, queues) -> None:
+        queues.exceptions = (bought_new(1, repair_type="PR"), bought_new(2, repair_type="PO", acquisition_type="PO"))
+
+        items = {i["id"]: i for i in queues.client.get(EXCEPTIONS).json()["items"]}
+
+        on_pr = items["EX-UNJUSTIFIED_ACQUISITION-PR-1000201201-10"]
+        # The repair PR's number is bare: the frontend builds 'PR-{BANFN}-{BNFPO}'.
+        assert on_pr["repairLine"] == {"type": "PR", "documentNumber": "2000029101", "line": "10"}
+        assert on_pr["acquisitionLine"] == {"type": "PR", "documentNumber": "1000201201", "line": "10"}
+        on_po = items["EX-UNJUSTIFIED_ACQUISITION-4100100002-10"]
+        assert on_po["repairLine"] == {"type": "PO", "documentNumber": "4500000002", "line": "10"}
+        assert on_po["acquisitionLine"] == {"type": "PO", "documentNumber": "4100100002", "line": "10"}
+
+    def test_the_repair_filter_takes_the_pr_row_id(self, queues) -> None:
+        queues.exceptions = (bought_new(1, repair_type="PR"), exception(2))
+
+        def found(repair: str) -> list[str]:
+            return ids(queues.client.get(EXCEPTIONS, params={"repair": repair}).json())
+
+        assert found("PR-2000029101-10") == ["EX-UNJUSTIFIED_ACQUISITION-PR-1000201201-10"]
+        assert found("PR-2000029101") == ["EX-UNJUSTIFIED_ACQUISITION-PR-1000201201-10"]
+        # The bare number is a PO line's form: it never finds the PR's finding.
+        assert found("2000029101-10") == []
+        assert found("4500000002-10") == ["EX-MISSING_ATTESTATION-4500000002-10"]
+        assert found("4500000002") == ["EX-MISSING_ATTESTATION-4500000002-10"]
+
+    def test_search_finds_the_pr_repair_as_its_row_is_named(self, queues) -> None:
+        queues.exceptions = (bought_new(1, repair_type="PR"), exception(2))
+
+        body = queues.client.get(EXCEPTIONS, params={"q": "pr-2000029101-10"}).json()
+
+        assert ids(body) == ["EX-UNJUSTIFIED_ACQUISITION-PR-1000201201-10"]
+
+    def test_a_pr_repairs_finding_never_lands_on_a_po_line_sharing_its_number(self, queues) -> None:
+        # A PO line numbered like the repair PR: the finding is about the PR.
+        queues.lines = (repair_line(1, purchasing_document="2000029101"), repair_line(2))
+        queues.exceptions = (bought_new(1, repair_type="PR"), bought_new(2, repair_type="PO"))
+
+        assert ids(listing(queues, withExceptions=True)) == ["4500000002-10"]
+
+
+class TestDeclarationsOnTheRegister:
+    """27-Oct-2026: PO rows name the department of their repair PR, PR rows
+    carry their own declaration, and every row says how it was linked."""
+
+    def test_a_po_row_names_the_department_of_its_repair_pr(self, queues, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "app.assistant.departments.name_for",
+            lambda code: {"10305": "Engineering"}.get(code or ""),
+        )
+        queues.lines = (repair_line(1, pr_department="10305"), repair_line(2))
+
+        rows = listing(queues)["items"]
+
+        # Line 2's PR was not read: its own requisitioner, as before.
+        assert [(r["requester"], r["requesterName"]) for r in rows] == [
+            ("10305", "Engineering"),
+            ("10316", None),
+        ]
+
+    def test_a_po_row_says_how_its_declaration_was_linked(self, queues) -> None:
+        queues.lines = (repair_line(1), repair_line(2))
+        queues.declarations = (
+            declaration(1, status="Completed", declaration_link="BOUND"),
+            declaration(2, status="Historical"),
+        )
+
+        rows = listing(queues)["items"]
+
+        assert [(r["declarationStatus"], r["declarationLink"]) for r in rows] == [
+            ("Completed", "BOUND"),
+            ("Historical", None),
+        ]
+
+    def test_a_pr_row_carries_its_declaration(self, queues) -> None:
+        serve_requests(queues, repair_request(1), repair_request(2))
+        queues.declarations = (
+            declaration(
+                1,
+                id="D-PR-2000029101-10",
+                related_repair_id="PR-2000029101-10",
+                repair_document_type="PR",
+                status="Completed",
+                declaration_id="att-1",
+                declared_by="A. Planner",
+                condition="Repairable",
+                declaration_link="WINDOW",
+            ),
+        )
+
+        body = listing(queues)
+        first, second = body["items"]
+
+        assert (first["declarationStatus"], first["declarationId"], first["declarationLink"]) == (
+            "Completed",
+            "att-1",
+            "WINDOW",
+        )
+        assert second["declarationStatus"] == "Required"
+        assert body["viewCounts"]["undeclared"] == 1
+        assert ids(listing(queues, view="undeclared")) == ["PR-2000029102-10"]
+        assert ids(listing(queues, declarationStatus="Completed")) == ["PR-2000029101-10"]

@@ -184,6 +184,11 @@ class TestSelectFields:
 
 class TestTerminalSteps:
     def test_a_finished_conversation_cannot_be_answered(self) -> None:
-        terminal = _i08({script.I08_ASSESSMENT: {"choice": script.USE_EXISTING}})
+        terminal = _i08(
+            {
+                script.I08_ASSESSMENT: {"choice": script.USE_EXISTING},
+                script.I08_DECLARE_CHOICE: {"choice": script.SKIP_DECLARATION},
+            }
+        )
         with pytest.raises(AnswerError, match="end of this conversation"):
             validate(terminal, {"choice": "anything"}, SETTINGS)
