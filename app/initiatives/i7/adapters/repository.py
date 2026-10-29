@@ -10,7 +10,10 @@ month for every material-plant would be a large, mostly-empty table. But
 ``ADI = n / n_nz`` counts total periods, so the series handed to a caller must
 be dense.
 
-**The window is the extract's, not the material's own first-to-last movement.**
+**The window is the demand window, not the material's own first-to-last movement.**
+It is the one the latest feature run recorded (24 calendar months ending at the latest
+verified complete month, :mod:`app.initiatives.i7.features.consumption_window`), or the
+extract's first-to-last window for a run that recorded none.
 :func:`consumption_series_for` used to densify over each material's own
 observed range -- which sounds like the more conservative choice, but is
 wrong: a material whose first movement is late loses its leading zero-demand
@@ -21,12 +24,11 @@ zeros are counted. Those leading months are real evidence of *no demand*,
 which is exactly what an intermittency measure needs to see -- see
 :func:`app.initiatives.i7.features.builder._densify` for the full rationale.
 
-So this module now shares Phase 3's own densification (:func:`_densify`) and
-its extract-wide window (:func:`observation_window`) rather than reimplementing
-either. Forecasting (the only caller of :func:`consumption_series_for`) and
-the feature store must agree on ``total_periods``/``non_zero_periods`` for the
-same material-plant -- a second, independently-windowed implementation is
-exactly how they drift apart.
+So this module shares Phase 3's own densification (:func:`_densify`) and the window
+Phase 3 resolved and recorded, rather than reimplementing either. Forecasting (the
+caller of :func:`consumption_series_for`) and the feature store must agree on
+``total_periods``/``non_zero_periods`` for the same material-plant -- a second,
+independently-windowed implementation is exactly how they drift apart.
 """
 
 from typing import Iterator
@@ -44,6 +46,7 @@ from app.initiatives.i7.contracts import (
 )
 from app.initiatives.i7.contracts.enums import Criticality
 from app.initiatives.i7.features.builder import _densify, observation_window
+from app.initiatives.i7.features.consumption_window import WindowStatus, latest_run_window
 from app.models.i7_staging import (
     StagedConsumption,
     StagedMaterial,
@@ -161,18 +164,33 @@ def consumption_series_for(
 ) -> ConsumptionSeries | None:
     """The dense monthly series for one material-plant.
 
-    Densified over the **extract-wide** observation window -- the same window
-    and the same densification (:func:`app.initiatives.i7.features.builder._densify`)
-    the feature store uses, so ``total_periods``/``non_zero_periods`` for a
+    Densified over the **demand window the latest feature run recorded** -- 24
+    calendar months ending at the latest verified complete month
+    (:mod:`app.initiatives.i7.features.consumption_window`) -- with the same
+    densification (:func:`app.initiatives.i7.features.builder._densify`) the
+    feature store uses, so ``total_periods``/``non_zero_periods`` for a
     material-plant agree between the two regardless of which one a caller
-    reads. See this module's docstring for why a per-material window would be
-    wrong, not just different.
+    reads. The window is read back from the run, never recomputed here, so
+    forecasting cannot window differently from the features it was routed by.
+    See this module's docstring for why a per-material window would be wrong,
+    not just different.
 
-    Returns ``None`` when either nothing is staged for this material-plant, or
-    the extract itself has no observation window at all (no consumption
-    staged anywhere) -- there is no window to densify over in either case.
+    A run built before the window existed has none recorded, and the series is
+    over the extract's own first-to-last window as it always was.
+
+    Returns ``None`` when nothing is staged for this material-plant, when the
+    extract has no observation window at all, or when the run found the demand
+    window unusable -- a month of it missing or incomplete. There is then no
+    series to give: a month nobody observed is not a zero, and a zero filled in
+    for it would be forecast as demand.
     """
-    window = observation_window(session)
+    recorded = latest_run_window(session)
+    if recorded is not None and recorded.status is not None:
+        if recorded.status != WindowStatus.USABLE.value or recorded.start is None or recorded.end is None:
+            return None
+        window = (recorded.start, recorded.end)
+    else:
+        window = observation_window(session)
     if window is None:
         return None
 

@@ -46,6 +46,7 @@ from app.initiatives.i7.features.classification import (
     classify_demand,
     route_models,
 )
+from app.initiatives.i7.features.consumption_window import ConsumptionWindow, resolve_window_for_run
 from app.initiatives.i7.features.declining import DecliningEvaluation, evaluate_dense_series
 from app.initiatives.i7.features.lead_time_provider import resolve_lead_time
 from app.initiatives.i7.features.oar_scope import assess_oar_scope
@@ -67,6 +68,10 @@ class FeatureBuildResult:
     history_status_counts: dict[str, int] = field(default_factory=dict)
     demand_class_counts: dict[str, int] = field(default_factory=dict)
     oar_scope_counts: dict[str, int] = field(default_factory=dict)
+    window: ConsumptionWindow | None = None
+    """The demand window this build read (:mod:`app.initiatives.i7.features.consumption_window`)."""
+    window_history_status_counts: dict[str, int] = field(default_factory=dict)
+    """The history gate over the window, for the material-plants it applies to (everything outside OAR scope)."""
     error: str | None = None
     declining_mode: str = "off"
     declining_status_counts: dict[str, int] = field(default_factory=dict)
@@ -601,6 +606,25 @@ def build_features(policy: PolicyDocument | None = None) -> FeatureBuildResult:
             purchase_orders = _load_purchase_order_counts(session)
             stock = _load_stock(session)
             window = observation_window(session, staging_run_id)
+            # The extract's own first-to-last window above is what OAR reads (its donor gate, its
+            # target history, the conversion count's reference month) and is left exactly as it was. The
+            # demand window below is what everything outside OAR scope -- classification, forecasting and
+            # the stock figures -- reads. See _build_one.
+            consumption_window = resolve_window_for_run(
+                session, staging_run_id, policy.consumption_window
+            )
+            result.window = consumption_window
+            if consumption_window.is_usable:
+                logger.info("feature run %d: demand %s", run_id, consumption_window.describe())
+            else:
+                logger.warning(
+                    "feature run %d: demand window is %s -- %s. Material-plants outside OAR scope are "
+                    "flagged MISSING_DATA and their recommendations blocked until the months are "
+                    "validated or the extract is reloaded",
+                    run_id,
+                    consumption_window.status.value,
+                    consumption_window.describe(),
+                )
 
             logger.info("feature run %d: computing features", run_id)
             batch_size = safe_batch_size(MaterialFeature, 2000, session.get_bind().dialect.name)
@@ -629,6 +653,7 @@ def build_features(policy: PolicyDocument | None = None) -> FeatureBuildResult:
                     run_id,
                     result,
                     declining_mode=result.declining_mode,
+                    consumption_window=consumption_window,
                 )
                 batch.append(feature)
                 if len(batch) >= batch_size:
@@ -650,6 +675,7 @@ def build_features(policy: PolicyDocument | None = None) -> FeatureBuildResult:
             stored.status = STATUS_SUCCEEDED
             stored.features_built = result.features
             stored.finished_at = datetime.now(timezone.utc)
+            _record_window(stored, result.window)
             session.commit()
 
         logger.info(
@@ -678,6 +704,22 @@ def build_features(policy: PolicyDocument | None = None) -> FeatureBuildResult:
         return result
 
 
+def _month_list(months: tuple[date, ...]) -> str | None:
+    """``YYYY-MM`` list for a run column (255 characters, so about 36 months), or ``None`` when empty."""
+    return ", ".join(month.strftime("%Y-%m") for month in months)[:255] or None
+
+
+def _record_window(stored: FeatureBuildRun, window: ConsumptionWindow | None) -> None:
+    """Write the demand window onto the run, so forecasting and the audit read the same one."""
+    if window is None:
+        return
+    stored.window_status = window.status.value
+    stored.window_start = window.start
+    stored.window_end = window.end
+    stored.window_missing_months = _month_list(window.missing_months)
+    stored.window_trailing_months = _month_list(window.trailing_incomplete_months)
+
+
 def _build_one(
     row: Any,
     consumption: dict[tuple[str, str], list[tuple[date, Decimal, str | None]]],
@@ -689,9 +731,21 @@ def _build_one(
     run_id: int,
     result: FeatureBuildResult,
     declining_mode: str = "off",
+    consumption_window: ConsumptionWindow | None = None,
 ) -> dict[str, Any]:
-    """One material-plant's features."""
+    """One material-plant's features.
+
+    ``consumption_window`` is the demand window (24 calendar months ending at the latest verified complete
+    month). It applies to every material-plant **outside OAR scope**: their classification (ADI / CV-squared),
+    routing, and the demand statistics the stock figures read are computed over it, and the history gate over
+    it is stored as ``window_history_status``. Two things are deliberately left over the extract's whole
+    history, because OAR reads them and the window must not move what OAR sees: ``history_status`` (a donor is
+    a material-plant with ``history_status = 'SUFFICIENT'``) and ``consumption_count_12m`` (the conversion
+    trigger). OAR material-plants themselves are built exactly as before. ``None`` -- as the older callers
+    pass -- builds everything as before.
+    """
     from app.initiatives.i7.contracts import MaterialAttributes
+    from app.initiatives.i7.contracts.enums import DemandPattern, ScopeDecision
 
     material = row.sap_material_number
     plant = row.sap_plant_code
@@ -726,8 +780,6 @@ def _build_one(
             statistics.adi.value, statistics.cv_squared.value, policy.classification
         )
     else:
-        from app.initiatives.i7.contracts import DemandPattern
-
         demand_class = DemandPattern.UNCLASSIFIED
 
     routing = route_models(demand_class)
@@ -748,6 +800,42 @@ def _build_one(
         material_status=row.material_status,
     )
     oar = assess_oar_scope(attributes, policy.oar)
+
+    routing_reason = routing.reason
+    window_history_status: str | None = None
+    if consumption_window is not None and oar.scope is not ScopeDecision.IN_SCOPE:
+        if consumption_window.is_usable:
+            window_series = (
+                _densify(rows, key, consumption_window.range)
+                if rows
+                else ConsumptionSeries(key=key, observations=())
+            )
+            window_statistics = demand_statistics(window_series)
+            window_history = assess_history(window_statistics, policy.history_gate, policy.confidence)
+            window_history_status = window_history.status.value
+            if window_history.status is HistoryStatus.SUFFICIENT:
+                demand_class = classify_demand(
+                    window_statistics.adi.value, window_statistics.cv_squared.value, policy.classification
+                )
+                routing_reason = route_models(demand_class).reason
+            else:
+                demand_class = DemandPattern.UNCLASSIFIED
+                routing_reason = f"WINDOW: {window_history.reason}"
+            routing = route_models(demand_class)
+            statistics, series = window_statistics, window_series
+        else:
+            # A month of the window is missing or incomplete. Whatever the statistics said, they are not
+            # evidence: the row keeps its (whole-history) numbers for OAR's sake and is not classified, so it
+            # is not forecast and its recommendation cannot be finalised.
+            window_history_status = "MISSING_DATA"
+            demand_class = DemandPattern.UNCLASSIFIED
+            routing = route_models(demand_class)
+            routing_reason = f"MISSING_DATA: {consumption_window.describe()}"
+
+    if window_history_status is not None:
+        result.window_history_status_counts[window_history_status] = (
+            result.window_history_status_counts.get(window_history_status, 0) + 1
+        )
 
     order_count = purchase_orders.get((material, plant), 0)
     stock_position = stock.get((material, plant))
@@ -774,6 +862,7 @@ def _build_one(
         "last_period": series.observations[-1].period if series.observations else None,
         "history_months": statistics.total_periods,
         "history_status": history.status.value,
+        "window_history_status": window_history_status,
         "data_sufficiency": history.sufficiency.value,
         "required_history_months": history.required_months,
         "total_demand": statistics.total_demand if statistics.total_periods else None,
@@ -788,7 +877,7 @@ def _build_one(
         "demand_class": demand_class.value,
         "baseline_model": routing.baseline.value if routing.baseline else None,
         "challenger_model": routing.challenger.value if routing.challenger else None,
-        "routing_reason": routing.reason[:255],
+        "routing_reason": routing_reason[:255],
         "oar_scope": oar.scope.value,
         "oar_reason": oar.reason[:255],
         "oar_rollup_status": oar.rollup_status,

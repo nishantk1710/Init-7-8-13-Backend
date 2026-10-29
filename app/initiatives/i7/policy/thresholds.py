@@ -34,6 +34,43 @@ class HistoryGatePolicy(BaseModel):
     """Fewer than 6 months of history routes to cold-start."""
 
 
+class ConsumptionWindowPolicy(BaseModel):
+    """The demand observation window: how long it is, and when a month counts as delivered in full.
+
+    The window is ``window_months`` calendar months ending at the latest **verified complete** month
+    (:mod:`app.initiatives.i7.features.consumption_window`). A month is not complete merely because it has
+    movement rows: a month is judged against the months before it, so a month that arrived with a small
+    fraction of its usual volume (a partial reload, a delivery cut short) is ``MISSING_DATA`` and is
+    neither read as zero consumption nor allowed to end the window.
+
+    The ratio is a first setting, not a calibrated one: it separates a collapse (June 2026 held 14% of May's
+    movements) from ordinary month-to-month movement, and an operator confirms or overrides the verdict
+    per month with ``I7_DEMAND_VALIDATED_MONTHS``.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    window_months: int = Field(default=24, ge=1)
+    """Calendar months in the window, every one of them a month in the series -- a month with no movement is a
+    zero only when the month is complete."""
+
+    completeness_reference_months: int = Field(default=6, ge=1)
+    """A month is compared with the median volume of the (up to) this many complete months before it."""
+
+    completeness_min_reference_months: int = Field(default=3, ge=1)
+    """Complete months needed before a month can be compared at all. The opening months of a delivery have
+    nothing before them, so they are accepted on having any movements (and say so)."""
+
+    completeness_min_ratio: float = Field(default=0.25, gt=0, le=1)
+    """A month holding less than this share of its reference volume is incomplete."""
+
+    @model_validator(mode="after")
+    def _reference_fits(self) -> "ConsumptionWindowPolicy":
+        if self.completeness_min_reference_months > self.completeness_reference_months:
+            raise ValueError("completeness_min_reference_months must not exceed completeness_reference_months")
+        return self
+
+
 class ClassificationPolicy(BaseModel):
     """Stage 2c/2d -- ADI and CV-squared cutoffs.
 

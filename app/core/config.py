@@ -9,7 +9,7 @@ to empty so the app -- and the health endpoint -- come up with no SAP, database
 or identity credentials present.
 """
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
@@ -795,6 +795,19 @@ class Settings(BaseSettings):
     # is applied on purpose, not by this setting).
     i7_declining_demand_mode: Literal["off", "shadow", "active"] = "off"
 
+    # --- I07 demand window: months an operator has validated as complete ------
+    #
+    # The window ends at the latest month whose SAP consumption is verified
+    # complete (app/initiatives/i7/features/consumption_window.py). A month is
+    # judged against the months before it, so a month that arrived with a small
+    # share of its usual volume is MISSING_DATA -- not zero consumption, and not a
+    # month the window may end on. A person who has checked such a month against
+    # SAP and found it genuinely quiet (a shutdown, a holiday month) lists it here
+    # as YYYY-MM, comma-separated, and it is then taken as complete. Empty (the
+    # default) validates nothing: only the volume rule decides. Reloading the
+    # extract is the other way out of MISSING_DATA.
+    i7_demand_validated_months: str = ""
+
     # --- I07 OAR donor similarity: retrieval -------------------------------
     #
     # Operational knobs for app/initiatives/i7/oar/retrieval.py. They decide how
@@ -1127,6 +1140,27 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         """Allowed CORS origins, parsed from ``FRONTEND_ORIGIN``."""
         return [origin.strip() for origin in self.frontend_origin.split(",") if origin.strip()]
+
+    @property
+    def i7_demand_validated_month_set(self) -> frozenset[date]:
+        """``I7_DEMAND_VALIDATED_MONTHS`` as first-of-month dates.
+
+        A malformed entry raises rather than being skipped: a month the operator meant to validate
+        and silently did not is a recommendation that stays blocked for a reason nobody can see.
+        """
+        months: set[date] = set()
+        for part in self.i7_demand_validated_months.split(","):
+            text = part.strip()
+            if not text:
+                continue
+            try:
+                parsed = datetime.strptime(text, "%Y-%m")
+            except ValueError as exc:
+                raise ValueError(
+                    f"I7_DEMAND_VALIDATED_MONTHS entry {text!r} is not YYYY-MM"
+                ) from exc
+            months.add(date(parsed.year, parsed.month, 1))
+        return frozenset(months)
 
     @property
     def i7_plant_list(self) -> tuple[str, ...]:
