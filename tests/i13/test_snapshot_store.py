@@ -465,6 +465,8 @@ ROUTES = [
     "/api/i13/utilisation-ledger",
     "/api/i13/utilisation-ledger?include_out_of_scope=true",
     "/api/i13/utilisation-ledger?lifecycle_status=received",
+    "/api/i13/utilisation-ledger?lifecycle_status=RESERVED,RECEIVED,ISSUED",
+    "/api/i13/utilisation-ledger?lifecycle_status=nonsense",
     "/api/i13/utilisation-ledger/101/1",
     "/api/i13/ledger",
     "/api/i13/ledger?include_out_of_scope=true",

@@ -324,8 +324,12 @@ class SqlSnapshot:
         limit=None, offset=0,
     ) -> tuple[list[tuple[ReservationLedgerEntry, str | None]], int]:
         """Ledger entries with their SGTXT. ``reservation_keys`` keeps only
-        those (reservation, item) pairs -- the session filter."""
+        those (reservation, item) pairs -- the session filter.
+        ``lifecycle_status`` is one status or a set of them (any matches)."""
         extra = []
+        if lifecycle_status is not None and not isinstance(lifecycle_status, str):
+            extra.append(R.f1.in_(sorted(lifecycle_status)))
+            lifecycle_status = None
         if reservation_keys is not None:
             numbers = sorted({k[0] for k in reservation_keys})
             if not numbers:
