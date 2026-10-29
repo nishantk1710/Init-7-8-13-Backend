@@ -747,10 +747,19 @@ def build_attestation_view(
     """Match every repair line against the attestation table, and every new
     purchase against the justifications. Always does the work."""
     cfg = cfg or get_i8_settings()
+    # Everything the complete flow added is built and served only while
+    # I8_COMPLETE_FLOW_ENABLED is on (29-Oct-2026). Off, the settings already
+    # read the repair PRs as unserved and the cutovers as unset; here the
+    # R-reference links, the newer checks and the declaring session go too.
+    complete_flow = cfg.complete_flow_enabled
     # The open repair PRs are declared on only while the register serves them.
     requests = snapshot.repair_requests if cfg.repair_requests_enabled else ()
     cover = attestation_coverage(
-        db, snapshot.lines, cfg, requests=requests, references=getattr(snapshot, "repair_references", ())
+        db,
+        snapshot.lines,
+        cfg,
+        requests=requests,
+        references=getattr(snapshot, "repair_references", ()) if complete_flow else (),
     )
     justifications = load_justifications(db)
     exceptions, exception_stats = build_exceptions(
@@ -772,19 +781,22 @@ def build_attestation_view(
         declaration_grace_days=cfg.declaration_grace_days,
         unreferenced_lines=getattr(snapshot, "unreferenced_lines", ()),
         session_check_start=getattr(snapshot, "session_check_start", None),
+        complete_flow=complete_flow,
     )
     by_line = justifications_by_line(snapshot.lines, justifications, exceptions)
     logger.info("I08 register justifications: %s", justification_counts(by_line))
+    declarations = build_queue(
+        snapshot.lines,
+        cover,
+        requests=requests,
+        cutover=cfg.attestation_cutover_date_value,
+    )
+    if not complete_flow:
+        # No link from a repair to the assistant visit that declared it.
+        declarations = [replace(row, declaration_session_id=None) for row in declarations]
     return AttestationView(
         coverage=cover,
-        declarations=tuple(
-            build_queue(
-                snapshot.lines,
-                cover,
-                requests=requests,
-                cutover=cfg.attestation_cutover_date_value,
-            )
-        ),
+        declarations=tuple(declarations),
         exceptions=tuple(exceptions),
         exception_stats=exception_stats,
         built_at=datetime.now(timezone.utc),
