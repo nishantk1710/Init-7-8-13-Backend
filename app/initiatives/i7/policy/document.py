@@ -30,6 +30,7 @@ from app.initiatives.i7.policy.thresholds import (
     ApprovalRoutingPolicy,
     ClassificationPolicy,
     ConfidencePolicy,
+    ConsumptionWindowPolicy,
     ConversionTriggerPolicy,
     DecliningDemandPolicy,
     DemandSanityPolicy,
@@ -57,6 +58,7 @@ class PolicyDocument(BaseModel):
 
     oar: OarPolicy = Field(default_factory=current_oar_policy)
     history_gate: HistoryGatePolicy = Field(default_factory=HistoryGatePolicy)
+    consumption_window: ConsumptionWindowPolicy = Field(default_factory=ConsumptionWindowPolicy)
     classification: ClassificationPolicy = Field(default_factory=ClassificationPolicy)
     model_adoption: ModelAdoptionPolicy = Field(default_factory=ModelAdoptionPolicy)
     similarity: SimilarityPolicy = Field(default_factory=SimilarityPolicy)
@@ -92,6 +94,12 @@ class PolicyDocument(BaseModel):
             raise ConfigurationError(
                 "confidence HIGH requires less history than the history gate demands, "
                 "so a material could be graded HIGH without ever being classified"
+            )
+
+        if self.consumption_window.window_months < self.history_gate.minimum_history_months:
+            raise ConfigurationError(
+                "the demand window is shorter than the history gate demands, so no material-plant "
+                "could ever have enough history inside it"
             )
 
         if (
