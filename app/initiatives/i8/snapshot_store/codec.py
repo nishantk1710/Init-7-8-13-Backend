@@ -63,7 +63,11 @@ from typing import Any
 # And unreferenced_lines (session_jobs.UnreferencedLine, the job lines with no
 # R-reference) with session_check_start; a version-4 payload raises no
 # MISSING_SESSION_ID until the next rebuild.
-CODEC_VERSION = 5
+#
+# 6 since 29-Oct-2026: RepairLine gained currency, EKKO.WAERS of its net price.
+# A version-5 payload would construct -- it defaults -- but every repair cost
+# would be served with no currency, so with no symbol, until the next rebuild.
+CODEC_VERSION = 6
 _ALLOWED = "app.initiatives.i8."
 
 

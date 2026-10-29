@@ -433,6 +433,15 @@ class I8Settings(BaseSettings):
     # of them on a busy database. 0 = no limit.
     new_item_price_timeout_seconds: int = 20
 
+    # --- Repair cost (the repair line's detail) ----------------------------
+
+    # An EKPO.NETPR above zero and at or below this is a placeholder price on
+    # the PO, not a cost: 16 of the 104 open repair lines carried 1.00 on
+    # 29-Oct-2026. The line then shows no cost and says why. The same floor as
+    # new_item_price_token_max above, set separately so the two stay
+    # independent. In the PO's own currency, like the price it is compared to.
+    repair_cost_token_max: Decimal = Decimal("1.00")
+
     # --- Presentation -----------------------------------------------------
 
     # Plant code -> display name, comma separated.

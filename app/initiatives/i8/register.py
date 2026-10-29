@@ -208,6 +208,12 @@ class RepairLine:
     repair, the same code a PR row shows. The queue's requester. A code; the
     name is looked up where it is served."""
 
+    # --- the price's currency (29-Oct-2026) ------------------------------
+    currency: str | None = None
+    """EKKO.WAERS: the currency :attr:`net_price` is in, ``ZAR`` on every open
+    line today. None when the line has no PO header or the header has no
+    currency -- then nobody knows, and the price must not be called rand."""
+
     @property
     def is_overdue(self) -> bool:
         return self.overdue_status == OVERDUE
@@ -323,6 +329,27 @@ def is_rfq_line(header: Mapping | None, cfg: I8Settings) -> bool:
     return header is not None and header["bsart"] == cfg.rfq_doc_type
 
 
+def is_placeholder_price(net_price: Decimal | None, cfg: I8Settings) -> bool:
+    """Whether the line's net price is a placeholder rather than a cost: above
+    zero and at or below ``I8_REPAIR_COST_TOKEN_MAX`` (R1.00).
+
+    The same token values MBEW holds (see ``I8_NEW_ITEM_PRICE_TOKEN_MAX``), on
+    the PO: 16 of the 104 open repair lines carried a NETPR of 1.00 on
+    29-Oct-2026, a pump and a man-winder cage among them. Served as a cost,
+    "R 1" would read as a repair that costs nothing.
+    """
+    return net_price is not None and 0 < net_price <= cfg.repair_cost_token_max
+
+
+def repair_cost(net_price: Decimal | None, cfg: I8Settings) -> Decimal | None:
+    """The line's net price as a repair cost, or None when it is not one: no
+    price, a zero, or a placeholder (:func:`is_placeholder_price`). In the
+    line's own currency, :attr:`RepairLine.currency` -- never converted."""
+    if net_price is None or net_price <= 0 or is_placeholder_price(net_price, cfg):
+        return None
+    return net_price
+
+
 # --- Layer 2: assemble the lifecycle per line -----------------------------
 
 _SCHEDULE_SQL = """
@@ -413,7 +440,11 @@ _HEADER_SQL = """
 -- (interim proxy -- EKKO-BEDAT is not exposed)"). Reading a column that
 -- disappears at cutover is a bug with a date on it, and two initiatives
 -- anchoring on different columns would report different ages for one PO line.
-select ebeln, bsart, lifnr, aedat
+--
+-- WAERS: the currency EKPO.NETPR is in. A PO is priced in the vendor's
+-- currency, not always the rand: plants 1300 and 1500 carry USD, EUR, INR and
+-- NAD lines (15-Oct-2026 export), and one repair line was priced in USD.
+select ebeln, bsart, lifnr, aedat, waers
 from v_ekko
 where ebeln in :documents
 """
@@ -560,6 +591,7 @@ def _build_line(
     doc_type = header["bsart"] if header else None
     vendor = header["lifnr"] if header else None
     po_date = header["aedat"] if header else None
+    currency = header["waers"] if header else None
 
     # ERDAT is the line's own creation date and is populated on every repair
     # line; the header date is a fallback for a shape where it is not.
@@ -585,6 +617,7 @@ def _build_line(
         ordered_qty=ordered_qty,
         unit=row["meins"],
         net_price=row["netpr"],
+        currency=currency,
         item_category=row["pstyp"],
         pr_number=row["banfn"],
         pr_item=row["bnfpo"],

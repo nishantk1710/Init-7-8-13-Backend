@@ -331,7 +331,17 @@ class RepairChain(I8Model):
     ordered_qty: Decimal = Decimal(0)
     unit: str | None = None
     repair_cost: Decimal | None = None
-    """Net order price of the repair line -- what this repair costs."""
+    """Net order price of the repair line (EKPO.NETPR) -- what this repair
+    costs, in ``repairCostCurrency``. Null when the line has no price, a zero,
+    or a placeholder (then ``repairCostPlaceholder`` carries it)."""
+    repair_cost_currency: str | None = None
+    """EKKO.WAERS, the currency of ``repairCost`` (``ZAR``, ``USD``): a PO is
+    priced in the vendor's currency and nothing here converts it. Null when the
+    PO has no header or no currency -- unknown, not rand."""
+    repair_cost_placeholder: Decimal | None = None
+    """The PO's net price when it is a placeholder (above zero, at or below
+    ``I8_REPAIR_COST_TOKEN_MAX``, R1.00), which ``repairCost`` then leaves
+    null. Null otherwise."""
 
     new_unit_lead_time_days: int | None = None
 

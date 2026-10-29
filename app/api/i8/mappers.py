@@ -65,7 +65,7 @@ from app.initiatives.i8.exception_state import (
     canonical_status,
 )
 from app.initiatives.i8.models import ExceptionEvent, Notification, RepairAttestation
-from app.initiatives.i8.register import RegisterStats, RepairLine
+from app.initiatives.i8.register import RegisterStats, RepairLine, is_placeholder_price, repair_cost
 from app.initiatives.i8.requisitions import NOT_ORDERED, PR_RAISED, RepairRequest
 from app.initiatives.i8.service import Snapshot
 from app.initiatives.i8.universe import UniverseRow, UniverseStats
@@ -194,7 +194,9 @@ def repair_chain(
         expected_return=line.due_date,
         ordered_qty=line.ordered_qty,
         unit=line.unit,
-        repair_cost=line.net_price,
+        repair_cost=repair_cost(line.net_price, cfg),
+        repair_cost_currency=line.currency,
+        repair_cost_placeholder=line.net_price if is_placeholder_price(line.net_price, cfg) else None,
         new_unit_lead_time_days=new_unit_lead_time_days,
         item_category=line.item_category,
         doc_type=line.doc_type,
