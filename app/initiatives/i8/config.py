@@ -24,7 +24,7 @@ from datetime import date
 from decimal import Decimal
 from functools import lru_cache
 
-from pydantic import ValidationInfo, field_validator
+from pydantic import ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.shared.plant_scope import PLANT_NAMES
@@ -44,6 +44,24 @@ class I8Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    # --- The complete-flow switch (29-Oct-2026) ---------------------------
+
+    complete_flow_enabled: bool = False
+    """Serve the I08 complete flow released 27/28-Oct-2026 (repair PRs, stock
+    by condition, the need-date line, declaring in the assistant, R-reference
+    links and session jobs, the new exception types, the start dates and the
+    notification log). Off by default, so no environment shows features the
+    team lead has not approved yet -- production included, when ``dev`` is
+    released to ``main``. Turning it on is ``I8_COMPLETE_FLOW_ENABLED=true`` on
+    the App Service: a settings change restarts the app, no deploy needed.
+
+    Off, every I08 and reservation-assistant output reads as it did before
+    that release. The data layer stays: the snapshot still builds everything,
+    and the switch decides only what is served and raised. While it is off,
+    :meth:`_complete_flow_gate` reads ``repair_requests_enabled``,
+    ``need_date_advice_enabled`` and the two cutover dates as off/blank,
+    whatever their own env vars say; the rest is gated where it is served."""
 
     # --- 80-series detection (W5.1) --------------------------------------
 
@@ -453,6 +471,25 @@ class I8Settings(BaseSettings):
     # 781 open repair lines will not render in one response.
     default_page_size: int = 50
     max_page_size: int = 500
+
+    @model_validator(mode="after")
+    def _complete_flow_gate(self) -> "I8Settings":
+        """With ``complete_flow_enabled`` off, the complete flow's own switches
+        and start dates read as off and blank -- the effective settings, so
+        every reader (register, declarations, exceptions, assistant, the
+        snapshot's rules) agrees without a check of its own.
+
+        ``session_check_start_date`` is left alone on purpose: the snapshot
+        build reads it, and a stored snapshot outlives a restart, so blanking
+        it here would leave the wrong start date behind after the switch is
+        turned on. Its only output, MISSING_SESSION_ID, is not raised while the
+        switch is off (exceptions.build_exceptions)."""
+        if not self.complete_flow_enabled:
+            self.repair_requests_enabled = False
+            self.need_date_advice_enabled = False
+            self.attestation_cutover_date = ""
+            self.justification_cutover_date = ""
+        return self
 
     @field_validator("stock_condition_source")
     @classmethod

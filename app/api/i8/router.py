@@ -68,6 +68,7 @@ from app.api.i8.schemas import (
     ExceptionEventRequest,
     ExceptionQueueItem,
     ExceptionResponse,
+    FeaturesResponse,
     MaterialReference,
     NotificationResponse,
     RepairChain,
@@ -1604,8 +1605,24 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
             # Since 27-Oct-2026: whether the assistant gives the need-date
             # line (off until SAP confirms how MRP treats an open repair PO).
             "needDateAdviceEnabled": cfg.need_date_advice_enabled,
+            # Since 29-Oct-2026: I8_COMPLETE_FLOW_ENABLED, which every switch
+            # above defers to. The screens hide the complete flow on false.
+            "completeFlowEnabled": cfg.complete_flow_enabled,
         },
     )
+
+
+@router.get(
+    "/features",
+    response_model=FeaturesResponse,
+    summary="Which I08 features this backend serves",
+)
+def get_features(cfg: SettingsDep) -> FeaturesResponse:
+    """The switches a screen needs before it renders, from the settings
+    alone: no snapshot, so never a 503 while I08 data is being prepared. The
+    assistant pages read it; a client that cannot treats every switch as off.
+    """
+    return FeaturesResponse(complete_flow_enabled=cfg.complete_flow_enabled)
 
 
 # --- W7.2 / FR-6: the repairable-unit rule, on its own ---------------------
