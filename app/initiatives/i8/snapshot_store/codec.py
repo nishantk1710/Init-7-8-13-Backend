@@ -63,6 +63,9 @@ from typing import Any
 # And unreferenced_lines (session_jobs.UnreferencedLine, the job lines with no
 # R-reference) with session_check_start; a version-4 payload raises no
 # MISSING_SESSION_ID until the next rebuild.
+# And (29-Oct-2026, the complete-flow switch) NewAcquisition gained
+# line_created_on, EKPO.ERDAT on a direct PO; a version-5 payload reads it as
+# None, which is what the live data carries, so the version stays 5.
 CODEC_VERSION = 5
 _ALLOWED = "app.initiatives.i8."
 

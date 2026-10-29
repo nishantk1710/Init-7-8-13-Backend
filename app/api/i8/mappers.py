@@ -57,7 +57,12 @@ from app.initiatives.i8.coding_candidates import (
 )
 from app.initiatives.i8.config import I8Settings
 from app.initiatives.i8.declarations import DeclarationRow
-from app.initiatives.i8.exceptions import RAISED_BY_I8, ExceptionItem, ExceptionStats
+from app.initiatives.i8.exceptions import (
+    RAISED_BY_I8,
+    RAISED_WITHOUT_COMPLETE_FLOW,
+    ExceptionItem,
+    ExceptionStats,
+)
 from app.initiatives.i8.line_justifications import LineJustification
 from app.initiatives.i8.exception_state import (
     UNTOUCHED,
@@ -102,17 +107,20 @@ def universe_item(row: UniverseRow, cfg: I8Settings) -> UniverseItem:
         open_repair_lines=row.open_repair_lines,
         qty_under_repair=row.qty_under_repair,
         in_material_master=row.in_material_master,
-        usable_stock=row.usable_stock,
-        damaged_stock=row.damaged_stock,
+        # Null while the complete flow is off (I8_COMPLETE_FLOW_ENABLED).
+        usable_stock=row.usable_stock if cfg.complete_flow_enabled else None,
+        damaged_stock=row.damaged_stock if cfg.complete_flow_enabled else None,
     )
 
 
-def stock_split(row: UniverseRow | None) -> dict:
+def stock_split(row: UniverseRow | None, cfg: I8Settings | None = None) -> dict:
     """The register row's stock split from its universe row (28-Oct-2026).
 
     ``stock_condition_known`` is null when there is no universe row, so a row
-    with no stock record at all does not read as "condition unknown"."""
-    if row is None:
+    with no stock record at all does not read as "condition unknown". All
+    three are null while the complete flow is off (``cfg``), as on a register
+    built before the split existed."""
+    if row is None or (cfg is not None and not cfg.complete_flow_enabled):
         return {"usable_stock": None, "damaged_stock": None, "stock_condition_known": None}
     return {
         "usable_stock": row.usable_stock,
@@ -427,8 +435,13 @@ def timeline(
     attestation: RepairAttestation | None = None,
     link: str | None = None,
     reference: str | None = None,
+    *,
+    requested_stage: bool = True,
 ) -> list[LifecycleStage]:
     """The lifecycle, stage by stage, with the evidence for each.
+
+    ``requested_stage`` is False while the complete flow is off: no "Repair
+    requested" stage, as before 27-Oct-2026.
 
     There is no "Removed from machine" stage since 27-Oct-2026 (ruled 26-Oct):
     SAP keeps no record of a unit coming off a machine -- the goods issue to
@@ -450,7 +463,7 @@ def timeline(
     stages: list[LifecycleStage] = []
     # The repair starts at the request (27-Oct-2026): the PR the PO was
     # ordered from, when the register knows it.
-    if line.pr_number:
+    if requested_stage and line.pr_number:
         stages.append(
             LifecycleStage(
                 stage="pr_raised",
@@ -543,9 +556,23 @@ def universe_meta(stats: UniverseStats) -> UniverseMeta:
     )
 
 
-def register_meta(stats: RegisterStats) -> RegisterMeta:
-    """The register's counts, whatever the filters."""
-    return RegisterMeta(**vars(stats))
+#: The register counts of the open repair PRs, served as 0 while the complete
+#: flow is off: before it the register did not look for them at all.
+_REQUEST_COUNTS = (
+    "open_repair_requests",
+    "requisitions_excluded_deleted",
+    "requisitions_excluded_live_po",
+    "requisitions_excluded_reservation_closed",
+)
+
+
+def register_meta(stats: RegisterStats, cfg: I8Settings | None = None) -> RegisterMeta:
+    """The register's counts, whatever the filters. With ``cfg`` and the
+    complete flow off, the repair-PR counts read 0."""
+    counts = vars(stats)
+    if cfg is not None and not cfg.complete_flow_enabled:
+        counts = {**counts, **{name: 0 for name in _REQUEST_COUNTS}}
+    return RegisterMeta(**counts)
 
 
 def register_facets(
@@ -846,6 +873,8 @@ def exception_meta(
     stats: ExceptionStats,
     excluded_types: frozenset[str] = frozenset(),
     excluded: Sequence[ExceptionItem] = (),
+    *,
+    complete_flow: bool = True,
 ) -> ExceptionMeta:
     """The counts, less whatever the caller's queue does not carry.
 
@@ -855,7 +884,11 @@ def exception_meta(
     types off ``typesRaised``, so the meta describes the queue as it is listed.
     Subtracted rather than recounted: the lines checked and covered and the
     windows are facts about the run that no count of items reproduces.
+
+    ``complete_flow`` False (``I8_COMPLETE_FLOW_ENABLED`` off) names only the
+    types raised then in ``typesRaised``.
     """
+    implemented = RAISED_BY_I8 if complete_flow else RAISED_WITHOUT_COMPLETE_FLOW
     pre_automation = sum(1 for item in excluded if item.pre_automation)
     by_severity = dict(stats.by_severity)
     for item in excluded:
@@ -873,7 +906,7 @@ def exception_meta(
         attestation_cutover_date=stats.attestation_cutover_date,
         # Which types are actually implemented, so an empty count is
         # distinguishable from an unimplemented check.
-        types_raised=sorted(t.value for t in RAISED_BY_I8 if t.value not in excluded_types),
+        types_raised=sorted(t.value for t in implemented if t.value not in excluded_types),
         acquisitions_checked=stats.acquisitions_checked,
         justification_window_days=stats.justification_window_days,
         justification_cutover_date=stats.justification_cutover_date,

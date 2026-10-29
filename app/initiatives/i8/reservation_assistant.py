@@ -233,8 +233,12 @@ class I08Assessment:
         append-only column and read back months later, so the shape has to be a
         deliberate choice that changes only when somebody means it to -- not
         something that silently gains a field because a dataclass did.
+
+        While the complete flow is off the stock split keys are left out
+        (``RepairableUnitVerdict.stock_condition_checked``), so the record has
+        the shape it had before the split existed.
         """
-        return {
+        record = {
             "flow": "i08",
             "materialId": self.material_id,
             "plant": self.plant,
@@ -302,6 +306,15 @@ class I08Assessment:
             # is part of what the requester was told.
             "needDateAdvice": self.need_date_advice(today),
         }
+        if not self.verdict.stock_condition_checked:
+            for key in _STOCK_SPLIT_KEYS:
+                del record[key]
+        return record
+
+
+#: The record keys of the usable/damaged split (27/28-Oct-2026), left out
+#: while the complete flow is off.
+_STOCK_SPLIT_KEYS = ("usableStock", "damagedStock", "stockConditionKnown", "stockSource", "usableBreakdown")
 
 
 def _number(value: Decimal | None) -> str | None:

@@ -247,6 +247,11 @@ class RepairableUnitVerdict:
     """``MCHB`` / ``MBEW`` when the condition is known, ``MARD`` when only the
     total is (the fallback), None when there is no stock record at all."""
 
+    stock_condition_checked: bool = True
+    """False while the complete flow is off (29-Oct-2026): the condition was
+    not looked at, so the stock is the MARD total, said as it was before the
+    split existed -- no "(condition unknown)", no note about it."""
+
     @property
     def has_stock(self) -> bool:
         """True only when stock is *known* and positive. The MARD total."""
@@ -311,8 +316,8 @@ class RepairableUnitVerdict:
         elif self.has_stock:
             parts.append(
                 f"There {'is' if self.stock_on_hand == 1 else 'are'} "
-                f"{plain(self.stock_on_hand)} in stock at plant {self.plant}{where} "
-                "(condition unknown)"
+                f"{plain(self.stock_on_hand)} in stock at plant {self.plant}{where}"
+                + (" (condition unknown)" if self.stock_condition_checked else "")
             )
 
         if self.open_repair_lines:
@@ -403,6 +408,7 @@ class RepairableUnitVerdict:
         # rows on the 15-Oct extract all hold 0).
         if (
             self.is_repairable_material
+            and self.stock_condition_checked
             and not self.stock_condition_known
             and self.has_stock
         ):
@@ -453,6 +459,7 @@ def assess(
     repair_requests: Sequence[RepairRequest] | None = None,
     department_name: Callable[[str | None], str | None] | None = None,
     usable_conditions: Sequence[str] | None = None,
+    stock_by_condition: bool | None = None,
 ) -> RepairableUnitVerdict:
     """Decide FR-6 for one material at one plant.
 
@@ -468,6 +475,10 @@ def assess(
     department code into its name (``departments.name_for``); without it, or
     when it has no name, the code is shown alone. ``usable_conditions`` orders
     the usable breakdown; it defaults to ``I8_USABLE_STOCK_CONDITIONS``.
+
+    ``stock_by_condition`` False reads the stock as the MARD total, as before
+    27-Oct-2026: a damaged-only shelf counts as stock again. ``None`` follows
+    ``I8_COMPLETE_FLOW_ENABLED``.
     """
     material_key = normalise(material_id) or ""
     plant_key = (plant or "").strip() or None
@@ -542,7 +553,11 @@ def assess(
         (line.qty_under_repair for line in open_lines), Decimal(0)
     )
 
-    split = _stock_split(rows, usable_conditions)
+    if stock_by_condition is None:
+        from app.initiatives.i8.config import get_i8_settings
+
+        stock_by_condition = get_i8_settings().complete_flow_enabled
+    split = _stock_split(rows, usable_conditions) if stock_by_condition else _UNKNOWN_SPLIT
 
     open_requests = (
         [
@@ -608,7 +623,12 @@ def assess(
         damaged_stock=split.damaged,
         usable_breakdown=split.breakdown,
         stock_condition_known=split.known,
-        stock_source=split.source if split.known else ("MARD" if stock_on_hand is not None else None),
+        stock_source=(
+            (split.source if split.known else ("MARD" if stock_on_hand is not None else None))
+            if stock_by_condition
+            else None
+        ),
+        stock_condition_checked=stock_by_condition,
     )
 
 
