@@ -7,6 +7,12 @@ densification (:func:`app.initiatives.i7.features.builder._densify`,
 :func:`app.initiatives.i7.features.builder.observation_window`) instead of
 densifying independently over each material's own first-to-last movement.
 
+The window is now the demand window the latest feature run recorded (24 months
+ending at the latest verified complete month -- see
+:mod:`app.initiatives.i7.features.consumption_window`), and it applies to the
+material-plants outside OAR scope. OAR rows keep the extract's own window, so
+the agreement asserted here is checked on non-OAR material-plants only.
+
 Real Postgres or skip. These assert on real staged data, not fixtures,
 because the divergence this closes (471 material-plants) only shows up at
 real volume -- see the feature builder's own docstring for the measured ADI
@@ -20,6 +26,7 @@ from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.initiatives.i7.adapters import consumption_series_for
 from app.initiatives.i7.features.builder import observation_window
+from app.initiatives.i7.features.consumption_window import WindowStatus, latest_run_window
 from app.models.i7_features import MaterialFeature
 
 needs_db = pytest.mark.skipif(not get_settings().database_url, reason="DATABASE_URL not set")
@@ -31,6 +38,19 @@ def session():
         yield session
 
 
+def _demand_window(session):
+    """The window forecasting reads: the latest feature run's, else the extract's own."""
+    recorded = latest_run_window(session)
+    if (
+        recorded is not None
+        and recorded.status == WindowStatus.USABLE.value
+        and recorded.start is not None
+        and recorded.end is not None
+    ):
+        return recorded.start, recorded.end
+    return observation_window(session)
+
+
 def _built(session) -> bool:
     return session.execute(select(func.count()).select_from(MaterialFeature)).scalar() > 0
 
@@ -40,7 +60,7 @@ def _late_starting_material_plant(session):
     extract's window start -- the exact case the old per-material window
     handled differently from the feature store.
     """
-    window = observation_window(session)
+    window = _demand_window(session)
     if window is None:
         return None
     start, _ = window
@@ -52,6 +72,10 @@ def _late_starting_material_plant(session):
               join i7_staged_material_plant p
                 on p.sap_material_number = c.sap_material_number
                and p.sap_plant_code = c.sap_plant_code
+              join i7_material_feature f
+                on f.sap_material_number = c.sap_material_number
+               and f.sap_plant_code = c.sap_plant_code
+               and f.oar_scope <> 'IN_SCOPE'
              group by 1, 2
             having min(c.period) > :start
              order by min(c.period) desc
@@ -127,7 +151,7 @@ def test_late_starting_series_spans_the_full_extract_window_not_its_own_span(ses
     if candidate is None:
         pytest.skip("no late-starting material-plant in this extract")
 
-    window = observation_window(session)
+    window = _demand_window(session)
     expected_total_periods = (
         (window[1].year - window[0].year) * 12 + (window[1].month - window[0].month) + 1
     )

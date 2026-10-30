@@ -34,6 +34,16 @@ from app.initiatives.i7.recommendations.types import (
 from app.initiatives.i7.policy import PolicyDocument
 
 
+MISSING_DATA_WINDOW = "MISSING_DATA"
+"""``i7_material_feature.window_history_status`` when a month of the demand window is missing or incomplete."""
+
+MISSING_DATA_REASON = (
+    "MISSING_DATA: SAP consumption for one or more months of the 24-month demand window is missing or "
+    "incomplete, so this recommendation is not built on a complete history. It cannot be submitted until "
+    "those months are validated (I7_DEMAND_VALIDATED_MONTHS) or the extract is reloaded and the pipeline re-run."
+)
+
+
 @dataclass
 class BuiltRecommendation:
     """Everything the persistence layer needs to write one row."""
@@ -193,7 +203,20 @@ def build_normal_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecomm
     rop_ok = row.rop_status in _OK_STATUSES
     max_ok = row.max_stock_status in _OK_STATUSES
 
-    if safety_stock_ok and rop_ok:
+    # A month of the demand window is missing or incomplete in the SAP extract
+    # (features.consumption_window). Whatever the inventory stage produced, it
+    # was not built on a complete history, so nothing is offered for review: the
+    # recommendation is NOT_EVALUABLE -- which the workflow will not submit -- and
+    # no recommended value is carried, until the months are validated or the
+    # extract is reloaded and the pipeline re-run.
+    window_missing_data = getattr(row, "window_history_status", None) == MISSING_DATA_WINDOW
+
+    if window_missing_data:
+        safety_stock_ok = rop_ok = max_ok = False
+        status = LifecycleStatus.NOT_EVALUABLE
+        blocking_reason = MISSING_DATA_REASON
+        trace = [("blocked_status", MISSING_DATA_WINDOW), ("reason", blocking_reason)]
+    elif safety_stock_ok and rop_ok:
         status = LifecycleStatus.READY_FOR_REVIEW
         blocking_reason = None
         trace = _trace_from_row(row, _NORMAL_TRACE_FIELDS)

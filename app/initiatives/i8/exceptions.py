@@ -89,7 +89,7 @@ snapshot's reference date, the date every other age in I08 is counted from.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from enum import Enum
 
@@ -165,6 +165,33 @@ RAISED_BY_I8: frozenset[ExceptionType] = frozenset(
         ExceptionType.MISSING_SESSION_ID,
     }
 )
+
+#: The types raised before the complete flow (27-Oct-2026), and the only ones
+#: raised while ``I8_COMPLETE_FLOW_ENABLED`` is off.
+RAISED_WITHOUT_COMPLETE_FLOW: frozenset[ExceptionType] = frozenset(
+    {
+        ExceptionType.MISSING_ATTESTATION,
+        ExceptionType.UNJUSTIFIED_ACQUISITION,
+        ExceptionType.OVERDUE_REPAIR,
+    }
+)
+
+
+def raised_without_complete_flow(exception_id: str) -> bool:
+    """Whether an exception id is one the queue raises with the complete flow
+    off: a type in :data:`RAISED_WITHOUT_COMPLETE_FLOW`, and for a bought-new
+    finding a purchase-order line, not a new-buy PR (whose id names
+    ``PR-``; see :func:`acquisition_exception_id`). Read by the auto-resolve
+    while the switch is off, so a finding only hidden is never closed as gone.
+    """
+    for exception_type in RAISED_WITHOUT_COMPLETE_FLOW:
+        prefix = f"EX-{exception_type.value}-"
+        if exception_id.startswith(prefix):
+            return not (
+                exception_type is ExceptionType.UNJUSTIFIED_ACQUISITION
+                and exception_id[len(prefix) :].startswith("PR-")
+            )
+    return False
 
 
 class Severity(str, Enum):
@@ -914,6 +941,7 @@ def build_exceptions(
     declaration_grace_days: int = 14,
     unreferenced_lines=(),
     session_check_start: date | None = None,
+    complete_flow: bool = True,
 ) -> tuple[list[ExceptionItem], ExceptionStats]:
     """The whole exception queue for one snapshot, and its counts.
 
@@ -924,7 +952,21 @@ def build_exceptions(
     PRs the register serves and the coverage checked; the PR findings read
     those. ``declarations`` are the current declarations. The two grace-day
     checks run only when ``reference_date`` is given.
+
+    ``complete_flow`` False (``I8_COMPLETE_FLOW_ENABLED`` off) raises only
+    what was raised before 27-Oct-2026 (:data:`RAISED_WITHOUT_COMPLETE_FLOW`):
+    the bought-new check reads the direct purchase-order lines only, dated by
+    the line's own creation date (EKPO.ERDAT) as it was then, against the open
+    repair PO lines only; and the session check has no start date.
     """
+    if not complete_flow:
+        acquisitions = [
+            replace(a, raised_at=a.line_created_on)
+            for a in acquisitions
+            if a.document_type == PURCHASE_ORDER
+        ]
+        repair_requests = served_requests = declarations = unreferenced_lines = ()
+        reference_date = session_check_start = None
     items = missing_attestations(lines, coverage, cutover=cutover)
     items += unjustified_acquisitions(
         acquisitions,
@@ -935,7 +977,8 @@ def build_exceptions(
         repair_requests=repair_requests,
     )
     items += overdue_repairs(lines, grace_days=overdue_grace_days)
-    items += repaired_against_assessment(lines, coverage, requests=served_requests)
+    if complete_flow:
+        items += repaired_against_assessment(lines, coverage, requests=served_requests)
     if reference_date is not None:
         items += undeclared_repair_requests(
             served_requests,

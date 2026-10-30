@@ -114,6 +114,12 @@ class NewAcquisition:
     tests construct this positionally."""
     requested_by: str | None = None
     """EBAN.AFNAM on a PR, as SAP sent it. None on a direct PO."""
+    line_created_on: date | None = None
+    """EKPO.ERDAT on a direct PO, None on a PR (29-Oct-2026). Only the check
+    with the complete flow switched off reads it: that is how the purchase was
+    dated before 27-Oct-2026, so it raises what was raised then -- nothing, on
+    data that does not carry ERDAT. Appended with a default, so a stored
+    snapshot without it reads as undated."""
 
     @property
     def key(self) -> tuple[str, str, str]:
@@ -353,6 +359,7 @@ def find_new_acquisitions(
                 ordered_qty=row["menge"],
                 raised_at=header["aedat"] if header is not None else None,
                 document_type=PURCHASE_ORDER,
+                line_created_on=row.get("erdat"),
             )
         )
     return sorted(found, key=lambda acquisition: acquisition.key)

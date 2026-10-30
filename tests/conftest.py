@@ -23,6 +23,13 @@ os.environ.setdefault(
     str(Path(__file__).resolve().parents[1] / "data-generator" / "discovery"),
 )
 
+# The I08 complete flow is ON for the suite (29-Oct-2026). It defaults off in
+# every environment until approved, but the tests describe the flow itself;
+# what it looks like switched off is tests/test_i8_feature_switch.py, which
+# turns it off explicitly. Assignment, not setdefault: a developer's shell or
+# .env saying false must not quietly fail every complete-flow test.
+os.environ["I8_COMPLETE_FLOW_ENABLED"] = "true"
+
 
 @pytest.fixture(autouse=True)
 def _one_sap_system(request, monkeypatch):

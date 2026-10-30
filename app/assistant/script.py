@@ -208,7 +208,12 @@ def _declaration_or_end(
     every I08 path -- whether or not a unit already exists says nothing about
     whether the one coming off is repairable. ``ending`` is the terminal text
     the path would have given without the question, so skipping changes nothing.
+
+    Not asked while the complete flow is off (``I8_COMPLETE_FLOW_ENABLED``,
+    29-Oct-2026): the path ends as it did before the question existed.
     """
+    if not get_i8_settings().complete_flow_enabled:
+        return _terminal(I08_DONE, session_id, ending, request_id)
     if I08_DECLARE_CHOICE not in answers:
         return Step(
             id=I08_DECLARE_CHOICE,
@@ -348,10 +353,12 @@ def _i08(
             # The first line stays the request: the request builder quotes
             # it alone when a reason is missing. The note under it says
             # what the reason does and does not do (27-Oct-2026).
+            # The note only with the complete flow on (29-Oct-2026).
             prompt=(
                 "Understood. The platform does not block anything. Please "
                 "record why a new unit is needed despite the one in stock or "
-                "on repair.\n\n" + I08_REASON_NOTE
+                "on repair."
+                + ("\n\n" + I08_REASON_NOTE if get_i8_settings().complete_flow_enabled else "")
             ),
             fields=(
                 _reason_field(reason_categories, "Why a new unit is needed"),

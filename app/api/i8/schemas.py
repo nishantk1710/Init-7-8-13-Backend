@@ -1222,6 +1222,18 @@ class SnapshotInfo(I8Model):
     can be traced to a setting without reading the deployment."""
 
 
+class FeaturesResponse(I8Model):
+    """Which I08 features this backend serves (29-Oct-2026). Read from the
+    settings alone, never the snapshot, so it answers while I08 data is still
+    being prepared."""
+
+    complete_flow_enabled: bool
+    """``I8_COMPLETE_FLOW_ENABLED``: the complete flow (repair PRs, stock by
+    condition, declaring in the assistant, R-reference links, the new
+    exception types, the notification log). A client that cannot read this
+    treats it as off."""
+
+
 UniverseDetail.model_rebuild()
 
 

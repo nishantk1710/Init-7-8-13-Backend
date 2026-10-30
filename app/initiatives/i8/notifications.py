@@ -75,7 +75,12 @@ def log_new(db: Session, items: Iterable[ExceptionItem], cfg: I8Settings) -> int
 
     Returns how many rows were written; 0 on any database error, which is
     logged as a warning and rolled back rather than raised.
+
+    Writes nothing while the complete flow is off (``I8_COMPLETE_FLOW_ENABLED``,
+    29-Oct-2026): the log came with it.
     """
+    if not cfg.complete_flow_enabled:
+        return 0
     wanted = _notifiable(items, cfg)
     if not wanted:
         return 0
