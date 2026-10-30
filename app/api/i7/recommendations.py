@@ -18,7 +18,8 @@ from sqlalchemy.orm import Session
 from app.api.i7.actor import Actor, get_i7_actor
 from app.api.i7.deps import get_session, load_latest_recommendation
 from app.initiatives.i7.kpi_formulas.resolved import load_active
-from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql, working_capital_sql
+from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql
+from app.initiatives.i7.kpi_formulas.working_capital import working_capital_impact
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations import oar_exclusions, routing
 from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
@@ -27,7 +28,7 @@ from app.initiatives.i7.recommendations.consumption_history import monthly_consu
 from app.models.i7_features import DecliningDemandEvaluation
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun
 from app.models.i7_oar import OarDonorExclusion, OarNeighbour
-from app.models.i7_recommendation import Recommendation
+from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation
 from app.models.i7_staging import StagedMaterial, StagedMaterialPlant
 from app.schemas.i7.errors import ApiError, bad_request
 from app.schemas.i7.recommendations import (
@@ -364,6 +365,27 @@ def _display_fields_for(session: Session, materials: set[str]) -> dict[str, tupl
     }
 
 
+def _rejection_reasons_for(session: Session, rows: list[Recommendation]) -> dict[str, str | None]:
+    """``recommendation_id -> the comment of its newest REJECT`` in the approval ledger, for the REJECTED rows.
+
+    One ``IN`` query for the whole page, and none at all when nothing on it is rejected. A row rejected before
+    anyone wrote a comment maps to ``None``. The ledger is read as written -- never edited -- so a request
+    that was rejected, asked for again and rejected once more shows the latest reason, and the earlier one
+    stays in ``GET .../approval-history``.
+    """
+    rejected = {row.recommendation_id for row in rows if row.status == "REJECTED"}
+    if not rejected:
+        return {}
+    reasons: dict[str, str | None] = {}
+    for recommendation_id, comment in session.execute(
+        select(ApprovalLedgerEntry.recommendation_id, ApprovalLedgerEntry.comment)
+        .where(ApprovalLedgerEntry.recommendation_id.in_(rejected), ApprovalLedgerEntry.action == "REJECT")
+        .order_by(ApprovalLedgerEntry.timestamp, ApprovalLedgerEntry.id)
+    ).all():
+        reasons[recommendation_id] = comment
+    return reasons
+
+
 def _current_sap_stock_for(
     session: Session, keys: set[tuple[str, str]]
 ) -> dict[tuple[str, str], tuple[Decimal | None, Decimal | None, Decimal | None]]:
@@ -576,6 +598,7 @@ def list_recommendations(
     # One batched staging lookup for the whole page -- see _display_fields_for.
     display_fields = _display_fields_for(session, {row.sap_material_number for row in rows})
     declining_keys = _declining_keys_for(session, rows)
+    rejection_reasons = _rejection_reasons_for(session, rows)
 
     return RecommendationListResponse(
         items=[
@@ -585,6 +608,7 @@ def list_recommendations(
                 description=display_fields.get(row.sap_material_number, (None, None))[0],
                 currency=display_fields.get(row.sap_material_number, (None, None))[1],
                 demand_type=_demand_type(row, declining_keys),
+                rejection_reason=rejection_reasons.get(row.recommendation_id),
             )
             for row in rows
         ],
@@ -735,11 +759,12 @@ def get_recommendation_summary(
     # The formula is the saved one when somebody edited it (Inventory Planning > KPI formulas), else the
     # rule above. A formula that cannot be worked out for a row (a missing input, a division by zero)
     # gives NULL, which SUM leaves out -- the same "left out, not read as zero" as the IS NOT NULL list.
+    #
+    # One shared calculation with the Quarterly Report (kpi_formulas.working_capital): MBEW price and
+    # currency, ZAR (and NAD at 1:1) only, stated in ZAR with how many material-plants it covers.
     formulas = load_active(session)
-    working_capital = working_capital_sql(formulas)
-    net_rop_value_row = session.execute(
-        base.with_only_columns(func.sum(working_capital)).where(working_capital.is_not(None))
-    ).scalar()
+    capital = working_capital_impact(session, base, formulas)
+    net_rop_value_row = capital.amount
 
     # --- High Stockout Risk: stock on hand < average daily consumption x lead time --
     # Every Fast and Slow moving material-plant in the usage table, recommended or not, with the
@@ -787,6 +812,9 @@ def get_recommendation_summary(
         currency=_portfolio_currency(session),
         net_safety_stock_value_impact=net_value_row,
         net_rop_value_impact=net_rop_value_row,
+        working_capital_currency=capital.currency,
+        working_capital_included_count=capital.included_count,
+        working_capital_excluded_count=capital.excluded_count,
         critical_stockout_risk_count=stockout_risk.at_risk,
         stockout_risk_evaluated_count=stockout_risk.evaluated,
         stockout_risk_insufficient_data_count=stockout_risk.insufficient_data,
@@ -820,6 +848,7 @@ def get_recommendation(
         consumption_history=consumption_history,
         description=display_fields[0],
         currency=display_fields[1],
+        rejection_reason=_rejection_reasons_for(session, [row]).get(row.recommendation_id),
     )
 
 

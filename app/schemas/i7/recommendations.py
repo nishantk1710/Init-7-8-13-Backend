@@ -23,6 +23,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.initiatives.i7.kpi_formulas.currency import zar_currency_for
 from app.models.i7_recommendation import Recommendation as RecommendationModel
 
 
@@ -488,6 +489,16 @@ class RecommendationSummary(BaseModel):
     """ISO code ``unit_price`` is in, as SAP's valuation data states it (MBEW
     WAERS). ``None`` when SAP supplies no currency -- a client must not assume
     one."""
+    working_capital_currency: str | None = None
+    """``"ZAR"`` when ``working_capital_impact`` is stated in ZAR (the price is in ZAR, or NAD at 1:1); ``None``
+    when there is no figure or the price's currency cannot be stated in ZAR."""
+    manually_converted: bool = False
+    """A user asked to convert this NOT_ELIGIBLE OAR material to Min-Max ordering. ``conversion_eligibility``
+    still holds the rule's verdict; this says the verdict was overridden by a request."""
+    requested_by: str | None = None
+    requested_at: datetime | None = None
+    rejection_reason: str | None = None
+    """The comment of the newest REJECT in the approval ledger, for a REJECTED row; ``None`` otherwise."""
 
     @classmethod
     def from_model(
@@ -497,7 +508,9 @@ class RecommendationSummary(BaseModel):
         description: str | None = None,
         currency: str | None = None,
         demand_type: str = "NORMAL",
+        rejection_reason: str | None = None,
     ) -> "RecommendationSummary":
+        impact = working_capital_impact(row)
         return cls(
             recommendation_id=row.recommendation_id,
             material=row.sap_material_number,
@@ -515,8 +528,13 @@ class RecommendationSummary(BaseModel):
             chain_index=row.chain_index,
             route=list(route),
             unit_price=row.unit_price,
-            working_capital_impact=working_capital_impact(row),
+            working_capital_impact=impact,
             currency=currency,
+            working_capital_currency=zar_currency_for(currency) if impact is not None else None,
+            manually_converted=bool(row.manually_converted),
+            requested_by=row.requested_by,
+            requested_at=row.requested_at,
+            rejection_reason=rejection_reason if row.status == "REJECTED" else None,
             current=StockParameters(
                 safety_stock=row.current_safety_stock,
                 rop=row.current_rop,
@@ -688,7 +706,17 @@ class RecommendationSummaryStats(BaseModel):
     points are present -- the Overview's Working Capital Impact. Same sign as
     ``net_safety_stock_value_impact`` (positive releases working capital, negative ties up more) but
     on the reorder point, which already includes the safety stock. ``None`` when no in-scope row has
-    all three values, never defaulted to 0."""
+    all three values, never defaulted to 0.
+
+    Stated in ZAR (``working_capital_currency``) from MBEW's price and ``WAERS``: ZAR counts as is, NAD at 1:1,
+    and a material-plant in any other currency, with no stated currency or with a placeholder price is left out
+    (``working_capital_excluded_count``)."""
+
+    working_capital_currency: str | None = None
+    working_capital_included_count: int = 0
+    """Material-plants the figure above is over."""
+    working_capital_excluded_count: int = 0
+    """Material-plants of the same population left out of it."""
 
     excess_inventory_opportunity: Decimal | None
     """SUM(unit_price * (current_max_stock - recommended_max_stock)) over
@@ -722,6 +750,13 @@ class RecommendationDetail(BaseModel):
     """Same figure as :attr:`RecommendationSummary.working_capital_impact`; ``None`` means not calculable."""
     currency: str | None = None
     """ISO code ``unit_price`` is in (MBEW WAERS); ``None`` when SAP supplies none."""
+    working_capital_currency: str | None = None
+    """See :attr:`RecommendationSummary.working_capital_currency`."""
+    manually_converted: bool = False
+    requested_by: str | None = None
+    requested_at: datetime | None = None
+    """The manual Min-Max conversion request, if any -- see :attr:`RecommendationSummary.manually_converted`."""
+    rejection_reason: str | None = None
 
     current: StockParameters
     recommended: StockParameters
@@ -754,7 +789,9 @@ class RecommendationDetail(BaseModel):
         consumption_history: tuple[ConsumptionHistoryEntry, ...] = (),
         description: str | None = None,
         currency: str | None = None,
+        rejection_reason: str | None = None,
     ) -> "RecommendationDetail":
+        impact = working_capital_impact(row)
         return cls(
             recommendation_id=row.recommendation_id,
             material=row.sap_material_number,
@@ -762,8 +799,13 @@ class RecommendationDetail(BaseModel):
             plant=row.sap_plant_code,
             circuit=row.circuit,
             unit_price=row.unit_price,
-            working_capital_impact=working_capital_impact(row),
+            working_capital_impact=impact,
             currency=currency,
+            working_capital_currency=zar_currency_for(currency) if impact is not None else None,
+            manually_converted=bool(row.manually_converted),
+            requested_by=row.requested_by,
+            requested_at=row.requested_at,
+            rejection_reason=rejection_reason if row.status == "REJECTED" else None,
             current=StockParameters(
                 safety_stock=row.current_safety_stock,
                 rop=row.current_rop,

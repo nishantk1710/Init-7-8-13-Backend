@@ -139,6 +139,12 @@ def test_the_rows_add_up_to_the_card_over_the_same_recommendations(monkeypatch):
     ]
     with Session(engine) as session:
         session.add_all(rows)
+        # Each price's currency (MBEW WAERS): the card counts ZAR and NAD only.
+        session.add_all(
+            StagedMaterialPlant(sap_material_number=m, sap_plant_code="1300", currency="ZAR", staging_run_id=1,
+                                source_table="n_mbew")
+            for m in "ABCD"
+        )
         session.commit()
         figures = kpi_definitions.position_figures(session, None, date(2027, 1, 1), date(2026, 10, 21))
         per_row = [working_capital_impact(row) for row in rows]

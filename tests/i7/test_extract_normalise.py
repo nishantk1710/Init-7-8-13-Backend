@@ -593,6 +593,43 @@ class TestMbewValuations:
         assert choice.missing is None
 
 
+    def test_waers_in_the_extract_is_staged_with_the_price(self, monkeypatch) -> None:
+        monkeypatch.setattr(extract, "_columns", lambda session, table: [*MBEW_COLUMNS, "WAERS"])
+        engine = create_engine("sqlite://")
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE n_mbew (material TEXT, valuation_area TEXT, valuation_type TEXT, "
+                "moving_price TEXT, price_unit TEXT, currency TEXT)"
+            ))
+            connection.execute(text(
+                "INSERT INTO n_mbew VALUES ('5000000001', '1300', '', '250.00', '10', 'ZAR')"
+            ))
+        with Session(engine) as session:
+            valuations = extract._valuations_by_plant(session)
+
+        choice = choose_unit_price(valuations[("5000000001", "1300")])
+        assert choice.price == Decimal("25.0000")
+        assert choice.currency == "ZAR"
+
+    def test_a_blank_waers_when_the_column_is_delivered_is_a_defect(self, monkeypatch) -> None:
+        monkeypatch.setattr(extract, "_columns", lambda session, table: [*MBEW_COLUMNS, "WAERS"])
+        engine = create_engine("sqlite://")
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE TABLE n_mbew (material TEXT, valuation_area TEXT, valuation_type TEXT, "
+                "moving_price TEXT, price_unit TEXT, currency TEXT)"
+            ))
+            connection.execute(text(
+                "INSERT INTO n_mbew VALUES ('5000000001', '1300', '', '10.00', '1', '')"
+            ))
+        with Session(engine) as session:
+            valuations = extract._valuations_by_plant(session)
+
+        choice = choose_unit_price(valuations[("5000000001", "1300")])
+        assert choice.price is None
+        assert choice.missing is not None
+
+
 def _marc(material: str, plant: str, lvorm: str | None = None) -> dict:
     return {"material": material, "plant": plant, "mrp_type": "PD", "planned_deliv_time": "14",
             "reorder_point": "10", "maximum_stock_level": "20", "df_at_plant_level": lvorm}

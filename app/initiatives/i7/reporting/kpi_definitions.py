@@ -39,7 +39,8 @@ from sqlalchemy.orm import Session
 
 from app.api.i7.recommendations import _apply_filters, _not_smooth, _portfolio_currency
 from app.initiatives.i7.kpi_formulas.resolved import Formulas, load_active
-from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql, working_capital_sql
+from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql
+from app.initiatives.i7.kpi_formulas.working_capital import working_capital_impact
 from app.initiatives.i7.stockout_risk.counts import stockout_risk_counts
 from app.models.i7_recommendation import Recommendation
 from app.schemas.i7.reports import PositionFigures, StockoutPosition
@@ -189,18 +190,19 @@ def position_figures(
         excess_base.with_only_columns(func.sum(excess_value)).where(excess_value.is_not(None))
     ).scalar()
 
-    working_capital = working_capital_sql(formulas)
-    priced = base.where(working_capital.is_not(None))
-    net_rop = session.execute(priced.with_only_columns(func.sum(working_capital))).scalar()
+    # The same calculation as the Overview card (kpi_formulas.working_capital): MBEW price and currency in ZAR.
+    capital = working_capital_impact(session, base, formulas)
 
     return PositionFigures(
         population=population,
         stockout=stockout_position(session, base, cutoff, plant, formulas),
         excess_count=excess_count,
         excess_opportunity=Decimal(excess_opportunity) if excess_opportunity is not None else None,
-        net_rop_value_impact=Decimal(net_rop) if net_rop is not None else None,
-        priced_count=count_of(session, priced),
+        net_rop_value_impact=capital.amount,
+        priced_count=capital.included_count,
         currency=_portfolio_currency(session),
+        working_capital_currency=capital.currency,
+        working_capital_excluded_count=capital.excluded_count,
     )
 
 

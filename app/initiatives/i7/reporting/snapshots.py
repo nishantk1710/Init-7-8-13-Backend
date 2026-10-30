@@ -42,7 +42,8 @@ from app.models.i7_kpi_snapshot import STATUS_FINAL, STATUS_OPEN, KpiSnapshot, K
 logger = get_logger(__name__)
 
 #: Bumped when the way a snapshot's figures are calculated changes, so two snapshots are never compared across it blindly.
-CALC_VERSION = "1"
+#: "2": the working capital impact is MBEW's price and WAERS stated in ZAR (ZAR, and NAD at 1:1), not every priced row.
+CALC_VERSION = "2"
 
 CREATED = "CREATED"
 UPDATED = "UPDATED"

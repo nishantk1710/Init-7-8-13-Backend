@@ -186,7 +186,11 @@ def test_an_open_month_is_a_rolling_reading_and_says_so(db):
 
 
 def test_the_working_capital_change_is_between_months_with_the_same_calculation_only(db):
-    db.add(rec("A", at(2026, 10), cur_rop=2, rec_rop=12))  # 10 x (2 - 12) = -100
+    db.add_all([
+        rec("A", at(2026, 10), cur_rop=2, rec_rop=12),  # 10 x (2 - 12) = -100
+        StagedMaterialPlant(sap_material_number="A", sap_plant_code="1300", unit_price=Decimal("10"), currency="ZAR",
+                            staging_run_id=1, source_table="n_mbew"),  # the price's currency: only ZAR / NAD counts
+    ])
     db.commit()
     snapshots.capture_month(db, OCT, today=date(2026, 11, 3))
     db.add(rec("A", at(2026, 11, 5), run=2, cur_rop=2, rec_rop=32))  # 10 x (2 - 32) = -300
@@ -198,7 +202,7 @@ def test_the_working_capital_change_is_between_months_with_the_same_calculation_
     assert november.net_rop_change_from_previous == Decimal("-200")  # more cash tied up than last month
 
     row = db.execute(select(KpiSnapshot).where(KpiSnapshot.month == NOV)).scalar_one()
-    row.calc_version = "2"  # made with a different calculation: not comparable
+    row.calc_version = "0"  # made with a different calculation: not comparable
     db.commit()
     assert build(db, date(2027, 1, 15)).trends.months[1].net_rop_change_from_previous is None
 
