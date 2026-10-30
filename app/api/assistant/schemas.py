@@ -283,6 +283,18 @@ class PlanModel(AssistantModel):
     ``reservationNumber`` shows the first of them when the plan has none of its
     own."""
 
+    # Acquired vs plan for this one plan (I13 ``plans.plan_outcomes``). Filled
+    # by the I13 plan list only, and left null there while no snapshot is
+    # available -- null means "not measured", not "nothing issued".
+    matched_reservations: list[str] | None = None
+    """``rsnum/rspos`` of every reservation item counted for this plan: its
+    SGTXT links, else the ones required inside its window."""
+    issued_quantity: str | None = None
+    """Issued against ``matchedReservations`` (MSEG by reservation, net of
+    reversals)."""
+    acquired_vs_plan_status: str | None = None
+    acquired_vs_plan_variance_quantity: str | None = None
+
 
 class LinkedReservationModel(AssistantModel):
     """A reservation item whose SGTXT names the session (session_reservation_link).

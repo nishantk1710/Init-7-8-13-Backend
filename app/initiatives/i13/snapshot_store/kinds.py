@@ -54,7 +54,9 @@ from app.initiatives.i13.snapshot_store import codec
 #: change to a stored type, which makes that version unreadable at once.
 #: 2 (20 Oct 2026): lledger's statuses and sort date; watch's last movement.
 #: 3 (28 Oct 2026): grni holds a PO line (LegacyLedgerEntry) and its scope.
-RECORD_LAYOUT = 3
+#: 4 (30 Oct 2026): watch's acquired-vs-plan measures issued on each plan's own
+#: reservations, and its f2 can hold NO_RESERVATION. Same columns, new values.
+RECORD_LAYOUT = 4
 
 WATCH = "watch"
 MOVEMENT = "movement"

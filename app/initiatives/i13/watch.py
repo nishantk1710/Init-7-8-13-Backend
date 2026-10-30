@@ -7,7 +7,8 @@ call ``compute_watch_metrics`` and serialize the result.
 
 Postgres-backed: composes W3.5 (``movement_metrics.py``), W6.1
 (``procurement_chain.py``, for open-PO quantity) and W6.2
-(``reservation_ledger.py``, for acquired/issued quantities) and the PO lines'
+(``reservation_ledger.py``, for received/issued quantities), the plans' own
+reservations (``plans.plan_outcomes``, for acquired-vs-plan) and the PO lines'
 goods issues (``stock_issue_matching.py``, for GR-not-issued) rather than reading a gateway/CSV directly, and never recomputes aging or
 consumption itself -- see each helper below for exactly which upstream module
 owns which number.
@@ -36,7 +37,7 @@ from app.initiatives.i13.aging import classify_aging_band
 from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.models import AcquiredVsPlanStatus, AgingBand, ReservationLedgerEntry, WatchMetric
 from app.initiatives.i13.movement_metrics import compute_all_movement_metrics
-from app.initiatives.i13.plans import load_consumption_plans
+from app.initiatives.i13.plans import PlanOutcome, load_consumption_plans, plan_outcomes
 from app.initiatives.i13.po_lines import po_line_states
 from app.initiatives.i13.procurement_chain import build_procurement_chain
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
@@ -58,29 +59,36 @@ def _group_ledger_by_material_plant(
     return grouped
 
 
-def _sum_planned_quantity(plans_by_material_plant: dict[tuple[str, str], list], key: tuple[str, str]) -> Decimal:
-    return sum((plan.planned_quantity for plan in plans_by_material_plant.get(key, [])), Decimal("0"))
+def acquired_vs_plan(planned_qty: Decimal, issued_qty: Decimal, *, has_reservation: bool) -> AcquiredVsPlanStatus:
+    """Planned against issued on the plan's own reservations (``plan_outcomes``).
 
-
-def _acquired_vs_plan(planned_qty: Decimal, received_qty: Decimal) -> AcquiredVsPlanStatus:
+    A plan no reservation stands for yet has nothing issued to compare, which
+    is not the same as being short -- ``NO_RESERVATION``, not ``BELOW_PLAN``.
+    Shared by the WATCH row and the per-plan list (``/consumption-plans``).
+    """
     if planned_qty <= 0:
         return AcquiredVsPlanStatus.NO_PLAN
-    if received_qty < planned_qty:
+    if not has_reservation:
+        return AcquiredVsPlanStatus.NO_RESERVATION
+    if issued_qty < planned_qty:
         return AcquiredVsPlanStatus.BELOW_PLAN
-    if received_qty > planned_qty:
+    if issued_qty > planned_qty:
         return AcquiredVsPlanStatus.ABOVE_PLAN
     return AcquiredVsPlanStatus.ON_PLAN
 
 
-def _acquired_vs_plan_variance(planned_qty: Decimal, received_qty: Decimal) -> tuple[Decimal | None, Decimal | None]:
+def acquired_vs_plan_variance(
+    planned_qty: Decimal, issued_qty: Decimal, *, has_reservation: bool
+) -> tuple[Decimal | None, Decimal | None]:
     """variance_quantity/variance_percentage -- ``None`` (not zero) when
     there is no plan to vary against (planned_qty <= 0), since "no plan" and
-    "exactly on plan" are different facts. No configured tolerance band
+    "exactly on plan" are different facts, and while no reservation stands for
+    the plan (nothing could have been issued yet). No configured tolerance band
     exists anywhere in this repository's settings, so this is an exact
     comparison, per the task's explicit instruction not to invent one."""
-    if planned_qty <= 0:
+    if planned_qty <= 0 or not has_reservation:
         return None, None
-    variance_quantity = received_qty - planned_qty
+    variance_quantity = issued_qty - planned_qty
     variance_percentage = (variance_quantity / planned_qty) * Decimal("100")
     return variance_quantity, variance_percentage
 
@@ -203,9 +211,9 @@ def compute_watch_metrics(
     # it and acquired-vs-plan starts measuring against plans real requesters
     # captured, not only the 742 the generator wrote.
     plans = load_consumption_plans(data_dir, db)
-    plans_by_key: dict[tuple[str, str], list] = defaultdict(list)
-    for plan in plans:
-        plans_by_key[(plan.material, plan.plant)].append(plan)
+    outcomes_by_key: dict[tuple[str, str], list[PlanOutcome]] = defaultdict(list)
+    for outcome in plan_outcomes(plans, ledger_entries):
+        outcomes_by_key[(outcome.plan.material, outcome.plan.plant)].append(outcome)
 
     keys = set(movement_metrics_by_key) | set(ledger_by_key) | set(open_po_by_key)
     metrics: list[WatchMetric] = []
@@ -241,10 +249,16 @@ def compute_watch_metrics(
             lines_by_key.get(key, []), threshold_days=config.watch.gr_not_issued_threshold_days, as_of=as_of
         )
 
+        # The position rolls up its plans: planned and issued both over the
+        # same plans, so the two totals describe the same demand.
         received_quantity = sum((e.received_quantity or Decimal("0") for e in entries), Decimal("0"))
-        issued_quantity = sum((e.issued_quantity for e in entries), Decimal("0"))
-        planned_quantity = _sum_planned_quantity(plans_by_key, key)
-        variance_quantity, variance_percentage = _acquired_vs_plan_variance(planned_quantity, received_quantity)
+        outcomes = outcomes_by_key.get(key, [])
+        planned_quantity = sum((o.plan.planned_quantity for o in outcomes), Decimal("0"))
+        issued_quantity = sum((o.issued_quantity for o in outcomes), Decimal("0"))
+        has_reservation = any(o.reservations for o in outcomes)
+        variance_quantity, variance_percentage = acquired_vs_plan_variance(
+            planned_quantity, issued_quantity, has_reservation=has_reservation
+        )
 
         # material_scope_index only carries entries for keys a query actually
         # touched raw_marc for -- a key present only via movement/ledger
@@ -282,7 +296,9 @@ def compute_watch_metrics(
                 gr_not_issued_received_quantity=gr_received,
                 gr_not_issued_issued_quantity=gr_issued,
                 gr_not_issued_outstanding_quantity=gr_outstanding,
-                acquired_vs_plan_status=_acquired_vs_plan(planned_quantity, received_quantity),
+                acquired_vs_plan_status=acquired_vs_plan(
+                    planned_quantity, issued_quantity, has_reservation=has_reservation
+                ),
                 planned_quantity=planned_quantity if planned_quantity > 0 else None,
                 received_quantity=received_quantity,
                 issued_quantity=issued_quantity,

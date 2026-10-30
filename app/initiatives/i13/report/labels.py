@@ -24,6 +24,7 @@ PLAN_STATUS = {
     "ON_PLAN": "On plan",
     "BELOW_PLAN": "Below plan",
     "ABOVE_PLAN": "Above plan",
+    "NO_RESERVATION": "Awaiting reservation",
     "NO_PLAN": "Non-AI",
 }
 
