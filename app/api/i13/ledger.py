@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.api.i13.deps import page, snapshot_or_live, with_expected_delivery, with_material_names
 from app.core.db import get_db
+from app.core.logging import get_logger
 from app.initiatives.i13.ledger_compat import LegacyLedgerEntry, build_legacy_ledger, delivery_state
 from app.initiatives.i13.snapshot import I13Snapshot
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
@@ -38,6 +39,8 @@ from app.integrations.sap.postgres_procurement import PostgresProcurementReposit
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
 from app.schemas.i13 import LedgerCountsResponse, UtilisationLedgerEntryResponse
 from app.shared.material_scope import MaterialScope
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -70,6 +73,29 @@ def _matching(
         and (wanted_u is None or e.utilisation_status.value == wanted_u)
         and (wanted_d is None or delivery_state(e) == wanted_d)
     ]
+
+
+def _with_ordered_quantity(
+    rows: list[UtilisationLedgerEntryResponse], snapshot: I13Snapshot | SqlSnapshot | None
+) -> list[UtilisationLedgerEntryResponse]:
+    """Fill ``ordered_quantity`` from the served snapshot: the stored
+    version's PO work table, or the in-memory one's procurement chain. The
+    live path (no snapshot) leaves it null.
+
+    A screen still renders without it ("0 received" rather than "0 of 6"), so
+    a failed read is logged and the page goes out as it is."""
+    lines = [(r.po_number, r.po_item) for r in rows if r.po_number and r.po_item]
+    if snapshot is None or not lines:
+        return rows
+    try:
+        ordered = snapshot.ordered_quantities_for(lines)
+    except Exception:  # noqa: BLE001 -- see the docstring
+        logger.warning("I13 ledger: could not read ordered quantities", exc_info=True)
+        return rows
+    for row in rows:
+        if row.po_number and row.po_item:
+            row.ordered_quantity = ordered.get((row.po_number, row.po_item))
+    return rows
 
 
 def _unstored_entries(
@@ -118,15 +144,18 @@ def list_ledger_entries(
             **filters,
         )
         response.headers["X-Total-Count"] = str(total)
-        return [UtilisationLedgerEntryResponse.model_validate(row) for row in rows]
+        return _with_ordered_quantity([UtilisationLedgerEntryResponse.model_validate(row) for row in rows], snapshot)
     entries = _matching(
         _unstored_entries(db, snapshot, plant=plant, material=material, include_out_of_scope=include_out_of_scope),
         plant=plant, material=material, **filters,
     )
-    return [
-        UtilisationLedgerEntryResponse.model_validate(entry)
-        for entry in page(entries, response, limit=limit, offset=offset)
-    ]
+    return _with_ordered_quantity(
+        [
+            UtilisationLedgerEntryResponse.model_validate(entry)
+            for entry in page(entries, response, limit=limit, offset=offset)
+        ],
+        snapshot,
+    )
 
 
 @router.get("/ledger/counts", response_model=LedgerCountsResponse)
@@ -172,13 +201,13 @@ def get_ledger_entry(
         found = snapshot.legacy_entry(ledger_id, oar_only=not include_out_of_scope)
         if found is None:
             raise HTTPException(status_code=404, detail="Ledger entry not found")
-        return UtilisationLedgerEntryResponse.model_validate(found)
+        return _with_ordered_quantity([UtilisationLedgerEntryResponse.model_validate(found)], snapshot)[0]
     if snapshot is not None:
         entry = snapshot.legacy_ledger_by_id.get(ledger_id)
         if entry is not None and (
             include_out_of_scope or snapshot.scope_of(entry.material, entry.plant) is MaterialScope.OAR
         ):
-            return UtilisationLedgerEntryResponse.model_validate(entry)
+            return _with_ordered_quantity([UtilisationLedgerEntryResponse.model_validate(entry)], snapshot)[0]
         raise HTTPException(status_code=404, detail="Ledger entry not found")
 
     procurement_repo = PostgresProcurementRepository(db)
