@@ -184,6 +184,10 @@ def _is_issue(movement_type: str | None) -> bool:
     return movement_type is not None and movement_type.rstrip(" ") in ("201", "261")
 
 
+def _is_issue_or_reversal(movement_type: str | None) -> bool:
+    return movement_type is not None and movement_type.rstrip(" ") in ("201", "261", "202", "262")
+
+
 @dataclass
 class BatchMovements:
     """The batch's goods movements, read ONCE for the three repositories.
@@ -196,7 +200,7 @@ class BatchMovements:
     selected:
 
         history            every row
-        issues by resv.    movement_type IN ('201','261') AND reservation <> '' AND reservation <> '0'
+        issues by resv.    movement_type IN ('201','261','202','262') AND reservation <> '' AND reservation <> '0'
         issues by PO       movement_type IN ('201','261') AND purchase_order <> '' AND item <> ''
 
     ``drop_history`` lets the builder release the largest of the three once
@@ -227,11 +231,11 @@ class BatchMovements:
         )
         for r in result:
             history.append(row(_to_movement_row, r))
-            if _is_issue(r.movement_type):
-                if not _blank(r.reservation) and r.reservation.rstrip(" ") != "0":
-                    by_reservation.append(row(_to_gi_by_reservation_row, r))
-                if not _blank(r.purchase_order) and not _blank(r.item):
-                    by_po.append(row(_to_gi_link_row, r))
+            # Reversals ride along with a reservation's issues, so it nets them out.
+            if _is_issue_or_reversal(r.movement_type) and not _blank(r.reservation) and r.reservation.rstrip(" ") != "0":
+                by_reservation.append(row(_to_gi_by_reservation_row, r))
+            if _is_issue(r.movement_type) and not _blank(r.purchase_order) and not _blank(r.item):
+                by_po.append(row(_to_gi_link_row, r))
         self._history, self._by_reservation, self._by_po = history, by_reservation, by_po
 
     def history(self) -> list[Row]:
@@ -446,7 +450,7 @@ class BatchReservationRepository:
             self.db,
             "SELECT reservation, item_no_stock_transfer_reserv, movement_type, quantity, posting_date "
             f"FROM {self.work.mov} WHERE {self.batch.predicate()} "
-            "AND movement_type IN ('201', '261') AND reservation <> '' AND reservation <> '0' "
+            "AND movement_type IN ('201', '261', '202', '262') AND reservation <> '' AND reservation <> '0' "
             f"{extra}",
             {**self.batch.params(), **params},
             _to_gi_by_reservation_row,

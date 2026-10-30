@@ -10,11 +10,12 @@ to run at start-up on a live database. Portable constructs only.
 
 Written on d2f6b8a41c93, which I08's attestation and notification migrations
 (f3a9c1e57d20, a6c4e2f19b70) and its nonprod test-row wipe (c5e1a9d37f02)
-followed too; moved after them, before it had run on any database, so the
-history keeps a single head.
+followed too; moved after them, and then after I07's consumption-window
+migrations (e6a3c91d5b28, f4b8d2a71c63), each time before it had run on any
+database, so the history keeps a single head.
 
 Revision ID: f3a9c27d5e14
-Revises: c5e1a9d37f02
+Revises: f4b8d2a71c63
 Create Date: 2026-10-26 13:00:00.000000
 
 """
@@ -26,7 +27,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'f3a9c27d5e14'
-down_revision: Union[str, Sequence[str], None] = 'c5e1a9d37f02'
+down_revision: Union[str, Sequence[str], None] = 'f4b8d2a71c63'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

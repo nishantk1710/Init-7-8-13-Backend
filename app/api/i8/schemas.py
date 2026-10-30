@@ -331,7 +331,17 @@ class RepairChain(I8Model):
     ordered_qty: Decimal = Decimal(0)
     unit: str | None = None
     repair_cost: Decimal | None = None
-    """Net order price of the repair line -- what this repair costs."""
+    """Net order price of the repair line (EKPO.NETPR) -- what this repair
+    costs, in ``repairCostCurrency``. Null when the line has no price, a zero,
+    or a placeholder (then ``repairCostPlaceholder`` carries it)."""
+    repair_cost_currency: str | None = None
+    """EKKO.WAERS, the currency of ``repairCost`` (``ZAR``, ``USD``): a PO is
+    priced in the vendor's currency and nothing here converts it. Null when the
+    PO has no header or no currency -- unknown, not rand."""
+    repair_cost_placeholder: Decimal | None = None
+    """The PO's net price when it is a placeholder (above zero, at or below
+    ``I8_REPAIR_COST_TOKEN_MAX``, R1.00), which ``repairCost`` then leaves
+    null. Null otherwise."""
 
     new_unit_lead_time_days: int | None = None
 
@@ -1210,6 +1220,18 @@ class SnapshotInfo(I8Model):
     rules: dict[str, bool | str | int]
     """The configuration actually in force, echoed back so a surprising number
     can be traced to a setting without reading the deployment."""
+
+
+class FeaturesResponse(I8Model):
+    """Which I08 features this backend serves (29-Oct-2026). Read from the
+    settings alone, never the snapshot, so it answers while I08 data is still
+    being prepared."""
+
+    complete_flow_enabled: bool
+    """``I8_COMPLETE_FLOW_ENABLED``: the complete flow (repair PRs, stock by
+    condition, declaring in the assistant, R-reference links, the new
+    exception types, the notification log). A client that cannot read this
+    treats it as off."""
 
 
 UniverseDetail.model_rebuild()

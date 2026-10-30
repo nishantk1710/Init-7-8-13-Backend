@@ -44,6 +44,7 @@ from app.assistant.models import AssistantRequest, AssistantSession
 from app.assistant.session import Origin
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
+from app.initiatives.i8.config import get_i8_settings
 from app.initiatives.i13.session_link import line_number_note
 from app.shared.material_names import material_names
 
@@ -67,6 +68,16 @@ ActorDep = Annotated[Actor, Depends(get_current_actor)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
+#: Why a line's ``declaration`` is refused while the complete flow is off.
+DECLARING_OFF = "Declaring a faulty unit is not available yet. Remove the declaration and submit again."
+
+
+def _declaring_enabled() -> bool:
+    """Whether a request may declare the faulty unit (option B): only with
+    the I08 complete flow on (``I8_COMPLETE_FLOW_ENABLED``, 29-Oct-2026)."""
+    return get_i8_settings().complete_flow_enabled
+
+
 def _names(materials: list[str]) -> dict[str, str]:
     from app.shared import material_names as names_module
 
@@ -87,12 +98,21 @@ def preview(body: PreviewRequest, db: DbDep, settings: SettingsDep) -> PreviewRe
             ReasonCategoryModel(value=c, label=c.replace("_", " ").title())
             for c in settings.assistant_justification_reason_category_list
         ],
-        # As the conversation's declaration form offers them (script).
-        fault_categories=[choice.value for choice in script.fault_category_choices()],
-        recommendations=[
-            ReasonCategoryModel(value=choice.value, label=choice.label)
-            for choice in script.recommendation_choices()
-        ],
+        # As the conversation's declaration form offers them (script). Empty
+        # while the complete flow is off: nothing can be declared then.
+        fault_categories=(
+            [choice.value for choice in script.fault_category_choices()]
+            if _declaring_enabled()
+            else []
+        ),
+        recommendations=(
+            [
+                ReasonCategoryModel(value=choice.value, label=choice.label)
+                for choice in script.recommendation_choices()
+            ]
+            if _declaring_enabled()
+            else []
+        ),
         lines=[
             PreviewLineModel(
                 material_id=line.material_id,
@@ -153,6 +173,12 @@ def create_request(
         for line in body.lines
     ]
     try:
+        if not _declaring_enabled():
+            # Refused, not dropped: a declaration the requester filled in must
+            # not vanish without a word.
+            for number, line in enumerate(body.lines, start=1):
+                if line.declaration is not None:
+                    raise request_service.RequestError(DECLARING_OFF, line=number)
         created = request_service.create(
             db,
             plant=body.plant,

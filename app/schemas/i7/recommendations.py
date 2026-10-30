@@ -343,6 +343,10 @@ class OarInfo(BaseModel):
     conversion_detail: str | None = None
     demand_class: str | None = None
     consumption_count_12m: int | None = None
+    consumption_count_months: int | None = None
+    """The window ``consumption_count_12m`` was counted over, in months. The field's name is
+    historical; this is the number a screen must label it with. ``None`` for a recommendation
+    made before the window was recorded."""
     consumption_count_threshold: int | None = None
     production_impact: bool | None = None
     i13_hod_approved: bool | None = None
@@ -799,6 +803,7 @@ class RecommendationDetail(BaseModel):
                 conversion_detail=row.conversion_detail,
                 demand_class=row.demand_class,
                 consumption_count_12m=row.consumption_count_12m,
+                consumption_count_months=row.consumption_count_months,
                 consumption_count_threshold=row.consumption_count_threshold,
                 production_impact=row.production_impact,
                 i13_hod_approved=row.i13_hod_approved,

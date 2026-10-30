@@ -324,8 +324,12 @@ class SqlSnapshot:
         limit=None, offset=0,
     ) -> tuple[list[tuple[ReservationLedgerEntry, str | None]], int]:
         """Ledger entries with their SGTXT. ``reservation_keys`` keeps only
-        those (reservation, item) pairs -- the session filter."""
+        those (reservation, item) pairs -- the session filter.
+        ``lifecycle_status`` is one status or a set of them (any matches)."""
         extra = []
+        if lifecycle_status is not None and not isinstance(lifecycle_status, str):
+            extra.append(R.f1.in_(sorted(lifecycle_status)))
+            lifecycle_status = None
         if reservation_keys is not None:
             numbers = sorted({k[0] for k in reservation_keys})
             if not numbers:
@@ -668,6 +672,32 @@ class SqlSnapshot:
                 if key in lines and (r.movement_type or "").strip() in RECEIPT_TYPES and r.posting_date:
                     receipts.setdefault(key, set()).add(date.fromisoformat(r.posting_date))
         return plants, {k: frozenset(v) for k, v in receipts.items()}
+
+    def ordered_quantities_for(self, lines: Iterable[Key]) -> dict[Key, Decimal]:
+        """(PO, item) -> EKPO-MENGE, for these lines -- the ledger page's own.
+
+        Read at the route rather than stored on the ledger entry: a stored
+        field changes the snapshot's schema signature, and the served version
+        becomes unreadable until a full rebuild. The PO work table already
+        holds the quantity, indexed on (purchasing_document, item).
+        """
+        from sqlalchemy import bindparam, text
+
+        from app.integrations.sap.postgres_movements import _decimal
+
+        lines = set(lines)
+        documents = sorted({po for po, _ in lines if po})
+        found: dict[Key, Decimal] = {}
+        stmt = text(
+            f"SELECT purchasing_document, item, order_quantity FROM {self._work().po} "
+            "WHERE purchasing_document IN :docs"
+        ).bindparams(bindparam("docs", expanding=True))
+        for start in range(0, len(documents), 500):
+            for r in self.db.execute(stmt, {"docs": documents[start : start + 500]}):
+                key = (r.purchasing_document.strip(), r.item.strip())
+                if key in lines:
+                    found[key] = _decimal(r.order_quantity)
+        return found
 
     def current_plans(self) -> list[ConsumptionPlan]:
         """Reference plans (as of this version) + captured plans (live)."""

@@ -29,6 +29,8 @@ from collections.abc import Sequence
 from typing import Annotated, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.i8.mappers import (
@@ -68,6 +70,7 @@ from app.api.i8.schemas import (
     ExceptionEventRequest,
     ExceptionQueueItem,
     ExceptionResponse,
+    FeaturesResponse,
     MaterialReference,
     NotificationResponse,
     RepairChain,
@@ -112,7 +115,7 @@ from app.initiatives.i8.exception_state import (
     state_of,
     validate_kind,
 )
-from app.initiatives.i8.exceptions import ExceptionItem
+from app.initiatives.i8.exceptions import ExceptionItem, raised_without_complete_flow
 from app.initiatives.i8.material_number import is_eighty_series, normalise
 from app.initiatives.i8.notifications import (
     list_notifications,
@@ -237,6 +240,27 @@ def _type_set(raw: str | None) -> frozenset[str]:
     )
 
 
+#: The repairable-unit keys of the usable/damaged split, as served.
+_STOCK_SPLIT_KEYS = ("usableStock", "damagedStock", "stockConditionKnown", "stockSource")
+
+
+def _require_complete_flow(cfg: I8Settings) -> None:
+    """404 for a route the complete flow added, while it is off
+    (``I8_COMPLETE_FLOW_ENABLED``): the answer an older backend gives."""
+    if not cfg.complete_flow_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+
+def _without(response: BaseModel, *keys: str) -> JSONResponse:
+    """``response`` as served, less ``keys`` (camelCase): fields the complete
+    flow added are left out while it is off, so a client reads the shape it
+    had before rather than a null it might take for an answer."""
+    content = response.model_dump(mode="json", by_alias=True)
+    for key in keys:
+        content.pop(key, None)
+    return JSONResponse(content=content)
+
+
 def _stock_lookup(snapshot: Snapshot) -> dict[tuple[str, str | None], UniverseRow]:
     """(material, plant) -> universe row.
 
@@ -272,7 +296,7 @@ def _chain(
         declaration=view.declaration_by_line.get(line.key) if view else None,
         justification=view.justifications.get(line.key) if view else None,
         exceptions=exceptions,
-        **stock_split(row),
+        **stock_split(row, cfg),
     )
 
 
@@ -296,7 +320,7 @@ def _request_chain(
         criticality=row.criticality if row else None,
         exceptions=exceptions,
         declaration=_request_declaration(request, view) if view else None,
-        **stock_split(row),
+        **stock_split(row, cfg),
     )
 
 
@@ -730,7 +754,7 @@ def get_register(
         page=page,
         page_size=page_size,
         total=total,
-        meta=register_meta(snapshot.register_stats),
+        meta=register_meta(snapshot.register_stats, cfg),
         facets=facets,
         reference_date=snapshot.reference_date,
         view_counts=view_counts,
@@ -792,6 +816,7 @@ def get_repair_line(
             view.coverage.covered.get(line.key),
             getattr(view.coverage, "links", {}).get(line.key),
             _reference_typed(snapshot, line.pr_number, line.pr_item),
+            requested_stage=cfg.complete_flow_enabled,
         ),
     )
 
@@ -1187,7 +1212,14 @@ def get_exceptions(
     # Before excludeType too. An item this caller's queue does not carry is
     # still raised, and resolving it because the caller looked away would
     # close somebody else's work.
-    auto_resolve(db, (i.id for i in items))
+    #
+    # While the complete flow is off the newer checks are not raised; their
+    # findings are hidden, not gone, so they are never closed here.
+    auto_resolve(
+        db,
+        (i.id for i in items),
+        in_scope=None if cfg.complete_flow_enabled else raised_without_complete_flow,
+    )
     # Same moment, same items, for the same reason: the read is the only time
     # the platform learns a finding exists. Logs each actionable item of a
     # notified type once, ever; never raises (see notifications.py).
@@ -1283,7 +1315,9 @@ def get_exceptions(
         # the register is uncovered" is the number that matters and it must not
         # change because somebody filtered to one plant. Only a check taken out
         # of the queue altogether comes off it.
-        meta=exception_meta(view.exception_stats, excluded_types, excluded),
+        meta=exception_meta(
+            view.exception_stats, excluded_types, excluded, complete_flow=cfg.complete_flow_enabled
+        ),
         facets=facets,
         reference_date=snapshot.reference_date,
         type_counts=dict(type_counts),
@@ -1306,7 +1340,10 @@ def get_notifications(
 ) -> NotificationResponse:
     """One notification per exception, logged the first time the queue found
     it actionable. Nothing is emailed yet, so ``emailed`` is false throughout.
+
+    404 while the complete flow is off: the log came with it.
     """
+    _require_complete_flow(cfg)
     size = min(page_size, cfg.max_page_size)
     wanted = type_filter.strip().upper() if type_filter and type_filter.strip() else None
     rows, total, types = list_notifications(
@@ -1546,7 +1583,7 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
         built_at=snapshot.built_at,
         build_seconds=snapshot.build_seconds,
         source_loaded_at=snapshot.source_loaded_at,
-        repair_register=register_meta(snapshot.register_stats),
+        repair_register=register_meta(snapshot.register_stats, cfg),
         universe=universe_meta(snapshot.universe_stats),
         rules={
             "seriesPrefixes": cfg.series_prefixes,
@@ -1604,8 +1641,24 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
             # Since 27-Oct-2026: whether the assistant gives the need-date
             # line (off until SAP confirms how MRP treats an open repair PO).
             "needDateAdviceEnabled": cfg.need_date_advice_enabled,
+            # Since 29-Oct-2026: I8_COMPLETE_FLOW_ENABLED, which every switch
+            # above defers to. The screens hide the complete flow on false.
+            "completeFlowEnabled": cfg.complete_flow_enabled,
         },
     )
+
+
+@router.get(
+    "/features",
+    response_model=FeaturesResponse,
+    summary="Which I08 features this backend serves",
+)
+def get_features(cfg: SettingsDep) -> FeaturesResponse:
+    """The switches a screen needs before it renders, from the settings
+    alone: no snapshot, so never a 503 while I08 data is being prepared. The
+    assistant pages read it; a client that cannot treats every switch as off.
+    """
+    return FeaturesResponse(complete_flow_enabled=cfg.complete_flow_enabled)
 
 
 # --- W7.2 / FR-6: the repairable-unit rule, on its own ---------------------
@@ -1625,7 +1678,7 @@ def get_repairable_unit(
     cfg: SettingsDep,
     material: Annotated[str, Query(description="Material number, padded or stripped")],
     plant: Annotated[str | None, Query(description="Plant code. Omitted means every plant.")] = None,
-) -> RepairableUnitResponse:
+) -> RepairableUnitResponse | JSONResponse:
     """Whether a repairable unit is on the shelf or coming back from repair.
 
     ``today`` is the snapshot's reference date rather than the wall clock, so
@@ -1644,8 +1697,9 @@ def get_repairable_unit(
         today=snapshot.reference_date,
         repair_requests=snapshot.repair_requests if cfg.repair_requests_enabled else None,
         department_name=department_name,
+        stock_by_condition=cfg.complete_flow_enabled,
     )
-    return RepairableUnitResponse(
+    response = RepairableUnitResponse(
         material_id=verdict.material_id,
         plant=verdict.plant,
         is_repairable_material=verdict.is_repairable_material,
@@ -1695,6 +1749,10 @@ def get_repairable_unit(
         stock_condition_known=verdict.stock_condition_known,
         stock_source=verdict.stock_source,
     )
+    if cfg.complete_flow_enabled:
+        return response
+    # The stock split is not served at all while the complete flow is off.
+    return _without(response, *_STOCK_SPLIT_KEYS)
 
 
 @router.post(
@@ -1841,9 +1899,12 @@ def get_session_job(
 ) -> SessionJobResponse:
     """Read from the snapshot only: the job's reservation lines and their
     movements were narrowed and read at build time (session_jobs.py), so this
-    route runs no SAP query at all -- one lookup that the session exists."""
+    route runs no SAP query at all -- one lookup that the session exists.
+
+    404 while the complete flow is off, as before the route existed."""
     from app.initiatives.i13.session_link import load_sessions
 
+    _require_complete_flow(cfg)
     if not load_sessions(db, [session_id]):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such assistant session.")
     reservations = [

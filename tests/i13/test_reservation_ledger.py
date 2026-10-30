@@ -401,3 +401,17 @@ def test_issued_before_history_only_when_nothing_issued_and_required_earlier() -
         gi_rows=[_gi("50031", "1", "261", "5", 3)],
     )[0]
     assert issued_before_history(issued, start) is False, "an issue was seen: it is known"
+
+
+# --- ?lifecycle_status= takes one status or several ------------------------------
+
+
+def test_lifecycle_filter_reads_one_or_several_statuses() -> None:
+    from app.api.i13.reservation_ledger import lifecycle_filter
+
+    assert lifecycle_filter(None) is None
+    assert lifecycle_filter(" ") is None
+    assert lifecycle_filter("received") == {"RECEIVED"}
+    assert lifecycle_filter("ISSUED, partially_issued") == {"ISSUED", "PARTIALLY_ISSUED"}
+    assert lifecycle_filter("RESERVED,nonsense") == {"RESERVED"}, "an unknown value is dropped"
+    assert lifecycle_filter("nonsense") == frozenset(), "only unknown values: matches nothing"

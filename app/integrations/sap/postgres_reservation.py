@@ -250,7 +250,7 @@ _GI_BY_RESERVATION_QUERY = """
     JOIN n_mkpf h
       ON m.material_document = h.material_document
      AND m.material_doc_year = h.material_doc_year
-    WHERE m.movement_type IN ('201', '261')
+    WHERE m.movement_type IN ('201', '261', '202', '262')
       AND m.reservation <> '' AND m.reservation <> '0'
       AND h.posting_date <> ''
       {reservation_filter}
@@ -269,7 +269,9 @@ def _to_gi_by_reservation_row(record: Any) -> Row:
 
 def fetch_goods_issue_by_reservation(db: Session, *, reservation_number: str | None = None) -> list[Row]:
     """Issue-type (201/261) movements carrying a real reservation reference --
-    the deterministic GI -> Reservation link W6.2 adds on top of W6.1."""
+    the deterministic GI -> Reservation link W6.2 adds on top of W6.1 -- and
+    their reversals (202/262), so ``net_quantity`` can take a reversed issue
+    back out. Without them a 261 cancelled by a 262 still counted as issued."""
     params: dict[str, str] = {}
     reservation_filter = ""
     if reservation_number:

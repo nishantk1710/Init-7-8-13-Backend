@@ -576,3 +576,13 @@ def test_oar_info_schema_exposes_structured_conversion_evidence():
         "i13_hod_approved",
     ):
         assert field in OarInfo.model_fields
+
+
+def test_oar_info_schema_exposes_the_months_the_count_covers():
+    """The count's name says 12 for historical reasons; the screen must label it with the real window."""
+    from app.schemas.i7.recommendations import OarInfo
+
+    assert "consumption_count_months" in OarInfo.model_fields
+    assert OarInfo(consumption_count_12m=5, consumption_count_months=6).consumption_count_months == 6
+    assert OarInfo(consumption_count_12m=5).consumption_count_months is None, "an unrecorded window stays unrecorded"
+

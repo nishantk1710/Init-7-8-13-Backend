@@ -53,7 +53,7 @@ less trustworthy.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -283,7 +283,12 @@ def add_comment(db: Session, exception_id: str, text: str, *, actor: str) -> Exc
     return record(db, exception_id, kind="COMMENT", actor=actor, text=clean)
 
 
-def auto_resolve(db: Session, detected_ids: Iterable[str]) -> int:
+def auto_resolve(
+    db: Session,
+    detected_ids: Iterable[str],
+    *,
+    in_scope: Callable[[str], bool] | None = None,
+) -> int:
     """Close the items whose checks have stopped finding them.
 
     Called from the listing, over the ids the checks raised on this read. A
@@ -299,13 +304,19 @@ def auto_resolve(db: Session, detected_ids: Iterable[str]) -> int:
     apart is the kind, ``AUTO_RESOLVED``, and the ``system`` actor -- the kind
     keeps its name because the rows written before 21-Oct carry it.
 
+    ``in_scope``, when given, limits the close to the ids it accepts: while
+    the complete flow is off the queue hides some checks, and a finding that is
+    only hidden has not gone away (29-Oct-2026).
+
     Returns how many were closed, for the caller to log.
     """
     detected = set(detected_ids)
     stale = [
         exception_id
         for exception_id, state in load_states(db).items()
-        if state.is_active and exception_id not in detected
+        if state.is_active
+        and exception_id not in detected
+        and (in_scope is None or in_scope(exception_id))
     ]
     if not stale:
         return 0

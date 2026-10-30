@@ -37,7 +37,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 
-from app.initiatives.i13.movements import ISSUE_TYPES, RECEIPT_TYPES, REVERSAL_OF, event_dates, net_quantity
+from app.initiatives.i13.movements import ISSUE_TYPES, RECEIPT_TYPES, REVERSAL_OF, event_dates, net_quantity, net_standing_quantity
 
 Row = dict[str, Any]
 PoKey = tuple[str, str]
@@ -252,7 +252,7 @@ def match_po_line_issues(
             is_open = _is_open(reservation)
             results[key] = PoLineIssues(
                 material, plant, key[0], key[1], received, len(deliveries), first_gr, last_gr,
-                issued_quantity=net_quantity(rows, ISSUE_TYPES),
+                issued_quantity=net_standing_quantity(rows, ISSUE_TYPES),
                 first_issue_date=first_issue,
                 last_issue_date=last_issue,
                 issue_match=IssueMatch.RESERVATION,

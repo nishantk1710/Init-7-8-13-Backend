@@ -55,7 +55,7 @@ import hashlib
 import threading
 import time
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -238,6 +238,20 @@ class I13Snapshot:
     @cached_property
     def legacy_ledger_by_id(self) -> dict[str, LegacyLedgerEntry]:
         return {entry.ledger_id: entry for entry in self.legacy_ledger}
+
+    @cached_property
+    def _ordered_by_po_line(self) -> dict[tuple[str, str], Decimal]:
+        return {
+            (e.po_number, e.po_item): e.ordered_quantity
+            for e in self.procurement_chain
+            if e.po_number and e.po_item and e.ordered_quantity is not None
+        }
+
+    def ordered_quantities_for(self, lines: Iterable[tuple[str, str]]) -> dict[tuple[str, str], Decimal]:
+        """(PO, item) -> EKPO-MENGE -- ``SqlSnapshot.ordered_quantities_for``'s
+        answer, from the chain this snapshot already holds."""
+        ordered = self._ordered_by_po_line
+        return {line: ordered[line] for line in set(lines) if line in ordered}
 
     @cached_property
     def legacy_ledger_oar(self) -> tuple[LegacyLedgerEntry, ...]:

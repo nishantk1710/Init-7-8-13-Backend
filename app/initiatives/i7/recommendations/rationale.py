@@ -109,10 +109,14 @@ def _oar_context(built: "BuiltRecommendation") -> dict[str, str]:
     estimate formula itself -- those are already decided by
     ``conversion.py``/``oar/estimate.py`` before this module ever runs."""
     consumption_count_12m = built.conversion.consumption_count_12m if built.conversion else None
+    consumption_count_months = built.conversion.consumption_count_months if built.conversion else None
     return {
         "material": built.sap_material_number,
         "plant": built.sap_plant_code,
         "demand_class": built.demand_class or "UNCLASSIFIED",
+        # The count's name says 12 for historical reasons; the window is the policy's (6 since
+        # 2026-10-22), so the prompt is told the months instead of assuming a period.
+        "consumption_count_months": _fmt(consumption_count_months),
         "consumption_count_12m": _fmt(consumption_count_12m),
         "neighbour_count": _fmt(built.oar_neighbour_count),
         "best_similarity": _fmt(built.oar_best_similarity),

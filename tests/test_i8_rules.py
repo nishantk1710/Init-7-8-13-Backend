@@ -268,7 +268,7 @@ class TestAnRfqIsNotAnOrder:
 
     @staticmethod
     def _header(bsart):
-        return {"bsart": bsart, "lifnr": "501910", "aedat": date(2026, 10, 8)}
+        return {"bsart": bsart, "lifnr": "501910", "aedat": date(2026, 10, 8), "waers": "ZAR"}
 
     def test_an_rfq_header_marks_the_line(self) -> None:
         assert is_rfq_line(self._header("AN"), self.CFG) is True
@@ -470,7 +470,7 @@ class TestTheLeadTimeReachesTheLine:
             _row(erdat=None),
             schedule=None,
             dispatch=None,
-            header={"bsart": "ZREP", "lifnr": "V1", "aedat": date(2026, 5, 20)},
+            header={"bsart": "ZREP", "lifnr": "V1", "aedat": date(2026, 5, 20), "waers": "ZAR"},
             vendor_names={},
             lead_time=None,
             today=TODAY,
@@ -478,6 +478,91 @@ class TestTheLeadTimeReachesTheLine:
         )
         assert line.po_date == date(2026, 5, 20)
         assert line.raised_at == date(2026, 5, 20)
+
+
+class TestRepairCostAndItsCurrency:
+    """The 29-Oct-2026 currency audit.
+
+    EKPO.NETPR is in the PO's currency (EKKO.WAERS), which the register never
+    read: every price was served as rand. All 104 open lines are ZAR today,
+    but the in-scope plants hold USD and EUR POs, and one repair line was USD.
+    And 16 of those 104 carry a placeholder NETPR of 1.00, served as "R 1".
+    """
+
+    CFG = I8Settings(_env_file=None)
+
+    def _line(self, *, header, **row_overrides):
+        from app.initiatives.i8.register import _build_line
+
+        return _build_line(
+            _row(**row_overrides),
+            schedule=None,
+            dispatch=None,
+            header=header,
+            vendor_names={},
+            lead_time=None,
+            today=TODAY,
+            cfg=self.CFG,
+        )
+
+    @staticmethod
+    def _header(waers):
+        return {"bsart": "ZREP", "lifnr": "100995", "aedat": date(2024, 6, 25), "waers": waers}
+
+    def test_the_currency_reaches_the_line(self) -> None:
+        line = self._line(header=self._header("USD"), netpr=Decimal("1250.00"))
+        assert line.currency == "USD"
+        assert line.net_price == Decimal("1250.00")
+
+    def test_no_header_is_no_currency_not_rand(self) -> None:
+        assert self._line(header=None).currency is None
+        assert self._line(header=self._header(None)).currency is None
+
+    def test_a_placeholder_is_not_a_cost(self) -> None:
+        from app.initiatives.i8.register import is_placeholder_price, repair_cost
+
+        for token in (Decimal("1.00"), Decimal("0.01")):
+            assert is_placeholder_price(token, self.CFG) is True
+            assert repair_cost(token, self.CFG) is None
+
+    def test_no_price_and_zero_are_not_placeholders(self) -> None:
+        """Both read as "no price on the PO": R 0 would be a free repair."""
+        from app.initiatives.i8.register import is_placeholder_price, repair_cost
+
+        for value in (None, Decimal(0)):
+            assert is_placeholder_price(value, self.CFG) is False
+            assert repair_cost(value, self.CFG) is None
+
+    def test_a_real_price_is_the_cost(self) -> None:
+        from app.initiatives.i8.register import is_placeholder_price, repair_cost
+
+        for value in (Decimal("1.01"), Decimal("27284.40")):
+            assert is_placeholder_price(value, self.CFG) is False
+            assert repair_cost(value, self.CFG) == value
+
+    def test_the_floor_is_configuration(self) -> None:
+        from app.initiatives.i8.register import is_placeholder_price, repair_cost
+
+        cfg = I8Settings(_env_file=None, repair_cost_token_max=Decimal(0))
+        assert is_placeholder_price(Decimal("1.00"), cfg) is False
+        assert repair_cost(Decimal("1.00"), cfg) == Decimal("1.00")
+
+    def test_the_wire_carries_cost_currency_and_placeholder(self) -> None:
+        from app.api.i8.mappers import repair_chain
+
+        priced = repair_chain(
+            self._line(header=self._header("USD"), netpr=Decimal("1250.00")), self.CFG
+        ).model_dump(by_alias=True)
+        assert priced["repairCost"] == Decimal("1250.00")
+        assert priced["repairCostCurrency"] == "USD"
+        assert priced["repairCostPlaceholder"] is None
+
+        token = repair_chain(
+            self._line(header=self._header("ZAR"), netpr=Decimal("1.00")), self.CFG
+        ).model_dump(by_alias=True)
+        assert token["repairCost"] is None
+        assert token["repairCostCurrency"] == "ZAR"
+        assert token["repairCostPlaceholder"] == Decimal("1.00")
 
 
 class TestNothingIsHardCoded:

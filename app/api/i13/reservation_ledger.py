@@ -35,6 +35,22 @@ def _sgtxt_of(rows) -> dict[tuple[str, str], str]:
     return {(r["Rsnum"], r["Rspos"]): r["Sgtxt"] for r in rows if r.get("Sgtxt")}
 
 
+def lifecycle_filter(raw: str | None) -> frozenset[str] | None:
+    """The statuses ``?lifecycle_status=`` asks for: one, or several
+    comma-separated (the Reservations tab's "Not issued" is every status short
+    of an issue). None when it asks for none; an unknown value is dropped, so
+    one that names only unknown values matches nothing. Pure, for the tests."""
+    if not raw or not raw.strip():
+        return None
+    wanted = set()
+    for part in raw.split(","):
+        try:
+            wanted.add(LifecycleStatus(part.strip().upper()).value)
+        except ValueError:
+            continue
+    return frozenset(wanted)
+
+
 def issued_before_history(entry: ReservationLedgerEntry, history_start: date | None) -> bool:
     """Nothing issued, and required before the earliest movement held: an issue
     could predate the history, so 0 is not a known zero. Pure, for the tests."""
@@ -79,7 +95,9 @@ def list_reservation_ledger(
     plant: str | None = Query(None),
     reservation_number: str | None = Query(None),
     pr_number: str | None = Query(None),
-    lifecycle_status: str | None = Query(None),
+    lifecycle_status: str | None = Query(
+        None, description="One status, or several comma-separated (RESERVED,PR_CREATED,...): any of them matches."
+    ),
     include_out_of_scope: bool = Query(False, description="Include non-OAR (Min-Max/Excluded) materials."),
     session_id: str | None = Query(None, description="Only reservations whose SGTXT names this session."),
     limit: int = Query(100, ge=1, le=1000),
@@ -89,18 +107,15 @@ def list_reservation_ledger(
 ) -> list[ReservationLedgerEntryResponse]:
     sessions = session_by_reservation(db)
     sgtxt: Mapping[tuple[str, str], str] | None = None
+    wanted_statuses = lifecycle_filter(lifecycle_status)
     if isinstance(snapshot, SqlSnapshot):
-        try:
-            wanted_status = LifecycleStatus(lifecycle_status.upper()).value if lifecycle_status else None
-        except ValueError:
-            wanted_status = ""  # matches nothing, as the in-memory filter does
         keys = None
         if session_id:
             wanted_session = session_id.strip().upper()
             keys = {key for key, sid in sessions.items() if sid == wanted_session}
         rows, total = snapshot.reservation_ledger(
             material=material, plant=plant, reservation_number=reservation_number, pr_number=pr_number,
-            lifecycle_status=wanted_status, oar_only=not include_out_of_scope, reservation_keys=keys,
+            lifecycle_status=wanted_statuses, oar_only=not include_out_of_scope, reservation_keys=keys,
             limit=limit, offset=offset,
         )
         response.headers["X-Total-Count"] = str(total)
@@ -137,12 +152,8 @@ def list_reservation_ledger(
                 reservation_number=reservation_number, pr_number=pr_number, material=material, plant=plant
             )
         )
-    if lifecycle_status:
-        try:
-            wanted = LifecycleStatus(lifecycle_status.upper())
-        except ValueError:
-            wanted = None
-        entries = [e for e in entries if e.lifecycle_status is wanted]
+    if wanted_statuses is not None:
+        entries = [e for e in entries if e.lifecycle_status.value in wanted_statuses]
     if session_id:
         wanted = session_id.strip().upper()
         linked = {key for key, sid in sessions.items() if sid == wanted}
