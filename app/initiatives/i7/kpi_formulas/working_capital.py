@@ -102,11 +102,16 @@ def working_capital_impact(session: Session, base: Select, formulas: Formulas) -
     value = working_capital_sql(formulas)
     included = and_(rate.is_not(None), Recommendation.unit_price > DEFAULT_TOKEN_MAX, value.is_not(None), oar_rule())
 
+    # Each row's own figures first, then the sums over them. SQL Server refuses an aggregate over an expression
+    # that holds a subquery (the currency lookup), so the subquery stays in the per-row select and the outer
+    # query only sums columns.
+    per_row = base.with_only_columns(
+        case((included, 1), else_=0).label("is_included"),
+        case((included, value * rate), else_=None).label("amount_zar"),
+    ).subquery()
     total, included_count, amount = session.execute(
-        base.with_only_columns(
-            func.count(),
-            func.coalesce(func.sum(case((included, 1), else_=0)), 0),
-            func.sum(case((included, value * rate), else_=None)),
+        select(func.count(), func.coalesce(func.sum(per_row.c.is_included), 0), func.sum(per_row.c.amount_zar)).select_from(
+            per_row
         )
     ).one()
     return WorkingCapitalImpact(
