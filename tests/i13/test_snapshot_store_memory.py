@@ -457,6 +457,10 @@ ALL = Batch("0", "9999999999")
 # move; a 262 against a reservation no longer sits in the oldest-first stock
 # pool undoing another line's issue, so one estimated line leaves GRNI
 # (81 -> 80) and its exception goes with it (152 -> 151). The giants keep theirs.
+# "watch" re-recorded 2026-10-30 in "mixed" and "giant_reservations":
+# acquired-vs-plan measures what was issued on each plan's own reservations
+# (plans.plan_outcomes), so a row's issued quantity and plan status move; the
+# row counts, and every other kind, are unchanged.
 EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
     "mixed": {
         "attrib": (294, "214738b080d76802"), "chain": (286, "636c21f9a8b8679e"),
@@ -464,7 +468,7 @@ EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
         "lledger": (286, "18121a087fdb0045"), "movement": (186, "085dd35e7ee606ce"),
         "oarkey": (87, "cafeb8032728b5cb"), "reclass": (87, "4b90da3bcd2f2450"),
         "rledger": (294, "747cdb56819da766"), "usage": (134, "a4ef4d00cc908924"),
-        "watch": (192, "cf041153f2b2bb03"),
+        "watch": (192, "e4800991a50f3707"),
     },
     "giant_procurement": {
         "attrib": (3, "f77f2830ef44df9f"), "chain": (1483, "17e55edc51ed3706"),
@@ -479,7 +483,7 @@ EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
         "lledger": (12, "ce8c39b941ae9377"),
         "movement": (1, "145d27f46ec8471e"), "oarkey": (1, "702ce6717c803e00"),
         "reclass": (1, "99733b38e83d2030"), "rledger": (4481, "906ccc961d424b9e"),
-        "usage": (1, "4db03c5965f3dd07"), "watch": (1, "ed9f8edede78bcf3"),
+        "usage": (1, "4db03c5965f3dd07"), "watch": (1, "aff23366b80b2fe5"),
     },
 }
 
