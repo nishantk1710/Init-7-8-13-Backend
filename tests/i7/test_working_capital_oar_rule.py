@@ -293,7 +293,7 @@ def _migration():
 def test_the_migration_extends_the_previous_head_and_adds_the_three_columns():
     module = _migration()
 
-    assert module.revision == "a6d2f81c9e47" and module.down_revision == "f4b8d2a71c63"
+    assert module.revision == "a6d2f81c9e47" and module.down_revision == "f3a9c27d5e14"
     columns = Recommendation.__table__.c
     assert {"manually_converted", "requested_by", "requested_at"} <= set(columns.keys())
     assert columns["manually_converted"].nullable is False

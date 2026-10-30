@@ -1,7 +1,7 @@
 """i7 recommendation: manual Min-Max conversion request
 
 Revision ID: a6d2f81c9e47
-Revises: f4b8d2a71c63
+Revises: f3a9c27d5e14
 Create Date: 2026-10-30 15:00:00.000000
 
 A user can ask to convert a NOT_ELIGIBLE OAR material to Min-Max ordering. The request goes through the
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'a6d2f81c9e47'
-down_revision: Union[str, Sequence[str], None] = 'f4b8d2a71c63'
+down_revision: Union[str, Sequence[str], None] = 'f3a9c27d5e14'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
