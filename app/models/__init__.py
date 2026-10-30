@@ -11,6 +11,7 @@ three private copies of an MSEG table would diverge within a week. Tables
 initiative.
 """
 
+from app.models.app_user import AppUser
 from app.models.base import Base
 from app.models.criticality_report import CriticalityCurrent, CriticalityReportRow, CriticalityReportUpload
 from app.models.csv_extract import CsvExtractRequest
@@ -92,6 +93,7 @@ __all__ = [
     "ActExceptionEventRecord",
     "ActExceptionRecord",
     "ActNotificationRecord",
+    "AppUser",
     "Base",
     "ConsumptionAttributionRecord",
     "CriticalityCurrent",

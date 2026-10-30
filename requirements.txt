@@ -47,6 +47,13 @@ psycopg[binary]==3.3.1
 azure-identity==1.19.0
 azure-storage-file-datalake==12.17.0
 
+# --- Sign-in ---
+# Validates the Microsoft Entra ID access tokens the web app sends
+# (app/core/security.py): RS256 signatures against the tenant's published keys.
+# Already installed through azure-identity -> msal; pinned here because the API
+# now uses it directly.
+PyJWT[crypto]==2.15.1
+
 # Reads the SAP extract workbooks. app/seed/reader.py opens every one of them
 # with read_only=True -- see README, "Seeding".
 openpyxl==3.1.5

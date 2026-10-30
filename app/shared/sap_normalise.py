@@ -70,7 +70,8 @@ Rebuilding
 every CSV or workbook load of a table this layer covers -- both loaders drop
 and recreate ``raw_<table>``, and a load can change which vocabulary it is in.
 The OData delta loader writes ``odata_<table>``, which nothing here reads.
-By hand::
+On SQL Server one process rebuilds at a time, under an application lock
+(``rebuild_read_layers``). By hand::
 
     python -m app.shared.sap_normalise create    # build or rebuild
     python -m app.shared.sap_normalise check     # which label reads which column
@@ -85,8 +86,11 @@ these (and I08's) first -- ``python -m app.initiatives.i8.views drop`` and
 
 from __future__ import annotations
 
+import contextlib
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import Engine, inspect, text
 
@@ -646,17 +650,102 @@ def check(engine: Engine | None = None) -> dict[str, list[Resolved] | None]:
     }
 
 
-def rebuild_read_layers(engine: Engine | None = None, *, raise_errors: bool = False) -> bool:
+# --- One rebuild at a time ------------------------------------------------------
+#
+# Start-up and every load rebuild these views, and nothing used to stop two
+# rebuilds running at once: two workers or instances starting together, or a
+# restart while the nightly full refresh is loading. Each CREATE OR ALTER VIEW
+# then waits on the other's schema locks, and the loser fails with a deadlock
+# or a timeout in the log while screens wait behind both. The same
+# ``sp_getapplock`` the scheduler and the snapshot builds use, under its own name.
+#
+# Start-up does not queue: whoever holds the lock is rebuilding the same views
+# over the same tables, so start-up leaves it to them. A load does queue: a
+# rebuild that began before its table was replaced may have read the old
+# columns, so it waits its turn and then rebuilds. If the wait runs out it
+# rebuilds anyway -- exactly what happened before the lock existed -- rather
+# than leave the views behind the table. A lock that cannot be taken at all
+# (database unreachable) never stops a rebuild either.
+
+READ_LAYERS_LOCK_NAME = "spares_ai_read_layers"
+
+#: Seconds between attempts while another process's rebuild holds the lock.
+READ_LAYERS_POLL_SECONDS = 5.0
+
+#: The longest a load waits for another rebuild before going ahead without the
+#: lock. A rebuild is seconds when the database is quiet; one ran past Azure's
+#: 230-second start-up probe on a busy day (app.main), so this is generous.
+READ_LAYERS_MAX_WAIT_SECONDS = 900.0
+
+
+def _read_layers_lock(engine: Engine) -> Any | None:
+    """The cross-instance lock, or ``None`` where there is none (not SQL Server)."""
+    if engine.dialect.name != "mssql":
+        return None
+    from app.ingest.scheduler import _Lock
+
+    return _Lock(READ_LAYERS_LOCK_NAME)
+
+
+def _take_read_layers_lock(
+    engine: Engine,
+    *,
+    wait: bool,
+    new_lock: Callable[[Engine], Any | None] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> tuple[bool, Any | None]:
+    """``(rebuild, held_lock)``. Never raises.
+
+    ``rebuild`` is False only for a caller that does not ``wait`` and found
+    the lock taken. ``held_lock`` is the lock to release afterwards, or
+    ``None`` when the rebuild goes ahead without one.
+    """
+    try:
+        lock = (new_lock or _read_layers_lock)(engine)
+        if lock is None:
+            return True, None
+        if lock.acquire():
+            return True, lock
+        if not wait:
+            logger.info("normalise: another process is rebuilding the read layers; leaving it to that one")
+            return False, None
+        logger.info("normalise: waiting for another process's rebuild of the read layers to finish")
+        deadline = monotonic() + READ_LAYERS_MAX_WAIT_SECONDS
+        while monotonic() < deadline:
+            sleep(READ_LAYERS_POLL_SECONDS)
+            if lock.acquire():
+                return True, lock
+        logger.warning(
+            "normalise: the read-layers lock is still held after %.0f s; rebuilding without it",
+            READ_LAYERS_MAX_WAIT_SECONDS,
+        )
+        return True, None
+    except Exception:  # noqa: BLE001 -- a missing guard must never stop a rebuild
+        logger.warning("normalise: could not use the read-layers lock; rebuilding without it", exc_info=True)
+        return True, None
+
+
+def rebuild_read_layers(
+    engine: Engine | None = None, *, raise_errors: bool = False, at_start_up: bool = False
+) -> bool:
     """Normalise views, then I08's views on top of them, in dependency order.
 
     What start-up and every CSV load call. By default never raises: a failure
     here must not take the API down -- the affected reads fail on their own,
     loudly, and ``/api/ready`` reports it. The CLI passes ``raise_errors``.
     Returns whether it succeeded.
+
+    One process at a time, on SQL Server (see "One rebuild at a time" above).
+    ``at_start_up`` skips -- and reports success -- when another process is
+    already rebuilding; every other caller waits its turn.
     """
     from app.initiatives.i8 import views as i8_views
 
     engine = engine or get_engine()
+    rebuild, lock = _take_read_layers_lock(engine, wait=not at_start_up)
+    if not rebuild:
+        return True
     try:
         # Postgres cannot rebuild a view another view reads; drop I08's first.
         if engine.dialect.name != "mssql":
@@ -669,6 +758,10 @@ def rebuild_read_layers(engine: Engine | None = None, *, raise_errors: bool = Fa
             raise
         logger.exception("normalise: rebuilding the read layers failed")
         return False
+    finally:
+        if lock is not None:
+            with contextlib.suppress(Exception):
+                lock.release()
 
 
 def refresh_after_load(table: str) -> bool:

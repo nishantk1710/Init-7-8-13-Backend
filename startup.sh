@@ -91,11 +91,11 @@ echo "startup: $(python -V 2>&1), cwd $(pwd)"
 # what secrets it held. Inside the App Service, on the other side of the private
 # endpoint, it works -- which is why it lives here rather than in deploy.yml.
 #
-# It stays off by default because nothing serialises it across instances: scale
-# this App Service past one instance with it enabled and two workers can run the
-# same migration at once. With one instance it is safe and convenient. Turn it
-# on with the app setting RUN_MIGRATIONS_ON_STARTUP=true, or run it by hand from
-# the SSH console -- see README, "Deployment".
+# It stays off by default so a deploy never changes the schema by surprise.
+# Instances that start together do not race: alembic/env.py holds a SQL Server
+# application lock for the whole upgrade, so the second waits and then finds
+# nothing to do. Turn it on with the app setting RUN_MIGRATIONS_ON_STARTUP=true,
+# or run it by hand from the SSH console -- see README, "Deployment".
 if [ "${RUN_MIGRATIONS_ON_STARTUP:-false}" = "true" ]; then
     echo "startup: applying migrations"
     python -m alembic upgrade head

@@ -60,9 +60,15 @@ class AcquiredVsPlanStatus(str, Enum):
     """``ON_PLAN`` is this codebase's name for what the FRS calls
     ``ALIGNED`` -- same state (acquired quantity exactly equals planned
     quantity), kept under its original name for backward compatibility with
-    the already-shipped API contract and tests."""
+    the already-shipped API contract and tests.
+
+    ``NO_RESERVATION`` -- a plan exists, but no reservation stands for it yet
+    (no SGTXT link, none required inside its window), so there is nothing
+    issued to compare. Kept to 16 characters, the width of the WATCH mart's
+    status column."""
 
     NO_PLAN = "NO_PLAN"
+    NO_RESERVATION = "NO_RESERVATION"
     BELOW_PLAN = "BELOW_PLAN"
     ON_PLAN = "ON_PLAN"
     ABOVE_PLAN = "ABOVE_PLAN"
@@ -390,6 +396,11 @@ class WatchMetric:
     gr_not_issued_outstanding_quantity: Decimal
 
     # --- Acquired vs plan ---
+    # Planned is every plan for the position added up; issued is what was
+    # issued against the reservations those plans stand for (plans.py
+    # ``plan_outcomes``), each reservation item counted once. Received is GR
+    # on POs raised from the position's reservations -- shown, not compared:
+    # an OAR reservation is filled from stock, so it is nearly always 0.
     acquired_vs_plan_status: AcquiredVsPlanStatus
     planned_quantity: Decimal | None
     received_quantity: Decimal
