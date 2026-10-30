@@ -65,8 +65,12 @@ from typing import Any
 # MISSING_SESSION_ID until the next rebuild.
 # And (29-Oct-2026, the complete-flow switch) NewAcquisition gained
 # line_created_on, EKPO.ERDAT on a direct PO; a version-5 payload reads it as
-# None, which is what the live data carries, so the version stays 5.
-CODEC_VERSION = 5
+# None, which is what the live data carries, so that change kept version 5.
+#
+# 6 since 29-Oct-2026: RepairLine gained currency, EKKO.WAERS of its net price.
+# A version-5 payload would construct -- it defaults -- but every repair cost
+# would be served with no currency, so with no symbol, until the next rebuild.
+CODEC_VERSION = 6
 _ALLOWED = "app.initiatives.i8."
 
 
