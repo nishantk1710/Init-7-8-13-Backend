@@ -91,6 +91,18 @@ class Settings(BaseSettings):
     # happens on our schedule instead of inside someone's request.
     database_pool_recycle_seconds: int = 1500
 
+    # Connections one worker keeps open, how many more it may open under a
+    # burst, and how long a request waits for one before failing. Requests and
+    # every background job share this pool, and each job's lock (delta, full
+    # refresh, snapshot builds, the I07 pipeline) holds a connection for its
+    # whole run. SQLAlchemy's own 5 + 10 ran out on nonprod on 14 Oct 2026
+    # with no load running ("QueuePool limit of size 5 overflow 10 reached").
+    # The ceiling is size + overflow per worker, times workers, times
+    # instances: keep that well under the database tier's worker limit.
+    database_pool_size: int = 10
+    database_max_overflow: int = 20
+    database_pool_timeout_seconds: int = 30
+
     # Attempts at opening a connection when Azure SQL drops it while it is being
     # set up -- "TCP Provider: Error code 0x68 (104)", a serverless database
     # waking (40613), a failover. Microsoft's guidance is to retry these: they
@@ -182,6 +194,17 @@ class Settings(BaseSettings):
     # hour per table to learn that.
     csv_delta_first_chunk_timeout_seconds: int = 300
     csv_delta_quiet_period_seconds: int = 120
+
+    # --- Key index on the raw tables ------------------------------------------
+    #
+    # Whether a CSV full load indexes raw_<table> on the set's identity key, so
+    # the merges into it seek instead of reading the whole table (app/ingest/
+    # csv_load.py, KEY INDEX). Off by default: every table is then built
+    # exactly as it always was -- every column nvarchar(max), no index -- and
+    # an environment changes only when it is switched on. Takes effect at a
+    # table's next full load; a table already loaded is never altered. Turn it
+    # on before the first data load of an environment that should have it.
+    raw_key_index_enabled: bool = False
 
     # --- Full refresh schedule -----------------------------------------------
     #
@@ -518,10 +541,40 @@ class Settings(BaseSettings):
     # blocked by an unsigned service level.
     i7_dev_mock_max_stock: bool = False
 
-    # --- Reserved for future integrations. Not read by any code yet, and not
-    # --- required for startup. See app/core/security.py and app/integrations/.
-    azure_tenant_id: str = ""
-    azure_client_id: str = ""
+    # --- Sign-in: Microsoft Entra ID access tokens (app/core/security.py). ---
+    # Off by default, and off locally and in tests: with it off every request is
+    # served as today -- the author comes from the X-Actor-Id header and no role
+    # is checked -- so switching it on is a setting, not a deploy, and switching
+    # it back off is the rollback.
+    auth_enabled: bool = False
+    # The VZI tenant, and the Application (client) ID of the API's app
+    # registration (spares-ai-api-<env>). Both are required once AUTH_ENABLED
+    # is true; without them every protected request answers 503 rather than
+    # being let through.
+    #
+    # Not AZURE_TENANT_ID / AZURE_CLIENT_ID: those are the Azure SDK's own
+    # variables, and DefaultAzureCredential (storage, Key Vault) takes
+    # AZURE_CLIENT_ID as a user-assigned managed identity. Holding the app
+    # registration's ID there broke storage on prod (28 Oct 2026).
+    entra_tenant_id: str = ""
+    entra_api_client_id: str = ""
+    # Extra accepted token audiences, comma-separated. The client ID and
+    # api://<client ID> are always accepted: a v2 access token carries the bare
+    # client ID as its audience (measured on spares-ai-api-prod, 26 Oct 2026),
+    # not the api:// URI the app registration displays.
+    auth_audience: str = ""
+    # The delegated scope a user's token must carry (Expose an API).
+    auth_required_scope: str = "access_as_user"
+    # Clock difference tolerated on exp/nbf/iat, and how long Entra's signing
+    # keys are cached before they are fetched again (an unknown key ID always
+    # triggers a fetch, so a key rotation never waits for this).
+    auth_clock_skew_seconds: int = 120
+    auth_jwks_cache_seconds: int = 3600
+    # SAP's calls (/api/events/pr, /api/events/csv) are switched separately:
+    # they come from VZI's CPI, not from a person, and how CPI authenticates is
+    # decision D2 in the RBAC plan. "off" keeps them open as today; "entra"
+    # requires an application token carrying the Sap.Events.Write role.
+    sap_events_auth: Literal["off", "entra"] = "off"
 
     # --- Initiative 13: End-to-End Spares Utilisation Tracking. ---
     # Root directory for platform-owned (non-SAP) reference data -- currently
