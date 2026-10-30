@@ -76,14 +76,16 @@ def _matching(
 
 
 def _with_ordered_quantity(
-    rows: list[UtilisationLedgerEntryResponse], snapshot: SqlSnapshot
+    rows: list[UtilisationLedgerEntryResponse], snapshot: I13Snapshot | SqlSnapshot | None
 ) -> list[UtilisationLedgerEntryResponse]:
-    """Fill ``ordered_quantity`` from the served version's PO work table.
+    """Fill ``ordered_quantity`` from the served snapshot: the stored
+    version's PO work table, or the in-memory one's procurement chain. The
+    live path (no snapshot) leaves it null.
 
     A screen still renders without it ("0 received" rather than "0 of 6"), so
     a failed read is logged and the page goes out as it is."""
     lines = [(r.po_number, r.po_item) for r in rows if r.po_number and r.po_item]
-    if not lines:
+    if snapshot is None or not lines:
         return rows
     try:
         ordered = snapshot.ordered_quantities_for(lines)
@@ -147,10 +149,13 @@ def list_ledger_entries(
         _unstored_entries(db, snapshot, plant=plant, material=material, include_out_of_scope=include_out_of_scope),
         plant=plant, material=material, **filters,
     )
-    return [
-        UtilisationLedgerEntryResponse.model_validate(entry)
-        for entry in page(entries, response, limit=limit, offset=offset)
-    ]
+    return _with_ordered_quantity(
+        [
+            UtilisationLedgerEntryResponse.model_validate(entry)
+            for entry in page(entries, response, limit=limit, offset=offset)
+        ],
+        snapshot,
+    )
 
 
 @router.get("/ledger/counts", response_model=LedgerCountsResponse)
@@ -202,7 +207,7 @@ def get_ledger_entry(
         if entry is not None and (
             include_out_of_scope or snapshot.scope_of(entry.material, entry.plant) is MaterialScope.OAR
         ):
-            return UtilisationLedgerEntryResponse.model_validate(entry)
+            return _with_ordered_quantity([UtilisationLedgerEntryResponse.model_validate(entry)], snapshot)[0]
         raise HTTPException(status_code=404, detail="Ledger entry not found")
 
     procurement_repo = PostgresProcurementRepository(db)

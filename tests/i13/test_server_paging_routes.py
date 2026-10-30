@@ -124,3 +124,22 @@ def test_the_ledger_still_answers_without_the_work_table(client):
     response = client.get(f"{API}/ledger", params={"delivery_status": "NOT_DELIVERED"})
     assert response.status_code == 200, response.text
     assert [r["ordered_quantity"] for r in response.json()] == [None]
+
+
+def test_the_in_memory_snapshot_answers_the_same_ordered_quantity() -> None:
+    """The stored and in-memory snapshots must answer every route alike
+    (test_snapshot_store); the in-memory one reads its procurement chain."""
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    from app.initiatives.i13.snapshot import I13Snapshot
+
+    chain = (
+        SimpleNamespace(po_number="POP1", po_item="10", ordered_quantity=Decimal("6.000")),
+        SimpleNamespace(po_number=None, po_item=None, ordered_quantity=Decimal("2")),
+        SimpleNamespace(po_number="POP2", po_item="10", ordered_quantity=None),
+    )
+    snapshot = SimpleNamespace(procurement_chain=chain)
+    found = I13Snapshot.ordered_quantities_for.__get__(snapshot)  # the method, on a stand-in
+    snapshot._ordered_by_po_line = I13Snapshot._ordered_by_po_line.func(snapshot)
+    assert found([("POP1", "10"), ("POP2", "10"), ("POX", "10")]) == {("POP1", "10"): Decimal("6.000")}
