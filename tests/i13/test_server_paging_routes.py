@@ -94,3 +94,33 @@ def test_exception_counts_cover_the_whole_queue(client):
         "by_status": {"OPEN": 2, "AWAITING_REQUESTER": 1, "RESOLVED": 1},
         "with_requester": 2,
     }
+
+
+def _work_po(stored, rows):  # noqa: F811
+    from sqlalchemy import text
+
+    stored.db.execute(text("CREATE TABLE i13_w1_po (purchasing_document TEXT, item TEXT, order_quantity TEXT)"))
+    for row in rows:
+        stored.db.execute(text("INSERT INTO i13_w1_po VALUES (:d, :i, :q)"), dict(zip("diq", row)))
+
+
+def test_a_ledger_line_carries_what_its_po_line_ordered(client, stored):  # noqa: F811
+    """UAT, 29 Oct: "Open PO 6" on the assistant and "Not delivered" on the
+    ledger, with no 6 anywhere on the ledger. The line now says it: 0 of 6."""
+    _work_po(stored, [("POP1", "10", "6.000"), ("POP1", "20", "9.000")])
+    response = client.get(f"{API}/ledger", params={"delivery_status": "NOT_DELIVERED"})
+    assert response.status_code == 200, response.text
+    assert [(r["ledger_id"], r["ordered_quantity"]) for r in response.json()] == [("P1", "6.000")]
+
+    detail = client.get(f"{API}/ledger/P1").json()
+    assert detail["ordered_quantity"] == "6.000"
+    # No PO line, nothing ordered to show.
+    assert client.get(f"{API}/ledger/P3").json()["ordered_quantity"] is None
+
+
+def test_the_ledger_still_answers_without_the_work_table(client):
+    """The quantity is a nicety: a version whose work table cannot be read
+    still serves its lines, without it."""
+    response = client.get(f"{API}/ledger", params={"delivery_status": "NOT_DELIVERED"})
+    assert response.status_code == 200, response.text
+    assert [r["ordered_quantity"] for r in response.json()] == [None]

@@ -201,6 +201,11 @@ class UtilisationLedgerEntryResponse(BaseModel):
     received_quantity: Decimal
     issued_quantity: Decimal
     open_quantity: Decimal
+    ordered_quantity: Decimal | None = None
+    """EKPO-MENGE of the PO line, so a screen can say "0 of 6 received" --
+    ordered minus received on an open line is what the assistant's open-PO
+    quantity adds up. Null with no PO line, or off the stored snapshot.
+    Attached at the route (``SqlSnapshot.ordered_quantities_for``)."""
 
     first_gr_date: date | None
     latest_gr_date: date | None
