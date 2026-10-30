@@ -138,9 +138,15 @@ class Recommendation(Base):
 
     consumption_count_12m: Mapped[int | None] = mapped_column(Integer, nullable=True)
     """SOP 3.1.1 indicator 1's own count, MSEG issue transactions minus
-    reversals, trailing 12 months. Structured, not just embedded in
-    ``conversion_detail`` -- a client can read/filter/sort on it without
-    parsing free text."""
+    reversals, over the trailing ``consumption_count_months`` months (6 since
+    2026-10-22, 12 before; the column keeps its historical name). Structured, not
+    just embedded in ``conversion_detail`` -- a client can read/filter/sort on it
+    without parsing free text."""
+
+    consumption_count_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """How many months the count above covers, as the policy said when this
+    recommendation was made. NULL for a recommendation made before this column
+    existed: its window was not recorded, and is not guessed."""
 
     consumption_count_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
     """The threshold the count above was compared against (policy-configured,
