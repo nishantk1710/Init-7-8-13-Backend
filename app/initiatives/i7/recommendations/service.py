@@ -166,6 +166,9 @@ def _to_row(
         "consumption_count_threshold": (
             conversion.consumption_count_threshold if conversion else None
         ),
+        "consumption_count_months": (
+            conversion.consumption_count_months if conversion else None
+        ),
         "production_impact": conversion.production_impact if conversion else None,
         "blocking_reason": (built.blocking_reason or "")[:500] or None,
         "factors_text": _factors_text(built.factors),

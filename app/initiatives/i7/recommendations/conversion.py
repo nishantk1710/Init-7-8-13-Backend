@@ -160,6 +160,7 @@ def evaluate(
             # never "unknown".
             production_impact=False if excluded else tier_met,
             detail=detail,
+            consumption_count_months=policy.consumption_count_months,
         )
 
     failed_gates = [detail for met, detail in gates if met is False]
