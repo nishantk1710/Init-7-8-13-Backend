@@ -334,6 +334,7 @@ class FakeSession:
         if unknown:
             raise NotImplementedError(f"fake session: filter {unknown} on {name}")
         issues = "movement_type IN ('201', '261')" in sql
+        issues_or_reversals = "movement_type IN ('201', '261', '202', '262')" in sql
         by_reservation = "reservation <> ''" in sql
         by_po = "purchase_order <> ''" in sql
         for row in self.tables[name]():
@@ -346,6 +347,8 @@ class FakeSession:
             if params.get("plant") and row.plant != params["plant"]:
                 continue
             if issues and row.movement_type not in ("201", "261"):
+                continue
+            if issues_or_reversals and row.movement_type not in ("201", "261", "202", "262"):
                 continue
             if by_reservation and row.reservation in ("", "0"):
                 continue
@@ -449,14 +452,19 @@ ALL = Batch("0", "9999999999")
 # (stock_issue_matching), and GRNI is per PO line, not per reservation. lledger
 # keeps its rows; grni 35 -> 81 (mixed) and 0 -> 6 (giant_reservations), and the
 # GR-not-issued exceptions follow WATCH's flag: 137 -> 152 and 4434 -> 4435.
+# "mixed" re-recorded 2026-10-30: a reservation's issues now carry their 202/262
+# reversals, netted and never below zero, so rledger/lledger/watch quantities
+# move; a 262 against a reservation no longer sits in the oldest-first stock
+# pool undoing another line's issue, so one estimated line leaves GRNI
+# (81 -> 80) and its exception goes with it (152 -> 151). The giants keep theirs.
 EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
     "mixed": {
         "attrib": (294, "214738b080d76802"), "chain": (286, "636c21f9a8b8679e"),
-        "exception": (152, "88cf86300dcd07c3"), "grni": (81, "72912b9a8298a299"),
-        "lledger": (286, "bb6eb5a92d41d6f9"), "movement": (186, "085dd35e7ee606ce"),
+        "exception": (151, "46ce4895f8e71b5c"), "grni": (80, "cdbe217240794569"),
+        "lledger": (286, "18121a087fdb0045"), "movement": (186, "085dd35e7ee606ce"),
         "oarkey": (87, "cafeb8032728b5cb"), "reclass": (87, "4b90da3bcd2f2450"),
-        "rledger": (294, "9bb3976d183c3a0e"), "usage": (134, "a4ef4d00cc908924"),
-        "watch": (192, "9cdd82c4433338d0"),
+        "rledger": (294, "747cdb56819da766"), "usage": (134, "a4ef4d00cc908924"),
+        "watch": (192, "cf041153f2b2bb03"),
     },
     "giant_procurement": {
         "attrib": (3, "f77f2830ef44df9f"), "chain": (1483, "17e55edc51ed3706"),

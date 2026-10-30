@@ -38,7 +38,7 @@ from enum import Enum
 from typing import Any
 
 from app.initiatives.i13.models import AttributionStatus, PartialLedgerEntry
-from app.initiatives.i13.movements import ISSUE_TYPES, event_dates, net_quantity
+from app.initiatives.i13.movements import ISSUE_TYPES, event_dates, net_standing_quantity
 from app.initiatives.i13.po_lines import PoLineState, po_line_states
 from app.initiatives.i13.procurement_chain import build_procurement_chain
 from app.initiatives.i13.stock_issue_matching import IssueMatch, PoKey, PoLineIssues, po_line_issues
@@ -180,7 +180,7 @@ def _to_legacy_entry(
     if reservation is not None:
         reservation_number, reservation_item = reservation["Rsnum"], reservation["Rspos"]
         gi_rows = gi_by_reservation.get((reservation_number, reservation_item), [])
-        issued_qty = net_quantity(gi_rows, ISSUE_TYPES)
+        issued_qty = net_standing_quantity(gi_rows, ISSUE_TYPES)
         first_gi_date, latest_gi_date = event_dates(gi_rows, ISSUE_TYPES)
         reservation_source = "LIVE"
     else:

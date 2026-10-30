@@ -48,7 +48,7 @@ from app.initiatives.i13.models import (
     ReservationLedgerEntry,
     ReservationPrLinkStatus,
 )
-from app.initiatives.i13.movements import ISSUE_TYPES, event_dates, net_quantity
+from app.initiatives.i13.movements import ISSUE_TYPES, event_dates, net_standing_quantity
 from app.initiatives.i13.po_lines import pr_is_deleted
 from app.initiatives.i13.procurement_chain import build_procurement_chain, derive_lifecycle_status
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
@@ -100,7 +100,7 @@ def _attach_reservation(
     # inherent to the reservation row itself) -- zero rows found is a
     # resolved fact ("not issued yet"), not an unresolved link.
     gi_rows = gi_by_reservation.get((rsnum, rspos), [])
-    issued_quantity = net_quantity(gi_rows, ISSUE_TYPES)
+    issued_quantity = net_standing_quantity(gi_rows, ISSUE_TYPES)
     first_issue_date, last_issue_date = event_dates(gi_rows, ISSUE_TYPES)
     gi_link_status = GiLinkStatus.LINKED
 
