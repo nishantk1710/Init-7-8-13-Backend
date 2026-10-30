@@ -97,7 +97,14 @@ def test_capturing_the_current_month_saves_an_open_rolling_reading(db):
 
 
 def test_a_snapshot_holds_the_headline_figures_and_the_per_plant_payload(db):
-    db.add_all([rec("A", at(2026, 10), plant="1300"), rec("B", at(2026, 10), plant="1500")])
+    db.add_all([
+        rec("A", at(2026, 10), plant="1300"), rec("B", at(2026, 10), plant="1500"),
+        # The currency of each price: working capital counts ZAR (and NAD) only.
+        StagedMaterialPlant(sap_material_number="A", sap_plant_code="1300", unit_price=Decimal("10"), currency="ZAR",
+                            staging_run_id=1, source_table="n_mbew"),
+        StagedMaterialPlant(sap_material_number="B", sap_plant_code="1500", unit_price=Decimal("10"), currency="ZAR",
+                            staging_run_id=1, source_table="n_mbew"),
+    ])
     db.commit()
     snapshots.capture_month(db, OCT, today=MID_OCT)
     row = only(db)

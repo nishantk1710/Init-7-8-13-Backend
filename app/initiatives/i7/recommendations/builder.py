@@ -34,6 +34,9 @@ from app.initiatives.i7.recommendations.types import (
 from app.initiatives.i7.policy import PolicyDocument
 
 
+NO_SIMILAR_MATERIALS_FOUND = "NO_SIMILAR_MATERIALS_FOUND"
+"""``blocking_reason`` of a cold-start material whose similarity search completed but found no usable neighbour."""
+
 MISSING_DATA_WINDOW = "MISSING_DATA"
 """``i7_material_feature.window_history_status`` when a month of the demand window is missing or incomplete."""
 
@@ -393,7 +396,13 @@ def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommend
         )
     else:
         status = LifecycleStatus.NOT_EVALUABLE
-        blocking_reason = row.status or "NO_ELIGIBLE_NEIGHBORS"
+        # ``row.status`` is the similarity search's own outcome. SUCCESS there means the search ran to the
+        # end and found no usable neighbour -- reported as the blocker it is, not as "SUCCESS".
+        blocking_reason = (
+            NO_SIMILAR_MATERIALS_FOUND
+            if row.status == "SUCCESS"
+            else row.status or "NO_ELIGIBLE_NEIGHBORS"
+        )
 
     trace: list[tuple[str, str]] = [
         ("candidates_considered", str(row.candidates_considered)),

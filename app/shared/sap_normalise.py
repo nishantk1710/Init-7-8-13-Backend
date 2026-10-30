@@ -356,6 +356,9 @@ TABLES: dict[str, tuple[Col, ...]] = {
         # 26-Oct-2026: it matches MARD on 717 of 730 stocked 80-series parts,
         # and it also counts units the plant owns but has sent to a vendor.
         _c("total_valuated_stock", "LBKUM", kind="num"),
+        # The currency VERPR is stated in. Read by I07's staging so a price travels
+        # with the currency SAP gave; an MBEW delivery without WAERS resolves to NULL.
+        _c("currency", "WAERS"),
     ),
     # Batch stock. I08 reads it for usable vs damaged stock on 80-series parts
     # (27-Oct-2026): they are not batch-managed, but this SAP keeps one MCHB

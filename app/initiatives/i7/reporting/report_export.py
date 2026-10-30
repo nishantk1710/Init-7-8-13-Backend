@@ -311,13 +311,15 @@ def _write_management_sheets(workbook: Workbook, management) -> None:
     _table(
         position,
         ["Plant", "Material-plants", "At stockout risk", "Judged", "Could not be judged", "Stockout measured as of", "Stockout reading stale",
-         "Excess candidates", "Excess opportunity", "Working capital impact (estimate)", "Priced rows", "Currency"],
+         "Excess candidates", "Excess opportunity", "Working capital impact (estimate)", "Working capital currency",
+         "Working capital: included", "Working capital: left out", "Currency"],
         [
             [
                 "All plants" if entry.plant is None else entry.plant, entry.figures.population, entry.figures.stockout.at_risk,
                 entry.figures.stockout.evaluated, entry.figures.stockout.insufficient_data, _iso(entry.figures.stockout.as_of),
                 "Yes" if entry.figures.stockout.stale else "No", entry.figures.excess_count, _na(entry.figures.excess_opportunity),
-                _na(entry.figures.net_rop_value_impact), entry.figures.priced_count, entry.figures.currency or "Not stated",
+                _na(entry.figures.net_rop_value_impact), entry.figures.working_capital_currency or "Not stated",
+                entry.figures.priced_count, entry.figures.working_capital_excluded_count, entry.figures.currency or "Not stated",
             ]
             for entry in management.plant_positions
         ],

@@ -49,9 +49,10 @@ from app.schemas.i7.reports import (
     SourceMonthStatus,
 )
 
-#: Ledger action -> (row key, row label, plain-language note).
-LEDGER_ROWS: tuple[tuple[str, str, str, str], ...] = (
-    ("SUBMIT", "submitted_for_approval", "Sent for approval", "Recommendations sent into the approval chain."),
+#: Ledger action(s) -> (row key, row label, plain-language note). A RESUBMIT (a manual Min-Max conversion asked for
+#: again after a rejection) is a send into the chain like a SUBMIT.
+LEDGER_ROWS: tuple[tuple[str | tuple[str, ...], str, str, str], ...] = (
+    (("SUBMIT", "RESUBMIT"), "submitted_for_approval", "Sent for approval", "Recommendations sent into the approval chain."),
     ("APPROVE", "approval_decisions", "Approval decisions", "One per role that approved at its step; a recommendation passes several."),
     ("REJECT", "rejections", "Rejections", "Rejected by an approver, or declined by the planner before it was sent."),
     ("SEND_BACK", "sent_back", "Sent back", "Returned a step for correction."),
@@ -68,7 +69,7 @@ def _month_values(counts: dict[tuple[int, int], int], months: list[date], states
     return [None if state == "not_started" else counts.get((m.year, m.month), 0) for m, state in zip(months, states)]
 
 
-def _events_by_month(session: Session, action: str, period_start: date, exclusive_end: date) -> dict[tuple[int, int], int]:
+def _events_by_month(session: Session, action: str | tuple[str, ...], period_start: date, exclusive_end: date) -> dict[tuple[int, int], int]:
     events = (
         select(
             ApprovalLedgerEntry.recommendation_id,
@@ -78,7 +79,7 @@ def _events_by_month(session: Session, action: str, period_start: date, exclusiv
             ApprovalLedgerEntry.timestamp,
         )
         .where(
-            ApprovalLedgerEntry.action == action,
+            ApprovalLedgerEntry.action.in_((action,) if isinstance(action, str) else action),
             ApprovalLedgerEntry.timestamp >= period_start,
             ApprovalLedgerEntry.timestamp < exclusive_end,
         )
@@ -93,7 +94,7 @@ def _events_by_month(session: Session, action: str, period_start: date, exclusiv
     return {(int(y), int(m)): int(n) for y, m, n in rows}
 
 
-def _distinct_events_in_period(session: Session, action: str, period_start: date, exclusive_end: date) -> int:
+def _distinct_events_in_period(session: Session, action: str | tuple[str, ...], period_start: date, exclusive_end: date) -> int:
     events = (
         select(
             ApprovalLedgerEntry.recommendation_id,
@@ -103,7 +104,7 @@ def _distinct_events_in_period(session: Session, action: str, period_start: date
             ApprovalLedgerEntry.timestamp,
         )
         .where(
-            ApprovalLedgerEntry.action == action,
+            ApprovalLedgerEntry.action.in_((action,) if isinstance(action, str) else action),
             ApprovalLedgerEntry.timestamp >= period_start,
             ApprovalLedgerEntry.timestamp < exclusive_end,
         )

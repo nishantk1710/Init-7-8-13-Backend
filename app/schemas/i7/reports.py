@@ -937,8 +937,14 @@ class PositionFigures(BaseModel):
     recommendation has a price and both reorder points. An estimate of the recommendations' effect, not a saving
     that has been realised."""
     priced_count: int
-    """How many of the population that figure is over."""
+    """How many of the population that figure is over: the material-plants the working capital impact includes."""
     currency: str | None = None
+    working_capital_currency: str | None = None
+    """The currency ``net_rop_value_impact`` is stated in (ZAR); ``currency`` is the portfolio's price currency, which
+    the excess opportunity still uses."""
+    working_capital_excluded_count: int = 0
+    """Material-plants of the population left out of ``net_rop_value_impact``: other or missing currency, no valid
+    price, or no reorder point."""
 
 
 class PlantPosition(BaseModel):

@@ -248,21 +248,24 @@ def _cards(
         KpiCard(
             key="working_capital_impact",
             title="Working capital impact",
-            unit=_unit(position.currency),
+            unit=_unit(position.working_capital_currency or position.currency),
             value=position.net_rop_value_impact,
             status=AvailabilityStatus.AVAILABLE if position.net_rop_value_impact is not None else AvailabilityStatus.NOT_AVAILABLE,
             explanation=(
                 "Estimated change in cash tied up in stock if every recommended reorder point were adopted: negative "
-                "means more tied up, positive means released. An estimate, not a realised saving."
+                "means more tied up, positive means released. An estimate, not a realised saving. In ZAR, from each "
+                "material's SAP valuation price (ZAR, and NAD at 1:1): "
+                f"{position.priced_count} material-plants included, {position.working_capital_excluded_count} left out "
+                "(another currency, no stated currency, no valid price or no reorder point)."
             ),
             kind=MetricKind.MEASUREMENT,
             measured_on=position_measured_on if from_snapshot else cutoff,
             period_label=f"{quarter_end_label} month-end" if from_snapshot else period_label,
             denominator=position.priced_count,
-            denominator_label="recommendations with a price and both reorder points",
+            denominator_label="material-plants included (ZAR/NAD price and both reorder points)",
             basis=basis,
             unavailable_reason=(
-                None if position.net_rop_value_impact is not None else "No recommendation has a unit price and both a current and a recommended reorder point."
+                None if position.net_rop_value_impact is not None else "No recommendation has a ZAR or NAD unit price and both a current and a recommended reorder point."
             ),
             note=" ".join(n for n in (position_note, MONEY_CAVEAT) if n),
         )

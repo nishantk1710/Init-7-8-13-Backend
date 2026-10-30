@@ -32,7 +32,8 @@ from app.initiatives.i7.kpi_formulas.resolved import (
     newest_active,
     validate,
 )
-from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql, working_capital_sql
+from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql
+from app.initiatives.i7.kpi_formulas.working_capital import working_capital_impact
 from app.models.i7_kpi_formula import KpiFormulaVersion
 from app.models.i7_recommendation import Recommendation
 from app.models.i7_stockout_risk import StockoutRiskInput
@@ -231,8 +232,7 @@ def figures(session: Session, formulas: Formulas) -> Figures:
     excess_total = session.execute(
         excess_base.with_only_columns(func.sum(excess_value)).where(excess_value.is_not(None))
     ).scalar()
-    capital = working_capital_sql(formulas)
-    capital_total = session.execute(base.with_only_columns(func.sum(capital)).where(capital.is_not(None))).scalar()
+    capital_total = working_capital_impact(session, base, formulas).amount
 
     from app.api.i7.adoption import adoption_counts
     from app.initiatives.i7.kpi_formulas import expression
