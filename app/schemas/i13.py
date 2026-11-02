@@ -735,7 +735,7 @@ class PlanVsIssuedRowResponse(BaseModel):
     session_id: str | None
     plan_id: str | None
     planned_quantity: Decimal
-    """A plan's planned quantity, or a SAP reservation's reserved quantity."""
+    """What was asked for: a plan's planned quantity, or a SAP reservation's reserved quantity."""
     issued_quantity: Decimal
     """Goods issued on the reservation(s), reversals netted -- never a receipt."""
     status: str
@@ -743,9 +743,12 @@ class PlanVsIssuedRowResponse(BaseModel):
     variance_percentage: Decimal | None
     due_date: date | None
     window_start: date | None
+    overdue: bool = False
+    """Below plan, and ``due_date`` has passed. A marker, not a status."""
 
 
 class PlanVsIssuedCountsResponse(BaseModel):
     total: int
     by_source: dict[str, int]
     by_status: dict[str, int]
+    overdue: int = 0

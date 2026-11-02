@@ -60,7 +60,9 @@ from app.initiatives.i13.snapshot_store import codec
 #: 4 (30 Oct 2026): watch's acquired-vs-plan measures issued on each plan's own
 #: reservations, and its f2 can hold NO_RESERVATION. Same columns, new values.
 #: 5 (2 Nov 2026): planvs, the acquired-vs-plan tab's plan and SAP reservation rows.
-RECORD_LAYOUT = 5
+#: 6 (2 Nov 2026): planvs statuses: awaiting reservation, not due yet, on, below
+#: or above plan.
+RECORD_LAYOUT = 6
 
 WATCH = "watch"
 MOVEMENT = "movement"

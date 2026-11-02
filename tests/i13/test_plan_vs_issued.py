@@ -4,11 +4,12 @@ and every OAR reservation raised directly in SAP that no plan owns."""
 from datetime import date
 from decimal import Decimal
 
-from app.api.i13.plan_vs_issued import _matches, _with_session
+from app.api.i13.plan_vs_issued import _matches, _response, _with_session
 from app.initiatives.i13.plan_vs_issued import (
     RowSource,
     RowStatus,
     from_payload,
+    is_overdue,
     plan_vs_issued_rows,
     to_payload,
 )
@@ -17,13 +18,13 @@ from app.initiatives.i13.snapshot_store import kinds
 from app.shared.material_scope import MaterialScope
 from tests.i13.test_plan_outcomes import _captured, _entry
 
-AS_OF = date(2026, 11, 2)
+TODAY = date(2026, 11, 2)
 PAST = date(2026, 10, 15)
 AHEAD = date(2026, 12, 1)
 
 
 def _rows(plans, entries):
-    return list(plan_vs_issued_rows(plans, entries, as_of=AS_OF))
+    return list(plan_vs_issued_rows(plans, entries, as_of=TODAY))
 
 
 def _sap(rspos: str, *, reserved: str = "10", issued: str = "0", required: date | None = PAST, **overrides):
@@ -37,7 +38,7 @@ def _status(rows, row_id):
     return next(r for r in rows if r.row_id == row_id).status
 
 
-# --- reservations raised directly in SAP ---------------------------------------
+# --- one rule for both sources: issued against planned (or reserved) ----------
 
 
 def test_sap_rows_compare_issued_with_reserved() -> None:
@@ -49,29 +50,46 @@ def test_sap_rows_compare_issued_with_reserved() -> None:
         _sap("0005", issued="0", required=AHEAD),
     ])
     assert {r.reservations[0]: r.status for r in rows} == {
-        "1000000000/0001": RowStatus.FULLY_ISSUED,
-        "1000000000/0002": RowStatus.PARTLY_ISSUED,
-        "1000000000/0003": RowStatus.OVER_ISSUED,
-        "1000000000/0004": RowStatus.NOT_ISSUED,
+        "1000000000/0001": RowStatus.ON_PLAN,
+        "1000000000/0002": RowStatus.BELOW_PLAN,
+        "1000000000/0003": RowStatus.ABOVE_PLAN,
+        "1000000000/0004": RowStatus.BELOW_PLAN,
         "1000000000/0005": RowStatus.NOT_DUE,
     }
     assert all(r.source is RowSource.SAP and r.session_id is None for r in rows)
 
 
-def test_a_sap_row_measures_variance_against_the_reserved_quantity() -> None:
+def test_there_are_five_statuses() -> None:
+    assert {s.value for s in RowStatus} == {"NO_RESERVATION", "NOT_DUE", "ON_PLAN", "BELOW_PLAN", "ABOVE_PLAN"}
+
+
+def test_variance_is_measured_against_the_reserved_quantity() -> None:
     (row,) = _rows([], [_sap("0001", reserved="100", issued="200")])
     assert (row.planned_quantity, row.issued_quantity) == (Decimal("100"), Decimal("200"))
     assert (row.variance_quantity, row.variance_percentage) == (Decimal("100"), Decimal("100"))
 
 
-def test_not_due_has_no_variance_it_is_not_a_shortfall_yet() -> None:
-    (row,) = _rows([], [_sap("0001", issued="0", required=AHEAD)])
-    assert row.variance_quantity is None and row.variance_percentage is None
+def test_nothing_issued_past_its_date_is_the_whole_quantity_below() -> None:
+    (row,) = _rows([], [_sap("0001", reserved="10", issued="0", required=PAST)])
+    assert row.status is RowStatus.BELOW_PLAN
+    assert (row.variance_quantity, row.variance_percentage) == (Decimal("-10"), Decimal("-100"))
 
 
-def test_a_partly_issued_reservation_is_partly_issued_even_before_its_date() -> None:
+def test_nothing_issued_before_its_date_is_not_due_yet_with_no_variance() -> None:
+    (row,) = _rows([], [_sap("0001", reserved="10", issued="0", required=AHEAD)])
+    assert row.status is RowStatus.NOT_DUE
+    assert (row.variance_quantity, row.variance_percentage) == (None, None)
+
+
+def test_a_partly_issued_reservation_is_below_plan_even_before_its_date() -> None:
     (row,) = _rows([], [_sap("0001", issued="4", required=AHEAD)])
-    assert row.status is RowStatus.PARTLY_ISSUED
+    assert row.status is RowStatus.BELOW_PLAN
+
+
+def test_issued_with_nothing_reserved_is_above_with_no_percentage() -> None:
+    (row,) = _rows([], [_sap("0001", reserved="0", issued="3")])
+    assert row.status is RowStatus.ABOVE_PLAN
+    assert (row.variance_quantity, row.variance_percentage) == (Decimal("3"), None)
 
 
 def test_a_reservation_split_over_po_lines_is_one_row() -> None:
@@ -115,11 +133,17 @@ def test_plan_rows_read_below_and_above_plan() -> None:
     assert next(r for r in above if r.row_id == "PLAN-P1").variance_quantity == Decimal("2")
 
 
-def test_a_plan_with_no_reservation_is_awaiting_one() -> None:
+def test_a_plan_with_no_reservation_yet_is_awaiting_one() -> None:
     (row,) = _rows([_captured("P1")], [])
     assert row.status is RowStatus.NO_RESERVATION
-    assert row.reservations == () and row.variance_quantity is None
+    assert row.reservations == () and row.issued_quantity == 0
+    assert row.variance_quantity is None
     assert row.due_date == date(2026, 10, 31)
+
+
+def test_awaiting_a_reservation_wins_even_when_the_window_is_ahead() -> None:
+    (row,) = _rows([_captured("P1", window_end=AHEAD)], [])
+    assert row.status is RowStatus.NO_RESERVATION
 
 
 def test_a_linked_plan_with_nothing_issued_and_its_window_ahead_is_not_due() -> None:
@@ -157,7 +181,7 @@ def test_the_stored_record_carries_its_filter_columns() -> None:
 def test_the_route_filters_by_source_status_and_reservation() -> None:
     rows = _rows([_captured("P1")], [_entry("0001", "4"), _sap("0002", issued="10", reservation_number="2000")])
     sap = next(r for r in rows if r.source is RowSource.SAP)
-    assert _matches(sap, source="sap", status="fully_issued", reservation="2000")
+    assert _matches(sap, source="sap", status="on_plan", reservation="2000")
     assert not _matches(sap, source="ASSISTANT", status=None, reservation=None)
     assert not _matches(sap, source=None, status=None, reservation="1000000000")
 
@@ -166,3 +190,42 @@ def test_a_sap_row_shows_the_session_its_item_text_names() -> None:
     (row,) = _rows([], [_sap("0001", issued="1")])
     assert _with_session(row, {("1000000000", "0001"): "SABC"}).session_id == "SABC"
     assert _with_session(row, {}).session_id is None
+
+
+# --- overdue: a marker on below-plan rows, not a status --------------------------
+
+
+def test_below_plan_and_past_its_date_is_overdue() -> None:
+    rows = _rows([], [
+        _sap("0001", issued="0", required=PAST),
+        _sap("0002", issued="0", required=AHEAD),
+        _sap("0003", issued="10", required=PAST),
+        _sap("0004", issued="0", required=None),
+    ])
+    assert {r.reservations[0][-4:]: is_overdue(r, TODAY) for r in rows} == {
+        "0001": True, "0002": False, "0003": False, "0004": False,
+    }
+    assert {r.reservations[0][-4:]: r.status for r in rows}["0002"] is RowStatus.NOT_DUE
+
+
+def test_a_linked_plan_whose_window_ended_with_nothing_issued_is_overdue() -> None:
+    plan = _captured(
+        "P1", reservation_number="1000000000", reservation_item="0001",
+        linked_reservations=(("1000000000", "0001"),),
+    )
+    (row,) = _rows([plan], [_entry("0001", "0")])
+    assert row.status is RowStatus.BELOW_PLAN
+    assert is_overdue(row, TODAY) and not is_overdue(row, date(2026, 10, 31))
+
+
+def test_awaiting_a_reservation_and_not_due_are_never_overdue() -> None:
+    awaiting = _rows([_captured("P1")], [])[0]
+    not_due = _rows([], [_sap("0001", required=AHEAD)])[0]
+    assert not is_overdue(awaiting, TODAY) and not is_overdue(not_due, date(2027, 1, 1))
+
+
+def test_the_route_marks_and_filters_overdue_rows() -> None:
+    due, ahead = _rows([], [_sap("0001", required=PAST), _sap("0002", required=AHEAD)])
+    assert _response(due, {}, TODAY).overdue and not _response(ahead, {}, TODAY).overdue
+    assert _matches(due, source=None, status=None, reservation=None, overdue=True, as_of=TODAY)
+    assert not _matches(ahead, source=None, status=None, reservation=None, overdue=True, as_of=TODAY)
