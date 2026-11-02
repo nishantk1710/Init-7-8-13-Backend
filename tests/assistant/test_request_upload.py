@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
 
 from app.assistant import departments
-from app.assistant.request_upload import HEADERS, SHEET, UploadError, build_template, extract
+from app.assistant.request_upload import HEADERS, SHEET, TEMPLATE_COLUMNS, UploadError, build_template, extract
 from app.core.config import get_settings
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -142,16 +142,26 @@ class TestTemplate:
     def test_has_the_headers_text_columns_and_instructions(self) -> None:
         book = load_workbook(io.BytesIO(build_template(20)))
         sheet = book[SHEET]
-        assert [c.value for c in sheet[1]] == list(HEADERS)
+        assert [c.value for c in sheet[1]] == ["Material", "Material name", "Plant", "Department"]
+        assert list(TEMPLATE_COLUMNS) == [c.value for c in sheet[1]]
         assert sheet["A2"].number_format == "@"
         assert any("Up to 20 materials" in (row[0] or "") for row in book["How to fill"].iter_rows(values_only=True))
 
     def test_filled_in_it_is_a_valid_upload(self) -> None:
         book = load_workbook(io.BytesIO(build_template(20)))
-        book[SHEET].append(["000000001000000123", "1300", "10303"])
+        book[SHEET].append(["000000001000000123", "BEARING ASSY PUMP HR250", "1300", "10303"])
+        book[SHEET].append(["1000000456", None, "1300", "10303"])
         buffer = io.BytesIO()
         book.save(buffer)
-        assert extract(buffer.getvalue(), max_lines=20, file_name="filled.xlsx").materials == ["000000001000000123"]
+        got = extract(buffer.getvalue(), max_lines=20, file_name="filled.xlsx")
+        assert got.materials == ["000000001000000123", "1000000456"]
+
+    def test_other_columns_are_the_requesters_own_and_ignored(self) -> None:
+        content = workbook(
+            ("Pump, 6/4 Warman", "1000000123", "Mill 3", "1300", "10303"),
+            header=("Description", "Material", "Notes", "Plant", "Department"),
+        )
+        assert extract(content, max_lines=20).materials == ["1000000123"]
 
 
 class TestRoutes:

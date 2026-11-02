@@ -36,6 +36,11 @@ MAX_UPLOAD_BYTES = 1024 * 1024
 SHEET = "Materials"
 HELP_SHEET = "How to fill"
 HEADERS = ("Material", "Plant", "Department")
+"""The columns read. Any other column is the requester's own and is ignored."""
+
+#: The template's columns: the three read, plus a name for the requester's own
+#: reference (UAT, 2 Nov) -- never read: the screen shows SAP's description.
+TEMPLATE_COLUMNS = ("Material", "Material name", "Plant", "Department")
 TEMPLATE_FILE_NAME = "material-request-template.xlsx"
 
 #: Header text as written, lower-cased with spaces removed -> column.
@@ -76,26 +81,27 @@ def build_template(max_lines: int) -> bytes:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = SHEET
-    sheet.append(list(HEADERS))
+    sheet.append(list(TEMPLATE_COLUMNS))
     for cell in sheet[1]:
         cell.font = Font(bold=True)
         cell.fill = PatternFill("solid", fgColor="EFEFEF")
     sheet.freeze_panes = "A2"
-    for letter, width in zip("ABC", (22, 12, 14), strict=True):
+    for letter, width in zip("ABCD", (22, 45, 12, 14), strict=True):
         sheet.column_dimensions[letter].width = width
     # Text format on the rows a requester will fill, so 000000000010001234
     # stays as typed instead of becoming a number.
-    for row in sheet.iter_rows(min_row=2, max_row=max_lines + 51, max_col=len(HEADERS)):
+    for row in sheet.iter_rows(min_row=2, max_row=max_lines + 51, max_col=len(TEMPLATE_COLUMNS)):
         for cell in row:
             cell.number_format = "@"
 
     notes = workbook.create_sheet(HELP_SHEET)
     for line in (
-        f"List the materials on the '{SHEET}' sheet, one per row, under the headers Material, Plant, Department.",
+        f"List the materials on the '{SHEET}' sheet, one per row. Do not rename the sheet or the headers.",
         "Material: the SAP material number. Leading zeros are optional.",
+        "Material name: optional, for your own reference. It is not read: the screen shows SAP's description.",
         f"Plant: the same plant on every row ({' or '.join(IN_SCOPE_PLANTS)}).",
         "Department: the same 5-digit department code on every row.",
-        f"Up to {max_lines} materials per file. Do not rename the sheet or the headers.",
+        f"Up to {max_lines} materials per file.",
         "After upload each material is checked; quantities and reasons are answered on screen.",
     ):
         notes.append([line])
@@ -281,6 +287,7 @@ __all__ = [
     "HEADERS",
     "MAX_UPLOAD_BYTES",
     "SHEET",
+    "TEMPLATE_COLUMNS",
     "TEMPLATE_FILE_NAME",
     "ExtractedFile",
     "UploadError",
