@@ -105,11 +105,10 @@ def _parser() -> argparse.ArgumentParser:
         "--from-date",
         metavar="YYYYMMDD",
         help=(
-            "override the window start, e.g. 20130101. The default is three "
-            "years back for transaction tables, which is right for a live "
-            "client and near-empty in this one -- 99.3%% of its purchase orders "
-            "predate 2026, and the ZREP orders are from 2018. Use this to ask "
-            "for the period the data actually occupies."
+            "a fixed window start for this run, e.g. 20130101, applied to every "
+            "table in it (master data too). Without it every table is pulled "
+            "whole, unless CSV_PULL_WINDOW_YEARS or CSV_PULL_FROM_DATE/"
+            "CSV_PULL_TO_DATE set a window for the transaction tables."
         ),
     )
     parser.add_argument(
@@ -121,7 +120,10 @@ def _parser() -> argparse.ArgumentParser:
         "--years",
         type=int,
         metavar="N",
-        help="widen the transaction window to N years back instead of three",
+        help=(
+            "limit the transaction tables to the last N years for this run; "
+            "0 pulls them whole. Overrides the CSV_PULL_* window settings."
+        ),
     )
     parser.add_argument(
         "--batch-size",
@@ -367,7 +369,7 @@ def _csv(args) -> int:
     """The CSV route: pull, load, or both, for one table or all of them."""
     from app.ingest.csv_load import load_all, load_table
     from app.ingest.csv_pull import pull_all, pull_one
-    from app.ingest.csv_tables import CSV_TABLES
+    from app.ingest.csv_tables import CSV_TABLES, configured_window
 
     if not (args.all or args.table):
         print("Nothing selected: pass --all or --table NAME. See --help.")
@@ -391,11 +393,24 @@ def _csv(args) -> int:
             "years": args.years,
         }
         if args.from_date:
-            span = f"{args.from_date}..{args.to_date} (explicit)"
-        elif args.years:
-            span = f"{args.years} year(s) back"
+            span = f"{args.from_date}..{args.to_date} (explicit, every table)"
+        elif args.years is not None:
+            span = (
+                f"transaction tables: last {args.years} year(s) (--years); master data whole"
+                if args.years else "every table whole (--years 0)"
+            )
         else:
-            span = "default (3 years for transaction tables)"
+            try:
+                years, start, end = configured_window()
+            except ValueError as exc:
+                print(f"The CSV pull window settings are unusable: {exc}")
+                return 2
+            if start:
+                span = f"transaction tables: {start}..{end} (CSV_PULL_FROM_DATE/TO_DATE); master data whole"
+            elif years:
+                span = f"transaction tables: last {years} year(s) (CSV_PULL_WINDOW_YEARS); master data whole"
+            else:
+                span = "every table whole -- full history (no window set)"
 
         if len(names) == 1:
             shape = "single table"
@@ -465,6 +480,8 @@ def _csv(args) -> int:
                 print(f"         {result.error}")
             if not result.ok:
                 failures += 1
+        if args.all:
+            failures += _odata_only_tables()
 
     if args.csv_verify:
         failures += _csv_verify(names)
@@ -473,6 +490,24 @@ def _csv(args) -> int:
         failures += _csv_download(names, args)
 
     return 1 if failures else 0
+
+
+def _odata_only_tables() -> int:
+    """The tables no CSV extract fills -- Department Codes (app/ingest/odata_tables.py)
+    -- read whole over OData and merged, so ``--csv-load --all`` leaves no raw
+    table behind. Their SAP table name is not one the CSV job is known to
+    accept, so they cannot ride the CSV request itself. Returns failures."""
+    from app.ingest.odata_tables import ODATA_TABLES
+    from app.ingest.scheduler import run_odata_full_pull_cycle
+
+    names = [t.entity_set for t in ODATA_TABLES]
+    print(f"\nOData-only tables, read whole and merged: {', '.join(names)}\n")
+    summary = run_odata_full_pull_cycle(names)
+    if summary["pulled"]:
+        print(f"  [ok ] {summary['pulled']} set(s) merged into their raw tables")
+    for error in summary["errors"]:
+        print(f"  [FAIL] {error}")
+    return summary["failed"]
 
 
 def _csv_download(names: list[str], args) -> int:

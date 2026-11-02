@@ -134,8 +134,13 @@ def test_the_cycle_runs_sweep_then_load_then_enrichment(monkeypatch) -> None:
 
     summary = scheduler.run_full_refresh_cycle()
 
-    assert fake.log == ["csv pull", "csv load", "fetch MaterialPlantSet full advance=False", "load MaterialPlantSet"]
-    assert summary["pulled"] == 1 and summary["loaded"] == 1 and summary["enriched"] == 1
+    assert fake.log == [
+        "csv pull", "csv load",
+        "fetch MaterialPlantSet full advance=False", "load MaterialPlantSet",
+        # The table no CSV extract fills, read whole after the enrichment sets.
+        "fetch DepartmentCodeSet full advance=False", "load DepartmentCodeSet",
+    ]
+    assert summary["pulled"] == 1 and summary["loaded"] == 1 and summary["enriched"] == 2
     assert summary["rows"] == 2040
     # EKKO's timeout is reported, not hidden, and does not stop the rest.
     assert summary["failed"] == 1 and any("EKKO" in e for e in summary["errors"])
