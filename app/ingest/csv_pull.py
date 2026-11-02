@@ -81,7 +81,7 @@ from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
 from app.core.logging import get_logger
-from app.ingest.csv_tables import CsvTable, CSV_TABLES, csv_table
+from app.ingest.csv_tables import CsvTable, CSV_TABLES, csv_table, requested_window
 from app.integrations.sap.client import SapClient
 from app.integrations.sap.errors import SapError
 from app.integrations.sap.transport import CpiTransport
@@ -298,9 +298,14 @@ def fire(
         # operator is told what to expect -- a 15-minute timeout, not rows.
         logger.warning("%s: %s; fired so the request is on record, expect a timeout",
                        spec.sap_table, spec.blocked)
-    from_date, to_date = spec.window(
-        today, years=years, from_date=from_date, to_date=to_date
-    )
+    try:
+        from_date, to_date = requested_window(
+            spec, today, years=years, from_date=from_date, to_date=to_date
+        )
+    except ValueError as exc:
+        detail = f"no window to ask SAP for: {exc}"
+        logger.error("%s: refusing to fire -- %s", spec.sap_table, detail)
+        return PullResult(spec.sap_table, "", STATUS_FAILED, error=detail)
     started = time.monotonic()
     sessionmaker = get_sessionmaker()
 
@@ -465,12 +470,13 @@ def _verdict(record: CsvExtractRequest) -> tuple[str, str | None]:
             "were lost and loading it would look complete and not be."
         )
 
-    # Windowed: the extract is a subset by design, so the count is a ceiling.
+    # Transaction table: windowable, and delivered as a subset for some, so the
+    # count is a ceiling.
     if received > expected:
         return STATUS_FAILED, (
             f"{received} row(s) landed against a $count of {expected} for the "
-            "whole set. A three-year window cannot return more than the table "
-            "holds -- chunks were most likely delivered twice."
+            "whole set. An extract cannot return more than the table holds -- "
+            "chunks were most likely delivered twice."
         )
     return STATUS_COMPLETE, None
 

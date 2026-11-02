@@ -14,23 +14,36 @@ WHY EVERY TABLE GETS AN EXPLICIT WINDOW
 Every request we have fired with ``FromDate=''`` and ``ToDate=''`` delivered
 nothing -- ack returned, chunks never arrived. Every request with real dates
 delivered. We have not isolated whether the blank dates or a reused RequestId
-caused that, so nothing here sends a blank date: master data gets a window wide
-enough to mean "everything" instead.
+caused that, so nothing here sends a blank date: "the whole table" is a window
+wide enough to mean everything.
 
-Transaction tables get three years, per the 25-Sep instruction. Master data
-gets the wide window, because "the last three years of MARA" is not a
+THE WHOLE TABLE, UNLESS A WINDOW IS SET
+
+Every table is pulled whole. Master data always has been; the transaction
+tables were limited to the last three years (the 25-Sep instruction) until
+2026-11-02, when the full history was asked for instead. A window for the
+transaction tables is now a setting -- ``CSV_PULL_WINDOW_YEARS``, or
+``CSV_PULL_FROM_DATE`` with ``CSV_PULL_TO_DATE`` -- and ``--years`` or
+``--from-date``/``--to-date`` choose one for a single run.
+
+The settings never narrow master data: "the last three years of MARA" is not a
 meaningful request -- a material created in 2009 and still stocked today has to
-be in the dimension.
+be in the dimension. Only a run's explicit ``--from-date``/``--to-date`` does,
+as it always has, because that is a one-off someone typed on purpose.
 
 WHAT THE $count IS FOR
 
 Chunks carry no request id, no sequence number and no total, so the only
 completeness evidence available is Interface 1's own ``$count`` for the same
-data. That comparison is exact only when the CSV window covers the whole table:
+data. That comparison is exact only when the extract is known to be the whole
+set:
 
-* ``Reconcile.EXACT``   -- wide window, received rows must EQUAL the count.
-* ``Reconcile.BOUNDED`` -- three-year window, so the extract is a subset. The
-  count is an upper bound: received must be above zero and no greater than it.
+* ``Reconcile.EXACT``   -- master data, always whole: received rows must EQUAL
+  the count.
+* ``Reconcile.BOUNDED`` -- transaction tables. The count is an upper bound:
+  received must be above zero and no greater than it. They can be windowed,
+  and even whole the job sends a subset of some (CDPOS: only the items of the
+  tables this extract covers), so equality would fail a correct delivery.
 
 BOUNDED is genuinely weaker, and it is not weaker by choice. A count with a
 matching date filter would be the right answer, but MKPF's ``Budat`` filter is
@@ -41,17 +54,12 @@ the whole table and turn a loose check into a confidently wrong one.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from enum import Enum
 
 from app.integrations.sap.known_conditions import CSV_UNDELIVERED_TABLES
 
-# Three years, per the 25-Sep instruction. Kept as a constant because the
-# figure is a decision, not arithmetic, and the next person will want to find
-# it rather than infer it.
-TRANSACTION_WINDOW_YEARS = 3
-
-# "Everything" for master data. Not a blank date -- see the module docstring.
+# "Everything". Not a blank date -- see the module docstring.
 WIDE_WINDOW_START = "19000101"
 
 # Far enough ahead that a document posted with a future date still lands.
@@ -76,7 +84,8 @@ class CsvTable:
     """The OData set holding the same data, used only for the $count check."""
 
     windowed: bool
-    """True for transaction data (three years), False for master (everything)."""
+    """True for transaction data, the tables a configured window narrows.
+    False for master data, which is always pulled whole."""
 
     note: str = ""
 
@@ -130,26 +139,29 @@ class CsvTable:
         from_date: str | None = None,
         to_date: str | None = None,
     ) -> tuple[str, str]:
-        """``(FromDate, ToDate)`` as SAP's DATS strings.
+        """``(FromDate, ToDate)`` as SAP's DATS strings. Pure: the settings are
+        applied by :func:`requested_window`, which calls this.
 
-        An explicit ``from_date``/``to_date`` wins over everything. That escape
-        hatch is not decoration: three years is the right window for a live
-        client and returns almost nothing in this one. 99.3% of its purchase
-        orders predate 2026 -- `Aedat ge 2026-01-01` matches 23 rows of 3,140,
-        and the ZREP orders are all from 2018. A hardcoded window built from
-        today's date therefore asks SAP for a period the data does not occupy,
-        gets a cheerful acknowledgement, and receives nothing.
+        Nothing passed: the whole table, as a wide window. An explicit
+        ``from_date``/``to_date`` wins over everything, master data included.
+        That escape hatch is not decoration: a date window built from today
+        returns almost nothing in a client whose data is old -- 99.3% of this
+        one's purchase orders predate 2026, `Aedat ge 2026-01-01` matches 23
+        rows of 3,140, and the ZREP orders are all from 2018. SAP acknowledges
+        such a request cheerfully and delivers nothing.
 
-        ``years`` overrides the span without pinning the end date, for a client
-        whose history is deeper than three years but still runs to today.
+        ``years`` limits a transaction table to the last N years, ending today;
+        0 or None is the whole table. Master data ignores it.
         """
         if from_date and to_date:
             return from_date, to_date
 
         today = today or date.today()
-        if self.windowed:
-            span = TRANSACTION_WINDOW_YEARS if years is None else years
-            start = date(today.year - span, today.month, today.day)
+        if self.windowed and years:
+            try:
+                start = today.replace(year=today.year - years)
+            except ValueError:  # 29 February, N years back in a common year
+                start = today.replace(year=today.year - years, day=28)
             return start.strftime(DATE_FORMAT), today.strftime(DATE_FORMAT)
 
         forward = today + timedelta(days=WIDE_WINDOW_FORWARD_DAYS)
@@ -181,7 +193,7 @@ CSV_TABLES: tuple[CsvTable, ...] = (
     CsvTable("LFA1", "VendorSet", windowed=False),
     CsvTable("S031", "MonthlyMovementStatisticSet", windowed=False, note="LIS"),
     CsvTable("S032", "StockMovementStatisticSet", windowed=False, note="LIS"),
-    # --- Transaction data: three years -------------------------------------
+    # --- Transaction data: whole, unless CSV_PULL_* sets a window -----------
     CsvTable("EKKO", "PurchaseOrderSet", windowed=True),
     CsvTable("EKPO", "PurchaseOrderItemSet", windowed=True,
              note="277 columns over CSV against 19 over OData -- BEDNR, "
@@ -252,3 +264,68 @@ def csv_table(name: str) -> CsvTable:
             f"{name!r} is not a table this extract knows. Known: "
             f"{', '.join(sorted(BY_TABLE))}"
         ) from None
+
+
+def configured_window() -> tuple[int | None, str | None, str | None]:
+    """``(years, from_date, to_date)`` for the transaction tables, from the settings.
+
+    ``CSV_PULL_WINDOW_YEARS`` (the last N years, ending today) or
+    ``CSV_PULL_FROM_DATE`` with ``CSV_PULL_TO_DATE`` (a fixed range, YYYYMMDD).
+    All unset: ``(None, None, None)``, the whole table. Raises ValueError for a
+    setting that cannot be a window -- a half-given range, a date that is not
+    one, both kinds at once -- because quietly pulling the whole table when
+    someone set a window, or the reverse, is worse than refusing.
+    """
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    years = settings.csv_pull_window_years
+    start = settings.csv_pull_from_date.strip()
+    end = settings.csv_pull_to_date.strip()
+
+    if bool(start) != bool(end):
+        raise ValueError(
+            "CSV_PULL_FROM_DATE and CSV_PULL_TO_DATE must be set together "
+            f"(got from={start or 'unset'}, to={end or 'unset'})"
+        )
+    if start:
+        if years:
+            raise ValueError(
+                "Set CSV_PULL_WINDOW_YEARS or CSV_PULL_FROM_DATE/CSV_PULL_TO_DATE, not both"
+            )
+        for name, value in (("CSV_PULL_FROM_DATE", start), ("CSV_PULL_TO_DATE", end)):
+            try:
+                datetime.strptime(value, DATE_FORMAT)
+            except ValueError:
+                raise ValueError(f"{name}={value!r} is not a YYYYMMDD date") from None
+        if start > end:
+            raise ValueError(f"CSV_PULL_FROM_DATE {start} is after CSV_PULL_TO_DATE {end}")
+        return None, start, end
+    if years < 0:
+        raise ValueError(f"CSV_PULL_WINDOW_YEARS={years} cannot be negative (0 = the whole table)")
+    return (years or None), None, None
+
+
+def requested_window(
+    spec: CsvTable,
+    today: date | None = None,
+    *,
+    years: int | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> tuple[str, str]:
+    """The window to ask SAP for: this run's own choice, else the settings,
+    else the whole table.
+
+    A run that passes ``years`` (``--years``; 0 = the whole table) or both
+    dates (``--from-date``/``--to-date``) gets exactly that, as before. Without
+    one, the ``CSV_PULL_*`` settings apply -- to the transaction tables only;
+    master data is always whole. Raises ValueError for an unusable setting
+    (:func:`configured_window`).
+    """
+    if years is not None or (from_date and to_date):
+        return spec.window(today, years=years, from_date=from_date, to_date=to_date)
+    if not spec.windowed:
+        return spec.window(today)
+    years, from_date, to_date = configured_window()
+    return spec.window(today, years=years, from_date=from_date, to_date=to_date)

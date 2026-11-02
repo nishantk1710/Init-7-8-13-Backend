@@ -16,13 +16,15 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.ingest import csv_pull
 from app.ingest.csv_tables import (
     BY_TABLE,
     CSV_TABLES,
-    TRANSACTION_WINDOW_YEARS,
     Reconcile,
+    configured_window,
     csv_table,
+    requested_window,
 )
 from app.models.csv_extract import (
     STATUS_COMPLETE,
@@ -88,11 +90,11 @@ class TestRequestId:
 
 
 class TestWindows:
-    def test_transaction_tables_get_three_years(self) -> None:
+    def test_transaction_tables_are_pulled_whole_by_default(self) -> None:
+        """The full history, since 2026-11-02 (three years before that)."""
         start, end = csv_table("EKPO").window(date(2026, 9, 25))
-        assert start == "20230925"
-        assert end == "20260925"
-        assert 2026 - int(start[:4]) == TRANSACTION_WINDOW_YEARS
+        assert start == "19000101"
+        assert end > "20260925", "the window must reach past today"
 
     def test_master_tables_get_everything(self) -> None:
         """Three years of MARA is not a meaningful request: a material created
@@ -200,7 +202,8 @@ class TestVerdict:
         assert "1200" in detail and "2183" in detail
 
     def test_a_windowed_extract_may_be_smaller_than_the_set(self) -> None:
-        """Three years of MKPF is a subset by design, so the count is a ceiling."""
+        """A transaction table can be windowed (or, like CDPOS, delivered as a
+        subset), so the count is a ceiling."""
         verdict, _ = csv_pull._verdict(
             request(reconcile="bounded", expected_rows=40651, received_rows=9000)
         )
@@ -345,9 +348,9 @@ class TestCappedVerdict:
 
 
 class TestWindowOverride:
-    """Three years is right for production and near-empty in this client:
-    99.3% of its purchase orders predate 2026. The window has to be steerable
-    or a full pull asks SAP for a period the data does not occupy."""
+    """A run can choose its own window: 99.3% of this client's purchase orders
+    predate 2026, so a window built from today asks SAP for a period the data
+    does not occupy. The window has to be steerable per run."""
 
     def test_explicit_dates_win_over_everything(self) -> None:
         assert csv_table("EKPO").window(
@@ -364,15 +367,126 @@ class TestWindowOverride:
         assert start == "20110925"
         assert end == "20260925"
 
-    def test_the_default_is_unchanged_when_nothing_is_passed(self) -> None:
-        assert csv_table("EKPO").window(date(2026, 9, 25)) == ("20230925", "20260925")
+    def test_years_zero_is_the_whole_table(self) -> None:
+        assert csv_table("EKPO").window(date(2026, 9, 25), years=0)[0] == "19000101"
+
+    def test_years_never_narrows_master_data(self) -> None:
+        assert csv_table("MARA").window(date(2026, 9, 25), years=3)[0] == "19000101"
+
+    def test_years_back_from_29_february_lands_on_the_28th(self) -> None:
+        assert csv_table("EKPO").window(date(2028, 2, 29), years=3) == ("20250228", "20280229")
 
     def test_a_half_given_override_is_ignored_not_half_applied(self) -> None:
         """A start with no end must fall back to the computed window rather
         than pairing a real start with a missing end."""
         assert csv_table("EKPO").window(
             date(2026, 9, 25), from_date="20130101"
-        ) == ("20230925", "20260925")
+        )[0] == "19000101"
+
+
+class TestConfiguredWindow:
+    """CSV_PULL_WINDOW_YEARS / CSV_PULL_FROM_DATE + CSV_PULL_TO_DATE: a window
+    for the transaction tables on every pull, set without touching code."""
+
+    TODAY = date(2026, 11, 2)
+
+    @pytest.fixture(autouse=True)
+    def _fresh_settings(self, monkeypatch):
+        for name in ("CSV_PULL_WINDOW_YEARS", "CSV_PULL_FROM_DATE", "CSV_PULL_TO_DATE"):
+            monkeypatch.delenv(name, raising=False)
+        get_settings.cache_clear()
+        yield
+        get_settings.cache_clear()
+
+    def _set(self, monkeypatch, **values: str) -> None:
+        for name, value in values.items():
+            monkeypatch.setenv(name, value)
+        get_settings.cache_clear()
+
+    def test_unset_means_every_table_whole(self) -> None:
+        assert configured_window() == (None, None, None)
+        for spec in CSV_TABLES:
+            assert requested_window(spec, self.TODAY)[0] == "19000101", spec.sap_table
+
+    def test_blank_years_is_unset_not_a_startup_crash(self, monkeypatch) -> None:
+        self._set(monkeypatch, CSV_PULL_WINDOW_YEARS="")
+        assert configured_window() == (None, None, None)
+
+    def test_years_limit_the_transaction_tables_only(self, monkeypatch) -> None:
+        self._set(monkeypatch, CSV_PULL_WINDOW_YEARS="3")
+        assert requested_window(csv_table("MSEG"), self.TODAY) == ("20231102", "20261102")
+        assert requested_window(csv_table("MARA"), self.TODAY)[0] == "19000101"
+
+    def test_a_fixed_range_limits_the_transaction_tables_only(self, monkeypatch) -> None:
+        self._set(monkeypatch, CSV_PULL_FROM_DATE="20200101", CSV_PULL_TO_DATE="20261231")
+        assert requested_window(csv_table("CDPOS"), self.TODAY) == ("20200101", "20261231")
+        assert requested_window(csv_table("MAKT"), self.TODAY)[0] == "19000101"
+
+    def test_a_run_choice_beats_the_settings(self, monkeypatch) -> None:
+        self._set(monkeypatch, CSV_PULL_WINDOW_YEARS="3")
+        # --years 0 pulls whole whatever the setting says; --years 5 widens it.
+        assert requested_window(csv_table("EKPO"), self.TODAY, years=0)[0] == "19000101"
+        assert requested_window(csv_table("EKPO"), self.TODAY, years=5)[0] == "20211102"
+        assert requested_window(
+            csv_table("EKPO"), self.TODAY, from_date="20130101", to_date="20181231"
+        ) == ("20130101", "20181231")
+
+    @pytest.mark.parametrize(
+        "values, reason",
+        [
+            ({"CSV_PULL_FROM_DATE": "20200101"}, "set together"),
+            ({"CSV_PULL_FROM_DATE": "2020-01-01", "CSV_PULL_TO_DATE": "20261231"}, "not a YYYYMMDD"),
+            ({"CSV_PULL_FROM_DATE": "20261231", "CSV_PULL_TO_DATE": "20200101"}, "is after"),
+            ({"CSV_PULL_WINDOW_YEARS": "3", "CSV_PULL_FROM_DATE": "20200101",
+              "CSV_PULL_TO_DATE": "20261231"}, "not both"),
+            ({"CSV_PULL_WINDOW_YEARS": "-1"}, "negative"),
+        ],
+    )
+    def test_an_unusable_setting_is_refused_not_guessed(self, monkeypatch, values, reason) -> None:
+        self._set(monkeypatch, **values)
+        with pytest.raises(ValueError, match=reason):
+            configured_window()
+        # Master data never reads the settings, so it still has its window.
+        assert requested_window(csv_table("MARA"), self.TODAY)[0] == "19000101"
+
+    def test_fire_reports_an_unusable_setting_as_a_failed_table(self, monkeypatch) -> None:
+        self._set(monkeypatch, CSV_PULL_FROM_DATE="20200101")
+        result = csv_pull.fire("EKPO", today=self.TODAY)
+        assert result.status == STATUS_FAILED
+        assert "CSV_PULL_TO_DATE" in (result.error or "")
+
+
+class TestLoadAllCoversTheOdataOnlyTables:
+    """Department Codes has no CSV extract; --csv-load --all reads it whole over
+    OData after the CSV tables, so a full load leaves no raw table behind."""
+
+    def _run(self, monkeypatch, argv: list[str]) -> list[list[str]]:
+        from app.ingest import __main__ as cli
+        from app.ingest import csv_load, scheduler
+
+        asked: list[list[str]] = []
+        monkeypatch.setattr(csv_load, "load_all", lambda names, **kw: [])
+        monkeypatch.setattr(csv_load, "load_table", lambda name, **kw: _Loaded(name))
+
+        def cycle(names=None):
+            asked.append(list(names))
+            return {"pulled": len(names), "failed": 0, "errors": []}
+
+        monkeypatch.setattr(scheduler, "run_odata_full_pull_cycle", cycle)
+        assert cli.main(argv) == 0
+        return asked
+
+    def test_load_all_merges_department_codes(self, monkeypatch) -> None:
+        assert self._run(monkeypatch, ["--csv-load", "--all"]) == [["DepartmentCodeSet"]]
+
+    def test_one_table_does_not(self, monkeypatch) -> None:
+        assert self._run(monkeypatch, ["--csv-load", "--table", "MARA"]) == []
+
+
+class _Loaded:
+    def __init__(self, name: str) -> None:
+        self.sap_table, self.rows, self.columns = name, 0, 0
+        self.table, self.watermark, self.error, self.ok = f"raw_{name.lower()}", None, None, True
 
 
 class TestTableIdentification:

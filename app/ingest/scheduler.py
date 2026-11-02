@@ -471,8 +471,13 @@ def run_full_refresh_cycle() -> dict:
             summary["failed"] += 1
             summary["errors"].append(f"{result.sap_table}: load {result.status} -- {result.error or ''}")
 
-    # 3. OData sets merged into raw_<table> for the fields CSV lacks.
-    for name in settings.full_refresh_odata_set_list:
+    # 3. OData sets merged into raw_<table> for the fields CSV lacks, then the
+    #    tables no CSV extract fills at all (odata_tables: Department Codes).
+    from app.ingest.odata_tables import ODATA_TABLES
+
+    names = settings.full_refresh_odata_set_list
+    names += [t.entity_set for t in ODATA_TABLES if t.entity_set not in names]
+    for name in names:
         try:
             detail = _pull_whole_and_merge(name, settings.ingest_prefix)
             summary["enriched"] += 1

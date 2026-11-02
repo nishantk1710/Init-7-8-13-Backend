@@ -318,6 +318,22 @@ class Settings(BaseSettings):
     # (21 tables, 38 deliveries); --batch-size overrides it per run.
     csv_pull_batch_size: int = 2
 
+    # --- CSV pull window ------------------------------------------------------
+    #
+    # Unset (the default): every table is pulled whole, its full history.
+    # Set ONE of these to limit the transaction tables -- EKKO, EKPO, EKET,
+    # EKBE, EBAN, MKPF, MSEG, RESB, CDHDR, CDPOS -- for every CSV pull, the
+    # nightly full refresh included:
+    #   CSV_PULL_WINDOW_YEARS=3                      the last 3 years, ending today
+    #   CSV_PULL_FROM_DATE=20200101 + CSV_PULL_TO_DATE=20261231   a fixed range
+    # Master data is never narrowed by these. --years N (0 = whole) and
+    # --from-date/--to-date choose a window for one run instead. A setting that
+    # cannot be a window (half a range, both kinds, a bad date) fails the pull
+    # with the reason rather than guessing (app/ingest/csv_tables.py).
+    csv_pull_window_years: int = 0
+    csv_pull_from_date: str = ""
+    csv_pull_to_date: str = ""
+
     # --- Workbook fallback --------------------------------------------------
     #
     # The local folder `python -m app.ingest.fallback --upload` (no arguments)
@@ -1152,6 +1168,14 @@ class Settings(BaseSettings):
         with it."""
         if isinstance(value, str) and not value.strip():
             return None
+        return value
+
+    @field_validator("csv_pull_window_years", mode="before")
+    @classmethod
+    def _blank_window_is_whole(cls, value: object) -> object:
+        """A blank CSV_PULL_WINDOW_YEARS means no window (0), not a startup crash."""
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return 0
         return value
 
     @field_validator("i7_stockout_risk_as_of", mode="before")
