@@ -74,6 +74,31 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "which is why assigning, commenting and moving are one POST and there "
         "is no PATCH."
     ),
+    # --- Shared notifications ----------------------------------------------
+    ("/api/notifications/read-all", "post"): (
+        "Marks the caller's own in-app notifications as read -> notification "
+        "(is_read, read_at). Touches no one else's rows and nothing in SAP."
+    ),
+    ("/api/notifications/{notification_id}/read", "post"): (
+        "Marks one of the caller's own in-app notifications as read -> "
+        "notification (is_read, read_at). Another user's id answers 404."
+    ),
+    ("/api/notifications/admin/recipients", "post"): (
+        "Spares.Admin only: adds who holds an approval role at a plant -> "
+        "notification_recipients, with an audit row in notification_config_audit."
+    ),
+    ("/api/notifications/admin/recipients/{recipient_id}/update", "post"): (
+        "Spares.Admin only: changes or retires (active=false) a recipient "
+        "assignment -> notification_recipients, audited. Never a delete."
+    ),
+    ("/api/notifications/admin/sla", "post"): (
+        "Spares.Admin only: adds reminder and escalation timings -> "
+        "notification_sla, with an audit row in notification_config_audit."
+    ),
+    ("/api/notifications/admin/sla/{sla_id}/update", "post"): (
+        "Spares.Admin only: changes or switches off (active=false) reminder "
+        "and escalation timings -> notification_sla, audited. Never a delete."
+    ),
     # --- Initiative 13 -----------------------------------------------------
     ("/api/i13/act/run/detect", "post"): (
         "Runs W6.6 ACT detection -> i13_act_exception. Idempotent on a "

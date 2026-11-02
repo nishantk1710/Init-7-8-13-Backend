@@ -27,14 +27,11 @@ from app.core.db import get_db
 from app.initiatives.i13.act.domain import ExceptionStatus, ExceptionType
 from app.initiatives.i13.act.service import (
     get_cross_plant_stock,
-    process_escalations,
     submit_confirmation,
 )
 from app.initiatives.i13.act.state_machine import InvalidTransitionError
 from app.initiatives.i13.act_exception_store import SqlExceptionRepository
-from app.initiatives.i13.act_hod_provider import ConfigEscalationRecipientProvider
-from app.initiatives.i13.act_notifications import LoggingNotificationAdapter
-from app.initiatives.i13.act_runner import run_detection
+from app.initiatives.i13.act_runner import run_detection, run_escalations
 from app.initiatives.i13.act_stock_provider import PostgresCrossPlantStockProvider
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.ordering import newest_first
@@ -401,11 +398,6 @@ def run_process_escalations(
     payload = payload or EscalationRunRequest()
     as_of_time = payload.as_of_time or datetime.now(timezone.utc)
 
-    result = process_escalations(
-        as_of_time,
-        repository=_repository(db),
-        escalation_recipient_provider=ConfigEscalationRecipientProvider.from_config_string(config.escalation.hod_recipients_raw),
-        notification_port=LoggingNotificationAdapter(),
-    )
+    result = run_escalations(db, config, as_of_time=as_of_time)
     db.commit()
     return EscalationRunResponse(**dataclasses.asdict(result))

@@ -57,6 +57,13 @@ from app.models.i13_zmm065_upload import Zmm065Upload, Zmm065UploadRow
 from app.models.i8_snapshot_store import I8SnapshotRun
 from app.models.ingest_watermark import IngestWatermark
 from app.models.ingestion import IngestionRun
+from app.models.notification import (
+    NotificationConfigAudit,
+    NotificationRecipient,
+    NotificationReminderState,
+    NotificationRow,
+    NotificationSla,
+)
 from app.models.serving import MaterialPlant
 
 # --- Initiative-owned tables ----------------------------------------------
@@ -107,6 +114,11 @@ __all__ = [
     "IngestionRun",
     "IngestWatermark",
     "MaterialPlant",
+    "NotificationConfigAudit",
+    "NotificationRecipient",
+    "NotificationReminderState",
+    "NotificationRow",
+    "NotificationSla",
     "QuantityJustificationRecord",
     "QuantitySuggestionRecord",
     "SessionReservationLink",

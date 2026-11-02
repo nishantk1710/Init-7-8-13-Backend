@@ -56,5 +56,9 @@ class ConfigEscalationRecipientProvider:
                 mapping[plant] = hod
         return cls(mapping)
 
+    def plants(self) -> frozenset[str]:
+        """The plants that have a HOD configured (upper-case)."""
+        return frozenset(self._plant_to_hod)
+
     def get_hod(self, *, material: str, plant: str, requester_id: str | None) -> str | None:
         return self._plant_to_hod.get(plant.upper())

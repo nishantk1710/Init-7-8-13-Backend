@@ -20,15 +20,16 @@ which is what makes it cheap enough to run after every assistant capture.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from app.initiatives.i13.act.domain import NoPlanReason, WatchGrniSnapshot
-from app.initiatives.i13.act.service import DetectionRunResult, detect_exceptions
+from app.initiatives.i13.act.service import DetectionRunResult, EscalationRunResult, detect_exceptions, process_escalations
 from app.initiatives.i13.act_exception_store import SqlExceptionRepository
-from app.initiatives.i13.act_notifications import LoggingNotificationAdapter
+from app.initiatives.i13.act_hod_provider import ConfigEscalationRecipientProvider
 from app.initiatives.i13.act_watch_snapshot import build_grni_snapshot_index
 from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.consumption_attribution import ConsumptionAttributionService
@@ -47,9 +48,36 @@ from app.initiatives.i13.session_link import (
 from app.initiatives.i13.snapshot import I13Snapshot, current_plans
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.initiatives.i13.watch_mart import list_watch_metrics
+from app.integrations.notifications.service import SharedNotificationPort
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
+
+
+def run_escalations(
+    db: Session,
+    config: I13Config,
+    *,
+    as_of_time: datetime,
+    limit: int | None = None,
+    plants: Collection[str] | None = None,
+) -> EscalationRunResult:
+    """Escalate exceptions whose requester has not answered in time. The caller commits.
+
+    Used by ``POST /api/i13/act/run/escalate`` (no ``limit``, every overdue exception) and by
+    the notification scheduler (a bounded batch, only at plants that have a HOD). The HOD is told
+    through the shared notification service.
+    """
+    return process_escalations(
+        as_of_time,
+        repository=SqlExceptionRepository(db),
+        escalation_recipient_provider=ConfigEscalationRecipientProvider.from_config_string(
+            config.escalation.hod_recipients_raw
+        ),
+        notification_port=SharedNotificationPort(db),
+        limit=limit,
+        plants=plants,
+    )
 
 
 def _in_scope(material: str | None, plant: str | None):
@@ -130,7 +158,7 @@ def run_detection(
         plans=plans,
         grni_snapshots=grni_snapshots,
         repository=SqlExceptionRepository(db),
-        notification_port=LoggingNotificationAdapter(),
+        notification_port=SharedNotificationPort(db),
         plan_breach_grace_days=config.exceptions.plan_breach_grace_days,
         requester_response_days=config.escalation.requester_response_days,
         quantity_decision_records=quantity_decision_records,
@@ -209,7 +237,7 @@ def _run_detection_stored(
             plans=slice_plans,
             grni_snapshots=grni_snapshots,
             repository=SqlExceptionRepository(db),
-            notification_port=LoggingNotificationAdapter(),
+            notification_port=SharedNotificationPort(db),
             plan_breach_grace_days=config.exceptions.plan_breach_grace_days,
             requester_response_days=config.escalation.requester_response_days,
             quantity_decision_records=quantity_records,

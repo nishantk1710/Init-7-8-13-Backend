@@ -89,13 +89,15 @@ def ledger(factory, recommendation_id="REC-OAR-1") -> list[ApprovalLedgerEntry]:
 
 
 def submit(client, recommendation_id="REC-OAR-1", actor="planner-1"):
-    return client.post(f"{BASE}/recommendations/{recommendation_id}/submit", json={"actor_id": actor})
+    # The actor is the authenticated caller (the X-Actor-Id header while sign-in is off), never the body.
+    return client.post(f"{BASE}/recommendations/{recommendation_id}/submit", json={}, headers={"X-Actor-Id": actor})
 
 
 def act(client, action, role, comment=None, recommendation_id="REC-OAR-1"):
     return client.post(
         f"{BASE}/recommendations/{recommendation_id}/actions",
-        json={"actor_id": "approver-1", "actor_role": role.value, "action": action, "comment": comment},
+        json={"actor_role": role.value, "action": action, "comment": comment},
+        headers={"X-Actor-Id": "approver-1"},
     )
 
 
@@ -314,7 +316,9 @@ def test_a_rejected_request_can_go_through_the_whole_chain_the_second_time(clien
 
 def test_a_not_eligible_material_declined_before_submission_can_still_be_requested(client, factory):
     seed(factory)
-    client.post(f"{BASE}/recommendations/REC-OAR-1/reject", json={"actor_id": "planner-1", "comment": "Not adopting"})
+    client.post(
+        f"{BASE}/recommendations/REC-OAR-1/reject", json={"comment": "Not adopting"}, headers={"X-Actor-Id": "planner-1"}
+    )
     assert row(factory).status == "REJECTED"
 
     response = submit(client, actor="planner-1")

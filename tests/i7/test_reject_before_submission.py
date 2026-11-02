@@ -11,6 +11,7 @@ from sqlalchemy import MetaData, create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from app.api.deps import Actor
 from app.api.i7 import approvals as approvals_api
 from app.initiatives.i7.recommendations import ledger, workflow
 from app.initiatives.i7.recommendations.types import (
@@ -142,7 +143,7 @@ def test_the_endpoint_returns_the_new_state_and_has_no_pending_role(db):
     db.add(row)
     db.commit()
     response = approvals_api.reject_recommendation(
-        "REC-STD-M1-1300", RejectRequest(actor_id="planner-1", comment="not needed"), db
+        "REC-STD-M1-1300", RejectRequest(comment="not needed"), db, Actor(id="planner-1")
     )
     assert response.status == "REJECTED"
     assert response.pending_role is None
@@ -156,6 +157,6 @@ def test_the_endpoint_turns_a_workflow_error_into_a_409(db):
     db.commit()
     with pytest.raises(HTTPException) as caught:
         approvals_api.reject_recommendation(
-            "REC-STD-M1-1300", RejectRequest(actor_id="planner-1", comment="reason"), db
+            "REC-STD-M1-1300", RejectRequest(comment="reason"), db, Actor(id="planner-1")
         )
     assert caught.value.status_code == 409

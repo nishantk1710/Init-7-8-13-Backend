@@ -21,6 +21,7 @@ the ORM rows.
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from datetime import datetime
 
 from sqlalchemy import func, select
@@ -164,6 +165,23 @@ class SqlExceptionRepository:
             stmt = stmt.limit(limit)
         rows = self._session.execute(stmt).scalars().all()
         return [_row_to_exception(row) for row in rows]
+
+    def list_due_for_escalation(
+        self, as_of_time, *, plants: Collection[str] | None = None, limit: int | None = None
+    ) -> list[ActException]:
+        """Exceptions still awaiting their requester whose response time has passed, oldest
+        overdue first -- filtered and limited in SQL, so an automatic run never loads them all."""
+        stmt = select(ActExceptionRecord).where(
+            ActExceptionRecord.status == ExceptionStatus.AWAITING_REQUESTER.value,
+            ActExceptionRecord.requester_due_at.is_not(None),
+            ActExceptionRecord.requester_due_at <= as_of_time,
+        )
+        if plants is not None:
+            stmt = stmt.where(func.upper(ActExceptionRecord.plant).in_(sorted(plants)))
+        stmt = stmt.order_by(ActExceptionRecord.requester_due_at, ActExceptionRecord.exception_id)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        return [_row_to_exception(row) for row in self._session.execute(stmt).scalars().all()]
 
     def count(
         self,
