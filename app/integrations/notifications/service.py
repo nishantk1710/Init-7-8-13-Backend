@@ -111,6 +111,7 @@ def enqueue(
     *,
     channels: Sequence[Channel] = _BOTH_CHANNELS,
     now: datetime | None = None,
+    email_enabled: bool | None = None,
 ) -> list[NotificationRow]:
     """Create the rows for ``event``; return the ones that were new. Does not commit.
 
@@ -119,6 +120,9 @@ def enqueue(
       so the gap is visible. (A known person's in-app notification is still created.)
     * A row whose idempotency key already exists is skipped, which is what makes a
       repeated request or job pass harmless.
+    * With email switched off (``NOTIFICATION_EMAIL_ENABLED=false``, or ``email_enabled=False``) no
+      email row is created at all; only the in-app inbox rows are. A failure that reaches nobody is
+      then recorded as a failed in-app row (it has no user, so no inbox shows it).
     * The rows are written inside a savepoint. If the database refuses them, only
       this notification is rolled back: the caller's own transaction -- an approval,
       say -- is left usable and can still commit. The error is re-raised so the
@@ -128,6 +132,10 @@ def enqueue(
     not fit the table.
     """
     _check_event(event)
+    email_on = get_settings().notification_email_enabled if email_enabled is None else email_enabled
+    if not email_on:
+        channels = tuple(c for c in channels if c is not Channel.EMAIL)
+    failure_channel = Channel.EMAIL if email_on else Channel.IN_APP
     now = now or _now()
     rendered = templates.render(event.event_type, {"plant": event.plant or "-", **event.context})
     title = (event.title or rendered.title)[:300]
@@ -139,7 +147,7 @@ def enqueue(
         problem = _recipient_problem(recipient)
         if problem or recipient.error:
             shown = Recipient(role=recipient.role, plant=recipient.plant)  # nothing unchecked is stored
-            planned.append((_key(event, _who(shown), Channel.EMAIL), shown, Channel.EMAIL, problem or recipient.error))
+            planned.append((_key(event, _who(shown), failure_channel), shown, failure_channel, problem or recipient.error))
             continue
         if Channel.IN_APP in channels and recipient.user_oid:
             planned.append((_key(event, _who(recipient), Channel.IN_APP), recipient, Channel.IN_APP, None))
@@ -321,6 +329,8 @@ def dispatch_pending(
 def dispatch_with_settings(db: Session, settings: Settings | None = None) -> DispatchResult:
     """:func:`dispatch_pending` with the configured adapter, link base and retry limits."""
     settings = settings or get_settings()
+    if not settings.notification_email_enabled:
+        return DispatchResult()  # email is off: leave any waiting rows untouched, send nothing
     return dispatch_pending(
         db,
         get_email_adapter(settings),
@@ -345,6 +355,8 @@ class SharedNotificationPort:
         self._db = db
 
     def send(self, intent: NotificationIntent) -> NotificationResult:
+        if intent.channel is NotificationChannel.EMAIL and not get_settings().notification_email_enabled:
+            return NotificationResult(outcome=NotificationOutcome.LOGGED_ONLY, detail="email notifications are switched off")
         recipients = resolve_user(
             self._db, intent.recipient, plant=intent.plant, fallback_email=get_settings().notification_fallback_email
         )
