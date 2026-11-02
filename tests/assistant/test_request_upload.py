@@ -77,6 +77,10 @@ class TestExtract:
         assert got.materials == ["1000000123"]
         assert got.duplicates == ["0000000001000000123"]
 
+    def test_reads_headers_with_or_without_the_required_hint(self) -> None:
+        content = workbook(("1000000123", "1300", "10303"), header=("Material (required)", "Plant*", "Department (required)"))
+        assert extract(content, max_lines=20).materials == ["1000000123"]
+
     def test_names_the_missing_columns(self) -> None:
         assert "Missing: Department" in errors_of(workbook(("1", "1300"), header=("Material", "Plant")))[0]
 
@@ -142,7 +146,10 @@ class TestTemplate:
     def test_has_the_headers_text_columns_and_instructions(self) -> None:
         book = load_workbook(io.BytesIO(build_template(20)))
         sheet = book[SHEET]
-        assert [c.value for c in sheet[1]] == ["Material", "Material name", "Plant", "Department"]
+        assert [c.value for c in sheet[1]] == [
+            "Material (required)", "Material name (optional)", "Plant (required)", "Department (required)",
+        ]
+        assert sheet["A1"].font.bold and not sheet["B1"].font.bold
         assert list(TEMPLATE_COLUMNS) == [c.value for c in sheet[1]]
         assert sheet["A2"].number_format == "@"
         assert any("Up to 20 materials" in (row[0] or "") for row in book["How to fill"].iter_rows(values_only=True))
@@ -185,7 +192,7 @@ class TestRoutes:
         assert response.status_code == 200, response.text
         assert response.headers["content-type"] == XLSX
         assert "material-request-template.xlsx" in response.headers["content-disposition"]
-        assert load_workbook(io.BytesIO(response.content))[SHEET]["A1"].value == "Material"
+        assert load_workbook(io.BytesIO(response.content))[SHEET]["A1"].value == "Material (required)"
 
     def test_upload_returns_the_materials(self, client) -> None:
         content = workbook(("1000000123", "1300", "10303"), ("1000000123", "1300", "10303"))

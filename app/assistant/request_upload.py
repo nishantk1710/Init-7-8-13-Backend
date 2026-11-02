@@ -38,9 +38,17 @@ HELP_SHEET = "How to fill"
 HEADERS = ("Material", "Plant", "Department")
 """The columns read. Any other column is the requester's own and is ignored."""
 
-#: The template's columns: the three read, plus a name for the requester's own
-#: reference (UAT, 2 Nov) -- never read: the screen shows SAP's description.
-TEMPLATE_COLUMNS = ("Material", "Material name", "Plant", "Department")
+#: The template's columns as headed, each saying whether it must be filled
+#: (UAT, 2 Nov): the three read, plus a name for the requester's own reference
+#: -- never read, the screen shows SAP's description. The reader ignores the
+#: bracketed part, so a plain "Material" header is just as good.
+TEMPLATE_COLUMNS = (
+    "Material (required)",
+    "Material name (optional)",
+    "Plant (required)",
+    "Department (required)",
+)
+_OPTIONAL_COLUMNS = {"Material name (optional)"}
 TEMPLATE_FILE_NAME = "material-request-template.xlsx"
 
 #: Header text as written, lower-cased with spaces removed -> column.
@@ -77,16 +85,18 @@ class ExtractedFile:
 
 
 def build_template(max_lines: int) -> bytes:
-    """The blank template: three text columns, so Excel keeps leading zeros."""
+    """The blank template: text columns, so Excel keeps leading zeros. Required
+    headers are bold on blue, the optional one plain on grey."""
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = SHEET
     sheet.append(list(TEMPLATE_COLUMNS))
     for cell in sheet[1]:
-        cell.font = Font(bold=True)
-        cell.fill = PatternFill("solid", fgColor="EFEFEF")
+        optional = cell.value in _OPTIONAL_COLUMNS
+        cell.font = Font(bold=not optional, italic=optional, color="595959" if optional else "000000")
+        cell.fill = PatternFill("solid", fgColor="F2F2F2" if optional else "DDEBF7")
     sheet.freeze_panes = "A2"
-    for letter, width in zip("ABCD", (22, 45, 12, 14), strict=True):
+    for letter, width in zip("ABCD", (22, 45, 18, 22), strict=True):
         sheet.column_dimensions[letter].width = width
     # Text format on the rows a requester will fill, so 000000000010001234
     # stays as typed instead of becoming a number.
@@ -97,10 +107,10 @@ def build_template(max_lines: int) -> bytes:
     notes = workbook.create_sheet(HELP_SHEET)
     for line in (
         f"List the materials on the '{SHEET}' sheet, one per row. Do not rename the sheet or the headers.",
-        "Material: the SAP material number. Leading zeros are optional.",
-        "Material name: optional, for your own reference. It is not read: the screen shows SAP's description.",
-        f"Plant: the same plant on every row ({' or '.join(IN_SCOPE_PLANTS)}).",
-        "Department: the same 5-digit department code on every row.",
+        "Material (required): the SAP material number. Leading zeros are optional.",
+        "Material name (optional): for your own reference; may be left blank. It is not read: the screen shows SAP's description.",
+        f"Plant (required): the same plant on every row ({' or '.join(IN_SCOPE_PLANTS)}).",
+        "Department (required): the same 5-digit department code on every row.",
         f"Up to {max_lines} materials per file.",
         "After upload each material is checked; quantities and reasons are answered on screen.",
     ):
@@ -190,7 +200,8 @@ def extract(
     if header_at is None:
         raise UploadError(["The file is empty."])
 
-    header = [cell.lower().replace(" ", "") for cell in rows[header_at]]
+    # "Material (required)" is "material": the bracketed hint is the template's, not a column name.
+    header = [re.sub(r"\(.*?\)|[\s*]", "", cell).lower() for cell in rows[header_at]]
     index = {column: header.index(key) for key, column in _HEADER_KEYS.items() if key in header}
     missing = [title for title in HEADERS if title.lower() not in index]
     if missing:
