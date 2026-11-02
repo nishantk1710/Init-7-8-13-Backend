@@ -1036,6 +1036,56 @@ class Settings(BaseSettings):
     # inventing a recipient.
     i13_hod_recipients: str = ""
 
+    # --- Shared notifications (I07, I08, I13) -----------------------------
+    #
+    # Only technical values have defaults. No business value (reminder timing,
+    # recipient, address, URL) is set here: reminders come from the
+    # notification_sla table and recipients from notification_recipients.
+
+    # The background timer that sends queued emails, reminders and I13
+    # escalations. Needs DATABASE_URL.
+    notification_scheduler_enabled: bool = True
+    notification_scheduler_interval_seconds: int = 60
+
+    # A failed email is tried again this many times, this far apart.
+    notification_retry_max: int = 3
+    notification_retry_interval_seconds: int = 300
+
+    # I13 automatic escalation (an exception nobody answered goes to the HOD). OFF by
+    # default and separate from the scheduler switch above: turning the scheduler on does
+    # not start it. It needs I13_HOD_RECIPIENTS, and each run handles at most this many
+    # exceptions, oldest overdue first, so a backlog is worked through in steps.
+    notification_i13_escalation_enabled: bool = False
+    notification_i13_escalation_batch_size: int = 100
+
+    # "logging" records an email without sending it (nothing is delivered and
+    # the row is LOGGED_ONLY). "graph" sends through Microsoft Graph and needs
+    # the four graph_* values below.
+    notification_email_provider: str = "logging"
+
+    # Base of every link in an email, e.g. the frontend's public address. Not
+    # frontend_origin: that one may list several origins for CORS.
+    notification_frontend_base_url: str = ""
+
+    # Where a notification goes when no approver is configured for its role and
+    # plant. Empty means it is recorded as failed instead.
+    notification_fallback_email: str = ""
+
+    # The Entra role of whoever executes an approved change in SAP. No default:
+    # when empty, the final-approval notice goes to the submitter only.
+    notification_sap_execution_role: str = ""
+
+    # Which role hears about each exception, as "TYPE:Spares.Role,...", e.g.
+    # "OVERDUE_REPAIR:Spares.Stores". Empty means no one is guessed.
+    i8_notification_recipient_roles: str = ""
+
+    # Microsoft Graph sending (Mail.Send application permission, one shared
+    # mailbox). All empty until the tenant admin has consented.
+    graph_tenant_id: str = ""
+    graph_client_id: str = ""
+    graph_client_secret: str = ""
+    graph_sender_mailbox: str = ""
+
     # --- W7.4: reservation-time quantity suggestion -----------------------
     #
     # Master gate. Off by default, and deliberately separate from the two

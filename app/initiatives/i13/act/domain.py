@@ -16,6 +16,15 @@ from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 
+# These four now live in the shared notification package so I07, I08 and I13 use
+# the same types. Re-exported here so every existing import keeps working.
+from app.integrations.notifications.models import (  # noqa: F401
+    NotificationChannel,
+    NotificationIntent,
+    NotificationOutcome,
+    NotificationResult,
+)
+
 
 class ExceptionType(str, Enum):
     PLAN_BREACH = "PLAN_BREACH"
@@ -86,20 +95,6 @@ class EventType(str, Enum):
     NOTIFICATION_FAILED = "NOTIFICATION_FAILED"
 
 
-class NotificationChannel(str, Enum):
-    PLATFORM_QUEUE = "PLATFORM_QUEUE"
-    EMAIL = "EMAIL"
-
-
-class NotificationOutcome(str, Enum):
-    SENT = "SENT"
-    # Recorded by today's dev/logging adapter -- the intent was captured for
-    # audit, but no real delivery happened. Never reported as SENT, so a
-    # reader can't mistake "logged" for "delivered".
-    LOGGED_ONLY = "LOGGED_ONLY"
-    FAILED = "FAILED"
-
-
 @dataclass(frozen=True)
 class ActException:
     """One accountable ACT exception. ``exception_id`` is the deterministic
@@ -166,21 +161,6 @@ class RequesterConfirmation:
     actor_id: str
     submitted_at: datetime
     confirmation_id: str | None = None
-
-
-@dataclass(frozen=True)
-class NotificationIntent:
-    exception_id: str
-    channel: NotificationChannel
-    recipient: str | None
-    subject: str
-    body: str
-
-
-@dataclass(frozen=True)
-class NotificationResult:
-    outcome: NotificationOutcome
-    detail: str
 
 
 @dataclass(frozen=True)

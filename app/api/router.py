@@ -29,6 +29,7 @@ from app.api.criticality.router import router as criticality_router
 from app.api.events import csv_upload, pr
 from app.api.i7.router import router as i7_router
 from app.api.i13.routes import router as i13_router
+from app.api.notifications.router import router as notifications_router
 from app.core.security import require_sap_events, require_signed_in
 
 #: The read rule, applied to every business router below.
@@ -42,6 +43,9 @@ api_router.include_router(me.router)  # -> /api/me
 api_router.include_router(pr.router, dependencies=[Depends(require_sap_events)])
 api_router.include_router(i7_router, dependencies=SIGNED_IN)  # -> /api/v1/i7/*
 api_router.include_router(i13_router, dependencies=SIGNED_IN)  # -> /api/i13/*
+# The shared notification inbox and its administrator endpoints. Outside every
+# initiative prefix because I07, I08 and I13 all write to it.
+api_router.include_router(notifications_router, dependencies=SIGNED_IN)  # -> /api/notifications/*
 
 # W7: the shared reservation-time assistant. Mounted OUTSIDE both initiative
 # prefixes on purpose -- the BAdI pop-up knows a material and a plant, and

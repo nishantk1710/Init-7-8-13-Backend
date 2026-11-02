@@ -19,11 +19,12 @@ from app.models.i7_recommendation import ApprovalLedgerEntry
 class ApprovalActionRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    actor_id: str = Field(min_length=1)
-    """Until an authentication mechanism exists (``app.core.security`` is a
-    placeholder, see docs/i07_api.md), the caller supplies this explicitly.
-    It is not treated as a trusted identity claim -- see the security section
-    of the API doc."""
+    actor_id: str | None = None
+    """**Ignored.** Kept so older clients that still send it are not rejected. The actor recorded
+    in the ledger -- and used to choose who is notified -- is the authenticated caller (the
+    Entra object id from the token; the ``X-Actor-Id`` header only while sign-in is off), taken
+    by the route, never from the body. ``actor_role`` below is still the caller's own claim:
+    nothing checks it against the token's roles yet (see ``app/api/i7/approvals.py``)."""
 
     actor_role: ApprovalRole
     action: ApprovalAction
@@ -33,7 +34,8 @@ class ApprovalActionRequest(BaseModel):
 class SubmitRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    actor_id: str = Field(min_length=1)
+    actor_id: str | None = None
+    """**Ignored** -- the actor is the authenticated caller. See ``ApprovalActionRequest.actor_id``."""
 
 
 class RejectRequest(BaseModel):
@@ -41,7 +43,8 @@ class RejectRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    actor_id: str = Field(min_length=1)
+    actor_id: str | None = None
+    """**Ignored** -- the actor is the authenticated caller. See ``ApprovalActionRequest.actor_id``."""
     comment: str | None = None
     """The reason. Required -- ``workflow.reject_unsubmitted`` enforces it, as it does for every
     REJECT -- so it is not duplicated as a schema rule here."""

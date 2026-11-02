@@ -192,6 +192,15 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
         pipeline_scheduler.start(stop, settings)
 
+    if settings.database_url:
+        # Sends queued emails, reminds and escalates approvals, and escalates
+        # unanswered I13 exceptions. Reminders do nothing until SLA timings are
+        # configured, and email is only logged until Microsoft Graph is set up.
+        from app.integrations.notifications import scheduler as notification_scheduler
+        from app.services.notification_jobs import build_jobs
+
+        notification_scheduler.start(stop, settings, build_jobs())
+
     task = None
     try:
         task = scheduler.start(application)
