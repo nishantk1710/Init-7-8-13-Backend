@@ -17,10 +17,16 @@ the shelf. A reservation a plan owns appears on that plan's row only, so no
 issue is counted twice. A deleted reservation item with nothing issued is not
 a live demand and is left out, as ``plan_outcomes`` leaves it out.
 
-The two sources say different things, so they use different words: a plan is
-on, below or above *plan*; a reservation is fully, partly, not or over
-*issued*. Both read "not due yet" while nothing is issued and the date the
-quantity is wanted by is still ahead -- that is not a shortfall yet.
+Both sources are read the same way: "planned" is what was asked for (a plan's
+planned quantity, a reservation's reserved quantity) and "issued" is what was
+used. Issued equal to planned is on plan, less is below, more is above --
+three statuses, one rule, so the screen reads the same whichever the source.
+
+**Overdue** is not a fourth status but a marker on a below-plan row whose
+due date (a plan's window end, a reservation's requirement date) has passed:
+it is short, and it should not be any more. It is worked out when the row is
+read (:func:`is_overdue`), against the served version's reference date, so it
+needs nothing stored beyond the status and the due date already filtered on.
 """
 
 from __future__ import annotations
@@ -47,18 +53,9 @@ class RowSource(str, Enum):
 
 
 class RowStatus(str, Enum):
-    # A captured plan.
     ON_PLAN = "ON_PLAN"
     BELOW_PLAN = "BELOW_PLAN"
     ABOVE_PLAN = "ABOVE_PLAN"
-    NO_RESERVATION = "NO_RESERVATION"
-    # A reservation raised directly in SAP.
-    FULLY_ISSUED = "FULLY_ISSUED"
-    PARTLY_ISSUED = "PARTLY_ISSUED"
-    NOT_ISSUED = "NOT_ISSUED"
-    OVER_ISSUED = "OVER_ISSUED"
-    # Either.
-    NOT_DUE = "NOT_DUE"
 
 
 @dataclass(frozen=True)
@@ -69,7 +66,7 @@ class PlanVsIssuedRow:
     plant: str
     oar: bool
     reservations: tuple[str, ...]
-    """``number/item``, sorted. A plan's may be empty (NO_RESERVATION)."""
+    """``number/item``, sorted. A plan's is empty until a reservation stands for it."""
     session_id: str | None
     """A plan's session. A SAP row's is looked up when it is read (the
     session links change between builds), so it is None here."""
@@ -78,39 +75,37 @@ class PlanVsIssuedRow:
     """A plan's planned quantity, or a reservation's reserved quantity."""
     issued_quantity: Decimal
     status: RowStatus
-    variance_quantity: Decimal | None
+    variance_quantity: Decimal
     variance_percentage: Decimal | None
+    """None only when nothing was planned (no percentage of zero)."""
     due_date: date | None
     """When the quantity is wanted by: a plan's window end (else its start), a
     reservation's requirement date."""
     window_start: date | None = None
 
 
-def _variance(planned: Decimal, issued: Decimal) -> tuple[Decimal, Decimal | None]:
+def compare(planned: Decimal, issued: Decimal) -> tuple[RowStatus, Decimal, Decimal | None]:
+    """Status, variance (issued - planned) and its percentage of planned. Exact:
+    no tolerance band is configured anywhere."""
+    status = (
+        RowStatus.BELOW_PLAN if issued < planned
+        else RowStatus.ABOVE_PLAN if issued > planned
+        else RowStatus.ON_PLAN
+    )
     variance = issued - planned
-    return variance, (variance / planned * Decimal("100")) if planned > 0 else None
+    return status, variance, (variance / planned * Decimal("100")) if planned > 0 else None
 
 
-def _not_due(issued: Decimal, due: date | None, as_of: date) -> bool:
-    return issued == 0 and due is not None and due > as_of
+def is_overdue(row: PlanVsIssuedRow, as_of: date) -> bool:
+    """Below plan, and the date it was wanted by has passed."""
+    return row.status is RowStatus.BELOW_PLAN and row.due_date is not None and row.due_date < as_of
 
 
-def plan_row(plan: ConsumptionPlan, reservations: tuple[tuple[str, str], ...], issued: Decimal, *,
-             as_of: date, oar: bool) -> PlanVsIssuedRow:
+def plan_row(
+    plan: ConsumptionPlan, reservations: tuple[tuple[str, str], ...], issued: Decimal, *, oar: bool
+) -> PlanVsIssuedRow:
     planned = plan.planned_quantity
-    due = plan.window_end or plan.planned_use_date
-    variance: tuple[Decimal | None, Decimal | None] = (None, None)
-    if not reservations:
-        status = RowStatus.NO_RESERVATION
-    elif _not_due(issued, due, as_of):
-        status = RowStatus.NOT_DUE
-    else:
-        status = (
-            RowStatus.BELOW_PLAN if issued < planned
-            else RowStatus.ABOVE_PLAN if issued > planned
-            else RowStatus.ON_PLAN
-        )
-        variance = _variance(planned, issued)
+    status, variance, percentage = compare(planned, issued)
     return PlanVsIssuedRow(
         row_id=f"PLAN-{plan.plan_id}",
         source=RowSource.ASSISTANT,
@@ -123,30 +118,19 @@ def plan_row(plan: ConsumptionPlan, reservations: tuple[tuple[str, str], ...], i
         planned_quantity=planned,
         issued_quantity=issued,
         status=status,
-        variance_quantity=variance[0],
-        variance_percentage=variance[1],
-        due_date=due,
+        variance_quantity=variance,
+        variance_percentage=percentage,
+        due_date=plan.window_end or plan.planned_use_date,
         window_start=plan.planned_use_date,
     )
 
 
-def reservation_row(entry, *, as_of: date) -> PlanVsIssuedRow | None:
+def reservation_row(entry) -> PlanVsIssuedRow | None:
     """None for an item with nothing reserved and nothing issued."""
     reserved, issued = entry.reservation_quantity, entry.issued_quantity
     if reserved <= 0 and issued <= 0:
         return None
-    due = entry.requirement_date
-    variance: tuple[Decimal | None, Decimal | None] = (None, None)
-    if _not_due(issued, due, as_of):
-        status = RowStatus.NOT_DUE
-    else:
-        status = (
-            RowStatus.NOT_ISSUED if issued <= 0
-            else RowStatus.PARTLY_ISSUED if issued < reserved
-            else RowStatus.OVER_ISSUED if issued > reserved
-            else RowStatus.FULLY_ISSUED
-        )
-        variance = _variance(reserved, issued)
+    status, variance, percentage = compare(reserved, issued)
     return PlanVsIssuedRow(
         row_id=f"RES-{entry.reservation_number}-{entry.reservation_item}",
         source=RowSource.SAP,
@@ -159,14 +143,14 @@ def reservation_row(entry, *, as_of: date) -> PlanVsIssuedRow | None:
         planned_quantity=reserved,
         issued_quantity=issued,
         status=status,
-        variance_quantity=variance[0],
-        variance_percentage=variance[1],
-        due_date=due,
+        variance_quantity=variance,
+        variance_percentage=percentage,
+        due_date=entry.requirement_date,
     )
 
 
 def plan_vs_issued_rows(
-    plans: Iterable[ConsumptionPlan], ledger_entries, *, as_of: date, is_oar=lambda material, plant: True
+    plans: Iterable[ConsumptionPlan], ledger_entries, *, is_oar=lambda material, plant: True
 ) -> Iterator[PlanVsIssuedRow]:
     """Every captured plan in ``plans`` and every OAR reservation item in
     ``ledger_entries`` no captured plan owns. Reference plans are ignored: they
@@ -176,7 +160,7 @@ def plan_vs_issued_rows(
     for outcome in plan_outcomes(captured, entries):
         yield plan_row(
             outcome.plan, outcome.reservations, outcome.issued_quantity,
-            as_of=as_of, oar=is_oar(outcome.plan.material, outcome.plan.plant),
+            oar=is_oar(outcome.plan.material, outcome.plan.plant),
         )
     matcher = PlanMatcher(captured, entries)
     seen: set[tuple[str, str]] = set()
@@ -193,7 +177,7 @@ def plan_vs_issued_rows(
             continue
         if matcher.plan_for(entry) is not None:
             continue
-        row = reservation_row(entry, as_of=as_of)
+        row = reservation_row(entry)
         if row is not None:
             yield row
 
@@ -233,6 +217,6 @@ def from_payload(d: dict[str, Any]) -> PlanVsIssuedRow:
         row_id=d["id"], source=RowSource(d["src"]), material=d["m"], plant=d["p"], oar=d["oar"],
         reservations=tuple(d["res"]), session_id=d["sid"], plan_id=d["pid"],
         planned_quantity=Decimal(d["pq"]), issued_quantity=Decimal(d["iq"]), status=RowStatus(d["st"]),
-        variance_quantity=num(d["vq"]), variance_percentage=num(d["vp"]),
+        variance_quantity=Decimal(d["vq"]), variance_percentage=num(d["vp"]),
         due_date=day(d["due"]), window_start=day(d["ws"]),
     )

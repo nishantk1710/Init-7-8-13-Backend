@@ -442,14 +442,14 @@ def _build_batch(
     writer.write(
         kinds.planvs(row)
         for row in plan_vs_issued_rows(
-            [p for p in all_plans if batch.holds(p.material)], ledger, as_of=as_of, is_oar=is_oar
+            [p for p in all_plans if batch.holds(p.material)], ledger, is_oar=is_oar
         )
     )
     del ledger
     writer.write(kinds.watch(m, m.material_scope is MaterialScope.OAR) for m in watch)
 
 
-def _write_plans_without_sap(writer: RecordWriter, all_plans: list[ConsumptionPlan], batches, as_of: date) -> None:
+def _write_plans_without_sap(writer: RecordWriter, all_plans: list[ConsumptionPlan], batches) -> None:
     """Captured plans whose material no batch holds -- nothing in SAP for it
     yet -- still get their acquired-vs-plan row (awaiting a reservation)."""
     orphans = [
@@ -457,7 +457,7 @@ def _write_plans_without_sap(writer: RecordWriter, all_plans: list[ConsumptionPl
         if p.source is PlanSource.CAPTURED and not any(b.holds(p.material) for b in batches)
     ]
     if orphans:
-        writer.write(kinds.planvs(row) for row in plan_vs_issued_rows(orphans, [], as_of=as_of, is_oar=lambda m, p: False))
+        writer.write(kinds.planvs(row) for row in plan_vs_issued_rows(orphans, [], is_oar=lambda m, p: False))
 
 
 # --- the whole build -------------------------------------------------------
@@ -547,7 +547,7 @@ def build(
         orphans = [p for p in reference_plans if not any(b.holds(p.material) for b in batches)]
         if orphans:
             writer.write([kinds.exception(i, True) for i in exception_queue_from([], orphans, [], config, as_of=as_of)])
-        _write_plans_without_sap(writer, all_plans, batches, as_of)
+        _write_plans_without_sap(writer, all_plans, batches)
 
         linked = sync_links(db, sgtxt_rows)
         log(f"I13 store: v{version} session links {linked}")
@@ -742,7 +742,7 @@ def reage(
         orphans = [p for p in reference_plans if not any(b.holds(p.material) for b in batches)]
         if orphans:
             writer.write([kinds.exception(i, True) for i in exception_queue_from([], orphans, [], config, as_of=as_of)])
-        _write_plans_without_sap(writer, all_plans, batches, as_of)
+        _write_plans_without_sap(writer, all_plans, batches)
         db.commit()
 
         copied = _copy_kinds(db, source.version, version, kinds.UNDATED_KINDS)

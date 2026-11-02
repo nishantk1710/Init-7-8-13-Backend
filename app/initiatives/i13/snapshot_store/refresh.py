@@ -103,7 +103,7 @@ def refresh_material(db: Session, material: str, plant: str, *, reservations: bo
             kinds.planvs(row)
             for row in plan_vs_issued_rows(
                 [p for p in plans if (p.material, p.plant) == (material, plant)], key_ledger,
-                as_of=run.reference_date, is_oar=oar_of,
+                is_oar=oar_of,
             )
         ]
 
