@@ -21,6 +21,7 @@ from app.initiatives.i13.config import get_i13_config
 from app.initiatives.i13.consumption_attribution import ConsumptionAttributionService
 from app.initiatives.i13.exceptions import exception_queue_from
 from app.initiatives.i13.ledger_compat import build_legacy_ledger, grni_lines
+from app.initiatives.i13.plan_vs_issued import plan_vs_issued_rows
 from app.initiatives.i13.plans import load_captured_plans, load_reference_plans
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
 from app.initiatives.i13.session_link import sync_links
@@ -75,17 +76,39 @@ def refresh_material(db: Session, material: str, plant: str, *, reservations: bo
         if (m.material, m.plant) == (material, plant)
     ]
 
+    # The reservation ledger is needed for the acquired-vs-plan rows even
+    # when the reservations themselves did not change: a new plan takes over
+    # the reservations its window covers.
+    ledger = build_reservation_ledger(
+        reservation_repo, procurement_repo, material_scope_index=index,
+        material=material, plant=plant, include_out_of_scope=True,
+    )
+    reference_plans = load_reference_plans(data_dir)
+    plans = list(reference_plans) + load_captured_plans(db)
+    key_ledger = [e for e in ledger if (e.material, e.plant) == (material, plant)]
+
+    def oar_of(m: str, p: str) -> bool:
+        return classify_material_scope(index.get((m, p))) is MaterialScope.OAR
+
     replaced = [kinds.WATCH]
     records: list[kinds.Record] = [kinds.watch(m, m.material_scope is MaterialScope.OAR) for m in watch]
+    # Only into a version built with the tab's rows: one material's rows in a
+    # version without the rest would read as the whole tab.
+    has_plan_rows = db.execute(
+        select(R.id).where(R.version == run.version, R.kind == kinds.PLAN_VS).limit(1)
+    ).first() is not None
+    if has_plan_rows:
+        replaced.append(kinds.PLAN_VS)
+        records += [
+            kinds.planvs(row)
+            for row in plan_vs_issued_rows(
+                [p for p in plans if (p.material, p.plant) == (material, plant)], key_ledger,
+                as_of=run.reference_date, is_oar=oar_of,
+            )
+        ]
 
     if reservations:
         rows = reservation_repo.get_reservations(material=material, plant=plant)
-        ledger = build_reservation_ledger(
-            reservation_repo, procurement_repo, material_scope_index=index,
-            material=material, plant=plant, include_out_of_scope=True,
-        )
-        reference_plans = load_reference_plans(data_dir)
-        plans = list(reference_plans) + load_captured_plans(db)
         attribution = ConsumptionAttributionService(
             cost_centre_enabled=config.attribution.cost_centre_enabled
         ).attribute_entries(ledger, rows, plans)
