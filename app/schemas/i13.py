@@ -739,7 +739,7 @@ class PlanVsIssuedRowResponse(BaseModel):
     issued_quantity: Decimal
     """Goods issued on the reservation(s), reversals netted -- never a receipt."""
     status: str
-    variance_quantity: Decimal
+    variance_quantity: Decimal | None
     variance_percentage: Decimal | None
     due_date: date | None
     window_start: date | None

@@ -463,8 +463,9 @@ ALL = Batch("0", "9999999999")
 # row counts, and every other kind, are unchanged.
 # "planvs" added 2026-11-02 in all three: the acquired-vs-plan tab's plan and
 # SAP reservation rows (plan_vs_issued). A new kind; every other kind unchanged.
-# "planvs" re-recorded the same day: on, below or above plan only, variance
-# always filled. Same row counts.
+# "planvs" re-recorded the same day: SAP rows read on, below or above plan
+# (these tenants hold no captured plan and nothing due after AS_OF, so no
+# awaiting-reservation or not-due rows). Same row counts.
 EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
     "mixed": {
         "attrib": (294, "214738b080d76802"), "chain": (286, "636c21f9a8b8679e"),

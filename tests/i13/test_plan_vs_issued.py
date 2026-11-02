@@ -18,12 +18,13 @@ from app.initiatives.i13.snapshot_store import kinds
 from app.shared.material_scope import MaterialScope
 from tests.i13.test_plan_outcomes import _captured, _entry
 
+TODAY = date(2026, 11, 2)
 PAST = date(2026, 10, 15)
 AHEAD = date(2026, 12, 1)
 
 
 def _rows(plans, entries):
-    return list(plan_vs_issued_rows(plans, entries))
+    return list(plan_vs_issued_rows(plans, entries, as_of=TODAY))
 
 
 def _sap(rspos: str, *, reserved: str = "10", issued: str = "0", required: date | None = PAST, **overrides):
@@ -53,13 +54,13 @@ def test_sap_rows_compare_issued_with_reserved() -> None:
         "1000000000/0002": RowStatus.BELOW_PLAN,
         "1000000000/0003": RowStatus.ABOVE_PLAN,
         "1000000000/0004": RowStatus.BELOW_PLAN,
-        "1000000000/0005": RowStatus.BELOW_PLAN,
+        "1000000000/0005": RowStatus.NOT_DUE,
     }
     assert all(r.source is RowSource.SAP and r.session_id is None for r in rows)
 
 
-def test_there_are_only_three_statuses() -> None:
-    assert {s.value for s in RowStatus} == {"ON_PLAN", "BELOW_PLAN", "ABOVE_PLAN"}
+def test_there_are_five_statuses() -> None:
+    assert {s.value for s in RowStatus} == {"NO_RESERVATION", "NOT_DUE", "ON_PLAN", "BELOW_PLAN", "ABOVE_PLAN"}
 
 
 def test_variance_is_measured_against_the_reserved_quantity() -> None:
@@ -68,9 +69,21 @@ def test_variance_is_measured_against_the_reserved_quantity() -> None:
     assert (row.variance_quantity, row.variance_percentage) == (Decimal("100"), Decimal("100"))
 
 
-def test_nothing_issued_is_the_whole_quantity_below() -> None:
-    (row,) = _rows([], [_sap("0001", reserved="10", issued="0", required=AHEAD)])
+def test_nothing_issued_past_its_date_is_the_whole_quantity_below() -> None:
+    (row,) = _rows([], [_sap("0001", reserved="10", issued="0", required=PAST)])
+    assert row.status is RowStatus.BELOW_PLAN
     assert (row.variance_quantity, row.variance_percentage) == (Decimal("-10"), Decimal("-100"))
+
+
+def test_nothing_issued_before_its_date_is_not_due_yet_with_no_variance() -> None:
+    (row,) = _rows([], [_sap("0001", reserved="10", issued="0", required=AHEAD)])
+    assert row.status is RowStatus.NOT_DUE
+    assert (row.variance_quantity, row.variance_percentage) == (None, None)
+
+
+def test_a_partly_issued_reservation_is_below_plan_even_before_its_date() -> None:
+    (row,) = _rows([], [_sap("0001", issued="4", required=AHEAD)])
+    assert row.status is RowStatus.BELOW_PLAN
 
 
 def test_issued_with_nothing_reserved_is_above_with_no_percentage() -> None:
@@ -120,12 +133,26 @@ def test_plan_rows_read_below_and_above_plan() -> None:
     assert next(r for r in above if r.row_id == "PLAN-P1").variance_quantity == Decimal("2")
 
 
-def test_a_plan_with_no_reservation_yet_is_below_plan_by_its_whole_quantity() -> None:
+def test_a_plan_with_no_reservation_yet_is_awaiting_one() -> None:
     (row,) = _rows([_captured("P1")], [])
-    assert row.status is RowStatus.BELOW_PLAN
+    assert row.status is RowStatus.NO_RESERVATION
     assert row.reservations == () and row.issued_quantity == 0
-    assert row.variance_quantity == Decimal("-10")
+    assert row.variance_quantity is None
     assert row.due_date == date(2026, 10, 31)
+
+
+def test_awaiting_a_reservation_wins_even_when_the_window_is_ahead() -> None:
+    (row,) = _rows([_captured("P1", window_end=AHEAD)], [])
+    assert row.status is RowStatus.NO_RESERVATION
+
+
+def test_a_linked_plan_with_nothing_issued_and_its_window_ahead_is_not_due() -> None:
+    plan = _captured(
+        "P1", window_end=AHEAD, reservation_number="1000000000", reservation_item="0001",
+        linked_reservations=(("1000000000", "0001"),),
+    )
+    (row,) = _rows([plan], [_entry("0001", "0", requirement_date=AHEAD)])
+    assert row.status is RowStatus.NOT_DUE
 
 
 def test_reference_plans_are_not_rows_and_own_nothing() -> None:
@@ -167,8 +194,6 @@ def test_a_sap_row_shows_the_session_its_item_text_names() -> None:
 
 # --- overdue: a marker on below-plan rows, not a status --------------------------
 
-TODAY = date(2026, 11, 2)
-
 
 def test_below_plan_and_past_its_date_is_overdue() -> None:
     rows = _rows([], [
@@ -180,11 +205,23 @@ def test_below_plan_and_past_its_date_is_overdue() -> None:
     assert {r.reservations[0][-4:]: is_overdue(r, TODAY) for r in rows} == {
         "0001": True, "0002": False, "0003": False, "0004": False,
     }
+    assert {r.reservations[0][-4:]: r.status for r in rows}["0002"] is RowStatus.NOT_DUE
 
 
-def test_a_plan_whose_window_ended_with_nothing_issued_is_overdue() -> None:
-    (row,) = _rows([_captured("P1")], [])
+def test_a_linked_plan_whose_window_ended_with_nothing_issued_is_overdue() -> None:
+    plan = _captured(
+        "P1", reservation_number="1000000000", reservation_item="0001",
+        linked_reservations=(("1000000000", "0001"),),
+    )
+    (row,) = _rows([plan], [_entry("0001", "0")])
+    assert row.status is RowStatus.BELOW_PLAN
     assert is_overdue(row, TODAY) and not is_overdue(row, date(2026, 10, 31))
+
+
+def test_awaiting_a_reservation_and_not_due_are_never_overdue() -> None:
+    awaiting = _rows([_captured("P1")], [])[0]
+    not_due = _rows([], [_sap("0001", required=AHEAD)])[0]
+    assert not is_overdue(awaiting, TODAY) and not is_overdue(not_due, date(2027, 1, 1))
 
 
 def test_the_route_marks_and_filters_overdue_rows() -> None:

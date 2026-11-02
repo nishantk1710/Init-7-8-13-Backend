@@ -60,7 +60,8 @@ from app.initiatives.i13.snapshot_store import codec
 #: 4 (30 Oct 2026): watch's acquired-vs-plan measures issued on each plan's own
 #: reservations, and its f2 can hold NO_RESERVATION. Same columns, new values.
 #: 5 (2 Nov 2026): planvs, the acquired-vs-plan tab's plan and SAP reservation rows.
-#: 6 (2 Nov 2026): planvs statuses are on, below or above plan only.
+#: 6 (2 Nov 2026): planvs statuses: awaiting reservation, not due yet, on, below
+#: or above plan.
 RECORD_LAYOUT = 6
 
 WATCH = "watch"
@@ -79,8 +80,8 @@ PLAN_VS = "planvs"
 #: Kinds measured against the reference date (days since an issue or a GR,
 #: the 12-month window, plan grace, the usage months kept). A re-age
 #: recomputes exactly these (``builder.reage``).
-#: planvs is recomputed with them: a re-age is when plans captured since the
-#: build are taken in.
+#: planvs is dated too: "not due yet" is measured against the date, and a
+#: re-age is when plans captured since the build are taken in.
 DATED_KINDS = (WATCH, MOVEMENT, OAR_KEY, RECLASS, USAGE, GRNI, EXCEPTION, PLAN_VS)
 #: Kinds that depend only on the SAP rows: a re-age copies them unchanged.
 #: ``test_snapshot_store_memory`` proves they do not move with the date.

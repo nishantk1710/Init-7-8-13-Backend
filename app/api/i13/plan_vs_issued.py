@@ -39,7 +39,7 @@ from app.schemas.i13 import PlanVsIssuedCountsResponse, PlanVsIssuedRowResponse
 router = APIRouter()
 
 _SOURCE = Query(None, description="ASSISTANT (captured plans) or SAP (reservations raised directly).")
-_STATUS = Query(None, description="ON_PLAN, BELOW_PLAN or ABOVE_PLAN.")
+_STATUS = Query(None, description="NO_RESERVATION, NOT_DUE, ON_PLAN, BELOW_PLAN or ABOVE_PLAN.")
 _RESERVATION = Query(None, description="One reservation number (exact match).")
 _OVERDUE = Query(False, description="Only below-plan rows whose due date has passed.")
 
@@ -48,7 +48,9 @@ def _as_of(snapshot: I13Snapshot | SqlSnapshot | None) -> date:
     return snapshot.reference_date if snapshot is not None else reference_date_for()
 
 
-def _computed_rows(db: Session, snapshot: I13Snapshot | None, *, material, plant) -> list[PlanVsIssuedRow]:
+def _computed_rows(
+    db: Session, snapshot: I13Snapshot | None, *, material, plant, as_of: date
+) -> list[PlanVsIssuedRow]:
     """The rows the stored snapshot would hold, computed here -- for the
     in-memory snapshot and ``?live=true``."""
     if snapshot is not None:
@@ -59,7 +61,7 @@ def _computed_rows(db: Session, snapshot: I13Snapshot | None, *, material, plant
             material_scope_index=fetch_material_scope_index(db, material=material, plant=plant),
             material=material, plant=plant, include_out_of_scope=True,
         )
-    rows = list(plan_vs_issued_rows(load_captured_plans(db), ledger))
+    rows = list(plan_vs_issued_rows(load_captured_plans(db), ledger, as_of=as_of))
     return [r for r in rows if (not material or r.material == material) and (not plant or r.plant == plant)]
 
 
@@ -112,7 +114,7 @@ def list_plan_vs_issued(
         response.headers["X-Total-Count"] = str(total)
     else:
         found = [
-            r for r in _computed_rows(db, snapshot, material=material, plant=plant)
+            r for r in _computed_rows(db, snapshot, material=material, plant=plant, as_of=as_of)
             if _matches(r, source=source, status=status, reservation=reservation, overdue=overdue, as_of=as_of)
         ]
         rows = list(page(newest_first(found, lambda r: r.due_date), response, limit=limit, offset=offset))
@@ -143,7 +145,7 @@ def count_plan_vs_issued(
         )
     as_of = _as_of(snapshot)
     rows = [
-        r for r in _computed_rows(db, snapshot, material=material, plant=plant)
+        r for r in _computed_rows(db, snapshot, material=material, plant=plant, as_of=as_of)
         if _matches(r, source=None, status=None, reservation=reservation)
     ]
 
