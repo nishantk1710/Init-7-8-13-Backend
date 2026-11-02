@@ -50,7 +50,8 @@ FAST_MAX_DAYS = 365
 SLOW_MAX_DAYS = 730
 
 
-def window_start(as_of: date) -> date:
-    """First day of the consumption window: ``CONSUMPTION_WINDOW_DAYS`` days
-    ending on, and including, ``as_of``."""
-    return as_of - timedelta(days=CONSUMPTION_WINDOW_DAYS - 1)
+def window_start(as_of: date, window_days: int = CONSUMPTION_WINDOW_DAYS) -> date:
+    """First day of the consumption window: ``window_days`` days ending on, and including,
+    ``as_of``. The default is ``CONSUMPTION_WINDOW_DAYS``; a saved KPI formula version can change
+    it (see :mod:`app.initiatives.i7.kpi_formulas`)."""
+    return as_of - timedelta(days=window_days - 1)

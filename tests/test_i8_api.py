@@ -219,15 +219,85 @@ class TestResponseShapeMatchesTheFrontend:
         }
 
     def test_status_values_are_the_frontend_unions(self) -> None:
+        from app.initiatives.i8 import aging
         from app.initiatives.i8 import register as reg
+        from app.initiatives.i8 import requisitions
 
-        assert {reg.PO_ISSUED, reg.AT_VENDOR} <= {
+        assert {reg.PO_ISSUED, reg.AT_VENDOR, requisitions.PR_RAISED} <= {
             "PR Raised",
             "PO Issued",
             "At Vendor",
             "Received",
             "Closed",
         }
+        # NOT_ORDERED (27-Oct-2026) is a PR row's; PO rows never carry it.
+        assert {*aging.OVERDUE_STATES, requisitions.NOT_ORDERED} <= {
+            "ON_TIME",
+            "OVERDUE",
+            "NO_DUE_DATE",
+            "RECEIVED",
+            "NOT_ORDERED",
+        }
+        assert requisitions.NOT_ORDERED not in aging.OVERDUE_STATES
+
+    def test_repair_pr_fields_are_defaulted_for_an_older_reader(self) -> None:
+        """Added 27-Oct-2026 for the open repair PRs with no PO yet. Every one
+        has a default, so a PO row reads as it did and a frontend that predates
+        them is not broken by their absence or presence."""
+        from app.api.i8.schemas import RegisterMeta, RegisterViewCounts, RepairChain
+
+        chain = {field.alias or name: field for name, field in RepairChain.model_fields.items()}
+        assert chain["lineKind"].default == "PO"
+        assert chain["requesterName"].default is None
+
+        meta = {field.alias or name: field for name, field in RegisterMeta.model_fields.items()}
+        for name in (
+            "openRepairRequests",
+            "requisitionsExcludedDeleted",
+            "requisitionsExcludedLivePo",
+            "requisitionsExcludedReservationClosed",
+        ):
+            assert meta[name].default == 0, name
+
+        counts = {
+            field.alias or name: field for name, field in RegisterViewCounts.model_fields.items()
+        }
+        assert counts["notOrdered"].default == 0
+
+    def test_the_28_oct_fields_are_optional(self) -> None:
+        """Added 28-Oct-2026 (stock split, the declaring session). Null by
+        default, so an older frontend reads a row as it did."""
+        from app.api.i8.schemas import RepairChain, UniverseItem
+
+        chain = {field.alias or name: field for name, field in RepairChain.model_fields.items()}
+        for name in ("usableStock", "damagedStock", "stockConditionKnown", "declarationSessionId"):
+            assert chain[name].default is None, name
+        item = {field.alias or name: field for name, field in UniverseItem.model_fields.items()}
+        for name in ("usableStock", "damagedStock"):
+            assert item[name].default is None, name
+
+    def test_a_universe_item_carries_its_stock_split(self) -> None:
+        from decimal import Decimal
+
+        from app.api.i8.mappers import universe_item
+        from app.initiatives.i8.config import get_i8_settings
+        from tests.assistant.conftest import universe_row
+
+        row = universe_row(
+            stock_on_hand=Decimal("3"),
+            usable_stock=Decimal("2"),
+            damaged_stock=Decimal("1"),
+            stock_condition_source="MCHB",
+        )
+        wire = universe_item(row, get_i8_settings()).model_dump(mode="json", by_alias=True)
+        assert (wire["usableStock"], wire["damagedStock"]) == ("2", "1")
+        unknown = universe_item(universe_row(), get_i8_settings()).model_dump(mode="json", by_alias=True)
+        assert (unknown["usableStock"], unknown["damagedStock"]) == (None, None)
+
+    def test_the_repair_pr_switch_is_off_by_default(self) -> None:
+        from app.initiatives.i8.config import I8Settings
+
+        assert I8Settings.model_fields["repair_requests_enabled"].default is False
 
     def test_declaration_status_is_the_w53_hook(self) -> None:
         from app.api.i8.schemas import RepairChain
@@ -309,7 +379,10 @@ class TestRegisterEndpoint:
         out as deleted, delivery completed or blocked -- each line once."""
         body = client.get(f"{REGISTER}?pageSize=1").json()
         meta = body["meta"]
-        assert body["total"] == meta["totalLines"] == meta["openLines"]
+        # The PO lines alone: the open repair PRs are counted apart, and listed
+        # only when I8_REPAIR_REQUESTS_ENABLED is on (off by default).
+        served_requests = body["viewCounts"].get("notOrdered", 0)
+        assert body["total"] - served_requests == meta["totalLines"] == meta["openLines"]
         assert meta["linesOnEightySeries"] == meta["totalLines"]
         assert meta["excludedDeletedLines"] == 44
         assert (
@@ -359,18 +432,16 @@ class TestRegisterEndpoint:
         document, _, item = first["id"].rpartition("-")
         body = client.get(f"{REGISTER}/{document}/{item}").json()
         stages = [stage["stage"] for stage in body["timeline"]]
-        # No "received": every line served is open in SAP.
-        assert stages == [
-            "removed",
-            "attested",
-            "po_raised",
-            "dispatched",
-            "at_vendor",
-        ]
-        # The stages the data cannot support say so, rather than being absent.
-        removed = body["timeline"][0]
-        assert removed["occurredAt"] is None
-        assert "does not name the repair PO" in removed["evidence"]
+        # No "received": every line served is open in SAP. No "removed"
+        # either since 27-Oct-2026: SAP has no record of removal. The repair
+        # starts at its request when the PO names a PR (27-Oct-2026).
+        assert stages in (
+            ["attested", "po_raised", "dispatched", "at_vendor"],
+            ["pr_raised", "attested", "po_raised", "dispatched", "at_vendor"],
+        )
+        # The PO stage names the repair PO it was built from.
+        po_raised = next(s for s in body["timeline"] if s["stage"] == "po_raised")
+        assert f"Repair PO {document}/" in po_raised["evidence"]
 
     def test_an_unknown_line_is_404(self) -> None:
         assert client.get(f"{REGISTER}/9999999999/10").status_code == 404
@@ -385,6 +456,11 @@ class TestSnapshotEndpoint:
         assert body["rules"]["rfqDocType"] == "AN"
         assert body["rules"]["seriesPrefixes"] == "80"
         assert "ELIKZ not 'X'" in body["rules"]["openLineRule"]
+        # A real boolean, not 1 or "true": the switch for serving repair PRs.
+        assert isinstance(body["rules"]["repairRequestsEnabled"], bool)
+        assert "RESB.BWART '543'" in body["rules"]["openRepairRequestRule"]
+        assert body["rules"]["stockConditionSource"] in ("MCHB", "MBEW")
+        assert "DAMAGED" in body["rules"]["damagedStockConditions"]
         assert body["repairRegister"]["totalLines"] == body["repairRegister"]["openLines"]
         # 3,605 before the two-plant scope ruling of 21-Sep-2026.
         assert body["universe"]["totalMaterials"] == 3145

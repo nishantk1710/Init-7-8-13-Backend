@@ -12,11 +12,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import TimeoutError as SqlAlchemyTimeoutError
 
 from app.api import root
 from app.api.router import api_router
 from app.core.config import Settings, get_settings
+from app.core.db import pool_status
 from app.core.logging import configure_logging, get_logger
+from app.core.security import azure_sdk_identity_warning
 from app.schemas.i7.errors import ApiError, ErrorBody, ErrorResponse
 from app.initiatives.i13 import snapshot as i13_snapshot
 
@@ -106,7 +109,8 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             if settings.database_url and settings.normalise_views_on_startup:
                 from app.shared import sap_normalise
 
-                sap_normalise.rebuild_read_layers()
+                # Skipped when another worker or instance is rebuilding them.
+                sap_normalise.rebuild_read_layers(at_start_up=True)
             if settings.database_url:
                 # After the views (n_makt is one), before the snapshot builds:
                 # material names are then ready by the time screens ask, rather
@@ -266,12 +270,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         unreachable. Add the header by hand so real 500s surface as 500s.
         """
         logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+        if isinstance(exc, SqlAlchemyTimeoutError):
+            # Waited pool_timeout for a connection and got none: say how full
+            # the pool was, so the next shortage is sized rather than guessed.
+            logger.error("Database connection pool exhausted: %s", pool_status())
         response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
         origin = request.headers.get("origin")
         if origin in settings.cors_origins:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Credentials"] = "true"
         return response
+
+    identity_warning = azure_sdk_identity_warning()
+    if identity_warning:
+        logger.warning(identity_warning)
 
     logger.info(
         "%s v%s ready (env=%s, api_prefix=%s, cors=%s)",

@@ -27,6 +27,7 @@ from app.api.i8.schemas import (
     LifecycleStage,
     LineException,
     MaterialReference,
+    NotificationItem,
     PlantReference,
     RegisterFacets,
     RegisterMeta,
@@ -40,8 +41,15 @@ from app.api.i8.schemas import (
     UnjustifiedPurchase,
     VendorOption,
 )
-from app.initiatives.i8.aging import days_between
-from app.initiatives.i8.attestation import CONDITION_LABELS, Recommendation
+from app.assistant import departments
+from app.initiatives.i8.aging import NO_LEAD_TIME, days_between
+from app.initiatives.i8.attestation import (
+    CONDITION_LABELS,
+    LINK_BOUND,
+    LINK_REFERENCE,
+    LINK_WINDOW,
+    Recommendation,
+)
 from app.initiatives.i8.coding_candidates import (
     CodingCandidate,
     ScreenStats,
@@ -49,15 +57,21 @@ from app.initiatives.i8.coding_candidates import (
 )
 from app.initiatives.i8.config import I8Settings
 from app.initiatives.i8.declarations import DeclarationRow
-from app.initiatives.i8.exceptions import RAISED_BY_I8, ExceptionItem, ExceptionStats
+from app.initiatives.i8.exceptions import (
+    RAISED_BY_I8,
+    RAISED_WITHOUT_COMPLETE_FLOW,
+    ExceptionItem,
+    ExceptionStats,
+)
 from app.initiatives.i8.line_justifications import LineJustification
 from app.initiatives.i8.exception_state import (
     UNTOUCHED,
     ExceptionWorkState,
     canonical_status,
 )
-from app.initiatives.i8.models import ExceptionEvent, RepairAttestation
-from app.initiatives.i8.register import RegisterStats, RepairLine
+from app.initiatives.i8.models import ExceptionEvent, Notification, RepairAttestation
+from app.initiatives.i8.register import RegisterStats, RepairLine, is_placeholder_price, repair_cost
+from app.initiatives.i8.requisitions import NOT_ORDERED, PR_RAISED, RepairRequest
 from app.initiatives.i8.service import Snapshot
 from app.initiatives.i8.universe import UniverseRow, UniverseStats
 
@@ -93,7 +107,26 @@ def universe_item(row: UniverseRow, cfg: I8Settings) -> UniverseItem:
         open_repair_lines=row.open_repair_lines,
         qty_under_repair=row.qty_under_repair,
         in_material_master=row.in_material_master,
+        # Null while the complete flow is off (I8_COMPLETE_FLOW_ENABLED).
+        usable_stock=row.usable_stock if cfg.complete_flow_enabled else None,
+        damaged_stock=row.damaged_stock if cfg.complete_flow_enabled else None,
     )
+
+
+def stock_split(row: UniverseRow | None, cfg: I8Settings | None = None) -> dict:
+    """The register row's stock split from its universe row (28-Oct-2026).
+
+    ``stock_condition_known`` is null when there is no universe row, so a row
+    with no stock record at all does not read as "condition unknown". All
+    three are null while the complete flow is off (``cfg``), as on a register
+    built before the split existed."""
+    if row is None or (cfg is not None and not cfg.complete_flow_enabled):
+        return {"usable_stock": None, "damaged_stock": None, "stock_condition_known": None}
+    return {
+        "usable_stock": row.usable_stock,
+        "damaged_stock": row.damaged_stock,
+        "stock_condition_known": row.stock_condition_source is not None,
+    }
 
 
 def repair_chain(
@@ -108,6 +141,9 @@ def repair_chain(
     declaration: DeclarationRow | None = None,
     justification: LineJustification | None = None,
     exceptions: Sequence[ExceptionItem] | None = None,
+    usable_stock=None,
+    damaged_stock=None,
+    stock_condition_known: bool | None = None,
 ) -> RepairChain:
     """One register row.
 
@@ -166,7 +202,9 @@ def repair_chain(
         expected_return=line.due_date,
         ordered_qty=line.ordered_qty,
         unit=line.unit,
-        repair_cost=line.net_price,
+        repair_cost=repair_cost(line.net_price, cfg),
+        repair_cost_currency=line.currency,
+        repair_cost_placeholder=line.net_price if is_placeholder_price(line.net_price, cfg) else None,
         new_unit_lead_time_days=new_unit_lead_time_days,
         item_category=line.item_category,
         doc_type=line.doc_type,
@@ -179,12 +217,105 @@ def repair_chain(
         declared_at=declaration.declared_at if declaration else None,
         condition=declaration.condition if declaration else None,
         next_action=declaration.next_action if declaration else None,
-        requester=line.requisitioner,
+        # The department that raised the repair PR (27-Oct-2026), falling back
+        # to the PO line's own requisitioner when that PR was not read.
+        requester=line.pr_department or line.requisitioner,
+        requester_name=department_name(line.pr_department or line.requisitioner),
+        declaration_link=declaration.declaration_link if declaration else None,
+        declaration_session_id=declaration.declaration_session_id if declaration else None,
         justification=repair_justification(justification) if justification else None,
         exceptions=(
             [line_exception(item) for item in exceptions] if exceptions is not None else None
         ),
+        usable_stock=usable_stock,
+        damaged_stock=damaged_stock,
+        stock_condition_known=stock_condition_known,
     )
+
+
+def request_chain(
+    request: RepairRequest,
+    cfg: I8Settings,
+    *,
+    stock_on_hand=None,
+    reorder_point=None,
+    new_unit_lead_time_days: int | None = None,
+    criticality: str | None = None,
+    exceptions: Sequence[ExceptionItem] | None = None,
+    declaration: DeclarationRow | None = None,
+    usable_stock=None,
+    damaged_stock=None,
+    stock_condition_known: bool | None = None,
+) -> RepairChain:
+    """One register row for an open repair PR with no PO yet.
+
+    The same row shape as :func:`repair_chain`, so the screen needs no second
+    table: what a PO line has and a PR does not -- the PO, the vendor, a
+    promised date, a dispatch -- is null, and the days count from the PR date.
+    Stock, reorder point and criticality come from the universe exactly as for
+    a PO row: they belong to the material at the plant, not to the document.
+
+    ``declaration`` is the PR's queue row, when the caller has the view: since
+    27-Oct-2026 a PR can be declared on, and its status, who declared, when
+    and the condition come from it. Without one the status is "Required".
+    ``exceptions`` is an empty list on the listing and None on the detail
+    page, as for a PO row.
+    """
+    return RepairChain(
+        id=request.row_id,
+        material=MaterialReference(
+            material_id=request.material_id,
+            material_code=request.material_id,
+            description=request.description,
+        ),
+        plant=plant_reference(request.plant, cfg),
+        stock_on_hand=stock_on_hand,
+        reorder_point=reorder_point,
+        qty_under_repair=request.quantity,
+        repair_pr=SAPDocumentReference(
+            type="PR", document_number=request.purchase_requisition, line=request.item
+        ),
+        repair_po=None,
+        vendor=None,
+        vendor_name=None,
+        repair_status=PR_RAISED,
+        declaration_status=declaration.status if declaration else "Required",
+        declaration_id=declaration.declaration_id if declaration else None,
+        declared_by=declaration.declared_by if declaration else None,
+        declared_at=declaration.declared_at if declaration else None,
+        condition=declaration.condition if declaration else None,
+        next_action=declaration.next_action if declaration else None,
+        declaration_link=declaration.declaration_link if declaration else None,
+        declaration_session_id=declaration.declaration_session_id if declaration else None,
+        overdue_status=NOT_ORDERED,
+        lead_time_status=NO_LEAD_TIME,
+        days_open=request.days_open,
+        aging_bucket=request.aging_bucket,
+        # Nothing has moved since the PR was raised, so the current stage is
+        # as old as the request.
+        days_in_current_stage=request.days_open,
+        raised_at=request.requested_on,
+        unit=request.unit,
+        new_unit_lead_time_days=new_unit_lead_time_days,
+        criticality=criticality,
+        requester=request.department,
+        requester_name=department_name(request.department),
+        exceptions=(
+            [line_exception(item) for item in exceptions] if exceptions is not None else None
+        ),
+        line_kind="PR",
+        usable_stock=usable_stock,
+        damaged_stock=damaged_stock,
+        stock_condition_known=stock_condition_known,
+    )
+
+
+def department_name(code: str | None) -> str | None:
+    """A department code's name from the list the assistant keeps, or None.
+
+    Never waits for that list to load: a row shown with its code alone is
+    better than a slow register."""
+    return departments.name_for(code)
 
 
 def repair_justification(value: LineJustification) -> RepairJustification:
@@ -205,8 +336,9 @@ def repair_justification(value: LineJustification) -> RepairJustification:
         unjustified_purchases=[
             UnjustifiedPurchase(
                 exception_id=item.id,
+                # A new-buy PR or a direct PO line (27-Oct-2026), as found.
                 purchase=SAPDocumentReference(
-                    type="PO",
+                    type=item.acquisition_document_type,
                     document_number=item.acquisition_document or "",
                     line=item.acquisition_item,
                 ),
@@ -253,59 +385,100 @@ def _at_vendor_evidence(line: RepairLine) -> str:
     )
 
 
+def _requested_evidence(document: str, item: str, department: str | None) -> str:
+    """``Repair PR {BANFN}/{BNFPO}``, and the department that asked for it --
+    named when the department list has its code, the code alone otherwise."""
+    requested = f"Repair PR {document}/{item}"
+    if department:
+        name = department_name(department)
+        requested += f", requested by department {department}" + (f" ({name})" if name else "")
+    return f"{requested}."
+
+
+def _declared_stage(
+    attestation: RepairAttestation | None, today, link: str | None, reference: str | None
+) -> LifecycleStage:
+    """The declaration stage, saying how the declaration was matched (since
+    27-Oct-2026): it names the line, the R-reference typed on the repair order
+    names the assistant visit it was made in, or it is a part declared at the
+    same plant within the date window -- three strengths of claim."""
+    if attestation is None:
+        return LifecycleStage(
+            stage="attested", label="Condition declared", occurred_at=None, evidence="Not declared yet."
+        )
+    evidence = (
+        f"Declaration {attestation.id}: "
+        f"{CONDITION_LABELS[Recommendation(attestation.recommendation)]}"
+        f" ({attestation.fault_category.replace('_', ' ').lower()}), "
+        f"by {_person(getattr(attestation, 'attestor_name', None) or attestation.attestor)}."
+    )
+    if link == LINK_BOUND:
+        evidence += " It names this repair."
+    elif link == LINK_REFERENCE:
+        evidence += (
+            f" Linked by the R-reference {reference} typed on the repair order."
+            if reference
+            else " Linked by the R-reference typed on the repair order."
+        )
+    elif link == LINK_WINDOW:
+        evidence += " Matched by material and plant within the declaration window."
+    return LifecycleStage(
+        stage="attested",
+        label="Condition declared",
+        occurred_at=attestation.attested_at.date(),
+        evidence=evidence,
+        days_since=days_between(attestation.attested_at.date(), today),
+    )
+
+
 def timeline(
-    line: RepairLine, today, attestation: RepairAttestation | None = None
+    line: RepairLine,
+    today,
+    attestation: RepairAttestation | None = None,
+    link: str | None = None,
+    reference: str | None = None,
+    *,
+    requested_stage: bool = True,
 ) -> list[LifecycleStage]:
     """The lifecycle, stage by stage, with the evidence for each.
 
-    Stage 1 -- removal from the machine -- is present as explicitly unavailable
-    rather than omitted. A reader should be able to see that it was considered
-    and why it cannot be shown, instead of wondering whether it was forgotten.
+    ``requested_stage`` is False while the complete flow is off: no "Repair
+    requested" stage, as before 27-Oct-2026.
+
+    There is no "Removed from machine" stage since 27-Oct-2026 (ruled 26-Oct):
+    SAP keeps no record of a unit coming off a machine -- the goods issue to
+    the machine (261/201) names no repair PO, and on the 19-Oct measurement the
+    stage was empty on every line by construction. "Condition declared" and the
+    replacement issue tell that part of the story, so the stage was dropped
+    rather than shown permanently blank.
 
     There is no "received" stage since 19-Oct-2026: every line served here is
     open in SAP, and goods receipts are not read. The line leaves the register
     when SAP marks it "Delivery completed".
 
-    **Stage 2 is no longer a hook.** It read "W5.3 owns this. Hook only." until
-    W5.3 landed; it now carries the real attestation where one covers this line,
+    **The declaration stage is no longer a hook.** It read "W5.3 owns this.
+    Hook only." until W5.3 landed; it now carries the real attestation where one covers this line,
     and says what was searched for where none does. That distinction is the
     whole point of the stage: "nobody assessed this part" and "we have not
     looked" are different statements.
     """
-    stages: list[LifecycleStage] = [
-        LifecycleStage(
-            stage="removed",
-            label="Removed from machine",
-            occurred_at=None,
-            evidence=(
-                "Not tracked: SAP's goods issue to the machine (movement 261/201) "
-                "does not name the repair PO, so it cannot be tied to this line."
-            ),
-        ),
-        LifecycleStage(
-            stage="attested",
-            label="Condition declared",
-            occurred_at=attestation.attested_at.date() if attestation else None,
-            evidence=(
-                (
-                    f"Declaration {attestation.id}: "
-                    f"{CONDITION_LABELS[Recommendation(attestation.recommendation)]}"
-                    f" ({attestation.fault_category.replace('_', ' ').lower()}), "
-                    f"by {_person(attestation.attestor)}"
-                )
-                if attestation
-                else (
-                    "No condition declaration is on record for this line. Until "
-                    "this platform there was nowhere to record one, so most older "
-                    "repairs have none."
-                )
-            ),
-            days_since=(
-                days_between(attestation.attested_at.date(), today)
-                if attestation
-                else None
-            ),
-        ),
+    stages: list[LifecycleStage] = []
+    # The repair starts at the request (27-Oct-2026): the PR the PO was
+    # ordered from, when the register knows it.
+    if requested_stage and line.pr_number:
+        stages.append(
+            LifecycleStage(
+                stage="pr_raised",
+                label="Repair requested",
+                occurred_at=getattr(line, "pr_requested_on", None),
+                evidence=_requested_evidence(
+                    line.pr_number, line.pr_item or "", getattr(line, "pr_department", None)
+                ),
+                days_since=days_between(getattr(line, "pr_requested_on", None), today),
+            )
+        )
+    stages += [
+        _declared_stage(attestation, today, link, reference),
         LifecycleStage(
             stage="po_raised",
             label="Repair PO raised",
@@ -342,6 +515,34 @@ def timeline(
     return stages
 
 
+def request_timeline(
+    request: RepairRequest,
+    today,
+    attestation: RepairAttestation | None = None,
+    link: str | None = None,
+    reference: str | None = None,
+) -> list[LifecycleStage]:
+    """The lifecycle of a repair PR with no PO yet: requested, declared (or
+    not yet), and the PO it is waiting on, saying plainly it has not happened.
+    """
+    return [
+        LifecycleStage(
+            stage="pr_raised",
+            label="Repair requested",
+            occurred_at=request.requested_on,
+            evidence=_requested_evidence(request.purchase_requisition, request.item, request.department),
+            days_since=days_between(request.requested_on, today),
+        ),
+        _declared_stage(attestation, today, link, reference),
+        LifecycleStage(
+            stage="po_raised",
+            label="Repair PO raised",
+            occurred_at=None,
+            evidence="No PO yet.",
+        ),
+    ]
+
+
 def universe_meta(stats: UniverseStats) -> UniverseMeta:
     return UniverseMeta(
         total_rows=stats.rows,
@@ -357,34 +558,57 @@ def universe_meta(stats: UniverseStats) -> UniverseMeta:
     )
 
 
-def register_meta(stats: RegisterStats) -> RegisterMeta:
-    """The register's counts, whatever the filters."""
-    return RegisterMeta(**vars(stats))
+#: The register counts of the open repair PRs, served as 0 while the complete
+#: flow is off: before it the register did not look for them at all.
+_REQUEST_COUNTS = (
+    "open_repair_requests",
+    "requisitions_excluded_deleted",
+    "requisitions_excluded_live_po",
+    "requisitions_excluded_reservation_closed",
+)
+
+
+def register_meta(stats: RegisterStats, cfg: I8Settings | None = None) -> RegisterMeta:
+    """The register's counts, whatever the filters. With ``cfg`` and the
+    complete flow off, the repair-PR counts read 0."""
+    counts = vars(stats)
+    if cfg is not None and not cfg.complete_flow_enabled:
+        counts = {**counts, **{name: 0 for name in _REQUEST_COUNTS}}
+    return RegisterMeta(**counts)
 
 
 def register_facets(
     lines: Sequence[RepairLine],
     cfg: I8Settings,
-    criticality_of: Callable[[RepairLine], str | None],
+    criticality_of: Callable[[RepairLine | RepairRequest], str | None],
+    requests: Sequence[RepairRequest] = (),
 ) -> RegisterFacets:
-    """The plants, vendors, repair statuses and criticalities among ``lines``.
+    """The plants, vendors, repair statuses and criticalities among ``lines``
+    and the served repair PRs, ``requests``.
 
-    ``criticality_of`` is the rating the line shows -- its material's at its
-    plant -- so the dropdown offers exactly what the column displays.
+    ``criticality_of`` is the rating the row shows -- its material's at its
+    plant -- so the dropdown offers exactly what the column displays. A PR row
+    has no vendor, so any PR makes ``vendor=none`` worth offering.
     """
-    criticalities = [criticality_of(line) for line in lines]
+    criticalities = [criticality_of(row) for row in (*lines, *requests)]
     return RegisterFacets(
-        plants=_plant_options((line.plant for line in lines), cfg),
+        plants=_plant_options(
+            (*(line.plant for line in lines), *(request.plant for request in requests)), cfg
+        ),
         vendors=_vendor_options((line.vendor, line.vendor_name) for line in lines),
-        has_unknown_vendor=any(not line.vendor for line in lines),
-        repair_statuses=sorted({line.repair_status for line in lines}),
+        has_unknown_vendor=bool(requests) or any(not line.vendor for line in lines),
+        repair_statuses=sorted(
+            {line.repair_status for line in lines} | ({PR_RAISED} if requests else set())
+        ),
         criticalities=sorted({c for c in criticalities if c}),
         has_unrated=any(not c for c in criticalities),
     )
 
 
 def line_exception(item: ExceptionItem) -> LineException:
-    return LineException(id=item.id, type=item.type, severity=item.severity)
+    return LineException(
+        id=item.id, type=item.type, severity=item.severity, pre_automation=item.pre_automation
+    )
 
 
 # --- W5.3: attestation, declarations, exceptions --------------------------
@@ -451,6 +675,11 @@ def attestation_item(
         repair_item=row.repair_item,
         supersedes=row.supersedes,
         superseded_by=superseded_by,
+        attestor_name=row.attestor_name,
+        amendment_reason=row.amendment_reason,
+        repair_document_type=(
+            (row.repair_document_type or "PO") if row.repair_document else None
+        ),
         covers_repair_lines=covers_repair_lines,
         coverage_note=coverage_note,
     )
@@ -473,6 +702,8 @@ def declaration_item(row: DeclarationRow, cfg: I8Settings) -> DeclarationItem:
         ),
         plant=plant_reference(row.plant, cfg),
         requester=row.requester,
+        requester_name=row.requester_name,
+        repair_document_type=row.repair_document_type,
         related_repair_id=row.related_repair_id,
         vendor=row.vendor,
         vendor_name=row.vendor_name,
@@ -481,7 +712,8 @@ def declaration_item(row: DeclarationRow, cfg: I8Settings) -> DeclarationItem:
             SAPDocumentReference(
                 type="PO", document_number=row.repair_document, line=row.repair_item
             )
-            if row.repair_document
+            # A PR row's repair document is the PR, already served as ``pr``.
+            if row.repair_document and row.repair_document_type == "PO"
             else None
         ),
         status=row.status,
@@ -566,12 +798,15 @@ def exception_item(
             description=item.description,
         ),
         plant=plant_reference(item.plant, cfg),
+        # The document kinds as the finding names them: a repair PR with no PO
+        # yet is the bare PR number with type PR, and the purchase is usually a
+        # new-buy PR (27-Oct-2026). Every other check names a PO line.
         repair_line=SAPDocumentReference(
-            type="PO", document_number=item.purchasing_document, line=item.item
+            type=item.repair_document_type, document_number=item.purchasing_document, line=item.item
         ),
         acquisition_line=(
             SAPDocumentReference(
-                type="PO",
+                type=item.acquisition_document_type,
                 document_number=item.acquisition_document,
                 line=item.acquisition_item,
             )
@@ -582,10 +817,45 @@ def exception_item(
         detail=item.detail,
         raised_at=item.raised_at,
         pre_automation=item.pre_automation,
+        declaration_id=item.declaration_id,
+        reservation_line=(
+            SAPDocumentReference(
+                type="RESERVATION", document_number=item.reservation_document, line=item.reservation_item
+            )
+            if item.reservation_document
+            else None
+        ),
         status=work.status,
         owner=work.owner,
         still_detected=still_detected,
         history=[exception_history_entry(e) for e in work.history],
+    )
+
+
+def notification_item(
+    row: Notification,
+    *,
+    repair_line: str | None = None,
+    description: str | None = None,
+    plant_name: str | None = None,
+) -> NotificationItem:
+    """A logged notification on the wire. ``emailed`` follows ``emailed_at``,
+    which nothing sets until the email sender exists. The keyword fields are
+    labels the route looks up at read time (28-Oct-2026)."""
+    return NotificationItem(
+        repair_line=repair_line,
+        description=description,
+        plant_name=plant_name,
+        id=row.id,
+        exception_id=row.exception_id,
+        type=row.exception_type,
+        severity=row.severity,
+        title=row.title,
+        material_id=row.material_id,
+        plant=row.plant,
+        logged_at=row.logged_at,
+        channel="EMAIL",
+        emailed=row.emailed_at is not None,
     )
 
 
@@ -605,6 +875,8 @@ def exception_meta(
     stats: ExceptionStats,
     excluded_types: frozenset[str] = frozenset(),
     excluded: Sequence[ExceptionItem] = (),
+    *,
+    complete_flow: bool = True,
 ) -> ExceptionMeta:
     """The counts, less whatever the caller's queue does not carry.
 
@@ -614,7 +886,11 @@ def exception_meta(
     types off ``typesRaised``, so the meta describes the queue as it is listed.
     Subtracted rather than recounted: the lines checked and covered and the
     windows are facts about the run that no count of items reproduces.
+
+    ``complete_flow`` False (``I8_COMPLETE_FLOW_ENABLED`` off) names only the
+    types raised then in ``typesRaised``.
     """
+    implemented = RAISED_BY_I8 if complete_flow else RAISED_WITHOUT_COMPLETE_FLOW
     pre_automation = sum(1 for item in excluded if item.pre_automation)
     by_severity = dict(stats.by_severity)
     for item in excluded:
@@ -632,10 +908,11 @@ def exception_meta(
         attestation_cutover_date=stats.attestation_cutover_date,
         # Which types are actually implemented, so an empty count is
         # distinguishable from an unimplemented check.
-        types_raised=sorted(t.value for t in RAISED_BY_I8 if t.value not in excluded_types),
+        types_raised=sorted(t.value for t in implemented if t.value not in excluded_types),
         acquisitions_checked=stats.acquisitions_checked,
         justification_window_days=stats.justification_window_days,
         justification_cutover_date=stats.justification_cutover_date,
+        session_check_start_date=stats.session_check_start_date,
     )
 
 

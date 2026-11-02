@@ -63,11 +63,10 @@ def _watch(material: str, plant: str, status: AcquiredVsPlanStatus, scope=OAR):
 
 
 def _grni(material: str, plant: str, days: int, outstanding: str = "4"):
-    ledger = SimpleNamespace(
-        material=material, plant=plant, material_scope=OAR,
-        reservation_number="0012345", reservation_item="0001", po_number="4500000001",
+    ledger = SimpleNamespace(material=material, plant=plant, po_number="4500000001", po_item="00010")
+    return SimpleNamespace(
+        ledger=ledger, outstanding_quantity=Decimal(outstanding), days_since_gr=days, material_scope=OAR
     )
-    return SimpleNamespace(ledger=ledger, outstanding_quantity=Decimal(outstanding), days_since_gr=days)
 
 
 SNAPSHOT = SimpleNamespace(

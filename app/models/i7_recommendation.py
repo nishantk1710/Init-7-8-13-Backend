@@ -32,6 +32,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -138,9 +139,15 @@ class Recommendation(Base):
 
     consumption_count_12m: Mapped[int | None] = mapped_column(Integer, nullable=True)
     """SOP 3.1.1 indicator 1's own count, MSEG issue transactions minus
-    reversals, trailing 12 months. Structured, not just embedded in
-    ``conversion_detail`` -- a client can read/filter/sort on it without
-    parsing free text."""
+    reversals, over the trailing ``consumption_count_months`` months (6 since
+    2026-10-22, 12 before; the column keeps its historical name). Structured, not
+    just embedded in ``conversion_detail`` -- a client can read/filter/sort on it
+    without parsing free text."""
+
+    consumption_count_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """How many months the count above covers, as the policy said when this
+    recommendation was made. NULL for a recommendation made before this column
+    existed: its window was not recorded, and is not guessed."""
 
     consumption_count_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
     """The threshold the count above was compared against (policy-configured,
@@ -182,6 +189,20 @@ class Recommendation(Base):
     safety_stock_delta: Mapped[Decimal | None] = mapped_column(QUANTITY, nullable=True)
     rop_delta: Mapped[Decimal | None] = mapped_column(QUANTITY, nullable=True)
     max_stock_delta: Mapped[Decimal | None] = mapped_column(QUANTITY, nullable=True)
+
+    # --- Manual Min-Max conversion request ----------------------------------------
+    manually_converted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    """True once a user asked to convert a NOT_ELIGIBLE OAR material to Min-Max ordering. It is a separate
+    fact from ``conversion_eligibility``, which stays the rule's own verdict: the two together say "the rule
+    said no, and somebody asked anyway". Set when the recommendation is submitted (see
+    ``ledger.submit_for_approval``); never cleared, so a rejected request stays visible as one."""
+
+    requested_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    """Who made the most recent manual conversion request. An earlier request (before a rejection and a
+    resubmission) is in the approval ledger, which is never overwritten."""
+
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    """When the most recent manual conversion request was made."""
 
     # --- Workflow state -----------------------------------------------------
     status: Mapped[str] = mapped_column(String(32), index=True)

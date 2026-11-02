@@ -121,7 +121,7 @@ def _statements(w: WorkTables) -> list[tuple[str, str, list[str]]]:
         (
             w.pr,
             (f"SELECT {_key('purchase_requisition')}, item_of_requisition, {_key('material')}, {_key('plant')}, "
-            f"quantity_requested, requisition_date, purchase_order, purchase_order_item INTO {w.pr} "
+            f"quantity_requested, requisition_date, purchase_order, purchase_order_item, deletion_indicator INTO {w.pr} "
             f"FROM n_eban WHERE purchase_requisition <> '' AND material <> '' AND plant <> '' AND {plant}"),
             ["material, plant", "purchase_requisition"],
         ),

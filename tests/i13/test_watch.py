@@ -112,33 +112,6 @@ def test_acquired_vs_plan_no_plan(data_dir: Path, i13_config) -> None:
     assert metric.acquired_vs_plan_variance_percentage is None
 
 
-def test_acquired_vs_plan_below_on_above(data_dir: Path, i13_config) -> None:
-    reservation, pr = _reservation_and_pr()
-    po_item = {"Ebeln": "4500000000", "Ebelp": "0010", "Banfn": "2000000000", "Bnfpo": "0010", "Matnr": "MAT1", "Werks": "1000", "Menge": Decimal("10")}
-    gr_row = {"Ebeln": "4500000000", "Ebelp": "0010", "Bwart": "101", "Menge": Decimal("5"), "BudatMkpf": AS_OF - timedelta(days=10)}
-    _write_plans(
-        data_dir,
-        [
-            {
-                "plan_id": "PLAN-1", "session_id": "SESS-1", "Rsnum": "1000000000", "Rspos": "0001",
-                "Matnr": "MAT1", "Werks": "1000", "requester": "REQ1", "purpose": "test",
-                "planned_quantity": "10", "planned_use_date": "2026-06-01", "status": "OPEN",
-            }
-        ],
-    )
-    movement_repo = FakeMovementRepository()
-    procurement_repo = FakeProcurementRepository(prs=[pr], po_items=[po_item], gr_rows=[gr_row])
-    reservation_repo = FakeReservationRepository(reservations=[reservation])
-
-    metrics = compute_watch_metrics(movement_repo, procurement_repo, reservation_repo, SCOPE_INDEX, i13_config, data_dir, as_of=AS_OF)
-    metric = next(m for m in metrics if m.material == "MAT1")
-    assert metric.planned_quantity == 10
-    assert metric.received_quantity == 5
-    assert metric.acquired_vs_plan_status is AcquiredVsPlanStatus.BELOW_PLAN
-    assert metric.acquired_vs_plan_variance_quantity == -5
-    assert metric.acquired_vs_plan_variance_percentage == -50
-
-
 def _plan(planned_quantity: str, **overrides) -> dict:
     plan = {
         "plan_id": "PLAN-1", "session_id": "SESS-1", "Rsnum": "1000000000", "Rspos": "0001",
@@ -149,47 +122,104 @@ def _plan(planned_quantity: str, **overrides) -> dict:
     return plan
 
 
-def test_acquired_vs_plan_aligned_when_gr_exactly_matches_plan(data_dir: Path, i13_config) -> None:
-    """§12 example A: plan 10, GR 10 -> variance 0, ON_PLAN (this codebase's
-    existing name for the FRS's "ALIGNED" -- see models.py's WatchMetric)."""
-    reservation, pr = _reservation_and_pr()
-    po_item = {"Ebeln": "4500000000", "Ebelp": "0010", "Banfn": "2000000000", "Bnfpo": "0010", "Matnr": "MAT1", "Werks": "1000", "Menge": Decimal("10")}
-    gr_row = {"Ebeln": "4500000000", "Ebelp": "0010", "Bwart": "101", "Menge": Decimal("10"), "BudatMkpf": AS_OF - timedelta(days=10)}
-    _write_plans(data_dir, [_plan("10")])
-    movement_repo = FakeMovementRepository()
-    procurement_repo = FakeProcurementRepository(prs=[pr], po_items=[po_item], gr_rows=[gr_row])
-    reservation_repo = FakeReservationRepository(reservations=[reservation])
+def _gi(qty: str, *, rspos: str = "0001", bwart: str = "261", days_ago_value: int = 5) -> dict:
+    return {
+        "Rsnum": "1000000000", "Rspos": rspos, "Bwart": bwart, "Menge": Decimal(qty),
+        "BudatMkpf": AS_OF - timedelta(days=days_ago_value),
+    }
 
-    metrics = compute_watch_metrics(movement_repo, procurement_repo, reservation_repo, SCOPE_INDEX, i13_config, data_dir, as_of=AS_OF)
-    metric = next(m for m in metrics if m.material == "MAT1")
+
+def _plan_metric(data_dir: Path, i13_config, plans: list[dict], *, gi_rows=(), reservations=None, **procurement):
+    reservation, pr = _reservation_and_pr()
+    _write_plans(data_dir, plans)
+    procurement_repo = FakeProcurementRepository(prs=[pr], **procurement)
+    reservation_repo = FakeReservationRepository(reservations=reservations or [reservation], gi_rows=list(gi_rows))
+    metrics = compute_watch_metrics(
+        FakeMovementRepository(), procurement_repo, reservation_repo, SCOPE_INDEX, i13_config, data_dir, as_of=AS_OF
+    )
+    return next(m for m in metrics if m.material == "MAT1")
+
+
+def test_acquired_vs_plan_below_plan_on_a_partial_issue(data_dir: Path, i13_config) -> None:
+    metric = _plan_metric(data_dir, i13_config, [_plan("10")], gi_rows=[_gi("5")])
+    assert metric.planned_quantity == 10
+    assert metric.issued_quantity == 5
+    assert metric.acquired_vs_plan_status is AcquiredVsPlanStatus.BELOW_PLAN
+    assert metric.acquired_vs_plan_variance_quantity == -5
+    assert metric.acquired_vs_plan_variance_percentage == -50
+
+
+def test_acquired_vs_plan_on_plan_when_issued_from_stock(data_dir: Path, i13_config) -> None:
+    """The OAR case: the reservation is filled from stock, no PO behind it, so
+    nothing is received against it -- yet the requester got all 10. That is on
+    plan; measuring receipts called it 0 of 10."""
+    reservation = {"Rsnum": "1000000000", "Rspos": "0001", "Matnr": "MAT1", "Werks": "1000", "Bdmng": Decimal("10")}
+    metric = _plan_metric(data_dir, i13_config, [_plan("10")], gi_rows=[_gi("10")], reservations=[reservation])
+    assert metric.received_quantity == 0
+    assert metric.issued_quantity == 10
     assert metric.acquired_vs_plan_status is AcquiredVsPlanStatus.ON_PLAN
     assert metric.acquired_vs_plan_variance_quantity == 0
     assert metric.acquired_vs_plan_variance_percentage == 0
 
 
-def test_acquired_vs_plan_above_plan_from_partial_receipts_summed(data_dir: Path, i13_config) -> None:
-    """§12 example C, and §8's partial-receipt example: two GRs against the
-    same PO line (6 then 4 later) must sum to one acquired quantity (10),
-    never double-count, and a further GR (5 more, total 15) against plan 10
-    is ABOVE_PLAN with +5/+50%."""
-    reservation, pr = _reservation_and_pr()
-    po_item = {"Ebeln": "4500000000", "Ebelp": "0010", "Banfn": "2000000000", "Bnfpo": "0010", "Matnr": "MAT1", "Werks": "1000", "Menge": Decimal("15")}
-    gr_rows = [
-        {"Ebeln": "4500000000", "Ebelp": "0010", "Bwart": "101", "Menge": Decimal("6"), "BudatMkpf": AS_OF - timedelta(days=20)},
-        {"Ebeln": "4500000000", "Ebelp": "0010", "Bwart": "101", "Menge": Decimal("4"), "BudatMkpf": AS_OF - timedelta(days=15)},
-        {"Ebeln": "4500000000", "Ebelp": "0010", "Bwart": "101", "Menge": Decimal("5"), "BudatMkpf": AS_OF - timedelta(days=10)},
-    ]
-    _write_plans(data_dir, [_plan("10")])
-    movement_repo = FakeMovementRepository()
-    procurement_repo = FakeProcurementRepository(prs=[pr], po_items=[po_item], gr_rows=gr_rows)
-    reservation_repo = FakeReservationRepository(reservations=[reservation])
+def test_acquired_vs_plan_receipts_alone_do_not_count(data_dir: Path, i13_config) -> None:
+    """Goods received on the reservation's PO but not yet issued: the
+    requester has not had them, so the plan is not met."""
+    po_item = {"Ebeln": "4500000000", "Ebelp": "0010", "Banfn": "2000000000", "Bnfpo": "0010", "Matnr": "MAT1", "Werks": "1000", "Menge": Decimal("10")}
+    gr_row = {"Ebeln": "4500000000", "Ebelp": "0010", "Bwart": "101", "Menge": Decimal("10"), "BudatMkpf": AS_OF - timedelta(days=10)}
+    metric = _plan_metric(data_dir, i13_config, [_plan("10")], po_items=[po_item], gr_rows=[gr_row])
+    assert metric.received_quantity == 10
+    assert metric.issued_quantity == 0
+    assert metric.acquired_vs_plan_status is AcquiredVsPlanStatus.BELOW_PLAN
 
-    metrics = compute_watch_metrics(movement_repo, procurement_repo, reservation_repo, SCOPE_INDEX, i13_config, data_dir, as_of=AS_OF)
-    metric = next(m for m in metrics if m.material == "MAT1")
-    assert metric.received_quantity == 15  # 6 + 4 + 5, never double-counted
+
+def test_acquired_vs_plan_above_plan_with_a_reversal_netted(data_dir: Path, i13_config) -> None:
+    """Issued 6 + 4 + 5, one issue of 5 reversed (262) and issued again: 15
+    against a plan of 10 is +5 / +50%."""
+    gi_rows = [_gi("6", days_ago_value=20), _gi("4", days_ago_value=15), _gi("5", days_ago_value=12),
+               _gi("5", bwart="262", days_ago_value=11), _gi("5", days_ago_value=10)]
+    metric = _plan_metric(data_dir, i13_config, [_plan("10")], gi_rows=gi_rows)
+    assert metric.issued_quantity == 15
     assert metric.acquired_vs_plan_status is AcquiredVsPlanStatus.ABOVE_PLAN
     assert metric.acquired_vs_plan_variance_quantity == 5
     assert metric.acquired_vs_plan_variance_percentage == 50
+
+
+def test_a_split_po_reservation_counts_its_issue_once(data_dir: Path, i13_config) -> None:
+    """A PR split over two PO lines gives the reservation two ledger entries,
+    each carrying the item's whole issued quantity. Counted once."""
+    po_items = [
+        {"Ebeln": "4500000000", "Ebelp": "0010", "Banfn": "2000000000", "Bnfpo": "0010", "Matnr": "MAT1", "Werks": "1000", "Menge": Decimal("5")},
+        {"Ebeln": "4500000001", "Ebelp": "0010", "Banfn": "2000000000", "Bnfpo": "0010", "Matnr": "MAT1", "Werks": "1000", "Menge": Decimal("5")},
+    ]
+    metric = _plan_metric(data_dir, i13_config, [_plan("10")], gi_rows=[_gi("10")], po_items=po_items)
+    assert metric.issued_quantity == 10
+    assert metric.acquired_vs_plan_status is AcquiredVsPlanStatus.ON_PLAN
+
+
+def test_only_the_plans_own_reservation_counts(data_dir: Path, i13_config) -> None:
+    """Issues on another reservation of the same material and plant -- one
+    no plan stands for -- are not this plan's."""
+    reservations = [
+        {"Rsnum": "1000000000", "Rspos": "0001", "Matnr": "MAT1", "Werks": "1000", "Bdmng": Decimal("10")},
+        {"Rsnum": "1000000000", "Rspos": "0002", "Matnr": "MAT1", "Werks": "1000", "Bdmng": Decimal("50")},
+    ]
+    metric = _plan_metric(
+        data_dir, i13_config, [_plan("10")], gi_rows=[_gi("4"), _gi("50", rspos="0002")], reservations=reservations
+    )
+    assert metric.issued_quantity == 4
+    assert metric.acquired_vs_plan_status is AcquiredVsPlanStatus.BELOW_PLAN
+
+
+def test_a_plan_with_no_reservation_is_awaiting_one(data_dir: Path, i13_config) -> None:
+    """The plan names a reservation the extract does not hold (yet): nothing
+    could have been issued, which is not the same as being short."""
+    metric = _plan_metric(data_dir, i13_config, [_plan("10", Rsnum="1999999999")], gi_rows=[_gi("10")])
+    assert metric.planned_quantity == 10
+    assert metric.issued_quantity == 0
+    assert metric.acquired_vs_plan_status is AcquiredVsPlanStatus.NO_RESERVATION
+    assert metric.acquired_vs_plan_variance_quantity is None
+    assert metric.acquired_vs_plan_variance_percentage is None
 
 
 def test_gr_not_issued_partial_issue_leaves_unissued_remainder_flagged(data_dir: Path, i13_config) -> None:

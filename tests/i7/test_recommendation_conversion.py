@@ -255,3 +255,24 @@ def test_evaluate_has_no_demand_class_parameter():
     assert "demand_class" not in parameters
     assert "adi" not in parameters
     assert "cv_squared" not in parameters
+
+
+# --- The window the count was taken over travels with the decision ------------------------------
+
+
+def test_the_decision_records_the_months_its_count_covers():
+    decision = decide(5, NORMAL)
+
+    assert decision.consumption_count_months == POLICY.consumption_count_months == 6
+
+
+def test_the_months_follow_the_policy_not_a_literal():
+    twelve = POLICY.model_copy(update={"consumption_count_months": 12})
+
+    assert decide(5, NORMAL, policy=twelve).consumption_count_months == 12
+    assert "in the last 12 months" in decide(5, NORMAL, policy=twelve).detail
+
+
+def test_the_months_are_recorded_on_every_outcome():
+    for count, tier, scope in ((5, NORMAL, IN_SCOPE), (1, NORMAL, IN_SCOPE), (None, None, IN_SCOPE), (9, NORMAL, "OUT_OF_SCOPE")):
+        assert decide(count, tier, scope=scope).consumption_count_months == 6

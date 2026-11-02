@@ -50,11 +50,21 @@ from tests.assistant.test_requests import (  # noqa: F401 -- fixtures
     settings,
 )
 
-REQUEST = ids.mint_request()
-
-
 def _mistyped(reference: str) -> str:
     return reference[:5] + ("A" if reference[5] != "A" else "B") + reference[6:]
+
+
+def _request_with_digit() -> str:
+    # Text only reads as a mistyped reference if it carries a digit (so
+    # "REPAIRABLE" is not one). A random ID whose digits all sit at the
+    # character _mistyped replaces made the invalid-reference tests flaky.
+    while True:
+        request = ids.mint_request()
+        if any(c.isdigit() for c in _mistyped(request)):
+            return request
+
+
+REQUEST = _request_with_digit()
 
 
 # --- reading the item text ----------------------------------------------------------

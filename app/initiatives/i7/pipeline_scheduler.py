@@ -94,6 +94,14 @@ class SchedulePolicy:
     initial_delay_seconds: int
     snapshots_enabled: bool = False
     """Also save the monthly KPI snapshots after the night's run (``I7_KPI_SNAPSHOT_ENABLED``)."""
+    quarterly_report_enabled: bool = False
+    """Also generate the Quarterly Report for a quarter that has just closed (``I7_QUARTERLY_REPORT_AUTO_ENABLED``)."""
+    quarterly_report_window_days: int = 7
+    """Days after a quarter closes in which that generation still runs (``I7_QUARTERLY_REPORT_AUTO_WINDOW_DAYS``)."""
+    monthly_report_enabled: bool = False
+    """Also generate the report for a month that has just ended (``I7_MONTHLY_REPORT_AUTO_ENABLED``)."""
+    monthly_report_window_days: int = 7
+    """Days after a month ends in which that generation still runs (``I7_MONTHLY_REPORT_AUTO_WINDOW_DAYS``)."""
 
     @classmethod
     def from_settings(cls, settings) -> "SchedulePolicy":
@@ -115,9 +123,21 @@ class SchedulePolicy:
             )
         if delay < 0:
             problems.append(f"I7_PIPELINE_INITIAL_DELAY_SECONDS must be >= 0, got {delay}")
+        report = bool(getattr(settings, "i7_quarterly_report_auto_enabled", False))
+        window = getattr(settings, "i7_quarterly_report_auto_window_days", 7)
+        # Only checked when the step is on: a setting for a feature that is off must not stop the pipeline watcher.
+        if report and not 1 <= window <= 31:
+            problems.append(f"I7_QUARTERLY_REPORT_AUTO_WINDOW_DAYS must be 1-31, got {window}")
+        monthly = bool(getattr(settings, "i7_monthly_report_auto_enabled", False))
+        monthly_window = getattr(settings, "i7_monthly_report_auto_window_days", 7)
+        if monthly and not 1 <= monthly_window <= 31:
+            problems.append(f"I7_MONTHLY_REPORT_AUTO_WINDOW_DAYS must be 1-31, got {monthly_window}")
         if problems:
             raise InvalidScheduleError("; ".join(problems))
-        return cls(hour, retries, interval, delay, bool(getattr(settings, "i7_kpi_snapshot_enabled", False)))
+        return cls(
+            hour, retries, interval, delay, bool(getattr(settings, "i7_kpi_snapshot_enabled", False)), report, window,
+            monthly, monthly_window,
+        )
 
 
 def open_slot(now: datetime, policy: SchedulePolicy) -> datetime | None:
@@ -178,6 +198,55 @@ def capture_snapshots(session_factory: Callable[[], Session], now: datetime | No
     return ", ".join(f"{r.month:%Y-%m} {r.action}" for r in results) or "up to date"
 
 
+def report_step(
+    policy: SchedulePolicy, kind: str, *, generate: Callable[..., object] | None = None
+) -> Callable[[Callable[[], Session], datetime | None], str]:
+    """The nightly report step for one ``kind`` of period (``"quarter"`` or ``"month"``), as the argument :func:`tick`
+    takes.
+
+    It asks ``auto_generate`` whether the period that just closed has a final report and generates it if not. The one
+    thing it adds is a limit on retries: a generation that FAILED is not attempted again in the same slot, so a
+    permanent fault costs one attempt per slot (``H, H+2, ...``) rather than one every tick. The record of that is held
+    in this closure -- a restart forgets it and tries once more, which is harmless because generation is idempotent and
+    locked; nothing is written to the database for a failed attempt.
+    """
+    from functools import partial
+
+    from app.initiatives.i7.reporting import auto_generate
+    from app.initiatives.i7.reporting.period import MONTH, latest_closed_period
+
+    window_days = policy.monthly_report_window_days if kind == MONTH else policy.quarterly_report_window_days
+    generate = generate or partial(auto_generate.generate_due_quarterly_report, kind=kind)
+    failed_in_slot: dict[str, datetime] = {}
+
+    def step(session_factory: Callable[[], Session], now: datetime | None = None) -> str:
+        moment = now or datetime.now(timezone.utc)
+        slot = open_slot(moment, policy)
+        period = latest_closed_period(kind, moment.astimezone(timezone.utc).date())
+        if slot is not None and failed_in_slot.get(period) == slot:
+            return f"{period}: FAILED earlier in the {slot:%H:%M} slot; tries again in the next"
+        result = generate(session_factory, moment, window_days=window_days)
+        if getattr(result, "action", None) == auto_generate.FAILED and slot is not None:
+            failed_in_slot[period] = slot
+        return str(result)
+
+    return step
+
+
+def quarterly_report_step(
+    policy: SchedulePolicy, *, generate: Callable[..., object] | None = None
+) -> Callable[[Callable[[], Session], datetime | None], str]:
+    """The nightly quarterly-report step: :func:`report_step` for a quarter."""
+    return report_step(policy, "quarter", generate=generate)
+
+
+def monthly_report_step(
+    policy: SchedulePolicy, *, generate: Callable[..., object] | None = None
+) -> Callable[[Callable[[], Session], datetime | None], str]:
+    """The nightly monthly-report step: :func:`report_step` for a month -- the report for a month that has just ended."""
+    return report_step(policy, "month", generate=generate)
+
+
 def tick(
     policy: SchedulePolicy,
     *,
@@ -185,6 +254,8 @@ def tick(
     runner: Callable[[str], str],
     now: datetime | None = None,
     capture: Callable[[Callable[[], Session], datetime | None], str] | None = None,
+    report: Callable[[Callable[[], Session], datetime | None], str] | None = None,
+    monthly: Callable[[Callable[[], Session], datetime | None], str] | None = None,
 ) -> str:
     """One look. Returns a one-line description of what it did, for the log.
 
@@ -195,15 +266,33 @@ def tick(
     When the policy asks for snapshots (and a ``capture`` step is given), they are saved after the pipeline check in
     the same open slot -- on this one timer, never a second. A failed capture is logged and reported in the returned
     line; it never ends the loop or affects the pipeline.
+
+    Likewise the monthly report (policy asks and a ``monthly`` step is given) and then the quarterly report (``report``):
+    generated after the snapshots, so the period's last month is final before the report reads it. A failure is
+    reported in the line and never raised, and one step failing does not stop the other.
     """
     outcome = _tick_pipeline(policy, session_factory=session_factory, runner=runner, now=now)
-    if capture is None or not policy.snapshots_enabled or outcome == "no slot open":
+    if outcome == "no slot open":
         return outcome
-    try:
-        return f"{outcome}; snapshots: {capture(session_factory, now)}"
-    except Exception as exc:  # noqa: BLE001 -- see the docstring
-        logger.exception("I07 nightly: the KPI snapshot capture failed (logged in i7_kpi_snapshot_log; retried next tick)")
-        return f"{outcome}; snapshots failed: {type(exc).__name__}"
+    if capture is not None and policy.snapshots_enabled:
+        try:
+            outcome = f"{outcome}; snapshots: {capture(session_factory, now)}"
+        except Exception as exc:  # noqa: BLE001 -- see the docstring
+            logger.exception("I07 nightly: the KPI snapshot capture failed (logged in i7_kpi_snapshot_log; retried next tick)")
+            outcome = f"{outcome}; snapshots failed: {type(exc).__name__}"
+    if monthly is not None and policy.monthly_report_enabled:
+        try:
+            outcome = f"{outcome}; monthly report: {monthly(session_factory, now)}"
+        except Exception as exc:  # noqa: BLE001 -- see the docstring
+            logger.exception("I07 nightly: the monthly report step failed (retried in the next open slot)")
+            outcome = f"{outcome}; monthly report failed: {type(exc).__name__}"
+    if report is not None and policy.quarterly_report_enabled:
+        try:
+            outcome = f"{outcome}; quarterly report: {report(session_factory, now)}"
+        except Exception as exc:  # noqa: BLE001 -- see the docstring
+            logger.exception("I07 nightly: the quarterly report step failed (retried in the next open slot)")
+            outcome = f"{outcome}; quarterly report failed: {type(exc).__name__}"
+    return outcome
 
 
 def _tick_pipeline(
@@ -254,6 +343,8 @@ def run_loop(
     runner: Callable[[str], str],
     clock: Callable[[], datetime] | None = None,
     capture: Callable[[Callable[[], Session], datetime | None], str] | None = None,
+    report: Callable[[Callable[[], Session], datetime | None], str] | None = None,
+    monthly: Callable[[Callable[[], Session], datetime | None], str] | None = None,
 ) -> None:
     """Tick every ``policy.interval_seconds`` until ``stop`` is set.
 
@@ -273,6 +364,8 @@ def run_loop(
                 runner=runner,
                 now=clock() if clock else None,
                 capture=capture,
+                report=report,
+                monthly=monthly,
             )
             logger.debug("I07 nightly tick: %s", outcome)
         except Exception:  # noqa: BLE001 -- a bad tick must never end the loop
@@ -301,7 +394,13 @@ def start(stop: threading.Event, settings) -> threading.Thread | None:
     thread = threading.Thread(
         target=run_loop,
         args=(stop, policy),
-        kwargs={"session_factory": get_sessionmaker(), "runner": check_and_run, "capture": capture_snapshots},
+        kwargs={
+            "session_factory": get_sessionmaker(),
+            "runner": check_and_run,
+            "capture": capture_snapshots,
+            "report": quarterly_report_step(policy) if policy.quarterly_report_enabled else None,
+            "monthly": monthly_report_step(policy) if policy.monthly_report_enabled else None,
+        },
         name="i7-pipeline-nightly",
         daemon=True,
     )
@@ -314,4 +413,14 @@ def start(stop: threading.Event, settings) -> threading.Thread | None:
         "y" if policy.retries == 1 else "ies",
         policy.interval_seconds,
     )
+    if policy.quarterly_report_enabled:
+        logger.info(
+            "I07 quarterly report: generated automatically for a quarter that closed in the last %d days",
+            policy.quarterly_report_window_days,
+        )
+    if policy.monthly_report_enabled:
+        logger.info(
+            "I07 monthly report: generated automatically for a month that ended in the last %d days",
+            policy.monthly_report_window_days,
+        )
     return thread

@@ -1,13 +1,18 @@
-"""Calendar-quarter resolution for the I07 Quarterly Deep-Dive Report.
+"""Calendar-period resolution for the I07 Deep-Dive Report: a quarter (``"Q3 2026"``) or a single month (``"Oct 2026"``).
 
-A pure function, deliberately kept separate from the aggregation service so
-it is trivially unit-testable without a database session.
+Pure functions, deliberately kept separate from the aggregation service so
+they are trivially unit-testable without a database session.
+
+A monthly report is the same report over one month. It is saved in the same table under its own label, which never
+collides with a quarter's (``"Oct 2026"`` against ``"Q4 2026"``), so the table needed no change; the code and routes
+keep the name "quarterly" for that reason, and :func:`period_kind` says which kind a label is.
 """
 
 from __future__ import annotations
 
+import calendar
 import re
-from datetime import date
+from datetime import date, timedelta
 
 _QUARTER_RE = re.compile(r"^Q([1-4])\s+(\d{4})$")
 
@@ -78,11 +83,64 @@ def month_label(month: date) -> str:
     return f"{_MONTH_ABBREVIATIONS[month.month - 1]} {month.year}"
 
 
+_MONTH_RE = re.compile(r"^(" + "|".join(_MONTH_ABBREVIATIONS) + r")\s+(\d{4})$")
+
+#: The two kinds of period a report can cover.
+QUARTER, MONTH = "quarter", "month"
+
+
+def latest_closed_month(today: date | None = None) -> str:
+    """The most recently *completed* calendar month as of ``today``, in the form :func:`resolve_period` accepts.
+    The current month is always in progress, so this is always the previous one, wrapping the year at January::
+
+        2026-11-01 -> "Oct 2026"
+        2027-01-01 -> "Dec 2026"
+    """
+    today = today or date.today()
+    return month_label(date(today.year, today.month, 1) - timedelta(days=1))
+
+
+def latest_closed_period(kind: str, today: date | None = None) -> str:
+    """The latest closed period of ``kind`` (``"quarter"`` or ``"month"``)."""
+    if kind == MONTH:
+        return latest_closed_month(today)
+    if kind == QUARTER:
+        return latest_closed_quarter(today)
+    raise ValueError(f"unknown period kind '{kind}'; expected '{QUARTER}' or '{MONTH}'")
+
+
+def period_kind(label: str) -> str:
+    """``"quarter"`` for ``"Q4 2026"``, ``"month"`` for ``"Oct 2026"``; ``ValueError`` for anything else."""
+    text = label.strip()
+    if _QUARTER_RE.match(text):
+        return QUARTER
+    if _MONTH_RE.match(text):
+        return MONTH
+    raise ValueError(
+        f"'{label}' is not a valid report period; expected a quarter 'Q<1-4> <year>' (e.g. 'Q3 2026') "
+        "or a month '<Mon> <year>' (e.g. 'Oct 2026')."
+    )
+
+
+def resolve_period(label: str) -> tuple[date, date]:
+    """Parse a quarter or a month label into ``(period_start, period_end)``, both inclusive.
+
+    ``"Q3 2026"`` -> ``(2026-07-01, 2026-09-30)`` and ``"Oct 2026"`` -> ``(2026-10-01, 2026-10-31)``. As with
+    :func:`resolve_quarter` the end is the last day of the period, not the first of the next. Raises ``ValueError``
+    for anything that is neither form exactly (lowercase, no space, an unknown month).
+    """
+    if period_kind(label) == QUARTER:
+        return resolve_quarter(label)
+    match = _MONTH_RE.match(label.strip())
+    assert match is not None  # period_kind just matched it
+    month = _MONTH_ABBREVIATIONS.index(match.group(1)) + 1
+    year = int(match.group(2))
+    return date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
+
+
 def exclusive_end_of(period_end: date) -> date:
     """The day after ``period_end``: the exclusive upper bound every period filter uses, so a quarter ending
     on 31 December is ``< 1 January`` and a row stamped late on the 31st is still inside it."""
-    from datetime import timedelta
-
     return period_end + timedelta(days=1)
 
 

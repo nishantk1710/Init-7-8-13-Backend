@@ -355,3 +355,69 @@ def test_rationale_result_carries_no_credentials():
     result_dict = result.__dict__
     for forbidden in ("api_key", "secret", "token", "credential", "authorization"):
         assert forbidden not in str(result_dict).lower()
+
+
+# --- The OAR explanation is told the real window, not an assumed 12 months --------
+
+
+def test_oar_context_carries_the_months_the_count_covers():
+    built = _oar_built(
+        conversion=_oar_built().conversion._replace(consumption_count_12m=5, consumption_count_months=6)
+    )
+
+    context = rationale._oar_context(built)
+
+    assert context["consumption_count_months"] == "6"
+    assert context["consumption_count_12m"] == "5"
+
+
+def test_oar_prompt_names_the_window_and_never_a_fixed_twelve_months():
+    from app.core.prompts import get_prompt
+
+    prompt = get_prompt("i07_oar_conversion_rationale")
+    context = rationale._oar_context(
+        _oar_built(conversion=_oar_built().conversion._replace(consumption_count_12m=5, consumption_count_months=6))
+    )
+
+    text = prompt.render(**context)
+
+    assert prompt.version >= 2
+    assert "Consumption count, trailing 6 months: 5" in text
+    assert "12 months" not in text
+
+
+def test_oar_prompt_renders_when_the_window_is_not_recorded():
+    """A decision made before the window was recorded has no months; the prompt still renders."""
+    from app.core.prompts import get_prompt
+
+    built = _oar_built(
+        conversion=_oar_built().conversion._replace(consumption_count_12m=5, consumption_count_months=None)
+    )
+
+    text = get_prompt("i07_oar_conversion_rationale").render(**rationale._oar_context(built))
+
+    assert "trailing unknown months" in text
+
+
+def test_the_persisted_row_carries_the_months_of_its_count():
+    """What is stored is what the screen labels the count with, so a later policy change cannot relabel it."""
+    from app.initiatives.i7.recommendations import service
+
+    built = _oar_built(
+        conversion=_oar_built().conversion._replace(consumption_count_12m=5, consumption_count_months=6)
+    )
+
+    row = service._to_row(built, rationale.RationaleResult(text="x", source=rationale.RATIONALE_SOURCE_FALLBACK))
+
+    assert row["consumption_count_12m"] == 5
+    assert row["consumption_count_months"] == 6
+
+
+def test_a_row_without_a_conversion_decision_stores_no_window():
+    from app.initiatives.i7.recommendations import service
+
+    row = service._to_row(
+        _oar_built(conversion=None), rationale.RationaleResult(text="x", source=rationale.RATIONALE_SOURCE_FALLBACK)
+    )
+
+    assert row["consumption_count_months"] is None

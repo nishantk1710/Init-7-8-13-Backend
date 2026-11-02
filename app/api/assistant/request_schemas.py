@@ -58,9 +58,35 @@ class PreviewResponse(AssistantModel):
     reason_categories: list[ReasonCategoryModel]
     """The justification categories submit accepts -- the configured list, so
     the screen offers exactly what the conversation would."""
+    fault_categories: list[str] = []
+    """The configured fault categories an I08 line's declaration accepts."""
+    recommendations: list[ReasonCategoryModel] = []
+    """The three assessments a declaration may record, with their labels."""
 
 
 # --- create ----------------------------------------------------------------------
+
+
+class LineDeclarationModel(AssistantModel):
+    """The faulty unit declared on an I08 line -- the conversation's declaration form."""
+
+    quantity: str | int | float = 1
+    condition_description: str = PydanticField(max_length=4000)
+    fault_category: str = PydanticField(max_length=64)
+    recommendation: str = PydanticField(max_length=64)
+    attestor_name: str = PydanticField(max_length=128)
+    evidence_reference: str | None = PydanticField(default=None, max_length=256)
+
+    def as_answer(self) -> dict[str, Any]:
+        """Keyed as the ``i08_declaration`` form's fields."""
+        return {
+            "quantity": str(self.quantity),
+            "condition_description": self.condition_description,
+            "fault_category": self.fault_category,
+            "recommendation": self.recommendation,
+            "attestor_name": self.attestor_name,
+            "evidence_reference": self.evidence_reference,
+        }
 
 
 class LineAnswersModel(AssistantModel):
@@ -80,6 +106,8 @@ class LineAnswersModel(AssistantModel):
     seen_suggested_quantity: str | None = PydanticField(default=None, max_length=20)
     """What the screen showed as the suggestion, null for "none could be made".
     Send it for every OAR line: a figure that moved since is refused (409)."""
+    declaration: LineDeclarationModel | None = None
+    """I08 only: declare the faulty unit coming off. Absent: nothing declared."""
 
 
 class CreateRequestBody(AssistantModel):

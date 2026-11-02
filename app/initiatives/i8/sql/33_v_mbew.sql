@@ -25,6 +25,13 @@ select
     nullif(valuation_area, '')     as bwkey,
     nullif(valuation_type, '')     as bwtar,
     sap_num(moving_price)          as verpr,
-    sap_num(price_unit)            as peinh
+    sap_num(price_unit)            as peinh,
+    -- LBKUM: the units valued on the row, per condition for a split-valuated
+    -- part. I08's alternative source for usable vs damaged stock
+    -- (I8_STOCK_CONDITION_SOURCE=MBEW; MCHB is the default). Unlike MCHB it
+    -- also counts units the plant owns but has sent to a vendor: 8000004885
+    -- showed 2 DAMAGED here and 0 in MARD and MCHB (26-Oct-2026).
+    -- APPENDED AT THE END -- see 21_v_ekpo.sql.
+    sap_num(total_valuated_stock)  as lbkum
 from n_mbew
 where in_scope_plant(valuation_area);

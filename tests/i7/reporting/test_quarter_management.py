@@ -302,13 +302,22 @@ def test_working_capital_is_on_the_reorder_point_over_priced_rows_only(db):
         rec("A", at(2026, 10), price=Decimal("10"), cur_rop=2, rec_rop=12),   # 10 x (2 - 12) = -100
         rec("B", at(2026, 10), price=Decimal("3"), cur_rop=9, rec_rop=4),     # 3 x (9 - 4) = +15
         rec("C", at(2026, 10), price=None, cur_rop=1, rec_rop=100),           # no price: left out, not zero
+        rec("D", at(2026, 10), price=Decimal("50"), cur_rop=1, rec_rop=2),    # priced in USD: left out, not converted
+        # The currency each price is stated in (MBEW WAERS): only ZAR and NAD count.
+        *[
+            StagedMaterialPlant(sap_material_number=m, sap_plant_code="1300", unit_price=p, currency=c,
+                                staging_run_id=1, source_table="n_mbew")
+            for m, p, c in (("A", Decimal("10"), "ZAR"), ("B", Decimal("3"), "NAD"), ("D", Decimal("50"), "USD"))
+        ],
     ])
     db.commit()
     management = build(db, AFTER_Q4)
     working_capital = card(management, "working_capital_impact")
     assert working_capital.value == Decimal("-85")
+    assert working_capital.unit == "ZAR"
     assert working_capital.denominator == 2
     assert management.position.priced_count == 2
+    assert management.position.working_capital_excluded_count == 2  # C (no price) and D (USD)
 
 
 def test_excess_opportunity_counts_only_where_current_max_is_above_the_recommended(db):

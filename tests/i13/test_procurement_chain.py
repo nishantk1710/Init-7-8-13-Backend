@@ -103,6 +103,33 @@ def test_pr_with_no_po_remains_pr_only() -> None:
     assert entries[0].lifecycle_status is LifecycleStatus.PR_CREATED
 
 
+# --- a requisition SAP deleted (EBAN-LOEKZ, UAT 26 Oct 2026) ----------------
+
+
+def test_a_deleted_pr_no_po_orders_is_not_a_line() -> None:
+    repo = _FakeRepository(
+        prs=[{**_pr("2000000003", "10", "MAT1", "1300", "5"), "Loekz": "X"}, _pr("2000000004", "10", "MAT1", "1300", "5")]
+    )
+    assert [e.pr_number for e in build_procurement_chain(repo)] == ["2000000004"]
+
+
+def test_a_deleted_pr_a_po_orders_stays_on_the_po_line() -> None:
+    repo = _FakeRepository(
+        prs=[{**_pr("2000000005", "10", "MAT1", "1300", "5"), "Loekz": "X"}],
+        po_items=[_po("4500000005", "10", "MAT1", "1300", "5", banfn="2000000005", bnfpo="10")],
+    )
+    entries = build_procurement_chain(repo)
+    assert [(e.po_number, e.pr_number) for e in entries] == [("4500000005", "2000000005")]
+
+
+def test_the_deleted_pr_rule_is_a_setting(monkeypatch) -> None:
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "i13_pr_respect_deleted", False)
+    repo = _FakeRepository(prs=[{**_pr("2000000006", "10", "MAT1", "1300", "5"), "Loekz": "X"}])
+    assert [e.pr_number for e in build_procurement_chain(repo)] == ["2000000006"]
+
+
 def test_po_with_pr_reference_not_in_loaded_pr_set_is_unresolved_not_dropped() -> None:
     """A PO carries a PR reference, but that PR isn't in the loaded EBAN
     extract (measured real gap: ~31% of cases, e.g. plant-coverage limits).

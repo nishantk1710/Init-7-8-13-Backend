@@ -238,7 +238,7 @@ cp .env.example .env
 | `FRONTEND_ORIGIN` | `http://localhost:3000` | Allowed CORS origin(s), comma-separated |
 
 Reserved and **not required for startup** — every one may be empty:
-`DATABASE_URL`, `STORAGE_URL`, `CPI_*`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`.
+`DATABASE_URL`, `STORAGE_URL`, `CPI_*`, `ENTRA_TENANT_ID`, `ENTRA_API_CLIENT_ID`.
 
 `.env` is gitignored. Never commit real credentials.
 

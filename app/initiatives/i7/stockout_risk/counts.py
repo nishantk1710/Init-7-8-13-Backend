@@ -13,7 +13,8 @@ of it. Each one is judged on three figures, all read from their own source:
 A material-plant is then one of:
 
 * **At risk** -- all three are valid and stock on hand is below average daily consumption x lead time.
-  Compared as ``SOH x window_days < consumption x lead time``, the same test without dividing.
+  By default ``SOH < (consumption / window_days) x lead time``; the three stages (average daily use,
+  stock needed, at risk) are the editable formulas of :mod:`app.initiatives.i7.kpi_formulas`.
 * **Evaluated, not at risk** -- all three are valid and stock covers the lead time.
 * **Insufficient Data** -- Fast or Slow, but one of the three is missing or invalid: no feature-store
   row or no lead time, a lead time of zero or less (SAP's "not maintained" is 0, and taking it as a real
@@ -37,7 +38,8 @@ from sqlalchemy import Select, and_, case, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.initiatives.i7.stockout_risk import SLOW_MAX_DAYS
+from app.initiatives.i7.kpi_formulas.resolved import Formulas, load_active
+from app.initiatives.i7.kpi_formulas.sql import stockout_rule
 from app.models.i7_features import MaterialFeature
 from app.models.i7_recommendation import Recommendation
 from app.models.i7_staging import StagedStock
@@ -72,6 +74,7 @@ def stockout_risk_counts(
     status: str | None = None,
     is_oar: bool | None = None,
     confidence: str | None = None,
+    formulas: Formulas | None = None,
 ) -> StockoutRiskCounts:
     """The counts for the Fast and Slow material-plants the caller's filters leave in.
 
@@ -80,7 +83,12 @@ def stockout_risk_counts(
     material, demand class and criticality narrow the usage population directly; a filter only a
     recommendation has (status, a confidence, OAR or not) restricts it to the material-plants ``base``
     selects, since only they have those properties.
+
+    ``formulas`` are the KPI formulas in force (the active saved version, or the built-in defaults when
+    none was saved); omitted, they are loaded here. They decide who is *at risk* and how far back a last
+    issue may be -- the validity guard below is not editable.
     """
+    formulas = formulas or load_active(session)
     try:
         as_of = session.execute(select(func.max(StockoutRiskInput.as_of_date))).scalar()
     except SQLAlchemyError:
@@ -113,17 +121,10 @@ def stockout_risk_counts(
         Recommendation.sap_plant_code.label("sap_plant_code"),
     ).distinct().subquery()  # one row per material-plant, however many recommendations it has
 
-    # Every figure a judgement needs must be present and usable. A missing one makes the whole
-    # expression NULL, which the CASEs below count as "not evaluated" -- never as safe.
-    valid_usage = and_(usage.window_days > 0, usage.consumption_90d >= 0)
-    valid_lead_time = feature.lead_time_days > 0
-    valid_stock = and_(
-        on_hand.c.on_hand.is_not(None),
-        on_hand.c.on_hand >= 0,
-        on_hand.c.blank_locations == 0,
-    )
-    evaluated = and_(valid_usage, valid_lead_time, valid_stock)
-    at_risk = and_(evaluated, on_hand.c.on_hand * usage.window_days < usage.consumption_90d * feature.lead_time_days)
+    # Every figure the rule uses must be present and usable. A missing one makes the rule unknown, which the
+    # CASEs below count as "not evaluated" -- never as safe. See ``stockout_rule`` for what that means.
+    rule, evaluated = stockout_rule(formulas, usage=usage, feature=feature, on_hand=on_hand)
+    at_risk = and_(evaluated, rule)
 
     source = (
         select(
@@ -155,9 +156,10 @@ def stockout_risk_counts(
                 recommended.c.sap_plant_code == usage.sap_plant_code,
             ),
         )
-    # Fast (last issue 0-365 days before the anchor) and Slow (366-730): measured from the anchor the
-    # table was built with, so a changed setting that has not been rebuilt never mislabels the figures.
-    source = source.where(usage.last_issue_date >= as_of - timedelta(days=SLOW_MAX_DAYS))
+    # Fast (last issue 0-365 days before the anchor) and Slow (366-730) by default: measured from the
+    # anchor the table was built with, so a changed setting that has not been rebuilt never mislabels
+    # the figures.
+    source = source.where(usage.last_issue_date >= as_of - timedelta(days=formulas.lookback_days))
     if plant is not None:
         source = source.where(usage.sap_plant_code == plant)
     if material is not None:

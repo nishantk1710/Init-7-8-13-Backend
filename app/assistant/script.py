@@ -20,8 +20,12 @@ What each flow asks
 **I08** -- a repair may already be open for this part.
 
     assessment + "do you still want to buy new?"
-      -> no  : done, the advice was taken
-      -> yes : why? (FR-7 justification) -> done
+      -> no  : (declare?) -> done, the advice was taken
+      -> yes : why? (FR-7 justification) -> (declare?) -> done
+    no unit at all : (declare?) -> done
+
+    (declare?) = "are you taking out a faulty unit that should go for
+    repair?" -> yes : the FR-4 declaration form -> done; no -> done.
 
 **I13** -- this part is planned on demand, so what is the plan?
 
@@ -53,12 +57,15 @@ from typing import Any, Mapping, Sequence
 
 from app.assistant.router import Flow
 from app.assistant.steps import Choice, Field, FieldType, Step, StepKind
+from app.initiatives.i8.config import get_i8_settings
 from app.initiatives.i13.quantity import QuantitySuggestion
 
 # --- Step ids. Stable across wording changes; see Step.id. -----------------
 
 I08_ASSESSMENT = "i08_assessment"
 I08_JUSTIFICATION = "i08_justification"
+I08_DECLARE_CHOICE = "i08_declare_choice"
+I08_DECLARATION = "i08_declaration"
 I08_DONE = "i08_done"
 
 I13_ASSESSMENT = "i13_assessment"
@@ -74,6 +81,30 @@ PROCEED = "proceed"
 NOT_NEEDED = "not_needed"
 ACCEPT_SUGGESTED = "accept_suggested"
 KEEP_REQUESTED = "keep_requested"
+DECLARE = "declare"
+SKIP_DECLARATION = "skip"
+
+#: The three assessments, as the declaration form labels them. Values are
+#: ``attestation.Recommendation``'s; the labels match the register's
+#: ``DeclarationCondition`` so the same unit reads the same on both screens.
+RECOMMENDATION_LABELS: tuple[tuple[str, str], ...] = (
+    ("REPAIRABLE", "Repairable"),
+    ("BEYOND_ECONOMICAL_REPAIR", "Beyond economical repair"),
+    ("SCRAP", "Scrap"),
+)
+
+#: What recording "I want a new one" does, said under the I08 justification
+#: prompt. The frontend shows the same text under its request builder
+#: (FE ``i08-facts-format.ts``); change both together. A reason recorded here
+#: never reaches SAP: the reservation takes whatever usable stock the plant
+#: has, and a new unit is bought only when MRP or an inventory controller
+#: raises a purchase request -- people who never see the reason.
+I08_REASON_NOTE = (
+    "Your reason is kept on the platform. It doesn't buy anything: the "
+    "reservation takes whatever usable stock the plant has, and a new unit is "
+    "bought only when MRP or an inventory controller raises a purchase request. "
+    "The desk that raises it won't see your reason."
+)
 
 
 def _reason_field(categories: Sequence[str], label: str) -> Field:
@@ -93,7 +124,7 @@ def _reason_field(categories: Sequence[str], label: str) -> Field:
             Choice(value=category, label=category.replace("_", " ").title())
             for category in categories
         ),
-        help_text="Placeholder categories -- VZI's own list is not confirmed yet.",
+        help_text="Placeholder categories. VZI's own list is not confirmed yet.",
     )
 
 
@@ -109,26 +140,137 @@ _FREE_TEXT = Field(
 )
 
 
-def _terminal(step_id: str, session_id: str, message: str) -> Step:
+def reference_instruction(session_id: str, request_id: str | None = None) -> str:
+    """The one sentence that says which reference goes where in SAP.
+
+    A request is one SAP reservation: its reference is typed once into the
+    header text and SAP copies it to every item. A single session's reference
+    goes into the item text. One reference per conversation, named once
+    (28-Oct-2026): the closing message used to name the session reference and
+    the item text even on a request line, which the session page contradicted.
+    """
+    if request_id:
+        return (
+            f"Type the request reference {request_id} once into the reservation's "
+            "header text in SAP; SAP copies it to every item."
+        )
+    return (
+        f"Type the session reference {session_id} into the reservation's item "
+        "text in SAP."
+    )
+
+
+def _terminal(
+    step_id: str, session_id: str, message: str, request_id: str | None = None
+) -> Step:
     """The last step. Always hands back the session ID.
 
-    The ID is the only thing the requester has to carry out of this
+    The reference is the only thing the requester has to carry out of this
     conversation, so the instruction is explicit rather than implied by a field
-    appearing on screen.
+    appearing on screen. ``request_id`` is set on a line of a multi-material
+    request, whose reference is the request's, not the session's.
     """
     return Step(
         id=step_id,
         kind=StepKind.TERMINAL,
-        prompt=(
-            f"{message}\n\nYour session reference is {session_id}. Type it into "
-            "the reservation's item text in SAP (field SGTXT) so this advice can "
-            "be linked to what you actually reserve."
-        ),
+        prompt=f"{message}\n\n{reference_instruction(session_id, request_id)}",
         session_id=session_id,
     )
 
 
 # --- Initiative 08 ---------------------------------------------------------
+
+
+def fault_category_choices() -> tuple[Choice, ...]:
+    """The configured fault categories, labelled as the request builder shows them."""
+    return tuple(
+        Choice(value=category, label=category.replace("_", " ").title())
+        for category in get_i8_settings().fault_category_list
+    )
+
+
+def recommendation_choices() -> tuple[Choice, ...]:
+    return tuple(Choice(value=value, label=label) for value, label in RECOMMENDATION_LABELS)
+
+
+def _declaration_or_end(
+    *,
+    session_id: str,
+    answers: Mapping[str, dict[str, Any]],
+    ending: str,
+    facts: dict[str, Any] | None = None,
+    request_id: str | None = None,
+) -> Step:
+    """Option B (27-Oct-2026): declare the faulty unit in the same visit.
+
+    The person taking a unit out of the machine is the one standing in front
+    of it, and this is the one moment the platform reliably has them. Asked on
+    every I08 path -- whether or not a unit already exists says nothing about
+    whether the one coming off is repairable. ``ending`` is the terminal text
+    the path would have given without the question, so skipping changes nothing.
+
+    Not asked while the complete flow is off (``I8_COMPLETE_FLOW_ENABLED``,
+    29-Oct-2026): the path ends as it did before the question existed.
+    """
+    if not get_i8_settings().complete_flow_enabled:
+        return _terminal(I08_DONE, session_id, ending, request_id)
+    if I08_DECLARE_CHOICE not in answers:
+        return Step(
+            id=I08_DECLARE_CHOICE,
+            kind=StepKind.CHOICE,
+            prompt="Are you taking out a faulty unit that should go for repair?",
+            choices=(
+                Choice(
+                    value=DECLARE,
+                    label="Yes, declare it now",
+                    description="Record its condition, so the repair can be checked against it.",
+                ),
+                Choice(value=SKIP_DECLARATION, label="No"),
+            ),
+            # Only on the first step of a conversation with nothing to
+            # challenge: elsewhere the card is already a few lines up.
+            facts=facts,
+        )
+    if answers[I08_DECLARE_CHOICE].get("choice") == DECLARE and I08_DECLARATION not in answers:
+        return Step(
+            id=I08_DECLARATION,
+            kind=StepKind.FORM,
+            prompt="Describe the faulty unit you are taking out.",
+            fields=(
+                Field(name="quantity", label="Quantity", type=FieldType.NUMBER, default=1),
+                Field(
+                    name="condition_description",
+                    label="Condition",
+                    type=FieldType.TEXTAREA,
+                    help_text="What is wrong with it, as you see it.",
+                ),
+                Field(
+                    name="fault_category",
+                    label="Fault",
+                    type=FieldType.SELECT,
+                    options=fault_category_choices(),
+                ),
+                Field(
+                    name="recommendation",
+                    label="Assessment",
+                    type=FieldType.SELECT,
+                    options=recommendation_choices(),
+                ),
+                Field(
+                    name="attestor_name",
+                    label="Your name (typed, not a sign-in)",
+                    type=FieldType.TEXT,
+                ),
+                Field(
+                    name="evidence_reference",
+                    label="Evidence reference",
+                    type=FieldType.TEXT,
+                    required=False,
+                    help_text="A photo or report reference, if there is one.",
+                ),
+            ),
+        )
+    return _terminal(I08_DONE, session_id, ending, request_id)
 
 
 def _i08(
@@ -138,6 +280,7 @@ def _i08(
     answers: Mapping[str, dict[str, Any]],
     today: date,
     reason_categories: Sequence[str],
+    request_id: str | None = None,
 ) -> Step:
     facts = assessment.as_record(today)
     headline = assessment.headline(today)
@@ -147,10 +290,15 @@ def _i08(
             # Nothing to challenge. Going ahead is the right answer, so asking
             # "are you sure?" would be theatre -- and a question with only one
             # sensible answer trains people to click through the next one.
-            return _terminal(
-                I08_DONE,
-                session_id,
-                f"{headline} Nothing here suggests holding off, so go ahead.",
+            #
+            # The declaration question is still asked, and as the first step
+            # it carries the card the terminal used to sit under.
+            return _declaration_or_end(
+                session_id=session_id,
+                answers=answers,
+                ending=f"{headline} Nothing here suggests holding off, so go ahead.",
+                facts=facts,
+                request_id=request_id,
             )
 
         return Step(
@@ -163,12 +311,14 @@ def _i08(
             choices=(
                 Choice(
                     value=USE_EXISTING,
-                    label="No -- I will use the existing unit",
-                    description="The repaired or in-stock unit covers this need.",
+                    label="No, I will use the existing unit",
+                    # "On repair" covers a requested repair with no PO yet
+                    # (27-Oct-2026): "repaired" claimed a unit already fixed.
+                    description="A unit in stock or on repair covers this need.",
                 ),
                 Choice(
                     value=PROCEED_NEW,
-                    label="Yes -- I still need a new one",
+                    label="Yes, I still need a new one",
                     description="You will be asked why, and the reason is recorded.",
                 ),
             ),
@@ -186,12 +336,13 @@ def _i08(
         )
 
     if answers[I08_ASSESSMENT].get("choice") == USE_EXISTING:
-        return _terminal(
-            I08_DONE,
-            session_id,
-            "Recorded -- you are using the unit that already exists rather than "
+        return _declaration_or_end(
+            session_id=session_id,
+            answers=answers,
+            ending="Recorded: you are using the unit that already exists rather than "
             "buying another. That decision is what this platform exists to "
             "capture.",
+            request_id=request_id,
         )
 
     # They are going ahead anyway. FR-7: reason category plus free text.
@@ -199,10 +350,15 @@ def _i08(
         return Step(
             id=I08_JUSTIFICATION,
             kind=StepKind.FORM,
+            # The first line stays the request: the request builder quotes
+            # it alone when a reason is missing. The note under it says
+            # what the reason does and does not do (27-Oct-2026).
+            # The note only with the complete flow on (29-Oct-2026).
             prompt=(
-                "Understood -- the platform does not block anything. Please "
-                "record why a new unit is needed despite the one already "
-                "available."
+                "Understood. The platform does not block anything. Please "
+                "record why a new unit is needed despite the one in stock or "
+                "on repair."
+                + ("\n\n" + I08_REASON_NOTE if get_i8_settings().complete_flow_enabled else "")
             ),
             fields=(
                 _reason_field(reason_categories, "Why a new unit is needed"),
@@ -214,11 +370,14 @@ def _i08(
             # question above is still visible a few lines up.
         )
 
-    return _terminal(
-        I08_DONE,
-        session_id,
-        "Recorded, with your reason. Nothing is blocked -- the reservation is "
-        "yours to make.",
+    return _declaration_or_end(
+        session_id=session_id,
+        answers=answers,
+        ending=(
+            "Recorded, with your reason. Nothing is blocked: the reservation is "
+            "yours to make."
+        ),
+        request_id=request_id,
     )
 
 
@@ -233,8 +392,12 @@ def _i13(
     today: date,
     reason_categories: Sequence[str],
     suggestion: QuantitySuggestion | None,
+    request_id: str | None = None,
 ) -> Step:
     facts = assessment.as_record(today)
+
+    def done(message: str) -> Step:
+        return _terminal(I13_DONE, session_id, message, request_id)
 
     if I13_ASSESSMENT not in answers:
         return Step(
@@ -248,12 +411,12 @@ def _i13(
             choices=(
                 Choice(
                     value=PROCEED,
-                    label="Yes -- continue",
+                    label="Yes, continue",
                     description="You will be asked what the material is for.",
                 ),
                 Choice(
                     value=NOT_NEEDED,
-                    label="No -- I do not need it after all",
+                    label="No, I do not need it after all",
                     description="Nothing is captured beyond the advice you were shown.",
                 ),
             ),
@@ -262,10 +425,8 @@ def _i13(
         )
 
     if answers[I13_ASSESSMENT].get("choice") == NOT_NEEDED:
-        return _terminal(
-            I13_DONE,
-            session_id,
-            "Nothing captured -- you decided against the reservation. The advice "
+        return done(
+            "Nothing captured: you decided against the reservation. The advice "
             "you were shown is still recorded, which is how "
             "'advice given, not acted on' gets counted.",
         )
@@ -346,18 +507,14 @@ def _i13(
                 ),
                 facts=facts,
             )
-        return _terminal(
-            I13_DONE,
-            session_id,
+        return done(
             "Plan recorded"
             + (f" at {planned}" if planned is not None else "")
             + ", with your reason. No quantity suggestion could be made for this part.",
         )
 
     if not suggestion.is_override:
-        return _terminal(
-            I13_DONE,
-            session_id,
+        return done(
             f"Plan recorded. {suggestion.reason}",
         )
 
@@ -386,9 +543,7 @@ def _i13(
         )
 
     if answers[I13_QUANTITY].get("choice") == ACCEPT_SUGGESTED:
-        return _terminal(
-            I13_DONE,
-            session_id,
+        return done(
             f"Plan recorded at the suggested {suggestion.suggested_quantity}.",
         )
 
@@ -407,9 +562,7 @@ def _i13(
             facts=facts,
         )
 
-    return _terminal(
-        I13_DONE,
-        session_id,
+    return done(
         f"Plan recorded at {suggestion.requested_quantity}, with your reason.",
     )
 
@@ -423,8 +576,13 @@ def next_step(
     today: date,
     reason_categories: Sequence[str],
     suggestion: QuantitySuggestion | None = None,
+    request_id: str | None = None,
 ) -> Step:
     """The next thing to say, given everything answered so far.
+
+    ``request_id`` is the multi-material request the session is a line of, if
+    any: the closing message then names the request reference, not the
+    session's.
 
     ``answers`` is keyed by step id. Keying by id rather than by position means
     a script that gains a step in the middle does not misread conversations that
@@ -438,6 +596,7 @@ def next_step(
             answers=answers,
             today=today,
             reason_categories=reason_categories,
+            request_id=request_id,
         )
     if flow is Flow.I13:
         return _i13(
@@ -447,6 +606,7 @@ def next_step(
             today=today,
             reason_categories=reason_categories,
             suggestion=suggestion,
+            request_id=request_id,
         )
     raise ValueError(
         f"no script exists for flow {flow!r} -- a session should never have been "

@@ -84,6 +84,8 @@ class Pr(NamedTuple):
     requisition_date: str
     purchase_order: str | None
     purchase_order_item: str | None
+    # EBAN-LOEKZ (app/initiatives/i13/po_lines.py): a live requisition here.
+    deletion_indicator: str | None = None
 
 
 class Po(NamedTuple):
@@ -332,6 +334,7 @@ class FakeSession:
         if unknown:
             raise NotImplementedError(f"fake session: filter {unknown} on {name}")
         issues = "movement_type IN ('201', '261')" in sql
+        issues_or_reversals = "movement_type IN ('201', '261', '202', '262')" in sql
         by_reservation = "reservation <> ''" in sql
         by_po = "purchase_order <> ''" in sql
         for row in self.tables[name]():
@@ -344,6 +347,8 @@ class FakeSession:
             if params.get("plant") and row.plant != params["plant"]:
                 continue
             if issues and row.movement_type not in ("201", "261"):
+                continue
+            if issues_or_reversals and row.movement_type not in ("201", "261", "202", "262"):
                 continue
             if by_reservation and row.reservation in ("", "0"):
                 continue
@@ -442,28 +447,43 @@ ALL = Batch("0", "9999999999")
 # it (the old VB rows now read EXCLUDED, not MIN_MAX). Row counts otherwise kept.
 # "lledger" and "watch" re-recorded 2026-10-20 in all three: they now store
 # their filter/sort columns beside the payload (kinds.RECORD_LAYOUT 2). Same rows.
+# "lledger", "grni", "watch" and "exception" re-recorded 2026-10-28: goods issued
+# per PO line now include stock issued out of its deliveries, oldest first
+# (stock_issue_matching), and GRNI is per PO line, not per reservation. lledger
+# keeps its rows; grni 35 -> 81 (mixed) and 0 -> 6 (giant_reservations), and the
+# GR-not-issued exceptions follow WATCH's flag: 137 -> 152 and 4434 -> 4435.
+# "mixed" re-recorded 2026-10-30: a reservation's issues now carry their 202/262
+# reversals, netted and never below zero, so rledger/lledger/watch quantities
+# move; a 262 against a reservation no longer sits in the oldest-first stock
+# pool undoing another line's issue, so one estimated line leaves GRNI
+# (81 -> 80) and its exception goes with it (152 -> 151). The giants keep theirs.
+# "watch" re-recorded 2026-10-30 in "mixed" and "giant_reservations":
+# acquired-vs-plan measures what was issued on each plan's own reservations
+# (plans.plan_outcomes), so a row's issued quantity and plan status move; the
+# row counts, and every other kind, are unchanged.
 EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
     "mixed": {
         "attrib": (294, "214738b080d76802"), "chain": (286, "636c21f9a8b8679e"),
-        "exception": (137, "8bb3e45bd8f2e431"), "grni": (35, "cc064da9a493ed3f"),
-        "lledger": (286, "633eac345001474d"), "movement": (186, "085dd35e7ee606ce"),
+        "exception": (151, "46ce4895f8e71b5c"), "grni": (80, "cdbe217240794569"),
+        "lledger": (286, "18121a087fdb0045"), "movement": (186, "085dd35e7ee606ce"),
         "oarkey": (87, "cafeb8032728b5cb"), "reclass": (87, "4b90da3bcd2f2450"),
-        "rledger": (294, "9bb3976d183c3a0e"), "usage": (134, "a4ef4d00cc908924"),
-        "watch": (192, "9b4a414134d20508"),
+        "rledger": (294, "747cdb56819da766"), "usage": (134, "a4ef4d00cc908924"),
+        "watch": (192, "e4800991a50f3707"),
     },
     "giant_procurement": {
         "attrib": (3, "f77f2830ef44df9f"), "chain": (1483, "17e55edc51ed3706"),
-        "exception": (2, "635263fdeb4ddacc"), "lledger": (1483, "e52e170a109ac7ea"),
+        "exception": (2, "635263fdeb4ddacc"), "lledger": (1483, "a93eeb4dccddc3db"),
         "movement": (1, "e888732abb0b5eb0"), "oarkey": (1, "34de90e00df89cf2"),
         "reclass": (1, "796ae91ff3f6fa23"), "rledger": (3, "3e636498cefa3ea8"),
         "usage": (1, "ed89b5283468661c"), "watch": (1, "5ed9bb4c2ae856d7"),
     },
     "giant_reservations": {
         "attrib": (4481, "172a43e538fb60e0"), "chain": (12, "441a698e4314a2ad"),
-        "exception": (4434, "4268ba8060c97795"), "lledger": (12, "1f4d08631e05f3f6"),
+        "exception": (4435, "2a46b5743a731d76"), "grni": (6, "9dd86a35f35ae9f6"),
+        "lledger": (12, "ce8c39b941ae9377"),
         "movement": (1, "145d27f46ec8471e"), "oarkey": (1, "702ce6717c803e00"),
         "reclass": (1, "99733b38e83d2030"), "rledger": (4481, "906ccc961d424b9e"),
-        "usage": (1, "4db03c5965f3dd07"), "watch": (1, "95046445439c7ae5"),
+        "usage": (1, "4db03c5965f3dd07"), "watch": (1, "aff23366b80b2fe5"),
     },
 }
 

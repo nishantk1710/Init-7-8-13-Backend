@@ -33,6 +33,7 @@ from app.initiatives.i7.adapters.extract import (
 from app.initiatives.i7.adapters.field_map import CREDIT_INDICATOR
 from app.initiatives.i7.adapters.ingestion_policy import ExtractIngestionPolicy
 from app.initiatives.i7.adapters.validation import clean, parse_date, parse_decimal
+from app.initiatives.i7.kpi_formulas.resolved import load_active
 from app.initiatives.i7.stockout_risk import CONSUMPTION_WINDOW_DAYS, window_start
 from app.models.i7_stockout_risk import StockoutRiskInput
 
@@ -66,6 +67,7 @@ def aggregate_issue_history(
     *,
     as_of: date,
     plant_scope: frozenset[str] = frozenset(),
+    window_days: int = CONSUMPTION_WINDOW_DAYS,
 ) -> HistoryResult:
     """Per material-plant: the newest issue date and the net quantity issued in
     the window, from movement rows, looking only at movements on or before ``as_of``.
@@ -81,7 +83,7 @@ def aggregate_issue_history(
     * A row with no material or plant, an unparseable date or quantity, or a date
       after ``as_of`` is skipped and counted.
     """
-    start = window_start(as_of)
+    start = window_start(as_of, window_days)
     last_issue: dict[tuple[str, str], date] = {}
     net: dict[tuple[str, str], Decimal] = {}
     skipped: dict[str, int] = {}
@@ -143,15 +145,24 @@ def resolve_anchor(session: Session, policy: ExtractIngestionPolicy, configured:
 
 
 def build_stockout_risk_input(
-    session: Session, *, as_of: date | None = None, policy: ExtractIngestionPolicy | None = None
+    session: Session,
+    *,
+    as_of: date | None = None,
+    policy: ExtractIngestionPolicy | None = None,
+    window_days: int | None = None,
 ) -> tuple[date | None, int]:
     """Rebuild ``i7_stockout_risk_input`` as of ``as_of`` (the setting when omitted).
+
+    ``window_days`` is the usage window; omitted, it is the window of the KPI formulas in force (90 unless
+    a saved version changed it), so the CLI and the page rebuild to the same definition.
 
     Returns ``(anchor used, rows written)``. With no anchor and no issue movements at
     all the table is left empty and the anchor is ``None``.
 
     The caller owns the transaction: nothing is committed here.
     """
+    if window_days is None:
+        window_days = load_active(session).window_days
     policy = policy or ExtractIngestionPolicy(plants=get_settings().i7_plant_list)
     configured = as_of if as_of is not None else get_settings().i7_stockout_risk_as_of
     anchor = resolve_anchor(session, policy, configured)
@@ -170,6 +181,7 @@ def build_stockout_risk_input(
         frozenset(policy.consumption.reversal_movement_types),
         as_of=anchor,
         plant_scope=policy.plant_scope,
+        window_days=window_days,
     )
 
     session.execute(delete(StockoutRiskInput))
@@ -180,7 +192,7 @@ def build_stockout_risk_input(
             "as_of_date": anchor,
             "last_issue_date": facts.last_issue_date,
             "consumption_90d": facts.consumption,
-            "window_days": CONSUMPTION_WINDOW_DAYS,
+            "window_days": window_days,
         }
         for (material, plant), facts in sorted(result.facts.items())
     ]

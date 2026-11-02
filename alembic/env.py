@@ -9,10 +9,13 @@ a tracked file.
 --autogenerate`` diffs the real models against the real database.
 """
 
+import contextlib
+import logging
+from collections.abc import Iterator
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import Engine, engine_from_config, pool
 
 from app.core.config import get_settings
 
@@ -72,6 +75,56 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+# startup.sh runs `alembic upgrade head` on every instance when
+# RUN_MIGRATIONS_ON_STARTUP is on, and nothing else serialises it: two
+# instances starting together would apply the same revision twice. One SQL
+# Server application lock for the whole upgrade -- the mechanism the ingest
+# scheduler uses -- makes the second wait, then find the revisions applied
+# and do nothing.
+MIGRATION_LOCK_NAME = "spares_ai_migrations"
+
+# How long a second migrator waits before going ahead anyway, as it did before
+# the lock existed. Ten minutes: a migration here is seconds.
+MIGRATION_LOCK_WAIT_MS = 600_000
+
+_log = logging.getLogger("alembic.env")
+
+
+@contextlib.contextmanager
+def _one_migrator_at_a_time(connectable: Engine) -> Iterator[None]:
+    """Hold the migration lock, on a connection of its own, while the body runs.
+
+    Its own connection, so the one the migrations run on -- and its
+    transaction -- is exactly what it was without the lock. A session-owned
+    lock ends with the session: closing this connection (NullPool closes for
+    real) releases it, and a killed process cannot leave it held. Not SQL
+    Server, or no lock in time: migrate anyway.
+    """
+    if connectable.dialect.name != "mssql":
+        yield
+        return
+    with connectable.connect() as lock_connection:
+        try:
+            granted = lock_connection.exec_driver_sql(
+                "DECLARE @r int; "
+                "EXEC @r = sp_getapplock @Resource = ?, @LockMode = 'Exclusive', "
+                "@LockOwner = 'Session', @LockTimeout = ?; SELECT @r;",
+                (MIGRATION_LOCK_NAME, MIGRATION_LOCK_WAIT_MS),
+            ).scalar()
+            # The lock belongs to the session, not this transaction; ending the
+            # transaction keeps the connection idle while the migrations run.
+            lock_connection.commit()
+        except Exception as exc:  # noqa: BLE001 -- the guard must never stop a migration
+            _log.warning("could not take the migration lock (%s); migrating without it", exc)
+            granted = None
+        if granted is not None and granted < 0:
+            _log.warning(
+                "the migration lock is still held after %d s; migrating without it",
+                MIGRATION_LOCK_WAIT_MS // 1000,
+            )
+        yield
+
+
 def run_migrations_online() -> None:
     """Connect and run migrations against the live database."""
     section = config.get_section(config.config_ini_section, {})
@@ -79,7 +132,7 @@ def run_migrations_online() -> None:
 
     connectable = engine_from_config(section, prefix="sqlalchemy.", poolclass=pool.NullPool)
 
-    with connectable.connect() as connection:
+    with _one_migrator_at_a_time(connectable), connectable.connect() as connection:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

@@ -366,9 +366,10 @@ def _material_sql(session: Session) -> str:
 # Where the rows come from, never assumed:
 #
 #   raw_mbew carries a moving price (the live CSV and the July workbook) -> n_mbew:
-#       VERPR per PEINH, one row per plant and valuation type (BWTAR). The extract has
-#       no currency column, so currency stays NULL -- that is an absent column, not a
-#       blank value, and is not an error;
+#       VERPR per PEINH, one row per plant and valuation type (BWTAR), in WAERS when the
+#       extract carries it. An extract with no currency column stages NULL -- an absent
+#       column, not a blank value, and not an error; a present-but-blank WAERS is a
+#       defect and the row is not read, as for the OData set;
 #   raw_mbew does not (an earlier CSV delivery had no VERPR)           -> odata_material_valuation
 #       (the OData MaterialValuationSet): Verpr per Peinh units, in Waers. This one
 #       does state a currency, so a blank Waers is a defect and the row is not read.
@@ -378,6 +379,10 @@ def _material_sql(session: Session) -> str:
 
 _VALUATION_SQL = """
     SELECT material, valuation_area, valuation_type, moving_price, price_unit
+      FROM n_mbew
+"""
+_VALUATION_SQL_WITH_CURRENCY = """
+    SELECT material, valuation_area, valuation_type, moving_price, price_unit, currency
       FROM n_mbew
 """
 ODATA_MATERIAL_VALUATION = "odata_material_valuation"
@@ -431,14 +436,19 @@ def _valuations_by_plant(
         return _odata_valuations(session, scope)
 
     peinh_present = bool(resolved.get("price_unit") and resolved["price_unit"].source is not None)
+    # WAERS is read only when the extract delivers it; an extract without the column
+    # still stages a price with no currency, as before.
+    currency_present = bool(resolved.get("currency") and resolved["currency"].source is not None)
+    statement = _VALUATION_SQL_WITH_CURRENCY if currency_present else _VALUATION_SQL
     triples = []
-    for row in _read(session, _VALUATION_SQL):
+    for row in _read(session, statement):
         material, plant = clean(row.material), clean(row.valuation_area)
         if material is None or plant is None or _out_of_scope(plant, scope):
             continue
         triples.append(
             (material, plant, _valuation_row(
-                row.valuation_type, row.moving_price, row.price_unit, peinh_present=peinh_present
+                row.valuation_type, row.moving_price, row.price_unit, peinh_present=peinh_present,
+                currency=row.currency if currency_present else None, currency_present=currency_present,
             ))
         )
     grouped = group_by_plant(triples)

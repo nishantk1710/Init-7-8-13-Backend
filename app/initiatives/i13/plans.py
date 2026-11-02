@@ -318,6 +318,60 @@ class PlanMatcher:
         return [entry for entry in self._entries_by_key.get((plan.material, plan.plant), []) if plan.covers(entry)]
 
 
+@dataclass(frozen=True)
+class PlanOutcome:
+    """What one plan got: the reservation items that stand for it, and the
+    quantity issued against them (MSEG by RSNUM/RSPOS, reversals netted)."""
+
+    plan: ConsumptionPlan
+    reservations: tuple[tuple[str, str], ...]
+    issued_quantity: Decimal
+
+
+def plan_outcomes(plans: list[ConsumptionPlan], ledger_entries) -> list[PlanOutcome]:
+    """Every plan, with the reservation items it stands for and what was issued.
+
+    Acquired-versus-plan asks whether the requester got what they planned. An
+    OAR reservation is filled from stock, so the answer is the goods issue
+    against the reservation, not a goods receipt on a PO -- there is rarely a
+    PO behind it at all.
+
+    Each reservation item counts for one plan only: the one
+    :meth:`PlanMatcher.plan_for` picks (an SGTXT link first, else the most
+    recently captured plan whose window covers it), so two overlapping plans
+    never both claim the same issue. Issued is taken once per item: a
+    reservation whose PR split across PO lines has one ledger entry per line,
+    each carrying the item's whole issued quantity. A deleted reservation item
+    (RESB.XLOEK) is not a live demand and is left out unless something was
+    issued against it.
+    """
+    matcher = PlanMatcher(plans, ledger_entries)
+    found: dict[tuple[str, str], list[tuple[tuple[str, str], Decimal]]] = {}
+    seen: set[tuple[str, str]] = set()
+    for entry in ledger_entries:
+        key = (entry.reservation_number, entry.reservation_item)
+        if key in seen:
+            continue
+        seen.add(key)
+        if entry.reservation_deleted and entry.issued_quantity <= 0:
+            continue
+        plan = matcher.plan_for(entry)
+        if plan is not None:
+            found.setdefault((plan.source.value, plan.plan_id), []).append((key, entry.issued_quantity))
+
+    outcomes = []
+    for plan in plans:
+        items = sorted(found.get((plan.source.value, plan.plan_id), []))
+        outcomes.append(
+            PlanOutcome(
+                plan=plan,
+                reservations=tuple(key for key, _ in items),
+                issued_quantity=sum((issued for _, issued in items), Decimal("0")),
+            )
+        )
+    return outcomes
+
+
 def load_consumption_plans(
     data_dir: Path, db: Session | None = None
 ) -> list[ConsumptionPlan]:

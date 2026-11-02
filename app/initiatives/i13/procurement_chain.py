@@ -46,6 +46,7 @@ from app.initiatives.i13.models import (
     ProcurementChainDiagnostics,
 )
 from app.initiatives.i13.movements import ISSUE_TYPES, RECEIPT_TYPES, event_dates, net_quantity
+from app.initiatives.i13.po_lines import pr_is_deleted
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 
 Row = dict[str, Any]
@@ -211,7 +212,8 @@ def build_procurement_chain(
     ``po_number`` narrows to one PO's own items only -- PR-only rows outside
     that PO are not relevant to "show me this PO" and are omitted. Any other
     filter combination also returns PR-only rows in scope, since a PR with no
-    PO is a real, reportable lifecycle state (``PR_CREATED``), not noise.
+    PO is a real, reportable lifecycle state (``PR_CREATED``), not noise --
+    unless SAP deleted it (EBAN-LOEKZ), when there is no line at all.
 
     This is the seam W6.2 extends: ``attach_reservation(entries)`` (or
     equivalent) can wrap this function's output and layer Reservation ->
@@ -253,7 +255,10 @@ def build_procurement_chain(
     if include_pr_only_rows:
         for pr in prs:
             key = (pr["Banfn"], pr["Bnfpo"])
-            if key in linked_pr_keys:
+            # A requisition SAP deleted before anything ordered it is not a
+            # procurement line (po_lines.pr_is_deleted). One a PO line orders
+            # stays on that line, whose own state decides what is open.
+            if key in linked_pr_keys or pr_is_deleted(pr):
                 continue
             entries.append(_build_pr_only_entry(pr))
 

@@ -12,6 +12,7 @@ from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
 
 _NORMAL_SQL = """
     SELECT f.sap_material_number, f.sap_plant_code, f.demand_class, f.history_status,
+           f.window_history_status,
            f.criticality, f.non_zero_periods, f.feature_run_id,
            f.consumption_count_12m, f.oar_scope,
            f.baseline_model, c.forecast_rate, c.model_name AS forecast_model,

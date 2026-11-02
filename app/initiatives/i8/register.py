@@ -56,10 +56,12 @@ What the data will and will not support
 ---------------------------------------
 Stages 3 to 5 of the lifecycle (PO raised, dispatched, at vendor) can be
 assembled per PO line. Stage 6, received, is not shown: a line in the register
-has not been closed, and a closed one is not in it. Stages 1 and 2 -- removal
-from the machine (MSEG 261 / 201) and the condition attestation -- cannot: those
-movements carry no PO reference whatsoever, and W5.3 owns the attestation. They
-are deliberately left out of v1 rather than linked by a guess.
+has not been closed, and a closed one is not in it. Removal from the machine
+(MSEG 261 / 201) is not a stage at all since 27-Oct-2026 (ruled 26-Oct): those
+movements carry no PO reference whatsoever, so SAP has no record of removal
+that could be tied to a line, and the stage was dropped rather than linked by a
+guess. The condition declaration comes from this platform's own attestations,
+not from SAP.
 """
 
 from __future__ import annotations
@@ -67,7 +69,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 
@@ -102,8 +104,9 @@ ZERO = Decimal(0)
 # union's other members are never emitted:
 #
 #   "PR Raised"           the register is built from PO lines, so a PO always
-#                         exists by construction. A requisition with no PO yet
-#                         is W5.3/W5.5 territory, not this read model.
+#                         exists by construction. A repair PR with no PO yet
+#                         is found by requisitions.py (27-Oct-2026), which
+#                         owns that status (requisitions.PR_RAISED).
 #   "Received", "Closed"  not since 19-Oct-2026: a line SAP has closed is not
 #                         in the register, and goods receipts are not read.
 #
@@ -192,6 +195,24 @@ class RepairLine:
     days_in_current_stage: int | None
     days_remaining: int | None
     aging_bucket: str | None
+
+    # --- the repair PR this line was ordered from (27-Oct-2026) -----------
+    pr_requested_on: date | None = None
+    """EBAN.BADAT of ``pr_number``/``pr_item``: when the repair was asked for.
+    Filled by the snapshot build from the PRs the requisition loader reads
+    (:func:`with_requisition_details`); None when the PR was not read, never
+    guessed from the PO date."""
+
+    pr_department: str | None = None
+    """EBAN.AFNAM of that PR: the 5-digit department code that raised the
+    repair, the same code a PR row shows. The queue's requester. A code; the
+    name is looked up where it is served."""
+
+    # --- the price's currency (29-Oct-2026) ------------------------------
+    currency: str | None = None
+    """EKKO.WAERS: the currency :attr:`net_price` is in, ``ZAR`` on every open
+    line today. None when the line has no PO header or the header has no
+    currency -- then nobody knows, and the price must not be called rand."""
 
     @property
     def is_overdue(self) -> bool:
@@ -308,6 +329,27 @@ def is_rfq_line(header: Mapping | None, cfg: I8Settings) -> bool:
     return header is not None and header["bsart"] == cfg.rfq_doc_type
 
 
+def is_placeholder_price(net_price: Decimal | None, cfg: I8Settings) -> bool:
+    """Whether the line's net price is a placeholder rather than a cost: above
+    zero and at or below ``I8_REPAIR_COST_TOKEN_MAX`` (R1.00).
+
+    The same token values MBEW holds (see ``I8_NEW_ITEM_PRICE_TOKEN_MAX``), on
+    the PO: 16 of the 104 open repair lines carried a NETPR of 1.00 on
+    29-Oct-2026, a pump and a man-winder cage among them. Served as a cost,
+    "R 1" would read as a repair that costs nothing.
+    """
+    return net_price is not None and 0 < net_price <= cfg.repair_cost_token_max
+
+
+def repair_cost(net_price: Decimal | None, cfg: I8Settings) -> Decimal | None:
+    """The line's net price as a repair cost, or None when it is not one: no
+    price, a zero, or a placeholder (:func:`is_placeholder_price`). In the
+    line's own currency, :attr:`RepairLine.currency` -- never converted."""
+    if net_price is None or net_price <= 0 or is_placeholder_price(net_price, cfg):
+        return None
+    return net_price
+
+
 # --- Layer 2: assemble the lifecycle per line -----------------------------
 
 _SCHEDULE_SQL = """
@@ -398,7 +440,11 @@ _HEADER_SQL = """
 -- (interim proxy -- EKKO-BEDAT is not exposed)"). Reading a column that
 -- disappears at cutover is a bug with a date on it, and two initiatives
 -- anchoring on different columns would report different ages for one PO line.
-select ebeln, bsart, lifnr, aedat
+--
+-- WAERS: the currency EKPO.NETPR is in. A PO is priced in the vendor's
+-- currency, not always the rand: plants 1300 and 1500 carry USD, EUR, INR and
+-- NAD lines (15-Oct-2026 export), and one repair line was priced in USD.
+select ebeln, bsart, lifnr, aedat, waers
 from v_ekko
 where ebeln in :documents
 """
@@ -545,6 +591,7 @@ def _build_line(
     doc_type = header["bsart"] if header else None
     vendor = header["lifnr"] if header else None
     po_date = header["aedat"] if header else None
+    currency = header["waers"] if header else None
 
     # ERDAT is the line's own creation date and is populated on every repair
     # line; the header date is a fallback for a shape where it is not.
@@ -570,6 +617,7 @@ def _build_line(
         ordered_qty=ordered_qty,
         unit=row["meins"],
         net_price=row["netpr"],
+        currency=currency,
         item_category=row["pstyp"],
         pr_number=row["banfn"],
         pr_item=row["bnfpo"],
@@ -680,6 +728,26 @@ class RegisterStats:
     """Item-category-3 lines on a request for quotation (EKKO.BSART), left out
     of every figure above: an RFQ orders nothing. Counted only when not already
     deleted, closed or blocked: 1 on the 15-Oct data."""
+
+    # --- open repair PRs with no PO yet (requisitions.py, 27-Oct-2026) ---
+    #
+    # Not in any figure above: those count PO lines only. Filled by the
+    # snapshot build from requisitions.RequestStats, whether or not the PRs are
+    # served (I8_REPAIR_REQUESTS_ENABLED). Each excluded PR is counted once,
+    # under the first of these it fails, in this order.
+
+    open_repair_requests: int = 0
+    """Repair PRs still open with no PO yet: 108 on the 15-Oct data."""
+
+    requisitions_excluded_deleted: int = 0
+    """Repair PRs SAP has deleted (EBAN.LOEKZ)."""
+
+    requisitions_excluded_live_po: int = 0
+    """Repair PRs a live PO line points back to -- these are in the register
+    as PO lines once open, or were closed there."""
+
+    requisitions_excluded_reservation_closed: int = 0
+    """Repair PRs whose repair-order lines are all deleted or final-issued."""
 
 
 def load_repair_lines(
@@ -820,3 +888,28 @@ def open_repair_index(
         count, qty = index.get(key, (0, ZERO))
         index[key] = (count + 1, qty + line.qty_under_repair)
     return index
+
+def with_requisition_details(
+    lines: Sequence[RepairLine],
+    requisitions: Mapping[tuple[str, str], Mapping],
+) -> list[RepairLine]:
+    """Each line with its repair PR's date and department filled in.
+
+    ``requisitions`` maps (BANFN, BNFPO) to a PR row with ``badat`` and
+    ``afnam`` -- the rows the requisition loader reads anyway (27-Oct-2026), so
+    EBAN is not read twice. A line whose PR is not among them keeps None: the
+    PR was not read, which is not the same as "no department".
+    """
+    out: list[RepairLine] = []
+    for line in lines:
+        pr = (
+            requisitions.get((line.pr_number, line.pr_item))
+            if line.pr_number and line.pr_item
+            else None
+        )
+        out.append(
+            replace(line, pr_requested_on=pr["badat"], pr_department=pr["afnam"])
+            if pr is not None
+            else line
+        )
+    return out

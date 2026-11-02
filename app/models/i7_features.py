@@ -83,6 +83,22 @@ class FeatureBuildRun(Base):
     """Carried through from the staging run, so the raw-layer load behind these
     features is answerable without joining back through staging."""
 
+    window_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    """USABLE / MISSING_DATA / NO_COMPLETE_MONTH / NO_SOURCE_DATA -- whether the demand window this build read is
+    made only of verified complete months (:mod:`app.initiatives.i7.features.consumption_window`). NULL for a run
+    recorded before the window existed: its features are over the extract's own window."""
+
+    window_start: Mapped[date | None] = mapped_column(Date, nullable=True)
+    window_end: Mapped[date | None] = mapped_column(Date, nullable=True)
+    """First and last month of the window: the latest verified complete month, and 24 calendar months back (fewer
+    when the delivery is shorter). Forecasting reads the same pair back, so it cannot window differently."""
+
+    window_missing_months: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    """``YYYY-MM`` list of months *inside* the window that are MISSING_DATA. Any makes the window unusable."""
+
+    window_trailing_months: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    """``YYYY-MM`` list of staged months after the window's end that are incomplete and so not read."""
+
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     started_at: Mapped[datetime] = mapped_column(
@@ -135,6 +151,15 @@ class MaterialFeature(Base):
 
     history_months: Mapped[int] = mapped_column(Integer, default=0)
     history_status: Mapped[str] = mapped_column(String(32), index=True)
+
+    window_history_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    """The history gate over the demand window: SUFFICIENT / COLD_START / NO_HISTORY, or MISSING_DATA when a month
+    of the window is missing or incomplete. Set for material-plants the window applies to (everything outside OAR
+    scope); NULL for OAR material-plants and for rows built before the window existed.
+
+    ``history_status`` above is NOT this. It stays the gate over the extract's whole history, because OAR reads
+    it -- a donor is a material-plant with ``history_status = 'SUFFICIENT'`` -- and the window must not change who
+    can lend a value. This column is what decides whether the material-plant is classified and forecast."""
     """SUFFICIENT / COLD_START / NO_HISTORY. A gating decision, not an error."""
 
     data_sufficiency: Mapped[str] = mapped_column(String(32))

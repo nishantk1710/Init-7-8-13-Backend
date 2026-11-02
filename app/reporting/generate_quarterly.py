@@ -41,7 +41,7 @@ import sys
 from app.core.db import get_sessionmaker
 from app.core.logging import configure_logging, get_logger
 from app.core.config import get_settings
-from app.initiatives.i7.reporting.period import latest_closed_quarter
+from app.initiatives.i7.reporting.period import latest_closed_month, latest_closed_quarter
 from app.initiatives.i7.reporting.repository import save_report
 from app.initiatives.i7.reporting.service import generate_quarterly_report
 
@@ -61,8 +61,14 @@ def _parser() -> argparse.ArgumentParser:
         required=False,
         default=None,
         metavar="'Q<1-4> <year>'",
-        help="e.g. 'Q3 2026'. Omit to generate the latest closed calendar "
-        "quarter -- the correct choice for a recurring scheduled call.",
+        help="e.g. 'Q3 2026', or a single month such as 'Oct 2026'. Omit to generate the latest closed "
+        "period of --period -- the correct choice for a recurring scheduled call.",
+    )
+    parser.add_argument(
+        "--period",
+        choices=("quarter", "month"),
+        default="quarter",
+        help="with --quarter omitted: generate the latest closed 'quarter' (the default) or the latest closed 'month'.",
     )
     return parser
 
@@ -71,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     configure_logging(get_settings())
     if args.quarter is None:
-        quarter = latest_closed_quarter()
+        quarter = latest_closed_month() if args.period == "month" else latest_closed_quarter()
         quarter_source = "latest_closed"
     else:
         quarter = args.quarter

@@ -60,8 +60,8 @@ class CsvExtractRequest(Base):
     The table's own ``request_id`` is ``F<TABLE><epoch-seconds>`` -- unique per
     REQUEST, deliberately, because SAP dedupes on it. Nothing in it, or in any
     other column here, says which rows were fired *together*: the window dates
-    differ by table (``windowed`` tables get three years, the rest a wide
-    window), and ``fired_at`` cannot stand in for membership because a sweep
+    can differ by table (a configured window narrows the transaction tables
+    only), and ``fired_at`` cannot stand in for membership because a sweep
     runs for ~15 minutes, fires in batches, and can cross midnight.
 
     So this exists to answer exactly one question, asked by
@@ -83,7 +83,8 @@ class CsvExtractRequest(Base):
     status: Mapped[str] = mapped_column(String(16), index=True, default=STATUS_OPEN)
 
     reconcile: Mapped[str] = mapped_column(String(16), default="bounded")
-    """EXACT for a wide window, BOUNDED for a three-year one. Decides whether
+    """EXACT for master data (always whole), BOUNDED for the transaction tables
+    (windowable, and delivered as a subset for some). Decides whether
     ``received_rows`` must equal ``expected_rows`` or merely fall within it."""
 
     expected_rows: Mapped[int | None] = mapped_column(Integer, nullable=True)

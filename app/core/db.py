@@ -140,6 +140,12 @@ def get_engine() -> Engine:
         # Recycle below Azure SQL's idle cut so a pooled connection is replaced
         # on our schedule rather than discovered dead on someone's request.
         pool_recycle=settings.database_pool_recycle_seconds,
+        # Sized for requests plus the background jobs that share it; see
+        # Settings.database_pool_size. Floors keep a mistyped setting from
+        # leaving the app with no connections at all.
+        pool_size=max(settings.database_pool_size, 1),
+        max_overflow=max(settings.database_max_overflow, 0),
+        pool_timeout=max(settings.database_pool_timeout_seconds, 1),
         future=True,
         connect_args=connect_args,
     )
@@ -240,6 +246,20 @@ def check_connection() -> None:
     """
     with get_engine().connect() as connection:
         connection.execute(text("SELECT 1"))
+
+
+def pool_status() -> str:
+    """The pool's own one-line account of what is checked out, for the log.
+
+    Read when a request gave up waiting for a connection, so the next shortage
+    says whether the pool was full and by how much. Never raises.
+    """
+    if get_engine.cache_info().currsize == 0:
+        return "no engine created yet"
+    try:
+        return get_engine().pool.status()
+    except Exception as exc:  # noqa: BLE001 -- a diagnostic must not fail the caller
+        return f"pool status unavailable ({type(exc).__name__})"
 
 
 def reset_engine_cache() -> None:

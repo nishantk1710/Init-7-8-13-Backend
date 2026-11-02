@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
-from fastapi import Depends, Header, HTTPException, Query, Response, status
+from fastapi import Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
+from app.core import security
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.initiatives.i13.snapshot import I13Snapshot, SnapshotBuilding, SnapshotFailed, get_i13_snapshot
@@ -99,18 +100,18 @@ class Actor:
     type: str = "USER"
 
 
-def get_current_actor(x_actor_id: str | None = Header(default=None, alias="X-Actor-Id")) -> Actor:
-    """Placeholder identity resolution -- no authentication is implemented
-    anywhere in this codebase yet (see ``app/core/security.py``). Reads a
-    client-supplied header rather than trusting a request-body field, so
-    identity isn't simply whatever an arbitrary JSON payload claims.
+def get_current_actor(
+    request: Request, x_actor_id: str | None = Header(default=None, alias="X-Actor-Id")
+) -> Actor:
+    """Who is acting on an ACT exception, a plan or a suggestion.
 
-    When Entra ID authentication is wired in, this dependency is the one
-    thing that changes -- it would validate a JWT and build the same
-    ``Actor`` from its claims instead of a header. Every caller of
-    ``Actor`` (the W6.6 routes and application services) stays the same.
+    Sign-in on (``AUTH_ENABLED``): the signed-in user's Entra object ID from the
+    validated token; the header is ignored. Sign-in off: the ``X-Actor-Id``
+    header as before, never a request-body field. Every caller of ``Actor``
+    (the W6.6 routes and application services) stays the same. See
+    ``app.core.security.actor_id``.
     """
-    return Actor(id=x_actor_id or "unknown-actor")
+    return Actor(id=security.actor_id(request, x_actor_id))
 
 
 def with_expected_delivery() -> Callable[[Callable[..., Any]], Callable[..., Any]]:

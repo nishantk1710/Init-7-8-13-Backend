@@ -41,6 +41,8 @@ from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session as DbSession
 
@@ -58,6 +60,7 @@ from app.api.assistant.schemas import (
     JustificationFacets,
     JustificationListResponse,
     JustificationModel,
+    JustificationPurchaseModel,
     JustificationRequest,
     LinkedReservationModel,
     MaterialMatchModel,
@@ -65,6 +68,7 @@ from app.api.assistant.schemas import (
     NarrativeModel,
     PlanModel,
     RoutingModel,
+    SessionDeclarationModel,
     SessionListResponse,
     SessionSummary,
     SessionTraceResponse,
@@ -87,11 +91,14 @@ from app.assistant.models import (
     Justification,
     QuantitySuggestionRecord,
 )
+from app.assistant.script import reference_instruction
 from app.assistant.session import Origin, SessionError
 from app.assistant.steps import Step
 from app.assistant.turns import AnswerError
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
+from app.initiatives.i8.config import get_i8_settings
+from app.initiatives.i8.models import RepairAttestation
 from app.shared.material_names import attach_material_names
 
 #: How long the session log and trace wait for material names right after a
@@ -111,14 +118,41 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 #: the linkage had been checked and found absent.
 LINKAGE_NOTE = (
     "No reservation is linked to this session yet. The assistant runs while the "
-    "reservation is being created, so it has no document number to record -- the "
-    "requester types the session ID into the reservation's item text (SGTXT) in "
-    "SAP, and the link is made when a SAP extract carrying it is loaded."
+    "reservation is being created, so it has no document number to record. "
+    "{instruction} The link is made when a SAP extract carrying it is loaded."
 )
-LINKED_NOTE = (
-    "Linked through the reservation's item text (SGTXT), which carries this "
-    "session's ID."
-)
+LINKED_NOTE = "Linked: the reservation's item text in SAP carries this reference."
+
+
+def _linkage_note(session: AssistantSession, linked: bool) -> str:
+    """The trace's link sentence, naming the same reference and the same SAP
+    field as the conversation's closing message (one instruction, 28-Oct-2026)."""
+    if linked:
+        return LINKED_NOTE
+    return LINKAGE_NOTE.format(
+        instruction=reference_instruction(session.id, session.request_id)
+    )
+
+
+def _complete_flow() -> bool:
+    """``I8_COMPLETE_FLOW_ENABLED`` (29-Oct-2026). Off, the session log, the
+    trace and the justification list leave out what the I08 complete flow
+    added -- the keys themselves, so a screen reads the older shape."""
+    return get_i8_settings().complete_flow_enabled
+
+
+def _without(
+    response: BaseModel, keys: tuple[str, ...] = (), item_keys: tuple[str, ...] = ()
+) -> JSONResponse:
+    """``response`` as served, less ``keys`` at the top and ``item_keys`` on
+    each of its ``items`` (camelCase, as on the wire)."""
+    content = response.model_dump(mode="json", by_alias=True)
+    for key in keys:
+        content.pop(key, None)
+    for item in content.get("items") or ():
+        for key in item_keys:
+            item.pop(key, None)
+    return JSONResponse(content=content)
 
 
 def _step_model(step: Step) -> StepModel:
@@ -425,6 +459,62 @@ def _justification_model(row: Justification) -> JustificationModel:
     )
 
 
+def _declaration_model(row: RepairAttestation) -> SessionDeclarationModel:
+    return SessionDeclarationModel(
+        id=row.id,
+        recommendation=row.recommendation,
+        condition_description=row.condition_description,
+        fault_category=row.fault_category,
+        quantity=str(row.quantity),
+        attestor_name=row.attestor_name,
+        attested_at=row.attested_at,
+        evidence_reference=row.evidence_reference,
+        repair_document=row.repair_document,
+        repair_item=row.repair_item,
+        repair_document_type=row.repair_document_type,
+    )
+
+
+def _session_declarations(db: DbSession, session_id: str) -> list[RepairAttestation]:
+    """The I08 declarations recorded in one session, newest first.
+
+    Only the assistant writes ``session_id`` on a declaration, so these are
+    exactly the ones made in the visit. The id breaks a timestamp tie so the
+    order is stable.
+    """
+    return list(
+        db.execute(
+            select(RepairAttestation)
+            .where(RepairAttestation.session_id == session_id)
+            .order_by(RepairAttestation.attested_at.desc(), RepairAttestation.id.desc())
+        ).scalars()
+    )
+
+
+def _declared_by_session(db: DbSession, session_ids: list[str]) -> dict[str, str]:
+    """session id -> the recommendation of its newest declaration, for one page.
+
+    One query for the page, not one per row. A session with no entry declared
+    nothing.
+    """
+    if not session_ids:
+        return {}
+    rows = db.execute(
+        select(
+            RepairAttestation.session_id,
+            RepairAttestation.recommendation,
+            RepairAttestation.attested_at,
+            RepairAttestation.id,
+        ).where(RepairAttestation.session_id.in_(session_ids))
+    ).all()
+    newest: dict[str, tuple] = {}
+    for session_id, recommendation, attested_at, row_id in rows:
+        key = (attested_at, row_id)
+        if session_id not in newest or key > newest[session_id][0]:
+            newest[session_id] = (key, recommendation)
+    return {session_id: value[1] for session_id, value in newest.items()}
+
+
 @router.get(
     "/sessions",
     response_model=SessionListResponse,
@@ -440,7 +530,7 @@ def list_sessions(
         Query(description="true: only sessions a reservation's SGTXT names; false: only those none does yet."),
     ] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
-) -> SessionListResponse:
+) -> SessionListResponse | JSONResponse:
     """Every session, newest first.
 
     The outcome on each row is derived from its turns rather than stored, so an
@@ -470,6 +560,8 @@ def list_sessions(
 
     rows = list(db.execute(statement.limit(limit)).scalars())
     links = links_for_sessions(db, (row.id for row in rows))
+    complete_flow = _complete_flow()
+    declared = _declared_by_session(db, [row.id for row in rows]) if complete_flow else {}
     items = []
     for row in rows:
         turn_rows = session_service.turns(db, row.id)
@@ -493,11 +585,13 @@ def list_sessions(
                 expires_at=row.expires_at,
                 turns=len(turn_rows),
                 linked_reservations=[_linked_model(link) for link in links.get(row.id, [])],
+                declared=row.id in declared,
+                declaration_recommendation=declared.get(row.id),
             )
         )
 
     attach_material_names(items, field="material_id", wait_seconds=NAME_WAIT_SECONDS)
-    return SessionListResponse(
+    response = SessionListResponse(
         items=items,
         total=len(items),
         note=(
@@ -508,6 +602,9 @@ def list_sessions(
             "error."
         ),
     )
+    if complete_flow:
+        return response
+    return _without(response, item_keys=("declared", "declarationRecommendation"))
 
 
 @router.get(
@@ -515,7 +612,7 @@ def list_sessions(
     response_model=SessionTraceResponse,
     summary="One session, and everything it produced",
 )
-def get_session(session_id: str, db: DbDep) -> SessionTraceResponse:
+def get_session(session_id: str, db: DbDep) -> SessionTraceResponse | JSONResponse:
     """The FR-8 trace.
 
     ``assessment`` is replayed from the stored JSON, not recomputed. That is the
@@ -594,11 +691,18 @@ def get_session(session_id: str, db: DbDep) -> SessionTraceResponse:
         plans=[_plan_model(p, links) for p in plans],
         quantity_suggestions=[_suggestion_model(s) for s in suggestions],
         justifications=[_justification_model(j) for j in justifications],
+        declarations=(
+            [_declaration_model(d) for d in _session_declarations(db, session.id)]
+            if _complete_flow()
+            else []
+        ),
         linked_reservations=[_linked_model(l) for l in links],
-        linkage_note=LINKED_NOTE if links else LINKAGE_NOTE,
+        linkage_note=_linkage_note(session, bool(links)),
     )
     attach_material_names([trace], field="material_id", wait_seconds=NAME_WAIT_SECONDS)
-    return trace
+    if _complete_flow():
+        return trace
+    return _without(trace, keys=("declarations",))
 
 
 # --- Justifications, shared by both initiatives ---------------------------
@@ -703,6 +807,72 @@ def post_justification(
     return _justification_model(justification)
 
 
+def _requester_names(db: DbSession, session_ids: list[str | None]) -> dict[str, str]:
+    """session id -> the requester name typed on it, for one page in one query.
+
+    ``requested_for`` is the name the operator typed for whoever wants the
+    part. It is not identity, but until sign-in is wired it is the only name a
+    chat or request reason has: its author is the anonymous placeholder.
+    """
+    wanted = sorted({sid for sid in session_ids if sid})
+    if not wanted:
+        return {}
+    rows = db.execute(
+        select(AssistantSession.id, AssistantSession.requested_for).where(
+            AssistantSession.id.in_(wanted)
+        )
+    ).all()
+    return {sid: name.strip() for sid, name in rows if name and name.strip()}
+
+
+def _purchases_answered(
+    rows: list[Justification],
+) -> dict[str, JustificationPurchaseModel] | None:
+    """justification id -> the new purchase it answers, for NEW_ACQUISITION rows.
+
+    Read from the I08 snapshot already in memory, the same new purchases the
+    bought-new check reads; never builds or waits for one. None while no
+    snapshot has been built (just after a restart), so the caller can say
+    nothing was looked up rather than that nothing was bought.
+    """
+    from app.initiatives.i8.acquisitions import NEW_ACQUISITION_KIND, JustificationRecord
+    from app.initiatives.i8.config import get_i8_settings
+    from app.initiatives.i8.exceptions import purchases_answered
+    from app.initiatives.i8.material_number import normalise
+    from app.initiatives.i8.service import cached_snapshot
+
+    snapshot = cached_snapshot()
+    if snapshot is None:
+        return None
+    records = [
+        JustificationRecord(
+            material_id=normalise(row.material_id) or row.material_id,
+            plant=(row.plant or "").strip(),
+            recorded_on=row.recorded_at.date(),
+            exception_id=row.exception_id,
+            id=row.id,
+        )
+        for row in rows
+        if row.kind == NEW_ACQUISITION_KIND
+    ]
+    if not records:
+        return {}
+    answered = purchases_answered(
+        records,
+        getattr(snapshot, "acquisitions", ()),
+        window_days=get_i8_settings().justification_window_days,
+    )
+    return {
+        justification_id: JustificationPurchaseModel(
+            type=acquisition.document_type,
+            document_number=acquisition.purchasing_document,
+            line=acquisition.item,
+            raised_at=acquisition.raised_at,
+        )
+        for justification_id, acquisition in answered.items()
+    }
+
+
 @justifications_router.get(
     "",
     response_model=JustificationListResponse,
@@ -720,7 +890,7 @@ def list_justifications(
     q: Annotated[str | None, Query(max_length=200)] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
-) -> JustificationListResponse:
+) -> JustificationListResponse | JSONResponse:
     """One page of justifications, newest first, with the count and the filter
     values over every match.
 
@@ -779,6 +949,14 @@ def list_justifications(
     total = db.execute(
         select(func.count()).select_from(Justification).where(*conditions)
     ).scalar_one()
+    items = [_justification_model(row) for row in rows]
+    names = _requester_names(db, [row.session_id for row in rows])
+    complete_flow = _complete_flow()
+    purchases = _purchases_answered(rows) if complete_flow else None
+    for item in items:
+        item.requester_name = names.get(item.session_id or "")
+        if purchases is not None and item.id in purchases:
+            item.purchase = purchases[item.id]
     facets = JustificationFacets(
         plants=sorted(
             db.execute(select(Justification.plant).where(*conditions).distinct()).scalars()
@@ -789,9 +967,10 @@ def list_justifications(
             ).scalars()
         ),
     )
-    return JustificationListResponse(
-        items=[_justification_model(row) for row in rows],
+    response = JustificationListResponse(
+        items=items,
         total=total,
+        purchases_checked=purchases is not None,
         facets=facets,
         reason_categories=settings.assistant_justification_reason_category_list,
         note=(
@@ -801,6 +980,11 @@ def list_justifications(
             "supplies its own."
         ),
     )
+    if complete_flow:
+        return response
+    # The purchase each reason answers came with the complete flow; the typed
+    # requester name stays.
+    return _without(response, keys=("purchasesChecked",), item_keys=("purchase",))
 
 
 # --- The free-text box (section 4.6) --------------------------------------

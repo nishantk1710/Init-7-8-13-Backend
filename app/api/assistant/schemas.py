@@ -283,6 +283,18 @@ class PlanModel(AssistantModel):
     ``reservationNumber`` shows the first of them when the plan has none of its
     own."""
 
+    # Acquired vs plan for this one plan (I13 ``plans.plan_outcomes``). Filled
+    # by the I13 plan list only, and left null there while no snapshot is
+    # available -- null means "not measured", not "nothing issued".
+    matched_reservations: list[str] | None = None
+    """``rsnum/rspos`` of every reservation item counted for this plan: its
+    SGTXT links, else the ones required inside its window."""
+    issued_quantity: str | None = None
+    """Issued against ``matchedReservations`` (MSEG by reservation, net of
+    reversals)."""
+    acquired_vs_plan_status: str | None = None
+    acquired_vs_plan_variance_quantity: str | None = None
+
 
 class LinkedReservationModel(AssistantModel):
     """A reservation item whose SGTXT names the session (session_reservation_link).
@@ -325,6 +337,16 @@ class SuggestionModel(AssistantModel):
     suggested_at: datetime
 
 
+class JustificationPurchaseModel(AssistantModel):
+    """The new-buy PR or direct PO line a NEW_ACQUISITION reason answers."""
+
+    type: Literal["PR", "PO"]
+    document_number: str
+    line: str | None = None
+    raised_at: date | None = None
+    """The PR date, or the PO header's created-on date. Null when SAP has none."""
+
+
 class JustificationModel(AssistantModel):
     id: str
     session_id: str | None = None
@@ -336,6 +358,39 @@ class JustificationModel(AssistantModel):
     plant: str
     author: str
     recorded_at: datetime
+    requester_name: str | None = None
+    """The name typed as the requester on the session this reason was recorded
+    in (28-Oct-2026). Typed, not a sign-in; null when the reason has no session
+    or none was typed. Served by the justification list only."""
+    purchase: JustificationPurchaseModel | None = None
+    """NEW_ACQUISITION only, on the justification list: the new purchase this
+    reason answers under the bought-new check's rule. Null when no purchase has
+    matched yet, for other kinds, and when ``purchasesChecked`` is false."""
+
+
+class SessionDeclarationModel(AssistantModel):
+    """An I08 condition declaration recorded during this session.
+
+    Read from ``i8_attestation`` by its ``session_id``. Only the assistant sets
+    that column, so these are the declarations made in the visit itself; an
+    amendment made later on the declarations screen carries no session and is
+    not listed here.
+    """
+
+    id: str
+    recommendation: str
+    """REPAIRABLE / BEYOND_ECONOMICAL_REPAIR / SCRAP."""
+    condition_description: str
+    fault_category: str
+    quantity: str
+    attestor_name: str | None = None
+    """The name the person typed, not a sign-in."""
+    attested_at: datetime
+    evidence_reference: str | None = None
+    repair_document: str | None = None
+    repair_item: str | None = None
+    repair_document_type: str | None = None
+    """'PO' or 'PR' when the declaration names a repair line; null otherwise."""
 
 
 class SessionTraceResponse(AssistantModel):
@@ -386,6 +441,10 @@ class SessionTraceResponse(AssistantModel):
     plans: list[PlanModel] = []
     quantity_suggestions: list[SuggestionModel] = []
     justifications: list[JustificationModel] = []
+    declarations: list[SessionDeclarationModel] = []
+    """I08: the faulty-unit declarations recorded in this session, newest
+    first. Empty for every I13 session and for an I08 visit that declared
+    nothing."""
     linked_reservations: list[LinkedReservationModel] = []
     linkage_note: str
 
@@ -419,6 +478,12 @@ class SessionSummary(AssistantModel):
     """Reservation items whose SGTXT names this session (as on the trace).
     Empty until the item text has been read -- from the RESB extract, or from
     the UAT overlay -- so empty means "not linked yet", not "never"."""
+    declared: bool = False
+    """I08: a condition declaration was recorded in this session. Always
+    false for I13 sessions, which never declare."""
+    declaration_recommendation: str | None = None
+    """The newest such declaration's recommendation (REPAIRABLE /
+    BEYOND_ECONOMICAL_REPAIR / SCRAP); null when nothing was declared."""
 
 
 class SessionListResponse(AssistantModel):
@@ -462,6 +527,10 @@ class JustificationListResponse(AssistantModel):
     facets: JustificationFacets
     reason_categories: list[str]
     note: str
+    purchases_checked: bool = False
+    """Whether ``purchase`` was matched for this page. False only while the
+    I08 data is still being prepared after a restart: every ``purchase`` is
+    then null because nothing was looked up, not because nothing was bought."""
 
 
 # --- the free-text box (section 4.6) ---------------------------------------

@@ -57,48 +57,86 @@ Two detectors, one queue
 ------------------------
 ``UNJUSTIFIED_ACQUISITION`` (FR-8) is raised beside ``MISSING_ATTESTATION``: a
 new 80-series unit bought while a repair of the same part was open at the same
-plant, with no NEW_ACQUISITION justification recorded near it. The purchases
-and the repairs they overlapped come from :mod:`app.initiatives.i8.acquisitions`,
+plant, with no NEW_ACQUISITION justification recorded near it. Since
+27-Oct-2026 the purchase is usually a new-buy PR, and the repair it overlapped
+may be a repair PR with no PO yet; the item says which kind each document is.
+The purchases and the repairs come from :mod:`app.initiatives.i8.acquisitions`,
 which also says why stock on hand cannot be judged for a past purchase.
 
-``MISSING_SESSION_ID`` (FR-8) is ours too and is **not raised yet**, for one
-reason outside this repository: it needs the session id read back off the
-reservation, and RESB.BEDNR is not exposed on ReservationItemSet. It stays in
-:class:`ExceptionType` so adding the detector is new code, not a migration.
+``MISSING_SESSION_ID`` (FR-8) is raised since 27-Oct-2026: a job
+(consumption) reservation line on an 80-series part, needed on or after
+``I8_SESSION_CHECK_START_DATE`` (blank: the I13 go-live date), whose text
+(RESB.SGTXT) carries no R-reference leading back to an assistant session for
+that part and plant. A mistyped reference is told apart from none at all, as
+I13 does (``session_link.session_status``). The lines are judged at snapshot
+build (``session_jobs.unreferenced_lines``); this module only words them.
+
+Three declaration findings (27-Oct-2026)
+----------------------------------------
+``REPAIRED_AGAINST_ASSESSMENT``: a repair PO line or repair PR whose current
+declaration says Beyond economical repair or Scrap. The declaration queue
+showed these as "Flagged" and nothing else did; the finding belongs here, where
+someone can own and close it.
+
+``REPAIR_PR_NOT_DECLARED``: an open repair PR, raised on or after the
+attestation cutover, older than ``I8_DECLARATION_GRACE_DAYS`` and with no
+declaration. ``DECLARED_NO_REPAIR_PR``: the other half of the same gap -- a
+Repairable declaration older than the grace days with no repair PR or PO for
+the part at the plant raised on or after it. Both are counted against the
+snapshot's reference date, the date every other age in I08 is counted from.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from enum import Enum
 
 from app.core.logging import get_logger
 from app.initiatives.i8.acquisitions import (
+    PURCHASE_ORDER,
+    PURCHASE_REQUISITION,
     JustificationRecord,
     NewAcquisition,
+    OpenRepair,
+    document_reference,
     open_repair_at,
     repairs_by_material_plant,
 )
-from app.initiatives.i8.attestation import AttestationCoverage
+from app.initiatives.i8.attestation import (
+    CONDITION_LABELS,
+    LINK_WINDOW,
+    AttestationCoverage,
+    Recommendation,
+)
 from app.initiatives.i8.register import RepairLine
+from app.initiatives.i8.requisitions import RepairRequest
+from app.initiatives.i13.session_link import INVALID_SESSION
 
 logger = get_logger(__name__)
 
 
 class ExceptionType(str, Enum):
-    """Every exception the queue can carry. All three are I08's -- FR-4 and FR-8.
-
-    ``MISSING_SESSION_ID`` is declared and not yet raised; see the module note.
-    """
+    """Every exception the queue can carry, all I08's -- FR-4 and FR-8."""
 
     MISSING_ATTESTATION = "MISSING_ATTESTATION"
     """A repair line with no condition-to-repair attestation. FR-4 / FR-8."""
 
+    REPAIRED_AGAINST_ASSESSMENT = "REPAIRED_AGAINST_ASSESSMENT"
+    """A part declared beyond economical repair or scrap, sent for repair
+    anyway. Since 27-Oct-2026."""
+
+    REPAIR_PR_NOT_DECLARED = "REPAIR_PR_NOT_DECLARED"
+    """An open repair PR older than the grace days with no declaration."""
+
+    DECLARED_NO_REPAIR_PR = "DECLARED_NO_REPAIR_PR"
+    """A Repairable declaration older than the grace days with no repair PR or
+    PO for the same part and plant raised on or after it."""
+
     MISSING_SESSION_ID = "MISSING_SESSION_ID"
-    """FR-8, an 80-series reservation with no valid session id. Not raised yet:
-    blocked on RESB.BEDNR being exposed on ReservationItemSet (SAP team)."""
+    """FR-8, an 80-series job reservation line with no valid R-reference in
+    its text (RESB.SGTXT). Raised since 27-Oct-2026; see the module note."""
 
     UNJUSTIFIED_ACQUISITION = "UNJUSTIFIED_ACQUISITION"
     """FR-8, a new unit bought while a repair was open, with no justification."""
@@ -121,8 +159,39 @@ RAISED_BY_I8: frozenset[ExceptionType] = frozenset(
         ExceptionType.MISSING_ATTESTATION,
         ExceptionType.UNJUSTIFIED_ACQUISITION,
         ExceptionType.OVERDUE_REPAIR,
+        ExceptionType.REPAIRED_AGAINST_ASSESSMENT,
+        ExceptionType.REPAIR_PR_NOT_DECLARED,
+        ExceptionType.DECLARED_NO_REPAIR_PR,
+        ExceptionType.MISSING_SESSION_ID,
     }
 )
+
+#: The types raised before the complete flow (27-Oct-2026), and the only ones
+#: raised while ``I8_COMPLETE_FLOW_ENABLED`` is off.
+RAISED_WITHOUT_COMPLETE_FLOW: frozenset[ExceptionType] = frozenset(
+    {
+        ExceptionType.MISSING_ATTESTATION,
+        ExceptionType.UNJUSTIFIED_ACQUISITION,
+        ExceptionType.OVERDUE_REPAIR,
+    }
+)
+
+
+def raised_without_complete_flow(exception_id: str) -> bool:
+    """Whether an exception id is one the queue raises with the complete flow
+    off: a type in :data:`RAISED_WITHOUT_COMPLETE_FLOW`, and for a bought-new
+    finding a purchase-order line, not a new-buy PR (whose id names
+    ``PR-``; see :func:`acquisition_exception_id`). Read by the auto-resolve
+    while the switch is off, so a finding only hidden is never closed as gone.
+    """
+    for exception_type in RAISED_WITHOUT_COMPLETE_FLOW:
+        prefix = f"EX-{exception_type.value}-"
+        if exception_id.startswith(prefix):
+            return not (
+                exception_type is ExceptionType.UNJUSTIFIED_ACQUISITION
+                and exception_id[len(prefix) :].startswith("PR-")
+            )
+    return False
 
 
 class Severity(str, Enum):
@@ -170,8 +239,33 @@ class ExceptionItem:
 
     acquisition_document: str | None = None
     acquisition_item: str | None = None
-    """``UNJUSTIFIED_ACQUISITION`` only: the purchase line that bought the new
-    unit. ``purchasing_document``/``item`` are then the repair it overlapped."""
+    """``UNJUSTIFIED_ACQUISITION`` only: the purchase that bought the new unit.
+    ``purchasing_document``/``item`` are then the repair it overlapped."""
+
+    repair_document_type: str = PURCHASE_ORDER
+    """``PO`` or ``PR``: what ``purchasing_document``/``item`` name. ``PR`` only
+    for an ``UNJUSTIFIED_ACQUISITION`` whose repair has no PO yet; the document
+    is then the bare PR number."""
+
+    acquisition_document_type: str = PURCHASE_ORDER
+    """``PO`` or ``PR``: what ``acquisition_document``/``acquisition_item``
+    name -- since 27-Oct-2026 usually a new-buy PR."""
+
+    declaration_id: str | None = None
+    """The declaration the finding is about, on ``REPAIRED_AGAINST_ASSESSMENT``
+    and ``DECLARED_NO_REPAIR_PR``. ``DECLARED_NO_REPAIR_PR`` names no repair
+    line -- there is none, which is the finding -- so its document is blank."""
+
+    reservation_document: str | None = None
+    reservation_item: str | None = None
+    """``MISSING_SESSION_ID`` only: the reservation line (RSNUM, RSPOS) with
+    no R-reference. It names no repair line, so the document is blank."""
+
+    @property
+    def repair_reference(self) -> str:
+        """The repair as the register names its row: ``{EBELN}-{EBELP}``, or
+        ``PR-{BANFN}-{BNFPO}`` for a repair PR with no PO yet."""
+        return document_reference(self.repair_document_type, self.purchasing_document, self.item)
 
 
 def _day(value: date | None, missing: str) -> str:
@@ -350,6 +444,19 @@ def overdue_repairs(lines, *, grace_days: int) -> list[ExceptionItem]:
     return items
 
 
+def _within_justification_window(
+    record: JustificationRecord, acquisition: NewAcquisition, window_days: int
+) -> bool:
+    """Same material, same plant, and the purchase within ``window_days`` of
+    the reason, either side."""
+    return (
+        record.material_id == acquisition.material_id
+        and record.plant == acquisition.plant
+        and acquisition.raised_at is not None
+        and abs((record.recorded_on - acquisition.raised_at).days) <= window_days
+    )
+
+
 def _justified(
     acquisition: NewAcquisition,
     exception_id: str,
@@ -360,19 +467,96 @@ def _justified(
 
     Either one recorded against this exception's id, or one for the same
     material and plant within ``window_days`` of the purchase, either side --
-    the assistant normally records the reason before the PO is raised.
+    the assistant normally records the reason before the purchase is raised.
     """
     for record in justifications:
         if record.exception_id == exception_id:
             return True
-        if (
-            record.material_id == acquisition.material_id
-            and record.plant == acquisition.plant
-            and acquisition.raised_at is not None
-            and abs((record.recorded_on - acquisition.raised_at).days) <= window_days
-        ):
+        if _within_justification_window(record, acquisition, window_days):
             return True
     return False
+
+
+def purchases_answered(
+    justifications: Sequence[JustificationRecord],
+    acquisitions: Sequence[NewAcquisition],
+    *,
+    window_days: int,
+) -> dict[str, NewAcquisition]:
+    """Justification id -> the new purchase it answers, by :func:`_justified`'s
+    own rule read the other way (28-Oct-2026: the Justifications screen's
+    Purchase column).
+
+    A reason recorded against a bought-new finding's id answers that purchase.
+    Otherwise it answers a purchase of the same part at the same plant within
+    the window; when several are, the one nearest in date, a purchase raised
+    on or after the reason before one raised before it (the assistant records
+    the reason first). A reason with no entry has no purchase yet.
+
+    Every new purchase counts, not only those that overlapped an open repair:
+    the question is whether a purchase followed the reason, and a repair
+    closed since does not undo the purchase.
+    """
+    by_finding = {acquisition_exception_id(a): a for a in acquisitions}
+    by_part: dict[tuple[str, str | None], list[NewAcquisition]] = {}
+    for acquisition in acquisitions:
+        by_part.setdefault((acquisition.material_id, acquisition.plant), []).append(acquisition)
+
+    answered: dict[str, NewAcquisition] = {}
+    for record in justifications:
+        if record.id is None:
+            continue
+        named = by_finding.get(record.exception_id) if record.exception_id else None
+        if named is not None:
+            answered[record.id] = named
+            continue
+        near = [
+            a
+            for a in by_part.get((record.material_id, record.plant), ())
+            if _within_justification_window(record, a, window_days)
+        ]
+        if near:
+            answered[record.id] = min(
+                near,
+                key=lambda a: (
+                    abs((a.raised_at - record.recorded_on).days),  # type: ignore[operator]
+                    a.raised_at < record.recorded_on,  # type: ignore[operator]
+                    a.key,
+                ),
+            )
+    return answered
+
+
+def _purchase_phrase(acquisition: NewAcquisition) -> str:
+    """``requested on 14 Mar 2026 (PR 1000201234/10)``: a PR is a request to
+    buy, a direct PO an order."""
+    if acquisition.document_type == PURCHASE_REQUISITION:
+        verb, label = "requested", "PR"
+    else:
+        verb, label = "ordered", "PO"
+    return (
+        f"{verb} on {_day(acquisition.raised_at, 'an unknown date')} "
+        f"({label} {acquisition.purchasing_document}/{acquisition.item})"
+    )
+
+
+def _repair_phrase(repair: OpenRepair) -> str:
+    """``repair PR 2000029113/10, requested 04 Feb 2026``."""
+    if repair.document_type == PURCHASE_REQUISITION:
+        verb, label = "requested", "PR"
+    else:
+        verb, label = "raised", "PO"
+    return (
+        f"repair {label} {repair.document}/{repair.item}, "
+        f"{verb} {_day(repair.raised_at, 'on an unknown date')}"
+    )
+
+
+def acquisition_exception_id(acquisition: NewAcquisition) -> str:
+    """``EX-UNJUSTIFIED_ACQUISITION-{EBELN}-{EBELP}`` for a direct PO -- the id
+    such an item has always had -- and ``EX-UNJUSTIFIED_ACQUISITION-PR-{BANFN}-
+    {BNFPO}`` for a PR, so the two number series can never share an id."""
+    return f"EX-{ExceptionType.UNJUSTIFIED_ACQUISITION.value}-{acquisition.reference}"
 
 
 def unjustified_acquisitions(
@@ -382,16 +566,22 @@ def unjustified_acquisitions(
     *,
     window_days: int,
     cutover: date | None = None,
+    repair_requests: Sequence[RepairRequest] = (),
 ) -> list[ExceptionItem]:
     """Raise UNJUSTIFIED_ACQUISITION for every new purchase of a part that was
     already out for repair at the same plant, with no justification near it.
+
+    The repairs are the open repair PO lines and, since 27-Oct-2026, the open
+    repair PRs with no PO yet (``repair_requests``) -- whether or not the
+    register serves them: a repair somebody has asked SAP for is open whatever
+    screen shows it.
 
     A purchase with no overlapping repair is not an exception -- buying a part
     nobody is repairing is ordinary procurement. ``cutover`` labels purchases
     raised before the justification control existed, exactly as
     :func:`missing_attestations` labels pre-cutover repair lines.
     """
-    repairs = repairs_by_material_plant(lines)
+    repairs = repairs_by_material_plant(lines, repair_requests)
     items: list[ExceptionItem] = []
 
     for acquisition in sorted(acquisitions, key=lambda a: a.key):
@@ -399,10 +589,7 @@ def unjustified_acquisitions(
         if repair is None:
             continue
 
-        exception_id = (
-            f"EX-{ExceptionType.UNJUSTIFIED_ACQUISITION.value}-"
-            f"{acquisition.purchasing_document}-{acquisition.item}"
-        )
+        exception_id = acquisition_exception_id(acquisition)
         if _justified(acquisition, exception_id, justifications, window_days):
             continue
 
@@ -410,9 +597,6 @@ def unjustified_acquisitions(
             cutover is not None
             and acquisition.raised_at is not None
             and acquisition.raised_at < cutover
-        )
-        bought = (
-            acquisition.raised_at.isoformat() if acquisition.raised_at else "an unknown date"
         )
 
         items.append(
@@ -426,8 +610,11 @@ def unjustified_acquisitions(
                 material_id=acquisition.material_id,
                 description=acquisition.description or repair.description,
                 plant=acquisition.plant,
-                purchasing_document=repair.purchasing_document,
+                purchasing_document=repair.document,
                 item=repair.item,
+                # Written for the people working the queue, as
+                # missing_attestations is: no table or field names, no rule
+                # names, dates as 08 May 2025.
                 title=(
                     "Raised before Spares Automation"
                     if historical
@@ -435,38 +622,268 @@ def unjustified_acquisitions(
                 ),
                 detail=(
                     (
-                        f"Purchase {acquisition.purchasing_document}/{acquisition.item} "
-                        f"was raised on {bought}, before the justification control "
-                        f"was introduced on {cutover.isoformat() if cutover else 'the cutover date'}. "
-                        "No reason is on record because none was asked for at the "
-                        "time; this is not an outstanding action."
+                        f"A new unit was {_purchase_phrase(acquisition)}, before "
+                        "reasons for buying new were first asked for on "
+                        f"{_day(cutover, 'the cutover date')}. No reason is on record "
+                        "because none was asked for at the time, so nothing needs doing."
                     )
                     if historical
                     else (
-                        f"Purchase {acquisition.purchasing_document}/{acquisition.item} "
-                        f"bought a new unit of {acquisition.material_id} at plant "
-                        f"{acquisition.plant} on {bought}, while repair "
-                        f"{repair.purchasing_document}/{repair.item}, raised "
-                        f"{repair.raised_at.isoformat() if repair.raised_at else 'on an unknown date'}, "
-                        f"was open -- and SAP still has it open. No NEW_ACQUISITION "
-                        f"justification was recorded for this material and plant "
-                        f"within {window_days} days of the purchase."
+                        f"A new unit was {_purchase_phrase(acquisition)} while a repair "
+                        f"of the same part ({_repair_phrase(repair)}) was still open, "
+                        f"and no reason was recorded within {window_days} days."
                     )
                 ),
                 raised_at=acquisition.raised_at,
                 pre_automation=historical,
                 acquisition_document=acquisition.purchasing_document,
                 acquisition_item=acquisition.item,
+                repair_document_type=repair.document_type,
+                acquisition_document_type=acquisition.document_type,
             )
         )
 
     logger.info(
         "I08 exceptions: %d UNJUSTIFIED_ACQUISITION of %d new purchases checked "
-        "(%d pre-automation)",
+        "against %d open repair lines and %d open repair PRs (%d pre-automation)",
         len(items),
         len(acquisitions),
+        len(lines),
+        len(repair_requests),
         sum(1 for i in items if i.pre_automation),
     )
+    return items
+
+
+# --- Declaration findings (27-Oct-2026) -----------------------------------
+
+#: The verdicts that say "do not repair this part".
+_NOT_FOR_REPAIR = frozenset(
+    {Recommendation.BEYOND_ECONOMICAL_REPAIR.value, Recommendation.SCRAP.value}
+)
+
+
+def _declared_by(attestation) -> str:
+    """The typed name when there is one, else the signed-in user."""
+    return getattr(attestation, "attestor_name", None) or attestation.attestor
+
+
+def _against_item(document_type, document, item, row, raised_at, attestation, link):
+    verdict = CONDITION_LABELS[Recommendation(attestation.recommendation)]
+    what = "repair PR" if document_type == PURCHASE_REQUISITION else "repair line"
+    matched = (
+        " The declaration was matched by part, plant and date rather than named on it."
+        if link == LINK_WINDOW
+        else ""
+    )
+    return ExceptionItem(
+        id=(
+            f"EX-{ExceptionType.REPAIRED_AGAINST_ASSESSMENT.value}-"
+            f"{document_reference(document_type, document, item)}"
+        ),
+        type=ExceptionType.REPAIRED_AGAINST_ASSESSMENT.value,
+        severity=Severity.WARNING.value,
+        material_id=row.material_id,
+        description=row.description,
+        plant=row.plant,
+        purchasing_document=document,
+        item=item,
+        title="Sent for repair against the assessment",
+        detail=(
+            f"{_declared_by(attestation)} declared this part {verdict} on "
+            f"{_day(attestation.attested_at.date(), 'an unknown date')} "
+            f"(declaration {attestation.id}), but this {what} sends it for repair."
+            f"{matched} Confirm the repair is wanted, or amend the declaration."
+        ),
+        raised_at=raised_at,
+        repair_document_type=document_type,
+        declaration_id=attestation.id,
+    )
+
+
+def repaired_against_assessment(
+    lines, coverage: AttestationCoverage, *, requests: Sequence[RepairRequest] = ()
+) -> list[ExceptionItem]:
+    """Raise REPAIRED_AGAINST_ASSESSMENT for every repair PO line or repair PR
+    whose covering declaration is Beyond economical repair or Scrap."""
+    items: list[ExceptionItem] = []
+    for line in sorted(lines, key=lambda line: (line.purchasing_document, line.item)):
+        attestation = coverage.covered.get(line.key)
+        if attestation is None or attestation.recommendation not in _NOT_FOR_REPAIR:
+            continue
+        items.append(
+            _against_item(
+                PURCHASE_ORDER, line.purchasing_document, line.item, line,
+                line.raised_at, attestation, coverage.links.get(line.key),
+            )
+        )
+    for request in sorted(requests, key=lambda request: request.key):
+        attestation = coverage.requests_covered.get(request.key)
+        if attestation is None or attestation.recommendation not in _NOT_FOR_REPAIR:
+            continue
+        items.append(
+            _against_item(
+                PURCHASE_REQUISITION, request.purchase_requisition, request.item, request,
+                request.requested_on, attestation, coverage.request_links.get(request.key),
+            )
+        )
+    return items
+
+
+def undeclared_repair_requests(
+    requests: Sequence[RepairRequest],
+    coverage: AttestationCoverage,
+    *,
+    reference_date: date,
+    grace_days: int,
+    cutover: date | None = None,
+) -> list[ExceptionItem]:
+    """Raise REPAIR_PR_NOT_DECLARED for every open repair PR checked and found
+    with no declaration, raised more than ``grace_days`` ago.
+
+    A PR raised before the cutover is Historical -- no declaration was asked
+    for -- and a PR with no date cannot be aged, so neither is raised.
+    """
+    items: list[ExceptionItem] = []
+    for request in sorted(requests, key=lambda request: request.key):
+        if request.key not in coverage.requests_uncovered or request.requested_on is None:
+            continue
+        if cutover is not None and request.requested_on < cutover:
+            continue
+        waited = (reference_date - request.requested_on).days
+        if waited <= grace_days:
+            continue
+        by = f" by department {request.department}" if request.department else ""
+        items.append(
+            ExceptionItem(
+                id=(
+                    f"EX-{ExceptionType.REPAIR_PR_NOT_DECLARED.value}-"
+                    f"{document_reference(PURCHASE_REQUISITION, request.purchase_requisition, request.item)}"
+                ),
+                type=ExceptionType.REPAIR_PR_NOT_DECLARED.value,
+                severity=Severity.WARNING.value,
+                material_id=request.material_id,
+                description=request.description,
+                plant=request.plant,
+                purchasing_document=request.purchase_requisition,
+                item=request.item,
+                title="Repair asked for, condition not declared",
+                detail=(
+                    f"This repair was asked for on {_day(request.requested_on, 'an unknown date')}"
+                    f"{by}, {waited} days ago, and no condition declaration is on record "
+                    f"for it or for material {request.material_id} at plant {request.plant} "
+                    f"within {coverage.window_days} days. A declaration is expected within "
+                    f"{grace_days} days of the repair being asked for."
+                ),
+                raised_at=request.requested_on,
+                repair_document_type=PURCHASE_REQUISITION,
+            )
+        )
+    return items
+
+
+def declarations_without_repair(
+    declarations,
+    lines,
+    requests: Sequence[RepairRequest],
+    *,
+    reference_date: date,
+    grace_days: int,
+) -> list[ExceptionItem]:
+    """Raise DECLARED_NO_REPAIR_PR for every current Repairable declaration
+    older than ``grace_days`` with no repair PR or PO for its part and plant
+    raised on or after the day it was made.
+
+    ``declarations`` are the current ones (nothing superseded). A declaration
+    that names a repair PR or PO line is not checked: naming one is only
+    accepted while it is open in the register, so its repair exists. A PO
+    line's date is its PR's date when the PR was read, else the PO line's own.
+    """
+    raised: dict[tuple[str, str | None], list[date]] = {}
+    for line in lines:
+        on = line.pr_requested_on or line.raised_at
+        if on is not None:
+            raised.setdefault((line.material_id, line.plant), []).append(on)
+    for request in requests:
+        if request.requested_on is not None:
+            raised.setdefault((request.material_id, request.plant), []).append(request.requested_on)
+
+    items: list[ExceptionItem] = []
+    for attestation in sorted(declarations, key=lambda a: a.id):
+        if attestation.recommendation != Recommendation.REPAIRABLE.value:
+            continue
+        if attestation.repair_document and attestation.repair_item:
+            continue
+        on = attestation.attested_at.date()
+        waited = (reference_date - on).days
+        if waited <= grace_days:
+            continue
+        if any(day >= on for day in raised.get((attestation.material_id, attestation.plant), ())):
+            continue
+        items.append(
+            ExceptionItem(
+                id=f"EX-{ExceptionType.DECLARED_NO_REPAIR_PR.value}-{attestation.id}",
+                type=ExceptionType.DECLARED_NO_REPAIR_PR.value,
+                severity=Severity.WARNING.value,
+                material_id=attestation.material_id,
+                description=None,
+                plant=attestation.plant,
+                purchasing_document="",
+                item="",
+                title="Declared repairable, no repair asked for",
+                detail=(
+                    f"{_declared_by(attestation)} declared material {attestation.material_id} "
+                    f"at plant {attestation.plant} Repairable on {_day(on, 'an unknown date')} "
+                    f"(declaration {attestation.id}), {waited} days ago, and no open repair "
+                    "PR or PO for that part at that plant has been raised since. Raise the "
+                    "repair, or amend the declaration if the part is not going for repair."
+                ),
+                raised_at=on,
+                declaration_id=attestation.id,
+            )
+        )
+    return items
+
+
+def missing_session_ids(lines, start: date | None = None) -> list[ExceptionItem]:
+    """Raise MISSING_SESSION_ID for each job reservation line judged at build
+    (``session_jobs.UnreferencedLine``). The text says whether nothing was
+    typed or what was typed leads nowhere -- different fixes for the planner."""
+    since = f" since {_day(start, '')}" if start else ""
+    items: list[ExceptionItem] = []
+    for line in lines:
+        where = f" (order {line.order})" if line.order else ""
+        if line.finding == INVALID_SESSION:
+            title = "Reservation reference does not lead to a session"
+            told = (
+                f"Its text reads \"{line.typed}\", which names no assistant session or "
+                f"request for material {line.material} at plant {line.plant or 'unknown'} -- "
+                "a mistyped or wrong reference."
+            )
+        else:
+            title = "Reservation with no session reference"
+            told = "Its text carries no assistant reference at all."
+        items.append(
+            ExceptionItem(
+                id=f"EX-{ExceptionType.MISSING_SESSION_ID.value}-R-{line.reservation}-{line.item}",
+                type=ExceptionType.MISSING_SESSION_ID.value,
+                severity=Severity.WARNING.value,
+                material_id=line.material,
+                description=None,
+                plant=line.plant,
+                purchasing_document="",
+                item="",
+                title=title,
+                detail=(
+                    f"Reservation {line.reservation}/{line.item}{where}, needed on "
+                    f"{_day(line.requirement_date, 'an unknown date')}. {told} Reservations "
+                    f"for this part are expected to carry the session's reference{since}."
+                ),
+                raised_at=line.requirement_date,
+                reservation_document=line.reservation,
+                reservation_item=line.item,
+            )
+        )
     return items
 
 
@@ -499,10 +916,12 @@ class ExceptionStats:
     traced to the rule that produced it. None means none is configured."""
 
     acquisitions_checked: int = 0
-    """New 80-series purchase lines the UNJUSTIFIED_ACQUISITION check ran over."""
+    """New 80-series purchases -- new-buy PRs and direct PO lines -- the
+    UNJUSTIFIED_ACQUISITION check ran over."""
 
     justification_window_days: int = 0
     justification_cutover_date: date | None = None
+    session_check_start_date: date | None = None
 
 
 def build_exceptions(
@@ -515,8 +934,39 @@ def build_exceptions(
     justification_window_days: int = 30,
     justification_cutover: date | None = None,
     overdue_grace_days: int = 7,
+    repair_requests: Sequence[RepairRequest] = (),
+    served_requests: Sequence[RepairRequest] = (),
+    declarations=(),
+    reference_date: date | None = None,
+    declaration_grace_days: int = 14,
+    unreferenced_lines=(),
+    session_check_start: date | None = None,
+    complete_flow: bool = True,
 ) -> tuple[list[ExceptionItem], ExceptionStats]:
-    """The whole exception queue for one snapshot, and its counts."""
+    """The whole exception queue for one snapshot, and its counts.
+
+    ``repair_requests`` (the open repair PRs with no PO yet) are read only as
+    repairs a purchase overlapped: nothing is declared on them in phase 1, so
+    no other check looks at them -- except, since 27-Oct-2026, as the repairs
+    a Repairable declaration is waiting for. ``served_requests`` are the repair
+    PRs the register serves and the coverage checked; the PR findings read
+    those. ``declarations`` are the current declarations. The two grace-day
+    checks run only when ``reference_date`` is given.
+
+    ``complete_flow`` False (``I8_COMPLETE_FLOW_ENABLED`` off) raises only
+    what was raised before 27-Oct-2026 (:data:`RAISED_WITHOUT_COMPLETE_FLOW`):
+    the bought-new check reads the direct purchase-order lines only, dated by
+    the line's own creation date (EKPO.ERDAT) as it was then, against the open
+    repair PO lines only; and the session check has no start date.
+    """
+    if not complete_flow:
+        acquisitions = [
+            replace(a, raised_at=a.line_created_on)
+            for a in acquisitions
+            if a.document_type == PURCHASE_ORDER
+        ]
+        repair_requests = served_requests = declarations = unreferenced_lines = ()
+        reference_date = session_check_start = None
     items = missing_attestations(lines, coverage, cutover=cutover)
     items += unjustified_acquisitions(
         acquisitions,
@@ -524,8 +974,28 @@ def build_exceptions(
         justifications,
         window_days=justification_window_days,
         cutover=justification_cutover,
+        repair_requests=repair_requests,
     )
     items += overdue_repairs(lines, grace_days=overdue_grace_days)
+    if complete_flow:
+        items += repaired_against_assessment(lines, coverage, requests=served_requests)
+    if reference_date is not None:
+        items += undeclared_repair_requests(
+            served_requests,
+            coverage,
+            reference_date=reference_date,
+            grace_days=declaration_grace_days,
+            cutover=cutover,
+        )
+        items += declarations_without_repair(
+            declarations,
+            lines,
+            repair_requests,
+            reference_date=reference_date,
+            grace_days=declaration_grace_days,
+        )
+
+    items += missing_session_ids(unreferenced_lines, session_check_start)
 
     by_type: dict[str, int] = {}
     by_severity: dict[str, int] = {}
@@ -547,5 +1017,6 @@ def build_exceptions(
         acquisitions_checked=len(acquisitions),
         justification_window_days=justification_window_days,
         justification_cutover_date=justification_cutover,
+        session_check_start_date=session_check_start,
     )
     return items, stats

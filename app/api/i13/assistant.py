@@ -46,16 +46,25 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session as DbSession
 
 from app.api.assistant.schemas import PlanModel
-from app.api.i13.deps import Actor, get_current_actor, get_data_dir, snapshot_or_live, with_material_names
+from app.api.i13.deps import (
+    Actor,
+    get_current_actor,
+    get_data_dir,
+    require_snapshot,
+    snapshot_or_live,
+    with_material_names,
+)
 from app.assistant import session as session_service
 from app.assistant.models import ConsumptionPlanRecord
 from app.assistant.session import SessionError
+from app.core.config import get_settings
 from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
+from app.initiatives.i13.plans import PlanOutcome, PlanSource, load_consumption_plans, plan_outcomes
 from app.initiatives.i13.snapshot import I13Snapshot
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.initiatives.i13.quantity import build_quantity_config, suggest
-from app.initiatives.i13.watch import compute_watch_metrics
+from app.initiatives.i13.watch import acquired_vs_plan, acquired_vs_plan_variance, compute_watch_metrics
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
@@ -232,6 +241,7 @@ def post_consumption_plan(
 def list_consumption_plans(
     db: DbDep,
     response: Response,
+    data_dir: Annotated[Path, Depends(get_data_dir)],
     session_id: Annotated[str | None, Query()] = None,
     material: Annotated[str | None, Query()] = None,
     plant: Annotated[str | None, Query()] = None,
@@ -270,8 +280,53 @@ def list_consumption_plans(
     response.headers["X-Total-Count"] = str(total)
     # The reservation each plan's session ID was typed into (SGTXT), if any.
     links = links_by_session(db)
-    rows = db.execute(statement.offset(offset).limit(limit)).scalars()
-    return [_plan_model(p, links.get(p.session_id)) for p in rows]
+    rows = db.execute(statement.offset(offset).limit(limit)).scalars().all()
+    outcomes = _plan_outcomes_for(db, data_dir, rows)
+    return [_with_outcome(_plan_model(p, links.get(p.session_id)), outcomes.get(p.id)) for p in rows]
+
+
+def _plan_outcomes_for(db: DbSession, data_dir: Path, rows) -> dict[str, PlanOutcome]:
+    """Acquired vs plan for this page's plans, keyed by plan id.
+
+    Matched over every plan of the same material and plant, not only the ones
+    on the page: a reservation counts for one plan, and which one depends on
+    the others. Reads the snapshot's reservation ledger; while there is none
+    (still building, or switched off) the list is still served, unmeasured,
+    rather than turning this route into a 503.
+    """
+    keys = {(p.material, p.plant) for p in rows}
+    if not keys or not get_settings().i13_snapshot_enabled:
+        return {}
+    try:
+        snapshot = require_snapshot(db)
+    except HTTPException:
+        return {}
+    if isinstance(snapshot, SqlSnapshot):
+        ledger = snapshot.ledger_for_keys(keys)
+    else:
+        ledger = [e for e in snapshot.reservation_ledger if (e.material, e.plant) in keys]
+    plans = [p for p in load_consumption_plans(data_dir, db) if (p.material, p.plant) in keys]
+    return {
+        o.plan.plan_id: o for o in plan_outcomes(plans, ledger) if o.plan.source is PlanSource.CAPTURED
+    }
+
+
+def _with_outcome(model: PlanModel, outcome: PlanOutcome | None) -> PlanModel:
+    if outcome is None:
+        return model
+    has_reservation = bool(outcome.reservations)
+    planned = outcome.plan.planned_quantity
+    variance, _ = acquired_vs_plan_variance(planned, outcome.issued_quantity, has_reservation=has_reservation)
+    return model.model_copy(
+        update={
+            "matched_reservations": [f"{number}/{item}" for number, item in outcome.reservations],
+            "issued_quantity": str(outcome.issued_quantity),
+            "acquired_vs_plan_status": acquired_vs_plan(
+                planned, outcome.issued_quantity, has_reservation=has_reservation
+            ).value,
+            "acquired_vs_plan_variance_quantity": None if variance is None else str(variance),
+        }
+    )
 
 
 @router.get(

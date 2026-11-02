@@ -50,6 +50,25 @@ def net_quantity(rows: list[Row], base_types: frozenset[str]) -> Decimal:
     return total
 
 
+def net_standing_quantity(rows: list[Row], base_types: frozenset[str]) -> Decimal:
+    """``net_quantity``, but a reversal only takes back what was posted before
+    it, in posting-date order -- so it never goes below zero.
+
+    A reservation's issues can hold a 262 whose 261 predates the movement
+    history; plain netting would read that as a negative issue.
+    """
+    reversal_types = reversal_types_for(base_types)
+    total = Decimal("0")
+    for row in sorted(rows, key=lambda r: (movement_date(r) is None, movement_date(r) or date.min)):
+        bwart = row.get("Bwart")
+        qty = row.get("Menge") or Decimal("0")
+        if bwart in base_types:
+            total += qty
+        elif bwart in reversal_types:
+            total = max(total - qty, Decimal("0"))
+    return total
+
+
 def net_event_count(rows: list[Row], base_types: frozenset[str]) -> int:
     """Count of net movement events for ``base_types`` (base rows minus
     reversal rows), floored at zero -- a reversed event is not a genuine

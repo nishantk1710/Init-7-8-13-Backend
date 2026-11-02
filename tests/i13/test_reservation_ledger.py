@@ -347,6 +347,36 @@ def test_a_linked_pr_with_no_po_yet_is_still_pr_created() -> None:
     assert entry.lifecycle_status is LifecycleStatus.PR_CREATED
 
 
+def test_a_deleted_pr_with_no_po_is_pr_deleted() -> None:
+    entry = _build(
+        reservations=[_reservation("50026", "1", "MAT1", "1300", "5", banfn="2000000026", bnfpo="10")],
+        prs=[{**_pr("2000000026", "10", "MAT1", "1300", "5"), "Loekz": "X"}],
+    )[0]
+    assert entry.reservation_pr_link_status is ReservationPrLinkStatus.PR_DELETED
+    assert entry.lifecycle_status is LifecycleStatus.PR_DELETED
+    assert entry.po_number is None
+
+
+def test_a_deleted_pr_a_po_orders_follows_the_po() -> None:
+    entry = _build(
+        reservations=[_reservation("50027", "1", "MAT1", "1300", "5", banfn="2000000027", bnfpo="10")],
+        prs=[{**_pr("2000000027", "10", "MAT1", "1300", "5"), "Loekz": "X"}],
+        po_items=[_po("4500000027", "10", "MAT1", "1300", "5", banfn="2000000027", bnfpo="10")],
+    )[0]
+    assert entry.reservation_pr_link_status is ReservationPrLinkStatus.LINKED
+    assert entry.po_number == "4500000027"
+    assert entry.lifecycle_status is LifecycleStatus.ORDERED
+
+
+def test_a_deleted_pr_issued_from_stock_is_still_issued() -> None:
+    entry = _build(
+        reservations=[_reservation("50028", "1", "MAT1", "1300", "5", banfn="2000000028", bnfpo="10")],
+        prs=[{**_pr("2000000028", "10", "MAT1", "1300", "5"), "Loekz": "X"}],
+        gi_rows=[_gi("50028", "1", "261", "5", 3)],
+    )[0]
+    assert entry.lifecycle_status is LifecycleStatus.ISSUED
+
+
 def test_issued_from_stock_with_no_pr_is_still_issued() -> None:
     entry = _build(
         reservations=[_reservation("50025", "1", "MAT1", "1300", "5")],
@@ -371,3 +401,17 @@ def test_issued_before_history_only_when_nothing_issued_and_required_earlier() -
         gi_rows=[_gi("50031", "1", "261", "5", 3)],
     )[0]
     assert issued_before_history(issued, start) is False, "an issue was seen: it is known"
+
+
+# --- ?lifecycle_status= takes one status or several ------------------------------
+
+
+def test_lifecycle_filter_reads_one_or_several_statuses() -> None:
+    from app.api.i13.reservation_ledger import lifecycle_filter
+
+    assert lifecycle_filter(None) is None
+    assert lifecycle_filter(" ") is None
+    assert lifecycle_filter("received") == {"RECEIVED"}
+    assert lifecycle_filter("ISSUED, partially_issued") == {"ISSUED", "PARTIALLY_ISSUED"}
+    assert lifecycle_filter("RESERVED,nonsense") == {"RESERVED"}, "an unknown value is dropped"
+    assert lifecycle_filter("nonsense") == frozenset(), "only unknown values: matches nothing"

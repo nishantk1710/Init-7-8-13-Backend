@@ -60,9 +60,15 @@ class AcquiredVsPlanStatus(str, Enum):
     """``ON_PLAN`` is this codebase's name for what the FRS calls
     ``ALIGNED`` -- same state (acquired quantity exactly equals planned
     quantity), kept under its original name for backward compatibility with
-    the already-shipped API contract and tests."""
+    the already-shipped API contract and tests.
+
+    ``NO_RESERVATION`` -- a plan exists, but no reservation stands for it yet
+    (no SGTXT link, none required inside its window), so there is nothing
+    issued to compare. Kept to 16 characters, the width of the WATCH mart's
+    status column."""
 
     NO_PLAN = "NO_PLAN"
+    NO_RESERVATION = "NO_RESERVATION"
     BELOW_PLAN = "BELOW_PLAN"
     ON_PLAN = "ON_PLAN"
     ABOVE_PLAN = "ABOVE_PLAN"
@@ -147,11 +153,14 @@ class LifecycleStatus(str, Enum):
     ``RESERVED`` -- the reservation names no PR (RESB.BANFN empty);
     ``PR_NOT_FOUND`` -- it names one the EBAN extract does not hold;
     ``PR_SHARED`` -- it names one that several reservations name, so whose
-    procurement it is cannot be told."""
+    procurement it is cannot be told;
+    ``PR_DELETED`` -- it names one SAP deleted (EBAN-LOEKZ) before any PO
+    ordered it."""
 
     RESERVED = "RESERVED"
     PR_NOT_FOUND = "PR_NOT_FOUND"
     PR_SHARED = "PR_SHARED"
+    PR_DELETED = "PR_DELETED"
     PR_CREATED = "PR_CREATED"
     ORDERED = "ORDERED"
     PARTIALLY_RECEIVED = "PARTIALLY_RECEIVED"
@@ -238,6 +247,9 @@ class ReservationPrLinkStatus(str, Enum):
     # are deliberately left unpopulated rather than guessed -- see
     # reservation_ledger.py's module docstring.
     CONSOLIDATION_UNRESOLVED = "CONSOLIDATION_UNRESOLVED"
+    # The PR is in the extract but SAP deleted it (EBAN-LOEKZ = X) and no PO
+    # line orders it: known, and nothing will come of it (UAT, 26 Oct 2026).
+    PR_DELETED = "PR_DELETED"
 
 
 @dataclass(frozen=True)
@@ -384,6 +396,11 @@ class WatchMetric:
     gr_not_issued_outstanding_quantity: Decimal
 
     # --- Acquired vs plan ---
+    # Planned is every plan for the position added up; issued is what was
+    # issued against the reservations those plans stand for (plans.py
+    # ``plan_outcomes``), each reservation item counted once. Received is GR
+    # on POs raised from the position's reservations -- shown, not compared:
+    # an OAR reservation is filled from stock, so it is nearly always 0.
     acquired_vs_plan_status: AcquiredVsPlanStatus
     planned_quantity: Decimal | None
     received_quantity: Decimal

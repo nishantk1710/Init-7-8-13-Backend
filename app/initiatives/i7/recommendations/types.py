@@ -234,6 +234,12 @@ class ConversionDecision(NamedTuple):
     """Whether the criticality condition held (CRITICAL/IMPACT). ``None`` when
     the tier is missing, unrecognised or the tier set is unresolved."""
     detail: str
+    consumption_count_months: int | None = None
+    """How many months ``consumption_count_12m`` was counted over -- the policy's
+    ``consumption_count_months`` when the decision was made (6 since 2026-10-22, 12
+    before). The count's name is historical; this is what a screen or an explanation
+    must say, and it travels with the count so a later policy change cannot relabel a
+    recommendation already made."""
 
 
 class ImpactStatus(StrEnum):

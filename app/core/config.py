@@ -9,7 +9,7 @@ to empty so the app -- and the health endpoint -- come up with no SAP, database
 or identity credentials present.
 """
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
@@ -90,6 +90,18 @@ class Settings(BaseSettings):
     # dead by the next call. Recycling below that window means the replacement
     # happens on our schedule instead of inside someone's request.
     database_pool_recycle_seconds: int = 1500
+
+    # Connections one worker keeps open, how many more it may open under a
+    # burst, and how long a request waits for one before failing. Requests and
+    # every background job share this pool, and each job's lock (delta, full
+    # refresh, snapshot builds, the I07 pipeline) holds a connection for its
+    # whole run. SQLAlchemy's own 5 + 10 ran out on nonprod on 14 Oct 2026
+    # with no load running ("QueuePool limit of size 5 overflow 10 reached").
+    # The ceiling is size + overflow per worker, times workers, times
+    # instances: keep that well under the database tier's worker limit.
+    database_pool_size: int = 10
+    database_max_overflow: int = 20
+    database_pool_timeout_seconds: int = 30
 
     # Attempts at opening a connection when Azure SQL drops it while it is being
     # set up -- "TCP Provider: Error code 0x68 (104)", a serverless database
@@ -182,6 +194,17 @@ class Settings(BaseSettings):
     # hour per table to learn that.
     csv_delta_first_chunk_timeout_seconds: int = 300
     csv_delta_quiet_period_seconds: int = 120
+
+    # --- Key index on the raw tables ------------------------------------------
+    #
+    # Whether a CSV full load indexes raw_<table> on the set's identity key, so
+    # the merges into it seek instead of reading the whole table (app/ingest/
+    # csv_load.py, KEY INDEX). Off by default: every table is then built
+    # exactly as it always was -- every column nvarchar(max), no index -- and
+    # an environment changes only when it is switched on. Takes effect at a
+    # table's next full load; a table already loaded is never altered. Turn it
+    # on before the first data load of an environment that should have it.
+    raw_key_index_enabled: bool = False
 
     # --- Full refresh schedule -----------------------------------------------
     #
@@ -294,6 +317,22 @@ class Settings(BaseSettings):
     # 0 fires every table together, the shape this route was proven on
     # (21 tables, 38 deliveries); --batch-size overrides it per run.
     csv_pull_batch_size: int = 2
+
+    # --- CSV pull window ------------------------------------------------------
+    #
+    # Unset (the default): every table is pulled whole, its full history.
+    # Set ONE of these to limit the transaction tables -- EKKO, EKPO, EKET,
+    # EKBE, EBAN, MKPF, MSEG, RESB, CDHDR, CDPOS -- for every CSV pull, the
+    # nightly full refresh included:
+    #   CSV_PULL_WINDOW_YEARS=3                      the last 3 years, ending today
+    #   CSV_PULL_FROM_DATE=20200101 + CSV_PULL_TO_DATE=20261231   a fixed range
+    # Master data is never narrowed by these. --years N (0 = whole) and
+    # --from-date/--to-date choose a window for one run instead. A setting that
+    # cannot be a window (half a range, both kinds, a bad date) fails the pull
+    # with the reason rather than guessing (app/ingest/csv_tables.py).
+    csv_pull_window_years: int = 0
+    csv_pull_from_date: str = ""
+    csv_pull_to_date: str = ""
 
     # --- Workbook fallback --------------------------------------------------
     #
@@ -518,10 +557,40 @@ class Settings(BaseSettings):
     # blocked by an unsigned service level.
     i7_dev_mock_max_stock: bool = False
 
-    # --- Reserved for future integrations. Not read by any code yet, and not
-    # --- required for startup. See app/core/security.py and app/integrations/.
-    azure_tenant_id: str = ""
-    azure_client_id: str = ""
+    # --- Sign-in: Microsoft Entra ID access tokens (app/core/security.py). ---
+    # Off by default, and off locally and in tests: with it off every request is
+    # served as today -- the author comes from the X-Actor-Id header and no role
+    # is checked -- so switching it on is a setting, not a deploy, and switching
+    # it back off is the rollback.
+    auth_enabled: bool = False
+    # The VZI tenant, and the Application (client) ID of the API's app
+    # registration (spares-ai-api-<env>). Both are required once AUTH_ENABLED
+    # is true; without them every protected request answers 503 rather than
+    # being let through.
+    #
+    # Not AZURE_TENANT_ID / AZURE_CLIENT_ID: those are the Azure SDK's own
+    # variables, and DefaultAzureCredential (storage, Key Vault) takes
+    # AZURE_CLIENT_ID as a user-assigned managed identity. Holding the app
+    # registration's ID there broke storage on prod (28 Oct 2026).
+    entra_tenant_id: str = ""
+    entra_api_client_id: str = ""
+    # Extra accepted token audiences, comma-separated. The client ID and
+    # api://<client ID> are always accepted: a v2 access token carries the bare
+    # client ID as its audience (measured on spares-ai-api-prod, 26 Oct 2026),
+    # not the api:// URI the app registration displays.
+    auth_audience: str = ""
+    # The delegated scope a user's token must carry (Expose an API).
+    auth_required_scope: str = "access_as_user"
+    # Clock difference tolerated on exp/nbf/iat, and how long Entra's signing
+    # keys are cached before they are fetched again (an unknown key ID always
+    # triggers a fetch, so a key rotation never waits for this).
+    auth_clock_skew_seconds: int = 120
+    auth_jwks_cache_seconds: int = 3600
+    # SAP's calls (/api/events/pr, /api/events/csv) are switched separately:
+    # they come from VZI's CPI, not from a person, and how CPI authenticates is
+    # decision D2 in the RBAC plan. "off" keeps them open as today; "entra"
+    # requires an application token carrying the Sap.Events.Write role.
+    sap_events_auth: Literal["off", "entra"] = "off"
 
     # --- Initiative 13: End-to-End Spares Utilisation Tracking. ---
     # Root directory for platform-owned (non-SAP) reference data -- currently
@@ -745,6 +814,27 @@ class Settings(BaseSettings):
     # capture can be run by hand: python -m app.reporting.capture_snapshot.
     i7_kpi_snapshot_enabled: bool = False
 
+    # Whether the nightly watcher also generates the Quarterly Report for the quarter that just closed
+    # (app/initiatives/i7/reporting/auto_generate.py), after the pipeline check and the snapshots. OFF by default, and it
+    # only acts when the watcher itself is on (i7_pipeline_watch_enabled) -- there is no second timer. Nothing else in the
+    # app generates the report on a schedule; the alternative is an Azure Logic App / WebJob calling the API (see
+    # docs/i07_quarterly_report_scheduling.md). Turn on I7_KPI_SNAPSHOT_ENABLED with it, or the report has no month-end
+    # snapshots to read and says so.
+    i7_quarterly_report_auto_enabled: bool = False
+
+    # Days after a quarter closes during which that automatic generation still runs. Switching it on mid-quarter must not
+    # produce a report for a quarter that closed weeks ago; that one is generated by hand. 1-31.
+    i7_quarterly_report_auto_window_days: int = 7
+
+    # The same for the MONTHLY report: when on (with the nightly watcher, I7_PIPELINE_WATCH_ENABLED), the report for a
+    # month that has just ended is generated automatically -- on the 1st, after the month's snapshot is finalised --
+    # and a mid-month report someone generated by hand is replaced by the final one. OFF by default, independent of the
+    # quarterly switch above. Turn on I7_KPI_SNAPSHOT_ENABLED with it, or the report has no month-end snapshot to read.
+    i7_monthly_report_auto_enabled: bool = False
+
+    # Days after a month ends during which that automatic generation still runs. 1-31.
+    i7_monthly_report_auto_window_days: int = 7
+
     # Whether Auto-ARIMA runs as the CHALLENGER to SES for Smooth and Erratic
     # demand. OFF by default. On nonprod (13 Oct 2026) it was the whole cost of
     # forecasting: ~7-8 minutes per material-plant on Azure (4 s on a laptop), so
@@ -773,6 +863,19 @@ class Settings(BaseSettings):
     # Needs the i7_declining_demand_evaluation table (an Alembic migration that
     # is applied on purpose, not by this setting).
     i7_declining_demand_mode: Literal["off", "shadow", "active"] = "off"
+
+    # --- I07 demand window: months an operator has validated as complete ------
+    #
+    # The window ends at the latest month whose SAP consumption is verified
+    # complete (app/initiatives/i7/features/consumption_window.py). A month is
+    # judged against the months before it, so a month that arrived with a small
+    # share of its usual volume is MISSING_DATA -- not zero consumption, and not a
+    # month the window may end on. A person who has checked such a month against
+    # SAP and found it genuinely quiet (a shutdown, a holiday month) lists it here
+    # as YYYY-MM, comma-separated, and it is then taken as complete. Empty (the
+    # default) validates nothing: only the volume rule decides. Reloading the
+    # extract is the other way out of MISSING_DATA.
+    i7_demand_validated_months: str = ""
 
     # --- I07 OAR donor similarity: retrieval -------------------------------
     #
@@ -871,6 +974,11 @@ class Settings(BaseSettings):
     # adds nothing to a material's open-PO quantity (UAT, 21 Oct 2026). See
     # app/initiatives/i13/watch.py. Part of the snapshot fingerprint.
     i13_open_po_respect_closed: bool = True
+    # A purchase requisition item SAP has deleted -- EBAN-LOEKZ = X -- that no
+    # PO line orders is not procurement: the ledger leaves it out, and a
+    # reservation naming it reads "PR deleted in SAP" (UAT, 26 Oct 2026). See
+    # app/initiatives/i13/po_lines.py. Part of the snapshot fingerprint.
+    i13_pr_respect_deleted: bool = True
     # Purchasing document types (EKKO-BSART) that are not orders, so nothing is
     # ever open on their lines: WK value and MK quantity contracts, AN requests
     # for quotation, FPA (VZI's own agreement type, measured as an agreement:
@@ -1062,6 +1170,14 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @field_validator("csv_pull_window_years", mode="before")
+    @classmethod
+    def _blank_window_is_whole(cls, value: object) -> object:
+        """A blank CSV_PULL_WINDOW_YEARS means no window (0), not a startup crash."""
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return 0
+        return value
+
     @field_validator("i7_stockout_risk_as_of", mode="before")
     @classmethod
     def _blank_stockout_as_of_is_unset(cls, value: object) -> object:
@@ -1101,6 +1217,27 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         """Allowed CORS origins, parsed from ``FRONTEND_ORIGIN``."""
         return [origin.strip() for origin in self.frontend_origin.split(",") if origin.strip()]
+
+    @property
+    def i7_demand_validated_month_set(self) -> frozenset[date]:
+        """``I7_DEMAND_VALIDATED_MONTHS`` as first-of-month dates.
+
+        A malformed entry raises rather than being skipped: a month the operator meant to validate
+        and silently did not is a recommendation that stays blocked for a reason nobody can see.
+        """
+        months: set[date] = set()
+        for part in self.i7_demand_validated_months.split(","):
+            text = part.strip()
+            if not text:
+                continue
+            try:
+                parsed = datetime.strptime(text, "%Y-%m")
+            except ValueError as exc:
+                raise ValueError(
+                    f"I7_DEMAND_VALIDATED_MONTHS entry {text!r} is not YYYY-MM"
+                ) from exc
+            months.add(date(parsed.year, parsed.month, 1))
+        return frozenset(months)
 
     @property
     def i7_plant_list(self) -> tuple[str, ...]:

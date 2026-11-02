@@ -42,6 +42,13 @@ select
     --
     -- APPENDED AT THE END, and it has to stay that way -- `create or replace
     -- view` can only add columns after the existing ones. See 21_v_ekpo.sql.
-    nullif(text, '')                     as sgtxt
+    nullif(text, '')                     as sgtxt,
+    -- The order and reservation a movement was posted against (27-Oct-2026),
+    -- so the maintenance order's 261/262 and the repair order's 543 can be
+    -- read by order in a later phase. Nothing reads them yet. "order" is a
+    -- keyword, quoted, and kept out of the helpers. APPENDED AT THE END.
+    nullif("order", '')                  as aufnr,
+    sap_key(reservation)                 as rsnum,
+    nullif(item_no_stock_transfer_reserv, '') as rspos
 from n_mseg
 where in_scope_plant(plant);

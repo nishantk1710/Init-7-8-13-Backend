@@ -35,6 +35,25 @@ set's own delta field in ``manifest.DELTAS`` (``CpudtMkpf`` -> ``CPUDT_MKPF``).
 A separate list fell behind once already -- MKPF was still seeded on BUDAT
 after its delta had to move to CPUDT, and EKPO, EKBE and MSEG were never
 seeded at all, so their first increment was always a full pull.
+
+KEY INDEX
+
+Every merge into ``raw_<table>`` (the OData delta through ``raw_merge``, the
+CSV increment through ``csv_delta``) matches rows on the set's identity key.
+Unindexed, each of those reads the whole table -- 7.2 million rows for MSEG,
+every hour, on the database the screens read. So the load gives the key
+columns a bounded width (``nvarchar(max)`` cannot be indexed) and builds one
+index over the whole key after the rows are in (``key_index_columns``).
+
+Only with RAW_KEY_INDEX_ENABLED on. Off -- the default -- every table is built
+exactly as before. Either way it acts at a table's next full load only: a
+table already in the database is never altered.
+
+The bounded width is the one new way a load can fail: a value wider than it
+(121 to 450 nchars, against SAP key fields of at most 90). That, or the index
+build itself failing, rolls the attempt back and loads again exactly as
+before the index existed -- unindexed, every column ``nvarchar(max)`` -- so
+the index can cost a slower merge, never an extract.
 """
 
 from __future__ import annotations
@@ -50,6 +69,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.core.db import get_engine, get_sessionmaker
 from app.core.logging import get_logger
 from app.core.storage import Storage, get_storage
@@ -58,7 +78,7 @@ from app.ingest.csv_tables import CsvTable, csv_table
 from app.ingest.watermarks import set_watermark
 from app.models.csv_extract import RECONCILE_INCREMENT, STATUS_COMPLETE, STATUS_OPEN, CsvExtractRequest
 from app.models.ingestion import IngestionRun
-from app.seed.sqlserver import RawTableWriter
+from app.seed.sqlserver import RawTableWriter, key_column_chars
 from app.shared import sap_normalise
 
 logger = get_logger(__name__)
@@ -272,44 +292,71 @@ def load_table(
     except Exception as exc:
         return failure(f"could not check which SAP system the database holds: {exc}")
 
-    writer = RawTableWriter(indexed_columns=())
     loaded = 0
     columns: list[str] = []
     watermark_value: str | None = None
     watermark_index: int | None = None
-    phase = "reading"
 
-    try:
-        with _open_csv(storage, record.data_key) as (header, rows):
-            if not header:
-                return failure(f"{record.data_key} is empty")
+    # Indexed first; unindexed -- the table exactly as it was built before the
+    # index existed -- only if the index itself is what failed. With
+    # RAW_KEY_INDEX_ENABLED off, only the unindexed load runs. See KEY INDEX.
+    attempts = (True, False) if get_settings().raw_key_index_enabled else (False,)
+    for with_key_index in attempts:
+        loaded = 0
+        watermark_value = None
+        key_index: list[str] = []
+        phase = "reading"
+        try:
+            with _open_csv(storage, record.data_key) as (header, rows):
+                if not header:
+                    return failure(f"{record.data_key} is empty")
 
-            columns = _safe_columns(header)
-            watermark_index = _watermark_index(spec, columns)
-            phase = "loading"
+                columns = _safe_columns(header)
+                watermark_index = _watermark_index(spec, columns)
+                key_index = key_index_columns(spec, columns) if with_key_index else []
+                writer = RawTableWriter(
+                    indexed_columns=tuple(key_index), indexed_chars=key_column_chars(len(key_index))
+                )
+                phase = "loading"
 
-            engine = get_engine()
-            with engine.begin() as connection:
-                # driver_connection, and a cursor from it: SQLAlchemy's wrapper
-                # does more on exit than close, and engine.begin() owns the
-                # transaction. Same pattern as ingest/load.py.
-                cursor = connection.connection.driver_connection.cursor()
+                engine = get_engine()
+                with engine.begin() as connection:
+                    # driver_connection, and a cursor from it: SQLAlchemy's wrapper
+                    # does more on exit than close, and engine.begin() owns the
+                    # transaction. Same pattern as ingest/load.py.
+                    cursor = connection.connection.driver_connection.cursor()
 
-                # Replace, not merge. A full pull IS the table; merging it into
-                # the previous one would keep rows SAP has since deleted.
-                writer.create_table(cursor, spec.raw_table, columns)
-                for batch in _batches(rows, len(columns)):
-                    if watermark_index is not None:
-                        watermark_value = _highest(
-                            watermark_value, (r[watermark_index] for r in batch)
-                        )
-                    writer.bulk_load(cursor, spec.raw_table, columns, batch)
-                    loaded += len(batch)
-    except Exception as exc:
-        if phase == "reading":
-            return failure(f"could not read {record.data_key}: {exc}")
-        _record(spec, record, STATUS_FAILED, 0, started_at, str(exc))
-        return failure(f"the load failed after {loaded} row(s): {exc}")
+                    # Replace, not merge. A full pull IS the table; merging it into
+                    # the previous one would keep rows SAP has since deleted.
+                    writer.create_table(cursor, spec.raw_table, columns)
+                    for batch in _batches(rows, len(columns)):
+                        if watermark_index is not None:
+                            watermark_value = _highest(
+                                watermark_value, (r[watermark_index] for r in batch)
+                            )
+                        writer.bulk_load(cursor, spec.raw_table, columns, batch)
+                        loaded += len(batch)
+                    # After the rows, never before: maintaining an index during
+                    # a bulk load costs more than building it once at the end.
+                    if key_index:
+                        phase = "indexing"
+                        writer.create_key_index(cursor, spec.raw_table, key_index)
+        except Exception as exc:
+            if phase == "reading":
+                return failure(f"could not read {record.data_key}: {exc}")
+            if key_index and (phase == "indexing" or _too_wide_for_key(exc)):
+                # Rolled back whole, so the previous table is intact. Load again
+                # as before the index existed rather than lose the extract to it.
+                logger.warning(
+                    "%s: the key index on %s failed (%s); loading again without it",
+                    spec.sap_table, ", ".join(key_index), exc,
+                )
+                continue
+            _record(spec, record, STATUS_FAILED, 0, started_at, str(exc))
+            return failure(f"the load failed after {loaded} row(s): {exc}")
+        if key_index:
+            logger.info("%s: %s indexed on %s", spec.sap_table, spec.raw_table, ", ".join(key_index))
+        break
 
     elapsed = time.monotonic() - started
 
@@ -370,6 +417,49 @@ def _seed_watermark(entity_set: str, field: str, dats: str, rows: int) -> str | 
     mark = f"{newest - timedelta(days=1):%Y-%m-%d}"
     set_watermark(entity_set, field, mark, rows)
     return mark
+
+
+def key_index_columns(spec: CsvTable, columns: list[str]) -> list[str]:
+    """The file's columns for the set's identity key, in key order, or ``[]``.
+
+    The same key the merges match on (``csv_delta``, ``raw_merge``): each
+    OData key property as its SAP field (``Mblnr`` -> ``MBLNR``), spelled as
+    the file spells it. ``[]`` -- no index -- when the file lacks any of them,
+    for then nothing can merge into this table by key anyway.
+    """
+    from app.ingest.manifest import spec_for
+    from app.ingest.raw_merge import sap_field
+
+    try:
+        keys = [sap_field(k) for k in spec_for(spec.entity_set).identity_keys]
+    except Exception as exc:  # noqa: BLE001 -- no index is the table as it always was
+        logger.warning("%s: no key index -- the key of %s is unknown (%s)", spec.sap_table, spec.entity_set, exc)
+        return []
+    by_upper: dict[str, str] = {}
+    for column in columns:
+        by_upper.setdefault(column.upper(), column)
+    missing = [k for k in keys if k not in by_upper]
+    if not keys or missing:
+        logger.info(
+            "%s: no key index -- the file has no column for %s",
+            spec.sap_table, ", ".join(missing) or "a key",
+        )
+        return []
+    return [by_upper[k] for k in keys]
+
+
+def _too_wide_for_key(exc: BaseException) -> bool:
+    """Whether a load failed on a value wider than its indexed key column.
+
+    SQLSTATE 22001 ("String or binary data would be truncated", errors 8152
+    and 2628). The one way a bounded key column can refuse a row the
+    unbounded one took; real SAP keys are a fraction of the width.
+    """
+    # pyodbc's own error here (the load uses the driver's cursor); SQLAlchemy's
+    # wrapper, should one ever arrive, carries it as ``orig``.
+    args = getattr(getattr(exc, "orig", None) or exc, "args", ())
+    state = args[0] if args and isinstance(args[0], str) else ""
+    return state == "22001" or "would be truncated" in str(exc)
 
 
 def _watermark_index(spec: CsvTable, columns: list[str]) -> int | None:

@@ -104,6 +104,21 @@ def submit(state: WorkflowState) -> WorkflowState:
     return replace(state, status=LifecycleStatus.PENDING_APPROVAL, chain_index=0)
 
 
+def resubmit(state: WorkflowState) -> WorkflowState:
+    """Re-enter the chain at the first role after a rejection.
+
+    Only a REJECTED recommendation may be resubmitted, and only a caller that has checked the material
+    may be asked for again (see ``ledger.submit_for_approval``): REJECTED stays final for every other
+    recommendation. It starts a new pass through the chain, so ``chain_index`` goes back to the first role;
+    ``adjustment_count`` and the version are kept, and the earlier pass stays in the ledger untouched.
+    """
+    if state.status is not LifecycleStatus.REJECTED:
+        raise WorkflowError(
+            f"cannot resubmit a recommendation in state {state.status.value}; only REJECTED may be resubmitted"
+        )
+    return replace(state, status=LifecycleStatus.PENDING_APPROVAL, chain_index=0)
+
+
 def reject_unsubmitted(state: WorkflowState, comment: str | None) -> WorkflowState:
     """Decline a recommendation straight from the Recommendations page, without sending it through
     the approval chain first.

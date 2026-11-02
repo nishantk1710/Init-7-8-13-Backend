@@ -123,4 +123,9 @@ class AdoptionSummary(BaseModel):
     ``known_count`` is 0 (including when every evaluated row is UNKNOWN, the
     current state of this extract) -- an all-UNKNOWN portfolio must never
     report a 0% rate, which would misrepresent "nothing observed yet" as
-    "observed and none adopted"."""
+    "observed and none adopted".
+
+    The built-in rule; Calculation > SAP Adoption can change it, and then this is that formula x 100."""
+    counted_as_adopted: int | None = None
+    """What the Adopted card counts: ``adopted_count`` by default, or the user's own formula (for example
+    adopted + partially adopted). ``None`` when the formula cannot be worked out."""
