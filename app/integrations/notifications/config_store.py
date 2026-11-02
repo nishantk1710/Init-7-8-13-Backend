@@ -107,7 +107,7 @@ def active_sla_for(db: Session, approval_route: str, role: str) -> NotificationS
     Order: this route and role, this route, any route and this role, any route.
     ``None`` -- no active row -- means no reminders and no escalation.
     """
-    rows = list(db.scalars(select(NotificationSla).where(NotificationSla.active.is_(True))))
+    rows = list(db.scalars(select(NotificationSla).where(NotificationSla.active)))
     for route, wanted_role in ((approval_route, role), (approval_route, None), ("ALL", role), ("ALL", None)):
         for row in rows:
             if row.approval_route == route and row.role == wanted_role:

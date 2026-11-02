@@ -72,7 +72,7 @@ def _is_latest(db: Session, row: Recommendation) -> bool:
 def run_reminders(db: Session, now: datetime | None = None) -> ReminderResult:
     """One pass. Queues the messages and saves the state; the caller commits."""
     now = _aware(now or datetime.now(timezone.utc))
-    if db.scalars(select(NotificationSla.id).where(NotificationSla.active.is_(True)).limit(1)).first() is None:
+    if db.scalars(select(NotificationSla.id).where(NotificationSla.active).limit(1)).first() is None:
         return ReminderResult()
 
     policy = PolicyDocument()

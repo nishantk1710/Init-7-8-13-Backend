@@ -63,7 +63,7 @@ def resolve_role(db: Session, role: str, plant: str | None, *, fallback_email: s
     rows = list(
         db.scalars(
             select(NotificationRecipient)
-            .where(NotificationRecipient.role == role, NotificationRecipient.active.is_(True))
+            .where(NotificationRecipient.role == role, NotificationRecipient.active)
             .order_by(NotificationRecipient.id)
         )
     )

@@ -80,7 +80,7 @@ def _own_or_404(db: Session, actor: Actor, notification_id: str) -> Notification
 
 
 def _unread(db: Session, actor: Actor) -> int:
-    return db.scalar(select(func.count()).select_from(NotificationRow).where(*_mine(actor), NotificationRow.is_read.is_(False))) or 0
+    return db.scalar(select(func.count()).select_from(NotificationRow).where(*_mine(actor), ~NotificationRow.is_read)) or 0
 
 
 @router.get("", response_model=InboxPage, summary="My notifications, newest first")
@@ -94,9 +94,9 @@ def list_my_notifications(
     size = min(page_size, MAX_PAGE_SIZE)
     conditions = list(_mine(actor))
     if status_filter == "unread":
-        conditions.append(NotificationRow.is_read.is_(False))
+        conditions.append(~NotificationRow.is_read)
     elif status_filter == "read":
-        conditions.append(NotificationRow.is_read.is_(True))
+        conditions.append(NotificationRow.is_read)
 
     total = db.scalar(select(func.count()).select_from(NotificationRow).where(*conditions)) or 0
     rows = db.scalars(
@@ -124,7 +124,7 @@ def unread_count(db: Session = Depends(get_db), actor: Actor = Depends(get_curre
 def mark_all_read(db: Session = Depends(get_db), actor: Actor = Depends(get_current_actor)) -> MarkedRead:
     result = db.execute(
         update(NotificationRow)
-        .where(*_mine(actor), NotificationRow.is_read.is_(False))
+        .where(*_mine(actor), ~NotificationRow.is_read)
         .values(is_read=True, read_at=datetime.now(timezone.utc))
     )
     db.commit()
