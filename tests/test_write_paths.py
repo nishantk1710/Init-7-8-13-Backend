@@ -139,6 +139,11 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "materials, which is a body rather than a query string. Listed so its "
         "presence here is deliberate."
     ),
+    ("/api/assistant/requests/upload", "post"): (
+        "A POST that writes NOTHING -- it reads an uploaded Excel template "
+        "back as a list of materials (a file is a multipart body). The file "
+        "is not kept. Listed so its presence here is deliberate."
+    ),
     ("/api/i13/uat/requests/simulate", "post"): (
         "UAT only (I13_UAT_SIMULATION_ENABLED, else 404) -> uat_reservation_sgtxt: "
         "one simulated reservation for a whole multi-material request, an item "
