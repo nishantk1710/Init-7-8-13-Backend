@@ -66,6 +66,14 @@ before writing and refused, never truncated: the idempotency key is replaced by 
 characters, and an over-long address or an identity that is not a GUID becomes a failed row without being stored.
 Failures are logged with the module, event, entity and error type, but not the values.
 
+### In-app only (email switched off)
+
+`NOTIFICATION_EMAIL_ENABLED=false` makes the in-app inbox the only channel. No email row is created, nothing is sent
+(waiting email rows are left untouched), and I13 email intents do nothing. Everything else is unchanged: approvals,
+reminders, escalation and the inbox work as before, and a notification that reaches nobody is still recorded as a
+failed row (as an in-app row with no user, so no inbox shows it). The Microsoft Graph setup is not needed in this mode.
+The default is `true`. Switching it back on later needs only the setting (and Graph, if real email is wanted).
+
 ### Wording
 
 Everything a person reads comes from `templates.py`. No internal module name (I07, I08, I13) appears in a subject,

@@ -1058,6 +1058,11 @@ class Settings(BaseSettings):
     notification_i13_escalation_enabled: bool = False
     notification_i13_escalation_batch_size: int = 100
 
+    # Master switch for email. When false, no email notification is created or sent at all: the
+    # in-app inbox is the only channel. (A notification that cannot be delivered to anyone is
+    # still recorded as a failed row, but not as an email.) Independent of the provider below.
+    notification_email_enabled: bool = True
+
     # "logging" records an email without sending it (nothing is delivered and
     # the row is LOGGED_ONLY). "graph" sends through Microsoft Graph and needs
     # the four graph_* values below.
