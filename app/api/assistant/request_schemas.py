@@ -203,3 +203,20 @@ class RequestSummaryModel(AssistantModel):
 
 class RequestListResponse(AssistantModel):
     items: list[RequestSummaryModel]
+
+
+# --- upload ----------------------------------------------------------------------
+
+
+class UploadResponse(AssistantModel):
+    """An uploaded template, read and checked. Nothing is stored: each material
+    is then previewed as one added by hand."""
+
+    plant: str
+    department: str
+    department_name: str | None
+    materials: list[str]
+    """In file order, duplicates removed."""
+    row_count: int
+    duplicates: list[str]
+    max_lines: int

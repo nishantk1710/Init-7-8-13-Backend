@@ -10,6 +10,9 @@ them into HTTP.
   422 names the line at fault; 409 lists the suggestions that moved since the
   preview, with their fresh values.
 * ``GET /assistant/requests`` / ``GET /assistant/requests/{id}`` -- read back.
+* ``GET /assistant/requests/upload-template`` / ``POST /assistant/requests/upload``
+  -- the Excel template, and an uploaded copy read back as a list of
+  materials. 422 lists every problem in the file. Writes nothing.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
@@ -34,10 +37,12 @@ from app.api.assistant.request_schemas import (
     RequestSummaryModel,
     SkippedModel,
     SuggestedModel,
+    UploadResponse,
 )
 from app.api.assistant.schemas import LinkedReservationModel
 from app.api.deps import Actor, get_current_actor
 from app.assistant import departments as department_names
+from app.assistant import request_upload
 from app.assistant import requests as request_service
 from app.assistant import script
 from app.assistant.models import AssistantRequest, AssistantSession
@@ -47,6 +52,8 @@ from app.core.db import get_db
 from app.initiatives.i8.config import get_i8_settings
 from app.initiatives.i13.session_link import line_number_note
 from app.shared.material_names import material_names
+
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 #: How long a read waits for material names right after a restart.
 NAME_WAIT_SECONDS = 10
@@ -230,6 +237,54 @@ def list_requests(
             )
             for r in rows
         ]
+    )
+
+
+# Declared before ``/{request_id}``, which would otherwise take the path.
+@router.get(
+    "/upload-template",
+    response_class=Response,
+    summary="The Excel template a request's materials are uploaded in",
+    responses={200: {"content": {XLSX_MEDIA_TYPE: {}}}},
+)
+def upload_template(settings: SettingsDep) -> Response:
+    return Response(
+        content=request_upload.build_template(request_service.max_lines(settings)),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{request_upload.TEMPLATE_FILE_NAME}"'},
+    )
+
+
+@router.post("/upload", response_model=UploadResponse, summary="The materials in an uploaded template")
+def upload(
+    settings: SettingsDep,
+    file: UploadFile = File(..., description="The filled-in template, .xlsx"),
+) -> UploadResponse:
+    """Reads and checks the file; stores nothing. 422 ``{"errors": [...]}``
+    lists every problem, so the file can be fixed in one go."""
+    max_lines = request_service.max_lines(settings)
+    # One byte past the limit is enough to know the file is too large.
+    content = file.file.read(request_upload.MAX_UPLOAD_BYTES + 1)
+    try:
+        extracted = request_upload.extract(
+            content,
+            max_lines=max_lines,
+            file_name=file.filename or "",
+            check_department=settings.assistant_department_check_enabled,
+        )
+    except request_upload.UploadError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": str(error), "errors": error.errors},
+        ) from None
+    return UploadResponse(
+        plant=extracted.plant,
+        department=extracted.department,
+        department_name=extracted.department_name,
+        materials=extracted.materials,
+        row_count=extracted.row_count,
+        duplicates=extracted.duplicates,
+        max_lines=max_lines,
     )
 
 

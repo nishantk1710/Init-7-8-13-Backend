@@ -67,6 +67,7 @@ PENDING: dict[tuple[str, str], str] = {
     ("/api/assistant/ask", "POST"): "I13",
     ("/api/assistant/requests", "POST"): "I13",
     ("/api/assistant/requests/preview", "POST"): "I13",
+    ("/api/assistant/requests/upload", "POST"): "I13",
     ("/api/justifications", "POST"): "I13",
 }
 
