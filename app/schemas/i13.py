@@ -717,3 +717,35 @@ class ActExceptionCountsResponse(BaseModel):
     by_status: dict[str, int]
     #: Exceptions with a requester to route to; the rest reach nobody.
     with_requester: int
+
+
+class PlanVsIssuedRowResponse(BaseModel):
+    """One row of the acquired-vs-plan tab: a captured plan (``ASSISTANT``)
+    or an OAR reservation raised directly in SAP (``SAP``) -- see
+    ``app.initiatives.i13.plan_vs_issued``."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    row_id: str
+    source: str
+    material: str
+    material_description: str | None = None
+    plant: str
+    reservations: list[str]
+    session_id: str | None
+    plan_id: str | None
+    planned_quantity: Decimal
+    """A plan's planned quantity, or a SAP reservation's reserved quantity."""
+    issued_quantity: Decimal
+    """Goods issued on the reservation(s), reversals netted -- never a receipt."""
+    status: str
+    variance_quantity: Decimal | None
+    variance_percentage: Decimal | None
+    due_date: date | None
+    window_start: date | None
+
+
+class PlanVsIssuedCountsResponse(BaseModel):
+    total: int
+    by_source: dict[str, int]
+    by_status: dict[str, int]

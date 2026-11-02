@@ -52,7 +52,8 @@ from app.initiatives.i13.exceptions import exception_queue_from
 from app.initiatives.i13.ledger_compat import build_legacy_ledger, grni_lines
 from app.initiatives.i13.models import AgingBand, ProcurementChainDiagnostics
 from app.initiatives.i13.movement_metrics import compute_all_movement_metrics
-from app.initiatives.i13.plans import ConsumptionPlan, load_reference_plans
+from app.initiatives.i13.plan_vs_issued import plan_vs_issued_rows
+from app.initiatives.i13.plans import ConsumptionPlan, PlanSource, load_reference_plans
 from app.initiatives.i13.procurement_chain import (
     build_procurement_chain,
     compute_chain_diagnostics,
@@ -436,8 +437,27 @@ def _build_batch(
         kinds.exception(item, is_oar(item.material, item.plant))
         for item in exception_queue_from(ledger, batch_plans, watch, config, as_of=as_of)
     )
+    # The acquired-vs-plan tab: this batch's captured plans and its OAR
+    # reservations, against the whole batch's ledger.
+    writer.write(
+        kinds.planvs(row)
+        for row in plan_vs_issued_rows(
+            [p for p in all_plans if batch.holds(p.material)], ledger, as_of=as_of, is_oar=is_oar
+        )
+    )
     del ledger
     writer.write(kinds.watch(m, m.material_scope is MaterialScope.OAR) for m in watch)
+
+
+def _write_plans_without_sap(writer: RecordWriter, all_plans: list[ConsumptionPlan], batches, as_of: date) -> None:
+    """Captured plans whose material no batch holds -- nothing in SAP for it
+    yet -- still get their acquired-vs-plan row (awaiting a reservation)."""
+    orphans = [
+        p for p in all_plans
+        if p.source is PlanSource.CAPTURED and not any(b.holds(p.material) for b in batches)
+    ]
+    if orphans:
+        writer.write(kinds.planvs(row) for row in plan_vs_issued_rows(orphans, [], as_of=as_of, is_oar=lambda m, p: False))
 
 
 # --- the whole build -------------------------------------------------------
@@ -527,6 +547,7 @@ def build(
         orphans = [p for p in reference_plans if not any(b.holds(p.material) for b in batches)]
         if orphans:
             writer.write([kinds.exception(i, True) for i in exception_queue_from([], orphans, [], config, as_of=as_of)])
+        _write_plans_without_sap(writer, all_plans, batches, as_of)
 
         linked = sync_links(db, sgtxt_rows)
         log(f"I13 store: v{version} session links {linked}")
@@ -721,6 +742,7 @@ def reage(
         orphans = [p for p in reference_plans if not any(b.holds(p.material) for b in batches)]
         if orphans:
             writer.write([kinds.exception(i, True) for i in exception_queue_from([], orphans, [], config, as_of=as_of)])
+        _write_plans_without_sap(writer, all_plans, batches, as_of)
         db.commit()
 
         copied = _copy_kinds(db, source.version, version, kinds.UNDATED_KINDS)
