@@ -68,8 +68,18 @@ class MarkedRead(_Camel):
     updated: int
 
 
+#: Modules whose notifications are no longer shown. Repairable Spares ("I08") sends none any more; any it sent
+#: before stay in the table but are kept out of the inbox, the unread count and mark-all-read, so nobody is left
+#: with unread notices they cannot see.
+HIDDEN_MODULES = ("I08",)
+
+
 def _mine(actor: Actor):
-    return (NotificationRow.channel == Channel.IN_APP.value, NotificationRow.recipient_user_id == actor.id)
+    return (
+        NotificationRow.channel == Channel.IN_APP.value,
+        NotificationRow.recipient_user_id == actor.id,
+        NotificationRow.module.not_in(HIDDEN_MODULES),
+    )
 
 
 def _own_or_404(db: Session, actor: Actor, notification_id: str) -> NotificationRow:

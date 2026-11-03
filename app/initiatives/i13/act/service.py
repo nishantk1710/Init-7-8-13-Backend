@@ -60,9 +60,11 @@ than one routed to nobody, because somebody answers it.
 from __future__ import annotations
 
 import dataclasses
+import uuid
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from urllib.parse import quote
 
 from app.initiatives.i13.act.detection import (
     build_exception_id,
@@ -158,9 +160,60 @@ def _transition(
 EXCEPTION_PAGE = "/oar-utilization/aging-exceptions"
 
 
-def _message(exception: ActException, action: str) -> str:
-    """What a notification says: the exception in business terms, then what is asked."""
-    return f"Material: {exception.material}\nPlant: {exception.plant}\n{exception.reason}\n{action}"
+#: What the requester is asked, word for word, in the "Confirm Exception" notification.
+REQUESTER_QUESTION = "Why was this material not consumed as planned, in your own words."
+
+
+def exception_link(exception: ActException) -> str:
+    """The Procurement Exceptions page narrowed to this exception's material and plant.
+
+    The page filters on exactly these two query parameters, so the link opens the material's own
+    exceptions instead of the whole list.
+    """
+    return f"{EXCEPTION_PAGE}?material={quote(exception.material, safe='')}&plant={quote(exception.plant, safe='')}"
+
+
+def _details(exception: ActException) -> list[str]:
+    """The lines both messages share: what the exception is, in business terms. ``Material:`` stays a
+    ``Label: value`` line, which is how the inbox picks the material out as the reference."""
+    return [
+        f"Material: {exception.material}",
+        f"Plant: {exception.plant}",
+        f"Exception: {exception.reason or '-'}",
+        f"Exception code: {exception.exception_type.value}",
+    ]
+
+
+def _requester_message(exception: ActException) -> str:
+    """Asked of the person who requested the reservation: confirm, and say why."""
+    return "\n".join([*_details(exception), REQUESTER_QUESTION])
+
+
+def _requester_name(exception: ActException) -> str | None:
+    """The requester as a person would read it. An Entra object id is not a name, so it is left out."""
+    who = (exception.owner_requester_id or "").strip()
+    if not who:
+        return None
+    try:
+        uuid.UUID(who)
+    except ValueError:
+        return who
+    return None
+
+
+def _hod_message(exception: ActException, as_of_time: datetime) -> str:
+    """Told to the HOD once the requester's time is up: still pending, and the requester has not responded."""
+    waited = max(0, (as_of_time - exception.detected_at).days)
+    lines = [
+        "This exception is still pending: the requester has not confirmed it or given an explanation.",
+        *_details(exception),
+    ]
+    requester = _requester_name(exception)
+    if requester:
+        lines.append(f"Requester: {requester}")
+    lines.append(f"Detected: {exception.detected_at:%d %b %Y} ({waited} {'day' if waited == 1 else 'days'} ago)")
+    lines.append("Action required: please follow up with the requester.")
+    return "\n".join(lines)
 
 
 def _notify(
@@ -190,7 +243,7 @@ def _notify(
         entity_type="EXCEPTION",
         module="I13",
         event_type=event_type,
-        action_path=EXCEPTION_PAGE,
+        action_path=exception_link(exception),
     )
     try:
         result = notification_port.send(intent)
@@ -245,8 +298,8 @@ def _route_to_requester(
         current_assignee_id=requester_id,
         routing_status=RoutingStatus.RESOLVED,
     )
-    subject = "Action Required – Inventory Exception"
-    body = _message(updated, "Action required: please confirm or explain.")
+    subject = "Confirm Exception"
+    body = _requester_message(updated)
     for channel in (NotificationChannel.PLATFORM_QUEUE, NotificationChannel.EMAIL):
         _notify(repository, notification_port, updated, channel, requester_id, subject=subject, body=body, as_of_time=as_of_time, event_type=EXCEPTION_RESPONSE_REQUIRED)
     return updated
@@ -629,8 +682,8 @@ def process_escalations(
                 current_assignee_id=hod_id,
                 routing_status=RoutingStatus.RESOLVED,
             )
-            subject = "Escalation Required – Inventory Exception"
-            body = _message(updated, "This exception was not answered in time and needs your review.")
+            subject = "Escalation Required – Exception Not Confirmed"
+            body = _hod_message(updated, as_of_time)
             for channel in (NotificationChannel.PLATFORM_QUEUE, NotificationChannel.EMAIL):
                 _notify(repository, notification_port, updated, channel, hod_id, subject=subject, body=body, as_of_time=as_of_time, event_type=EXCEPTION_ESCALATED)
             escalated += 1
