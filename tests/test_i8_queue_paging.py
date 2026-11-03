@@ -420,6 +420,18 @@ class TestRegisterFilters:
         assert ids(listing(queues, department="10305")) == ["4500000001-10", "PR-2000029101-10"]
         assert ids(listing(queues, department="99999")) == []
 
+    def test_department_falls_back_to_the_requisitioner_as_the_row_does(self, queues) -> None:
+        """A PO line whose repair PR was not read shows its own requisitioner
+        as its department, so the filter finds it by that code."""
+        queues.lines = (
+            repair_line(1, pr_department="10305", requisitioner="10316"),
+            repair_line(2, pr_department=None, requisitioner="10316"),
+        )
+
+        assert ids(listing(queues, department="10316")) == ["4500000002-10"]
+        assert ids(listing(queues, department="10305")) == ["4500000001-10"]
+        assert [d["value"] for d in listing(queues)["facets"]["departments"]] == ["10305", "10316"]
+
     def test_late_aging_bands_the_days_past_the_expected_return(self, queues) -> None:
         """3-Nov-2026: the Overview's "days past expected return" row. A line
         not yet due, or with no date, is in no band; a PR has no date at all."""
@@ -571,8 +583,9 @@ class TestRegisterFacets:
         assert facets["repairStatuses"] == ["At Vendor", "PO Issued"]
         assert facets["criticalities"] == ["CRITICAL"]
         assert facets["hasUnrated"] is True
-        # No line names its repair PR's department here.
-        assert facets["departments"] == []
+        # No line names its repair PR's department here, so each offers the
+        # requisitioner its row shows instead.
+        assert [d["value"] for d in facets["departments"]] == ["10316"]
 
     def test_departments_are_offered_by_code_with_their_names(self, queues, monkeypatch) -> None:
         monkeypatch.setattr(

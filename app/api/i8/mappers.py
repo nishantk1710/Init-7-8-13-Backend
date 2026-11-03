@@ -190,10 +190,8 @@ def repair_chain(
         declared_at=declaration.declared_at if declaration else None,
         condition=declaration.condition if declaration else None,
         next_action=declaration.next_action if declaration else None,
-        # The department that raised the repair PR (27-Oct-2026), falling back
-        # to the PO line's own requisitioner when that PR was not read.
-        requester=line.pr_department or line.requisitioner,
-        requester_name=department_name(line.pr_department or line.requisitioner),
+        requester=line_department(line),
+        requester_name=department_name(line_department(line)),
         declaration_link=declaration.declaration_link if declaration else None,
         declaration_session_id=declaration.declaration_session_id if declaration else None,
         usable_stock=usable_stock,
@@ -271,6 +269,14 @@ def request_chain(
         damaged_stock=damaged_stock,
         stock_condition_known=stock_condition_known,
     )
+
+
+def line_department(line: RepairLine) -> str | None:
+    """The department a repair PO line's row shows: the one that raised its
+    repair PR (EBAN.AFNAM, 27-Oct-2026), else the PO line's own requisitioner
+    when that PR was not read. The ``department`` filter and its dropdown match
+    the same value (3-Nov-2026), so a row is found by the code it shows."""
+    return line.pr_department or line.requisitioner
 
 
 def department_name(code: str | None) -> str | None:
@@ -503,13 +509,13 @@ def register_facets(
     plant -- so the dropdown offers exactly what the column displays. A PR row
     has no vendor, so any PR makes ``vendor=none`` worth offering. The
     departments (3-Nov-2026) are the ones the ``department`` filter matches:
-    the repair PR's EBAN.AFNAM code.
+    what each row shows (``line_department``; a PR row's own EBAN.AFNAM code).
     """
     criticalities = [criticality_of(row) for row in (*lines, *requests)]
     department_codes = {
         code.strip()
         for code in (
-            *(line.pr_department for line in lines),
+            *(line_department(line) for line in lines),
             *(request.department for request in requests),
         )
         if code and code.strip()

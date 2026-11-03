@@ -30,6 +30,7 @@ from app.api.i8.mappers import (
     declaration_item,
     declaration_meta,
     department_name,
+    line_department,
     material_descriptions,
     register_facets,
     register_meta,
@@ -439,8 +440,9 @@ def get_register(
     department: str | None = Query(
         None,
         description=(
-            "The department that asked for the repair: the repair PR's "
-            "EBAN.AFNAM code, on a PO line and a PR row alike (3-Nov-2026)"
+            "The department that raised the repair, as the row shows it: the "
+            "repair PR's EBAN.AFNAM code, else a PO line's own requisitioner "
+            "when its PR was not read (3-Nov-2026)"
         ),
     ),
     quick_view: str | None = Query(
@@ -566,7 +568,7 @@ def get_register(
         requests = ()
     if department:
         wanted_department = department.strip()
-        lines = tuple(line for line in lines if (line.pr_department or "").strip() == wanted_department)
+        lines = tuple(line for line in lines if (line_department(line) or "").strip() == wanted_department)
         requests = tuple(r for r in requests if (r.department or "").strip() == wanted_department)
     if q and q.strip():
         needle = q.strip().lower()
