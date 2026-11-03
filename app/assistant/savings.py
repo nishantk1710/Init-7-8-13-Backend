@@ -83,7 +83,7 @@ def unit_price(db: DbSession, material: str, plant: str) -> UnitPrice:
         .where(
             StagedMaterialPlant.sap_material_number.in_(keys),
             StagedMaterialPlant.sap_plant_code == (plant or "").strip(),
-            StagedMaterialPlant.is_active.is_(True),
+            StagedMaterialPlant.is_active,  # not .is_(True): SQL Server refuses "IS 1"
         )
         .order_by(StagedMaterialPlant.staging_run_id.desc())
         .limit(1)
