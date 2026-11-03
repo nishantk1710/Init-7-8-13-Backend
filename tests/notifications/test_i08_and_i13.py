@@ -1,8 +1,8 @@
 """I08 and I13 through the shared service.
 
-I08: the existing log still works and the four exception types now also reach the
-inbox, to whoever is configured. I13: the requester and HOD notifications land in
-the shared table, and escalation runs through the same code the scheduler calls.
+I08: the existing exception log still works, and Repairable Spares sends no in-app or email notification to
+anyone. I13: the requester and HOD notifications land in the shared table, and escalation runs through the same
+code the scheduler calls.
 """
 
 from __future__ import annotations
@@ -10,11 +10,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import select
 
-from app.core.config import get_settings
 from app.initiatives.i13.act.domain import (
     ActException,
     AssigneeType,
@@ -25,10 +22,11 @@ from app.initiatives.i13.act.domain import (
 )
 from app.initiatives.i13.act.service import process_escalations
 from app.initiatives.i13.act_hod_provider import ConfigEscalationRecipientProvider
+from app.initiatives.i8 import notifications as i8_notifications
 from app.initiatives.i8.config import get_i8_settings
 from app.initiatives.i8.exceptions import ExceptionItem
 from app.initiatives.i8.models import Notification
-from app.initiatives.i8.notifications import _roles_by_type, log_new
+from app.initiatives.i8.notifications import log_new
 from app.integrations.notifications.service import SharedNotificationPort
 from app.models.app_user import AppUser
 from app.models.base import Base
@@ -65,78 +63,48 @@ def shared(db):
 # --- I08 ---------------------------------------------------------------------
 
 
-def test_i08_roles_setting_is_parsed_without_guessing():
-    assert _roles_by_type("overdue_repair:Spares.Stores, MISSING_ATTESTATION:Spares.HOD,OVERDUE_REPAIR:Spares.HOD,bad") == {
-        "OVERDUE_REPAIR": ["Spares.Stores", "Spares.HOD"],
-        "MISSING_ATTESTATION": ["Spares.HOD"],
-    }
-    assert _roles_by_type("") == {}
+def someone_is_set_up_to_hear_about_repairs(db):
+    """Everything that used to make Repairable Spares notify somebody: a user, and a role row for the plant."""
+    db.add(AppUser(oid=OID, name="Stores", email="stores@example.com"))
+    db.add(NotificationRecipient(role="Spares.Stores", plant="1300", user_oid=OID, active=True))
+    db.commit()
 
 
-def test_i08_log_is_unchanged_and_sends_nothing_shared_when_no_recipients_are_configured(i8_db, cfg, monkeypatch):
-    monkeypatch.setattr(get_settings(), "i8_notification_recipient_roles", "")
+def test_i08_log_is_written_and_nothing_goes_to_the_inbox_or_email(i8_db, cfg):
+    someone_is_set_up_to_hear_about_repairs(i8_db)
 
-    assert log_new(i8_db, [item(1), item(2)], cfg) == 2
+    assert log_new(i8_db, [item(1), item(2, plant="1500")], cfg) == 2
 
-    assert i8_db.scalar(select(Notification.exception_id).limit(1)) is not None  # the old log still written
-    assert shared(i8_db) == []  # nobody is guessed
-
-
-def test_i08_exceptions_reach_the_configured_role_at_that_plant(i8_db, cfg, monkeypatch):
-    monkeypatch.setattr(get_settings(), "i8_notification_recipient_roles", "OVERDUE_REPAIR:Spares.Stores")
-    i8_db.add(AppUser(oid=OID, name="Stores", email="stores@example.com"))
-    i8_db.add(NotificationRecipient(role="Spares.Stores", plant="1300", user_oid=OID, active=True))
-    i8_db.commit()
-
-    log_new(i8_db, [item(1), item(2, plant="1500")], cfg)
-
-    rows = shared(i8_db)
-    inbox = [r for r in rows if r.channel == "IN_APP"]
-    assert [(r.recipient_user_id, r.plant) for r in inbox] == [(OID, "1300")]
-    assert inbox[0].title == "Action Required – Inventory Exception"
-    assert inbox[0].action_path == "/repairable-spares/exceptions?id=EX-OVERDUE_REPAIR-4500000001-10"
-    assert "I08" not in inbox[0].title + inbox[0].description  # module id stays internal
-    # the 1500 item has no one configured: recorded as a failure, not dropped
-    assert any(r.status == "FAILED" and r.plant == "1500" for r in rows)
+    assert i8_db.scalar(select(Notification.exception_id).limit(1)) is not None  # the exception log is still written
+    assert shared(i8_db) == []  # no in-app notification, no email, not even a recorded failure
 
 
-def test_i08_reading_the_queue_again_adds_nothing(i8_db, cfg, monkeypatch):
-    monkeypatch.setattr(get_settings(), "i8_notification_recipient_roles", "OVERDUE_REPAIR:Spares.Stores")
-    i8_db.add(NotificationRecipient(role="Spares.Stores", plant="1300", user_oid=OID, active=True))
-    i8_db.commit()
-
-    log_new(i8_db, [item(1)], cfg)
-    first = len(shared(i8_db))
-    log_new(i8_db, [item(1)], cfg)
-
-    assert len(shared(i8_db)) == first
+def test_i08_has_no_way_left_to_queue_a_shared_notification():
+    for name in ("enqueue", "resolve_role", "_queue_shared", "_roles_by_type", "_without_shared_notification"):
+        assert not hasattr(i8_notifications, name), f"Repairable Spares must not reach the shared notification service: {name}"
 
 
-def test_i08_flag_off_writes_nothing_at_all(i8_db, cfg, monkeypatch):
-    monkeypatch.setattr(get_settings(), "i8_notification_recipient_roles", "OVERDUE_REPAIR:Spares.Stores")
-    i8_db.add(NotificationRecipient(role="Spares.Stores", plant="1300", user_oid=OID, active=True))
-    i8_db.commit()
+def test_i08_reading_the_queue_again_adds_nothing(i8_db, cfg):
+    assert log_new(i8_db, [item(1)], cfg) == 1
+    assert log_new(i8_db, [item(1)], cfg) == 0
+
+    assert len(list(i8_db.scalars(select(Notification)))) == 1
+    assert shared(i8_db) == []
+
+
+def test_i08_flag_off_writes_nothing_at_all(i8_db, cfg):
+    someone_is_set_up_to_hear_about_repairs(i8_db)
 
     assert log_new(i8_db, [item(1)], cfg.model_copy(update={"complete_flow_enabled": False})) == 0
-    assert shared(i8_db) == []
-
-
-def test_i08_types_not_configured_for_notification_are_not_sent(i8_db, cfg, monkeypatch):
-    monkeypatch.setattr(get_settings(), "i8_notification_recipient_roles", "MISSING_SESSION_ID:Spares.Stores")
-    i8_db.add(NotificationRecipient(role="Spares.Stores", plant="1300", user_oid=OID, active=True))
-    i8_db.commit()
-
-    log_new(i8_db, [item(1, "OVERDUE_REPAIR")], cfg)  # OVERDUE_REPAIR has no role mapped
 
     assert shared(i8_db) == []
+    assert list(i8_db.scalars(select(Notification))) == []
 
 
-def test_i08_shared_failure_never_breaks_the_log_or_the_queue(i8_db, cfg, monkeypatch):
-    monkeypatch.setattr(get_settings(), "i8_notification_recipient_roles", "OVERDUE_REPAIR:Spares.Stores")
-    monkeypatch.setattr("app.initiatives.i8.notifications.enqueue", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+def test_i08_types_not_configured_for_the_log_are_not_logged(i8_db, cfg):
+    log_new(i8_db, [item(1, "OVERDUE_REPAIR"), item(2, "REPAIR_PR_NOT_DECLARED")], cfg.model_copy(update={"notification_types": "OVERDUE_REPAIR"}))
 
-    assert log_new(i8_db, [item(1)], cfg) == 1
-    assert i8_db.scalar(select(Notification.exception_id)) is not None
+    assert [row.exception_type for row in i8_db.scalars(select(Notification))] == ["OVERDUE_REPAIR"]
 
 
 # --- I13 ---------------------------------------------------------------------
@@ -185,7 +153,7 @@ def test_i13_hod_escalation_reaches_the_hod_through_the_shared_service(db):
         ("EMAIL", HOD, "hod@example.com"),
     }
     inbox = next(r for r in rows if r.channel == "IN_APP")
-    assert inbox.title == "Escalation Required – Inventory Exception"
+    assert inbox.title == "Escalation Required – Exception Not Confirmed"
     assert inbox.status == "SENT" and next(r for r in rows if r.channel == "EMAIL").status == "PENDING"
     assert "I13" not in inbox.title + inbox.description and "ACT" not in inbox.title + inbox.description
     # I13's own audit trail is still written, and never claims delivery for the email

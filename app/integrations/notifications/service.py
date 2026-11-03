@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -351,14 +351,24 @@ class SharedNotificationPort:
     reported as ``SENT`` only when it really is in someone's inbox.
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, identity_aliases: Mapping[str, str] | None = None) -> None:
         self._db = db
+        # Lower-cased name -> Entra object id, for a recipient who is known by a name (a SAP requester).
+        self._aliases = identity_aliases or {}
+
+    def _identity(self, recipient: str | None) -> str | None:
+        """An object id is used as it is; a name that has been mapped to one becomes that id; anything else is
+        passed on unchanged, so :func:`resolve_user` refuses it and the failure is recorded."""
+        who = (recipient or "").strip()
+        if not who or is_entra_object_id(who):
+            return recipient
+        return self._aliases.get(who.lower(), recipient)
 
     def send(self, intent: NotificationIntent) -> NotificationResult:
         if intent.channel is NotificationChannel.EMAIL and not get_settings().notification_email_enabled:
             return NotificationResult(outcome=NotificationOutcome.LOGGED_ONLY, detail="email notifications are switched off")
         recipients = resolve_user(
-            self._db, intent.recipient, plant=intent.plant, fallback_email=get_settings().notification_fallback_email
+            self._db, self._identity(intent.recipient), plant=intent.plant, fallback_email=get_settings().notification_fallback_email
         )
         recipient = recipients[0]
         if recipient.error:

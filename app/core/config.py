@@ -1036,6 +1036,12 @@ class Settings(BaseSettings):
     # inventing a recipient.
     i13_hod_recipients: str = ""
 
+    # The requester on an OAR exception is a SAP name ("Darren"), but a person can only be notified by Entra
+    # object id. "SAP name:object id,SAP name:object id" maps one to the other so the requester gets their
+    # "Confirm Exception" notification (see app.initiatives.i13.act_requester_directory). Empty by default: a
+    # requester not listed (and not already an object id) is recorded as a failed notification, never guessed.
+    i13_requester_recipients: str = ""
+
     # --- Shared notifications (I07, I08, I13) -----------------------------
     #
     # Only technical values have defaults. No business value (reminder timing,
@@ -1050,6 +1056,20 @@ class Settings(BaseSettings):
     # A failed email is tried again this many times, this far apart.
     notification_retry_max: int = 3
     notification_retry_interval_seconds: int = 300
+
+    # I07 approval reminders and escalation, in DAYS, as production settings (the way I13 has its five days). They apply
+    # to a step only when the notification_sla table has no active row for it: a row there always wins. Everything
+    # is OFF at 0 / blank, so deploying this changes nothing until someone sets them.
+    #   first days   -- how long an approver waits before the first reminder (0 = no reminders)
+    #   repeat days  -- the gap between later reminders
+    #   max          -- how many reminders in all
+    #   escalate     -- days before it is escalated (0 = never); needs the role below, which must have
+    #                   notification_recipients rows for each plant, or the escalation is recorded as failed
+    i7_reminder_first_days: int = 0
+    i7_reminder_repeat_days: int = 1
+    i7_reminder_max: int = 3
+    i7_escalate_after_days: int = 0
+    i7_escalation_role: str = ""
 
     # I13 automatic escalation (an exception nobody answered goes to the HOD). OFF by
     # default and separate from the scheduler switch above: turning the scheduler on does
@@ -1079,10 +1099,6 @@ class Settings(BaseSettings):
     # The Entra role of whoever executes an approved change in SAP. No default:
     # when empty, the final-approval notice goes to the submitter only.
     notification_sap_execution_role: str = ""
-
-    # Which role hears about each exception, as "TYPE:Spares.Role,...", e.g.
-    # "OVERDUE_REPAIR:Spares.Stores". Empty means no one is guessed.
-    i8_notification_recipient_roles: str = ""
 
     # A purchase requisition SAP posts to /api/events/pr: an in-app notice for everyone
     # who has signed in ("a requisition was received", no details) and one with the PR
