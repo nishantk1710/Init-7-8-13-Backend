@@ -1078,6 +1078,13 @@ class Settings(BaseSettings):
     notification_i13_escalation_enabled: bool = False
     notification_i13_escalation_batch_size: int = 100
 
+    # A request's requester is told in the app when its lines are linked to an SAP reservation, and reminded
+    # once when lines that need a reservation are still unlinked this many hours after the request (0 = no
+    # reminder). Both look back only this many hours, so switching it on does not notify about old requests.
+    assistant_link_notifications_enabled: bool = True
+    assistant_link_reminder_hours: int = 24
+    assistant_link_notice_lookback_hours: int = 48
+
     # Master switch for email. When false, no email notification is created or sent at all: the
     # in-app inbox is the only channel. (A notification that cannot be delivered to anyone is
     # still recorded as a failed row, but not as an email.) Independent of the provider below.
