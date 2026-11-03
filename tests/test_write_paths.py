@@ -139,7 +139,8 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
     ("/api/events/pr", "post"): (
         "Inbound procurement event listener. Writes only to platform tables; "
         "with DELTA_ON_PR_EVENT_ENABLED it also starts the delta cycle, which "
-        "READS SAP and merges into raw_<table> -- it never writes to SAP."
+        "READS SAP and merges into raw_<table> -- it never writes to SAP. After "
+        "the 202 it writes in-app notification rows (PR_EVENT_NOTIFICATIONS_ENABLED)."
     ),
     # --- W7: the reservation-time assistant --------------------------------
     ("/api/assistant/sessions", "post"): (

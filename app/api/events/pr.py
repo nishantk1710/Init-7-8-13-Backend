@@ -26,6 +26,11 @@ cycle. The cycle runs in the background -- SAP gets its 202 at once -- and is th
 same one the timer runs, with the same gates. It does not classify the PR or
 route it into I07/I08/I13; it reads SAP, it never writes to it.
 
+It also tells people, in the in-app inbox, once SAP has its 202
+(``app.services.pr_event_notifications``): everyone who has signed in learns that a
+requisition arrived, with no details; the Spares.Admin recipients get the PR number,
+creator and SAP's message. PR_EVENT_NOTIFICATIONS_ENABLED switches it off.
+
 WHY THIS READS THE RAW BODY INSTEAD OF TAKING A MODEL PARAMETER
 
 Declaring the model as the parameter is the idiomatic FastAPI spelling, and it
@@ -43,7 +48,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import get_settings
@@ -170,7 +175,7 @@ def _reject(reason: str, content_type: str, raw: bytes) -> HTTPException:
         }
     },
 )
-async def receive_pr_event(request: Request) -> PREventAccepted:
+async def receive_pr_event(request: Request, background: BackgroundTasks) -> PREventAccepted:
     raw = await request.body()
     content_type = request.headers.get("content-type", "(none)")
 
@@ -221,6 +226,11 @@ async def receive_pr_event(request: Request) -> PREventAccepted:
     from app.ingest import scheduler
 
     delta = scheduler.request_delta_cycle(f"PR {banfn or '(no BANFN)'}")
+
+    # After the response, so SAP's 202 never waits on the inbox. Never raises.
+    from app.services.pr_event_notifications import notify_in_background
+
+    background.add_task(notify_in_background, payload, datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
     return PREventAccepted(status="received", stored=stored, delta=delta)
 

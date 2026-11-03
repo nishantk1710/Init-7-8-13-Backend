@@ -1084,6 +1084,12 @@ class Settings(BaseSettings):
     # "OVERDUE_REPAIR:Spares.Stores". Empty means no one is guessed.
     i8_notification_recipient_roles: str = ""
 
+    # A purchase requisition SAP posts to /api/events/pr: an in-app notice for everyone
+    # who has signed in ("a requisition was received", no details) and one with the PR
+    # number, creator and SAP's message for the Spares.Admin recipients. In-app only, and
+    # written after SAP has its 202, so it never delays or fails the event.
+    pr_event_notifications_enabled: bool = True
+
     # Microsoft Graph sending (Mail.Send application permission, one shared
     # mailbox). All empty until the tenant admin has consented.
     graph_tenant_id: str = ""
