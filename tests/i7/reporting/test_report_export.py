@@ -30,7 +30,7 @@ from app.models.i7_staging import StagedConsumption
 ORIGINAL_SHEETS = ["Metadata", "Baseline Comparison", "Scope & Data Quality", "Limitations"]
 TECHNICAL_SHEETS = ["Demand Classification", "Forecast Accuracy", "OAR", "Recommendations", "Approval Activity"]
 MANAGEMENT_SHEETS = [
-    "Period", "KPI Cards", "Monthly Activity", "Position", "Month-end Position", "Status Distribution", "Forecast vs Actual",
+    "Period", "KPI Cards", "Monthly Activity", "Position", "Status Distribution", "Forecast vs Actual",
     "SAP Adoption", "Trends", "Performance Trends", "Data Coverage", "Definitions",
 ]
 
@@ -321,14 +321,13 @@ def test_the_position_sheet_has_the_stock_figures_and_does_not_make_them_zero_wh
     assert all_plants[col["Newest recommendation in the figures"]] == "2026-11-10"
 
 
-def test_the_month_end_position_sheet_says_snapshot_not_available_and_shows_no_figure_from_today(db):
-    sheet = workbook(generated(db, capture=True))["Month-end Position"]
-    facts = facts_of(sheet)
-    assert facts["Status"] == "Snapshot not available"
-    assert "Dec 2026" in facts["Why"]
-    texts = [v for r in rows(sheet) for v in r if isinstance(v, str)]
-    assert any("cannot be rebuilt" in t for t in texts)
-    assert not any(r[0] == "Total inventory value (ZAR)" for r in rows(sheet))  # nothing stands in for the missing snapshot
+def test_there_is_no_month_end_position_sheet_and_the_stock_figures_stay_on_the_position_and_trends_sheets(db):
+    wb = workbook(generated(db, capture=True))
+    assert "Month-end Position" not in wb.sheetnames  # the page has no such card either
+    header, _ = table_after(wb["Position"], "Plant")
+    assert "Inventory value (ZAR)" in header and "Below reorder point" in header
+    header, _ = table_after(wb["Trends"], "Month")
+    assert "Inventory value (ZAR)" in header and "Safety stock value (ZAR)" in header
 
 
 def test_the_performance_sheet_has_a_row_a_month_with_gaps_that_are_not_zero(db):
