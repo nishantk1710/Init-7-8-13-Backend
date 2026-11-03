@@ -332,8 +332,6 @@ def _write_management_sheets(workbook: Workbook, management) -> None:
         ],
     )
 
-    _write_month_end_sheet(workbook, management)
-
     status = workbook.create_sheet("Status Distribution")
     _facts(
         status,
@@ -463,49 +461,6 @@ def _write_trends_sheet(workbook: Workbook, trends) -> None:
     sheet.append([])
     _table(sheet, ["Notes"], [[note] for note in trends.notes])
     sheet.append(["Counts are positions on a date: they are shown per month and never added into a quarter total."])
-
-
-def _write_month_end_sheet(workbook: Workbook, management) -> None:
-    """The month-end position, only from a valid saved snapshot. With none it says so and why: today's figures are never put
-    in its place. The values are the report's own position figures, read as saved."""
-    sheet = workbook.create_sheet("Month-end Position")
-    end = management.trends.quarter_end if management.trends is not None else None
-    if management.position_basis != "snapshot" or end is None or end.status.value != "AVAILABLE":
-        _facts(
-            sheet,
-            [("Status", "Snapshot not available"), ("Why", (end.reason if end is not None else None) or "No saved month-end snapshot exists."),
-             ("Latest snapshot available", (end.latest_available_label if end is not None else None) or NOT_AVAILABLE),
-             ("Latest snapshot measured on", _iso(end.latest_available_measured_on if end is not None else None))],
-        )
-        sheet.append([])
-        sheet.append(["A past month cannot be rebuilt from today's data, so no estimate is shown in its place."])
-        return
-    p = management.position
-    stock_why = p.inventory_unavailable_reason or "Not measured in this snapshot (saved before stock held was captured, or nothing could be valued)."
-    _facts(
-        sheet,
-        [("Status", "From the saved month-end snapshot"), ("Month", end.label), ("Snapshot measured on", _iso(end.measured_on)),
-         ("Stock on hand loaded", _iso(p.inventory_stock_as_of)), ("Currency of the stock figures", "ZAR")],
-    )
-    sheet.append([])
-    stockout_usable = p.stockout.as_of is not None and not p.stockout.stale
-    _table(
-        sheet, ["Measure", "Value", "Over", "Why not available"],
-        [
-            ["Total inventory value (ZAR)", _na(p.inventory_value), f"{p.inventory_priced_count} material-plants with stock and a ZAR price",
-             "" if p.inventory_value is not None else stock_why],
-            ["Excess inventory value (estimate)", _na(p.excess_opportunity), f"{p.excess_count} material-plants above their recommended maximum",
-             "" if p.excess_opportunity is not None else "No excess material-plant has a price and both maximum stocks."],
-            ["Working capital impact (estimate)", _na(p.net_rop_value_impact), f"{p.priced_count} material-plants included",
-             "" if p.net_rop_value_impact is not None else "No recommendation has a ZAR or NAD price and both reorder points."],
-            ["Safety stock value (ZAR)", _na(p.safety_stock_value), f"{p.safety_stock_priced_count} material-plants priced",
-             "" if p.safety_stock_value is not None else stock_why],
-            ["Material-plants below reorder point", _na(p.below_reorder_count), f"{p.below_reorder_judged} that could be judged",
-             "" if p.below_reorder_count is not None else stock_why],
-            ["High stockout risk", p.stockout.at_risk if stockout_usable else NOT_AVAILABLE, f"{p.stockout.evaluated} that could be judged",
-             "" if stockout_usable else (p.stockout.stale_note or "The stockout usage has not been built. This is not zero risk.")],
-        ],
-    )
 
 
 def _write_performance_sheet(workbook: Workbook, performance) -> None:
