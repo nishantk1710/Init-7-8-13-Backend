@@ -30,6 +30,7 @@ from app.initiatives.i13.act.domain import NoPlanReason, WatchGrniSnapshot
 from app.initiatives.i13.act.service import DetectionRunResult, EscalationRunResult, detect_exceptions, process_escalations
 from app.initiatives.i13.act_exception_store import SqlExceptionRepository
 from app.initiatives.i13.act_hod_provider import ConfigEscalationRecipientProvider
+from app.initiatives.i13.act_requester_directory import parse_requester_recipients
 from app.initiatives.i13.act_watch_snapshot import build_grni_snapshot_index
 from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.consumption_attribution import ConsumptionAttributionService
@@ -54,6 +55,12 @@ from app.integrations.sap.postgres_procurement import PostgresProcurementReposit
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
 
 
+def _notification_port(db: Session, config: I13Config) -> SharedNotificationPort:
+    """The shared notification service, told which Entra user each SAP requester name stands for
+    (``I13_REQUESTER_RECIPIENTS``), so the requester's "Confirm Exception" reaches their inbox."""
+    return SharedNotificationPort(db, identity_aliases=parse_requester_recipients(config.escalation.requester_recipients_raw))
+
+
 def run_escalations(
     db: Session,
     config: I13Config,
@@ -74,7 +81,7 @@ def run_escalations(
         escalation_recipient_provider=ConfigEscalationRecipientProvider.from_config_string(
             config.escalation.hod_recipients_raw
         ),
-        notification_port=SharedNotificationPort(db),
+        notification_port=_notification_port(db, config),
         limit=limit,
         plants=plants,
     )
@@ -158,7 +165,7 @@ def run_detection(
         plans=plans,
         grni_snapshots=grni_snapshots,
         repository=SqlExceptionRepository(db),
-        notification_port=SharedNotificationPort(db),
+        notification_port=_notification_port(db, config),
         plan_breach_grace_days=config.exceptions.plan_breach_grace_days,
         requester_response_days=config.escalation.requester_response_days,
         quantity_decision_records=quantity_decision_records,
@@ -237,7 +244,7 @@ def _run_detection_stored(
             plans=slice_plans,
             grni_snapshots=grni_snapshots,
             repository=SqlExceptionRepository(db),
-            notification_port=SharedNotificationPort(db),
+            notification_port=_notification_port(db, config),
             plan_breach_grace_days=config.exceptions.plan_breach_grace_days,
             requester_response_days=config.escalation.requester_response_days,
             quantity_decision_records=quantity_records,

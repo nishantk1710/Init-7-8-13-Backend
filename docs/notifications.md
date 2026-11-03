@@ -97,6 +97,26 @@ Read from the recommendation's own route and position, never hard-coded.
 
 The person who just acted is not told about their own action (except that an approver asked to act always is).
 
+## A purchase requisition from SAP (the PR event)
+
+When SAP posts a requisition to `/api/events/pr`, the inbox is told once SAP has its `202`
+(`app/services/pr_event_notifications.py`, a background task -- it never delays or fails the event):
+
+| Who | What they see |
+| --- | --- |
+| Everyone who has signed in (`app_user`) | **New Purchase Requisition Received** -- "A new purchase requisition was received from SAP." Nothing else: no PR number, creator or message, and the row's `entityId` is empty, so the inbox shows no "Ref". |
+| Active `Spares.Admin` rows in `notification_recipients` (any plant) | **Purchase Requisition {BANFN} Received** -- the PR number, created on/at, the SAP user who created it and SAP's message. Instead of the plain notice, not as well. |
+
+- **In-app only**, whatever `NOTIFICATION_EMAIL_ENABLED` says: an email to every user for every requisition would be noise.
+- The event has **no plant** and its `CREATED_BY` is a SAP user name, not an Entra identity, so the creator is shown
+  to administrators but never notified.
+- **No administrator configured** is recorded as a failed in-app row with the reason, like any unresolved recipient.
+- **The same event twice** (same BANFN, date and time) adds nothing. An event without a BANFN cannot be matched to a
+  repeat, so each one is its own notice.
+- `PR_EVENT_NOTIFICATIONS_ENABLED=false` switches it off.
+- Where people see it: **More → Notifications** (`/notifications`), with the unread badge on **More**. There is no
+  page to open, so clicking one only marks it read.
+
 ## Configuration checklist
 
 ### Before anything is delivered to a person's inbox
@@ -117,14 +137,37 @@ The person who just acted is not told about their own action (except that an app
   the gap is recorded as a failed notification instead.
 - [ ] Optional: `NOTIFICATION_SAP_EXECUTION_ROLE` -- the Entra role of whoever applies an approved change in SAP.
   Blank means the final-approval notice goes to the submitter only.
-- [ ] I13 requester and HOD notifications need the identity to be an Entra object id (the HOD comes from
-  `I13_HOD_RECIPIENTS`, `PLANT:identity`). An email address or SAP user name is refused and recorded as a failed
-  notification. The recipient needs an email on record (or `NOTIFICATION_FALLBACK_EMAIL`) to be emailed.
+- Repairable Spares (I08) sends **no** in-app or email notification, so there is nothing to configure for it
+  (`I8_NOTIFICATION_RECIPIENT_ROLES` no longer exists; remove it from any environment that still sets it). It has no
+  exception queue or log either (removed 3-Nov-2026). Notifications it sent earlier stay in the table but are kept out of every inbox, unread count and
+  mark-all-read. Emails it had already queued as `PENDING` are still sent unless cancelled: check for
+  `module = 'I08'` rows in `notification` with `status = 'PENDING'` and cancel them if they should not go out.
+- [ ] **I13 requester and HOD** -- see "I13 requester and HOD" below. Both need an Entra object id, and the requester
+  needs a mapping from their SAP name.
 
 ### Reminders and escalation (off until you set them)
 
-With no active row in `notification_sla` **nothing is reminded or escalated**. The notices sent when an approval moves
-are not affected.
+With no active row in `notification_sla` **and no `I7_*` settings below, nothing is reminded or escalated**. The notices
+sent when an approval moves are not affected.
+
+**Option A -- production settings, in days (simplest).** They apply to every approval step that has no `notification_sla`
+row, and everything is off until you set them:
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `I7_REMINDER_FIRST_DAYS` | days an approver waits before the first reminder (0 = no reminders) | 0 |
+| `I7_REMINDER_REPEAT_DAYS` | days between later reminders | 1 |
+| `I7_REMINDER_MAX` | how many reminders in all | 3 |
+| `I7_ESCALATE_AFTER_DAYS` | days before it escalates (0 = never) | 0 |
+| `I7_ESCALATION_ROLE` | Entra role told on escalation, e.g. `Spares.PlantHead` | blank |
+
+Escalation needs both the days and the role. The role must have `notification_recipients` rows for each plant, or the
+escalation is recorded as a failed notification. Example (first reminder after 1 day, daily, at most 3, escalate at
+3 days): `I7_REMINDER_FIRST_DAYS=1`, `I7_REMINDER_REPEAT_DAYS=1`, `I7_REMINDER_MAX=3`, `I7_ESCALATE_AFTER_DAYS=3`,
+`I7_ESCALATION_ROLE=Spares.PlantHead`. A settings change restarts the app.
+
+**Option B -- `notification_sla` rows, in minutes, for finer control** (a different timing per route or step). A row
+always wins over the settings for the steps it covers:
 
 ```
 POST /api/notifications/admin/sla                      (Spares.Admin only)
@@ -165,6 +208,36 @@ scheduler on does not start it. When on, each run:
 
 A batch that fails is logged and saved nothing. The manual `POST /api/i13/act/run/escalate` is unchanged and unbounded.
 Before enabling, count the exceptions that are overdue so you know how large the first batches will be.
+
+### I13 requester and HOD
+
+When an OAR exception is detected and has a requester, that person gets a **Confirm Exception** notification (in-app
+and email) with the material, plant, reason and exception code, asking: "Why was this material not consumed as planned,
+in your own words." Its link opens the Procurement Exceptions page narrowed to that material and plant
+(`/oar-utilization/aging-exceptions?material=...&plant=...`). One notification per exception per person: the
+idempotency key stops a repeat however often detection runs.
+
+If the requester has not confirmed or explained within `I13_REQUESTER_RESPONSE_DAYS` (default **5**, counted from when
+the exception was routed to them), the next escalation run moves it to escalated and tells the plant's HOD: "This
+exception is still pending: the requester has not confirmed it or given an explanation", with the details, who the
+requester is, when it was detected and how many days ago. It is sent once. An exception the requester has already
+confirmed is never escalated, and an escalated one is not escalated again.
+
+Required production configuration (nothing is set for you):
+
+- [ ] `I13_REQUESTER_RECIPIENTS` -- `SAP requester name:Entra object id,...` (for example `Darren:<object id>`). The
+  requester on an exception is a SAP name, but a person can only be notified by object id. A requester who is not
+  listed and not already an object id is recorded as a **failed** notification ("invalid identity"), never guessed.
+  Check the failed `notification` rows after the first detection run to see which names still need mapping. Matching
+  ignores case.
+- [ ] `I13_HOD_RECIPIENTS` -- `PLANT:Entra object id,...`, one HOD per plant (for example `1300:<id>,1500:<id>`). A plant
+  with no entry is left alone, not moved to escalated.
+- [ ] `NOTIFICATION_I13_ESCALATION_ENABLED=true` -- off by default and separate from the scheduler. Also leave
+  `NOTIFICATION_SCHEDULER_ENABLED=true`. `NOTIFICATION_I13_ESCALATION_BATCH_SIZE` (default 100) caps each run.
+- [ ] `I13_REQUESTER_RESPONSE_DAYS` -- only if five days is not what you want.
+- [ ] Each person needs an email on record (they have signed in) or `NOTIFICATION_FALLBACK_EMAIL`, or the email part
+  is recorded as failed. The in-app notification does not depend on it.
+- [ ] Email only leaves the system with `NOTIFICATION_EMAIL_PROVIDER=graph` and its settings (see the Graph section).
 
 ### Scheduler
 

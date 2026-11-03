@@ -59,6 +59,8 @@ class EscalationConfig:
 
     requester_response_days: int
     hod_recipients_raw: str
+    #: ``"SAP name:Entra object id,..."`` -- who a SAP requester name is, so they can be notified.
+    requester_recipients_raw: str = ""
 
     def __post_init__(self) -> None:
         if self.requester_response_days <= 0:
@@ -156,6 +158,7 @@ def build_i13_config(settings: Settings) -> I13Config:
         escalation=EscalationConfig(
             requester_response_days=settings.i13_requester_response_days,
             hod_recipients_raw=settings.i13_hod_recipients,
+            requester_recipients_raw=settings.i13_requester_recipients,
         ),
         quantity_suggestion=QuantitySuggestionConfig(
             enabled=settings.i13_qty_suggestion_enabled,

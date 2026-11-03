@@ -54,7 +54,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DbSession
 
-from app.assistant import departments, ids, script
+from app.assistant import departments, ids, savings, script
 from app.assistant import session as session_module
 from app.assistant import turns as turn_module
 from app.assistant.models import (
@@ -62,6 +62,7 @@ from app.assistant.models import (
     AssistantSession,
     ConsumptionPlanRecord,
     Justification,
+    QuantitySavingRecord,
     QuantitySuggestionRecord,
 )
 from app.assistant.router import Flow, RoutedFlow, route
@@ -146,6 +147,8 @@ class PreviewLine:
     there is nothing to decide -- the line needs no answer."""
     suggestion: Suggested | None = None
     also_matched: str | None = None
+    price: savings.UnitPrice | None = None
+    """I13 only: the unit price a saving is valued at."""
 
 
 def suggested_window(quantity: Decimal | None, rate: Decimal | None, today: date) -> tuple[date, date, int] | None:
@@ -228,6 +231,7 @@ def preview(
                     window_end=window[1] if window else None,
                     window_months=window[2] if window else None,
                 ),
+                price=savings.unit_price(db, routed.material_id, plant),
             )
         )
     return lines
@@ -261,6 +265,12 @@ class LineAnswers:
     """I08 only: the faulty unit declared on this line (27-Oct-2026), keyed as
     the conversation's ``i08_declaration`` form is. ``None``: nothing declared,
     which answers "No" to the declaration question."""
+    required_quantity: str | None = None
+    """I13: the quantity typed before the suggestion was shown -- what a
+    saving is measured from. ``None`` (a screen from before 3 Nov, or SAP):
+    no saving is recorded."""
+    quantity_choice: str | None = None
+    """I13: which number was locked -- ``suggested`` or ``own``."""
 
 
 @dataclass
@@ -285,6 +295,63 @@ class _Prepared:
     answers: LineAnswers
     routed: RoutedFlow
     assessment: Any
+    required: Decimal | None = None
+    """I13 with a required quantity: checked, and a saving will be recorded."""
+    offered: Decimal | None = None
+    """The suggestion as the screen showed it (uncapped), fresh."""
+
+
+def _decimal(value: str | None, what: str, line_no: int, *, positive: bool = False) -> Decimal:
+    try:
+        number = Decimal(str(value).strip())
+    except (InvalidOperation, AttributeError):
+        raise RequestError(f"{what} {value!r} is not a number.", line=line_no) from None
+    if not number.is_finite() or number < 0 or (positive and number == 0):
+        raise RequestError(f"{what} must be {'above' if positive else 'at least'} 0.", line=line_no)
+    return number
+
+
+def _check_choice(line: LineAnswers, offered: Decimal | None, line_no: int) -> Decimal | None:
+    """The required quantity, once the lock agrees with it. ``None``: the
+    screen sent no required quantity, so there is nothing to measure from.
+
+    "Use suggested" locks the suggestion the screen showed; "Use mine" locks
+    the required quantity. Keeping one's own number below the suggestion needs
+    a reason, as keeping it above does (the conversation asks that one)."""
+    if line.required_quantity is None or str(line.required_quantity).strip() == "":
+        if line.quantity_choice is not None:
+            raise RequestError(f"{line.material_id}: enter the quantity you need.", line=line_no)
+        return None
+    required = _decimal(line.required_quantity, "The quantity you need", line_no, positive=True)
+    if line.quantity_choice not in savings.QUANTITY_CHOICES:
+        raise RequestError(
+            f"{line.material_id}: choose whether to use the suggested quantity or your own.", line=line_no
+        )
+    if line.decision != script.PROCEED:
+        return required
+
+    final = _decimal(line.quantity, "Quantity", line_no)
+    if line.quantity_choice == savings.CHOICE_SUGGESTED:
+        if offered is None or offered <= 0:
+            raise RequestError(
+                f"{line.material_id}: there is no suggested quantity to use"
+                + (" -- mark the line not needed instead." if offered is not None else "."),
+                line=line_no,
+            )
+        if final != offered:
+            raise RequestError(
+                f"{line.material_id}: the quantity {final} is not the suggested {offered}.", line=line_no
+            )
+    elif final != required:
+        raise RequestError(
+            f"{line.material_id}: the quantity {final} is not the {required} you entered.", line=line_no
+        )
+    elif offered is not None and required < offered:
+        if not (line.reason_category and (line.free_text or "").strip()):
+            raise RequestError(
+                f"A reason is needed: why {required} rather than the suggested {offered}?", line=line_no
+            )
+    return required
 
 
 def _same_quantity(seen: str | None, fresh: Decimal | None) -> bool:
@@ -450,17 +517,38 @@ def create(
             skipped.append({"materialId": routed.material_id, "plant": plant, "kind": "data_gap", "reason": str(error)})
             continue
 
+        required = offered = None
+        if routed.flow is Flow.I13:
+            offered = uncapped_suggestion(assessment).suggested_quantity
+            # The lock is checked against the suggestion the screen showed --
+            # whether that is still the fresh one is the conflict check below.
+            seen = offered
+            if line.check_seen and str(line.seen_suggested_quantity or "").strip():
+                try:
+                    seen = Decimal(str(line.seen_suggested_quantity).strip())
+                except InvalidOperation:
+                    seen = offered
+            elif line.check_seen:
+                seen = None
+            required = _check_choice(line, seen, submitted)
+            if (
+                required is not None
+                and line.reason_category
+                and line.reason_category not in settings.assistant_justification_reason_category_list
+            ):
+                raise RequestError(f"{line.material_id}: {line.reason_category!r} is not a reason category.", line=submitted)
         if routed.flow is Flow.I13 and line.check_seen and line.decision == script.PROCEED:
-            fresh = uncapped_suggestion(assessment).suggested_quantity
-            if not _same_quantity(line.seen_suggested_quantity, fresh):
+            if not _same_quantity(line.seen_suggested_quantity, offered):
                 changed.append(
                     {
                         "materialId": routed.material_id,
                         "seenSuggestedQuantity": line.seen_suggested_quantity,
-                        "suggestedQuantity": None if fresh is None else str(fresh),
+                        "suggestedQuantity": None if offered is None else str(offered),
                     }
                 )
-        prepared.append(_Prepared(len(prepared) + 1, submitted, line, routed, assessment))
+        prepared.append(
+            _Prepared(len(prepared) + 1, submitted, line, routed, assessment, required=required, offered=offered)
+        )
 
     if changed:
         raise RequestConflict(changed)
@@ -528,6 +616,9 @@ def create(
             else:  # pragma: no cover -- a script/request mismatch, not an input
                 raise RequestError(f"{item.routed.material_id}: the conversation did not finish.", line=item.submitted)
 
+            if item.required is not None:
+                _record_saving(db, request, session, item, actor=requester)
+
             if session.flow == Flow.I13.value and script.I13_CAPTURE_PLAN in session_module.answers_of(
                 session_module.turns(db, session.id)
             ):
@@ -552,6 +643,59 @@ def create(
         request.id, len(sessions), plant, len(skipped), requester,
     )
     return CreatedRequest(request=request, sessions=sessions, downstream_keys=downstream_keys)
+
+
+def _record_saving(
+    db: DbSession, request: AssistantRequest, session: AssistantSession, item: _Prepared, *, actor: str
+) -> QuantitySavingRecord:
+    """The line's saving, and -- for a quantity kept under the suggestion --
+    its reason. Flushed with the line; committed with the request."""
+    line, required, offered = item.answers, item.required, item.offered
+    assert required is not None
+    not_needed = line.decision == script.NOT_NEEDED
+    final = Decimal("0") if not_needed else Decimal(str(line.quantity).strip())
+
+    if (
+        not not_needed
+        and line.quantity_choice == savings.CHOICE_OWN
+        and offered is not None
+        and required < offered
+    ):
+        db.add(
+            Justification(
+                session_id=session.id,
+                exception_id=None,
+                kind=savings.BELOW_SUGGESTION_KIND,
+                reason_category=line.reason_category,
+                free_text=line.free_text,
+                material_id=session.material_id,
+                plant=session.plant,
+                author=actor,
+            )
+        )
+
+    price = savings.unit_price(db, session.material_id, session.plant)
+    units = savings.units_saved(required, offered, final, not_needed=not_needed)
+    record = QuantitySavingRecord(
+        session_id=session.id,
+        request_id=request.id,
+        material=session.material_id,
+        plant=session.plant,
+        required_quantity=required,
+        suggested_quantity=offered,
+        final_quantity=final,
+        quantity_choice=line.quantity_choice,
+        decision=line.decision,
+        units_saved=units,
+        unit_price=price.price,
+        currency=price.currency,
+        price_valuation_type=price.valuation_type,
+        price_missing_reason=price.missing,
+        value_saved=savings.value_saved(units, price),
+        recorded_by=actor,
+    )
+    db.add(record)
+    return record
 
 
 def apply_downstream(keys: list[tuple[str, str, str]]) -> None:
@@ -612,6 +756,7 @@ class LineRecord:
     suggestion: QuantitySuggestionRecord | None
     justification: Justification | None
     outcome: str
+    saving: QuantitySavingRecord | None = None
 
 
 def line_records(db: DbSession, sessions: list[AssistantSession]) -> list[LineRecord]:
@@ -628,6 +773,7 @@ def line_records(db: DbSession, sessions: list[AssistantSession]) -> list[LineRe
     plans = first_by_session(ConsumptionPlanRecord, ConsumptionPlanRecord.captured_at)
     suggestions = first_by_session(QuantitySuggestionRecord, QuantitySuggestionRecord.suggested_at)
     justifications = first_by_session(Justification, Justification.recorded_at)
+    saved = first_by_session(QuantitySavingRecord, QuantitySavingRecord.recorded_at)
 
     records = []
     for session in sessions:
@@ -644,6 +790,7 @@ def line_records(db: DbSession, sessions: list[AssistantSession]) -> list[LineRe
                 suggestion=suggestions.get(session.id),
                 justification=justifications.get(session.id),
                 outcome=session_module.outcome(session, turns).value,
+                saving=saved.get(session.id),
             )
         )
     return records

@@ -88,6 +88,10 @@ def new_suggestion_id() -> str:
     return _new_id("QSG")
 
 
+def new_saving_id() -> str:
+    return _new_id("QSV")
+
+
 class AssistantRequest(Base):
     """Several materials checked in one go. The parent of its lines' sessions.
 
@@ -639,4 +643,78 @@ class QuantitySuggestionRecord(Base):
         return (
             f"<QuantitySuggestionRecord {self.id} {self.material}@{self.plant} "
             f"suggested={self.suggested_quantity} accepted={self.accepted_quantity}>"
+        )
+
+
+class QuantitySavingRecord(Base):
+    """What the quantity suggestion saved on one OAR request line (3 Nov 2026).
+
+    The requester names the quantity they need **before** the suggestion is
+    shown, then locks either the suggestion or their own number. The saving is
+    what they asked for less what they locked -- never negative -- priced at
+    the plant's replacement price as I07 reads it (MBEW VERPR / PEINH, from
+    ``i7_staged_material_plant``), so the two initiatives value a part alike.
+
+    A row of its own rather than columns on ``quantity_suggestion``: that table
+    is append-only and is written halfway through the line's replay, before the
+    screen's first number or the lock is known. A line marked "not needed" also
+    gets one, which a suggestion record never covers.
+
+    An estimate, taken at submit. Whether SAP was then reserved at that
+    quantity is a later question (the linked reservation), not this record's.
+    """
+
+    __tablename__ = "quantity_saving"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_saving_id)
+
+    session_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("assistant_session.id"), index=True
+    )
+    request_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("assistant_request.id"), index=True
+    )
+
+    material: Mapped[str] = mapped_column(String(40), index=True)
+    plant: Mapped[str] = mapped_column(String(8), index=True)
+
+    required_quantity: Mapped[Decimal] = mapped_column(Numeric(18, 3))
+    """The quantity typed before the suggestion was shown -- the baseline."""
+
+    suggested_quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 3), nullable=True)
+    """The suggestion as the screen showed it (uncapped headroom). Null: none
+    could be made, and then nothing is counted as saved."""
+
+    final_quantity: Mapped[Decimal] = mapped_column(Numeric(18, 3))
+    """What was locked: the plan quantity, or 0 for a line marked not needed."""
+
+    quantity_choice: Mapped[str] = mapped_column(String(16))
+    """``suggested`` or ``own`` -- which number the requester locked."""
+
+    decision: Mapped[str] = mapped_column(String(16))
+    """``proceed`` or ``not_needed``."""
+
+    units_saved: Mapped[Decimal | None] = mapped_column(Numeric(18, 3), nullable=True)
+    """Required less final, at least 0. Null when there was no suggestion."""
+
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    price_valuation_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    price_missing_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    """Why there is no price -- I07's ``PriceMissing`` codes, plus
+    ``price_not_staged`` and ``price_not_zar``. Null when there is one."""
+
+    value_saved: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    """``units_saved`` x ``unit_price`` in ZAR. Null without either -- a gap,
+    never a zero."""
+
+    recorded_by: Mapped[str] = mapped_column(String(128), index=True)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<QuantitySavingRecord {self.id} {self.material}@{self.plant} "
+            f"required={self.required_quantity} final={self.final_quantity} saved={self.units_saved}>"
         )

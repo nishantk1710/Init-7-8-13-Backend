@@ -9,9 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import select
 
 from app.initiatives.i13.act.domain import (
     ActException,
@@ -82,7 +80,7 @@ def test_i13_hod_escalation_reaches_the_hod_through_the_shared_service(db):
         ("EMAIL", HOD, "hod@example.com"),
     }
     inbox = next(r for r in rows if r.channel == "IN_APP")
-    assert inbox.title == "Escalation Required – Inventory Exception"
+    assert inbox.title == "Escalation Required – Exception Not Confirmed"
     assert inbox.status == "SENT" and next(r for r in rows if r.channel == "EMAIL").status == "PENDING"
     assert "I13" not in inbox.title + inbox.description and "ACT" not in inbox.title + inbox.description
     # I13's own audit trail is still written, and never claims delivery for the email

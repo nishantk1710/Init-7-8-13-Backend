@@ -35,6 +35,16 @@ class SuggestedModel(AssistantModel):
     window_months: int | None = None
 
 
+class UnitPriceModel(AssistantModel):
+    """The plant's replacement price as I07 reads it (MBEW VERPR / PEINH), in ZAR."""
+
+    price: str | None = None
+    """Null: no usable price -- ``missing`` says why, ``note`` in words."""
+    currency: str | None = None
+    missing: str | None = None
+    note: str | None = None
+
+
 class PreviewLineModel(AssistantModel):
     material_id: str
     material_description: str | None = None
@@ -45,6 +55,8 @@ class PreviewLineModel(AssistantModel):
     unit_exists: bool | None = None
     suggestion: SuggestedModel | None = None
     also_matched: str | None = None
+    unit_price: UnitPriceModel | None = None
+    """OAR lines only: what a saving on this line is valued at."""
 
 
 class ReasonCategoryModel(AssistantModel):
@@ -109,6 +121,11 @@ class LineAnswersModel(AssistantModel):
     Send it for every OAR line: a figure that moved since is refused (409)."""
     declaration: LineDeclarationModel | None = None
     """I08 only: declare the faulty unit coming off. Absent: nothing declared."""
+    required_quantity: str | None = PydanticField(default=None, max_length=20)
+    """OAR: the quantity needed, typed before the suggestion was shown. What a
+    saving is measured from; absent, none is recorded."""
+    quantity_choice: Literal["suggested", "own"] | None = None
+    """OAR: which number was locked. ``quantity`` must then be that number."""
 
 
 class CreateRequestBody(AssistantModel):
@@ -133,6 +150,22 @@ class JustificationBriefModel(AssistantModel):
     free_text: str
 
 
+class SavingModel(AssistantModel):
+    """What the quantity suggestion saved on one OAR line -- an estimate at submit."""
+
+    required_quantity: str
+    suggested_quantity: str | None = None
+    final_quantity: str
+    quantity_choice: Literal["suggested", "own"]
+    units_saved: str | None = None
+    """Null: no suggestion could be made, so nothing is counted."""
+    unit_price: str | None = None
+    currency: str | None = None
+    value_saved: str | None = None
+    """Null without a price; ``price_note`` says why."""
+    price_note: str | None = None
+
+
 class RequestLineModel(AssistantModel):
     line_no: int
     reference: str
@@ -154,6 +187,8 @@ class RequestLineModel(AssistantModel):
     window_end: date | None = None
     purpose: str | None = None
     justification: JustificationBriefModel | None = None
+    saving: SavingModel | None = None
+    """OAR lines submitted with a required quantity (from 3 Nov 2026)."""
     linked_reservations: list[LinkedReservationModel] = []
 
 
@@ -221,3 +256,37 @@ class UploadResponse(AssistantModel):
     row_count: int
     duplicates: list[str]
     max_lines: int
+
+
+# --- link reservation ------------------------------------------------------------
+
+
+class LinkJobStepModel(AssistantModel):
+    """One step of a Link reservation job, as the progress window shows it."""
+
+    key: str
+    label: str
+    # pending | active | done | failed | skipped
+    status: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    detail: str | None = None
+
+
+class LinkJobResponse(AssistantModel):
+    """A Link reservation job: where it is, what each step did, how it ended."""
+
+    id: int
+    request_id: str
+    # queued | running | succeeded | failed | abandoned
+    status: str
+    # The step being worked on: queue | delta | link | i13 | i08 | done
+    step: str
+    steps: list[LinkJobStepModel]
+    requested_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    links: int | None = None
+    error: str | None = None
+    created: bool
+    """False when the press found this request's job already queued or running."""

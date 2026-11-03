@@ -25,6 +25,7 @@ line  flow       case                                    expect
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from decimal import Decimal
 
@@ -45,6 +46,7 @@ from app.assistant.models import (
     AssistantTurn,
     ConsumptionPlanRecord,
     Justification,
+    QuantitySavingRecord,
     QuantitySuggestionRecord,
 )
 from app.assistant.router import Flow, RoutedFlow
@@ -56,6 +58,7 @@ from app.initiatives.i8.models import RepairAttestation
 from app.initiatives.i8.reservation_assistant import build as build_i08
 from app.models.base import Base
 from app.models.i13_session_link import SessionReservationLink
+from app.models.i7_staging import StagedMaterialPlant
 from app.shared.material_scope import MaterialScope
 from tests.assistant.conftest import TODAY, repair_line, repair_request, universe_row, watch_metric
 
@@ -69,8 +72,10 @@ _TABLES = [
     Justification.__table__,
     ConsumptionPlanRecord.__table__,
     QuantitySuggestionRecord.__table__,
+    QuantitySavingRecord.__table__,
     SessionReservationLink.__table__,
     RepairAttestation.__table__,
+    StagedMaterialPlant.__table__,
 ]
 
 #: A faulty unit declared in the visit (option B, 27-Oct-2026), as the
@@ -99,6 +104,8 @@ OAR_ABOVE = "1000000124"
 #: Two issues in a year: no suggestion can be made.
 OAR_NO_HISTORY = "1000000125"
 OAR_NOT_NEEDED = "1000000126"
+#: 20 in stock against a target of 12: 0 suggested.
+OAR_COVERED = "1000000127"
 REPAIR_EXISTING = "8000005632"
 REPAIR_NEW = "8000005633"
 REPAIR_NONE = "8000005634"
@@ -127,10 +134,11 @@ def _assessment(material: str):
             today=TODAY,
         )
     history = 2 if material == OAR_NO_HISTORY else 12
+    stock = Decimal("20") if material == OAR_COVERED else Decimal("4")
     return build_i13(
         material=material,
         plant=PLANT,
-        metric=watch_metric(material=material, consumption_count_12m=history),
+        metric=watch_metric(material=material, consumption_count_12m=history, stock_on_hand=stock),
         cross_plant_stock=(),
         requested_quantity=None,
     )
@@ -885,3 +893,204 @@ class TestRoutes:
     def test_an_unknown_or_mistyped_reference_is_a_404(self, client) -> None:
         assert client.get("/api/assistant/requests/R00000000X").status_code == 404
         assert client.get("/api/assistant/requests/nonsense").status_code == 404
+
+
+# --- what the suggestion saved (3 Nov 2026) ----------------------------------------
+
+
+def price(db, material: str, unit_price: str | None, currency: str | None = "ZAR", missing: str | None = None) -> None:
+    """I07's staged price for ``material`` at the plant (MBEW VERPR / PEINH)."""
+    db.add(StagedMaterialPlant(
+        sap_material_number=material, sap_plant_code=PLANT,
+        unit_price=None if unit_price is None else Decimal(unit_price),
+        currency=currency, price_missing_reason=missing, price_valuation_type="NEW",
+        source_table="n_mbew", staging_run_id=1,
+    ))
+    db.commit()
+
+
+def locked(material: str, required: str, choice: str | None, quantity: str | None = None, **extra):
+    """A line as the 3 Nov screen sends it: required first, then the lock."""
+    return oar(
+        material, quantity if quantity is not None else required,
+        required_quantity=required, quantity_choice=choice, **extra,
+    )
+
+
+def saving_of(db, request_id: str, material: str):
+    records = request_service.line_records(db, request_service.lines_of(db, request_id))
+    return next(r for r in records if r.session.material_id == material)
+
+
+class TestSavings:
+    """OAR_NORMAL suggests 8 (4 in stock, 1 a month, 12-month ceiling)."""
+
+    def test_the_price_and_saving_queries_are_valid_on_sql_server(self, factory, settings) -> None:
+        # SQLite accepts "is_active IS 1"; SQL Server does not, and every non-prod preview 500'd on it (3 Nov).
+        from sqlalchemy import event
+        from sqlalchemy.dialects import mssql
+
+        seen: list[str] = []
+        with factory() as db:
+
+            @event.listens_for(db.get_bind(), "before_execute")
+            def _record(conn, clauseelement, multiparams, params, execution_options):
+                try:
+                    seen.append(str(clauseelement.compile(dialect=mssql.dialect())))
+                except Exception:  # noqa: BLE001 -- statements that cannot be compiled standalone
+                    pass
+
+            try:
+                price(db, OAR_NORMAL, "250.5")
+                request_service.preview(db, [(OAR_NORMAL, PLANT)], today=TODAY)
+                request_id = create(db, [locked(OAR_NORMAL, "12", "suggested", quantity="8")], settings).request.id
+                request_service.line_records(db, request_service.lines_of(db, request_id))
+            finally:
+                event.remove(db.get_bind(), "before_execute", _record)
+        assert any("i7_staged_material_plant" in s for s in seen)
+        assert [s for s in seen if re.search(r"\bIS\s+[01]\b", s, re.IGNORECASE)] == []
+
+    def test_locking_the_suggestion_saves_the_difference_at_the_i07_price(self, factory, settings) -> None:
+        with factory() as db:
+            price(db, OAR_NORMAL, "250.5")
+            request_id = create(db, [locked(OAR_NORMAL, "12", "suggested", quantity="8")], settings).request.id
+        with factory() as db:
+            record = saving_of(db, request_id, OAR_NORMAL)
+            saving = record.saving
+            assert (saving.required_quantity, saving.suggested_quantity, saving.final_quantity) == (12, 8, 8)
+            assert (saving.quantity_choice, saving.units_saved) == ("suggested", 4)
+            assert (saving.unit_price, saving.currency, saving.value_saved) == (
+                Decimal("250.5"), "ZAR", Decimal("1002.00")
+            )
+            assert record.plan.planned_quantity == 8 and record.justification is None
+
+    def test_keeping_your_own_number_above_saves_nothing_and_asks_why(self, factory, settings) -> None:
+        with factory() as db:
+            request_id = create(db, [locked(OAR_NORMAL, "12", "own", **reason())], settings).request.id
+        with factory() as db:
+            record = saving_of(db, request_id, OAR_NORMAL)
+            assert (record.saving.final_quantity, record.saving.units_saved) == (12, 0)
+            assert record.justification.kind == "QUANTITY_OVERRIDE"
+
+    def test_keeping_your_own_number_below_needs_a_reason(self, factory, settings) -> None:
+        with factory() as db, pytest.raises(request_service.RequestError) as error:
+            create(db, [locked(OAR_NORMAL, "5", "own")], settings)
+        assert "why 5 rather than the suggested 8" in str(error.value)
+        _nothing_written(factory)
+
+        with factory() as db:
+            request_id = create(db, [locked(OAR_NORMAL, "5", "own", **reason("Only one pump"))], settings).request.id
+        with factory() as db:
+            record = saving_of(db, request_id, OAR_NORMAL)
+            assert (record.saving.final_quantity, record.saving.units_saved) == (5, 0)
+            assert (record.justification.kind, record.justification.free_text) == (
+                "QUANTITY_BELOW_SUGGESTION", "Only one pump"
+            )
+
+    def test_no_suggestion_counts_nothing(self, factory, settings) -> None:
+        with factory() as db:
+            line = locked(OAR_NO_HISTORY, "3", "own", seen=None, **reason("New conveyor"))
+            request_id = create(db, [line], settings).request.id
+        with factory() as db:
+            saving = saving_of(db, request_id, OAR_NO_HISTORY).saving
+            assert (saving.suggested_quantity, saving.units_saved, saving.value_saved) == (None, None, None)
+
+    def test_not_needed_when_stock_covers_it_saves_the_whole_quantity(self, factory, settings) -> None:
+        with factory() as db:
+            price(db, OAR_COVERED, "10")
+            line = locked(OAR_COVERED, "6", "suggested", quantity="", seen="0", decision="not_needed")
+            request_id = create(db, [line], settings).request.id
+        with factory() as db:
+            saving = saving_of(db, request_id, OAR_COVERED).saving
+            assert (saving.final_quantity, saving.units_saved, saving.value_saved) == (0, 6, Decimal("60.00"))
+
+    def test_not_needed_against_a_positive_suggestion_is_not_the_suggestions_saving(self, factory, settings) -> None:
+        with factory() as db:
+            line = locked(OAR_NORMAL, "6", "own", quantity="", decision="not_needed")
+            request_id = create(db, [line], settings).request.id
+        with factory() as db:
+            assert saving_of(db, request_id, OAR_NORMAL).saving.units_saved == 0
+
+    def test_the_suggestion_cannot_be_used_when_it_is_zero(self, factory, settings) -> None:
+        with factory() as db, pytest.raises(request_service.RequestError, match="mark the line not needed"):
+            create(db, [locked(OAR_COVERED, "6", "suggested", quantity="0", seen="0")], settings)
+
+    @pytest.mark.parametrize("staged, note", [
+        (None, "not in the I07 price data"),
+        ((None, "ZAR", "price_token_value"), "placeholder price"),
+        (("40", "USD", None), "not stated in ZAR"),
+        (("40", None, None), "not stated in ZAR"),
+    ])
+    def test_no_price_keeps_the_units_and_leaves_the_value_out(self, factory, settings, staged, note) -> None:
+        from app.assistant.savings import UnitPrice
+
+        with factory() as db:
+            if staged is not None:
+                price(db, OAR_NORMAL, *staged)
+            request_id = create(db, [locked(OAR_NORMAL, "12", "suggested", quantity="8")], settings).request.id
+        with factory() as db:
+            saving = saving_of(db, request_id, OAR_NORMAL).saving
+            assert saving.units_saved == 4
+            assert saving.value_saved is None and saving.unit_price is None
+            assert note in UnitPrice(missing=saving.price_missing_reason).note
+
+    def test_nad_counts_one_for_one(self, factory, settings) -> None:
+        with factory() as db:
+            price(db, OAR_NORMAL, "100", currency="NAD")
+            request_id = create(db, [locked(OAR_NORMAL, "12", "suggested", quantity="8")], settings).request.id
+        with factory() as db:
+            saving = saving_of(db, request_id, OAR_NORMAL).saving
+            assert (saving.currency, saving.value_saved) == ("ZAR", Decimal("400.00"))
+
+    @pytest.mark.parametrize("required, choice, quantity, words", [
+        ("12", "suggested", "9", "is not the suggested 8"),
+        ("12", "own", "10", "is not the 12 you entered"),
+        ("0", "own", None, "must be above 0"),
+        ("", "own", "8", "enter the quantity you need"),
+        ("12", None, "8", "use the suggested quantity or your own"),
+    ])
+    def test_a_lock_that_does_not_match_is_refused(self, factory, settings, required, choice, quantity, words) -> None:
+        with factory() as db, pytest.raises(request_service.RequestError, match=words):
+            create(db, [locked(OAR_NORMAL, required, choice, quantity=quantity)], settings)
+        _nothing_written(factory)
+
+    def test_a_screen_without_a_required_quantity_records_no_saving(self, factory, settings) -> None:
+        with factory() as db:
+            request_id = create(db, [oar(OAR_NORMAL, "8")], settings).request.id
+        with factory() as db:
+            assert saving_of(db, request_id, OAR_NORMAL).saving is None
+            assert count(db, QuantitySavingRecord) == 0
+
+    def test_a_moved_suggestion_is_still_a_conflict_not_a_mismatch(self, factory, settings) -> None:
+        with factory() as db, pytest.raises(request_service.RequestConflict):
+            create(db, [locked(OAR_NORMAL, "12", "suggested", quantity="7", seen="7")], settings)
+
+
+class TestSavingsRoutes:
+    client = TestRoutes.client
+    _body = TestRoutes._body
+
+    def test_preview_carries_the_unit_price(self, client, factory) -> None:
+        with factory() as db:
+            price(db, OAR_NORMAL, "250.5")
+        response = client.post("/api/assistant/requests/preview", json={
+            "materials": [{"materialId": OAR_NORMAL, "plant": PLANT}, {"materialId": OAR_ABOVE, "plant": PLANT}],
+        })
+        priced, unpriced = response.json()["lines"]
+        assert priced["unitPrice"] == {"price": "250.5000", "currency": "ZAR", "missing": None, "note": None}
+        assert unpriced["unitPrice"]["price"] is None
+        assert unpriced["unitPrice"]["note"] == "No price: not in the I07 price data for this plant"
+
+    def test_create_reads_the_saving_back(self, client, factory) -> None:
+        with factory() as db:
+            price(db, OAR_NORMAL, "250.5")
+        line = {"materialId": OAR_NORMAL, "plant": PLANT, "decision": "proceed", "quantity": "8",
+                "windowStart": "2026-08-01", "windowEnd": "2027-03-31", "purpose": "Mill 3",
+                "seenSuggestedQuantity": "8", "requiredQuantity": "12", "quantityChoice": "suggested"}
+        response = client.post("/api/assistant/requests", json=self._body(key="draft-saving-1", lines=[line]))
+        assert response.status_code == 201, response.text
+        assert response.json()["lines"][0]["saving"] == {
+            "requiredQuantity": "12", "suggestedQuantity": "8", "finalQuantity": "8",
+            "quantityChoice": "suggested", "unitsSaved": "4", "unitPrice": "250.5000",
+            "currency": "ZAR", "valueSaved": "1002.00", "priceNote": None,
+        }

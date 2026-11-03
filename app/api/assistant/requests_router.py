@@ -33,23 +33,30 @@ from app.api.assistant.request_schemas import (
     ReasonCategoryModel,
     RequestLineModel,
     RequestListResponse,
+    LinkJobResponse,
+    LinkJobStepModel,
     RequestResponse,
     RequestSummaryModel,
+    SavingModel,
     SkippedModel,
     SuggestedModel,
+    UnitPriceModel,
     UploadResponse,
 )
 from app.api.assistant.schemas import LinkedReservationModel
 from app.api.deps import Actor, get_current_actor
 from app.assistant import departments as department_names
+from app.assistant import link_job
 from app.assistant import request_upload
 from app.assistant import requests as request_service
 from app.assistant import script
 from app.assistant.models import AssistantRequest, AssistantSession
+from app.assistant.savings import UnitPrice
 from app.assistant.session import Origin
 from app.core import security
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
+from app.core.security import USER_ROLES, require_roles
 from app.initiatives.i13.session_link import line_number_note
 from app.shared.material_names import material_names
 
@@ -122,6 +129,16 @@ def preview(body: PreviewRequest, db: DbDep, settings: SettingsDep) -> PreviewRe
                     if line.suggestion is not None
                     else None
                 ),
+                unit_price=(
+                    UnitPriceModel(
+                        price=None if line.price.price is None else str(line.price.price),
+                        currency=line.price.currency,
+                        missing=line.price.missing,
+                        note=line.price.note,
+                    )
+                    if line.price is not None
+                    else None
+                ),
             )
             for line in lines
         ],
@@ -158,6 +175,8 @@ def create_request(
             # Sent at all, as opposed to sent as null ("no suggestion was shown").
             check_seen="seen_suggested_quantity" in line.model_fields_set,
             declaration=line.declaration.as_answer() if line.declaration else None,
+            required_quantity=line.required_quantity,
+            quantity_choice=line.quantity_choice,
         )
         for line in body.lines
     ]
@@ -276,6 +295,67 @@ def get_request(request_id: str, db: DbDep, settings: SettingsDep) -> RequestRes
     return _request_response(db, request)
 
 
+#: Any signed-in user with a role may press it: it changes no business record, only
+#: refreshes what the page shows, and one job runs at a time whoever presses.
+_ANY_USER = Depends(require_roles(*sorted(USER_ROLES)))
+
+
+def _job_response(job, *, created: bool) -> LinkJobResponse:
+    return LinkJobResponse(
+        id=job.id,
+        request_id=job.request_id,
+        status=job.status,
+        step=job.step,
+        steps=[LinkJobStepModel(**step) for step in link_job.steps_of(job)],
+        requested_at=job.requested_at,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+        links=job.links,
+        error=job.error,
+        created=created,
+    )
+
+
+def _existing_request(db: DbSession, request_id: str, settings: Settings) -> None:
+    try:
+        request_service.load(db, request_id, settings)
+    except request_service.RequestError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+
+
+@router.post(
+    "/{request_id}/link-reservation",
+    response_model=LinkJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[_ANY_USER],
+    summary="Pull the latest SAP data, link this request's reservations, rebuild the views",
+)
+def link_reservation(request_id: str, db: DbDep, settings: SettingsDep, actor: ActorDep) -> LinkJobResponse:
+    """Starts a Link reservation job, or returns the one already queued or running for
+    this request. Poll ``GET`` with the same path for its progress."""
+    if not link_job.enabled(settings):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Link reservation is not available.")
+    _existing_request(db, request_id, settings)
+    job, created = link_job.create(db, request_id, requested_by=actor.id)
+    if created:
+        link_job.start_in_background(job.id, request_id)
+    return _job_response(job, created=created)
+
+
+@router.get(
+    "/{request_id}/link-reservation",
+    response_model=LinkJobResponse,
+    summary="The latest Link reservation job for this request",
+)
+def link_reservation_status(request_id: str, db: DbDep, settings: SettingsDep) -> LinkJobResponse:
+    _existing_request(db, request_id, settings)
+    job = link_job.latest_for_request(db, request_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No Link reservation job for this request yet.")
+    link_job.mark_abandoned_if_stale(db, job)
+    return _job_response(job, created=False)
+
+
 def _single(departments: list[str]) -> str | None:
     return departments[0] if len(departments) == 1 else None
 
@@ -316,6 +396,7 @@ def _request_response(db: DbSession, request: AssistantRequest, *, replayed: boo
     for record in records:
         session: AssistantSession = record.session
         plan, suggestion, justification = record.plan, record.suggestion, record.justification
+        saving = record.saving
         lines.append(
             RequestLineModel(
                 line_no=session.line_no or 0,
@@ -343,6 +424,21 @@ def _request_response(db: DbSession, request: AssistantRequest, *, replayed: boo
                         free_text=justification.free_text,
                     )
                     if justification
+                    else None
+                ),
+                saving=(
+                    SavingModel(
+                        required_quantity=quantity(saving.required_quantity),
+                        suggested_quantity=quantity(saving.suggested_quantity),
+                        final_quantity=quantity(saving.final_quantity),
+                        quantity_choice=saving.quantity_choice,
+                        units_saved=quantity(saving.units_saved),
+                        unit_price=None if saving.unit_price is None else str(saving.unit_price),
+                        currency=saving.currency,
+                        value_saved=None if saving.value_saved is None else str(saving.value_saved),
+                        price_note=UnitPrice(missing=saving.price_missing_reason).note,
+                    )
+                    if saving
                     else None
                 ),
                 linked_reservations=[

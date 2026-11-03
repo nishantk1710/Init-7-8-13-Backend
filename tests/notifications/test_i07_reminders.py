@@ -11,8 +11,9 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings, get_settings
 from app.core.security import Roles
-from app.initiatives.i7.reminders import run_reminders
+from app.initiatives.i7.reminders import SlaTiming, run_reminders, settings_sla
 from app.initiatives.i7.recommendations.types import APPROVAL_CHAIN, ApprovalRole
 from app.models.notification import NotificationReminderState, NotificationRecipient, NotificationSla
 from tests.notifications.test_i07_approvals import SUBMITTER, act, configure, notes, person, recommendation, submit
@@ -188,3 +189,76 @@ def test_an_approver_nobody_configured_is_recorded_as_a_failed_reminder(db, api)
 
     failed = [n for n in notes(db, "APPROVAL_REMINDER", channel="EMAIL")]
     assert len(failed) == 1 and failed[0].status == "FAILED"
+
+
+# --- the I7_* day settings: timings without a notification_sla row ---------------------------------------------------
+
+DAY = 24 * 60
+
+
+def use_settings(monkeypatch, **values):
+    for name, value in values.items():
+        monkeypatch.setattr(get_settings(), name, value)
+
+
+def test_the_day_settings_are_off_by_default_and_become_minutes():
+    fields = Settings.model_fields
+    assert (fields["i7_reminder_first_days"].default, fields["i7_escalate_after_days"].default) == (0, 0)
+    assert fields["i7_escalation_role"].default == ""
+    assert settings_sla(Settings()) is None
+
+    on = Settings(
+        i7_reminder_first_days=1, i7_reminder_repeat_days=2, i7_reminder_max=3,
+        i7_escalate_after_days=3, i7_escalation_role=Roles.PLANT_HEAD,
+    )
+    assert settings_sla(on) == SlaTiming(DAY, 2 * DAY, 3, 3 * DAY, Roles.PLANT_HEAD)
+
+
+def test_escalation_needs_both_days_and_a_role_so_it_never_half_escalates():
+    assert settings_sla(Settings(i7_reminder_first_days=1, i7_escalate_after_days=3)) == SlaTiming(DAY, DAY, 3, None, None)
+    assert settings_sla(Settings(i7_escalate_after_days=3)) is None
+    assert settings_sla(Settings(i7_escalation_role=Roles.PLANT_HEAD)) is None
+    assert settings_sla(Settings(i7_escalate_after_days=3, i7_escalation_role=Roles.PLANT_HEAD)) == SlaTiming(
+        DAY, DAY, 0, 3 * DAY, Roles.PLANT_HEAD
+    )  # escalation only: no reminders
+
+
+def test_the_settings_alone_remind_on_the_day_schedule_and_stop_at_the_maximum(db, api, monkeypatch):
+    use_settings(monkeypatch, i7_reminder_first_days=1, i7_reminder_repeat_days=1, i7_reminder_max=2)
+    submit(api, waiting(db))
+
+    assert run(db, minutes=23 * 60).reminders == 0  # not yet a day
+    assert run(db, minutes=25 * 60).reminders == 1
+    assert run(db, minutes=25 * 60).reminders == 0  # the same pass again adds nothing
+    assert run(db, minutes=50 * 60).reminders == 1  # a day after the first
+    assert run(db, minutes=10 * DAY).reminders == 0  # the maximum of 2 is reached
+    assert len(notes(db, "APPROVAL_REMINDER")) == 2
+
+
+def test_the_settings_alone_escalate_once_after_the_configured_days(db, api, monkeypatch):
+    use_settings(monkeypatch, i7_escalate_after_days=3, i7_escalation_role=Roles.PLANT_HEAD)
+    submit(api, waiting(db))
+
+    assert run(db, minutes=2 * DAY).escalations == 0
+    assert run(db, minutes=3 * DAY + 5).escalations == 1
+    assert run(db, minutes=10 * DAY).escalations == 0
+
+    assert {n.recipient_user_id for n in notes(db, "APPROVAL_ESCALATED")} == {person(ApprovalRole.PLANT_HEAD)}
+    assert notes(db, "APPROVAL_REMINDER") == []  # escalation only: no reminders were asked for
+
+
+def test_a_notification_sla_row_wins_over_the_settings(db, api, monkeypatch):
+    use_settings(monkeypatch, i7_reminder_first_days=5, i7_reminder_max=3)
+    add_sla(db, escalate_after_minutes=None, escalation_role=None)  # first reminder after 60 minutes
+    submit(api, waiting(db))
+
+    assert run(db, minutes=61).reminders == 1  # the row's hour, not the setting's five days
+
+
+def test_with_the_settings_off_and_no_row_nothing_is_reminded(db, api, monkeypatch):
+    use_settings(monkeypatch, i7_reminder_first_days=0, i7_escalate_after_days=0, i7_escalation_role="")
+    submit(api, waiting(db))
+
+    result = run(db, minutes=60 * DAY)
+
+    assert (result.reminders, result.escalations) == (0, 0)

@@ -64,6 +64,7 @@ from app.models.notification import (
     NotificationRow,
     NotificationSla,
 )
+from app.models.reservation_link_job import ReservationLinkJob
 from app.models.serving import MaterialPlant
 
 # --- Initiative-owned tables ----------------------------------------------
@@ -121,6 +122,7 @@ __all__ = [
     "NotificationSla",
     "QuantityJustificationRecord",
     "QuantitySuggestionRecord",
+    "ReservationLinkJob",
     "SessionReservationLink",
     "StockoutRiskInput",
     "UatReservationSgtxt",

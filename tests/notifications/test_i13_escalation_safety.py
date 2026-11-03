@@ -22,6 +22,7 @@ from tests.notifications.test_i13_shared import (  # noqa: F401 -- fixtures and 
     OID,
     act_exception,
     repository,
+    shared,
 )
 
 

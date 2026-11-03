@@ -27,6 +27,10 @@ APPROVAL_ESCALATED = "APPROVAL_ESCALATED"
 EXCEPTION_ACTION_REQUIRED = "EXCEPTION_ACTION_REQUIRED"
 EXCEPTION_RESPONSE_REQUIRED = "EXCEPTION_RESPONSE_REQUIRED"
 EXCEPTION_ESCALATED = "EXCEPTION_ESCALATED"
+# A purchase requisition SAP posted to /api/events/pr. The plain notice goes to every
+# signed-in user and names nothing about the requisition; the details are for administrators.
+PR_RECEIVED = "PR_RECEIVED"
+PR_RECEIVED_DETAILS = "PR_RECEIVED_DETAILS"
 GENERAL = "GENERAL"
 
 
@@ -129,6 +133,20 @@ _TEMPLATES: dict[str, _Template] = {
         "{summary}\n"
         "This exception was not answered in time and needs your review.",
         _EXCEPTION,
+    ),
+    # No placeholders on purpose: this one reaches everyone, so it carries nothing about the requisition.
+    PR_RECEIVED: _Template(
+        "New Purchase Requisition Received",
+        "A new purchase requisition was received from SAP.",
+        "Open",
+    ),
+    PR_RECEIVED_DETAILS: _Template(
+        "Purchase Requisition {banfn} Received",
+        "Purchase requisition {banfn} was received from SAP.\n"
+        "Created on: {created_on} at {created_at}\n"
+        "Created by (SAP user): {created_by}\n"
+        "SAP message: {message}",
+        "Open",
     ),
     GENERAL: _Template("Notification", "{summary}", "Open"),
 }
