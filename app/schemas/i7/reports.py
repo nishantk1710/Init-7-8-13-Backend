@@ -946,6 +946,30 @@ class PositionFigures(BaseModel):
     """Material-plants of the population left out of ``net_rop_value_impact``: other or missing currency, no valid
     price, or no reorder point."""
 
+    # --- Stock held, valued in ZAR over the same population ------------------------------------------------
+    # Stock on hand is as loaded when the figures were worked out (``inventory_stock_as_of``): it is month-end only
+    # inside a saved month-end snapshot. ``None`` is "not measured", never 0; all default to None so a snapshot saved
+    # before they existed still reads.
+    inventory_value: Decimal | None = None
+    """Unrestricted-use stock on hand x MBEW price, in ZAR, over the population's material-plants that have a valid
+    price and a complete stock figure."""
+    inventory_priced_count: int = 0
+    """How many material-plants ``inventory_value`` is over."""
+    safety_stock_value: Decimal | None = None
+    """The safety stock SAP holds (not the recommended one) x MBEW price, in ZAR."""
+    safety_stock_priced_count: int = 0
+    below_reorder_count: int | None = None
+    """Material-plants whose stock on hand is below the reorder point SAP holds. A reorder point of 0 is "not
+    maintained" and cannot be judged."""
+    below_reorder_judged: int = 0
+    """How many material-plants ``below_reorder_count`` is out of: a stock figure and a reorder point above 0."""
+    inventory_stock_as_of: date | None = None
+    """When the stock on hand behind these three figures was loaded."""
+    inventory_unavailable_reason: str | None = None
+    """Why the three are ``None`` (no stock load, or one too far from the report's cutoff)."""
+    recommendation_reference_date: date | None = None
+    """The newest ``generated_at`` in the population: the date of the SAP values stored on the recommendations."""
+
 
 class PlantPosition(BaseModel):
     """The position figures for one plant (``None`` is every plant): what the Overview's two by-plant charts draw."""
@@ -1007,6 +1031,31 @@ class ForecastActualSection(BaseModel):
     note: str
 
 
+class WorkflowStages(BaseModel):
+    """Where the period's recommendations stand today, by stage. Approval and SAP adoption are separate processes: the
+    stages are exclusive and add up to ``total``, and nothing here says a recommendation was adopted in SAP -- only the
+    change evidence in the adoption counts does."""
+
+    model_config = ConfigDict(frozen=True)
+
+    total: int
+    """Recommendation records generated in the period."""
+    not_submitted: int
+    """Not yet in the approval chain: ready for review, or never computed (nothing to approve)."""
+    awaiting_approval: int
+    """Waiting for an approver's decision (pending approval, or held)."""
+    adjusted_in_chain: int
+    """A reviewer changed a value and the chain has not decided again."""
+    approved_awaiting_sap: int
+    """Approved; no SAP execution evidence is recorded yet."""
+    implemented_in_sap: int
+    """Execution evidence recorded, or SAP change evidence checked (adopted, partially or not): the approval has been
+    acted on, whether or not SAP ended up matching it."""
+    rejected_or_sent_back: int
+    other: int = 0
+    """Any status this mapping does not know, so the stages always add up to ``total``."""
+
+
 class AdoptionQuarter(BaseModel):
     """SAP adoption of the period's recommendations that have something to adopt: an OAR one eligible for the
     Min-Max conversion, or a stock item whose reorder point, safety stock or max stock changes -- the Overview's
@@ -1025,7 +1074,13 @@ class AdoptionQuarter(BaseModel):
     partially_adopted: int | None = None
     not_adopted: int | None = None
     pending: int | None = None
-    """No SAP change evidence yet: the four counts add up to ``tracked``. Pending is not "not adopted"."""
+    """No SAP change evidence yet, whether or not the recommendation was approved: the four counts add up to
+    ``tracked``. Pending is not "not adopted", and it is not "awaiting approval" -- see ``stages``."""
+    adoption_rate: Decimal | None = None
+    """A share between 0 and 1, by the Overview's own adoption-rate formula (the one in force on the Calculation page; by
+    default adopted and partially adopted out of those with SAP change evidence). ``None`` until at least one has
+    evidence: with none, a rate would be a measured 0% that was never measured."""
+    stages: WorkflowStages | None = None
 
 
 class MonthCoverage(BaseModel):
@@ -1035,6 +1090,20 @@ class MonthCoverage(BaseModel):
     label: str
     consumption_status: SourceMonthStatus
     recommendations_generated: int
+
+
+class CoverageItem(BaseModel):
+    """One source the figures rest on, with a plain status and the reason when it is not Available."""
+
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    label: str
+    value: str | None = None
+    """The date or count it stands for, as text; ``None`` when there is none."""
+    status: str
+    """``Available``, ``Stale``, ``Not available``, ``Not covered`` or ``Insufficient history``."""
+    detail: str | None = None
 
 
 class DataCoverage(BaseModel):
@@ -1053,6 +1122,8 @@ class DataCoverage(BaseModel):
     basis: str
     """Whether the figures are from saved monthly snapshots or current calculations."""
     warnings: list[str]
+    items: list[CoverageItem] = []
+    """Each important source with a status and why, for the page, the PDF and the Excel to show alike. Empty on a report made before they existed."""
 
 
 class TrendMonth(BaseModel):
@@ -1079,6 +1150,10 @@ class TrendMonth(BaseModel):
     net_rop_change_from_previous: Decimal | None = None
     """How that estimate moved since the previous month; ``None`` unless both months have one, made with the same calculation."""
     currency: str | None = None
+    inventory_value: Decimal | None = None
+    """Stock held, in ZAR, as measured with that snapshot; ``None`` for a snapshot taken before it was captured."""
+    safety_stock_value: Decimal | None = None
+    below_reorder_count: int | None = None
     revision: int | None = None
     calc_version: str | None = None
     note: str | None = None
@@ -1122,6 +1197,46 @@ class QuarterTrends(BaseModel):
     notes: list[str]
 
 
+class PerformanceMonth(BaseModel):
+    """One month of the performance trends. ``None`` is "no figure for this month", never 0: a month that has not started,
+    one before the history began, or one with no month-end snapshot."""
+
+    model_config = ConfigDict(frozen=True)
+
+    month: date
+    label: str
+    state: str
+    """``ended``, ``in_progress`` or ``not_started``."""
+    records_generated: int | None = None
+    """Recommendation records generated in the month (runs, not materials)."""
+    material_plants_generated: int | None = None
+    """Distinct material-plants with a recommendation generated in the month."""
+    submitted: int | None = None
+    approved: int | None = None
+    rejected: int | None = None
+    sent_back: int | None = None
+    """Approval events from the dated approval history, counted in the month they happened -- never from today's status."""
+    excess_state: str = "MISSING"
+    """``MONTH_END`` (a final snapshot valid for the month's end), ``ROLLING`` (a month still running, or a snapshot taken too long after
+    its end: kept out of the trend) or ``MISSING`` (no snapshot was captured)."""
+    excess_count: int | None = None
+    excess_opportunity: Decimal | None = None
+    currency: str | None = None
+
+
+class PerformanceTrends(BaseModel):
+    """The last few months' recommendation volume, approval activity and excess inventory, each from its own honest source."""
+
+    model_config = ConfigDict(frozen=True)
+
+    months: list[PerformanceMonth]
+    recommendation_history_from: date | None = None
+    """The first month any recommendation was generated; earlier months have no figure."""
+    approval_history_from: date | None = None
+    """The first month an approval event was recorded; earlier months have no figure."""
+    notes: list[str] = []
+
+
 class QuarterManagement(BaseModel):
     """The management view of one period. Report version 1.2."""
 
@@ -1143,6 +1258,8 @@ class QuarterManagement(BaseModel):
     position_basis: str = "current_calculation"
     """``snapshot`` when ``position`` and ``plant_positions`` are the valid quarter-end snapshot's; otherwise
     ``current_calculation`` over the period's recommendations."""
+    performance: PerformanceTrends | None = None
+    """The last months' recommendation, approval and excess trends. ``None`` on a report made before they existed."""
     definitions: list[str]
     """What each kind of figure on the page means, so a card's number is never read as another kind."""
 

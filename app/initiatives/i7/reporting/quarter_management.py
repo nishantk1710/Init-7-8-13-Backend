@@ -17,10 +17,13 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.initiatives.i7.kpi_formulas.expression import evaluate
+from app.initiatives.i7.kpi_formulas.resolved import load_active
 from app.initiatives.i7.reporting import kpi_definitions
-from app.initiatives.i7.reporting.data_coverage import BASIS_CURRENT, build_data_coverage
+from app.initiatives.i7.reporting.data_coverage import BASIS_CURRENT, build_data_coverage, coverage_items
 from app.initiatives.i7.reporting.forecast_actual import build_forecast_actual
 from app.initiatives.i7.reporting.monthly_activity import build_monthly_activity, period_months
+from app.initiatives.i7.reporting.performance_trends import build_performance_trends
 from app.initiatives.i7.reporting.quarter_trends import REALISED_SAVINGS_NOTE, build_trends
 from app.initiatives.i7.reporting.period import (
     exclusive_end_of,
@@ -34,6 +37,7 @@ from app.models.i7_recommendation import Recommendation, SapAdoptionResult
 from app.schemas.i7.reports import (
     AdoptionQuarter,
     AvailabilityStatus,
+    ForecastActualSection,
     KpiCard,
     MetricKind,
     PeriodInfo,
@@ -44,6 +48,7 @@ from app.schemas.i7.reports import (
     SourceActivitySection,
     StatusCount,
     StatusDistribution,
+    WorkflowStages,
 )
 
 DEFINITIONS = [
@@ -73,11 +78,13 @@ def _unit(currency: str | None) -> str:
 
 
 def _adoption(
-    session: Session, period_start: date, exclusive_end: date, awaiting: int
+    session: Session, period_start: date, exclusive_end: date, awaiting: int, stages: WorkflowStages
 ) -> AdoptionQuarter:
     """Adoption of the period's recommendations that have something to adopt (the Overview's ``actionable`` rule,
     over the newest recommendation of each material-plant). Approval is not adoption: only SAP change evidence in the
-    ledger (``i7_sap_adoption``) counts, and everything with no evidence is pending, never "not adopted"."""
+    ledger (``i7_sap_adoption``) counts, and everything with no evidence is pending, never "not adopted". That pending
+    is about SAP evidence, whether or not the recommendation was approved: where each recommendation stands in the
+    approval chain is ``stages``, kept apart."""
     tracked = _apply_filters(
         select(Recommendation.recommendation_id),
         status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None, criticality=None,
@@ -97,7 +104,8 @@ def _adoption(
     evidence = adopted + partially + not_adopted
     counts = dict(
         tracked=total, adopted=adopted, partially_adopted=partially, not_adopted=not_adopted,
-        pending=max(total - evidence, 0),
+        pending=max(total - evidence, 0), stages=stages,
+        adoption_rate=_adoption_rate(session, adopted, partially, not_adopted, total - evidence, total),
     )
     if evidence == 0:
         return AdoptionQuarter(
@@ -122,6 +130,18 @@ def _adoption(
     )
 
 
+def _adoption_rate(session: Session, adopted: int, partially: int, not_adopted: int, pending: int, tracked: int) -> Decimal | None:
+    """The Overview's own adoption rate: the formula in force on the Calculation page (by default adopted and partially
+    adopted out of everything SAP has evidence for), over this period's counts. ``None`` -- never 0 -- when it cannot be
+    worked out, as with nothing yet measured."""
+    figures = {
+        "adopted": Decimal(adopted), "partially_adopted": Decimal(partially), "not_adopted": Decimal(not_adopted),
+        "pending": Decimal(max(pending, 0)), "tracked": Decimal(tracked),
+    }
+    rate = evaluate(load_active(session).parsed["adoption_rate"], figures)
+    return rate if isinstance(rate, Decimal) else None
+
+
 def _cards(
     *,
     from_snapshot: bool,
@@ -135,6 +155,7 @@ def _cards(
     assessed: int,
     every: int,
     awaiting: int,
+    approved: int,
     position: PositionFigures,
 ) -> list[KpiCard]:
     stockout = position.stockout
@@ -148,21 +169,34 @@ def _cards(
             if quarter_end_reason else None
         )
     )
+    # The SAP values the excess and working-capital figures compare against are the ones stored on each recommendation
+    # when it was generated, not a fresh read of SAP: say which date that is.
+    reference_note = (
+        f"Compares the SAP values stored on each recommendation when it was generated (newest "
+        f"{position.recommendation_reference_date:%d %b %Y}) with the recommended ones; SAP is not read again for this report."
+        if position.recommendation_reference_date
+        else None
+    )
     cards: list[KpiCard] = [
         KpiCard(
             key="materials_assessed",
-            title="Materials assessed",
+            title="Material-plants with a computed recommendation",
             unit="material-plants",
             value=Decimal(assessed),
             status=AvailabilityStatus.AVAILABLE,
-            explanation="Different material-plants the system actually worked out a recommendation for in this period.",
+            explanation=(
+                "Different material-plants for which a recommendation was actually worked out in this period. Each counts "
+                "once, however many times it was regenerated."
+            ),
             kind=MetricKind.EVENT,
             measured_on=None,
             period_label=period_label,
             denominator=every,
-            denominator_label="material-plants with a recommendation",
-            note="Distinct material-plants, not records: one with several recommendations counts once. Those with no "
-            "computable recommendation are left out.",
+            denominator_label="distinct material-plants looked at",
+            note=(
+                f"{every - assessed:,} of the {every:,} material-plants looked at had no recommendation computed because a "
+                "required input was missing. They are looked at, not assessed, and are not counted here."
+            ),
         ),
         KpiCard(
             key="recommendations_generated",
@@ -170,10 +204,17 @@ def _cards(
             unit="recommendation records",
             value=Decimal(generated),
             status=AvailabilityStatus.AVAILABLE,
-            explanation="Recommendation records created in this period.",
+            explanation=(
+                "Recommendation records created in this period. These are records, not materials: a material-plant that "
+                "was recalculated has a record for each run."
+            ),
             kind=MetricKind.EVENT,
             measured_on=None,
             period_label=period_label,
+            note=(
+                f"{generated:,} records over {every:,} distinct material-plants: "
+                f"{generated - every:,} are repeat runs of a material-plant already recommended in the period."
+            ),
         ),
     ]
 
@@ -239,7 +280,7 @@ def _cards(
             unavailable_reason=(
                 None if position.excess_opportunity is not None else "No excess material-plant has a unit price, a current and a recommended maximum stock together."
             ),
-            note=" ".join(n for n in (position_note, MONEY_CAVEAT) if n),
+            note=" ".join(n for n in (position_note, reference_note, MONEY_CAVEAT) if n),
         )
     )
 
@@ -267,11 +308,13 @@ def _cards(
             unavailable_reason=(
                 None if position.net_rop_value_impact is not None else "No recommendation has a ZAR or NAD unit price and both a current and a recommended reorder point."
             ),
-            note=" ".join(n for n in (position_note, MONEY_CAVEAT) if n),
+            note=" ".join(n for n in (position_note, reference_note, MONEY_CAVEAT) if n),
         )
     )
 
-    # --- Pending approval: a status as of the cutoff -----------------------------------------------
+    # --- Approval: two statuses as of the date the report was generated -----------------------------
+    # Both are where the period's recommendations stand in the approval chain on that date. Neither says anything about
+    # SAP: whether SAP was updated is the adoption section, a separate process.
     cards.append(
         KpiCard(
             key="pending_approval",
@@ -280,8 +323,27 @@ def _cards(
             value=Decimal(awaiting),
             status=AvailabilityStatus.AVAILABLE,
             explanation=(
-                "Recommendations from this period that are waiting for someone's decision on the date this report was "
-                "generated. Where they stood at the end of the period is not what this shows."
+                "Recommendations from this period waiting for an approver's decision (pending or on hold) on the date this "
+                "report was generated. Not the same as waiting for SAP to be updated."
+            ),
+            kind=MetricKind.STATUS_AS_OF,
+            measured_on=as_of,
+            period_label=f"as of {as_of:%d %b %Y}",
+            denominator=generated,
+            denominator_label="recommendations generated in the period",
+        )
+    )
+    cards.append(
+        KpiCard(
+            key="approved",
+            title="Approved",
+            unit="recommendations",
+            value=Decimal(approved),
+            status=AvailabilityStatus.AVAILABLE,
+            explanation=(
+                "Recommendations generated in this period that are in an approved status (approved, or approved and "
+                "since acted on in SAP) on the date this report was generated. Approved is not adopted: whether SAP "
+                "changed is the adoption section."
             ),
             kind=MetricKind.STATUS_AS_OF,
             measured_on=as_of,
@@ -296,6 +358,7 @@ def _cards(
 def _coverage(
     session: Session, period_start: date, period_end: date, today: date, cutoff: date, *,
     source_activity: SourceActivitySection | None, position: PositionFigures, trends, from_snapshot: bool,
+    forecast: ForecastActualSection,
 ):
     """The data-coverage section, with the basis said honestly: which figures are a saved month-end snapshot and which are
     worked out now, and which months have no snapshot."""
@@ -314,7 +377,13 @@ def _coverage(
         warnings.append(BASIS_CURRENT)
         if trends.quarter_end.reason:
             warnings.append(f"No quarter-end snapshot: {trends.quarter_end.reason}")
-    return coverage.model_copy(update={"basis": "snapshot" if from_snapshot else "current_calculation", "warnings": warnings})
+    return coverage.model_copy(
+        update={
+            "basis": "snapshot" if from_snapshot else "current_calculation",
+            "warnings": warnings,
+            "items": coverage_items(coverage, position, trends.quarter_end, forecast),
+        }
+    )
 
 
 def build_quarter_management(
@@ -333,6 +402,7 @@ def build_quarter_management(
     generated = kpi_definitions.records_generated(session, period_start, exclusive_end)
     assessed, every = kpi_definitions.material_plants_assessed(session, period_start, exclusive_end)
     awaiting = kpi_definitions.awaiting_decision(session, period_start, exclusive_end)
+    approved = kpi_definitions.approved_count(session, period_start, exclusive_end)
     position = kpi_definitions.position_figures(session, period_start, exclusive_end, cutoff)
     # The Overview's by-plant charts: every plant, then each plant it offers. Narrowed to the plants this
     # deployment actually carries (I7_PLANTS), in the Overview's order.
@@ -399,18 +469,20 @@ def build_quarter_management(
             assessed=assessed,
             every=every,
             awaiting=awaiting,
+            approved=approved,
             position=position,
         ),
         position=position,
         position_basis="snapshot" if from_snapshot else "current_calculation",
         trends=trends,
+        performance=build_performance_trends(session, period_end, today),
         plant_positions=plant_positions,
         status_distribution=distribution,
         forecast_actual=forecast,
-        adoption=_adoption(session, period_start, exclusive_end, awaiting),
+        adoption=_adoption(session, period_start, exclusive_end, awaiting, WorkflowStages(**kpi_definitions.stage_counts(counts))),
         data_coverage=_coverage(
             session, period_start, period_end, today, cutoff,
-            source_activity=source_activity, position=position, trends=trends, from_snapshot=from_snapshot,
+            source_activity=source_activity, position=position, trends=trends, from_snapshot=from_snapshot, forecast=forecast,
         ),
         definitions=DEFINITIONS,
     )
