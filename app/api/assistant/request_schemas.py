@@ -35,6 +35,16 @@ class SuggestedModel(AssistantModel):
     window_months: int | None = None
 
 
+class UnitPriceModel(AssistantModel):
+    """The plant's replacement price as I07 reads it (MBEW VERPR / PEINH), in ZAR."""
+
+    price: str | None = None
+    """Null: no usable price -- ``missing`` says why, ``note`` in words."""
+    currency: str | None = None
+    missing: str | None = None
+    note: str | None = None
+
+
 class PreviewLineModel(AssistantModel):
     material_id: str
     material_description: str | None = None
@@ -45,6 +55,8 @@ class PreviewLineModel(AssistantModel):
     unit_exists: bool | None = None
     suggestion: SuggestedModel | None = None
     also_matched: str | None = None
+    unit_price: UnitPriceModel | None = None
+    """OAR lines only: what a saving on this line is valued at."""
 
 
 class ReasonCategoryModel(AssistantModel):
@@ -108,6 +120,11 @@ class LineAnswersModel(AssistantModel):
     Send it for every OAR line: a figure that moved since is refused (409)."""
     declaration: LineDeclarationModel | None = None
     """I08 only: declare the faulty unit coming off. Absent: nothing declared."""
+    required_quantity: str | None = PydanticField(default=None, max_length=20)
+    """OAR: the quantity needed, typed before the suggestion was shown. What a
+    saving is measured from; absent, none is recorded."""
+    quantity_choice: Literal["suggested", "own"] | None = None
+    """OAR: which number was locked. ``quantity`` must then be that number."""
 
 
 class CreateRequestBody(AssistantModel):
@@ -132,6 +149,22 @@ class JustificationBriefModel(AssistantModel):
     free_text: str
 
 
+class SavingModel(AssistantModel):
+    """What the quantity suggestion saved on one OAR line -- an estimate at submit."""
+
+    required_quantity: str
+    suggested_quantity: str | None = None
+    final_quantity: str
+    quantity_choice: Literal["suggested", "own"]
+    units_saved: str | None = None
+    """Null: no suggestion could be made, so nothing is counted."""
+    unit_price: str | None = None
+    currency: str | None = None
+    value_saved: str | None = None
+    """Null without a price; ``price_note`` says why."""
+    price_note: str | None = None
+
+
 class RequestLineModel(AssistantModel):
     line_no: int
     reference: str
@@ -153,6 +186,8 @@ class RequestLineModel(AssistantModel):
     window_end: date | None = None
     purpose: str | None = None
     justification: JustificationBriefModel | None = None
+    saving: SavingModel | None = None
+    """OAR lines submitted with a required quantity (from 3 Nov 2026)."""
     linked_reservations: list[LinkedReservationModel] = []
 
 

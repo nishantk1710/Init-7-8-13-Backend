@@ -37,8 +37,10 @@ from app.api.assistant.request_schemas import (
     LinkJobStepModel,
     RequestResponse,
     RequestSummaryModel,
+    SavingModel,
     SkippedModel,
     SuggestedModel,
+    UnitPriceModel,
     UploadResponse,
 )
 from app.api.assistant.schemas import LinkedReservationModel
@@ -49,6 +51,7 @@ from app.assistant import request_upload
 from app.assistant import requests as request_service
 from app.assistant import script
 from app.assistant.models import AssistantRequest, AssistantSession
+from app.assistant.savings import UnitPrice
 from app.assistant.session import Origin
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
@@ -145,6 +148,16 @@ def preview(body: PreviewRequest, db: DbDep, settings: SettingsDep) -> PreviewRe
                     if line.suggestion is not None
                     else None
                 ),
+                unit_price=(
+                    UnitPriceModel(
+                        price=None if line.price.price is None else str(line.price.price),
+                        currency=line.price.currency,
+                        missing=line.price.missing,
+                        note=line.price.note,
+                    )
+                    if line.price is not None
+                    else None
+                ),
             )
             for line in lines
         ],
@@ -180,6 +193,8 @@ def create_request(
             # Sent at all, as opposed to sent as null ("no suggestion was shown").
             check_seen="seen_suggested_quantity" in line.model_fields_set,
             declaration=line.declaration.as_answer() if line.declaration else None,
+            required_quantity=line.required_quantity,
+            quantity_choice=line.quantity_choice,
         )
         for line in body.lines
     ]
@@ -402,6 +417,7 @@ def _request_response(db: DbSession, request: AssistantRequest, *, replayed: boo
     for record in records:
         session: AssistantSession = record.session
         plan, suggestion, justification = record.plan, record.suggestion, record.justification
+        saving = record.saving
         lines.append(
             RequestLineModel(
                 line_no=session.line_no or 0,
@@ -429,6 +445,21 @@ def _request_response(db: DbSession, request: AssistantRequest, *, replayed: boo
                         free_text=justification.free_text,
                     )
                     if justification
+                    else None
+                ),
+                saving=(
+                    SavingModel(
+                        required_quantity=quantity(saving.required_quantity),
+                        suggested_quantity=quantity(saving.suggested_quantity),
+                        final_quantity=quantity(saving.final_quantity),
+                        quantity_choice=saving.quantity_choice,
+                        units_saved=quantity(saving.units_saved),
+                        unit_price=None if saving.unit_price is None else str(saving.unit_price),
+                        currency=saving.currency,
+                        value_saved=None if saving.value_saved is None else str(saving.value_saved),
+                        price_note=UnitPrice(missing=saving.price_missing_reason).note,
+                    )
+                    if saving
                     else None
                 ),
                 linked_reservations=[
