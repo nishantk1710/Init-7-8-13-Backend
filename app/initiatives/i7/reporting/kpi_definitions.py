@@ -37,7 +37,7 @@ from decimal import Decimal
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
-from app.api.i7.recommendations import _apply_filters, _not_smooth, _portfolio_currency
+from app.api.i7.recommendations import _apply_filters, _latest_only, _not_smooth, _portfolio_currency
 from app.initiatives.i7.kpi_formulas.inventory_value import inventory_measurements, stock_date_problem, stock_loaded_at
 from app.initiatives.i7.kpi_formulas.resolved import Formulas, load_active
 from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql
@@ -130,6 +130,35 @@ def stage_counts(counts: dict[str, int]) -> dict[str, int]:
     stages = {stage: sum(counts.get(s, 0) for s in statuses) for stage, statuses in STAGE_STATUSES.items()}
     total = sum(counts.values())
     return {**stages, "total": total, "other": total - sum(stages.values())}
+
+
+def oar_records(session: Session, period_start: date, exclusive_end: date) -> int:
+    """Recommendation records generated in the period for OAR material-plants -- rows, not distinct materials."""
+    return count_of(
+        session, select(Recommendation.id).where(*_in_period(period_start, exclusive_end), Recommendation.is_oar)
+    )
+
+
+def min_max_conversion(session: Session, period_start: date, exclusive_end: date) -> tuple[int, int, int]:
+    """``(eligible, oar_material_plants, manually_requested)`` over the OAR recommendations the Recommendations list shows for the
+    period: generated in it, and the newest of their material-plant. Built from the list's own filters, so the card's count and the
+    list behind it can never disagree.
+
+    *Eligible* is the OAR rule's own verdict (``conversion_eligibility`` = ELIGIBLE) that the material-plant may be converted to
+    Min-Max ordering -- not a change made in SAP, which is what SAP adoption measures. *Manually requested* are the NOT_ELIGIBLE
+    ones somebody asked to convert anyway; they are counted apart and never added into *eligible*.
+    """
+    oar = _latest_only(
+        _apply_filters(
+            select(Recommendation.id), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+            criticality=None, generated_from=period_start, generated_to=exclusive_end, demand_type="oar",
+        ).where(_not_smooth())
+    )
+    return (
+        count_of(session, oar.where(Recommendation.conversion_eligibility == "ELIGIBLE")),
+        count_of(session, oar),
+        count_of(session, oar.where(Recommendation.manually_converted)),
+    )
 
 
 def approved_count(session: Session, period_start: date, exclusive_end: date) -> int:

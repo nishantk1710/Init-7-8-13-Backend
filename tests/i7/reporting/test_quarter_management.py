@@ -601,3 +601,64 @@ def test_a_month_without_staged_consumption_is_not_covered_never_zero(db):
     db.commit()
     item = coverage_items(build(db, AFTER_Q4))["consumption_month"]
     assert item.status == "Not covered" and "never as zero" in item.detail
+
+
+# --- OAR records and Min-Max conversion ---------------------------------------------------------
+
+
+def oar(material, when, *, verdict="ELIGIBLE", manual=False, run=1, plant="1300", is_oar=True):
+    row = rec(material, when, run=run, plant=plant)
+    row.is_oar, row.conversion_eligibility, row.manually_converted = is_oar, verdict, manual
+    return row
+
+
+def test_oar_records_are_counted_as_records_not_materials(db):
+    db.add_all([
+        oar("A", at(2026, 10), run=1), oar("A", at(2026, 10, 20), run=2),  # one OAR material-plant, two runs
+        oar("B", at(2026, 10)), oar("N", at(2026, 10), is_oar=False, verdict=None),  # a stock item is not OAR
+        oar("OLD", at(2026, 6)),  # another period
+    ])
+    db.commit()
+    card_ = card(build(db, AFTER_Q4), "oar_recommendations")
+    assert card_.value == 3 and card_.unit == "recommendation records"
+    assert card_.denominator == 4  # every record generated in the period, OAR or not
+    assert "records, not materials" in card_.explanation
+
+
+def test_min_max_conversion_counts_eligible_oar_material_plants_and_keeps_manual_requests_apart(db):
+    db.add_all([
+        oar("ELIG1", at(2026, 10)), oar("ELIG2", at(2026, 10), plant="1500"),
+        oar("NO", at(2026, 10), verdict="NOT_ELIGIBLE"),
+        oar("ASKED", at(2026, 10), verdict="NOT_ELIGIBLE", manual=True),  # the rule said no and somebody asked anyway
+        oar("STOCK", at(2026, 10), is_oar=False, verdict=None),
+        oar("OLD", at(2026, 6)),  # generated in another period
+        oar("RERUN", at(2026, 10), verdict="NOT_ELIGIBLE", run=1), oar("RERUN", at(2026, 10, 25), verdict="ELIGIBLE", run=2),  # the newest wins
+    ])
+    db.commit()
+    c = card(build(db, AFTER_Q4), "min_max_conversion")
+    assert c.value == 3  # ELIG1, ELIG2 and RERUN's newest run; ASKED is not eligible
+    assert c.denominator == 5 and c.denominator_label == "OAR material-plants"  # ELIG1, ELIG2, NO, ASKED, RERUN; not STOCK or OLD
+    assert c.kind is MetricKind.STATUS_AS_OF and c.period_label == "as of 15 Jan 2027"
+    assert "1 more were not eligible" in c.note  # ASKED, apart from the eligible count
+    assert "not a change made in SAP" in c.explanation
+
+
+def test_the_min_max_card_and_the_list_behind_it_agree(db):
+    """The card is worked out with the Recommendations list's own filters, so clicking it lists exactly the counted material-plants."""
+    from app.api.i7 import recommendations as api
+
+    db.add_all([
+        oar("E1", at(2026, 10)), oar("E2", at(2026, 11), plant="1500"), oar("NO", at(2026, 10), verdict="NOT_ELIGIBLE"),
+        oar("RERUN", at(2026, 10), run=1), oar("RERUN", at(2026, 12, 20), run=2),  # regenerated late: the list shows its newest run
+        oar("EARLY", at(2026, 9)),  # before the period
+    ])
+    db.commit()
+    start, end = Q4_START, date(2027, 1, 1)
+    listed = api.list_recommendations(
+        session=db, page=1, page_size=50, sort="generated_at", sort_desc=True, status=None, plant=None, material=None, demand_class=None,
+        is_oar=None, confidence=None, criticality=None, generated_from=datetime(2026, 10, 1), generated_to=datetime(2027, 1, 1), demand_type="oar",
+        search=None, criticality_level=None, status_group=None, risk=None, conversion_eligibility="ELIGIBLE",
+    )
+    assert card(build(db, AFTER_Q4), "min_max_conversion").value == listed.total == 3  # E1, E2, RERUN
+    assert sorted(item.material for item in listed.items) == ["E1", "E2", "RERUN"]
+    assert kpi_definitions.min_max_conversion(db, start, end)[0] == listed.total

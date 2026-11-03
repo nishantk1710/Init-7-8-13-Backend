@@ -156,6 +156,8 @@ def _cards(
     every: int,
     awaiting: int,
     approved: int,
+    oar_records: int,
+    min_max: tuple[int, int, int],
     position: PositionFigures,
 ) -> list[KpiCard]:
     stockout = position.stockout
@@ -352,6 +354,50 @@ def _cards(
             denominator_label="recommendations generated in the period",
         )
     )
+    # --- OAR: how many records, and how many material-plants may convert to Min-Max ordering ------------
+    eligible, oar_material_plants, manual = min_max
+    cards.append(
+        KpiCard(
+            key="oar_recommendations",
+            title="OAR recommendations",
+            unit="recommendation records",
+            value=Decimal(oar_records),
+            status=AvailabilityStatus.AVAILABLE,
+            explanation=(
+                "Recommendation records generated in this period for OAR material-plants, whose levels are sized from similar "
+                "materials. These are records, not materials: an OAR material-plant that was recalculated has a record for each run."
+            ),
+            kind=MetricKind.EVENT,
+            measured_on=None,
+            period_label=period_label,
+            denominator=generated,
+            denominator_label="recommendations generated in the period",
+        )
+    )
+    cards.append(
+        KpiCard(
+            key="min_max_conversion",
+            title="Min-Max conversion",
+            unit="material-plants",
+            value=Decimal(eligible),
+            status=AvailabilityStatus.AVAILABLE,
+            explanation=(
+                "OAR material-plants whose newest recommendation from this period is eligible to be converted to Min-Max ordering, by the "
+                "conversion rule. Eligible is the rule's verdict, not a change made in SAP: whether SAP was changed is the SAP adoption "
+                "section."
+            ),
+            kind=MetricKind.STATUS_AS_OF,
+            measured_on=as_of,
+            period_label=f"as of {as_of:%d %b %Y}",
+            denominator=oar_material_plants,
+            denominator_label="OAR material-plants",
+            note=(
+                f"{manual:,} more were not eligible but were requested for conversion by a user; they are not counted here."
+                if manual
+                else None
+            ),
+        )
+    )
     return cards
 
 
@@ -403,6 +449,8 @@ def build_quarter_management(
     assessed, every = kpi_definitions.material_plants_assessed(session, period_start, exclusive_end)
     awaiting = kpi_definitions.awaiting_decision(session, period_start, exclusive_end)
     approved = kpi_definitions.approved_count(session, period_start, exclusive_end)
+    oar_records = kpi_definitions.oar_records(session, period_start, exclusive_end)
+    min_max = kpi_definitions.min_max_conversion(session, period_start, exclusive_end)
     position = kpi_definitions.position_figures(session, period_start, exclusive_end, cutoff)
     # The Overview's by-plant charts: every plant, then each plant it offers. Narrowed to the plants this
     # deployment actually carries (I7_PLANTS), in the Overview's order.
@@ -470,6 +518,8 @@ def build_quarter_management(
             every=every,
             awaiting=awaiting,
             approved=approved,
+            oar_records=oar_records,
+            min_max=min_max,
             position=position,
         ),
         position=position,
