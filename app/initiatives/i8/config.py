@@ -190,7 +190,9 @@ class I8Settings(BaseSettings):
     # part with one DAMAGED unit on the shelf reads as "1 in stock". SAP keeps
     # the condition alongside -- in MCHB's batch field and in MBEW's valuation
     # type -- so the stock can be split into usable and damaged. The MARD total
-    # stays the stock on hand; the split is served beside it.
+    # stays the stock on hand; the split is served beside it, and only where it
+    # adds up to that total (SAP, 3-Nov-2026: MARD is the stock, MCHB the
+    # condition -- see universe.agrees_with_mard).
 
     stock_condition_source: str = "MCHB"
     """Where the split is read from: ``MCHB`` (stock per batch) or ``MBEW``

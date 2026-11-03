@@ -41,8 +41,10 @@ Since 27-Oct-2026 there are two more things to keep apart:
   damaged unit the same as a new one. Where the part has condition rows (MCHB
   batches by default: NEW 1,667 / REFURBISHD 975 / DAMAGED 790 on the 15-Oct
   extract) only the usable conditions count, so a shelf holding nothing but
-  damaged units no longer reads as "a unit exists". Where it has none, the
-  MARD total stands and the answer says the condition is unknown.
+  damaged units no longer reads as "a unit exists". Where it has none, or
+  they do not add up to the MARD total (the universe drops such a split: MARD
+  is the stock, SAP said on 3-Nov-2026), the MARD total stands and the answer
+  says the condition is unknown.
 
 What this rule may NOT say, given today's data
 -----------------------------------------------
@@ -241,7 +243,8 @@ class RepairableUnitVerdict:
     (``I8_USABLE_STOCK_CONDITIONS``), conditions holding none left out."""
 
     stock_condition_known: bool = False
-    """True when the part has condition rows, so the split can be trusted."""
+    """True when the part has condition rows that add up to the MARD total,
+    so the split can be trusted."""
 
     stock_source: str | None = None
     """``MCHB`` / ``MBEW`` when the condition is known, ``MARD`` when only the
