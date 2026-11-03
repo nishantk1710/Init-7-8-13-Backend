@@ -17,13 +17,14 @@ from sqlalchemy import MetaData, create_engine, inspect, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.initiatives.i7.reporting import kpi_definitions, snapshots
+from app.initiatives.i7.reporting import kpi_definitions, quarter_trends, snapshots
 from app.initiatives.i7.stockout_risk.counts import StockoutRiskCounts
 from app.models.i7_features import MaterialFeature
 from app.models.i7_kpi_snapshot import STATUS_FINAL, STATUS_OPEN, KpiSnapshot, KpiSnapshotLog
 from app.models.i7_recommendation import Recommendation
 from app.models.i7_staging import StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun
 from app.models.i7_stockout_risk import StockoutRiskInput
+from app.schemas.i7.reports import PositionFigures
 
 TABLES = (Recommendation, KpiSnapshot, KpiSnapshotLog, StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun, StockoutRiskInput, MaterialFeature)
 OCT = date(2026, 10, 1)
@@ -115,6 +116,100 @@ def test_a_snapshot_holds_the_headline_figures_and_the_per_plant_payload(db):
     payload = json.loads(row.payload_json)
     assert [p["plant"] for p in payload["plant_positions"]] == [None, "1300", "1500"]
     assert {lvl["key"]: lvl["records"] for lvl in payload["stock_levels"]} == {"safety_stock": 2, "reorder_point": 2, "max_stock": 2}
+
+
+# --- stock held: inventory value, safety stock value, below reorder point -------------------------
+
+
+def held(material, plant, price_currency, stock):
+    """The currency of a material-plant's price, and its stock by storage location (a None quantity is a blank location)."""
+    rows = [StagedMaterialPlant(sap_material_number=material, sap_plant_code=plant, unit_price=Decimal("10"), currency=price_currency,
+                                staging_run_id=1, source_table="n_mbew")]
+    rows += [StagedStock(sap_material_number=material, sap_plant_code=plant, storage_location=f"L{i}", unrestricted_use_stock=qty,
+                         staging_run_id=1, source_table="n_mard") for i, qty in enumerate(stock)]
+    return rows
+
+
+def stock_load(finished):
+    return StagingRun(source="x", status="OK", stock_staged=5, finished_at=finished)
+
+
+def stock_scenario(db, load=datetime(2026, 10, 30, 12, tzinfo=timezone.utc)):
+    db.add_all([rec(m, at(2026, 10), plant=p) for m, p in (("A", "1300"), ("B", "1300"), ("C", "1300"), ("D", "1300"), ("E", "1300"))])
+    db.add_all(
+        held("A", "1300", "ZAR", [Decimal(3), Decimal(2)])  # 5 on hand over two locations, above the reorder point of 2
+        + held("B", "1300", "ZAR", [Decimal(1)])  # 1 on hand: below it
+        + held("C", "1300", "ZAR", [])  # no stock row at all
+        + held("D", "1300", "ZAR", [Decimal(4), None])  # a blank location: the total is not a stock figure
+        + held("E", "1300", "USD", [Decimal(1)])  # a currency that cannot be stated in ZAR
+    )
+    if load is not None:
+        db.add(stock_load(load))
+    db.commit()
+
+
+def test_a_final_snapshot_carries_the_stock_held_valued_in_zar(db):
+    stock_scenario(db)
+    snapshots.capture_month(db, OCT, today=EARLY_NOV)
+    row = only(db)
+    assert row.status == STATUS_FINAL and row.month_end_valid is True
+    # Only A (5) and B (1) have a stock figure and a ZAR price: 6 x 10. C has none, D is partly blank, E is not ZAR.
+    assert row.inventory_value == Decimal("60")
+    assert row.safety_stock_value == Decimal("40")  # SAP's safety stock of 1 x 10, for A, B, C and D; E is USD
+    # Below the reorder point (2) does not need a price: A (5) is above, B (1) and E (1) are below; C and D have no stock figure.
+    assert (row.below_reorder_count, row.below_reorder_judged) == (2, 3)
+    payload = json.loads(row.payload_json)["plant_positions"][0]["figures"]
+    assert Decimal(payload["inventory_value"]) == Decimal("60") and payload["inventory_priced_count"] == 2
+    assert payload["inventory_stock_as_of"] == "2026-10-30"
+
+
+def test_no_stock_load_means_the_stock_held_is_not_measured_not_zero(db):
+    stock_scenario(db, load=None)
+    snapshots.capture_month(db, OCT, today=EARLY_NOV)
+    row = only(db)
+    assert (row.inventory_value, row.safety_stock_value, row.below_reorder_count, row.below_reorder_judged) == (None, None, None, None)
+    position = json.loads(row.payload_json)["plant_positions"][0]["figures"]
+    assert position["inventory_value"] is None and "No stock-on-hand load" in position["inventory_unavailable_reason"]
+
+
+def test_a_stock_load_too_far_from_the_months_end_is_not_used_as_its_month_end_stock(db):
+    stock_scenario(db, load=datetime(2026, 5, 31, 12, tzinfo=timezone.utc))
+    snapshots.capture_month(db, OCT, today=EARLY_NOV)
+    row = only(db)
+    assert (row.inventory_value, row.safety_stock_value, row.below_reorder_count) == (None, None, None)
+    reason = json.loads(row.payload_json)["plant_positions"][0]["figures"]["inventory_unavailable_reason"]
+    assert "153 days" in reason and "31 Oct 2026" in reason
+
+
+def test_an_older_snapshot_without_the_stock_figures_reads_as_not_measured_and_is_never_backfilled(db):
+    stock_scenario(db)
+    snapshots.capture_month(db, OCT, today=EARLY_NOV)
+    row = only(db)
+    for column in ("inventory_value", "safety_stock_value", "below_reorder_count", "below_reorder_judged"):
+        setattr(row, column, None)  # what a snapshot saved before the columns existed holds
+    db.commit()
+    # Capturing it again does not fill them in from today's stock: a final snapshot is refused, and left as it was.
+    assert snapshots.capture_month(db, OCT, today=date(2026, 11, 10)).action == snapshots.REFUSED
+    assert [r.month for r in snapshots.capture_due(db, today=date(2026, 11, 10))] == [NOV]  # October is left alone
+    again = only(db)
+    assert (again.inventory_value, again.safety_stock_value, again.below_reorder_count) == (None, None, None)
+    point = quarter_trends._trend_month(OCT, again)
+    assert (point.inventory_value, point.safety_stock_value, point.below_reorder_count) == (None, None, None)
+
+
+def test_the_stock_figures_are_read_back_from_the_snapshot(db):
+    stock_scenario(db)
+    snapshots.capture_month(db, OCT, today=EARLY_NOV)
+    point = quarter_trends._trend_month(OCT, only(db))
+    assert (point.inventory_value, point.safety_stock_value, point.below_reorder_count) == (Decimal("60"), Decimal("40"), 2)
+    trends, position, plants = quarter_trends.build_trends(db, OCT, date(2026, 10, 31))
+    assert trends.quarter_end.status.value == "AVAILABLE"
+    assert (position.inventory_value, position.below_reorder_count, position.inventory_priced_count) == (Decimal("60"), 2, 2)
+    # A payload saved before the fields existed still validates, with the new ones empty.
+    old = json.loads(only(db).payload_json)["plant_positions"][0]["figures"]
+    for key in [k for k in old if k.startswith(("inventory_", "safety_stock_", "below_reorder", "recommendation_reference"))]:
+        del old[key]
+    assert PositionFigures.model_validate(old).inventory_value is None
 
 
 def test_a_month_that_has_not_started_cannot_be_captured(db):
@@ -321,9 +416,9 @@ def test_the_nightly_capture_rolls_over_the_year(db):
 # --- the migration matches the model ---------------------------------------------------------
 
 
-def _load_migration():
-    path = next(Path(__file__).resolve().parents[3].glob("alembic/versions/a3c9e7f15b42_*.py"))
-    spec = importlib.util.spec_from_file_location("migration_a3c9e7f15b42", path)
+def _load_migration(revision="a3c9e7f15b42"):
+    path = next(Path(__file__).resolve().parents[3].glob(f"alembic/versions/{revision}_*.py"))
+    spec = importlib.util.spec_from_file_location(f"migration_{revision}", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -333,17 +428,21 @@ def test_the_migration_creates_exactly_the_tables_and_columns_of_the_models_and_
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
 
-    migration = _load_migration()
+    migration, stock_held = _load_migration(), _load_migration("e5b7c1d93a64")
     engine = create_engine("sqlite://")
     with engine.begin() as connection:
         with Operations.context(MigrationContext.configure(connection)):
             migration.upgrade()
+            stock_held.upgrade()
         inspector = inspect(connection)
         for model in (KpiSnapshot, KpiSnapshotLog):
             made = {column["name"] for column in inspector.get_columns(model.__tablename__)}
             assert made == {column.name for column in model.__table__.columns}, model.__tablename__
         uniques = {tuple(u["column_names"]) for u in inspector.get_unique_constraints("i7_kpi_snapshot")}
         assert ("month",) in uniques  # one snapshot per month, enforced by the database too
+        with Operations.context(MigrationContext.configure(connection)):
+            stock_held.downgrade()
+        assert {"inventory_value", "below_reorder_count"}.isdisjoint(c["name"] for c in inspect(connection).get_columns("i7_kpi_snapshot"))
         with Operations.context(MigrationContext.configure(connection)):
             migration.downgrade()
         assert not {"i7_kpi_snapshot", "i7_kpi_snapshot_log"} & set(inspect(connection).get_table_names())
@@ -352,3 +451,4 @@ def test_the_migration_creates_exactly_the_tables_and_columns_of_the_models_and_
 def test_the_migration_continues_the_single_alembic_chain():
     migration = _load_migration()
     assert migration.down_revision == "d4e8b2a61c35"
+    assert _load_migration("e5b7c1d93a64").down_revision == "c4e8a2f61d93"  # the head before it

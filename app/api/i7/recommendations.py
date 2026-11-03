@@ -178,6 +178,7 @@ def _apply_filters(
     conversion_eligibility: str | None = None,
     consumption_above_threshold: bool | None = None,
     actionable: bool | None = None,
+    has_recommended: bool | None = None,
 ) -> Select:
     """Every filter here maps to a real, persisted column or a keyed lookup.
     Nothing that would require loading rows into Python to evaluate.
@@ -206,6 +207,14 @@ def _apply_filters(
         statement = statement.where(Recommendation.conversion_eligibility == conversion_eligibility)
     if actionable:
         statement = statement.where(_actionable())
+    if has_recommended:
+        statement = statement.where(
+            or_(
+                Recommendation.recommended_rop.is_not(None),
+                Recommendation.recommended_safety_stock.is_not(None),
+                Recommendation.recommended_max_stock.is_not(None),
+            )
+        )
     if consumption_above_threshold:
         # Issued more than the policy's own count in the policy's trailing window (6 months) -- the threshold
         # stored on the row, not a literal, so it follows the policy. A row with no count (never
@@ -533,6 +542,13 @@ def list_recommendations(
             "counts cover."
         ),
     ] = None,
+    has_recommended: Annotated[
+        bool | None,
+        Query(
+            description="true: only recommendations with at least one recommended value (reorder point, "
+            "safety stock or maximum stock) -- leaves out those where nothing could be computed."
+        ),
+    ] = None,
 ) -> RecommendationListResponse:
     if sort not in SORT_FIELDS:
         raise bad_request(
@@ -565,6 +581,7 @@ def list_recommendations(
             conversion_eligibility=conversion_eligibility,
             consumption_above_threshold=consumption_above_threshold,
             actionable=actionable,
+            has_recommended=has_recommended,
         ).where(_not_smooth())
     )
 

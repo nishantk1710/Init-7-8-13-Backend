@@ -312,7 +312,10 @@ def _write_management_sheets(workbook: Workbook, management) -> None:
         position,
         ["Plant", "Material-plants", "At stockout risk", "Judged", "Could not be judged", "Stockout measured as of", "Stockout reading stale",
          "Excess candidates", "Excess opportunity", "Working capital impact (estimate)", "Working capital currency",
-         "Working capital: included", "Working capital: left out", "Currency"],
+         "Working capital: included", "Working capital: left out", "Currency",
+         "Inventory value (ZAR)", "Inventory value: material-plants", "Safety stock value (ZAR)", "Safety stock value: material-plants",
+         "Below reorder point", "Below reorder point: out of", "Stock on hand loaded", "Why stock figures are not available",
+         "Newest recommendation in the figures"],
         [
             [
                 "All plants" if entry.plant is None else entry.plant, entry.figures.population, entry.figures.stockout.at_risk,
@@ -320,10 +323,16 @@ def _write_management_sheets(workbook: Workbook, management) -> None:
                 "Yes" if entry.figures.stockout.stale else "No", entry.figures.excess_count, _na(entry.figures.excess_opportunity),
                 _na(entry.figures.net_rop_value_impact), entry.figures.working_capital_currency or "Not stated",
                 entry.figures.priced_count, entry.figures.working_capital_excluded_count, entry.figures.currency or "Not stated",
+                _na(entry.figures.inventory_value), entry.figures.inventory_priced_count, _na(entry.figures.safety_stock_value),
+                entry.figures.safety_stock_priced_count, _na(entry.figures.below_reorder_count), entry.figures.below_reorder_judged,
+                _iso(entry.figures.inventory_stock_as_of), entry.figures.inventory_unavailable_reason or "",
+                _iso(entry.figures.recommendation_reference_date),
             ]
             for entry in management.plant_positions
         ],
     )
+
+    _write_month_end_sheet(workbook, management)
 
     status = workbook.create_sheet("Status Distribution")
     _facts(
@@ -363,11 +372,28 @@ def _write_management_sheets(workbook: Workbook, management) -> None:
         [("Status", adoption.status.value), ("Reason", adoption.reason), ("Confirmed adoptions", _na(adoption.confirmed_adoptions)),
          ("Recommendations awaiting a decision", adoption.pending_approvals), ("Recommendations with a change to adopt", _na(adoption.tracked)),
          ("Adopted", _na(adoption.adopted)), ("Partially adopted", _na(adoption.partially_adopted)), ("Not adopted", _na(adoption.not_adopted)),
-         ("Pending (no SAP change recorded yet)", _na(adoption.pending))],
+         ("Pending (no SAP change recorded yet)", _na(adoption.pending)),
+         ("Adoption rate (the Overview's formula)", _na(adoption.adoption_rate))],
     )
+    adoption_sheet.append([])
+    adoption_sheet.append(["Pending here means no SAP change evidence yet, whether or not the recommendation was approved. Approval is a separate process: see below."])
+    if adoption.stages is not None:
+        stages = adoption.stages
+        adoption_sheet.append([])
+        _table(
+            adoption_sheet, ["Approval stage of the period's recommendations (today)", "Records"],
+            [
+                ["Not yet submitted", stages.not_submitted], ["Awaiting approval", stages.awaiting_approval],
+                ["Adjusted in the chain", stages.adjusted_in_chain], ["Approved, awaiting SAP", stages.approved_awaiting_sap],
+                ["Implemented in SAP", stages.implemented_in_sap], ["Rejected or sent back", stages.rejected_or_sent_back],
+                ["Other status", stages.other], ["Total records generated in the period", stages.total],
+            ],
+        )
 
     if management.trends is not None:
         _write_trends_sheet(workbook, management.trends)
+    if management.performance is not None:
+        _write_performance_sheet(workbook, management.performance)
 
     coverage = management.data_coverage
     coverage_sheet = workbook.create_sheet("Data Coverage")
@@ -385,6 +411,12 @@ def _write_management_sheets(workbook: Workbook, management) -> None:
         coverage_sheet, ["Month", "SAP consumption data", "Recommendations generated"],
         [[m.label, m.consumption_status.value, m.recommendations_generated] for m in coverage.months],
     )
+    if coverage.items:
+        coverage_sheet.append([])
+        _table(
+            coverage_sheet, ["Data", "As of", "Status", "What it means"],
+            [[item.label, item.value or NOT_AVAILABLE, item.status, item.detail or ""] for item in coverage.items],
+        )
     coverage_sheet.append([])
     _table(coverage_sheet, ["Limitation or warning"], [[warning] for warning in coverage.warnings])
 
@@ -398,13 +430,14 @@ def _write_trends_sheet(workbook: Workbook, trends) -> None:
         sheet,
         ["Month", "Snapshot", "Measured on", "Valid for month-end", "Stockout reading usable", "Material-plants", "At stockout risk", "Judged",
          "Could not be judged", "Excess candidates", "Excess opportunity", "Working capital impact (estimate)", "Change from previous month",
-         "Currency", "Revision", "Calculation version", "Note"],
+         "Currency", "Inventory value (ZAR)", "Safety stock value (ZAR)", "Below reorder point", "Revision", "Calculation version", "Note"],
         [
             [
                 m.label, m.state, _iso(m.measured_on), "Yes" if m.month_end_valid else "No", "Yes" if m.stockout_valid else "No",
                 _na(m.population), _na(m.stockout_at_risk), _na(m.stockout_evaluated), _na(m.stockout_insufficient),
                 _na(m.excess_count), _na(m.excess_opportunity), _na(m.net_rop_value_impact), _na(m.net_rop_change_from_previous),
-                m.currency or "Not stated", _na(m.revision), m.calc_version or "", m.note or "",
+                m.currency or "Not stated", _na(m.inventory_value), _na(m.safety_stock_value), _na(m.below_reorder_count),
+                _na(m.revision), m.calc_version or "", m.note or "",
             ]
             for m in trends.months
         ],
@@ -430,3 +463,69 @@ def _write_trends_sheet(workbook: Workbook, trends) -> None:
     sheet.append([])
     _table(sheet, ["Notes"], [[note] for note in trends.notes])
     sheet.append(["Counts are positions on a date: they are shown per month and never added into a quarter total."])
+
+
+def _write_month_end_sheet(workbook: Workbook, management) -> None:
+    """The month-end position, only from a valid saved snapshot. With none it says so and why: today's figures are never put
+    in its place. The values are the report's own position figures, read as saved."""
+    sheet = workbook.create_sheet("Month-end Position")
+    end = management.trends.quarter_end if management.trends is not None else None
+    if management.position_basis != "snapshot" or end is None or end.status.value != "AVAILABLE":
+        _facts(
+            sheet,
+            [("Status", "Snapshot not available"), ("Why", (end.reason if end is not None else None) or "No saved month-end snapshot exists."),
+             ("Latest snapshot available", (end.latest_available_label if end is not None else None) or NOT_AVAILABLE),
+             ("Latest snapshot measured on", _iso(end.latest_available_measured_on if end is not None else None))],
+        )
+        sheet.append([])
+        sheet.append(["A past month cannot be rebuilt from today's data, so no estimate is shown in its place."])
+        return
+    p = management.position
+    stock_why = p.inventory_unavailable_reason or "Not measured in this snapshot (saved before stock held was captured, or nothing could be valued)."
+    _facts(
+        sheet,
+        [("Status", "From the saved month-end snapshot"), ("Month", end.label), ("Snapshot measured on", _iso(end.measured_on)),
+         ("Stock on hand loaded", _iso(p.inventory_stock_as_of)), ("Currency of the stock figures", "ZAR")],
+    )
+    sheet.append([])
+    stockout_usable = p.stockout.as_of is not None and not p.stockout.stale
+    _table(
+        sheet, ["Measure", "Value", "Over", "Why not available"],
+        [
+            ["Total inventory value (ZAR)", _na(p.inventory_value), f"{p.inventory_priced_count} material-plants with stock and a ZAR price",
+             "" if p.inventory_value is not None else stock_why],
+            ["Excess inventory value (estimate)", _na(p.excess_opportunity), f"{p.excess_count} material-plants above their recommended maximum",
+             "" if p.excess_opportunity is not None else "No excess material-plant has a price and both maximum stocks."],
+            ["Working capital impact (estimate)", _na(p.net_rop_value_impact), f"{p.priced_count} material-plants included",
+             "" if p.net_rop_value_impact is not None else "No recommendation has a ZAR or NAD price and both reorder points."],
+            ["Safety stock value (ZAR)", _na(p.safety_stock_value), f"{p.safety_stock_priced_count} material-plants priced",
+             "" if p.safety_stock_value is not None else stock_why],
+            ["Material-plants below reorder point", _na(p.below_reorder_count), f"{p.below_reorder_judged} that could be judged",
+             "" if p.below_reorder_count is not None else stock_why],
+            ["High stockout risk", p.stockout.at_risk if stockout_usable else NOT_AVAILABLE, f"{p.stockout.evaluated} that could be judged",
+             "" if stockout_usable else (p.stockout.stale_note or "The stockout usage has not been built. This is not zero risk.")],
+        ],
+    )
+
+
+def _write_performance_sheet(workbook: Workbook, performance) -> None:
+    """The last months' recommendation volume, dated approval activity and month-end excess, one row per month. A cell reading
+    'Not available' is a month with no figure (before the history began, not started, or no valid month-end snapshot)."""
+    sheet = workbook.create_sheet("Performance Trends")
+    _table(
+        sheet,
+        ["Month", "State", "Recommendation records", "Distinct material-plants", "Sent for approval", "Approval decisions", "Rejections", "Sent back",
+         "Excess snapshot", "Excess material-plants", "Excess opportunity (estimate)", "Currency"],
+        [
+            [
+                m.label, m.state, _na(m.records_generated), _na(m.material_plants_generated), _na(m.submitted), _na(m.approved),
+                _na(m.rejected), _na(m.sent_back), m.excess_state, _na(m.excess_count), _na(m.excess_opportunity), m.currency or "Not stated",
+            ]
+            for m in performance.months
+        ],
+    )
+    sheet.append([])
+    sheet.append(["Records are recommendation runs; distinct material-plants count each once. Approval events are counted in the month they happened, from the dated approval history."])
+    sheet.append(["Excess is shown only for a month with a final snapshot valid for its end. A month with no figure is not zero."])
+    sheet.append([])
+    _table(sheet, ["Notes"], [[note] for note in performance.notes])

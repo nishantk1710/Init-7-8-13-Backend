@@ -277,15 +277,66 @@ def test_materials_assessed_counts_distinct_material_plants_not_records(db):
     assert card(management, "recommendations_generated").value == 4
 
 
-def test_pending_approval_is_a_status_on_the_day_the_report_was_generated_not_at_the_quarters_end(db):
-    db.add_all([rec("A", at(2026, 10), status="PENDING_APPROVAL"), rec("B", at(2026, 10), status="HELD"), rec("C", at(2026, 10)), rec("D", at(2026, 10), status="APPROVED")])
+def test_approved_is_a_status_on_the_day_the_report_was_generated_not_at_the_quarters_end(db):
+    db.add_all([
+        rec("A", at(2026, 10), status="PENDING_APPROVAL"), rec("B", at(2026, 10), status="HELD"),
+        rec("C", at(2026, 10)), rec("D", at(2026, 10), status="APPROVED"), rec("E", at(2026, 11), status="ADOPTED"),
+    ])
     db.commit()
-    pending = card(build(db, AFTER_Q4), "pending_approval")
-    assert pending.value == 2
+    management = build(db, AFTER_Q4)
+    approved = card(management, "approved")
+    assert approved.value == 2  # D approved, E taken on in SAP; pending and held ones are not
+    assert approved.kind is MetricKind.STATUS_AS_OF
+    assert approved.measured_on == AFTER_Q4  # the generation date; the quarter ended on 31 Dec
+    assert approved.period_label == "as of 15 Jan 2027"
+    assert approved.denominator == 5
+    # Pending approval is its own card, a different set of recommendations from the approved ones.
+    pending = card(management, "pending_approval")
+    assert pending.value == 2  # A pending, B held
     assert pending.kind is MetricKind.STATUS_AS_OF
-    assert pending.measured_on == AFTER_Q4  # the generation date; the quarter ended on 31 Dec
     assert pending.period_label == "as of 15 Jan 2027"
-    assert pending.denominator == 4
+    assert "SAP" in pending.explanation and "SAP" in approved.explanation
+
+
+def test_the_three_counts_are_records_then_distinct_material_plants_then_those_with_a_computed_recommendation(db):
+    db.add_all([
+        rec("A", at(2026, 10), run=1), rec("A", at(2026, 10, 20), run=2),  # A regenerated: two records, one material-plant
+        rec("B", at(2026, 10)), rec("C", at(2026, 10), status="NOT_EVALUABLE"),  # C was looked at, nothing computed
+    ])
+    db.commit()
+    management = build(db, AFTER_Q4)
+    computed, records = card(management, "materials_assessed"), card(management, "recommendations_generated")
+    assert records.value == 4 and records.unit == "recommendation records"
+    assert computed.value == 2  # A and B
+    assert computed.denominator == 3  # distinct material-plants looked at: A, B, C
+    assert "distinct" in computed.denominator_label
+    assert computed.title == "Material-plants with a computed recommendation"
+    assert "1 of the 3" in computed.note  # C
+    assert "4 records over 3 distinct material-plants" in records.note and "1 are repeat runs" in records.note
+
+
+def test_stages_separate_approval_from_sap_and_add_up_to_the_records_generated(db):
+    statuses = ["READY_FOR_REVIEW", "NOT_EVALUABLE", "PENDING_APPROVAL", "HELD", "ADJUSTED", "APPROVED", "SAP_EXECUTION_PENDING",
+                "SAP_EXECUTED", "ADOPTED", "REJECTED", "SENT_BACK"]
+    db.add_all([rec(f"M{i}", at(2026, 10), status=s) for i, s in enumerate(statuses)])
+    db.commit()
+    management = build(db, AFTER_Q4)
+    stages = management.adoption.stages
+    assert stages.total == 11 and stages.other == 0
+    assert (stages.not_submitted, stages.awaiting_approval, stages.adjusted_in_chain) == (2, 2, 1)
+    assert (stages.approved_awaiting_sap, stages.implemented_in_sap, stages.rejected_or_sent_back) == (2, 2, 2)
+    assert sum([stages.not_submitted, stages.awaiting_approval, stages.adjusted_in_chain, stages.approved_awaiting_sap,
+                stages.implemented_in_sap, stages.rejected_or_sent_back, stages.other]) == stages.total
+    # The cards read the same sets as the stages.
+    assert card(management, "pending_approval").value == stages.awaiting_approval
+    assert card(management, "approved").value == stages.approved_awaiting_sap + stages.implemented_in_sap
+
+
+def test_the_approval_card_sets_and_the_stage_sets_are_one_definition():
+    approved = kpi_definitions.STAGE_STATUSES["approved_awaiting_sap"] + kpi_definitions.STAGE_STATUSES["implemented_in_sap"]
+    assert set(approved) == set(kpi_definitions.APPROVED_STATUSES)
+    assert kpi_definitions.STAGE_STATUSES["awaiting_approval"] == kpi_definitions.AWAITING_DECISION
+    assert kpi_definitions.stage_counts({"SOMETHING_NEW": 3, "APPROVED": 1})["other"] == 3
 
 
 def test_working_capital_is_not_available_not_zero_when_nothing_has_a_price_and_both_reorder_points(db):
@@ -409,6 +460,9 @@ def test_adoption_is_not_measured_without_sap_evidence_and_an_approval_is_not_an
     assert "not an adoption" in adoption.reason
     # Nothing is adopted and nothing is "not adopted": every one with a change is simply pending.
     assert (adoption.tracked, adoption.adopted, adoption.not_adopted, adoption.pending) == (2, 0, 0, 2)
+    assert adoption.adoption_rate is None  # no evidence: not a measured 0%
+    # SAP "pending" (2) covers an approved and a pending-approval recommendation alike; approval stages are separate.
+    assert (adoption.stages.approved_awaiting_sap, adoption.stages.awaiting_approval) == (1, 1)
 
 
 def test_adoption_counts_confirmed_results_for_this_periods_recommendations_only(db):
@@ -426,6 +480,7 @@ def test_adoption_counts_confirmed_results_for_this_periods_recommendations_only
     assert adoption.status is AvailabilityStatus.AVAILABLE
     assert adoption.confirmed_adoptions == 1
     assert (adoption.tracked, adoption.adopted, adoption.not_adopted, adoption.pending) == (3, 1, 1, 1)  # OLD is another period
+    assert adoption.adoption_rate == Decimal("0.5")  # 1 adopted of the 2 SAP has evidence for (the Overview's formula); C is pending, not a miss
 
 
 def test_a_recommendation_with_nothing_to_adopt_is_not_counted_in_adoption(db):
@@ -506,3 +561,43 @@ def test_each_plants_stockout_is_asked_for_that_plant_only(db, monkeypatch):
     # All plants once -- the card and the chart read the same figures -- then each plant, never one plant's counts
     # standing in for another's.
     assert asked == [None, "1300", "1500"]
+
+
+# --- data coverage statuses -------------------------------------------------------------------
+
+
+def coverage_items(management):
+    return {item.key: item for item in management.data_coverage.items}
+
+
+def test_each_source_gets_a_status_and_a_reason_saved_with_the_report(db, monkeypatch):
+    monkeypatch.setattr(
+        kpi_definitions, "stockout_risk_counts",
+        lambda session, base, **kw: StockoutRiskCounts(at_risk=4, evaluated=40, insufficient_data=1, as_of=date(2026, 5, 31)),
+    )
+    db.add(rec("A", at(2026, 10)))
+    db.commit()
+    items = coverage_items(build(db, AFTER_Q4))
+    assert items["stockout"].status == "Stale" and "31 May 2026" in items["stockout"].detail
+    assert items["stockout"].value == "31 May 2026"
+    assert items["snapshot"].status == "Not available" and "snapshot" in items["snapshot"].detail
+    assert items["forecast"].status == "Not available"
+    assert items["recommendation_date"].status == "Available" and items["recommendation_date"].value == "10 Oct 2026"
+    assert items["recommendation_counts"].value == "1 · 1"
+    assert items["currency"].status == "Available" and items["currency"].value == "ZAR"
+
+
+def test_an_unbuilt_stockout_usage_and_no_stock_load_are_not_available_and_not_zero_risk(db):
+    db.add(rec("A", at(2026, 10)))
+    db.commit()
+    items = coverage_items(build(db, AFTER_Q4))
+    assert items["stockout"].status == "Not available" and "not zero risk" in items["stockout"].detail
+    assert items["stock_load"].status == "Not available"
+    assert items["goods_issue"].status == "Not available"
+
+
+def test_a_month_without_staged_consumption_is_not_covered_never_zero(db):
+    db.add_all([rec("A", at(2026, 10)), consumed("A", date(2026, 9, 1))])
+    db.commit()
+    item = coverage_items(build(db, AFTER_Q4))["consumption_month"]
+    assert item.status == "Not covered" and "never as zero" in item.detail

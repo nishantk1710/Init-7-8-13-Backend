@@ -30,8 +30,8 @@ from app.models.i7_staging import StagedConsumption
 ORIGINAL_SHEETS = ["Metadata", "Baseline Comparison", "Scope & Data Quality", "Limitations"]
 TECHNICAL_SHEETS = ["Demand Classification", "Forecast Accuracy", "OAR", "Recommendations", "Approval Activity"]
 MANAGEMENT_SHEETS = [
-    "Period", "KPI Cards", "Monthly Activity", "Position", "Status Distribution", "Forecast vs Actual", "SAP Adoption",
-    "Trends", "Data Coverage", "Definitions",
+    "Period", "KPI Cards", "Monthly Activity", "Position", "Month-end Position", "Status Distribution", "Forecast vs Actual",
+    "SAP Adoption", "Trends", "Performance Trends", "Data Coverage", "Definitions",
 ]
 
 
@@ -296,3 +296,73 @@ def test_the_export_is_a_valid_workbook_that_opens_and_has_no_empty_sheets(db):
     wb = workbook(generated(db, capture=True))
     for sheet in wb.worksheets:
         assert sheet.max_row >= 2, sheet.title
+
+
+# --- the sheets added with the monthly report improvements -----------------------------------------
+
+
+def test_the_kpi_sheet_carries_pending_approval_and_approved_as_separate_cards(db):
+    header, body = table_after(workbook(generated(db))["KPI Cards"], "Card")
+    cards = {row[0]: dict(zip(header, row)) for row in body}
+    assert cards["Pending approval"]["Value"] == 1  # B
+    assert cards["Approved"]["Value"] == 1  # C
+    assert "Material-plants with a computed recommendation" in cards
+    assert "not the same as waiting for sap" in cards["Pending approval"]["What it means"].lower()
+
+
+def test_the_position_sheet_has_the_stock_figures_and_does_not_make_them_zero_when_there_is_no_stock_load(db):
+    header, body = table_after(workbook(generated(db))["Position"], "Plant")
+    col = {name: i for i, name in enumerate(header)}
+    all_plants = body[0]
+    assert all_plants[col["Inventory value (ZAR)"]] == NOT_AVAILABLE
+    assert all_plants[col["Safety stock value (ZAR)"]] == NOT_AVAILABLE
+    assert all_plants[col["Below reorder point"]] == NOT_AVAILABLE
+    assert "No stock-on-hand load" in all_plants[col["Why stock figures are not available"]]
+    assert all_plants[col["Newest recommendation in the figures"]] == "2026-11-10"
+
+
+def test_the_month_end_position_sheet_says_snapshot_not_available_and_shows_no_figure_from_today(db):
+    sheet = workbook(generated(db, capture=True))["Month-end Position"]
+    facts = facts_of(sheet)
+    assert facts["Status"] == "Snapshot not available"
+    assert "Dec 2026" in facts["Why"]
+    texts = [v for r in rows(sheet) for v in r if isinstance(v, str)]
+    assert any("cannot be rebuilt" in t for t in texts)
+    assert not any(r[0] == "Total inventory value (ZAR)" for r in rows(sheet))  # nothing stands in for the missing snapshot
+
+
+def test_the_performance_sheet_has_a_row_a_month_with_gaps_that_are_not_zero(db):
+    wb = workbook(generated(db, capture=True))
+    header, body = table_after(wb["Performance Trends"], "Month")
+    col = {name: i for i, name in enumerate(header)}
+    by_month = {row[0]: row for row in body}
+    assert list(by_month) == ["Jul 2026", "Aug 2026", "Sep 2026", "Oct 2026", "Nov 2026", "Dec 2026"]
+    assert by_month["Sep 2026"][col["Recommendation records"]] == NOT_AVAILABLE  # before any recommendation
+    assert (by_month["Oct 2026"][col["Recommendation records"]], by_month["Oct 2026"][col["Distinct material-plants"]]) == (2, 2)
+    assert by_month["Nov 2026"][col["Recommendation records"]] == 1
+    assert by_month["Oct 2026"][col["Sent for approval"]] == NOT_AVAILABLE  # before the first approval event (Nov)
+    assert (by_month["Nov 2026"][col["Sent for approval"]], by_month["Nov 2026"][col["Approval decisions"]]) == (1, 1)
+    assert by_month["Dec 2026"][col["Approval decisions"]] == 0  # after the history began, a month with none is a real 0
+    assert by_month["Oct 2026"][col["Excess snapshot"]] == "MONTH_END" and by_month["Oct 2026"][col["Excess material-plants"]] == 2
+    assert by_month["Nov 2026"][col["Excess snapshot"]] == "MISSING" and by_month["Nov 2026"][col["Excess opportunity (estimate)"]] == NOT_AVAILABLE
+    texts = [v for r in rows(wb["Performance Trends"]) for v in r if isinstance(v, str)]
+    assert any("no monthly series" in t for t in texts)  # SAP implementation is said to have none
+
+
+def test_the_adoption_sheet_keeps_the_approval_stages_apart_from_sap_pending(db):
+    sheet = workbook(generated(db))["SAP Adoption"]
+    texts = [v for r in rows(sheet) for v in r if isinstance(v, str)]
+    assert any("whether or not the recommendation was approved" in t for t in texts)
+    header, body = table_after(sheet, "Approval stage of the period's recommendations (today)")
+    stages = {row[0]: row[1] for row in body}
+    assert stages["Awaiting approval"] == 1 and stages["Approved, awaiting SAP"] == 1 and stages["Not yet submitted"] == 1
+    assert stages["Total records generated in the period"] == 3
+    assert facts_of(sheet)["Adoption rate (the Overview's formula)"] == NOT_AVAILABLE  # nothing measured is not 0%
+
+
+def test_the_coverage_sheet_gives_each_source_a_status_and_a_reason(db):
+    header, body = table_after(workbook(generated(db))["Data Coverage"], "Data")
+    items = {row[0]: row for row in body}
+    assert items["Latest stockout measurement"][2] == "Not available" and "not zero risk" in items["Latest stockout measurement"][3]
+    assert items["Month-end snapshot"][2] == "Not available"
+    assert items["Currency"][2] == "Available"
