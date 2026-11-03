@@ -19,6 +19,8 @@ reclass     ReclassificationCandidate    f1 candidate Y/N
 usage       monthly series + stock       f1 WATCH aging band, f2 material scope, n1 issued
 grni        GrniEntry (a PO line)        rec_key ledger id, n1 days since GR
 exception   ExceptionQueueItem           rec_key id, f1 type, f2 status, n1 type rank
+planvs      PlanVsIssuedRow (JSON)       rec_key row id, f1 source, f2 status,
+                                         f3 first reservation, d1 due date, text1 session
 =========== ============================ ===================================================
 
 ``oar`` is the item's material-plant classified OAR, for every kind.
@@ -46,6 +48,7 @@ from app.initiatives.i13.models import (
     ReservationLedgerEntry,
     WatchMetric,
 )
+from app.initiatives.i13.plan_vs_issued import PlanVsIssuedRow, to_payload
 from app.initiatives.i13.snapshot_store import codec
 
 #: Bumped when a kind starts storing a new column beside its payload. It is
@@ -56,7 +59,10 @@ from app.initiatives.i13.snapshot_store import codec
 #: 3 (28 Oct 2026): grni holds a PO line (LegacyLedgerEntry) and its scope.
 #: 4 (30 Oct 2026): watch's acquired-vs-plan measures issued on each plan's own
 #: reservations, and its f2 can hold NO_RESERVATION. Same columns, new values.
-RECORD_LAYOUT = 4
+#: 5 (2 Nov 2026): planvs, the acquired-vs-plan tab's plan and SAP reservation rows.
+#: 6 (2 Nov 2026): planvs statuses: awaiting reservation, not due yet, on, below
+#: or above plan.
+RECORD_LAYOUT = 6
 
 WATCH = "watch"
 MOVEMENT = "movement"
@@ -69,11 +75,14 @@ RECLASS = "reclass"
 USAGE = "usage"
 GRNI = "grni"
 EXCEPTION = "exception"
+PLAN_VS = "planvs"
 
 #: Kinds measured against the reference date (days since an issue or a GR,
 #: the 12-month window, plan grace, the usage months kept). A re-age
 #: recomputes exactly these (``builder.reage``).
-DATED_KINDS = (WATCH, MOVEMENT, OAR_KEY, RECLASS, USAGE, GRNI, EXCEPTION)
+#: planvs is dated too: "not due yet" is measured against the date, and a
+#: re-age is when plans captured since the build are taken in.
+DATED_KINDS = (WATCH, MOVEMENT, OAR_KEY, RECLASS, USAGE, GRNI, EXCEPTION, PLAN_VS)
 #: Kinds that depend only on the SAP rows: a re-age copies them unchanged.
 #: ``test_snapshot_store_memory`` proves they do not move with the date.
 UNDATED_KINDS = (RLEDGER, LLEDGER, CHAIN, ATTRIB)
@@ -212,4 +221,16 @@ def exception(item: ExceptionQueueItem, oar: bool) -> Record:
     return Record(
         EXCEPTION, item.material, item.plant, oar, _p(item),
         rec_key=item.id, f1=item.type.value, f2=item.status.value, n1=Decimal(EXCEPTION_RANK[item.type]),
+    )
+
+
+def planvs(row: PlanVsIssuedRow) -> Record:
+    """One acquired-vs-plan tab row. Its payload is plain JSON
+    (``plan_vs_issued.to_payload``), so adding the kind left the schema
+    signature -- and the version already served -- as they were."""
+    return Record(
+        PLAN_VS, row.material, row.plant, row.oar, codec.dumps(to_payload(row)),
+        rec_key=row.row_id, f1=row.source.value, f2=row.status.value,
+        f3=row.reservations[0].split("/")[0] if row.reservations else None,
+        d1=row.due_date, text1=_clip(row.session_id, 400),
     )

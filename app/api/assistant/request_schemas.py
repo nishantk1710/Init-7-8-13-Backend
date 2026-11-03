@@ -203,3 +203,54 @@ class RequestSummaryModel(AssistantModel):
 
 class RequestListResponse(AssistantModel):
     items: list[RequestSummaryModel]
+
+
+# --- upload ----------------------------------------------------------------------
+
+
+class UploadResponse(AssistantModel):
+    """An uploaded template, read and checked. Nothing is stored: each material
+    is then previewed as one added by hand."""
+
+    plant: str
+    department: str
+    department_name: str | None
+    materials: list[str]
+    """In file order, duplicates removed."""
+    row_count: int
+    duplicates: list[str]
+    max_lines: int
+
+
+# --- link reservation ------------------------------------------------------------
+
+
+class LinkJobStepModel(AssistantModel):
+    """One step of a Link reservation job, as the progress window shows it."""
+
+    key: str
+    label: str
+    # pending | active | done | failed | skipped
+    status: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    detail: str | None = None
+
+
+class LinkJobResponse(AssistantModel):
+    """A Link reservation job: where it is, what each step did, how it ended."""
+
+    id: int
+    request_id: str
+    # queued | running | succeeded | failed | abandoned
+    status: str
+    # The step being worked on: queue | delta | link | i13 | i08 | done
+    step: str
+    steps: list[LinkJobStepModel]
+    requested_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    links: int | None = None
+    error: str | None = None
+    created: bool
+    """False when the press found this request's job already queued or running."""

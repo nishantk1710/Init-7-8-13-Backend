@@ -33,6 +33,7 @@ from app.initiatives.i13.config import get_i13_config
 from app.initiatives.i13.exceptions import exception_queue_from
 from app.initiatives.i13.ledger_compat import LegacyLedgerEntry
 from app.initiatives.i13.ordering import newest_requirement_first
+from app.initiatives.i13.plan_vs_issued import PlanVsIssuedRow, from_payload
 from app.initiatives.i13.models import (
     AgingBand,
     ConsumptionAttribution,
@@ -424,6 +425,52 @@ class SqlSnapshot:
             f2=reservation_number or None, f3=pr_number or None,
             extra=[R.rec_key == ledger_id] if ledger_id else (),
         )
+
+    # --- the acquired-vs-plan tab ---------------------------------------------------
+
+    def _plan_vs_where(
+        self, *, source=None, status=None, material=None, plant=None, reservation=None, overdue=False
+    ) -> list:
+        """``overdue`` keeps below-plan rows whose due date is before the
+        version's reference date (``plan_vs_issued.is_overdue``)."""
+        extra = [R.f2 == "BELOW_PLAN", R.d1 < self.reference_date] if overdue else []
+        return self._where(
+            kinds.PLAN_VS, material=material, plant=plant,
+            f1=source.upper() if source else None, f2=status.upper() if status else None,
+            f3=reservation or None, extra=extra,
+        )
+
+    def plan_vs_issued(
+        self, *, source=None, status=None, material=None, plant=None, reservation=None, overdue=False,
+        limit=None, offset=0,
+    ) -> tuple[list[PlanVsIssuedRow], int]:
+        """Plan and SAP reservation rows, latest due date first, undated last."""
+        rows, total = self._page(
+            self._plan_vs_where(
+                source=source, status=status, material=material, plant=plant, reservation=reservation,
+                overdue=overdue,
+            ),
+            [*self._newest_first(R.d1), R.seq], limit, offset,
+        )
+        return [from_payload(json.loads(r.payload)) for r in rows], total
+
+    def _count(self, clauses: list) -> int:
+        return self.db.execute(select(func.count()).select_from(R).where(*clauses)).scalar_one()
+
+    def plan_vs_issued_counts(
+        self, *, source=None, status=None, material=None, plant=None, reservation=None, overdue=False
+    ):
+        """``total`` under every filter; ``by_source`` under all but the source
+        filter, ``by_status`` under all but the status one, and ``overdue``
+        under all but the status and overdue ones -- so each filter's options
+        show what picking them would give."""
+        scope = {"material": material, "plant": plant, "reservation": reservation}
+        return {
+            "total": self._count(self._plan_vs_where(source=source, status=status, overdue=overdue, **scope)),
+            "by_source": self._counts(self._plan_vs_where(status=status, overdue=overdue, **scope), R.f1),
+            "by_status": self._counts(self._plan_vs_where(source=source, overdue=overdue, **scope), R.f2),
+            "overdue": self._count(self._plan_vs_where(source=source, overdue=True, **scope)),
+        }
 
     # --- GRNI and usage -----------------------------------------------------------
 

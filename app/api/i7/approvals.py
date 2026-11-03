@@ -11,6 +11,19 @@ routes: APPROVE/REJECT/SEND_BACK/ADJUST share the same validation and the same
 ledger write, and duplicating that across five functions is exactly the kind
 of duplicated business logic the phase brief asks to avoid. The action is an
 explicit enum in the request body, not a free string.
+
+Who is acting
+-------------
+The actor recorded in the ledger -- and so the submitter and the people notified -- is the
+authenticated caller (``get_i7_actor``: the Entra object id from the token, or the
+``X-Actor-Id`` header while sign-in is off). The ``actor_id`` field some clients still send in the
+body is ignored.
+
+**Known gap, unchanged here:** ``actor_role`` in the body is still the caller's own claim. These
+routes do not yet check it against the roles in the token (there is no ``require_roles`` on them;
+see ``tests/test_write_roles.py`` PENDING), so any signed-in user can act as any approval role.
+Closing that is an authorisation change to the approval workflow and is deliberately not part of
+the notification work.
 """
 
 from typing import Annotated
@@ -18,7 +31,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.api.i7.actor import Actor, get_i7_actor
 from app.api.i7.deps import get_session, load_latest_recommendation
+from app.initiatives.i7.notifications import notify_transition
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations import ledger, routing, workflow
 from app.initiatives.i7.recommendations.types import WorkflowError
@@ -89,13 +104,15 @@ def submit_recommendation(
     recommendation_id: str,
     body: SubmitRequest,
     session: Annotated[Session, Depends(get_session)],
+    actor: Annotated[Actor, Depends(get_i7_actor)],
 ) -> WorkflowStateResponse:
     row = load_latest_recommendation(session, recommendation_id)
     policy = PolicyDocument()
     try:
-        ledger.submit_for_approval(session, row, actor_id=body.actor_id, policy=policy)
+        ledger.submit_for_approval(session, row, actor_id=actor.id, policy=policy)
     except WorkflowError as exc:
         raise conflict("INVALID_WORKFLOW_STATE", str(exc)) from exc
+    notify_transition(session, row, policy)
     session.commit()
     return _state_response(row, policy)
 
@@ -115,13 +132,15 @@ def reject_recommendation(
     recommendation_id: str,
     body: RejectRequest,
     session: Annotated[Session, Depends(get_session)],
+    actor: Annotated[Actor, Depends(get_i7_actor)],
 ) -> WorkflowStateResponse:
     row = load_latest_recommendation(session, recommendation_id)
     policy = PolicyDocument()
     try:
-        ledger.reject_before_submission(session, row, actor_id=body.actor_id, comment=body.comment, policy=policy)
+        ledger.reject_before_submission(session, row, actor_id=actor.id, comment=body.comment, policy=policy)
     except WorkflowError as exc:
         raise conflict("INVALID_WORKFLOW_ACTION", str(exc)) from exc
+    notify_transition(session, row, policy)
     session.commit()
     return _state_response(row, policy)
 
@@ -145,15 +164,17 @@ def apply_action(
     recommendation_id: str,
     body: ApprovalActionRequest,
     session: Annotated[Session, Depends(get_session)],
+    actor: Annotated[Actor, Depends(get_i7_actor)],
 ) -> WorkflowStateResponse:
     row = load_latest_recommendation(session, recommendation_id)
     policy = PolicyDocument()
     try:
         ledger.apply_approval_action(
-            session, row, body.actor_id, body.actor_role, body.action, body.comment,
+            session, row, actor.id, body.actor_role, body.action, body.comment,
             policy=policy,
         )
     except WorkflowError as exc:
         raise conflict("INVALID_WORKFLOW_ACTION", str(exc)) from exc
+    notify_transition(session, row, policy)
     session.commit()
     return _state_response(row, policy)

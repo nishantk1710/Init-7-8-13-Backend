@@ -60,7 +60,7 @@ than one routed to nobody, because somebody answers it.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -98,6 +98,7 @@ from app.initiatives.i13.act.ports import (
     NotificationPort,
 )
 from app.initiatives.i13.act.state_machine import validate_transition
+from app.integrations.notifications.templates import EXCEPTION_ESCALATED, EXCEPTION_RESPONSE_REQUIRED
 from app.initiatives.i13.models import ReservationLedgerEntry
 from app.initiatives.i13.plans import ConsumptionPlan, PlanMatcher
 from app.shared.material_scope import MaterialScope
@@ -153,6 +154,15 @@ def _transition(
     return updated
 
 
+#: The frontend page that lists these exceptions; notifications link to it.
+EXCEPTION_PAGE = "/oar-utilization/aging-exceptions"
+
+
+def _message(exception: ActException, action: str) -> str:
+    """What a notification says: the exception in business terms, then what is asked."""
+    return f"Material: {exception.material}\nPlant: {exception.plant}\n{exception.reason}\n{action}"
+
+
 def _notify(
     repository: ExceptionRepository,
     notification_port: NotificationPort,
@@ -163,13 +173,25 @@ def _notify(
     subject: str,
     body: str,
     as_of_time: datetime,
+    event_type: str | None = None,
 ) -> None:
     """Notification delivery never corrupts the exception's already-persisted
     state transition: the transition happens (and is committed to the
     repository) before this is called, and any exception raised by the
     notification adapter itself is caught and recorded as a failed attempt
     rather than propagated."""
-    intent = NotificationIntent(exception_id=exception.exception_id, channel=channel, recipient=recipient, subject=subject, body=body)
+    intent = NotificationIntent(
+        exception_id=exception.exception_id,
+        channel=channel,
+        recipient=recipient,
+        subject=subject,
+        body=body,
+        plant=exception.plant,
+        entity_type="EXCEPTION",
+        module="I13",
+        event_type=event_type,
+        action_path=EXCEPTION_PAGE,
+    )
     try:
         result = notification_port.send(intent)
     except Exception as exc:  # adapter failure must not corrupt exception state
@@ -223,9 +245,10 @@ def _route_to_requester(
         current_assignee_id=requester_id,
         routing_status=RoutingStatus.RESOLVED,
     )
-    subject = f"ACT exception {updated.exception_id} requires your confirmation"
-    _notify(repository, notification_port, updated, NotificationChannel.PLATFORM_QUEUE, requester_id, subject=subject, body=updated.reason, as_of_time=as_of_time)
-    _notify(repository, notification_port, updated, NotificationChannel.EMAIL, requester_id, subject=subject, body=updated.reason, as_of_time=as_of_time)
+    subject = "Action Required – Inventory Exception"
+    body = _message(updated, "Action required: please confirm or explain.")
+    for channel in (NotificationChannel.PLATFORM_QUEUE, NotificationChannel.EMAIL):
+        _notify(repository, notification_port, updated, channel, requester_id, subject=subject, body=body, as_of_time=as_of_time, event_type=EXCEPTION_RESPONSE_REQUIRED)
     return updated
 
 
@@ -547,6 +570,8 @@ def process_escalations(
     repository: ExceptionRepository,
     escalation_recipient_provider: EscalationRecipientProvider,
     notification_port: NotificationPort,
+    limit: int | None = None,
+    plants: Collection[str] | None = None,
 ) -> EscalationRunResult:
     """Escalate every ``AWAITING_REQUESTER`` exception whose
     ``requester_due_at`` has passed. The exception's status moves to
@@ -554,13 +579,37 @@ def process_escalations(
     overdue and needs HOD attention"); whether a real HOD identity was found
     is tracked separately in ``routing_status``/``current_assignee_id`` so a
     routing failure is visible without ever inventing a recipient (FRS
-    §11/W6.6 instruction: never fabricate a routing target)."""
+    §11/W6.6 instruction: never fabricate a routing target).
+
+    ``limit`` and ``plants`` only narrow *which* overdue exceptions this run takes --
+    the oldest overdue first, at most ``limit``, only at those plants. Each one is then
+    escalated by exactly the same rules. Left out, every overdue exception is taken, as
+    before (the manual ``POST /run/escalate`` does that)."""
     escalated = routing_pending = 0
-    due = [
-        exc
-        for exc in repository.list(status=ExceptionStatus.AWAITING_REQUESTER)
-        if exc.requester_due_at is not None and as_of_time >= exc.requester_due_at
-    ]
+    if limit is None and plants is None:
+        due = [
+            exc
+            for exc in repository.list(status=ExceptionStatus.AWAITING_REQUESTER)
+            if exc.requester_due_at is not None and as_of_time >= exc.requester_due_at
+        ]
+    else:
+        wanted_plants = {p.upper() for p in plants} if plants is not None else None
+        pick = getattr(repository, "list_due_for_escalation", None)
+        if pick is not None:  # the SQL repository filters and limits in the database
+            due = pick(as_of_time, plants=wanted_plants, limit=limit)
+        else:
+            due = sorted(
+                (
+                    exc
+                    for exc in repository.list(status=ExceptionStatus.AWAITING_REQUESTER)
+                    if exc.requester_due_at is not None
+                    and as_of_time >= exc.requester_due_at
+                    and (wanted_plants is None or exc.plant.upper() in wanted_plants)
+                ),
+                key=lambda exc: (exc.requester_due_at, exc.exception_id),
+            )
+            if limit is not None:
+                due = due[:limit]
     for exception in due:
         hod_id = escalation_recipient_provider.get_hod(
             material=exception.material, plant=exception.plant, requester_id=exception.owner_requester_id
@@ -580,9 +629,10 @@ def process_escalations(
                 current_assignee_id=hod_id,
                 routing_status=RoutingStatus.RESOLVED,
             )
-            subject = f"ACT exception {updated.exception_id} escalated for your review"
-            _notify(repository, notification_port, updated, NotificationChannel.PLATFORM_QUEUE, hod_id, subject=subject, body=updated.reason, as_of_time=as_of_time)
-            _notify(repository, notification_port, updated, NotificationChannel.EMAIL, hod_id, subject=subject, body=updated.reason, as_of_time=as_of_time)
+            subject = "Escalation Required – Inventory Exception"
+            body = _message(updated, "This exception was not answered in time and needs your review.")
+            for channel in (NotificationChannel.PLATFORM_QUEUE, NotificationChannel.EMAIL):
+                _notify(repository, notification_port, updated, channel, hod_id, subject=subject, body=body, as_of_time=as_of_time, event_type=EXCEPTION_ESCALATED)
             escalated += 1
         else:
             _transition(

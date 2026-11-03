@@ -10,6 +10,9 @@ them into HTTP.
   422 names the line at fault; 409 lists the suggestions that moved since the
   preview, with their fresh values.
 * ``GET /assistant/requests`` / ``GET /assistant/requests/{id}`` -- read back.
+* ``GET /assistant/requests/upload-template`` / ``POST /assistant/requests/upload``
+  -- the Excel template, and an uploaded copy read back as a list of
+  materials. 422 lists every problem in the file. Writes nothing.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
@@ -30,23 +33,31 @@ from app.api.assistant.request_schemas import (
     ReasonCategoryModel,
     RequestLineModel,
     RequestListResponse,
+    LinkJobResponse,
+    LinkJobStepModel,
     RequestResponse,
     RequestSummaryModel,
     SkippedModel,
     SuggestedModel,
+    UploadResponse,
 )
 from app.api.assistant.schemas import LinkedReservationModel
 from app.api.deps import Actor, get_current_actor
 from app.assistant import departments as department_names
+from app.assistant import link_job
+from app.assistant import request_upload
 from app.assistant import requests as request_service
 from app.assistant import script
 from app.assistant.models import AssistantRequest, AssistantSession
 from app.assistant.session import Origin
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
+from app.core.security import USER_ROLES, require_roles
 from app.initiatives.i8.config import get_i8_settings
 from app.initiatives.i13.session_link import line_number_note
 from app.shared.material_names import material_names
+
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 #: How long a read waits for material names right after a restart.
 NAME_WAIT_SECONDS = 10
@@ -233,6 +244,54 @@ def list_requests(
     )
 
 
+# Declared before ``/{request_id}``, which would otherwise take the path.
+@router.get(
+    "/upload-template",
+    response_class=Response,
+    summary="The Excel template a request's materials are uploaded in",
+    responses={200: {"content": {XLSX_MEDIA_TYPE: {}}}},
+)
+def upload_template(settings: SettingsDep) -> Response:
+    return Response(
+        content=request_upload.build_template(request_service.max_lines(settings)),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{request_upload.TEMPLATE_FILE_NAME}"'},
+    )
+
+
+@router.post("/upload", response_model=UploadResponse, summary="The materials in an uploaded template")
+def upload(
+    settings: SettingsDep,
+    file: UploadFile = File(..., description="The filled-in template, .xlsx"),
+) -> UploadResponse:
+    """Reads and checks the file; stores nothing. 422 ``{"errors": [...]}``
+    lists every problem, so the file can be fixed in one go."""
+    max_lines = request_service.max_lines(settings)
+    # One byte past the limit is enough to know the file is too large.
+    content = file.file.read(request_upload.MAX_UPLOAD_BYTES + 1)
+    try:
+        extracted = request_upload.extract(
+            content,
+            max_lines=max_lines,
+            file_name=file.filename or "",
+            check_department=settings.assistant_department_check_enabled,
+        )
+    except request_upload.UploadError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": str(error), "errors": error.errors},
+        ) from None
+    return UploadResponse(
+        plant=extracted.plant,
+        department=extracted.department,
+        department_name=extracted.department_name,
+        materials=extracted.materials,
+        row_count=extracted.row_count,
+        duplicates=extracted.duplicates,
+        max_lines=max_lines,
+    )
+
+
 @router.get("/{request_id}", response_model=RequestResponse, summary="One request, every line")
 def get_request(request_id: str, db: DbDep, settings: SettingsDep) -> RequestResponse:
     try:
@@ -240,6 +299,67 @@ def get_request(request_id: str, db: DbDep, settings: SettingsDep) -> RequestRes
     except request_service.RequestError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
     return _request_response(db, request)
+
+
+#: Any signed-in user with a role may press it: it changes no business record, only
+#: refreshes what the page shows, and one job runs at a time whoever presses.
+_ANY_USER = Depends(require_roles(*sorted(USER_ROLES)))
+
+
+def _job_response(job, *, created: bool) -> LinkJobResponse:
+    return LinkJobResponse(
+        id=job.id,
+        request_id=job.request_id,
+        status=job.status,
+        step=job.step,
+        steps=[LinkJobStepModel(**step) for step in link_job.steps_of(job)],
+        requested_at=job.requested_at,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+        links=job.links,
+        error=job.error,
+        created=created,
+    )
+
+
+def _existing_request(db: DbSession, request_id: str, settings: Settings) -> None:
+    try:
+        request_service.load(db, request_id, settings)
+    except request_service.RequestError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+
+
+@router.post(
+    "/{request_id}/link-reservation",
+    response_model=LinkJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[_ANY_USER],
+    summary="Pull the latest SAP data, link this request's reservations, rebuild the views",
+)
+def link_reservation(request_id: str, db: DbDep, settings: SettingsDep, actor: ActorDep) -> LinkJobResponse:
+    """Starts a Link reservation job, or returns the one already queued or running for
+    this request. Poll ``GET`` with the same path for its progress."""
+    if not link_job.enabled(settings):
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Link reservation is not available.")
+    _existing_request(db, request_id, settings)
+    job, created = link_job.create(db, request_id, requested_by=actor.id)
+    if created:
+        link_job.start_in_background(job.id, request_id)
+    return _job_response(job, created=created)
+
+
+@router.get(
+    "/{request_id}/link-reservation",
+    response_model=LinkJobResponse,
+    summary="The latest Link reservation job for this request",
+)
+def link_reservation_status(request_id: str, db: DbDep, settings: SettingsDep) -> LinkJobResponse:
+    _existing_request(db, request_id, settings)
+    job = link_job.latest_for_request(db, request_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No Link reservation job for this request yet.")
+    link_job.mark_abandoned_if_stale(db, job)
+    return _job_response(job, created=False)
 
 
 def _single(departments: list[str]) -> str | None:

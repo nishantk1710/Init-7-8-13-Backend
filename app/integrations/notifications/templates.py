@@ -1,0 +1,174 @@
+"""Wording for every notification: one subject, body and button label per event.
+
+Everything a person reads comes from here, so it is also the one place to check
+the wording rule: no internal module names (I07, I08, I13) in anything a user
+sees. ``tests/test_notification_templates.py`` enforces it.
+
+Each template is a plain ``str.format`` string. A placeholder the caller did not
+supply renders as a dash rather than raising, so a missing detail never stops a
+notification.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+# --- Event types (stored on the notification row) ----------------------------
+
+APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
+APPROVAL_SENT_BACK = "APPROVAL_SENT_BACK"
+APPROVAL_REJECTED = "APPROVAL_REJECTED"
+APPROVAL_ON_HOLD = "APPROVAL_ON_HOLD"
+APPROVAL_HOLD_RELEASED = "APPROVAL_HOLD_RELEASED"
+APPROVAL_ADJUSTED = "APPROVAL_ADJUSTED"
+APPROVAL_COMPLETED = "APPROVAL_COMPLETED"
+APPROVAL_REMINDER = "APPROVAL_REMINDER"
+APPROVAL_ESCALATED = "APPROVAL_ESCALATED"
+EXCEPTION_ACTION_REQUIRED = "EXCEPTION_ACTION_REQUIRED"
+EXCEPTION_RESPONSE_REQUIRED = "EXCEPTION_RESPONSE_REQUIRED"
+EXCEPTION_ESCALATED = "EXCEPTION_ESCALATED"
+# A purchase requisition SAP posted to /api/events/pr. The plain notice goes to every
+# signed-in user and names nothing about the requisition; the details are for administrators.
+PR_RECEIVED = "PR_RECEIVED"
+PR_RECEIVED_DETAILS = "PR_RECEIVED_DETAILS"
+GENERAL = "GENERAL"
+
+
+@dataclass(frozen=True)
+class Rendered:
+    title: str
+    body: str
+    button_label: str
+
+
+@dataclass(frozen=True)
+class _Template:
+    title: str
+    body: str
+    button_label: str
+
+
+_REVIEW = "Open Review Workspace"
+_EXCEPTION = "Open Exception"
+
+_TEMPLATES: dict[str, _Template] = {
+    APPROVAL_REQUIRED: _Template(
+        "Approval Required – Material Recommendation",
+        "A new inventory recommendation for Plant {plant} is waiting for your approval.\n"
+        "Material: {material}\n"
+        "Action required: Review and approve the recommendation.",
+        _REVIEW,
+    ),
+    APPROVAL_SENT_BACK: _Template(
+        "Recommendation Sent Back – Material {material}",
+        "A recommendation for Plant {plant} was sent back for correction.\n"
+        "Material: {material}\n"
+        "Comment: {comment}",
+        _REVIEW,
+    ),
+    APPROVAL_REJECTED: _Template(
+        "Recommendation Rejected – Material {material}",
+        "A recommendation for Plant {plant} was rejected.\n"
+        "Material: {material}\n"
+        "Comment: {comment}",
+        _REVIEW,
+    ),
+    APPROVAL_ON_HOLD: _Template(
+        "Recommendation On Hold – Material {material}",
+        "A recommendation for Plant {plant} was put on hold by the approver.\n"
+        "Material: {material}\n"
+        "Comment: {comment}",
+        _REVIEW,
+    ),
+    APPROVAL_HOLD_RELEASED: _Template(
+        "Hold Released – Material {material}",
+        "The hold on a recommendation for Plant {plant} was released and it is moving again.\n"
+        "Material: {material}",
+        _REVIEW,
+    ),
+    APPROVAL_ADJUSTED: _Template(
+        "Recommendation Adjusted – Approval Required",
+        "A recommendation for Plant {plant} was adjusted and is waiting for your approval.\n"
+        "Material: {material}\n"
+        "Comment: {comment}\n"
+        "Action required: Review the adjusted values.",
+        _REVIEW,
+    ),
+    APPROVAL_COMPLETED: _Template(
+        "Recommendation Approved – Material {material}",
+        "A recommendation for Plant {plant} has been fully approved.\n"
+        "Material: {material}\n"
+        "Next step: the approved values are updated in SAP by the team.",
+        _REVIEW,
+    ),
+    APPROVAL_REMINDER: _Template(
+        "Reminder: Approval Required – Material {material}",
+        "A recommendation for Plant {plant} is still waiting for your approval.\n"
+        "Material: {material}\n"
+        "Action required: Review and approve the recommendation.",
+        _REVIEW,
+    ),
+    APPROVAL_ESCALATED: _Template(
+        "Escalation Required – Approval Overdue for Material {material}",
+        "A recommendation for Plant {plant} has waited too long for approval from {pending_role}.\n"
+        "Material: {material}\n"
+        "Action required: Follow up with the approver.",
+        _REVIEW,
+    ),
+    EXCEPTION_ACTION_REQUIRED: _Template(
+        "Action Required – Inventory Exception",
+        "{summary}\n"
+        "Material: {material}\n"
+        "Plant: {plant}",
+        _EXCEPTION,
+    ),
+    EXCEPTION_RESPONSE_REQUIRED: _Template(
+        "Action Required – Inventory Exception",
+        "{summary}\n"
+        "Action required: Please confirm or explain.",
+        _EXCEPTION,
+    ),
+    EXCEPTION_ESCALATED: _Template(
+        "Escalation Required – Inventory Exception",
+        "{summary}\n"
+        "This exception was not answered in time and needs your review.",
+        _EXCEPTION,
+    ),
+    # No placeholders on purpose: this one reaches everyone, so it carries nothing about the requisition.
+    PR_RECEIVED: _Template(
+        "New Purchase Requisition Received",
+        "A new purchase requisition was received from SAP.",
+        "Open",
+    ),
+    PR_RECEIVED_DETAILS: _Template(
+        "Purchase Requisition {banfn} Received",
+        "Purchase requisition {banfn} was received from SAP.\n"
+        "Created on: {created_on} at {created_at}\n"
+        "Created by (SAP user): {created_by}\n"
+        "SAP message: {message}",
+        "Open",
+    ),
+    GENERAL: _Template("Notification", "{summary}", "Open"),
+}
+
+
+class _Dash(dict):
+    """``format_map`` source that renders a missing placeholder as a dash."""
+
+    def __missing__(self, key: str) -> str:
+        return "-"
+
+
+def render(event_type: str, context: dict[str, str] | None = None) -> Rendered:
+    """Fill the template for ``event_type``. An unknown type uses the general one."""
+    template = _TEMPLATES.get(event_type, _TEMPLATES[GENERAL])
+    values = _Dash({k: ("-" if v in (None, "") else str(v)) for k, v in (context or {}).items()})
+    return Rendered(
+        title=template.title.format_map(values),
+        body=template.body.format_map(values),
+        button_label=template.button_label,
+    )
+
+
+def known_event_types() -> list[str]:
+    return sorted(_TEMPLATES)
