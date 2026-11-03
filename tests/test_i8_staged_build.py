@@ -78,7 +78,7 @@ ROWS: dict[str, list[tuple]] = {
         (N, "1300", "VB", "10", "5"), (A, "3000", "ND", "99", ""),
     ],
     "raw_mard": [
-        (A, "1300", "0001", "3"), (A, "1300", "0002", "4,5"), (C, "1500", "0001", "2"),
+        (A, "1300", "0001", "3"), (A, "1300", "0002", "4"), (C, "1500", "0001", "2"),
         (N, "1300", "0001", "9"), (A, "3000", "0001", "50"),
     ],
     "raw_ekko": [
@@ -293,8 +293,10 @@ def test_the_tenant_crosses_every_filter(built) -> None:
     assert direct.register_stats.requisitions_excluded_deleted == 1
     assert direct.register_stats.requisitions_excluded_reservation_closed == 1
     # Stock per condition (MCHB, the default): summed across bins, split by the
-    # configured conditions; B has no MCHB rows, so its split is unknown.
+    # configured conditions; B has no MCHB rows, so its split is unknown. A split
+    # is kept only where MCHB adds up to MARD (A: 3 + 4 = 2 + 1 + 4), since 3-Nov-2026.
     universe = {(r.material_id, r.plant): r for r in direct.universe}
+    assert universe[(A, "1300")].stock_on_hand == 7
     assert universe[(A, "1300")].usable_stock == 6
     assert universe[(A, "1300")].damaged_stock == 1
     assert universe[(A, "1300")].stock_condition_source == "MCHB"
