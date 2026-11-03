@@ -136,6 +136,12 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "Records a requester's confirmation and justification against an "
         "exception."
     ),
+    ("/api/assistant/requests/{request_id}/link-reservation", "post"): (
+        "Starts a Link reservation job -> reservation_link_job (one row per press, "
+        "updated as it moves on). The job runs the delta cycle (READS SAP, merges "
+        "into raw_<table>), writes session_reservation_link for the request's "
+        "materials, and starts the I13 and I08 snapshot rebuilds. Never writes to SAP."
+    ),
     ("/api/events/pr", "post"): (
         "Inbound procurement event listener. Writes only to platform tables; "
         "with DELTA_ON_PR_EVENT_ENABLED it also starts the delta cycle, which "
