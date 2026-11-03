@@ -96,6 +96,26 @@ Read from the recommendation's own route and position, never hard-coded.
 
 The person who just acted is not told about their own action (except that an approver asked to act always is).
 
+## A purchase requisition from SAP (the PR event)
+
+When SAP posts a requisition to `/api/events/pr`, the inbox is told once SAP has its `202`
+(`app/services/pr_event_notifications.py`, a background task -- it never delays or fails the event):
+
+| Who | What they see |
+| --- | --- |
+| Everyone who has signed in (`app_user`) | **New Purchase Requisition Received** -- "A new purchase requisition was received from SAP." Nothing else: no PR number, creator or message, and the row's `entityId` is empty, so the inbox shows no "Ref". |
+| Active `Spares.Admin` rows in `notification_recipients` (any plant) | **Purchase Requisition {BANFN} Received** -- the PR number, created on/at, the SAP user who created it and SAP's message. Instead of the plain notice, not as well. |
+
+- **In-app only**, whatever `NOTIFICATION_EMAIL_ENABLED` says: an email to every user for every requisition would be noise.
+- The event has **no plant** and its `CREATED_BY` is a SAP user name, not an Entra identity, so the creator is shown
+  to administrators but never notified.
+- **No administrator configured** is recorded as a failed in-app row with the reason, like any unresolved recipient.
+- **The same event twice** (same BANFN, date and time) adds nothing. An event without a BANFN cannot be matched to a
+  repeat, so each one is its own notice.
+- `PR_EVENT_NOTIFICATIONS_ENABLED=false` switches it off.
+- Where people see it: **More → Notifications** (`/notifications`), with the unread badge on **More**. There is no
+  page to open, so clicking one only marks it read.
+
 ## Configuration checklist
 
 ### Before anything is delivered to a person's inbox

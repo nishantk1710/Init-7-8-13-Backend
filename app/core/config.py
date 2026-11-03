@@ -1084,6 +1084,12 @@ class Settings(BaseSettings):
     # "OVERDUE_REPAIR:Spares.Stores". Empty means no one is guessed.
     i8_notification_recipient_roles: str = ""
 
+    # A purchase requisition SAP posts to /api/events/pr: an in-app notice for everyone
+    # who has signed in ("a requisition was received", no details) and one with the PR
+    # number, creator and SAP's message for the Spares.Admin recipients. In-app only, and
+    # written after SAP has its 202, so it never delays or fails the event.
+    pr_event_notifications_enabled: bool = True
+
     # Microsoft Graph sending (Mail.Send application permission, one shared
     # mailbox). All empty until the tenant admin has consented.
     graph_tenant_id: str = ""
@@ -1201,6 +1207,10 @@ class Settings(BaseSettings):
     # plant, one line per material, each line an ordinary session. Off by
     # default -- the routes answer 404 until it is switched on.
     assistant_requests_enabled: bool = False
+    # "Link reservation" on a request (app/assistant/link_job.py): pull the latest
+    # SAP data, link the request's reservations, rebuild the I13 and I08 views,
+    # with the progress shown on the page. Needs DATABASE_URL.
+    link_reservation_enabled: bool = True
     # The request reference: same alphabet, length and check character as a
     # session ID, a different prefix so a reader can tell the two apart. Each
     # line is quoted as "<request>/<n>" on the SAP item text (SGTXT, 50 chars).
