@@ -81,10 +81,18 @@ def _requester_escalations() -> str:
     return run_requester_escalations()
 
 
+def _request_link_notices() -> str:
+    """Tell requesters their request was linked to an SAP reservation, or remind them it is not yet."""
+    from app.assistant.link_notifications import run_job
+
+    return run_job()
+
+
 def build_jobs() -> list[Job]:
     # Reminders and escalations run before delivery, so what they queue goes out in the same tick.
     return [
         Job("approval_reminders", _approval_reminders),
         Job("requester_escalations", _requester_escalations),
+        Job("request_link_notices", _request_link_notices),
         Job("deliver_pending", _deliver_pending),
     ]

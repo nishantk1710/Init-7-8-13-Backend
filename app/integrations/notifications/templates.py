@@ -31,6 +31,9 @@ EXCEPTION_ESCALATED = "EXCEPTION_ESCALATED"
 # signed-in user and names nothing about the requisition; the details are for administrators.
 PR_RECEIVED = "PR_RECEIVED"
 PR_RECEIVED_DETAILS = "PR_RECEIVED_DETAILS"
+# A request's lines were linked to an SAP reservation, and the reminder when a day passes with lines still unlinked.
+RESERVATION_LINKED = "RESERVATION_LINKED"
+RESERVATION_LINK_REMINDER = "RESERVATION_LINK_REMINDER"
 GENERAL = "GENERAL"
 
 
@@ -50,6 +53,7 @@ class _Template:
 
 _REVIEW = "Open Review Workspace"
 _EXCEPTION = "Open Exception"
+_REQUEST = "Open Request"
 
 _TEMPLATES: dict[str, _Template] = {
     APPROVAL_REQUIRED: _Template(
@@ -147,6 +151,21 @@ _TEMPLATES: dict[str, _Template] = {
         "Created by (SAP user): {created_by}\n"
         "SAP message: {message}",
         "Open",
+    ),
+    RESERVATION_LINKED: _Template(
+        "Reservation Linked – Request {request}",
+        "Your SAP reservation is now linked to request {request} at Plant {plant}.\n"
+        "{lines}\n"
+        "Lines with a reservation: {linked} of {total}.",
+        _REQUEST,
+    ),
+    RESERVATION_LINK_REMINDER: _Template(
+        "Reminder: Reservation Not Linked – Request {request}",
+        "No SAP reservation is linked yet to these lines of request {request} at Plant {plant}:\n"
+        "{lines}\n"
+        "Action required: create the reservation in SAP with {request} in its header text, "
+        "then press Link reservation on the request.",
+        _REQUEST,
     ),
     GENERAL: _Template("Notification", "{summary}", "Open"),
 }
