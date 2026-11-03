@@ -365,9 +365,11 @@ class TestStaging:
         cfg = I8Settings(_env_file=None, repair_reservation_movement_type="544", job_issue_movement_type="201")
         statements = _staging_statements(monkeypatch, cfg)
         [narrow] = [s for s in statements if s.startswith("SELECT * INTO #i8b_resb FROM n_resb")]
-        # The repair order's lines and, since 27-Oct-2026, every job line
-        # (MISSING_SESSION_ID), both from settings.
-        assert "movement_type IN ('544', '201')" in narrow
+        # The repair order's lines, from the setting. Job lines are kept only
+        # when they carry text: every one was kept for the missing-session
+        # check until it was removed on 3-Nov-2026.
+        assert "movement_type = '544'" in narrow
+        assert "'201'" not in narrow
         assert "LIKE '%80%'" in narrow and "'1300'" in narrow
 
     def test_eban_is_narrowed_on_scope_and_series(self, monkeypatch) -> None:

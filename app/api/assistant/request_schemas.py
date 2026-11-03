@@ -83,21 +83,22 @@ class LineDeclarationModel(AssistantModel):
     """The faulty unit declared on an I08 line -- the conversation's declaration form."""
 
     quantity: str | int | float = 1
-    condition_description: str = PydanticField(max_length=4000)
     fault_category: str = PydanticField(max_length=64)
     recommendation: str = PydanticField(max_length=64)
-    attestor_name: str = PydanticField(max_length=128)
+
+    # Retired 3-Nov-2026, when the form stopped asking for them: still
+    # accepted, so a draft saved before then submits, and never passed on.
+    # The declarer is the signed-in requester now.
+    condition_description: str | None = PydanticField(default=None, max_length=4000)
+    attestor_name: str | None = PydanticField(default=None, max_length=128)
     evidence_reference: str | None = PydanticField(default=None, max_length=256)
 
     def as_answer(self) -> dict[str, Any]:
         """Keyed as the ``i08_declaration`` form's fields."""
         return {
             "quantity": str(self.quantity),
-            "condition_description": self.condition_description,
             "fault_category": self.fault_category,
             "recommendation": self.recommendation,
-            "attestor_name": self.attestor_name,
-            "evidence_reference": self.evidence_reference,
         }
 
 

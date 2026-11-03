@@ -1,21 +1,20 @@
-"""FR-8 -- UNJUSTIFIED_ACQUISITION, checked on the new-buy PR, and the
+"""New 80-series purchases, which justification answers each, and the
 deleted/blocked PO-line rule.
 
-No database. The detector is a pure function of purchases, open repairs and
-justifications, and every decision it makes is pinned here: which PR items and
-PO lines are new purchases (since 27-Oct-2026 the new-buy PR, plus direct PO
-lines with no PR behind it), what "a repair was open at the time" means (a
-repair PO line or an open repair PR), which justifications answer a purchase,
-how a pre-cutover purchase is labelled, and that the text a person reads names
-no SAP table or field. Rows are hand-built in the ``v_eban`` / ``v_ekpo`` /
-``v_ekko`` / ``v_resb`` column names.
+No database. Which PR items and PO lines are new purchases (since 27-Oct-2026
+the new-buy PR, plus direct PO lines with no PR behind it), and which purchase a
+NEW_ACQUISITION justification answered -- the Justifications screen's Purchase
+column. Rows are hand-built in the ``v_eban`` / ``v_ekpo`` / ``v_ekko`` /
+``v_resb`` column names.
+
+The bought-new exception these purchases also fed (UNJUSTIFIED_ACQUISITION) was
+removed with the exception queue on 3-Nov-2026, and its tests with it.
 """
 
 from __future__ import annotations
 
 import ast
 import pathlib
-import re
 from datetime import date
 from decimal import Decimal
 
@@ -27,97 +26,20 @@ from app.initiatives.i8.acquisitions import (
     PURCHASE_REQUISITION,
     JustificationRecord,
     NewAcquisition,
-    OpenRepair,
     find_new_acquisitions,
     is_direct_purchase_line,
     is_new_buy_requisition,
     is_new_purchase_line,
     load_new_acquisitions,
-    open_repair_at,
+    purchases_answered,
     repair_order_references,
-    repairs_by_material_plant,
 )
-from app.initiatives.i8.attestation import AttestationCoverage
 from app.initiatives.i8.config import I8Settings
-from app.initiatives.i8.exceptions import (
-    RAISED_BY_I8,
-    ExceptionType,
-    build_exceptions,
-    unjustified_acquisitions,
-)
-from app.initiatives.i8.register import RepairLine, is_deleted_line
-from app.initiatives.i8.requisitions import RepairRequest
+from app.initiatives.i8.register import is_deleted_line
 
 CFG = I8Settings(_env_file=None)
 BOUGHT = date(2026, 5, 10)
 NON_ORDER = frozenset({"WK", "MK", "AN", "FPA"})  # I13_NON_ORDER_DOC_TYPES' default
-
-
-def repair(**overrides) -> RepairLine:
-    """An open repair PO line of 8000005632 at 1300, raised before BOUGHT."""
-    defaults = dict(
-        purchasing_document="4500001234",
-        item="10",
-        material_id="8000005632",
-        plant="1300",
-        description="Pump repair",
-        ordered_qty=Decimal(1),
-        unit="EA",
-        net_price=None,
-        item_category="3",
-        pr_number=None,
-        pr_item=None,
-        requisitioner=None,
-        doc_type="ZREP",
-        corroborated_by_doc_type=True,
-        has_po_header=True,
-        vendor="400093",
-        vendor_name=None,
-        raised_at=date(2026, 5, 1),
-        po_date=date(2026, 5, 1),
-        due_date=date(2026, 6, 1),
-        schedule_lines=1,
-        dispatched_at=None,
-        dispatched_qty=Decimal(0),
-        lead_time_days=None,
-        repair_status="PO Issued",
-        overdue_status="ON_TIME",
-        lead_time_status="NO_LEAD_TIME",
-        qty_under_repair=Decimal(1),
-        days_open=9,
-        days_elapsed=9,
-        days_over_lead_time=None,
-        days_at_vendor=None,
-        days_in_current_stage=9,
-        days_remaining=22,
-        aging_bucket="0-15",
-    )
-    defaults.update(overrides)
-    return RepairLine(**defaults)
-
-
-def repair_request(**overrides) -> RepairRequest:
-    """An open repair PR (no PO yet) of 8000005632 at 1300, requested 04 Feb."""
-    defaults = dict(
-        purchase_requisition="2000029113",
-        item="10",
-        material_id="8000005632",
-        plant="1300",
-        description="PUMP REPAIR",
-        quantity=Decimal(1),
-        unit="EA",
-        requested_on=date(2026, 2, 4),
-        need_date=None,
-        department="10305",
-        requisition_status="N",
-        document_type="ZMNP",
-        repair_order="940000004981",
-        reservation="1916164",
-        days_open=0,
-        aging_bucket="0-15",
-    )
-    defaults.update(overrides)
-    return RepairRequest(**defaults)
 
 
 def purchase(**overrides) -> NewAcquisition:
@@ -193,17 +115,6 @@ def find(requisitions=(), candidates=(), headers=None, reservation_lines=(), cfg
         reservation_lines,
         cfg,
         non_order_doc_types=NON_ORDER,
-    )
-
-
-def raised(acquisitions, lines, justifications=(), *, window=30, cutover=None, requests=()):
-    return unjustified_acquisitions(
-        acquisitions,
-        lines,
-        justifications,
-        window_days=window,
-        cutover=cutover,
-        repair_requests=requests,
     )
 
 
@@ -467,222 +378,39 @@ class TestDeletedAndBlockedLines:
                 )
 
 
-# --- was a repair open when the purchase was raised ---------------------------------
+# --- which purchase a justification answered ---------------------------------------
 
 
-class TestOpenRepairAtThePurchase:
-    """Every repair here is open in SAP, so one raised by the day of the
-    purchase has been out ever since. One SAP has closed is not there to match."""
-
-    def index(self, *lines, requests=()):
-        return repairs_by_material_plant(lines, requests)
-
-    def test_an_open_repair_raised_before_the_purchase(self) -> None:
-        line = repair()
-        assert open_repair_at(purchase(), self.index(line)) == OpenRepair.from_line(line)
-
-    def test_a_repair_raised_the_same_day_counts(self) -> None:
-        line = repair(raised_at=BOUGHT)
-        assert open_repair_at(purchase(), self.index(line)) == OpenRepair.from_line(line)
-
-    def test_a_repair_raised_after_the_purchase_does_not(self) -> None:
-        assert open_repair_at(purchase(), self.index(repair(raised_at=date(2026, 5, 11)))) is None
-
-    def test_an_undated_repair_cannot_be_placed_in_time(self) -> None:
-        assert open_repair_at(purchase(), self.index(repair(raised_at=None))) is None
-
-    def test_another_plant_is_another_shelf(self) -> None:
-        assert open_repair_at(purchase(), self.index(repair(plant="1500"))) is None
-
-    def test_the_soonest_due_repair_is_the_one_reported(self) -> None:
-        late = repair(item="10", due_date=date(2026, 7, 1))
-        soon = repair(item="20", due_date=date(2026, 5, 20))
-        undated = repair(item="30", due_date=None)
-        assert open_repair_at(purchase(), self.index(late, undated, soon)).item == "20"
-
-    def test_an_undated_purchase_cannot_be_placed_in_time(self) -> None:
-        assert open_repair_at(purchase(raised_at=None), self.index(repair())) is None
-
-    def test_an_open_repair_pr_counts_from_its_pr_date(self) -> None:
-        found = open_repair_at(purchase(), self.index(requests=[repair_request()]))
-        assert found is not None
-        assert found.key == (PURCHASE_REQUISITION, "2000029113", "10")
-        assert found.raised_at == date(2026, 2, 4)
-        assert found.due_date is None
-        assert found.reference == "PR-2000029113-10"
-
-    def test_a_repair_pr_requested_after_the_purchase_does_not(self) -> None:
-        later = repair_request(requested_on=date(2026, 5, 11))
-        assert open_repair_at(purchase(), self.index(requests=[later])) is None
-
-    def test_a_repair_pr_sorts_after_po_repairs_even_undated_ones(self) -> None:
-        """A PR has no due date; among the undated, a PO comes first."""
-        dated = repair(item="10", due_date=date(2026, 7, 1))
-        undated = repair(item="20", due_date=None)
-        request = repair_request()
-        assert open_repair_at(purchase(), self.index(dated, requests=[request])).item == "10"
-        assert open_repair_at(purchase(), self.index(undated, requests=[request])).key == (
-            PURCHASE_ORDER,
-            "4500001234",
-            "20",
-        )
-        assert open_repair_at(purchase(), self.index(requests=[request])).document_type == (
-            PURCHASE_REQUISITION
-        )
+def reason(recorded_on: date, *, id: str = "J1", exception_id: str | None = None, **over) -> JustificationRecord:
+    values = dict(material_id="8000005632", plant="1300", recorded_on=recorded_on, id=id, exception_id=exception_id)
+    values.update(over)
+    return JustificationRecord(**values)
 
 
-# --- the exception -----------------------------------------------------------------
+class TestPurchasesAnswered:
+    def test_a_reason_answers_a_purchase_of_the_part_at_the_plant_within_the_window(self) -> None:
+        answered = purchases_answered([reason(date(2026, 5, 1))], [purchase()], window_days=30)
+        assert answered["J1"].purchasing_document == "1000201234"
 
+    def test_outside_the_window_or_another_plant_answers_nothing(self) -> None:
+        assert purchases_answered([reason(date(2026, 3, 1))], [purchase()], window_days=30) == {}
+        assert purchases_answered([reason(date(2026, 5, 1), plant="1500")], [purchase()], window_days=30) == {}
 
-_TABLE_VOCABULARY = re.compile(
-    r"\b(EBAN|EKPO|EKKO|RESB|BANFN|BNFPO|EBELN|EBELP|BADAT|AEDAT|ERDAT|AFNAM|NEW_ACQUISITION|"
-    r"justification|SAP)\b"
-)
+    def test_the_nearest_purchase_wins_and_one_raised_after_the_reason_first(self) -> None:
+        before = purchase(purchasing_document="1000200001", raised_at=date(2026, 5, 6))
+        after = purchase(purchasing_document="1000200002", raised_at=date(2026, 5, 14))
+        answered = purchases_answered([reason(date(2026, 5, 10))], [before, after], window_days=30)
+        assert answered["J1"].purchasing_document == "1000200002"
 
+    def test_a_reason_recorded_against_a_bought_new_finding_answers_that_purchase(self) -> None:
+        """Ids of the removed exception queue, on reasons recorded before 3-Nov-2026."""
+        named = purchase(purchasing_document="1000209999", raised_at=date(2025, 1, 1))
+        record = reason(date(2026, 5, 10), exception_id="EX-UNJUSTIFIED_ACQUISITION-PR-1000209999-10")
+        answered = purchases_answered([record], [purchase(), named], window_days=30)
+        assert answered["J1"].purchasing_document == "1000209999"
 
-class TestUnjustifiedAcquisition:
-    def test_a_new_buy_pr_while_a_repair_pr_was_open(self) -> None:
-        [item] = raised([purchase(raised_at=date(2026, 3, 14))], [], requests=[repair_request()])
-        assert item.type == ExceptionType.UNJUSTIFIED_ACQUISITION.value
-        assert item.id == "EX-UNJUSTIFIED_ACQUISITION-PR-1000201234-10"
-        assert (item.acquisition_document, item.acquisition_item) == ("1000201234", "10")
-        assert item.acquisition_document_type == PURCHASE_REQUISITION
-        # The repair: the bare PR number, typed PR, named as the register names its row.
-        assert (item.purchasing_document, item.item) == ("2000029113", "10")
-        assert item.repair_document_type == PURCHASE_REQUISITION
-        assert item.repair_reference == "PR-2000029113-10"
-        assert item.severity == "warning"
-        assert item.raised_at == date(2026, 3, 14)
-        assert item.detail == (
-            "A new unit was requested on 14 Mar 2026 (PR 1000201234/10) while a repair "
-            "of the same part (repair PR 2000029113/10, requested 04 Feb 2026) was still "
-            "open, and no reason was recorded within 30 days."
-        )
-
-    def test_a_new_buy_pr_while_a_repair_po_was_open(self) -> None:
-        [item] = raised([purchase()], [repair()])
-        assert item.id == "EX-UNJUSTIFIED_ACQUISITION-PR-1000201234-10"
-        assert (item.purchasing_document, item.item) == ("4500001234", "10")
-        assert item.repair_document_type == PURCHASE_ORDER
-        assert item.repair_reference == "4500001234-10"
-        assert "(repair PO 4500001234/10, raised 01 May 2026)" in item.detail
-
-    def test_a_direct_po_keeps_the_id_it_always_had(self) -> None:
-        [item] = raised([po_purchase()], [repair()])
-        assert item.id == "EX-UNJUSTIFIED_ACQUISITION-4100100001-10"
-        assert item.acquisition_document_type == PURCHASE_ORDER
-        assert item.detail.startswith("A new unit was ordered on 10 May 2026 (PO 4100100001/10)")
-
-    def test_the_text_names_no_table_field_or_rule(self) -> None:
-        for item in [
-            *raised([purchase()], [repair()]),
-            *raised([po_purchase()], [], requests=[repair_request()]),
-            *raised([purchase()], [repair()], cutover=date(2026, 9, 1)),
-        ]:
-            assert not _TABLE_VOCABULARY.search(item.detail), item.detail
-            assert not _TABLE_VOCABULARY.search(item.title), item.title
-            assert not re.search(r"\d{4}-\d{2}-\d{2}", item.detail), "dates read as 08 May 2025"
-
-    def test_open_repair_prs_count_whatever_the_register_serves(self) -> None:
-        """The check is handed every open repair PR; no switch is read here."""
-        assert len(raised([purchase()], [], requests=[repair_request()])) == 1
-
-    def test_not_raised_when_no_repair_was_open(self) -> None:
-        """Buying a part nobody is repairing is ordinary procurement."""
-        assert raised([purchase()], []) == []
-        assert raised([purchase()], [repair(raised_at=date(2026, 5, 11))]) == []
-        assert raised([purchase()], [], requests=[repair_request(requested_on=date(2026, 5, 11))]) == []
-
-    def test_an_undated_purchase_is_never_raised(self) -> None:
-        assert raised([po_purchase(raised_at=None)], [repair()]) == []
-
-    @pytest.mark.parametrize("recorded", [date(2026, 4, 10), BOUGHT, date(2026, 6, 9)])
-    def test_a_justification_inside_the_window_answers_it(self, recorded) -> None:
-        reason = JustificationRecord(material_id="8000005632", plant="1300", recorded_on=recorded)
-        assert raised([purchase()], [repair()], [reason]) == []
-        assert raised([purchase()], [], [reason], requests=[repair_request()]) == []
-
-    def test_a_justification_outside_the_window_does_not(self) -> None:
-        reason = JustificationRecord(
-            material_id="8000005632", plant="1300", recorded_on=date(2026, 6, 10)
-        )
-        assert len(raised([purchase()], [repair()], [reason])) == 1
-
-    def test_a_justification_for_another_plant_does_not(self) -> None:
-        reason = JustificationRecord(material_id="8000005632", plant="1500", recorded_on=BOUGHT)
-        assert len(raised([purchase()], [repair()], [reason])) == 1
-
-    def test_a_justification_against_the_exception_id_answers_it_whenever_recorded(self) -> None:
-        reason = JustificationRecord(
-            material_id="8000005632",
-            plant="1300",
-            recorded_on=date(2026, 12, 1),
-            exception_id="EX-UNJUSTIFIED_ACQUISITION-PR-1000201234-10",
-        )
-        assert raised([purchase()], [repair()], [reason]) == []
-
-    def test_the_window_is_configuration(self) -> None:
-        reason = JustificationRecord(
-            material_id="8000005632", plant="1300", recorded_on=date(2026, 5, 20)
-        )
-        assert raised([purchase()], [repair()], [reason], window=10) == []
-        assert len(raised([purchase()], [repair()], [reason], window=5)) == 1
-
-    def test_before_the_cutover_it_is_labelled_not_accused(self) -> None:
-        [item] = raised([purchase()], [repair()], cutover=date(2026, 9, 1))
-        assert item.pre_automation is True
-        assert item.severity == "info"
-        assert item.title == "Raised before Spares Automation"
-        assert item.detail.startswith(
-            "A new unit was requested on 10 May 2026 (PR 1000201234/10), before reasons "
-            "for buying new were first asked for on 01 Sep 2026."
-        )
-
-    def test_after_the_cutover_it_is_a_warning(self) -> None:
-        [item] = raised([purchase()], [repair()], cutover=date(2026, 1, 1))
-        assert item.pre_automation is False
-        assert item.severity == "warning"
-        assert item.title == "New unit bought while a repair was open"
-
-    def test_it_is_now_a_raised_type(self) -> None:
-        assert ExceptionType.UNJUSTIFIED_ACQUISITION in RAISED_BY_I8
-        # Raised too since 27-Oct-2026 (job lines with no R-reference).
-        assert ExceptionType.MISSING_SESSION_ID in RAISED_BY_I8
-
-    def test_other_checks_name_po_lines(self) -> None:
-        line = repair()
-        coverage = AttestationCoverage(covered={}, uncovered={line.key}, window_days=30)
-        items, _ = build_exceptions([line], coverage)
-        [item] = items
-        assert item.repair_document_type == PURCHASE_ORDER
-        assert item.repair_reference == "4500001234-10"
-
-    def test_both_detectors_share_one_queue_and_one_set_of_counts(self) -> None:
-        line = repair()
-        coverage = AttestationCoverage(covered={}, uncovered={line.key}, window_days=30)
-        items, stats = build_exceptions(
-            [line],
-            coverage,
-            acquisitions=[
-                purchase(),
-                purchase(item="20", raised_at=date(2026, 4, 1)),
-                po_purchase(material_id="8000000001"),
-            ],
-            justification_window_days=30,
-            justification_cutover=date(2026, 5, 5),
-            repair_requests=[repair_request(material_id="8000000001")],
-        )
-        assert stats.by_type == {"MISSING_ATTESTATION": 1, "UNJUSTIFIED_ACQUISITION": 2}
-        assert stats.acquisitions_checked == 3
-        assert stats.total == 3
-        assert stats.pre_automation == 0
-        assert stats.actionable == 3
-        assert stats.justification_cutover_date == date(2026, 5, 5)
-        bought_new = sorted(i.id for i in items if i.type == "UNJUSTIFIED_ACQUISITION")
-        assert bought_new == [
-            "EX-UNJUSTIFIED_ACQUISITION-4100100001-10",
-            "EX-UNJUSTIFIED_ACQUISITION-PR-1000201234-10",
-        ]
+    def test_a_reason_with_no_id_is_skipped(self) -> None:
+        assert purchases_answered([reason(date(2026, 5, 10), id=None)], [purchase()], window_days=30) == {}
 
 
 class TestConfigurationDefaults:
@@ -693,14 +421,18 @@ class TestConfigurationDefaults:
         assert cfg.delivery_completed_indicator == "X"
         assert cfg.new_purchase_item_category == "0"
         assert cfg.justification_window_days == 30
-        assert cfg.justification_cutover_date_value is None
         assert cfg.attestation_max_quantity == 1000
 
-    def test_a_malformed_justification_cutover_fails_loudly(self) -> None:
-        with pytest.raises(ValueError):
-            I8Settings(_env_file=None, justification_cutover_date="01-10-2026").justification_cutover_date_value
-
-    def test_the_cutover_is_documented_as_the_release_date(self) -> None:
+    def test_the_settings_of_the_removed_checks_are_gone(self) -> None:
+        """3-Nov-2026: the exception queue went, and its settings with it."""
+        for name in (
+            "justification_cutover_date",
+            "declaration_grace_days",
+            "session_check_start_date",
+            "notification_types",
+            "complete_flow_enabled",
+        ):
+            assert name not in I8Settings.model_fields, name
         text = pathlib.Path(".env.example").read_text(encoding="utf-8")
-        block = text[text.index("I8_JUSTIFICATION_WINDOW_DAYS") : text.index("I8_JUSTIFICATION_CUTOVER_DATE=")]
-        assert "release date" in block
+        for variable in ("I8_JUSTIFICATION_CUTOVER_DATE=", "I8_NOTIFICATION_TYPES=", "I8_COMPLETE_FLOW_ENABLED="):
+            assert variable not in text, variable

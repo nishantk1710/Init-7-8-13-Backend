@@ -164,59 +164,6 @@ class UniverseDetail(I8Model):
 # --- Register (W5.2) ------------------------------------------------------
 
 
-class RepairJustificationEntry(I8Model):
-    """One NEW_ACQUISITION justification recorded while the line was out."""
-
-    id: str | None = None
-    reason_category: str | None = None
-    free_text: str | None = None
-    author: str | None = None
-    recorded_at: datetime | None = None
-    session_id: str | None = None
-    """The assistant session it was recorded in -- the link to the
-    conversation."""
-
-
-class UnjustifiedPurchase(I8Model):
-    """A new unit bought while the line was out, with no reason on record.
-
-    The same finding as the ``UNJUSTIFIED_ACQUISITION`` exception, which
-    ``exception_id`` names. ``purchase`` is a new-buy PR (type ``PR``) or a
-    direct PO line (type ``PO``).
-    """
-
-    exception_id: str
-    purchase: SAPDocumentReference
-    raised_at: date | None = None
-    pre_automation: bool = False
-    """Bought before the justification control existed -- nobody was asked."""
-
-
-class RepairJustification(I8Model):
-    """The register's Justification cell for one repair line."""
-
-    status: Literal["RECORDED", "MISSING"]
-    """MISSING whenever any purchase overlapping the line has no reason, even
-    if another one does: that is the one somebody has to act on."""
-
-    entries: list[RepairJustificationEntry]
-    """Newest first. Empty when the line is only MISSING."""
-
-    unjustified_purchases: list[UnjustifiedPurchase]
-
-
-class LineException(I8Model):
-    """One exception raised against a register line: enough for the register's
-    Exceptions column to name it and link to it in the queue."""
-
-    id: str
-    type: str
-    severity: Literal["info", "warning", "critical"]
-    pre_automation: bool = False
-    """Raised before the check's start date: labelled, not work to do. The
-    register's Exceptions column counts only the others (28-Oct-2026)."""
-
-
 class RepairChain(I8Model):
     """One repair PO line SAP still has open. Mirrors the frontend's RepairChain.
 
@@ -286,18 +233,6 @@ class RepairChain(I8Model):
     requester: str | None = None
     """EKPO.AFNAM, a code rather than a name -- no person directory was
     delivered."""
-
-    justification: RepairJustification | None = None
-    """FR-7 on this line: a NEW_ACQUISITION reason recorded while it was out,
-    or a new purchase that overlapped it with none. None when neither --
-    see ``app.initiatives.i8.line_justifications``."""
-
-    exceptions: list[LineException] | None = None
-    """What the checks raise against this line, for the register's Exceptions
-    column. Served by the register listing, so the screen need not load the
-    whole exception queue to fill one column of one page. An empty list means
-    the checks ran and raised nothing; null means not computed here -- the
-    line's detail endpoint, which links to the queue instead."""
 
     days_open: int | None = None
     """Raised to today -- the same number as ``daysElapsed``. The line is open
@@ -464,6 +399,18 @@ class VendorOption(I8Model):
     to the code -- the rule the Vendor columns follow."""
 
 
+class DepartmentOption(I8Model):
+    """One department a register can be narrowed to (3-Nov-2026)."""
+
+    value: str
+    """The code -- the repair PR's EBAN.AFNAM -- which the ``department``
+    filter takes."""
+
+    name: str | None = None
+    """The name from the department list the assistant keeps, when it has the
+    code. A dropdown shows it and falls back to the code."""
+
+
 class RegisterFacets(I8Model):
     """The values the register's filters can take, for a paged screen's dropdowns.
 
@@ -482,6 +429,9 @@ class RegisterFacets(I8Model):
     """Some lines' material has no criticality at their plant.
     ``criticality=none`` finds them."""
 
+    departments: list[DepartmentOption] = []
+    """The departments that raised the listed repairs."""
+
 
 class RegisterViewCounts(I8Model):
     """How many of the filtered lines each quick view of the register holds.
@@ -495,7 +445,6 @@ class RegisterViewCounts(I8Model):
     undeclared: int
     """Never counts a PR row: there is nothing to declare against until phase 2."""
     at_vendor: int
-    with_exceptions: int
     not_ordered: int = 0
     """Repair PRs with no PO yet. 0 while ``I8_REPAIR_REQUESTS_ENABLED`` is off."""
 
@@ -528,80 +477,7 @@ class RepairDetail(I8Model):
     timeline: list[LifecycleStage]
 
 
-# --- Attestation, declarations and exceptions (W5.3) ----------------------
-
-
-class AttestationRequest(I8Model):
-    """The condition-to-repair form, as submitted.
-
-    Note what is NOT here: ``attestor``, ``attestedAt`` and ``sessionId``. The
-    first two are set by the server from the authenticated caller and the clock
-    -- an audit record whose author and timestamp are the author's to choose is
-    not an audit record. The third is set only by the assistant, which knows the
-    session a declaration is made in (27-Oct-2026); a body cannot claim one.
-    """
-
-    # Lengths are the column widths in app/initiatives/i8/models.py. Without
-    # them an overlong value reaches the database and comes back as a 500
-    # rather than as a 422 that says which field was wrong.
-    material_id: str = Field(max_length=40)
-    plant: str = Field(max_length=8)
-    quantity: Decimal
-    condition_description: str
-    """Free text. The part a human actually reads."""
-
-    fault_category: str = Field(max_length=64)
-    """Must be one of the configured list -- see ``GET /api/i8/config``. Not a
-    free string: the list is VZI's vocabulary and is validated against it."""
-
-    recommendation: Literal["REPAIRABLE", "BEYOND_ECONOMICAL_REPAIR", "SCRAP"]
-
-    serial_number: str | None = Field(default=None, max_length=64)
-    """Optional. I08 works at material-plant grain today; capturing a serial
-    when somebody knows it costs nothing now and is unrecoverable later."""
-
-    evidence_reference: str | None = Field(default=None, max_length=500)
-    """**A reference string only.** File upload is descoped and SharePoint is
-    not provisioned, so this holds a pointer somebody can follow -- the platform
-    does not pretend to store the artefact."""
-
-    supersedes: str | None = Field(default=None, max_length=32)
-    """The attestation this one amends. Attestations are never edited: an
-    amendment is a new record pointing at the one it replaces, and the original
-    stays readable. Must be for the same material and plant."""
-
-    repair_document: str | None = Field(default=None, max_length=20)
-    """EKPO.EBELN of the repair line being declared against.
-
-    FR-4's "link ... to the repair PR or PO". Send it whenever the screen knows
-    which line it is declaring -- the register, the repair detail page and the
-    declarations queue all do -- and the line is then covered outright, with no
-    date matching involved.
-
-    Omit it when assessing a part before anything has been raised for it.
-    There is no purchase order to name in that moment, which is exactly why the
-    date window exists, and it stays the fallback for those.
-
-    With ``repairDocumentType`` 'PR' it is an open repair PR with no PO yet
-    (EBAN.BANFN; a register PR row's ``PR-{BANFN}`` is accepted too). The line
-    must be open in the register and be for the same material and plant, and a
-    line that already has a current declaration takes an amendment, not a
-    second one -- each refused with a 422 (27-Oct-2026)."""
-
-    repair_item: str | None = Field(default=None, max_length=10)
-    """EKPO.EBELP (or EBAN.BNFPO) of that line. Send with ``repairDocument`` or
-    not at all -- half a key identifies no line and is rejected with a 422."""
-
-    repair_document_type: Literal["PO", "PR"] | None = None
-    """What ``repairDocument`` names: a repair PO line (the default) or an open
-    repair PR with no PO yet."""
-
-    attestor_name: str | None = Field(default=None, max_length=128)
-    """The name the person typed. Not a sign-in."""
-
-    amendment_reason: str | None = None
-    """Why this amendment replaces the declaration it ``supersedes``. Required
-    with ``supersedes``: 422 without it."""
+# --- Attestation and declarations (W5.3) ------------------------------------
 
 
 class Attestation(I8Model):
@@ -782,223 +658,6 @@ class DeclarationResponse(I8Model):
     meta: DeclarationMeta
     facets: DeclarationFacets
     reference_date: date
-
-
-class ExceptionHistoryEntry(I8Model):
-    """One thing that happened to an exception: an assignment, a comment, a
-    status change, or the queue resolving the item itself."""
-
-    id: str
-    kind: Literal["ASSIGNED", "COMMENT", "STATUS", "AUTO_RESOLVED"]
-    """``AUTO_RESOLVED`` is kept apart from ``STATUS`` deliberately. "Priya
-    resolved this" and "the check stopped finding it" are different claims,
-    and rendering them identically invites the first to be read where only the
-    second happened."""
-
-    status: Literal["OPEN", "CLOSED"] | None = None
-    """The status this entry set. Null on a comment or an assignment. An entry
-    stored with a retired status (IN_PROGRESS, RESOLVED) is served as the one
-    it became, so the history and the item's status speak one vocabulary."""
-
-    owner: str | None = None
-    """Who the item was assigned to, on an ``ASSIGNED`` entry. Null there means
-    it was unassigned -- ``kind`` tells the two nulls apart."""
-
-    actor: str
-    """``system`` on ``AUTO_RESOLVED``; otherwise whoever acted. Server-set,
-    never taken from the request body."""
-
-    text: str = ""
-    at: datetime
-
-
-class ExceptionQueueItem(I8Model):
-    """One exception. No matching frontend type exists yet -- this defines it,
-    in the same camelCase house style as everything else in /api/i8."""
-
-    id: str
-    type: str
-    severity: Literal["info", "warning", "critical"]
-    material: MaterialReference
-    plant: PlantReference | None = None
-    repair_line: SAPDocumentReference
-    """The repair line the exception is about. For ``UNJUSTIFIED_ACQUISITION``
-    it is the repair that was open when the new unit was bought: a repair PO
-    line (type ``PO``) or, since 27-Oct-2026, a repair PR with no PO yet (type
-    ``PR``, the bare PR number and item). Every other type names a PO line."""
-
-    acquisition_line: SAPDocumentReference | None = None
-    """``UNJUSTIFIED_ACQUISITION`` only: the purchase that bought a new unit
-    while ``repairLine`` was still out -- a new-buy PR (type ``PR``) or a direct
-    PO line with no PR behind it (type ``PO``). Null for every other type."""
-
-    title: str
-    detail: str
-    """Says what is missing AND what was searched for, so a reader can tell a
-    real gap from a matching rule that did not fit."""
-
-    raised_at: date | None = None
-    """The date of the line the exception is about -- the repair line, or for
-    an acquisition the purchase line -- not the moment the check ran."""
-
-    pre_automation: bool = False
-    """The line predates the control it is measured against, so the gap is
-    explained by when it was raised rather than by anyone failing to act.
-    Always false while no cutover date is configured."""
-
-    declaration_id: str | None = None
-    """The condition declaration the finding is about, on the two
-    declaration-based types (``REPAIRED_AGAINST_ASSESSMENT``,
-    ``DECLARED_NO_REPAIR_PR``). Null on every other type. Since 27-Oct-2026."""
-
-    reservation_line: SAPDocumentReference | None = None
-    """``MISSING_SESSION_ID`` only: the reservation line (type ``RESERVATION``,
-    RSNUM and RSPOS) whose text carries no valid R-reference; ``repairLine`` is
-    then blank. Null on every other type. Since 27-Oct-2026."""
-
-    # --- FR-11: the state people put it in ------------------------------
-    #
-    # The item above is recomputed on every read; everything below is stored
-    # against its id in i8_exception_state. An item nobody has touched has no
-    # row there and reports the defaults -- OPEN and unassigned -- which is
-    # the truth about it rather than a placeholder.
-
-    status: Literal["OPEN", "CLOSED"] = "OPEN"
-    """Two on purpose -- see ``STATUSES`` in ``exception_state``. Who closed
-    it, a person or the check, is in ``history``."""
-
-    owner: str | None = None
-    """Null means unassigned, which is a real state and the common one."""
-
-    still_detected: bool = True
-    """Whether the check still finds this item.
-
-    Always true for an item in the list -- being listed is what detection
-    means. It is served because a CLOSED item may be listed when the caller
-    asks for one by id or by status, and then the distinction between "someone
-    closed it" and "the data moved" is the whole story."""
-
-    history: list[ExceptionHistoryEntry] = []
-    """Oldest first, the order a history is read in. Empty for an item nobody
-    has touched."""
-
-
-class ExceptionMeta(I8Model):
-    total: int
-    by_type: dict[str, int]
-    by_severity: dict[str, int]
-    lines_checked: int
-    lines_covered: int
-    attestation_window_days: int
-
-    pre_automation: int = 0
-    actionable: int = 0
-    """``total`` less ``preAutomation`` -- the work, where ``total`` is the
-    business case. Both are served because quoting either alone misleads."""
-
-    attestation_cutover_date: date | None = None
-    """The cutover these counts were measured against. Null means none is
-    configured, which is the current state."""
-
-    types_raised: list[str]
-    """Which exception types I08 actually raises, so a caller can tell an empty
-    count from an unimplemented check. ``MISSING_SESSION_ID`` is raised since
-    27-Oct-2026."""
-
-    acquisitions_checked: int = 0
-    """New 80-series purchases -- new-buy PRs and direct PO lines -- the
-    UNJUSTIFIED_ACQUISITION check ran over."""
-
-    justification_window_days: int = 0
-    """How far from a purchase a NEW_ACQUISITION justification may sit and
-    still cover it."""
-
-    justification_cutover_date: date | None = None
-    """The cutover the acquisition counts were measured against. Null means
-    none is configured."""
-
-    session_check_start_date: date | None = None
-    """From when job reservation lines were checked for an R-reference
-    (MISSING_SESSION_ID): the setting, else the I13 go-live date. Null on a
-    snapshot built before the check. Since 27-Oct-2026."""
-
-
-class ExceptionFacets(I8Model):
-    """The values the queue's filters can take, for a paged screen's dropdowns.
-
-    Taken over every item the queue carries -- after ``excludeType``, which
-    takes a check out of the queue altogether -- and before any filter, so a
-    dropdown always offers every value it can be switched to.
-    """
-
-    plants: list[PlantReference]
-    types: list[str]
-    """The types present among the items. ``meta.typesRaised`` says which checks
-    run; this says which of them found something."""
-
-
-class ExceptionResponse(I8Model):
-    items: list[ExceptionQueueItem]
-    page: int
-    page_size: int
-    total: int
-    meta: ExceptionMeta
-    facets: ExceptionFacets
-    reference_date: date
-    type_counts: dict[str, int] | None = None
-    """Items per type after every filter but ``type``: what each type tab on
-    the Exceptions screen holds, so a tab shows the number of rows it opens
-    on. Unlike ``meta``, these DO follow the filters -- status above all.
-    Optional so an older client ignores it."""
-
-
-# --- Notifications (FR-11) ------------------------------------------------
-
-
-class NotificationItem(I8Model):
-    """One logged notification: an exception as it stood when first found
-    actionable. Nothing is emailed yet, so ``emailed`` is false on every row
-    until the sender exists."""
-
-    id: str
-    exception_id: str
-    type: str
-    severity: str
-    title: str
-    material_id: str
-    plant: str | None = None
-    logged_at: datetime
-    channel: Literal["EMAIL"] = "EMAIL"
-    emailed: bool = False
-
-    # --- 28-Oct-2026: enough to tell the rows apart ----------------------
-    # Looked up when the log is read, not stored: the row keeps what it was
-    # logged with, and these are labels.
-
-    repair_line: str | None = None
-    """The repair line the finding is about, as the register names its row:
-    ``4500001719-10``, or ``PR-2000028756-10`` for a repair PR with no PO yet.
-    Null for a finding with no repair line (a declaration with no repair, a
-    reservation with no reference), and for a bought-new finding once it is
-    no longer raised."""
-
-    description: str | None = None
-    """The material's description, where one is known."""
-
-    plant_name: str | None = None
-    """The plant's name. Null when none is documented for the code."""
-
-
-class NotificationResponse(I8Model):
-    items: list[NotificationItem]
-    total: int
-    page: int
-    page_size: int
-    types: list[str] = Field(default_factory=list)
-    """The types that have been logged, for the screen's type filter."""
-
-
-# --- Coding candidates (W5.5) ---------------------------------------------
 
 
 class CodingCandidateLine(I8Model):
@@ -1223,15 +882,12 @@ class SnapshotInfo(I8Model):
 
 
 class FeaturesResponse(I8Model):
-    """Which I08 features this backend serves (29-Oct-2026). Read from the
-    settings alone, never the snapshot, so it answers while I08 data is still
-    being prepared."""
+    """Which I08 features this backend serves (29-Oct-2026).
+
+    ``completeFlowEnabled`` is always true since 3-Nov-2026, when the switch
+    was retired; served for a frontend deployed before that release."""
 
     complete_flow_enabled: bool
-    """``I8_COMPLETE_FLOW_ENABLED``: the complete flow (repair PRs, stock by
-    condition, declaring in the assistant, R-reference links, the new
-    exception types, the notification log). A client that cannot read this
-    treats it as off."""
 
 
 UniverseDetail.model_rebuild()
@@ -1312,36 +968,6 @@ class RepairableUnitResponse(I8Model):
     stock_source: str | None = None
     """``MCHB`` / ``MBEW``; ``MARD`` when only the total is known; null with
     no stock record."""
-
-
-class ExceptionEventRequest(I8Model):
-    """Append one entry to an exception's history (FR-11).
-
-    One request shape for all three actions, because they are one operation on
-    one append-only table. There is no PATCH anywhere in this application: a
-    status is not a column to be edited, it is the last entry that set one.
-
-    ====================  ============================================
-    ``kind``              what else to send
-    ====================  ============================================
-    ``ASSIGNED``          ``owner`` -- or null to unassign, which is
-                          an action and gets its own entry
-    ``STATUS``            ``status``, and ``text`` saying why --
-                          required when closing
-    ``COMMENT``           ``text``
-    ====================  ============================================
-
-    ``AUTO_RESOLVED`` is not accepted: only the queue writes those, because
-    only a check can know it has stopped finding something.
-    """
-
-    kind: Literal["ASSIGNED", "STATUS", "COMMENT"]
-    status: Literal["OPEN", "CLOSED"] | None = None
-    owner: str | None = Field(default=None, max_length=128)
-    text: str = Field(default="", max_length=2000)
-    """What was said, or why the status moved. Required to close an item (a 422
-    without it), optional to reopen one: a history of bare closes explains
-    nothing later."""
 
 
 # --- The job an assistant session was for (27-Oct-2026) --------------------

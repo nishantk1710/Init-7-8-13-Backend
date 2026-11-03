@@ -649,16 +649,16 @@ class TestNothingIsHardCoded:
             I8Settings(_env_file=None, reference_date="31-07-2026").reference_date_value
 
     def test_the_attestation_cutover_is_configuration(self) -> None:
-        """The date attestation starts applying -- still unsupplied by VZI.
-
-        Blank is the shipped default and means "no cutover", which leaves the
-        exception behaving exactly as it did before the label existed. Turning
-        it on must be one .env line.
+        """The day declarations began. 27-Oct-2026 by default since 3-Nov-2026
+        (the release that let the assistant declare, and nonprod's setting); an
+        environment that started later sets its own date, and blank means no
+        cutover at all.
         """
         cfg = I8Settings(_env_file=None)
-        assert cfg.attestation_cutover_date_value is None
+        assert cfg.attestation_cutover_date_value == date(2026, 10, 27)
         cfg = I8Settings(_env_file=None, attestation_cutover_date="2026-10-01")
         assert cfg.attestation_cutover_date_value == date(2026, 10, 1)
+        assert I8Settings(_env_file=None, attestation_cutover_date="").attestation_cutover_date_value is None
 
     def test_a_malformed_cutover_fails_loudly(self) -> None:
         """A wrong cutover silently forgives real misses on one side of it."""

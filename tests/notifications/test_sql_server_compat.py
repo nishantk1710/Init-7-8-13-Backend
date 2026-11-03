@@ -46,7 +46,6 @@ def test_no_notification_module_writes_a_boolean_is_comparison():
         "app/api/notifications",
         "app/initiatives/i7/notifications.py",
         "app/initiatives/i7/reminders.py",
-        "app/initiatives/i8/notifications.py",
         "app/services/notification_jobs.py",
     ]
     files = [p for root in roots for p in ([pathlib.Path(root)] if root.endswith(".py") else pathlib.Path(root).rglob("*.py"))]

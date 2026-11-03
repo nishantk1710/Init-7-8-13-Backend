@@ -464,6 +464,7 @@ def create(
     lines: list[LineAnswers],
     idempotency_key: str,
     requester: str,
+    requester_name: str | None = None,
     requested_for: str | None = None,
     origin: Origin = Origin.PLATFORM,
     department: str | None = None,
@@ -476,7 +477,9 @@ def create(
     ``department`` is the request's one department. Per-line departments are
     still accepted (a screen from before 21 Oct sends them) as long as they all
     agree with it and with each other. ``department_note`` is free text beside
-    it, recorded on every line as the department is."""
+    it, recorded on every line as the department is. ``requester_name`` is the
+    requester's name as shown, written as the declarer of any line's I08
+    declaration (3-Nov-2026)."""
     settings = settings or get_settings()
     today = today or date.today()
     i13_config = get_i13_config()
@@ -601,6 +604,7 @@ def create(
                         session.id,
                         payload,
                         actor=requester,
+                        actor_name=requester_name,
                         today=today,
                         settings=settings,
                         assessment=item.assessment,

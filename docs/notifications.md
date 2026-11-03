@@ -1,12 +1,13 @@
 # Shared notifications
 
-One notification service for approvals, repairable-spares exceptions and OAR exceptions. It lives in
+One notification service for approvals and OAR exceptions. It lives in
 `app/integrations/notifications/`; nothing else builds its own client.
 
 ## How it works
 
-1. **Something happens** -- an approval moves (`app/initiatives/i7/notifications.py`), an exception is raised
-   (I08, `app/initiatives/i8/notifications.py`) or goes unanswered (I13, `app/initiatives/i13/act/service.py`).
+1. **Something happens** -- an approval moves (`app/initiatives/i7/notifications.py`) or an exception goes
+   unanswered (I13, `app/initiatives/i13/act/service.py`). Repairable-spares (I08) exceptions were notified here too
+   until 3-Nov-2026, when their exception queue was removed.
 2. **`enqueue`** writes `notification` rows in the caller's own transaction -- an **in-app** row (the inbox) and an
    **email** row for each recipient. A step that fails (HTTP 409) never gets this far, and a step that is saved
    always has its notifications saved with it.
@@ -137,8 +138,8 @@ When SAP posts a requisition to `/api/events/pr`, the inbox is told once SAP has
 - [ ] Optional: `NOTIFICATION_SAP_EXECUTION_ROLE` -- the Entra role of whoever applies an approved change in SAP.
   Blank means the final-approval notice goes to the submitter only.
 - Repairable Spares (I08) sends **no** in-app or email notification, so there is nothing to configure for it
-  (`I8_NOTIFICATION_RECIPIENT_ROLES` no longer exists; remove it from any environment that still sets it). Its exception
-  log is unaffected. Notifications it sent earlier stay in the table but are kept out of every inbox, unread count and
+  (`I8_NOTIFICATION_RECIPIENT_ROLES` no longer exists; remove it from any environment that still sets it). It has no
+  exception queue or log either (removed 3-Nov-2026). Notifications it sent earlier stay in the table but are kept out of every inbox, unread count and
   mark-all-read. Emails it had already queued as `PENDING` are still sent unless cancelled: check for
   `module = 'I08'` rows in `notification` with `status = 'PENDING'` and cancel them if they should not go out.
 - [ ] **I13 requester and HOD** -- see "I13 requester and HOD" below. Both need an Entra object id, and the requester

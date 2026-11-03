@@ -79,13 +79,18 @@ _TABLES = [
 ]
 
 #: A faulty unit declared in the visit (option B, 27-Oct-2026), as the
-#: conversation's form keys it.
+#: conversation's form keys it. Three fields since 3-Nov-2026.
 DECLARED = {
     "quantity": "1",
-    "condition_description": "Bearing seized, shaft scored.",
     "fault_category": "BEARING_FAILURE",
     "recommendation": "REPAIRABLE",
-    "attestor_name": "J Miller",
+}
+
+#: The fields the form asked until 3-Nov-2026, as a draft saved before then
+#: still sends them: accepted and not kept.
+RETIRED = {
+    "condition_description": "Bearing seized, shaft scored.",
+    "attestor_name": "Typed Name",
     "evidence_reference": "PHOTO-12",
 }
 
@@ -213,6 +218,7 @@ def create(db, lines, settings, key="draft-0001", department="10100"):
         lines=lines,
         idempotency_key=key,
         requester=ACTOR,
+        requester_name="J Miller",
         requested_for="J Miller",
         department=department,
         today=TODAY,
@@ -634,8 +640,8 @@ class TestDeclaringInTheVisit:
         )
 
     def _answer(self, db, sid, payload, settings):
-        step, _ = turn_module.answer(db, sid, payload, actor=ACTOR, today=TODAY,
-                                     settings=settings, downstream=False)
+        step, _ = turn_module.answer(db, sid, payload, actor=ACTOR, actor_name="J Miller",
+                                     today=TODAY, settings=settings, downstream=False)
         return step
 
     def test_no_unit_asks_the_declaration_instead_of_ending(self, factory, settings) -> None:
@@ -658,11 +664,22 @@ class TestDeclaringInTheVisit:
             [row] = db.execute(select(RepairAttestation)).scalars().all()
             assert (row.session_id, row.material_id, row.plant) == (sid, REPAIR_NONE, PLANT)
             assert (row.repair_document, row.repair_item, row.repair_document_type) == (None, None, None)
+            # The declarer is the requester, not a typed name (3-Nov-2026).
             assert (row.attestor, row.attestor_name) == (ACTOR, "J Miller")
-            assert (row.recommendation, row.fault_category, row.evidence_reference) == (
-                "REPAIRABLE", "BEARING_FAILURE", "PHOTO-12",
-            )
+            assert (row.recommendation, row.fault_category) == ("REPAIRABLE", "BEARING_FAILURE")
+            assert (row.condition_description, row.evidence_reference) == ("", None)
             assert row.quantity == Decimal("1")
+
+    def test_an_older_draft_with_the_retired_fields_still_declares(self, factory, settings) -> None:
+        """Accepted and not kept: the typed name loses to the requester's."""
+        with factory() as db:
+            started = self._start(db, settings)
+            sid = started.session.id
+            self._answer(db, sid, {"choice": "declare"}, settings)
+            assert self._answer(db, sid, {**DECLARED, **RETIRED}, settings).is_terminal
+            [row] = db.execute(select(RepairAttestation)).scalars().all()
+            assert row.attestor_name == "J Miller"
+            assert (row.condition_description, row.evidence_reference) == ("", None)
 
     def test_a_bad_declaration_is_an_answer_error_and_writes_nothing(self, factory, settings) -> None:
         with factory() as db:
@@ -772,29 +789,34 @@ class TestRoutes:
         assert consumable["kind"] == "out_of_scope"
 
     def test_a_line_declaration_is_recorded_from_the_wire(self, client, factory) -> None:
-        response = client.post("/api/assistant/requests", json=self._body(key="draft-declare", lines=[
-            {"materialId": REPAIR_NONE, "plant": PLANT, "declaration": {
-                "quantity": 2, "conditionDescription": "Seal leaking.", "faultCategory": "SEAL_LEAK",
-                "recommendation": "REPAIRABLE", "attestorName": "J Miller",
-            }},
-        ]))
+        """A draft saved before 3-Nov-2026 still sends the description and a
+        typed name: accepted, not kept. The declarer is who submitted."""
+        response = client.post("/api/assistant/requests", headers={"X-Actor-Id": "J Miller"}, json=self._body(
+            key="draft-declare", lines=[
+                {"materialId": REPAIR_NONE, "plant": PLANT, "declaration": {
+                    "quantity": 2, "conditionDescription": "Seal leaking.", "faultCategory": "SEAL_LEAK",
+                    "recommendation": "REPAIRABLE", "attestorName": "Typed Name",
+                }},
+            ],
+        ))
         assert response.status_code == 201, response.text
         sid = response.json()["lines"][0]["sessionId"]
         with factory() as db:
             [row] = db.execute(select(RepairAttestation)).scalars().all()
         assert (row.session_id, row.quantity, row.fault_category) == (sid, Decimal("2"), "SEAL_LEAK")
-        assert row.evidence_reference is None
+        assert (row.attestor_name, row.condition_description, row.evidence_reference) == ("J Miller", "", None)
 
     def test_the_session_trace_and_log_show_the_declaration(self, client) -> None:
         """Contract 1 + 2 (28-Oct-2026): the trace lists the declaration made in
         the visit; the log says which sessions declared and what."""
-        response = client.post("/api/assistant/requests", json=self._body(key="draft-trace", lines=[
-            {"materialId": REPAIR_NONE, "plant": PLANT, "declaration": {
-                "quantity": 1, "conditionDescription": "Seal leaking.", "faultCategory": "SEAL_LEAK",
-                "recommendation": "SCRAP", "attestorName": "J Miller", "evidenceReference": "PHOTO-7",
-            }},
-            {"materialId": REPAIR_EXISTING, "plant": PLANT, "decision": "use_existing"},
-        ]))
+        response = client.post("/api/assistant/requests", headers={"X-Actor-Id": "J Miller"}, json=self._body(
+            key="draft-trace", lines=[
+                {"materialId": REPAIR_NONE, "plant": PLANT, "declaration": {
+                    "quantity": 1, "faultCategory": "SEAL_LEAK", "recommendation": "SCRAP",
+                }},
+                {"materialId": REPAIR_EXISTING, "plant": PLANT, "decision": "use_existing"},
+            ],
+        ))
         assert response.status_code == 201, response.text
         declared_sid, other_sid = (line["sessionId"] for line in response.json()["lines"])
 
@@ -802,9 +824,9 @@ class TestRoutes:
         [declaration] = trace["declarations"]
         assert declaration["id"].startswith("ATT-")
         assert (declaration["recommendation"], declaration["faultCategory"]) == ("SCRAP", "SEAL_LEAK")
-        assert declaration["conditionDescription"] == "Seal leaking."
+        assert declaration["conditionDescription"] == ""
         assert Decimal(declaration["quantity"]) == Decimal("1")
-        assert (declaration["attestorName"], declaration["evidenceReference"]) == ("J Miller", "PHOTO-7")
+        assert (declaration["attestorName"], declaration["evidenceReference"]) == ("J Miller", None)
         assert (declaration["repairDocument"], declaration["repairItem"], declaration["repairDocumentType"]) == (
             None, None, None,
         )

@@ -26,7 +26,7 @@ from app.initiatives.i13.act_requester_directory import parse_requester_recipien
 from app.initiatives.i13.config import build_i13_config
 from app.integrations.notifications.service import SharedNotificationPort
 from app.models.app_user import AppUser
-from tests.notifications.test_i08_and_i13 import HOD, NOW, OID, act_exception, repository, shared
+from tests.notifications.test_i13_shared import HOD, NOW, OID, act_exception, repository, shared
 
 OTHER_HOD = "33333333-3333-3333-3333-333333333333"
 FIVE_DAYS = timedelta(days=5)

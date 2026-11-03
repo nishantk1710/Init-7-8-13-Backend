@@ -50,6 +50,15 @@ total; the split sits beside it, and is None -- unknown, not zero -- for a part
 with no condition rows. On the 15-Oct extract MCHB's total equals MARD's on all
 730 stocked 80-series parts, and the 1,516 MARD rows with no MCHB row all hold
 nothing.
+
+MARD is the stock, the condition rows only label it (3-Nov-2026)
+----------------------------------------------------------------
+SAP's answer: read the stock from MARD, and only the condition (new,
+refurbished, damaged) from MCHB. So a split is kept only where its units add up
+to exactly MARD's total for that part and plant (:func:`agrees_with_mard`).
+Where they do not -- MARD has no row, a storage location MCHB has not caught up
+with, units with no condition, MBEW counting units at a vendor -- the row keeps
+the MARD total with its condition unknown, and the build log names it.
 """
 
 from __future__ import annotations
@@ -117,19 +126,22 @@ class UniverseRow:
     usable_stock: Decimal | None = None
     """Units in a usable condition (I8_USABLE_STOCK_CONDITIONS: new and
     refurbished), from :attr:`stock_condition_source`. None when the part has
-    no condition rows -- unknown, never zero."""
+    no condition rows, or they do not add up to :attr:`stock_on_hand` --
+    unknown, never zero."""
 
     damaged_stock: Decimal | None = None
     """Units in a damaged condition (I8_DAMAGED_STOCK_CONDITIONS). None when
-    the part has no condition rows."""
+    the split is unknown, as for :attr:`usable_stock`."""
 
     stock_by_condition: tuple[tuple[str, Decimal], ...] = ()
     """Every condition SAP holds for the part with its units, by condition
-    name -- including one counted as neither (MBEW's SCRAP). Empty when none."""
+    name -- including one counted as neither (MBEW's SCRAP). Empty when the
+    split is unknown."""
 
     stock_condition_source: str | None = None
     """``MCHB`` or ``MBEW``: where the split came from. None when the part has
-    no condition rows there, so only the MARD total is known."""
+    no condition rows there, or they do not add up to the MARD total, so only
+    the MARD total is known."""
 
     @property
     def has_open_repair(self) -> bool:
@@ -156,6 +168,10 @@ class UniverseStats:
     in_material_master: int = 0
     with_stock_condition: int = 0
     """Rows whose stock is split by condition (27-Oct-2026)."""
+
+    stock_condition_mismatch: int = 0
+    """Rows that had condition rows but kept the MARD total with the condition
+    unknown, because the condition rows did not add up to it (3-Nov-2026)."""
 
 
 # Candidate rows, drawn from every source that names a material.
@@ -392,6 +408,28 @@ def fetch_condition_stock(
     )
 
 
+def condition_total(condition: ConditionStock) -> Decimal:
+    """Every unit the condition rows hold, whatever the condition -- one
+    counted as neither usable nor damaged (MBEW's SCRAP) included."""
+    return sum((units for _condition, units in condition.by_condition), Decimal(0))
+
+
+def agrees_with_mard(condition: ConditionStock, mard_total: Decimal | None) -> bool:
+    """Whether a part's condition rows account for exactly MARD's stock.
+
+    SAP (3-Nov-2026): MARD is the stock; MCHB says only which condition each
+    unit is in. A split that holds more or fewer units than MARD would put a
+    different number in front of the requester than the stock SAP stands
+    behind, so it is used only when the two agree. ``None`` -- no MARD row --
+    never agrees: there is no stock figure for the split to label.
+    """
+    return mard_total is not None and condition_total(condition) == mard_total
+
+
+#: How many disagreeing rows the build log names, so it stays one line.
+_MISMATCH_SAMPLE = 10
+
+
 # (material, plant) -> (open repair lines, quantity out for repair)
 OpenRepairIndex = dict[tuple[str, str | None], tuple[int, Decimal]]
 
@@ -519,12 +557,19 @@ def load_universe(
     by_source = dict.fromkeys(SOURCES, 0)
     seen_materials: set[str] = set()
     seen_plants: set[str] = set()
+    # (material, plant, MARD total, condition rows' total), for the log.
+    mismatched: list[tuple[str, str | None, Decimal | None, Decimal]] = []
 
     for row in repairable:
         material_id = row["matnr"]
         plant = row["werks"]
         open_lines, qty_under_repair = index.get((material_id, plant), (0, Decimal(0)))
         condition = conditions.get((material_id, plant))
+        if condition is not None and not agrees_with_mard(condition, row["labst"]):
+            # MARD is the stock (SAP, 3-Nov-2026): keep its total and say the
+            # condition is unknown, rather than serve a split of other units.
+            mismatched.append((material_id, plant, row["labst"], condition_total(condition)))
+            condition = None
 
         universe.append(
             UniverseRow(
@@ -572,11 +617,13 @@ def load_universe(
         with_open_repair=sum(1 for r in universe if r.has_open_repair),
         in_material_master=sum(1 for r in universe if r.in_material_master),
         with_stock_condition=sum(1 for r in universe if r.stock_condition_source is not None),
+        stock_condition_mismatch=len(mismatched),
     )
     logger.info(
         "I08 universe: %d rows, %d materials, %d plants (MARA knows %d); "
         "criticality on %d rows, %d of them inferred from another plant; "
-        "stock split by condition (%s) on %d rows",
+        "stock split by condition (%s) on %d rows, %d left at the MARD total "
+        "because their condition rows do not add up to it",
         stats.rows,
         stats.materials,
         stats.plants,
@@ -585,5 +632,20 @@ def load_universe(
         stats.with_criticality_from_other_plant,
         cfg.stock_condition_source,
         stats.with_stock_condition,
+        stats.stock_condition_mismatch,
     )
+    if mismatched:
+        logger.warning(
+            "I08 universe: %d part+plant rows have %s condition rows that do not "
+            "add up to MARD's stock, so they show the MARD total with the "
+            "condition unknown. First %d: %s",
+            len(mismatched),
+            cfg.stock_condition_source,
+            min(len(mismatched), _MISMATCH_SAMPLE),
+            "; ".join(
+                f"{material} at {plant}: MARD {'no row' if mard is None else mard}, "
+                f"{cfg.stock_condition_source} {total}"
+                for material, plant, mard, total in mismatched[:_MISMATCH_SAMPLE]
+            ),
+        )
     return universe, stats

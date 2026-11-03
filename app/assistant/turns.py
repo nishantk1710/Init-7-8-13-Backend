@@ -137,9 +137,12 @@ def validate(step: Step, answer: Mapping[str, Any], settings: Settings) -> dict[
 
     # FORM. Each field is validated by its declared type, and an unrecognised
     # key is refused rather than ignored: silently dropping a field the caller
-    # believed it was sending is how a plan ends up missing its window.
+    # believed it was sending is how a plan ends up missing its window. The one
+    # exception is a field the step has retired (script.RETIRED_ANSWER_FIELDS),
+    # which an older draft still sends: it is accepted and not kept.
     declared = {field.name for field in step.fields}
-    unknown = sorted(set(answer) - declared)
+    retired = script.RETIRED_ANSWER_FIELDS.get(step.id, frozenset())
+    unknown = sorted(set(answer) - declared - retired)
     if unknown:
         raise AnswerError(
             f"{step.id} does not take {unknown}. It takes {sorted(declared)}."
@@ -265,7 +268,9 @@ def _record_suggestion(
     return record
 
 
-def _declaration_draft(session: AssistantSession, answer: Mapping[str, Any]):
+def _declaration_draft(
+    session: AssistantSession, answer: Mapping[str, Any], actor_name: str | None
+):
     """I08 FR-4, option B: the faulty unit declared in the visit that removes it.
 
     Unbound -- nothing has been raised for it yet -- and carrying the session
@@ -273,6 +278,10 @@ def _declaration_draft(session: AssistantSession, answer: Mapping[str, Any]):
     plant are the session's, never the answer's: the person declared the part
     they were asked about. Validated here, before the turn is added, so a
     refused declaration leaves no half-written turn behind.
+
+    Since 3-Nov-2026 the form asks no description, name or evidence: the
+    description is stored empty, and the name is the signed-in requester's
+    (``actor_name``), so who declared is still on the record.
     """
     from app.initiatives.i8 import attestation  # local: keeps the assistant import light
 
@@ -280,11 +289,10 @@ def _declaration_draft(session: AssistantSession, answer: Mapping[str, Any]):
         material_id=session.material_id,
         plant=session.plant,
         quantity=Decimal(answer["quantity"]),
-        condition_description=answer["condition_description"],
+        condition_description="",
         fault_category=answer["fault_category"],
         recommendation=answer["recommendation"],
-        evidence_reference=answer.get("evidence_reference"),
-        attestor_name=answer.get("attestor_name"),
+        attestor_name=actor_name,
     )
     try:
         attestation.validate(draft)
@@ -423,6 +431,7 @@ def answer(
     payload: Mapping[str, Any],
     *,
     actor: str,
+    actor_name: str | None = None,
     today: date | None = None,
     settings: Settings | None = None,
     assessment: Any = None,
@@ -433,7 +442,9 @@ def answer(
 
     ``actor`` is passed separately from the payload by every caller. An audit
     record whose author is taken from the body it is auditing is not an audit
-    record.
+    record. ``actor_name`` is that person's name as shown -- the signed-in
+    user's, or the requester name sent while sign-in is off -- and is written
+    as the declarer of an I08 declaration (3-Nov-2026).
 
     A multi-material submit (``app/assistant/requests.py``) passes the line's
     ``assessment`` (built once), ``commit=False`` -- everything is flushed and
@@ -474,7 +485,9 @@ def answer(
 
     cleaned = validate(step, payload, settings)
     declaration = (
-        _declaration_draft(session, cleaned) if step.id == script.I08_DECLARATION else None
+        _declaration_draft(session, cleaned, actor_name)
+        if step.id == script.I08_DECLARATION
+        else None
     )
 
     turn = AssistantTurn(

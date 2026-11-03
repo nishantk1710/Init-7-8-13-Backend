@@ -24,7 +24,7 @@ from datetime import date
 from decimal import Decimal
 from functools import lru_cache
 
-from pydantic import ValidationInfo, field_validator, model_validator
+from pydantic import ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.shared.plant_scope import PLANT_NAMES
@@ -45,23 +45,10 @@ class I8Settings(BaseSettings):
         extra="ignore",
     )
 
-    # --- The complete-flow switch (29-Oct-2026) ---------------------------
-
-    complete_flow_enabled: bool = False
-    """Serve the I08 complete flow released 27/28-Oct-2026 (repair PRs, stock
-    by condition, the need-date line, declaring in the assistant, R-reference
-    links and session jobs, the new exception types, the start dates and the
-    notification log). Off by default, so no environment shows features the
-    team lead has not approved yet -- production included, when ``dev`` is
-    released to ``main``. Turning it on is ``I8_COMPLETE_FLOW_ENABLED=true`` on
-    the App Service: a settings change restarts the app, no deploy needed.
-
-    Off, every I08 and reservation-assistant output reads as it did before
-    that release. The data layer stays: the snapshot still builds everything,
-    and the switch decides only what is served and raised. While it is off,
-    :meth:`_complete_flow_gate` reads ``repair_requests_enabled``,
-    ``need_date_advice_enabled`` and the two cutover dates as off/blank,
-    whatever their own env vars say; the rest is gated where it is served."""
+    # The complete-flow switch (I8_COMPLETE_FLOW_ENABLED, 29-Oct-2026) was
+    # retired on 3-Nov-2026, once the team lead approved the flow: repair PRs,
+    # stock by condition and declaring in the assistant are how I08 works now.
+    # An environment that still sets the variable is unaffected (extra="ignore").
 
     # --- 80-series detection (W5.1) --------------------------------------
 
@@ -116,7 +103,7 @@ class I8Settings(BaseSettings):
     # PSTYP of a standard purchase line -- a new unit bought outright. On an
     # 80-series material this is the population the reservation assistant
     # challenges (FRS s4.1: document types ZDOM, AN and WK, item category 0),
-    # and what UNJUSTIFIED_ACQUISITION is measured over.
+    # and the direct purchases the Justifications screen matches reasons to.
     new_purchase_item_category: str = "0"
 
     # --- Movement conventions (W5.2 lifecycle) ---------------------------
@@ -177,12 +164,13 @@ class I8Settings(BaseSettings):
     the PR table marks deletion 'X' -- 4,820 of the 12,369 in-scope 80-series
     PR lines on the 15-Oct extract, and none of them 'L'."""
 
-    repair_requests_enabled: bool = False
+    repair_requests_enabled: bool = True
     """Serve the open repair PRs: rows with no PO yet on the register, their
     detail page, and (BE6) the PRs in the assistant's verdict. The snapshot
-    always builds them; this only decides whether they are served, so the
-    backend can deploy before the frontend that renders a PR row (27-Oct-2026).
-    Off by default: a frontend that predates PR rows would show them as POs."""
+    always builds them; this only decides whether they are served
+    (27-Oct-2026). On by default since 3-Nov-2026, when the complete flow became
+    permanent: nonprod already served them, and production should not depend
+    on somebody remembering to set it."""
 
     # --- Stock by condition (27-Oct-2026) ---------------------------------
     #
@@ -190,7 +178,9 @@ class I8Settings(BaseSettings):
     # part with one DAMAGED unit on the shelf reads as "1 in stock". SAP keeps
     # the condition alongside -- in MCHB's batch field and in MBEW's valuation
     # type -- so the stock can be split into usable and damaged. The MARD total
-    # stays the stock on hand; the split is served beside it.
+    # stays the stock on hand; the split is served beside it, and only where it
+    # adds up to that total (SAP, 3-Nov-2026: MARD is the stock, MCHB the
+    # condition -- see universe.agrees_with_mard).
 
     stock_condition_source: str = "MCHB"
     """Where the split is read from: ``MCHB`` (stock per batch) or ``MBEW``
@@ -288,43 +278,21 @@ class I8Settings(BaseSettings):
     #
     # The window is symmetric around the line's raised date. The assessment
     # normally happens first -- the part is looked at, then the repair is
-    # raised -- but not always, and a one-sided window would raise exceptions
-    # against lines that were attested two days late. Symmetric is easier to
+    # raised -- but not always, and a one-sided window would leave lines that
+    # were attested two days late reading "Required". Symmetric is easier to
     # explain and easier to defend at UAT than a rule with a story attached.
-    #
-    # Every exception this produces carries the window that produced it, so a
-    # change here is visible in the output rather than silently re-scoring the
-    # queue.
     attestation_window_days: int = 30
 
-    # The date the attestation control starts applying. Blank means "no cutover
-    # is set", and every line is then judged as if the control had always
-    # existed -- which is today's behaviour, unchanged.
+    # The day declarations began. A repair line raised before it was never
+    # asked for one, so its Declaration status reads "Historical" rather than
+    # "Required" -- the team lead's ruling of 20-Sep ("on them can we show
+    # before Spares Automation"). Blank means no cutover: every line is then
+    # judged as if declarations had always existed.
     #
-    # THE DATE ITSELF IS STILL MISSING. The RULING is not: asked on 20-Sep why
-    # MISSING_ATTESTATION fires on all 1,225 lines, the team lead answered
-    # "on them can we show before Spares Automation". A line raised before this
-    # date did not fail a control -- the control did not exist -- so it is
-    # labelled rather than accused, and kept out of the actionable count while
-    # staying visible in the queue.
-    #
-    # Whoever owns go-live supplies the date; it is one .env line. Until then
-    # this is deliberately blank rather than guessed, because a wrong cutover
-    # silently forgives real misses on one side of it and accuses historical
-    # lines on the other.
-    attestation_cutover_date: str = ""
-
-    # Days a repair PR may wait for a declaration, and a Repairable declaration
-    # for its repair PR, before either gap is raised as an exception
-    # (REPAIR_PR_NOT_DECLARED, DECLARED_NO_REPAIR_PR; 27-Oct-2026). Without a
-    # grace every PR raised this morning would read as a miss.
-    declaration_grace_days: int = 14
-
-    # From when an 80-series job reservation line must carry the assistant's
-    # R-reference in its text (MISSING_SESSION_ID, 27-Oct-2026). Blank falls
-    # back to the I13 go-live date: before the assistant existed nobody could
-    # type one. Set to the release date at deploy.
-    session_check_start_date: str = ""
+    # 2026-10-27 by default since 3-Nov-2026: the day declaring in the
+    # assistant was released, and what nonprod had set. An environment that
+    # started declaring later (production) can set its own go-live date.
+    attestation_cutover_date: str = "2026-10-27"
 
     # The largest quantity one attestation may record. A typo guard, not a
     # business rule: every repair line in the July extract is for quantity 1,
@@ -335,38 +303,23 @@ class I8Settings(BaseSettings):
     # --- Justification (FR-7 / FR-8) ----------------------------------------
 
     # How far from a new purchase's raised date a NEW_ACQUISITION justification
-    # may sit and still count as covering it. Symmetric, like the attestation
-    # window and for the same reason: material + plant + a date is the only key
-    # both sides share. And it stays the only one: the purchase is a new-buy PR
-    # (since 27-Oct-2026), raised by the MRP and inventory desks with no
-    # reservation behind it -- 3 of 6,259 on 80-series parts name one (measured
-    # 26-Oct-2026) -- so no session reference can ever reach it. The assistant
-    # normally records the reason before the purchase is raised, sometimes after.
+    # may sit and still count as answering it (the Justifications screen's
+    # Purchase column). Symmetric, like the attestation window and for the same
+    # reason: material + plant + a date is the only key both sides share. And it
+    # stays the only one: the purchase is a new-buy PR (since 27-Oct-2026),
+    # raised by the MRP and inventory desks with no reservation behind it -- 3
+    # of 6,259 on 80-series parts name one (measured 26-Oct-2026) -- so no
+    # session reference can ever reach it. The assistant normally records the
+    # reason before the purchase is raised, sometimes after.
     #
     # A PROPOSAL, NOT A CONFIRMED RULE -- it mirrors attestation_window_days so
-    # the two controls are measured the same way until VZI says otherwise.
+    # the two are measured the same way until VZI says otherwise.
     justification_window_days: int = 30
 
-    # The date the justification control starts applying. Blank means no
-    # cutover. Separate from attestation_cutover_date because the two controls
-    # go live with different things and may not share a date. Ruled 26-Oct-2026:
-    # no VZI cutover dates; each check starts from its feature's release date,
-    # so set this at deploy time to the day the purchase-request check is
-    # released. A purchase raised before it is labelled "before Spares
-    # Automation" rather than accused, exactly as a pre-cutover repair line is.
-    justification_cutover_date: str = ""
-
-    # --- Notifications (FR-11) --------------------------------------------
-
-    # Exception types that log a notification the first time an item of that
-    # type is found actionable (not raised before its control existed). FR-11
-    # asks for notification "through the exception queue and email": the log is
-    # written from 27-Oct-2026, the email sender comes later and reads the same
-    # rows. Comma separated; a type not named here is still queued, only not
-    # notified. Kept to the four checks that ask somebody to act on a line.
-    notification_types: str = (
-        "OVERDUE_REPAIR,MISSING_ATTESTATION,MISSING_SESSION_ID,UNJUSTIFIED_ACQUISITION"
-    )
+    # The exception queue, its checks and its notification log were removed on
+    # 3-Nov-2026, with their settings: I8_DECLARATION_GRACE_DAYS,
+    # I8_SESSION_CHECK_START_DATE, I8_JUSTIFICATION_CUTOVER_DATE and
+    # I8_NOTIFICATION_TYPES are no longer read.
 
     # --- Coding candidates (W5.5) -----------------------------------------
 
@@ -481,25 +434,6 @@ class I8Settings(BaseSettings):
     default_page_size: int = 50
     max_page_size: int = 500
 
-    @model_validator(mode="after")
-    def _complete_flow_gate(self) -> "I8Settings":
-        """With ``complete_flow_enabled`` off, the complete flow's own switches
-        and start dates read as off and blank -- the effective settings, so
-        every reader (register, declarations, exceptions, assistant, the
-        snapshot's rules) agrees without a check of its own.
-
-        ``session_check_start_date`` is left alone on purpose: the snapshot
-        build reads it, and a stored snapshot outlives a restart, so blanking
-        it here would leave the wrong start date behind after the switch is
-        turned on. Its only output, MISSING_SESSION_ID, is not raised while the
-        switch is off (exceptions.build_exceptions)."""
-        if not self.complete_flow_enabled:
-            self.repair_requests_enabled = False
-            self.need_date_advice_enabled = False
-            self.attestation_cutover_date = ""
-            self.justification_cutover_date = ""
-        return self
-
     @field_validator("stock_condition_source")
     @classmethod
     def _known_stock_condition_source(cls, value: str) -> str:
@@ -589,12 +523,6 @@ class I8Settings(BaseSettings):
         )
 
     @property
-    def notification_type_list(self) -> tuple[str, ...]:
-        """The notified exception types, upper-cased and de-duplicated in
-        order. Blank turns notification logging off."""
-        return _conditions(self.notification_types)
-
-    @property
     def series_prefix_list(self) -> tuple[str, ...]:
         """The 80-series prefixes, parsed. Mirrors Settings.cors_origins."""
         return tuple(p.strip() for p in self.series_prefixes.split(",") if p.strip())
@@ -627,25 +555,6 @@ class I8Settings(BaseSettings):
         if not self.attestation_cutover_date.strip():
             return None
         return date.fromisoformat(self.attestation_cutover_date.strip())
-
-    @property
-    def session_check_start_date_value(self) -> date | None:
-        """``session_check_start_date`` as a date, or None meaning "use the
-        I13 go-live date". Invalid input raises, like the cutover."""
-        if not self.session_check_start_date.strip():
-            return None
-        return date.fromisoformat(self.session_check_start_date.strip())
-
-    @property
-    def justification_cutover_date_value(self) -> date | None:
-        """``justification_cutover_date`` as a date, or None meaning "not set".
-
-        Raises on malformed input, for the same reason the attestation cutover
-        does: a wrong date silently decides which purchases get accused.
-        """
-        if not self.justification_cutover_date.strip():
-            return None
-        return date.fromisoformat(self.justification_cutover_date.strip())
 
     @property
     def reference_date_value(self) -> date | None:

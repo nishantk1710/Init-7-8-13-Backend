@@ -48,27 +48,36 @@ class TestRoutesAreMounted:
             # W5.3
             "/api/i8/attestations",
             "/api/i8/declarations",
-            "/api/i8/exceptions",
-            # A paged queue opens a linked item by id, not from its rows.
-            "/api/i8/exceptions/{exception_id}",
         } <= paths
+
+    def test_the_exception_queue_is_gone(self, openapi) -> None:
+        """Removed 3-Nov-2026 with its screen, its checks and its notification
+        log. Overdue repairs are shown on the register."""
+        paths = set(openapi["paths"])
+        assert not {
+            "/api/i8/exceptions",
+            "/api/i8/exceptions/{exception_id}",
+            "/api/i8/exceptions/{exception_id}/events",
+            "/api/i8/notifications",
+        } & paths
 
     def test_vendor_turnaround_is_gone(self, openapi) -> None:
         """Removed 19-Oct-2026: it was dispatch to goods receipt over closed
         repairs, and the register serves neither receipts nor closed lines."""
         assert "/api/i8/vendors/turnaround" not in openapi["paths"]
 
-    # --- The read-only guarantee, as it stands after FR-11 ----------------
+    # --- The read-only guarantee, as it stands since 3-Nov-2026 -----------
     #
     # This test once read "the module is read-only: anything other than GET is
-    # a mistake, not a feature." W5.3 made that false and the test was CHANGED
-    # rather than deleted, because deleting it would have quietly dropped the
-    # guarantee instead of restating it. FR-11 loosens it one more step, and
-    # the same rule applies: restate, do not delete.
+    # a mistake, not a feature." W5.3 made that false (POST /attestations) and
+    # FR-11 loosened it again (POST /exceptions/{id}/events); each time the
+    # test was restated, not deleted. On 3-Nov-2026 both went -- a declaration
+    # is recorded by the assistant, and the exception queue was removed -- so
+    # it reads as it first did.
     #
-    # The promise is now in three parts, one test each:
+    # The promise is in three parts, one test each:
     #
-    #   1. the write paths are a closed, named set -- nothing else writes
+    #   1. the module writes nothing at all: every route is a GET
     #   2. nothing is ever updated or deleted: no PUT, PATCH or DELETE
     #   3. nothing in I08 writes to SAP -- unchanged, and the one that matters
     #
@@ -77,14 +86,9 @@ class TestRoutesAreMounted:
     # into SAP. That is what makes "we cannot enforce this control, only observe
     # it" an honest statement rather than an excuse.
 
-    def test_the_module_writes_only_what_it_owns(self, openapi) -> None:
-        """A closed set of write paths, each against a table I08 owns.
-
-        The attestation (W5.3) records a person's judgement. The exception
-        event (FR-11) records who is working a finding and what they said about
-        it -- it cannot change the finding itself, which is recomputed from SAP
-        data on every read and has no stored form to edit.
-        """
+    def test_the_module_is_read_only(self, openapi) -> None:
+        """Every /api/i8 route is a GET. A declaration is recorded by the
+        assistant's turn route, not here (3-Nov-2026)."""
         i8_paths = {p: v for p, v in openapi["paths"].items() if p.startswith("/api/i8")}
         assert i8_paths, "no /api/i8 paths in the spec -- is the router mounted?"
 
@@ -94,19 +98,14 @@ class TestRoutesAreMounted:
             for verb in operations
             if verb != "get"
         }
-        assert writes == {
-            ("/api/i8/attestations", "post"),
-            ("/api/i8/exceptions/{exception_id}/events", "post"),
-        }, f"I08's write paths are a closed set. Found: {sorted(writes)}"
+        assert not writes, f"I08 has no write paths. Found: {sorted(writes)}"
 
     def test_nothing_updates_or_deletes(self, openapi) -> None:
         """Every table I08 owns is append-only, and the API says so.
 
-        PUT, PATCH and DELETE must not exist anywhere in the module -- not on
-        the attestation, and not on the exception queue either. An amendment to
-        an attestation is a new row pointing at the one it supersedes; an
-        exception's status is not a column but the last history entry that set
-        one. Neither has anything to edit.
+        PUT, PATCH and DELETE must not exist anywhere in the module. A
+        declaration is never edited: a correction is a new row pointing at the
+        one it supersedes.
 
         This was briefly written the other way, allowing PATCH on the queue's
         workflow state. ``tests/test_write_paths.py`` holds the whole
@@ -190,16 +189,18 @@ class TestResponseShapeMatchesTheFrontend:
             "sentToVendorAt",
             "expectedReturn",
             "daysRemainingInRepair",
-            # The Declaration Queue and Justifications screens, folded into
-            # the register on 08-Oct-2026.
+            # The Declaration Queue screen, folded into the register on
+            # 08-Oct-2026.
             "declaredBy",
             "declaredAt",
             "condition",
             "nextAction",
             "requester",
-            "justification",
         }
         assert expected <= wire, f"missing: {sorted(expected - wire)}"
+        # Gone on 3-Nov-2026 with the exception queue: a row no longer carries
+        # its exceptions or its justification (the Justifications page does).
+        assert not wire & {"exceptions", "justification"}
 
     def test_a_row_carries_nothing_about_receipts_or_closure(self) -> None:
         """Since 19-Oct-2026 every row is open in SAP and goods receipts are not
@@ -294,10 +295,11 @@ class TestResponseShapeMatchesTheFrontend:
         unknown = universe_item(universe_row(), get_i8_settings()).model_dump(mode="json", by_alias=True)
         assert (unknown["usableStock"], unknown["damagedStock"]) == (None, None)
 
-    def test_the_repair_pr_switch_is_off_by_default(self) -> None:
+    def test_the_repair_pr_switch_is_on_by_default(self) -> None:
+        """On since 3-Nov-2026, when the complete flow became permanent."""
         from app.initiatives.i8.config import I8Settings
 
-        assert I8Settings.model_fields["repair_requests_enabled"].default is False
+        assert I8Settings.model_fields["repair_requests_enabled"].default is True
 
     def test_declaration_status_is_the_w53_hook(self) -> None:
         from app.api.i8.schemas import RepairChain

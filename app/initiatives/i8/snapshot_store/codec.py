@@ -70,7 +70,16 @@ from typing import Any
 # 6 since 29-Oct-2026: RepairLine gained currency, EKKO.WAERS of its net price.
 # A version-5 payload would construct -- it defaults -- but every repair cost
 # would be served with no currency, so with no symbol, until the next rebuild.
-CODEC_VERSION = 6
+#
+# 7 since 3-Nov-2026: UniverseStats gained stock_condition_mismatch, and the
+# universe keeps a stock split only where it adds up to MARD's total. A
+# version-6 payload would construct -- the field defaults -- but would go on
+# serving a split that disagrees with MARD until the source data next changed.
+# On the same release (extending this note rather than raising the version
+# again) the exception queue was removed: the Snapshot lost unreferenced_lines
+# and session_check_start, and NewAcquisition lost line_created_on. A version-6
+# payload naming them would no longer construct.
+CODEC_VERSION = 7
 _ALLOWED = "app.initiatives.i8."
 
 

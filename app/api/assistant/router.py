@@ -40,9 +40,7 @@ import json
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session as DbSession
 
@@ -95,9 +93,9 @@ from app.assistant.script import reference_instruction
 from app.assistant.session import Origin, SessionError
 from app.assistant.steps import Step
 from app.assistant.turns import AnswerError
+from app.core import security
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
-from app.initiatives.i8.config import get_i8_settings
 from app.initiatives.i8.models import RepairAttestation
 from app.shared.material_names import attach_material_names
 
@@ -132,27 +130,6 @@ def _linkage_note(session: AssistantSession, linked: bool) -> str:
     return LINKAGE_NOTE.format(
         instruction=reference_instruction(session.id, session.request_id)
     )
-
-
-def _complete_flow() -> bool:
-    """``I8_COMPLETE_FLOW_ENABLED`` (29-Oct-2026). Off, the session log, the
-    trace and the justification list leave out what the I08 complete flow
-    added -- the keys themselves, so a screen reads the older shape."""
-    return get_i8_settings().complete_flow_enabled
-
-
-def _without(
-    response: BaseModel, keys: tuple[str, ...] = (), item_keys: tuple[str, ...] = ()
-) -> JSONResponse:
-    """``response`` as served, less ``keys`` at the top and ``item_keys`` on
-    each of its ``items`` (camelCase, as on the wire)."""
-    content = response.model_dump(mode="json", by_alias=True)
-    for key in keys:
-        content.pop(key, None)
-    for item in content.get("items") or ():
-        for key in item_keys:
-            item.pop(key, None)
-    return JSONResponse(content=content)
 
 
 def _step_model(step: Step) -> StepModel:
@@ -363,12 +340,16 @@ def start_session(
 def post_turn(
     session_id: str,
     body: AnswerRequest,
+    request: Request,
     db: DbDep,
     actor: ActorDep,
 ) -> AnswerResponse:
+    # The name a person reads, for the declarer of an I08 declaration: the
+    # signed-in user's, or (sign-in off) the requester name the screen sends.
+    actor_name = security.current_user(request).name or None
     try:
         step, session = turn_service.answer(
-            db, session_id, body.answer, actor=actor.id
+            db, session_id, body.answer, actor=actor.id, actor_name=actor_name
         )
     except AnswerError as error:
         raise HTTPException(
@@ -530,7 +511,7 @@ def list_sessions(
         Query(description="true: only sessions a reservation's SGTXT names; false: only those none does yet."),
     ] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
-) -> SessionListResponse | JSONResponse:
+) -> SessionListResponse:
     """Every session, newest first.
 
     The outcome on each row is derived from its turns rather than stored, so an
@@ -560,8 +541,7 @@ def list_sessions(
 
     rows = list(db.execute(statement.limit(limit)).scalars())
     links = links_for_sessions(db, (row.id for row in rows))
-    complete_flow = _complete_flow()
-    declared = _declared_by_session(db, [row.id for row in rows]) if complete_flow else {}
+    declared = _declared_by_session(db, [row.id for row in rows])
     items = []
     for row in rows:
         turn_rows = session_service.turns(db, row.id)
@@ -591,7 +571,7 @@ def list_sessions(
         )
 
     attach_material_names(items, field="material_id", wait_seconds=NAME_WAIT_SECONDS)
-    response = SessionListResponse(
+    return SessionListResponse(
         items=items,
         total=len(items),
         note=(
@@ -602,9 +582,6 @@ def list_sessions(
             "error."
         ),
     )
-    if complete_flow:
-        return response
-    return _without(response, item_keys=("declared", "declarationRecommendation"))
 
 
 @router.get(
@@ -612,7 +589,7 @@ def list_sessions(
     response_model=SessionTraceResponse,
     summary="One session, and everything it produced",
 )
-def get_session(session_id: str, db: DbDep) -> SessionTraceResponse | JSONResponse:
+def get_session(session_id: str, db: DbDep) -> SessionTraceResponse:
     """The FR-8 trace.
 
     ``assessment`` is replayed from the stored JSON, not recomputed. That is the
@@ -691,18 +668,12 @@ def get_session(session_id: str, db: DbDep) -> SessionTraceResponse | JSONRespon
         plans=[_plan_model(p, links) for p in plans],
         quantity_suggestions=[_suggestion_model(s) for s in suggestions],
         justifications=[_justification_model(j) for j in justifications],
-        declarations=(
-            [_declaration_model(d) for d in _session_declarations(db, session.id)]
-            if _complete_flow()
-            else []
-        ),
+        declarations=[_declaration_model(d) for d in _session_declarations(db, session.id)],
         linked_reservations=[_linked_model(l) for l in links],
         linkage_note=_linkage_note(session, bool(links)),
     )
     attach_material_names([trace], field="material_id", wait_seconds=NAME_WAIT_SECONDS)
-    if _complete_flow():
-        return trace
-    return _without(trace, keys=("declarations",))
+    return trace
 
 
 # --- Justifications, shared by both initiatives ---------------------------
@@ -835,9 +806,8 @@ def _purchases_answered(
     snapshot has been built (just after a restart), so the caller can say
     nothing was looked up rather than that nothing was bought.
     """
-    from app.initiatives.i8.acquisitions import NEW_ACQUISITION_KIND, JustificationRecord
+    from app.initiatives.i8.acquisitions import NEW_ACQUISITION_KIND, JustificationRecord, purchases_answered
     from app.initiatives.i8.config import get_i8_settings
-    from app.initiatives.i8.exceptions import purchases_answered
     from app.initiatives.i8.material_number import normalise
     from app.initiatives.i8.service import cached_snapshot
 
@@ -890,7 +860,7 @@ def list_justifications(
     q: Annotated[str | None, Query(max_length=200)] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
-) -> JustificationListResponse | JSONResponse:
+) -> JustificationListResponse:
     """One page of justifications, newest first, with the count and the filter
     values over every match.
 
@@ -951,8 +921,7 @@ def list_justifications(
     ).scalar_one()
     items = [_justification_model(row) for row in rows]
     names = _requester_names(db, [row.session_id for row in rows])
-    complete_flow = _complete_flow()
-    purchases = _purchases_answered(rows) if complete_flow else None
+    purchases = _purchases_answered(rows)
     for item in items:
         item.requester_name = names.get(item.session_id or "")
         if purchases is not None and item.id in purchases:
@@ -967,7 +936,7 @@ def list_justifications(
             ).scalars()
         ),
     )
-    response = JustificationListResponse(
+    return JustificationListResponse(
         items=items,
         total=total,
         purchases_checked=purchases is not None,
@@ -980,11 +949,6 @@ def list_justifications(
             "supplies its own."
         ),
     )
-    if complete_flow:
-        return response
-    # The purchase each reason answers came with the complete flow; the typed
-    # requester name stays.
-    return _without(response, keys=("purchasesChecked",), item_keys=("purchase",))
 
 
 # --- The free-text box (section 4.6) --------------------------------------
