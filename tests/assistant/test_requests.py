@@ -25,6 +25,7 @@ line  flow       case                                    expect
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from decimal import Decimal
 
@@ -901,6 +902,31 @@ def saving_of(db, request_id: str, material: str):
 
 class TestSavings:
     """OAR_NORMAL suggests 8 (4 in stock, 1 a month, 12-month ceiling)."""
+
+    def test_the_price_and_saving_queries_are_valid_on_sql_server(self, factory, settings) -> None:
+        # SQLite accepts "is_active IS 1"; SQL Server does not, and every non-prod preview 500'd on it (3 Nov).
+        from sqlalchemy import event
+        from sqlalchemy.dialects import mssql
+
+        seen: list[str] = []
+        with factory() as db:
+
+            @event.listens_for(db.get_bind(), "before_execute")
+            def _record(conn, clauseelement, multiparams, params, execution_options):
+                try:
+                    seen.append(str(clauseelement.compile(dialect=mssql.dialect())))
+                except Exception:  # noqa: BLE001 -- statements that cannot be compiled standalone
+                    pass
+
+            try:
+                price(db, OAR_NORMAL, "250.5")
+                request_service.preview(db, [(OAR_NORMAL, PLANT)], today=TODAY)
+                request_id = create(db, [locked(OAR_NORMAL, "12", "suggested", quantity="8")], settings).request.id
+                request_service.line_records(db, request_service.lines_of(db, request_id))
+            finally:
+                event.remove(db.get_bind(), "before_execute", _record)
+        assert any("i7_staged_material_plant" in s for s in seen)
+        assert [s for s in seen if re.search(r"\bIS\s+[01]\b", s, re.IGNORECASE)] == []
 
     def test_locking_the_suggestion_saves_the_difference_at_the_i07_price(self, factory, settings) -> None:
         with factory() as db:
