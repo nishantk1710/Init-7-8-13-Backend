@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 
 from sqlalchemy import func, select
@@ -49,21 +49,11 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker, statement_timeout
 from app.core.logging import get_logger
-from app.initiatives.i8.acquisitions import (
-    NEW_ACQUISITION_KIND,
-    NewAcquisition,
-    load_justifications,
-    load_new_acquisitions,
-)
+from app.initiatives.i8.acquisitions import NewAcquisition, load_new_acquisitions
 from app.initiatives.i8.attestation import AttestationCoverage, coverage as attestation_coverage
-from app.initiatives.i8.attestation import find as find_attestations
 from app.initiatives.i8.coding_candidates import CodingCandidate, ScreenStats, screen
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.declarations import DeclarationRow, build_queue
-from app.initiatives.i8.exceptions import ExceptionItem, ExceptionStats, build_exceptions
-from app.initiatives.i8.line_justifications import LineJustification
-from app.initiatives.i8.line_justifications import by_line as justifications_by_line
-from app.initiatives.i8.line_justifications import index_size as justification_counts
 from app.initiatives.i8.new_item_price import MissingPrice
 from app.initiatives.i8.register import (
     RegisterStats,
@@ -76,15 +66,9 @@ from app.initiatives.i8.register import (
 )
 from app.initiatives.i8.repair_references import load_repair_references
 from app.initiatives.i8.requisitions import RepairRequest, fetch_repair_order_lines, load_repair_requests
-from app.initiatives.i8.session_jobs import (
-    SessionJob,
-    UnreferencedLine,
-    load_session_jobs,
-    load_unreferenced_lines,
-)
+from app.initiatives.i8.session_jobs import SessionJob, load_session_jobs
 from app.initiatives.i8.staged import staged_sources
 from app.initiatives.i8.universe import UniverseRow, UniverseStats, load_universe
-from app.initiatives.i13.session_link import go_live_date
 from app.models import IngestionRun
 from app.shared.snapshot_builds import exclusive_build
 
@@ -187,10 +171,10 @@ class Snapshot:
     universe_stats: UniverseStats
 
     acquisitions: tuple[NewAcquisition, ...] = ()
-    """New 80-series purchases, for the UNJUSTIFIED_ACQUISITION check: the
-    new-buy PRs and the direct PO lines with no PR behind them (since
-    27-Oct-2026; acquisitions.py). Built with the register, so it shares its
-    lifetime."""
+    """New 80-series purchases, for the Justifications screen's Purchase
+    column: the new-buy PRs and the direct PO lines with no PR behind them
+    (since 27-Oct-2026; acquisitions.py). Built with the register, so it shares
+    its lifetime."""
 
     source_fingerprint: str = ""
     """What :data:`SOURCE_TABLES` looked like when this build started. A
@@ -202,8 +186,8 @@ class Snapshot:
     repair_requests: tuple[RepairRequest, ...] = ()
     """Open repair PRs with no PO yet (requisitions.py), ordered by PR date.
     Kept apart from ``lines`` on purpose: every reader of ``lines`` -- the
-    declaration queue, the exceptions, the assistant -- means PO lines, and a
-    repair with no PO yet is served only where it is asked for. Always built;
+    declaration queue, the assistant -- means PO lines, and a repair with no
+    PO yet is served only where it is asked for. Always built;
     ``I8_REPAIR_REQUESTS_ENABLED`` decides only whether it is served."""
 
     repair_references: tuple[tuple[str, str, str, str], ...] = ()
@@ -216,15 +200,6 @@ class Snapshot:
     """The job reservation lines whose text names an assistant session, with
     their 261 issues and 262 returns (session_jobs.py, 27-Oct-2026). Served on
     the session page; nothing else reads them."""
-
-    unreferenced_lines: tuple[UnreferencedLine, ...] = ()
-    """The 80-series job lines needed on or after ``session_check_start``
-    whose text leads to no assistant session: MISSING_SESSION_ID
-    (session_jobs.py, 27-Oct-2026)."""
-
-    session_check_start: date | None = None
-    """From when those lines were checked: ``I8_SESSION_CHECK_START_DATE``,
-    else the I13 go-live date. None on a snapshot built before the check."""
 
     def line(self, document: str, item: str) -> RepairLine | None:
         """One repair line by its (EBELN, EBELP) key."""
@@ -326,9 +301,6 @@ def build_snapshot(
             del reservation_lines
             # The job each assistant session was for: its own reservation line.
             session_jobs = load_session_jobs(db, cfg, sources=sources)
-            # Job lines that should name a session and do not.
-            session_check_start = cfg.session_check_start_date_value or go_live_date(db)
-            unreferenced = load_unreferenced_lines(db, session_check_start, cfg, sources=sources)
             register_stats = replace(
                 register_stats,
                 open_repair_requests=request_stats.open_repair_requests,
@@ -364,8 +336,6 @@ def build_snapshot(
         repair_requests=repair_requests,
         repair_references=repair_references,
         session_jobs=session_jobs,
-        unreferenced_lines=unreferenced,
-        session_check_start=session_check_start,
     )
 
 
@@ -450,13 +420,10 @@ def _build_locked(
     # The two caches BUILT ON TOP of this one cannot outlive it.
     #
     # This used to be missing, and it is the whole of audit finding 11.2. The
-    # attestation view is rebuilt only when somebody writes an attestation or a
-    # justification, and the coding screen only on restart -- so after a SAP
-    # reload the register showed new repair lines beside declaration and
-    # justification columns computed from the data before it, and the exception
-    # list did not contain the new lines at all. That breaks acceptance
-    # criterion 5 ("raised as an exception within one refresh cycle") after
-    # every single reload.
+    # attestation view is rebuilt only when somebody writes a declaration, and
+    # the coding screen only on restart -- so after a SAP reload the register
+    # showed new repair lines beside a declaration column computed from the
+    # data before it.
     #
     # Here rather than in reset_snapshot(): THIS is the line that makes a new
     # snapshot live, and the reload path never calls reset_snapshot() at all.
@@ -658,39 +625,30 @@ def check_source_fingerprint(db: Session, *, min_interval_seconds: float | None 
 # for the whole attestation table, invalidated explicitly when a write happens.
 # What the task plan rules out is a query PER LINE, and there is not one here.
 #
-# Explicit invalidation only covers writes made through THIS process's router.
-# Two other writers exist: `demo_seed` (a separate process -- after `--clear`
-# a running server kept serving the demo coverage until it restarted) and the
-# WS7 justification endpoints, which the UNJUSTIFIED_ACQUISITION check reads.
-# So every read also compares a cheap fingerprint of both tables -- a count and
-# a latest timestamp each, two aggregate queries -- and rebuilds when it moved.
-# The tables are append-only apart from the demo clear, which changes the count.
+# Declarations are written by the assistant (since 3-Nov-2026 the only place),
+# and also by `demo_seed` (a separate process -- after `--clear` a running server
+# kept serving the demo coverage until it restarted). So every read compares a
+# cheap fingerprint of the table -- a count and a latest timestamp, one
+# aggregate query -- and rebuilds when it moved. The table is append-only apart
+# from the demo clear, which changes the count.
 
 
 @dataclass(frozen=True)
 class AttestationView:
-    """Coverage, the declaration queue and the exception queue, built together.
+    """Coverage and the declaration queue, built together.
 
-    One object because they are three readings of a single pass: which repair
+    One object because they are two readings of a single pass: which repair
     lines have an attestation. Building them separately would mean matching
-    1,225 lines against the attestation table three times to get three answers
-    that must agree.
+    every line against the attestation table twice to get two answers that
+    must agree.
     """
 
     coverage: AttestationCoverage
     declarations: tuple[DeclarationRow, ...]
-    exceptions: tuple[ExceptionItem, ...]
-    exception_stats: ExceptionStats
     built_at: datetime
     source_fingerprint: tuple | None = None
-    """What the attestation and justification tables looked like when this was
-    built. A different fingerprint on read means another writer moved them."""
-
-    justifications: dict[tuple[str, str], LineJustification] = field(default_factory=dict)
-    """(document, item) -> the line's justification, for the register's
-    Justification column. Lines with none are absent. Built here because it
-    reads the same justifications and the same exception queue as the rest of
-    this view, and must change with them."""
+    """What the attestation table looked like when this was built. A
+    different fingerprint on read means another writer moved it."""
 
     @property
     def declaration_by_line(self) -> dict[tuple[str, str], DeclarationRow]:
@@ -717,24 +675,15 @@ class AttestationView:
 
 
 def source_fingerprint(db: Session) -> tuple:
-    """A cheap summary of every table the attestation view is derived from.
-
-    Count and latest timestamp of the attestation table, and of the
-    NEW_ACQUISITION justifications. Two aggregate queries, portable across
-    Postgres and Azure SQL.
-    """
-    from app.assistant.models import Justification
+    """A cheap summary of the table the attestation view is derived from:
+    the attestation table's count and latest timestamp. One aggregate query,
+    portable across Postgres and Azure SQL."""
     from app.initiatives.i8.models import RepairAttestation
 
     attestations = db.execute(
         select(func.count(), func.max(RepairAttestation.attested_at))
     ).one()
-    justifications = db.execute(
-        select(func.count(), func.max(Justification.recorded_at)).where(
-            Justification.kind == NEW_ACQUISITION_KIND
-        )
-    ).one()
-    return (tuple(attestations), tuple(justifications))
+    return (tuple(attestations),)
 
 
 def build_attestation_view(
@@ -744,14 +693,9 @@ def build_attestation_view(
     *,
     fingerprint: tuple | None = None,
 ) -> AttestationView:
-    """Match every repair line against the attestation table, and every new
-    purchase against the justifications. Always does the work."""
+    """Match every repair line against the attestation table. Always does the
+    work."""
     cfg = cfg or get_i8_settings()
-    # Everything the complete flow added is built and served only while
-    # I8_COMPLETE_FLOW_ENABLED is on (29-Oct-2026). Off, the settings already
-    # read the repair PRs as unserved and the cutovers as unset; here the
-    # R-reference links, the newer checks and the declaring session go too.
-    complete_flow = cfg.complete_flow_enabled
     # The open repair PRs are declared on only while the register serves them.
     requests = snapshot.repair_requests if cfg.repair_requests_enabled else ()
     cover = attestation_coverage(
@@ -759,49 +703,19 @@ def build_attestation_view(
         snapshot.lines,
         cfg,
         requests=requests,
-        references=getattr(snapshot, "repair_references", ()) if complete_flow else (),
+        references=getattr(snapshot, "repair_references", ()),
     )
-    justifications = load_justifications(db)
-    exceptions, exception_stats = build_exceptions(
-        snapshot.lines,
-        cover,
-        cutover=cfg.attestation_cutover_date_value,
-        acquisitions=snapshot.acquisitions,
-        justifications=justifications,
-        justification_window_days=cfg.justification_window_days,
-        justification_cutover=cfg.justification_cutover_date_value,
-        overdue_grace_days=cfg.overdue_grace_days,
-        # Every open repair PR, served or not: a purchase that overlapped one
-        # bought new while a repair was open whatever the register shows.
-        repair_requests=snapshot.repair_requests,
-        served_requests=requests,
-        # A second read of the attestation table; it holds a handful of rows.
-        declarations=find_attestations(db, include_superseded=False),
-        reference_date=snapshot.reference_date,
-        declaration_grace_days=cfg.declaration_grace_days,
-        unreferenced_lines=getattr(snapshot, "unreferenced_lines", ()),
-        session_check_start=getattr(snapshot, "session_check_start", None),
-        complete_flow=complete_flow,
-    )
-    by_line = justifications_by_line(snapshot.lines, justifications, exceptions)
-    logger.info("I08 register justifications: %s", justification_counts(by_line))
     declarations = build_queue(
         snapshot.lines,
         cover,
         requests=requests,
         cutover=cfg.attestation_cutover_date_value,
     )
-    if not complete_flow:
-        # No link from a repair to the assistant visit that declared it.
-        declarations = [replace(row, declaration_session_id=None) for row in declarations]
     return AttestationView(
         coverage=cover,
         declarations=tuple(declarations),
-        exceptions=tuple(exceptions),
-        exception_stats=exception_stats,
         built_at=datetime.now(timezone.utc),
         source_fingerprint=fingerprint,
-        justifications=by_line,
     )
 
 
@@ -832,21 +746,13 @@ def get_attestation_view(
         return _attestation_view
 
 
-def cached_attestation_view() -> AttestationView | None:
-    """The attestation view already built, or None. Never builds, never waits
-    and never reads the database: for a caller that only wants labels from it
-    (the notification log, 28-Oct-2026)."""
-    with _attestation_lock:
-        return _attestation_view
-
-
 def reset_attestation_view() -> None:
     """Drop the cached view. **Call this after recording an attestation.**
 
-    Explicit rather than automatic, and called at the write site in the router,
-    so that the one place that changes the data is also the place that says so.
-    A TTL would be the alternative and would mean a planner's own submission
-    takes up to N seconds to appear, which is indistinguishable from broken.
+    Explicit rather than automatic, and called at the write site, so that the
+    one place that changes the data is also the place that says so. A TTL
+    would be the alternative and would mean a planner's own submission takes up
+    to N seconds to appear, which is indistinguishable from broken.
     """
     global _attestation_view
     with _attestation_lock:

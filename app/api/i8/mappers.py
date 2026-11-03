@@ -20,25 +20,17 @@ from app.api.i8.schemas import (
     DeclarationFacets,
     DeclarationItem,
     DeclarationMeta,
-    ExceptionFacets,
-    ExceptionHistoryEntry,
-    ExceptionMeta,
-    ExceptionQueueItem,
+    DepartmentOption,
     LifecycleStage,
-    LineException,
     MaterialReference,
-    NotificationItem,
     PlantReference,
     RegisterFacets,
     RegisterMeta,
     RepairChain,
-    RepairJustification,
-    RepairJustificationEntry,
     SAPDocumentReference,
     UniverseItem,
     UniverseMeta,
     UniverseSources,
-    UnjustifiedPurchase,
     VendorOption,
 )
 from app.assistant import departments
@@ -57,19 +49,7 @@ from app.initiatives.i8.coding_candidates import (
 )
 from app.initiatives.i8.config import I8Settings
 from app.initiatives.i8.declarations import DeclarationRow
-from app.initiatives.i8.exceptions import (
-    RAISED_BY_I8,
-    RAISED_WITHOUT_COMPLETE_FLOW,
-    ExceptionItem,
-    ExceptionStats,
-)
-from app.initiatives.i8.line_justifications import LineJustification
-from app.initiatives.i8.exception_state import (
-    UNTOUCHED,
-    ExceptionWorkState,
-    canonical_status,
-)
-from app.initiatives.i8.models import ExceptionEvent, Notification, RepairAttestation
+from app.initiatives.i8.models import RepairAttestation
 from app.initiatives.i8.register import RegisterStats, RepairLine, is_placeholder_price, repair_cost
 from app.initiatives.i8.requisitions import NOT_ORDERED, PR_RAISED, RepairRequest
 from app.initiatives.i8.service import Snapshot
@@ -107,9 +87,8 @@ def universe_item(row: UniverseRow, cfg: I8Settings) -> UniverseItem:
         open_repair_lines=row.open_repair_lines,
         qty_under_repair=row.qty_under_repair,
         in_material_master=row.in_material_master,
-        # Null while the complete flow is off (I8_COMPLETE_FLOW_ENABLED).
-        usable_stock=row.usable_stock if cfg.complete_flow_enabled else None,
-        damaged_stock=row.damaged_stock if cfg.complete_flow_enabled else None,
+        usable_stock=row.usable_stock,
+        damaged_stock=row.damaged_stock,
     )
 
 
@@ -117,10 +96,9 @@ def stock_split(row: UniverseRow | None, cfg: I8Settings | None = None) -> dict:
     """The register row's stock split from its universe row (28-Oct-2026).
 
     ``stock_condition_known`` is null when there is no universe row, so a row
-    with no stock record at all does not read as "condition unknown". All
-    three are null while the complete flow is off (``cfg``), as on a register
-    built before the split existed."""
-    if row is None or (cfg is not None and not cfg.complete_flow_enabled):
+    with no stock record at all does not read as "condition unknown". ``cfg``
+    is no longer read (3-Nov-2026: the complete-flow switch is retired)."""
+    if row is None:
         return {"usable_stock": None, "damaged_stock": None, "stock_condition_known": None}
     return {
         "usable_stock": row.usable_stock,
@@ -139,8 +117,6 @@ def repair_chain(
     declaration_status: str = "Required",
     criticality: str | None = None,
     declaration: DeclarationRow | None = None,
-    justification: LineJustification | None = None,
-    exceptions: Sequence[ExceptionItem] | None = None,
     usable_stock=None,
     damaged_stock=None,
     stock_condition_known: bool | None = None,
@@ -160,9 +136,6 @@ def repair_chain(
     ``declaration`` is the line's queue row, when the caller has the view: its
     status overrides ``declaration_status``, and it brings who declared, when,
     the condition and the next action with it.
-
-    ``exceptions`` are the items raised against the line, when the caller
-    computed them -- the register listing does, the detail endpoint does not.
     """
     if declaration is not None:
         declaration_status = declaration.status
@@ -223,10 +196,6 @@ def repair_chain(
         requester_name=department_name(line.pr_department or line.requisitioner),
         declaration_link=declaration.declaration_link if declaration else None,
         declaration_session_id=declaration.declaration_session_id if declaration else None,
-        justification=repair_justification(justification) if justification else None,
-        exceptions=(
-            [line_exception(item) for item in exceptions] if exceptions is not None else None
-        ),
         usable_stock=usable_stock,
         damaged_stock=damaged_stock,
         stock_condition_known=stock_condition_known,
@@ -241,7 +210,6 @@ def request_chain(
     reorder_point=None,
     new_unit_lead_time_days: int | None = None,
     criticality: str | None = None,
-    exceptions: Sequence[ExceptionItem] | None = None,
     declaration: DeclarationRow | None = None,
     usable_stock=None,
     damaged_stock=None,
@@ -258,8 +226,6 @@ def request_chain(
     ``declaration`` is the PR's queue row, when the caller has the view: since
     27-Oct-2026 a PR can be declared on, and its status, who declared, when
     and the condition come from it. Without one the status is "Required".
-    ``exceptions`` is an empty list on the listing and None on the detail
-    page, as for a PO row.
     """
     return RepairChain(
         id=request.row_id,
@@ -300,9 +266,6 @@ def request_chain(
         criticality=criticality,
         requester=request.department,
         requester_name=department_name(request.department),
-        exceptions=(
-            [line_exception(item) for item in exceptions] if exceptions is not None else None
-        ),
         line_kind="PR",
         usable_stock=usable_stock,
         damaged_stock=damaged_stock,
@@ -316,38 +279,6 @@ def department_name(code: str | None) -> str | None:
     Never waits for that list to load: a row shown with its code alone is
     better than a slow register."""
     return departments.name_for(code)
-
-
-def repair_justification(value: LineJustification) -> RepairJustification:
-    """One line's Justification cell."""
-    return RepairJustification(
-        status=value.status,
-        entries=[
-            RepairJustificationEntry(
-                id=record.id,
-                reason_category=record.reason_category,
-                free_text=record.free_text,
-                author=record.author,
-                recorded_at=record.recorded_at,
-                session_id=record.session_id,
-            )
-            for record in value.recorded
-        ],
-        unjustified_purchases=[
-            UnjustifiedPurchase(
-                exception_id=item.id,
-                # A new-buy PR or a direct PO line (27-Oct-2026), as found.
-                purchase=SAPDocumentReference(
-                    type=item.acquisition_document_type,
-                    document_number=item.acquisition_document or "",
-                    line=item.acquisition_item,
-                ),
-                raised_at=item.raised_at,
-                pre_automation=item.pre_automation,
-            )
-            for item in value.unjustified
-        ],
-    )
 
 
 def _day(value) -> str:
@@ -386,13 +317,13 @@ def _at_vendor_evidence(line: RepairLine) -> str:
 
 
 def _requested_evidence(document: str, item: str, department: str | None) -> str:
-    """``Repair PR {BANFN}/{BNFPO}``, and the department that asked for it --
+    """``Repair PR {BANFN}/{BNFPO}``, and the department that raised it --
     named when the department list has its code, the code alone otherwise."""
-    requested = f"Repair PR {document}/{item}"
+    raised = f"Repair PR {document}/{item}"
     if department:
         name = department_name(department)
-        requested += f", requested by department {department}" + (f" ({name})" if name else "")
-    return f"{requested}."
+        raised += f", raised by department {department}" + (f" ({name})" if name else "")
+    return f"{raised}."
 
 
 def _declared_stage(
@@ -437,13 +368,8 @@ def timeline(
     attestation: RepairAttestation | None = None,
     link: str | None = None,
     reference: str | None = None,
-    *,
-    requested_stage: bool = True,
 ) -> list[LifecycleStage]:
     """The lifecycle, stage by stage, with the evidence for each.
-
-    ``requested_stage`` is False while the complete flow is off: no "Repair
-    requested" stage, as before 27-Oct-2026.
 
     There is no "Removed from machine" stage since 27-Oct-2026 (ruled 26-Oct):
     SAP keeps no record of a unit coming off a machine -- the goods issue to
@@ -465,11 +391,11 @@ def timeline(
     stages: list[LifecycleStage] = []
     # The repair starts at the request (27-Oct-2026): the PR the PO was
     # ordered from, when the register knows it.
-    if requested_stage and line.pr_number:
+    if line.pr_number:
         stages.append(
             LifecycleStage(
                 stage="pr_raised",
-                label="Repair requested",
+                label="PR raised",
                 occurred_at=getattr(line, "pr_requested_on", None),
                 evidence=_requested_evidence(
                     line.pr_number, line.pr_item or "", getattr(line, "pr_department", None)
@@ -522,13 +448,13 @@ def request_timeline(
     link: str | None = None,
     reference: str | None = None,
 ) -> list[LifecycleStage]:
-    """The lifecycle of a repair PR with no PO yet: requested, declared (or
-    not yet), and the PO it is waiting on, saying plainly it has not happened.
+    """The lifecycle of a repair PR with no PO yet: raised, declared (or not
+    yet), and the PO it is waiting on, saying plainly it has not happened.
     """
     return [
         LifecycleStage(
             stage="pr_raised",
-            label="Repair requested",
+            label="PR raised",
             occurred_at=request.requested_on,
             evidence=_requested_evidence(request.purchase_requisition, request.item, request.department),
             days_since=days_between(request.requested_on, today),
@@ -558,23 +484,10 @@ def universe_meta(stats: UniverseStats) -> UniverseMeta:
     )
 
 
-#: The register counts of the open repair PRs, served as 0 while the complete
-#: flow is off: before it the register did not look for them at all.
-_REQUEST_COUNTS = (
-    "open_repair_requests",
-    "requisitions_excluded_deleted",
-    "requisitions_excluded_live_po",
-    "requisitions_excluded_reservation_closed",
-)
-
-
 def register_meta(stats: RegisterStats, cfg: I8Settings | None = None) -> RegisterMeta:
-    """The register's counts, whatever the filters. With ``cfg`` and the
-    complete flow off, the repair-PR counts read 0."""
-    counts = vars(stats)
-    if cfg is not None and not cfg.complete_flow_enabled:
-        counts = {**counts, **{name: 0 for name in _REQUEST_COUNTS}}
-    return RegisterMeta(**counts)
+    """The register's counts, whatever the filters. ``cfg`` is no longer read
+    (3-Nov-2026: the complete-flow switch is retired)."""
+    return RegisterMeta(**vars(stats))
 
 
 def register_facets(
@@ -583,14 +496,24 @@ def register_facets(
     criticality_of: Callable[[RepairLine | RepairRequest], str | None],
     requests: Sequence[RepairRequest] = (),
 ) -> RegisterFacets:
-    """The plants, vendors, repair statuses and criticalities among ``lines``
-    and the served repair PRs, ``requests``.
+    """The plants, vendors, repair statuses, criticalities and departments
+    among ``lines`` and the served repair PRs, ``requests``.
 
     ``criticality_of`` is the rating the row shows -- its material's at its
     plant -- so the dropdown offers exactly what the column displays. A PR row
-    has no vendor, so any PR makes ``vendor=none`` worth offering.
+    has no vendor, so any PR makes ``vendor=none`` worth offering. The
+    departments (3-Nov-2026) are the ones the ``department`` filter matches:
+    the repair PR's EBAN.AFNAM code.
     """
     criticalities = [criticality_of(row) for row in (*lines, *requests)]
+    department_codes = {
+        code.strip()
+        for code in (
+            *(line.pr_department for line in lines),
+            *(request.department for request in requests),
+        )
+        if code and code.strip()
+    }
     return RegisterFacets(
         plants=_plant_options(
             (*(line.plant for line in lines), *(request.plant for request in requests)), cfg
@@ -602,16 +525,13 @@ def register_facets(
         ),
         criticalities=sorted({c for c in criticalities if c}),
         has_unrated=any(not c for c in criticalities),
+        departments=[
+            DepartmentOption(value=code, name=department_name(code)) for code in sorted(department_codes)
+        ],
     )
 
 
-def line_exception(item: ExceptionItem) -> LineException:
-    return LineException(
-        id=item.id, type=item.type, severity=item.severity, pre_automation=item.pre_automation
-    )
-
-
-# --- W5.3: attestation, declarations, exceptions --------------------------
+# --- W5.3: attestation and declarations ---------------------------------
 
 
 def material_descriptions(snapshot: Snapshot | None, material_ids: Iterable[str]) -> dict[str, str]:
@@ -773,155 +693,6 @@ def _vendor_options(vendors: Iterable[tuple[str | None, str | None]]) -> list[Ve
             names.items(), key=lambda entry: ((entry[1] or entry[0]).lower(), entry[0])
         )
     ]
-
-
-def exception_item(
-    item: ExceptionItem,
-    cfg: I8Settings,
-    state: ExceptionWorkState | None = None,
-    still_detected: bool = True,
-) -> ExceptionQueueItem:
-    """One computed finding, plus whatever people have done about it.
-
-    ``state`` is None for an item nobody has touched, and ``UNTOUCHED`` is then
-    the truth about it rather than a placeholder: an exception starts OPEN and
-    unassigned, which is exactly what an empty history means.
-    """
-    work = state or UNTOUCHED
-    return ExceptionQueueItem(
-        id=item.id,
-        type=item.type,
-        severity=item.severity,
-        material=MaterialReference(
-            material_id=item.material_id,
-            material_code=item.material_id,
-            description=item.description,
-        ),
-        plant=plant_reference(item.plant, cfg),
-        # The document kinds as the finding names them: a repair PR with no PO
-        # yet is the bare PR number with type PR, and the purchase is usually a
-        # new-buy PR (27-Oct-2026). Every other check names a PO line.
-        repair_line=SAPDocumentReference(
-            type=item.repair_document_type, document_number=item.purchasing_document, line=item.item
-        ),
-        acquisition_line=(
-            SAPDocumentReference(
-                type=item.acquisition_document_type,
-                document_number=item.acquisition_document,
-                line=item.acquisition_item,
-            )
-            if item.acquisition_document
-            else None
-        ),
-        title=item.title,
-        detail=item.detail,
-        raised_at=item.raised_at,
-        pre_automation=item.pre_automation,
-        declaration_id=item.declaration_id,
-        reservation_line=(
-            SAPDocumentReference(
-                type="RESERVATION", document_number=item.reservation_document, line=item.reservation_item
-            )
-            if item.reservation_document
-            else None
-        ),
-        status=work.status,
-        owner=work.owner,
-        still_detected=still_detected,
-        history=[exception_history_entry(e) for e in work.history],
-    )
-
-
-def notification_item(
-    row: Notification,
-    *,
-    repair_line: str | None = None,
-    description: str | None = None,
-    plant_name: str | None = None,
-) -> NotificationItem:
-    """A logged notification on the wire. ``emailed`` follows ``emailed_at``,
-    which nothing sets until the email sender exists. The keyword fields are
-    labels the route looks up at read time (28-Oct-2026)."""
-    return NotificationItem(
-        repair_line=repair_line,
-        description=description,
-        plant_name=plant_name,
-        id=row.id,
-        exception_id=row.exception_id,
-        type=row.exception_type,
-        severity=row.severity,
-        title=row.title,
-        material_id=row.material_id,
-        plant=row.plant,
-        logged_at=row.logged_at,
-        channel="EMAIL",
-        emailed=row.emailed_at is not None,
-    )
-
-
-def exception_history_entry(event: ExceptionEvent) -> ExceptionHistoryEntry:
-    return ExceptionHistoryEntry(
-        id=event.id,
-        kind=event.kind,
-        status=canonical_status(event.status),
-        owner=event.owner,
-        actor=event.actor,
-        text=event.text or "",
-        at=event.at,
-    )
-
-
-def exception_meta(
-    stats: ExceptionStats,
-    excluded_types: frozenset[str] = frozenset(),
-    excluded: Sequence[ExceptionItem] = (),
-    *,
-    complete_flow: bool = True,
-) -> ExceptionMeta:
-    """The counts, less whatever the caller's queue does not carry.
-
-    ``excluded_types`` are the checks taken out with ``excludeType`` and
-    ``excluded`` the items they raised. Their items come off ``total``,
-    ``byType``, ``bySeverity``, ``preAutomation`` and ``actionable`` and their
-    types off ``typesRaised``, so the meta describes the queue as it is listed.
-    Subtracted rather than recounted: the lines checked and covered and the
-    windows are facts about the run that no count of items reproduces.
-
-    ``complete_flow`` False (``I8_COMPLETE_FLOW_ENABLED`` off) names only the
-    types raised then in ``typesRaised``.
-    """
-    implemented = RAISED_BY_I8 if complete_flow else RAISED_WITHOUT_COMPLETE_FLOW
-    pre_automation = sum(1 for item in excluded if item.pre_automation)
-    by_severity = dict(stats.by_severity)
-    for item in excluded:
-        if item.severity in by_severity:
-            by_severity[item.severity] = max(0, by_severity[item.severity] - 1)
-    return ExceptionMeta(
-        total=max(0, stats.total - len(excluded)),
-        by_type={t: n for t, n in stats.by_type.items() if t not in excluded_types},
-        by_severity=by_severity,
-        lines_checked=stats.lines_checked,
-        lines_covered=stats.lines_covered,
-        attestation_window_days=stats.attestation_window_days,
-        pre_automation=max(0, stats.pre_automation - pre_automation),
-        actionable=max(0, stats.actionable - (len(excluded) - pre_automation)),
-        attestation_cutover_date=stats.attestation_cutover_date,
-        # Which types are actually implemented, so an empty count is
-        # distinguishable from an unimplemented check.
-        types_raised=sorted(t.value for t in implemented if t.value not in excluded_types),
-        acquisitions_checked=stats.acquisitions_checked,
-        justification_window_days=stats.justification_window_days,
-        justification_cutover_date=stats.justification_cutover_date,
-        session_check_start_date=stats.session_check_start_date,
-    )
-
-
-def exception_facets(items: Sequence[ExceptionItem], cfg: I8Settings) -> ExceptionFacets:
-    """The plants and types present among ``items``."""
-    return ExceptionFacets(
-        plants=_plant_options((i.plant for i in items), cfg),
-        types=sorted({i.type for i in items}),
-    )
 
 
 # --- W5.5: coding candidates ----------------------------------------------

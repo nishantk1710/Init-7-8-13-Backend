@@ -84,6 +84,15 @@ KEEP_REQUESTED = "keep_requested"
 DECLARE = "declare"
 SKIP_DECLARATION = "skip"
 
+#: Fields a step no longer asks for but still accepts, and ignores. The
+#: declaration form lost its free-text condition, the typed name and the
+#: evidence reference on 3-Nov-2026 (the name now comes from the signed-in
+#: requester). A request draft saved before then, or a browser still running the
+#: older page, sends them; refusing the whole answer for it would lose the rest.
+RETIRED_ANSWER_FIELDS: dict[str, frozenset[str]] = {
+    I08_DECLARATION: frozenset({"condition_description", "attestor_name", "evidence_reference"}),
+}
+
 #: The three assessments, as the declaration form labels them. Values are
 #: ``attestation.Recommendation``'s; the labels match the register's
 #: ``DeclarationCondition`` so the same unit reads the same on both screens.
@@ -209,11 +218,11 @@ def _declaration_or_end(
     whether the one coming off is repairable. ``ending`` is the terminal text
     the path would have given without the question, so skipping changes nothing.
 
-    Not asked while the complete flow is off (``I8_COMPLETE_FLOW_ENABLED``,
-    29-Oct-2026): the path ends as it did before the question existed.
+    Since 3-Nov-2026 this is the only place a declaration is made: the I08
+    screens no longer offer one. The form asks the quantity, the fault and the
+    assessment; who declared is the signed-in requester (``turns.answer``'s
+    ``actor_name``), not a typed name.
     """
-    if not get_i8_settings().complete_flow_enabled:
-        return _terminal(I08_DONE, session_id, ending, request_id)
     if I08_DECLARE_CHOICE not in answers:
         return Step(
             id=I08_DECLARE_CHOICE,
@@ -239,12 +248,6 @@ def _declaration_or_end(
             fields=(
                 Field(name="quantity", label="Quantity", type=FieldType.NUMBER, default=1),
                 Field(
-                    name="condition_description",
-                    label="Condition",
-                    type=FieldType.TEXTAREA,
-                    help_text="What is wrong with it, as you see it.",
-                ),
-                Field(
                     name="fault_category",
                     label="Fault",
                     type=FieldType.SELECT,
@@ -255,18 +258,6 @@ def _declaration_or_end(
                     label="Assessment",
                     type=FieldType.SELECT,
                     options=recommendation_choices(),
-                ),
-                Field(
-                    name="attestor_name",
-                    label="Your name (typed, not a sign-in)",
-                    type=FieldType.TEXT,
-                ),
-                Field(
-                    name="evidence_reference",
-                    label="Evidence reference",
-                    type=FieldType.TEXT,
-                    required=False,
-                    help_text="A photo or report reference, if there is one.",
                 ),
             ),
         )
@@ -312,7 +303,7 @@ def _i08(
                 Choice(
                     value=USE_EXISTING,
                     label="No, I will use the existing unit",
-                    # "On repair" covers a requested repair with no PO yet
+                    # "On repair" covers a PR raised for repair with no PO yet
                     # (27-Oct-2026): "repaired" claimed a unit already fixed.
                     description="A unit in stock or on repair covers this need.",
                 ),
@@ -353,12 +344,11 @@ def _i08(
             # The first line stays the request: the request builder quotes
             # it alone when a reason is missing. The note under it says
             # what the reason does and does not do (27-Oct-2026).
-            # The note only with the complete flow on (29-Oct-2026).
             prompt=(
                 "Understood. The platform does not block anything. Please "
                 "record why a new unit is needed despite the one in stock or "
                 "on repair."
-                + ("\n\n" + I08_REASON_NOTE if get_i8_settings().complete_flow_enabled else "")
+                "\n\n" + I08_REASON_NOTE
             ),
             fields=(
                 _reason_field(reason_categories, "Why a new unit is needed"),

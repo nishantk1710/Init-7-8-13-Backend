@@ -4,33 +4,22 @@ Routes parse input, call a service and shape a response. Every rule lives in
 ``app/initiatives/i8``, which is what makes the rules testable without an HTTP
 client and what keeps the repair-PO convention in one place.
 
-What this module is allowed to write
--------------------------------------
-Through W5.2 the answer was "nothing", and a contract test asserted it against
-the served OpenAPI spec. **W5.3 loosens that, deliberately and by exactly one
-step**, so it is worth stating precisely what the guarantee is now:
-
-* **ONE write path exists**: ``POST /api/i8/attestations``.
-* It writes to **one table we own**, ``i8_attestation``, and that table is
-  append-only -- no endpoint updates or deletes a row, and on Postgres a trigger
-  makes the attempt an error.
-* **Nothing here writes to SAP, ever.** Not a purchase order, not a movement,
-  not a master-data field. The platform reads SAP and records its own findings
-  beside it. That is the guarantee that actually matters, and it is unchanged.
-
-``test_the_module_is_read_only_except_for_attestations`` asserts all three,
-rather than being deleted when it went red.
+Read-only
+---------
+Every route here is a GET. Until 3-Nov-2026 two wrote: ``POST
+/api/i8/attestations`` (a declaration from an I08 screen) and ``POST
+/api/i8/exceptions/{id}/events`` (the exception queue's history). Declarations
+are made only in the assistant now (``app.assistant.turns``), and the exception
+queue was removed. **Nothing here writes to SAP, ever** -- the platform reads SAP
+and records its own findings beside it.
 """
 
 from __future__ import annotations
 
-from collections import Counter
 from collections.abc import Sequence
 from typing import Annotated, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.i8.mappers import (
@@ -41,12 +30,7 @@ from app.api.i8.mappers import (
     declaration_item,
     declaration_meta,
     department_name,
-    exception_facets,
-    exception_history_entry,
-    exception_item,
-    exception_meta,
     material_descriptions,
-    notification_item,
     register_facets,
     register_meta,
     repair_chain,
@@ -62,17 +46,11 @@ from app.api.i8.schemas import (
     SessionJobRepair,
     SessionJobReservation,
     SessionJobResponse,
-    Attestation,
-    AttestationRequest,
     AttestationResponse,
     CodingCandidateResponse,
     DeclarationResponse,
-    ExceptionEventRequest,
-    ExceptionQueueItem,
-    ExceptionResponse,
     FeaturesResponse,
     MaterialReference,
-    NotificationResponse,
     RepairChain,
     RegisterResponse,
     RegisterViewCounts,
@@ -80,48 +58,21 @@ from app.api.i8.schemas import (
     RepairDetail,
     RepairEvidenceItem,
     RepairRequestEvidenceItem,
-    SAPDocumentReference,
     SnapshotInfo,
     UniverseDetail,
     UniverseResponse,
 )
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.initiatives.i8.acquisitions import PURCHASE_ORDER
 from app.initiatives.i8.aging import aging_bucket as band_of
 from app.initiatives.i8.aging import bucket_labels
-from app.initiatives.i8.attestation import (
-    AttestationDraft,
-    AttestationError,
-    explain_coverage,
-    find as find_attestations,
-    record as record_attestation,
-)
+from app.initiatives.i8.attestation import find as find_attestations
 from app.initiatives.i8.coding_candidates import (
     CandidateSource,
     meets_confidence_threshold,
 )
 from app.initiatives.i8.config import I8Settings, get_i8_settings
-from app.initiatives.i8.exception_state import (
-    UNTOUCHED,
-    ExceptionStateError,
-    ExceptionWorkState,
-    add_comment,
-    assign,
-    auto_resolve,
-    canonical_status,
-    load_states,
-    set_status,
-    state_of,
-    validate_kind,
-)
-from app.initiatives.i8.exceptions import ExceptionItem, raised_without_complete_flow
 from app.initiatives.i8.material_number import is_eighty_series, normalise
-from app.initiatives.i8.notifications import (
-    list_notifications,
-    log_new as log_new_notifications,
-    repair_line_of,
-)
 from app.initiatives.i8.register import RepairLine
 from app.initiatives.i8.repairable_unit import assess as assess_repairable_unit
 from app.initiatives.i8.requisitions import NOT_ORDERED, PR_RAISED, RepairRequest
@@ -130,16 +81,13 @@ from app.initiatives.i8.service import (
     Snapshot,
     SnapshotBuilding,
     SnapshotFailed,
-    cached_attestation_view,
     cached_snapshot,
     get_attestation_view,
     get_coding_screen,
     get_snapshot,
-    reset_attestation_view,
 )
 from app.initiatives.i8.universe import UniverseRow
 from app.shared import get_criticality_source
-from app.shared.material_names import material_names
 
 router = APIRouter(prefix="/i8", tags=["i8 - refurbishable spares"])
 
@@ -182,33 +130,17 @@ SettingsDep = Annotated[I8Settings, Depends(get_i8_settings)]
 def attestation_view_dependency(
     db: Session = Depends(get_db), snapshot: Snapshot = Depends(snapshot_dependency)
 ) -> AttestationView:
-    """Coverage, the declaration queue and the exception queue.
+    """Coverage and the declaration queue.
 
     Cached separately from the snapshot: the snapshot turns over when its
-    source is reloaded, but an attestation must be visible the moment the
-    planner who recorded it reloads the queue.
+    source is reloaded, but a declaration must be visible the moment the
+    person who recorded it reloads the register.
     """
     return get_attestation_view(db, snapshot)
 
 
 AttestationViewDep = Annotated[AttestationView, Depends(attestation_view_dependency)]
 DbDep = Annotated[Session, Depends(get_db)]
-
-
-def _current_user() -> str:
-    """Who is attesting.
-
-    **A placeholder, and named as one.** Entra sign-in is not wired into this
-    module yet (``app/integrations/entra``), so there is no authenticated
-    principal to read. Every attestation recorded before that lands is stamped
-    with this value, which makes those rows obviously provisional rather than
-    quietly attributing an audit record to a real person who did not make it.
-
-    When auth arrives this becomes the caller's object id and nothing else
-    changes -- ``record()`` already takes the attestor as an argument rather
-    than reading it from the request body.
-    """
-    return "UNAUTHENTICATED_LOCAL_USER"
 
 
 def _paginate(
@@ -233,34 +165,6 @@ def _matches(needle: str, *fields: str | None) -> bool:
     return any(needle in field.lower() for field in fields if field)
 
 
-def _type_set(raw: str | None) -> frozenset[str]:
-    """``A,B`` -> {"A", "B"}, upper-cased; blanks are dropped."""
-    return frozenset(
-        part.strip().upper() for part in (raw or "").split(",") if part.strip()
-    )
-
-
-#: The repairable-unit keys of the usable/damaged split, as served.
-_STOCK_SPLIT_KEYS = ("usableStock", "damagedStock", "stockConditionKnown", "stockSource")
-
-
-def _require_complete_flow(cfg: I8Settings) -> None:
-    """404 for a route the complete flow added, while it is off
-    (``I8_COMPLETE_FLOW_ENABLED``): the answer an older backend gives."""
-    if not cfg.complete_flow_enabled:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
-
-
-def _without(response: BaseModel, *keys: str) -> JSONResponse:
-    """``response`` as served, less ``keys`` (camelCase): fields the complete
-    flow added are left out while it is off, so a client reads the shape it
-    had before rather than a null it might take for an answer."""
-    content = response.model_dump(mode="json", by_alias=True)
-    for key in keys:
-        content.pop(key, None)
-    return JSONResponse(content=content)
-
-
 def _stock_lookup(snapshot: Snapshot) -> dict[tuple[str, str | None], UniverseRow]:
     """(material, plant) -> universe row.
 
@@ -275,15 +179,13 @@ def _chain(
     cfg: I8Settings,
     lookup: dict[tuple[str, str | None], UniverseRow],
     view: AttestationView | None = None,
-    exceptions: Sequence[ExceptionItem] | None = None,
 ) -> RepairChain:
     """A register row enriched with its material's stock position.
 
     Stock and reorder point live on the material+plant, not on the PO line, so
     they come from the universe rather than from a second query. The declaration
-    and the justification come from W5.3's attestation view for the same reason
-    -- and because those tables change while the process runs, which the July
-    snapshot does not.
+    comes from W5.3's attestation view for the same reason -- and because that
+    table changes while the process runs, which the snapshot does not.
     """
     row = lookup.get((line.material_id, line.plant))
     return repair_chain(
@@ -294,8 +196,6 @@ def _chain(
         new_unit_lead_time_days=row.planned_delivery_days if row else None,
         criticality=row.criticality if row else None,
         declaration=view.declaration_by_line.get(line.key) if view else None,
-        justification=view.justifications.get(line.key) if view else None,
-        exceptions=exceptions,
         **stock_split(row, cfg),
     )
 
@@ -304,7 +204,6 @@ def _request_chain(
     request: RepairRequest,
     cfg: I8Settings,
     lookup: dict[tuple[str, str | None], UniverseRow],
-    exceptions: Sequence[ExceptionItem] | None = None,
     view: AttestationView | None = None,
 ) -> RepairChain:
     """A repair PR's register row, with its material's stock position from the
@@ -318,7 +217,6 @@ def _request_chain(
         reorder_point=row.reorder_point if row else None,
         new_unit_lead_time_days=row.planned_delivery_days if row else None,
         criticality=row.criticality if row else None,
-        exceptions=exceptions,
         declaration=_request_declaration(request, view) if view else None,
         **stock_split(row, cfg),
     )
@@ -373,26 +271,6 @@ def _request_declaration_status(request: RepairRequest, view: AttestationView) -
     """The same for a repair PR row (27-Oct-2026: PRs can be declared on)."""
     row = _request_declaration(request, view)
     return row.status if row is not None else "Required"
-
-
-def _raised_by_line(
-    view: AttestationView, excluded_types: frozenset[str]
-) -> dict[tuple[str, str], list[ExceptionItem]]:
-    """Each repair line's exception items, less the excluded types.
-
-    One pass over the queue per request, so the register can fill its
-    Exceptions column -- and filter on it -- for any page without the screen
-    loading the whole queue to join it in the browser.
-
-    PO lines only. A bought-new finding whose repair is a PR with no PO yet
-    names the PR number; keyed in with the PO lines, it could land on a PO line
-    that shares the number, and a PR row shows no exceptions in phase 1.
-    """
-    by_line: dict[tuple[str, str], list[ExceptionItem]] = {}
-    for item in view.exceptions:
-        if item.type not in excluded_types and item.repair_document_type == PURCHASE_ORDER:
-            by_line.setdefault((item.purchasing_document, item.item), []).append(item)
-    return by_line
 
 
 # --- W5.1: the repairable universe ----------------------------------------
@@ -550,26 +428,28 @@ def get_register(
             "where agingBucket bands the days it has been open"
         ),
     ),
-    with_exceptions: bool = Query(
-        False,
-        alias="withExceptions",
-        description="Only lines a check has raised something against",
+    late_aging_bucket: str | None = Query(
+        None,
+        alias="lateAgingBucket",
+        description=(
+            "The aging band of the days a line is past its expected return "
+            "date. Only lines past it match; a repair PR has no date (3-Nov-2026)"
+        ),
+    ),
+    department: str | None = Query(
+        None,
+        description=(
+            "The department that asked for the repair: the repair PR's "
+            "EBAN.AFNAM code, on a PO line and a PR row alike (3-Nov-2026)"
+        ),
     ),
     quick_view: str | None = Query(
         None,
         alias="view",
         description=(
-            "A quick view on top of the filters: overdue, undeclared, atVendor, "
-            "withExceptions or notOrdered (repair PRs with no PO yet). "
-            "viewCounts counts each one before it is applied."
-        ),
-    ),
-    exclude_exception_type: str | None = Query(
-        None,
-        alias="excludeExceptionType",
-        description=(
-            "Comma-separated exception types the caller does not carry: left "
-            "out of each line's `exceptions` and of `withExceptions`"
+            "A quick view on top of the filters: overdue, undeclared, atVendor "
+            "or notOrdered (repair PRs with no PO yet). viewCounts counts each "
+            "one before it is applied."
         ),
     ),
     q: str | None = Query(
@@ -580,8 +460,7 @@ def get_register(
     page: int = Query(1, ge=1),
     page_size: int = Query(None, alias="pageSize", ge=1),
 ) -> RegisterResponse:
-    """Repair lines SAP still has open, one page at a time, each with what the
-    checks raise against it.
+    """Repair lines SAP still has open, one page at a time.
 
     Open is SAP's "Delivery completed" flag, since 19-Oct-2026: a line SAP has
     closed, deleted or blocked is not listed, and ``meta`` counts each kind.
@@ -597,14 +476,13 @@ def get_register(
     """
     page_size = min(page_size or cfg.default_page_size, cfg.max_page_size)
     lookup = _stock_lookup(snapshot)
-    raised = _raised_by_line(view, _type_set(exclude_exception_type))
 
     lines = snapshot.lines
     # The open repair PRs with no PO yet, served after every PO row while the
     # switch is on. Never read while it is off, so the register is then exactly
     # what it was before they existed. Every filter below narrows them by what
     # their row shows: no vendor, PR Raised, NOT_ORDERED, Required, days from
-    # the PR date, no exceptions.
+    # the PR date, no expected return date.
     requests = snapshot.repair_requests if cfg.repair_requests_enabled else ()
     facets = register_facets(
         lines, cfg, lambda row: _criticality_of(row, lookup), requests=requests
@@ -675,9 +553,21 @@ def get_register(
         )
         # Nothing has moved since the PR was raised: its stage is as old as it.
         requests = tuple(r for r in requests if band_of(r.days_open, bands) == stage_aging_bucket)
-    if with_exceptions:
-        lines = tuple(line for line in lines if raised.get(line.key))
+    if late_aging_bucket:
+        bands = cfg.aging_band_boundaries_list
+        lines = tuple(
+            line
+            for line in lines
+            if line.days_remaining is not None
+            and line.days_remaining < 0
+            and band_of(-line.days_remaining, bands) == late_aging_bucket
+        )
+        # Nothing is ordered on a PR, so there is no date to be past.
         requests = ()
+    if department:
+        wanted_department = department.strip()
+        lines = tuple(line for line in lines if (line.pr_department or "").strip() == wanted_department)
+        requests = tuple(r for r in requests if (r.department or "").strip() == wanted_department)
     if q and q.strip():
         needle = q.strip().lower()
         lines = tuple(
@@ -707,14 +597,13 @@ def get_register(
     # The quick views: what the screen's preset buttons select, counted over
     # the filtered lines before one of them is applied. A PR row is in its own
     # and, since 27-Oct-2026, "undeclared": nothing is ordered, so nothing is
-    # overdue or at the vendor and no check reads it, but it can be declared on.
+    # overdue or at the vendor, but it can be declared on.
     # "Undeclared" is Required only -- Historical is not waiting, and Flagged
     # has its declaration. The PO tests below see PO lines only.
     view_tests = {
         "overdue": lambda line: line.overdue_status == "OVERDUE",
         "undeclared": lambda line: _declaration_status_of(line, view) == "Required",
         "atVendor": lambda line: line.repair_status == "At Vendor",
-        "withExceptions": lambda line: bool(raised.get(line.key)),
         "notOrdered": lambda line: False,
     }
     view_counts = RegisterViewCounts(
@@ -723,7 +612,6 @@ def get_register(
         undeclared=sum(1 for line in lines if view_tests["undeclared"](line))
         + sum(1 for r in requests if _request_declaration_status(r, view) == "Required"),
         at_vendor=sum(1 for line in lines if view_tests["atVendor"](line)),
-        with_exceptions=sum(1 for line in lines if view_tests["withExceptions"](line)),
         not_ordered=len(requests),
     )
     if quick_view:
@@ -746,9 +634,9 @@ def get_register(
     page_rows, total = _paginate(rows, page, page_size)
     return RegisterResponse(
         items=[
-            _request_chain(row, cfg, lookup, exceptions=[], view=view)
+            _request_chain(row, cfg, lookup, view=view)
             if isinstance(row, RepairRequest)
-            else _chain(row, cfg, lookup, view, exceptions=raised.get(row.key, []))
+            else _chain(row, cfg, lookup, view)
             for row in page_rows
         ],
         page=page,
@@ -816,7 +704,6 @@ def get_repair_line(
             view.coverage.covered.get(line.key),
             getattr(view.coverage, "links", {}).get(line.key),
             _reference_typed(snapshot, line.pr_number, line.pr_item),
-            requested_stage=cfg.complete_flow_enabled,
         ),
     )
 
@@ -827,159 +714,11 @@ def get_repair_line(
 # post the 541 on the day of the receipt on about 90% of repairs.
 
 
-# --- W5.3: attestation, declarations and exceptions ------------------------
-
-
-NOT_OPEN_IN_REGISTER = "That repair line is not open in the register."
-
-
-def _bound_line(
-    body: AttestationRequest, snapshot: Snapshot, cfg: I8Settings
-) -> tuple[str, str, str, str, str | None] | None:
-    """The register line a declaration names, as (type, document, item,
-    material, plant), or None for an unbound declaration.
-
-    Raises the 422 when the named line is not open in the register. A PR is
-    open in the register only while PR rows are served. A ``PR-`` document (the
-    register's PR row id) names a repair PR whatever type is sent. Half a key
-    is left to :func:`validate`, which says so in its own words.
-    """
-    document = (body.repair_document or "").strip()
-    item = (body.repair_item or "").strip()
-    if not document or not item:
-        return None
-    is_request = body.repair_document_type == "PR"
-    if document.upper().startswith(_REQUEST_PREFIX):
-        is_request = True
-        document = document[len(_REQUEST_PREFIX) :].strip()
-    if is_request:
-        request = (
-            snapshot.request(document, _item_key(item))
-            if cfg.repair_requests_enabled
-            else None
-        )
-        if request is None:
-            raise HTTPException(status_code=422, detail=NOT_OPEN_IN_REGISTER)
-        return ("PR", *request.key, request.material_id, request.plant)
-    line = snapshot.line(document, item) or snapshot.line(document, _item_key(item))
-    if line is None:
-        raise HTTPException(status_code=422, detail=NOT_OPEN_IN_REGISTER)
-    return ("PO", *line.key, line.material_id, line.plant)
-
-
-def _check_binding(
-    body: AttestationRequest,
-    bound: tuple[str, str, str, str, str | None],
-    db: Session,
-) -> None:
-    """The declaration must be for the bound line's part and plant, and a line
-    with a current declaration takes an amendment of it, not a second one --
-    two current answers for one line is the ambiguity the binding removes."""
-    kind, document, item, material, plant = bound
-    own_material = normalise(body.material_id) or body.material_id.strip()
-    own_plant = (body.plant or "").strip()
-    if own_material != material or (plant is not None and own_plant != plant):
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"This declaration is for {own_material} at {own_plant}, but that "
-                f"repair line is for {material} at {plant or 'no plant'}."
-            ),
-        )
-    current = [
-        row
-        for row in find_attestations(
-            db, material_id=material, plant=own_plant, include_superseded=False
-        )
-        if row.repair_document == document
-        and row.repair_item == item
-        and (row.repair_document_type or "PO") == kind
-    ]
-    if current and (body.supersedes or "").strip() not in {row.id for row in current}:
-        raise HTTPException(
-            status_code=422,
-            detail=f"This line already has declaration {current[0].id}. Amend it instead.",
-        )
-
-
-@router.post(
-    "/attestations",
-    response_model=Attestation,
-    status_code=status.HTTP_201_CREATED,
-    summary="Record a condition-to-repair attestation",
-)
-def post_attestation(
-    body: AttestationRequest,
-    db: DbDep,
-    cfg: SettingsDep,
-    snapshot: SnapshotDep,
-) -> Attestation:
-    """**The only write path in Initiative 08.**
-
-    Writes one row to ``i8_attestation``, a table we own. It does not write to
-    SAP and cannot: the platform has no write path into SAP, which is why this
-    control can be recorded and reported but never enforced.
-
-    An attestation is never updated. To correct one, POST again with
-    ``supersedes`` set to the original's id -- that creates a new row, leaves
-    the original readable, and the pair is the audit trail.
-
-    A declaration may name a repair PO line or (``repairDocumentType`` 'PR',
-    27-Oct-2026) an open repair PR with no PO yet. The named line must be open
-    in the register and be for the same part and plant, and a line that
-    already has a current declaration takes an amendment of it -- each a 422
-    before anything is written. The stored key is the register's own.
-    """
-    bound = _bound_line(body, snapshot, cfg)
-    if bound is not None:
-        _check_binding(body, bound, db)
-    draft = AttestationDraft(
-        material_id=body.material_id,
-        plant=body.plant,
-        quantity=body.quantity,
-        condition_description=body.condition_description,
-        fault_category=body.fault_category,
-        recommendation=body.recommendation,
-        serial_number=body.serial_number,
-        evidence_reference=body.evidence_reference,
-        supersedes=body.supersedes,
-        repair_document=bound[1] if bound else body.repair_document,
-        repair_item=bound[2] if bound else body.repair_item,
-        repair_document_type=bound[0] if bound else body.repair_document_type,
-        attestor_name=body.attestor_name,
-        amendment_reason=body.amendment_reason,
-    )
-    try:
-        # The attestor comes from the caller, never from the body.
-        stored = record_attestation(
-            db,
-            draft,
-            attestor=_current_user(),
-            cfg=cfg,
-            known_materials={row.material_id for row in snapshot.universe},
-        )
-    except AttestationError as exc:
-        # 422, not 400: the request was well-formed JSON that broke a business
-        # rule -- an unknown fault category, a supersedes that points nowhere.
-        # 422 as a literal: starlette has deprecated the
-        # HTTP_422_UNPROCESSABLE_ENTITY constant and renamed it, and pinning the
-        # number avoids breaking on whichever spelling this version has.
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    # The declaration and exception queues are derived from this table, so they
-    # are now stale. Invalidated at the write site rather than on a timer: a
-    # planner must see their own submission immediately.
-    reset_attestation_view()
-
-    # Say what the write actually achieved, rather than leaving the caller to
-    # infer it from a queue that may not have moved. See the field docs on
-    # Attestation.coversRepairLines -- this is the difference between an honest
-    # "recorded, and here is why nothing changed" and a UI that looks broken.
-    covers, note = explain_coverage(stored, snapshot.lines, cfg)
-
-    return attestation_item(
-        stored, cfg, covers_repair_lines=covers, coverage_note=note
-    )
+# --- W5.3: declarations ---------------------------------------------------------
+#
+# Read-only since 3-Nov-2026: a declaration is recorded only in the assistant
+# (app.assistant.turns), never from an I08 screen. POST /api/i8/attestations,
+# which recorded and amended one, went with the screens' declare buttons.
 
 
 @router.get(
@@ -1118,307 +857,9 @@ def get_declarations(
     )
 
 
-@router.get(
-    "/exceptions",
-    response_model=ExceptionResponse,
-    summary="The exception queue -- repair lines with no attestation",
-)
-def get_exceptions(
-    view: AttestationViewDep,
-    snapshot: SnapshotDep,
-    cfg: SettingsDep,
-    db: DbDep,
-    type_filter: str | None = Query(
-        None, alias="type", description="MISSING_ATTESTATION"
-    ),
-    plant: str | None = Query(None, description="Plant code, e.g. 1300"),
-    repair: str | None = Query(
-        None,
-        description=(
-            "One repair line, as the register keys it -- '4500000677-20', or "
-            "'PR-2000029113-10' for a repair PR with no PO yet. Everything "
-            "raised against that line, whatever the check."
-        ),
-    ),
-    status_filter: str | None = Query(
-        None,
-        alias="status",
-        description=(
-            "OPEN / CLOSED. The retired IN_PROGRESS and RESOLVED still answer, "
-            "as OPEN and CLOSED, so an old link does not come back empty."
-        ),
-    ),
-    owner: str | None = Query(
-        None,
-        description=(
-            "Items owned by this person. The literal 'unassigned' returns "
-            "the ones nobody has taken."
-        ),
-    ),
-    actionable_only: bool = Query(
-        False,
-        alias="actionableOnly",
-        description="Leave out items raised before the control existed (preAutomation)",
-    ),
-    pre_automation_only: bool = Query(
-        False,
-        alias="preAutomationOnly",
-        description=(
-            "Only the items raised before the control existed (preAutomation): "
-            "the queue's 'raised before go-live' view. The opposite of "
-            "actionableOnly; asking for both returns nothing."
-        ),
-    ),
-    exclude_type: str | None = Query(
-        None,
-        alias="excludeType",
-        description=(
-            "Comma-separated types this queue does not carry. Left out of the "
-            "items, the facets and the meta counts alike."
-        ),
-    ),
-    q: str | None = Query(
-        None,
-        max_length=200,
-        description="Exception id, material number or description, or repair line",
-    ),
-    page: int = Query(1, ge=1),
-    page_size: int | None = Query(None, alias="pageSize", ge=1),
-) -> ExceptionResponse:
-    """Repair lines that went out with no recorded condition assessment.
-
-    Expect this to be large. Every historical repair line raises it, because the
-    control did not exist before this platform -- that number is the business
-    case for W5.3, not a bug in it.
-
-    The items are recomputed on every read; their status, owner and history
-    come from ``i8_exception_state`` and are merged on here. An item nobody has
-    touched reports OPEN and unassigned, which is the truth about it rather
-    than a placeholder.
-
-    ``excludeType`` is not a filter: it takes a check out of the queue, so its
-    items leave the meta counts as well as the list. ``facets`` are taken after
-    it and before every filter, so a screen showing one page of thousands can
-    still offer every plant and type in its dropdowns.
-    """
-    items = view.exceptions
-
-    # Before any filtering, and over every computed id: a state row still
-    # OPEN whose item is no longer raised describes a finding that has gone
-    # away -- somebody recorded the declaration, or SAP closed the repair line.
-    # Resolving it here means the person who owned it sees why, instead of
-    # watching it vanish from their queue.
-    #
-    # Before excludeType too. An item this caller's queue does not carry is
-    # still raised, and resolving it because the caller looked away would
-    # close somebody else's work.
-    #
-    # While the complete flow is off the newer checks are not raised; their
-    # findings are hidden, not gone, so they are never closed here.
-    auto_resolve(
-        db,
-        (i.id for i in items),
-        in_scope=None if cfg.complete_flow_enabled else raised_without_complete_flow,
-    )
-    # Same moment, same items, for the same reason: the read is the only time
-    # the platform learns a finding exists. Logs each actionable item of a
-    # notified type once, ever; never raises (see notifications.py).
-    log_new_notifications(db, items, cfg)
-
-    excluded_types = _type_set(exclude_type)
-    excluded = tuple(i for i in items if i.type in excluded_types)
-    if excluded:
-        items = tuple(i for i in items if i.type not in excluded_types)
-
-    facets = exception_facets(items, cfg)
-
-    # The type filter comes last, after the counts below; the rest narrow in
-    # any order.
-    if plant:
-        items = tuple(i for i in items if i.plant == plant)
-    if repair:
-        # The repair as the register names its row: '{EBELN}-{EBELP}', or
-        # 'PR-{BANFN}-{BNFPO}' for a repair PR with no PO yet (a bought-new
-        # finding can name one). A bare document -- 'PR-{BANFN}' for a PR --
-        # matches every line of it.
-        wanted_line = repair.strip()
-        items = tuple(
-            i
-            for i in items
-            if i.repair_reference == wanted_line
-            or i.repair_reference.rsplit("-", 1)[0] == wanted_line
-        )
-    if actionable_only:
-        items = tuple(i for i in items if not i.pre_automation)
-    if pre_automation_only:
-        items = tuple(i for i in items if i.pre_automation)
-    if q and q.strip():
-        needle = q.strip().lower()
-        items = tuple(
-            i
-            for i in items
-            if _matches(
-                needle,
-                i.id,
-                i.material_id,
-                i.description,
-                i.repair_reference,
-            )
-        )
-
-    # Folded once for the whole filtered set, because status and owner filter
-    # on it -- paging first would filter a page rather than the queue. Only
-    # items somebody has touched have a history, so this stays small while the
-    # queue runs to thousands.
-    states = load_states(db)
-
-    if status_filter:
-        wanted_status = canonical_status(status_filter)
-        items = tuple(
-            i for i in items if states.get(i.id, UNTOUCHED).status == wanted_status
-        )
-    if owner:
-        wanted_owner = owner.strip()
-        if wanted_owner.lower() == "unassigned":
-            items = tuple(i for i in items if not states.get(i.id, UNTOUCHED).owner)
-        else:
-            items = tuple(
-                i for i in items if states.get(i.id, UNTOUCHED).owner == wanted_owner
-            )
-
-    # What each type tab holds: every filter applied except the type itself,
-    # so the open tab's count is the number of rows under it.
-    type_counts = Counter(i.type for i in items)
-    if type_filter:
-        wanted = type_filter.strip().upper()
-        items = tuple(i for i in items if i.type == wanted)
-
-    size = min(page_size or cfg.default_page_size, cfg.max_page_size)
-    page_items, total = _paginate(items, page, size)
-
-    return ExceptionResponse(
-        items=[
-            exception_item(
-                i,
-                cfg,
-                state=states.get(i.id),
-                # Listed means raised: these all came from a check that just
-                # ran. The flag matters for an item fetched by id elsewhere.
-                still_detected=True,
-            )
-            for i in page_items
-        ],
-        page=page,
-        page_size=size,
-        total=total,
-        # Meta describes the whole check, not the filtered view: "how many of
-        # the register is uncovered" is the number that matters and it must not
-        # change because somebody filtered to one plant. Only a check taken out
-        # of the queue altogether comes off it.
-        meta=exception_meta(
-            view.exception_stats, excluded_types, excluded, complete_flow=cfg.complete_flow_enabled
-        ),
-        facets=facets,
-        reference_date=snapshot.reference_date,
-        type_counts=dict(type_counts),
-    )
-
-
-@router.get(
-    "/notifications",
-    response_model=NotificationResponse,
-    summary="FR-11 notifications logged for exceptions, newest first",
-)
-def get_notifications(
-    cfg: SettingsDep,
-    db: DbDep,
-    type_filter: str | None = Query(
-        None, alias="type", description="Exception type, e.g. OVERDUE_REPAIR"
-    ),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(25, alias="pageSize", ge=1),
-) -> NotificationResponse:
-    """One notification per exception, logged the first time the queue found
-    it actionable. Nothing is emailed yet, so ``emailed`` is false throughout.
-
-    404 while the complete flow is off: the log came with it.
-    """
-    _require_complete_flow(cfg)
-    size = min(page_size, cfg.max_page_size)
-    wanted = type_filter.strip().upper() if type_filter and type_filter.strip() else None
-    rows, total, types = list_notifications(
-        db, page=page, page_size=size, exception_type=wanted
-    )
-    # Labels for the page (28-Oct-2026), from what is already in memory: the
-    # exception queue as last built, the material names list and the snapshot.
-    # Nothing here builds or waits, so the log loads while I08 data is still
-    # being prepared -- with fewer labels.
-    view = cached_attestation_view()
-    on_page = {r.exception_id for r in rows}
-    current = (
-        {i.id: i for i in view.exceptions if i.id in on_page} if view is not None else {}
-    )
-    materials = {r.material_id for r in rows}
-    names = material_names(materials)
-    from_snapshot = material_descriptions(
-        cached_snapshot(), (m for m in materials if normalise(m) not in names)
-    )
-
-    def describe(row) -> str | None:
-        item = current.get(row.exception_id)
-        return (
-            names.get(normalise(row.material_id) or "")
-            or from_snapshot.get(row.material_id)
-            or (item.description if item is not None else None)
-        )
-
-    plant_names = cfg.plant_name_map
-    return NotificationResponse(
-        items=[
-            notification_item(
-                r,
-                repair_line=repair_line_of(r, current.get(r.exception_id)),
-                description=describe(r),
-                plant_name=plant_names.get(r.plant) if r.plant else None,
-            )
-            for r in rows
-        ],
-        total=total,
-        page=page,
-        page_size=size,
-        types=types,
-    )
-
-
-@router.get(
-    "/exceptions/{exception_id}",
-    response_model=ExceptionQueueItem,
-    summary="One exception, with its status, owner and history",
-)
-def get_exception(
-    exception_id: str,
-    view: AttestationViewDep,
-    cfg: SettingsDep,
-    db: DbDep,
-) -> ExceptionQueueItem:
-    """The item a link names, wherever it sits in the queue.
-
-    A paged screen holds one page, so it cannot open a linked item by finding
-    it among its rows: the item may be on any page, or filtered off them all.
-
-    An item the checks no longer raise still answers while it has a history,
-    with ``stillDetected`` false -- somebody followed a link to work they
-    remember, and the answer is that the data moved. An id with neither is
-    404: nothing raised it and nobody touched it.
-    """
-    found = next((i for i in view.exceptions if i.id == exception_id), None)
-    work = state_of(db, exception_id)
-    if found is None and not work.history:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No exception {exception_id!r} is raised or has a history.",
-        )
-    return _exception_response(cfg, exception_id, found, work)
+# No exception queue since 3-Nov-2026: GET /api/i8/exceptions, /exceptions/{id},
+# POST /exceptions/{id}/events and GET /api/i8/notifications were removed with
+# the screen. Overdue repairs are shown on the register.
 
 
 # --- W5.5: coding candidates -----------------------------------------------
@@ -1641,9 +1082,9 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
             # Since 27-Oct-2026: whether the assistant gives the need-date
             # line (off until SAP confirms how MRP treats an open repair PO).
             "needDateAdviceEnabled": cfg.need_date_advice_enabled,
-            # Since 29-Oct-2026: I8_COMPLETE_FLOW_ENABLED, which every switch
-            # above defers to. The screens hide the complete flow on false.
-            "completeFlowEnabled": cfg.complete_flow_enabled,
+            # I8_COMPLETE_FLOW_ENABLED was retired on 3-Nov-2026: always true,
+            # still served for a frontend deployed before that release.
+            "completeFlowEnabled": True,
         },
     )
 
@@ -1653,12 +1094,13 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
     response_model=FeaturesResponse,
     summary="Which I08 features this backend serves",
 )
-def get_features(cfg: SettingsDep) -> FeaturesResponse:
-    """The switches a screen needs before it renders, from the settings
-    alone: no snapshot, so never a 503 while I08 data is being prepared. The
-    assistant pages read it; a client that cannot treats every switch as off.
+def get_features() -> FeaturesResponse:
+    """Always "on" since 3-Nov-2026, when the complete-flow switch was retired.
+
+    Kept for a frontend deployed before that release, which reads it before it
+    renders and treats a missing route as "off". Remove once both are live.
     """
-    return FeaturesResponse(complete_flow_enabled=cfg.complete_flow_enabled)
+    return FeaturesResponse(complete_flow_enabled=True)
 
 
 # --- W7.2 / FR-6: the repairable-unit rule, on its own ---------------------
@@ -1678,7 +1120,7 @@ def get_repairable_unit(
     cfg: SettingsDep,
     material: Annotated[str, Query(description="Material number, padded or stripped")],
     plant: Annotated[str | None, Query(description="Plant code. Omitted means every plant.")] = None,
-) -> RepairableUnitResponse | JSONResponse:
+) -> RepairableUnitResponse:
     """Whether a repairable unit is on the shelf or coming back from repair.
 
     ``today`` is the snapshot's reference date rather than the wall clock, so
@@ -1697,9 +1139,8 @@ def get_repairable_unit(
         today=snapshot.reference_date,
         repair_requests=snapshot.repair_requests if cfg.repair_requests_enabled else None,
         department_name=department_name,
-        stock_by_condition=cfg.complete_flow_enabled,
     )
-    response = RepairableUnitResponse(
+    return RepairableUnitResponse(
         material_id=verdict.material_id,
         plant=verdict.plant,
         is_repairable_material=verdict.is_repairable_material,
@@ -1748,99 +1189,6 @@ def get_repairable_unit(
         damaged_stock=verdict.damaged_stock,
         stock_condition_known=verdict.stock_condition_known,
         stock_source=verdict.stock_source,
-    )
-    if cfg.complete_flow_enabled:
-        return response
-    # The stock split is not served at all while the complete flow is off.
-    return _without(response, *_STOCK_SPLIT_KEYS)
-
-
-@router.post(
-    "/exceptions/{exception_id}/events",
-    response_model=ExceptionQueueItem,
-    status_code=status.HTTP_201_CREATED,
-    summary="Append one entry to an exception's history",
-)
-def post_exception_event(
-    exception_id: str,
-    body: ExceptionEventRequest,
-    view: AttestationViewDep,
-    cfg: SettingsDep,
-    db: DbDep,
-) -> ExceptionQueueItem:
-    """**Writes the history, never the finding.**
-
-    The exception itself is computed from SAP data and this cannot change it.
-    What it records is who is working the finding and what they said -- the
-    half FR-11 asks for and no check can derive.
-
-    One POST for assigning, commenting and moving, because all three are the
-    same operation on the same append-only table. There is deliberately no
-    PATCH: the item's status is not a column somebody edits, it is the last
-    entry that set one, and ``tests/test_write_paths.py`` holds the whole
-    application to that.
-
-    An unknown id is still accepted. The checks are recomputed on every read,
-    so an id can be real and currently unraised -- the gap it describes was
-    closed since the caller loaded the screen. Rejecting it would throw away
-    the comment somebody just typed about exactly that.
-    """
-    found = next((i for i in view.exceptions if i.id == exception_id), None)
-
-    try:
-        kind = validate_kind(body.kind)
-        if kind == "ASSIGNED":
-            assign(db, exception_id, body.owner, actor=_current_user())
-        elif kind == "STATUS":
-            if body.status is None:
-                raise ExceptionStateError("a STATUS entry needs a status")
-            set_status(
-                db, exception_id, body.status, actor=_current_user(), note=body.text
-            )
-        else:
-            add_comment(db, exception_id, body.text, actor=_current_user())
-    except ExceptionStateError as exc:
-        # 422, not 400: well-formed JSON that broke a rule of the queue.
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    return _exception_response(cfg, exception_id, found, state_of(db, exception_id))
-
-
-def _exception_response(
-    cfg: I8Settings,
-    exception_id: str,
-    found: ExceptionItem | None,
-    work: ExceptionWorkState,
-) -> ExceptionQueueItem:
-    """The item as it now stands, for a write or a lookup by id to return.
-
-    ``found`` is None when the checks are no longer raising this id. The row
-    still answers -- with ``stillDetected`` false, and a placeholder body that
-    says the finding is gone rather than inventing a repair line for it. That
-    is the honest answer to "I just commented on something that resolved
-    underneath me".
-    """
-    if found is not None:
-        return exception_item(found, cfg, state=work, still_detected=True)
-
-    return ExceptionQueueItem(
-        id=exception_id,
-        type="UNKNOWN",
-        severity="info",
-        material=MaterialReference(material_id="", material_code="", description=None),
-        plant=None,
-        repair_line=SAPDocumentReference(type="PO", document_number="", line=None),
-        title="No longer raised",
-        detail=(
-            "No check is currently raising this item. The data it was found on "
-            "has changed since it was listed."
-        ),
-        raised_at=None,
-        pre_automation=False,
-        status=work.status,
-        owner=work.owner,
-        still_detected=False,
-        history=[exception_history_entry(e) for e in work.history],
     )
 
 
@@ -1899,12 +1247,9 @@ def get_session_job(
 ) -> SessionJobResponse:
     """Read from the snapshot only: the job's reservation lines and their
     movements were narrowed and read at build time (session_jobs.py), so this
-    route runs no SAP query at all -- one lookup that the session exists.
-
-    404 while the complete flow is off, as before the route existed."""
+    route runs no SAP query at all -- one lookup that the session exists."""
     from app.initiatives.i13.session_link import load_sessions
 
-    _require_complete_flow(cfg)
     if not load_sessions(db, [session_id]):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No such assistant session.")
     reservations = [

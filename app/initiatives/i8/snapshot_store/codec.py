@@ -75,6 +75,10 @@ from typing import Any
 # universe keeps a stock split only where it adds up to MARD's total. A
 # version-6 payload would construct -- the field defaults -- but would go on
 # serving a split that disagrees with MARD until the source data next changed.
+# On the same release (extending this note rather than raising the version
+# again) the exception queue was removed: the Snapshot lost unreferenced_lines
+# and session_check_start, and NewAcquisition lost line_created_on. A version-6
+# payload naming them would no longer construct.
 CODEC_VERSION = 7
 _ALLOWED = "app.initiatives.i8."
 

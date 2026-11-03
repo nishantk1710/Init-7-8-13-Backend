@@ -256,7 +256,6 @@ def test_the_assistant_reads_a_dropped_split_as_the_mard_total(built) -> None:
         universe_rows=list(rows.values()),
         repair_lines=[],
         today=date(2026, 11, 3),
-        stock_by_condition=True,
     )
     assert verdict.stock_on_hand == 3
     assert not verdict.stock_condition_known

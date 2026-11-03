@@ -1,4 +1,8 @@
-"""The register and the two queues, paged on the server.
+"""The register and the declaration queue, paged on the server.
+
+(The exception queue paged here too until 3-Nov-2026, when it was removed with
+its screen; so did POST /attestations, now that the assistant records a
+declaration. Their tests went with them.)
 
 The three screens fetched every row -- 5,063, 5,153 and 5,978 of them -- and
 filtered in the browser, so each page weighed 17 to 35 MB. They now ask for one
@@ -33,7 +37,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -41,14 +45,10 @@ from app.api.i8.router import attestation_view_dependency, snapshot_dependency
 from app.core.db import get_db
 from app.initiatives.i8.config import get_i8_settings
 from app.initiatives.i8.declarations import DeclarationRow
-from app.initiatives.i8.exception_state import assign, set_status
-from app.initiatives.i8.exceptions import ExceptionItem, ExceptionStats
-from app.initiatives.i8.models import ExceptionEvent
 from app.initiatives.i8.register import RegisterStats, RepairLine
 from app.initiatives.i8.requisitions import RepairRequest
 
 DECLARATIONS = "/api/i8/declarations"
-EXCEPTIONS = "/api/i8/exceptions"
 REGISTER = "/api/i8/register"
 
 
@@ -144,67 +144,13 @@ def declaration(n: int, **overrides) -> DeclarationRow:
     return DeclarationRow(**fields)
 
 
-def exception(n: int, type: str = "MISSING_ATTESTATION", **overrides) -> ExceptionItem:
-    """One item raised against repair line ``45000000{n}-10``."""
-    document = f"45000000{n:02d}"
-    fields = dict(
-        id=f"EX-{type}-{document}-10",
-        type=type,
-        severity="warning",
-        material_id=f"80000000{n:02d}",
-        description=f"Pump seal {n}",
-        plant="1300",
-        purchasing_document=document,
-        item="10",
-        title="No condition declaration",
-        detail="No attestation for this material and plant within 30 days.",
-        raised_at=date(2026, 9, 1),
-    )
-    fields.update(overrides)
-    return ExceptionItem(**fields)
-
-
-def test_a_line_exception_says_whether_it_was_raised_before_go_live() -> None:
-    """28-Oct-2026: the register counts only what is to act on, so each line
-    exception carries the flag instead of the screen guessing from severity."""
-    from app.api.i8.mappers import line_exception
-
-    earlier = line_exception(exception(1, severity="info", pre_automation=True))
-    current = line_exception(exception(2, type="OVERDUE_REPAIR"))
-    assert earlier.model_dump(by_alias=True)["preAutomation"] is True
-    assert current.model_dump(by_alias=True)["preAutomation"] is False
-
-
-def stats_of(items: tuple[ExceptionItem, ...]) -> ExceptionStats:
-    """The counts the real build would have made over ``items``."""
-    by_type: dict[str, int] = {}
-    by_severity: dict[str, int] = {}
-    for item in items:
-        by_type[item.type] = by_type.get(item.type, 0) + 1
-        by_severity[item.severity] = by_severity.get(item.severity, 0) + 1
-    historical = sum(1 for item in items if item.pre_automation)
-    return ExceptionStats(
-        total=len(items),
-        by_type=by_type,
-        by_severity=by_severity,
-        lines_checked=40,
-        lines_covered=2,
-        attestation_window_days=30,
-        pre_automation=historical,
-        actionable=len(items) - historical,
-        acquisitions_checked=7,
-        justification_window_days=14,
-    )
-
-
 @pytest.fixture
 def factory():
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
-    # Only the history table: everything else these routes read comes from the
-    # view and the snapshot, which are replaced below.
-    ExceptionEvent.__table__.create(engine)
+    # No tables: everything these routes read comes from the view and the
+    # snapshot, which are replaced below.
     return sessionmaker(bind=engine)
 
 
@@ -216,7 +162,6 @@ def queues(factory):
     app = create_app()
     state = SimpleNamespace(
         declarations=(),
-        exceptions=(),
         lines=(),
         universe=(),
         stats=None,
@@ -232,17 +177,14 @@ def queues(factory):
     def _view():
         return SimpleNamespace(
             declarations=state.declarations,
-            exceptions=state.exceptions,
-            exception_stats=stats_of(state.exceptions),
             # No declaration covers any line here: the PO detail route reads
             # ``covered`` for the timeline's declaration stage.
             coverage=SimpleNamespace(window_days=30, covered={}),
             # What the register reads off the view: each line's queue row by
-            # its key, and its justification (none here).
+            # its key.
             declaration_by_line={
                 tuple(row.related_repair_id.rsplit("-", 1)): row for row in state.declarations
             },
-            justifications={},
         )
 
     def _snapshot():
@@ -394,353 +336,6 @@ class TestDeclarationMeta:
         assert meta["total"] == 1
 
 
-# --- The exception queue ---------------------------------------------------
-
-
-class TestExceptionSearch:
-    @pytest.fixture(autouse=True)
-    def rows(self, queues):
-        queues.exceptions = (
-            exception(1),
-            exception(2, description="Gearbox bearing"),
-            exception(3, type="OVERDUE_REPAIR"),
-        )
-
-    @pytest.mark.parametrize(
-        ("q", "expected"),
-        [
-            ("ex-overdue", ["EX-OVERDUE_REPAIR-4500000003-10"]),  # the item's id
-            ("8000000001", ["EX-MISSING_ATTESTATION-4500000001-10"]),  # material
-            ("gearbox", ["EX-MISSING_ATTESTATION-4500000002-10"]),  # description
-            ("4500000002-10", ["EX-MISSING_ATTESTATION-4500000002-10"]),  # repair line
-        ],
-    )
-    def test_searches_the_fields_the_screen_did(self, queues, q, expected) -> None:
-        body = queues.client.get(EXCEPTIONS, params={"q": q}).json()
-
-        assert ids(body) == expected
-        assert body["total"] == len(expected)
-
-
-class TestActionableOnly:
-    def test_leaves_out_what_predates_the_control_but_keeps_counting_it(self, queues) -> None:
-        queues.exceptions = (exception(1), exception(2, pre_automation=True))
-
-        body = queues.client.get(EXCEPTIONS, params={"actionableOnly": True}).json()
-
-        assert ids(body) == ["EX-MISSING_ATTESTATION-4500000001-10"]
-        # Both numbers stay in the meta: it describes the check, not the view.
-        assert body["meta"]["total"] == 2
-        assert body["meta"]["preAutomation"] == 1
-
-
-class TestPreAutomationOnly:
-    """28-Oct-2026: the queue's "Raised before go-live" view. Those items were
-    counted in the header but could not be seen anywhere."""
-
-    @pytest.fixture(autouse=True)
-    def rows(self, queues):
-        queues.exceptions = (
-            exception(1),
-            exception(2, pre_automation=True),
-            exception(3, type="UNJUSTIFIED_ACQUISITION", pre_automation=True),
-        )
-
-    def test_lists_only_what_predates_the_control(self, queues) -> None:
-        body = queues.client.get(EXCEPTIONS, params={"preAutomationOnly": "true"}).json()
-
-        assert ids(body) == [
-            "EX-MISSING_ATTESTATION-4500000002-10",
-            "EX-UNJUSTIFIED_ACQUISITION-4500000003-10",
-        ]
-        assert body["total"] == 2
-        # The tabs count what this view holds; the meta still describes the check.
-        assert body["typeCounts"] == {"MISSING_ATTESTATION": 1, "UNJUSTIFIED_ACQUISITION": 1}
-        assert body["meta"]["total"] == 3
-        assert (body["meta"]["preAutomation"], body["meta"]["actionable"]) == (2, 1)
-
-    def test_combines_with_the_type_tab(self, queues) -> None:
-        body = queues.client.get(
-            EXCEPTIONS, params={"preAutomationOnly": "true", "type": "UNJUSTIFIED_ACQUISITION"}
-        ).json()
-
-        assert ids(body) == ["EX-UNJUSTIFIED_ACQUISITION-4500000003-10"]
-
-    def test_off_by_default(self, queues) -> None:
-        assert queues.client.get(EXCEPTIONS).json()["total"] == 3
-
-
-class TestExcludeType:
-    @pytest.fixture(autouse=True)
-    def rows(self, queues):
-        queues.exceptions = (
-            exception(1),
-            exception(2, type="OVERDUE_REPAIR", severity="critical"),
-            exception(3, type="UNJUSTIFIED_ACQUISITION", plant="1500"),
-            exception(4, type="UNJUSTIFIED_ACQUISITION", pre_automation=True),
-        )
-
-    def test_takes_the_items_out_of_the_list(self, queues) -> None:
-        body = queues.client.get(EXCEPTIONS, params={"excludeType": "UNJUSTIFIED_ACQUISITION"}).json()
-
-        assert body["total"] == 2
-        assert {item["type"] for item in body["items"]} == {"MISSING_ATTESTATION", "OVERDUE_REPAIR"}
-
-    def test_takes_them_off_the_counts_too(self, queues) -> None:
-        meta = queues.client.get(EXCEPTIONS, params={"excludeType": "unjustified_acquisition"}).json()[
-            "meta"
-        ]
-
-        assert meta["total"] == 2
-        assert meta["byType"] == {"MISSING_ATTESTATION": 1, "OVERDUE_REPAIR": 1}
-        assert meta["bySeverity"] == {"warning": 1, "critical": 1}
-        # One of the two dropped was pre-automation: it comes off that count,
-        # and the other off the actionable one.
-        assert meta["preAutomation"] == 0
-        assert meta["actionable"] == 2
-        assert "UNJUSTIFIED_ACQUISITION" not in meta["typesRaised"]
-
-    def test_leaves_the_runs_own_measurements_alone(self, queues) -> None:
-        meta = queues.client.get(EXCEPTIONS, params={"excludeType": "UNJUSTIFIED_ACQUISITION"}).json()[
-            "meta"
-        ]
-
-        assert meta["linesChecked"] == 40
-        assert meta["linesCovered"] == 2
-        assert meta["acquisitionsChecked"] == 7
-
-    def test_takes_the_type_out_of_types_raised_even_with_none_raised(self, queues) -> None:
-        """The case live data is in today: the check runs and raises nothing."""
-        queues.exceptions = (exception(1),)
-
-        meta = queues.client.get(EXCEPTIONS, params={"excludeType": "UNJUSTIFIED_ACQUISITION"}).json()[
-            "meta"
-        ]
-
-        assert "UNJUSTIFIED_ACQUISITION" not in meta["typesRaised"]
-        assert "MISSING_ATTESTATION" in meta["typesRaised"]
-
-    def test_without_it_nothing_changes(self, queues) -> None:
-        body = queues.client.get(EXCEPTIONS).json()
-
-        assert body["total"] == 4
-        assert body["meta"]["total"] == 4
-        assert "UNJUSTIFIED_ACQUISITION" in body["meta"]["typesRaised"]
-
-    def test_does_not_resolve_the_excluded_items(self, queues, factory) -> None:
-        """Auto-resolution must still see them. An item somebody is working, of
-        a type this caller does not list, is still raised -- resolving it
-        because one screen looked away would close somebody else's work."""
-        excluded = queues.exceptions[2].id
-        with factory() as db:
-            assign(db, excluded, "priya", actor="tester")
-
-        queues.client.get(EXCEPTIONS, params={"excludeType": "UNJUSTIFIED_ACQUISITION"})
-
-        with factory() as db:
-            kinds = db.execute(
-                select(ExceptionEvent.kind).where(ExceptionEvent.exception_id == excluded)
-            ).scalars()
-            assert list(kinds) == ["ASSIGNED"]
-
-
-class TestExceptionFacets:
-    def test_list_every_plant_and_type_whatever_the_filters(self, queues) -> None:
-        queues.exceptions = (
-            exception(1),
-            exception(2, type="OVERDUE_REPAIR", plant="1500"),
-            exception(3, type="UNJUSTIFIED_ACQUISITION", plant="1600"),
-        )
-
-        body = queues.client.get(
-            EXCEPTIONS,
-            params={
-                "plant": "1300",
-                "type": "MISSING_ATTESTATION",
-                "status": "OPEN",
-                "q": "pump",
-                "excludeType": "UNJUSTIFIED_ACQUISITION",
-            },
-        ).json()
-
-        assert body["total"] == 1
-        # 1600 is only on the excluded type, so it is not offered.
-        assert [p["plantId"] for p in body["facets"]["plants"]] == ["1300", "1500"]
-        assert body["facets"]["plants"][1]["name"] == "Gamsberg"
-        assert body["facets"]["types"] == ["MISSING_ATTESTATION", "OVERDUE_REPAIR"]
-
-
-# --- One exception, by id --------------------------------------------------
-
-
-class TestOneException:
-    def test_answers_with_the_item_and_its_state(self, queues, factory) -> None:
-        queues.exceptions = (exception(1), exception(2))
-        wanted = queues.exceptions[1].id
-        with factory() as db:
-            set_status(db, wanted, "CLOSED", actor="tester", note="Not a real gap.")
-
-        response = queues.client.get(f"{EXCEPTIONS}/{wanted}")
-
-        assert response.status_code == 200
-        body = response.json()
-        assert body["id"] == wanted
-        assert body["status"] == "CLOSED"
-        assert body["stillDetected"] is True
-        assert body["repairLine"]["documentNumber"] == "4500000002"
-
-    def test_an_item_no_longer_raised_answers_from_its_history(self, queues, factory) -> None:
-        gone = "EX-MISSING_ATTESTATION-4500000099-10"
-        with factory() as db:
-            assign(db, gone, "priya", actor="tester")
-
-        body = queues.client.get(f"{EXCEPTIONS}/{gone}").json()
-
-        assert body["stillDetected"] is False
-        assert body["owner"] == "priya"
-
-    def test_an_id_nothing_raised_or_touched_is_404(self, queues) -> None:
-        queues.exceptions = (exception(1),)
-
-        response = queues.client.get(f"{EXCEPTIONS}/EX-MISSING_ATTESTATION-1-1")
-
-        assert response.status_code == 404
-
-    def test_is_read_only(self, queues, factory) -> None:
-        """Unlike the listing it does not auto-resolve: a lookup writes nothing."""
-        gone = "EX-MISSING_ATTESTATION-4500000099-10"
-        with factory() as db:
-            assign(db, gone, "priya", actor="tester")
-
-        queues.client.get(f"{EXCEPTIONS}/{gone}")
-
-        with factory() as db:
-            kinds = db.execute(
-                select(ExceptionEvent.kind).where(ExceptionEvent.exception_id == gone)
-            ).scalars()
-            assert list(kinds) == ["ASSIGNED"]
-
-
-# --- Two statuses, OPEN and CLOSED (21-Oct-2026) -----------------------------
-
-
-def legacy_entry(exception_id: str, kind: str, status: str) -> ExceptionEvent:
-    """A history row as written before IN_PROGRESS and RESOLVED were retired."""
-    return ExceptionEvent(exception_id=exception_id, kind=kind, status=status, actor="system")
-
-
-class TestTwoStatuses:
-    def test_closing_without_a_note_is_refused(self, queues) -> None:
-        queues.exceptions = (exception(1),)
-        wanted = queues.exceptions[0].id
-
-        response = queues.client.post(
-            f"{EXCEPTIONS}/{wanted}/events", json={"kind": "STATUS", "status": "CLOSED"}
-        )
-
-        assert response.status_code == 422
-        assert "note" in response.json()["detail"]
-
-    def test_closing_with_a_note_closes_it(self, queues) -> None:
-        queues.exceptions = (exception(1),)
-        wanted = queues.exceptions[0].id
-
-        response = queues.client.post(
-            f"{EXCEPTIONS}/{wanted}/events",
-            json={"kind": "STATUS", "status": "CLOSED", "text": "Pre-dates the control."},
-        )
-
-        assert response.status_code == 201
-        assert response.json()["status"] == "CLOSED"
-
-    @pytest.mark.parametrize("retired", ["IN_PROGRESS", "RESOLVED"])
-    def test_a_retired_status_cannot_be_written(self, queues, retired) -> None:
-        queues.exceptions = (exception(1),)
-        wanted = queues.exceptions[0].id
-
-        response = queues.client.post(
-            f"{EXCEPTIONS}/{wanted}/events",
-            json={"kind": "STATUS", "status": retired, "text": "Old screen."},
-        )
-
-        assert response.status_code == 422
-
-    def test_old_history_is_served_in_the_two_statuses(self, queues, factory) -> None:
-        """Rows are never rewritten, so the old words are still stored. The
-        item and every entry in its history must still answer OPEN or CLOSED,
-        or the response would not validate."""
-        queues.exceptions = (exception(1), exception(2))
-        in_progress, resolved = (item.id for item in queues.exceptions)
-        with factory() as db:
-            db.add(legacy_entry(in_progress, "STATUS", "IN_PROGRESS"))
-            db.add(legacy_entry(resolved, "STATUS", "RESOLVED"))
-            db.commit()
-
-        first = queues.client.get(f"{EXCEPTIONS}/{in_progress}").json()
-        second = queues.client.get(f"{EXCEPTIONS}/{resolved}").json()
-
-        assert first["status"] == "OPEN"
-        assert first["history"][0]["status"] == "OPEN"
-        assert second["status"] == "CLOSED"
-        assert second["history"][0]["status"] == "CLOSED"
-
-    def test_an_old_status_filter_still_finds_its_items(self, queues, factory) -> None:
-        # A bookmark from before the change: ?status=RESOLVED means CLOSED now.
-        queues.exceptions = (exception(1), exception(2))
-        closed = queues.exceptions[1].id
-        with factory() as db:
-            set_status(db, closed, "CLOSED", actor="tester", note="Not a real gap.")
-
-        assert ids(queues.client.get(EXCEPTIONS, params={"status": "RESOLVED"}).json()) == [closed]
-        assert ids(queues.client.get(EXCEPTIONS, params={"status": "CLOSED"}).json()) == [closed]
-
-    def test_an_item_the_check_drops_is_closed_by_the_system(self, queues, factory) -> None:
-        gone = "EX-MISSING_ATTESTATION-4500000099-10"
-        with factory() as db:
-            assign(db, gone, "priya", actor="tester")
-        queues.exceptions = (exception(1),)
-
-        queues.client.get(EXCEPTIONS)
-
-        body = queues.client.get(f"{EXCEPTIONS}/{gone}").json()
-        assert body["status"] == "CLOSED"
-        assert body["history"][-1]["kind"] == "AUTO_RESOLVED"
-        assert body["history"][-1]["actor"] == "system"
-
-
-class TestTypeCounts:
-    """The Exceptions screen's type tabs: how many items each would list."""
-
-    def test_counted_after_every_filter_but_the_type(self, queues, factory) -> None:
-        queues.exceptions = (
-            exception(1),
-            exception(2),
-            exception(3, type="OVERDUE_REPAIR", severity="critical"),
-            exception(4, type="OVERDUE_REPAIR", severity="critical", plant="1500"),
-        )
-        with factory() as db:
-            set_status(db, queues.exceptions[1].id, "CLOSED", actor="tester", note="Handled.")
-
-        body = queues.client.get(
-            EXCEPTIONS, params={"status": "OPEN", "plant": "1300", "type": "OVERDUE_REPAIR"}
-        ).json()
-
-        # The type narrows the list, not the counts; status and plant do both.
-        assert ids(body) == ["EX-OVERDUE_REPAIR-4500000003-10"]
-        assert body["typeCounts"] == {"MISSING_ATTESTATION": 1, "OVERDUE_REPAIR": 1}
-
-    def test_meta_still_describes_the_whole_check(self, queues, factory) -> None:
-        """typeCounts follow the filters; meta.byType does not, on purpose."""
-        queues.exceptions = (exception(1), exception(2))
-        with factory() as db:
-            set_status(db, queues.exceptions[0].id, "CLOSED", actor="tester", note="Handled.")
-
-        body = queues.client.get(EXCEPTIONS, params={"status": "OPEN"}).json()
-
-        assert body["typeCounts"] == {"MISSING_ATTESTATION": 1}
-        assert body["meta"]["byType"] == {"MISSING_ATTESTATION": 2}
-
-
 # --- The register ------------------------------------------------------------
 
 
@@ -816,14 +411,29 @@ class TestRegisterFilters:
         assert ids(listing(queues, declarationStatus="Completed")) == ["4500000001-10"]
         assert ids(listing(queues, declarationStatus="required")) == ["4500000003-10"]
 
-    def test_with_exceptions_does_not_count_an_excluded_type(self, queues) -> None:
-        queues.lines = (repair_line(1), repair_line(2), repair_line(3))
-        queues.exceptions = (exception(1), exception(2, type="UNJUSTIFIED_ACQUISITION"))
+    def test_department_is_the_code_of_the_repair_pr_on_both_kinds_of_row(self, queues) -> None:
+        """3-Nov-2026, for the Overview's Department filter: its links must open
+        the same slice."""
+        queues.lines = (repair_line(1, pr_department="10305"), repair_line(2, pr_department="10316"))
+        serve_requests(queues, repair_request(1, department="10305"))
 
-        assert ids(
-            listing(queues, withExceptions=True, excludeExceptionType="UNJUSTIFIED_ACQUISITION")
-        ) == ["4500000001-10"]
-        assert ids(listing(queues, withExceptions=True)) == ["4500000001-10", "4500000002-10"]
+        assert ids(listing(queues, department="10305")) == ["4500000001-10", "PR-2000029101-10"]
+        assert ids(listing(queues, department="99999")) == []
+
+    def test_late_aging_bands_the_days_past_the_expected_return(self, queues) -> None:
+        """3-Nov-2026: the Overview's "days past expected return" row. A line
+        not yet due, or with no date, is in no band; a PR has no date at all."""
+        queues.lines = (
+            repair_line(1, days_remaining=-20),
+            repair_line(2, days_remaining=-90),
+            repair_line(3, days_remaining=5),
+            repair_line(4, days_remaining=None, due_date=None),
+        )
+        serve_requests(queues, repair_request(1))
+
+        assert ids(listing(queues, lateAgingBucket="16-30")) == ["4500000001-10"]
+        assert ids(listing(queues, lateAgingBucket="60+")) == ["4500000002-10"]
+        assert ids(listing(queues, lateAgingBucket="0-15")) == []
 
     def test_pages_count_every_match_not_the_page(self, queues) -> None:
         queues.lines = tuple(repair_line(n) for n in range(1, 8))
@@ -835,8 +445,9 @@ class TestRegisterFilters:
 
 
 class TestQuickViews:
-    """The register screen's preset buttons: Overdue, Not declared, At vendor
-    and With exceptions, each showing how many lines it would list."""
+    """The register screen's preset buttons: Overdue, Not declared and At
+    vendor, each showing how many lines it would list. (With exceptions went
+    with the exception queue on 3-Nov-2026.)"""
 
     def test_each_view_is_counted_over_the_filtered_lines(self, queues) -> None:
         queues.lines = (
@@ -846,7 +457,6 @@ class TestQuickViews:
             repair_line(4, plant="1500"),
         )
         queues.declarations = (declaration(3, status="Completed"),)
-        queues.exceptions = (exception(1),)
 
         body = listing(queues, plant="1300")
 
@@ -855,7 +465,6 @@ class TestQuickViews:
             "overdue": 2,
             "undeclared": 2,
             "atVendor": 1,
-            "withExceptions": 1,
             # Repair PRs with no PO yet: none served while the switch is off.
             "notOrdered": 0,
         }
@@ -889,6 +498,8 @@ class TestQuickViews:
         queues.lines = (repair_line(1),)
 
         assert queues.client.get(REGISTER, params={"view": "everything"}).status_code == 422
+        # Gone with the exception queue (3-Nov-2026).
+        assert queues.client.get(REGISTER, params={"view": "withExceptions"}).status_code == 422
 
 
 class TestStageAging:
@@ -902,39 +513,6 @@ class TestStageAging:
 
         assert ids(listing(queues, stageAgingBucket="0-15")) == ["4500000001-10"]
         assert ids(listing(queues, stageAgingBucket="60+")) == ["4500000002-10"]
-
-
-class TestLineExceptions:
-    def test_each_row_carries_its_own_less_the_excluded_types(self, queues) -> None:
-        queues.lines = (repair_line(1), repair_line(2))
-        queues.exceptions = (
-            exception(1),
-            exception(1, type="OVERDUE_REPAIR", severity="critical"),
-            exception(1, type="UNJUSTIFIED_ACQUISITION"),
-        )
-
-        rows = {
-            item["id"]: item
-            for item in listing(queues, excludeExceptionType="UNJUSTIFIED_ACQUISITION")["items"]
-        }
-
-        assert rows["4500000001-10"]["exceptions"] == [
-            {
-                "id": "EX-MISSING_ATTESTATION-4500000001-10",
-                "type": "MISSING_ATTESTATION",
-                "severity": "warning",
-                "preAutomation": False,
-            },
-            {
-                "id": "EX-OVERDUE_REPAIR-4500000001-10",
-                "type": "OVERDUE_REPAIR",
-                "severity": "critical",
-                "preAutomation": False,
-            },
-        ]
-        # Checked and clean is an empty list. Null would mean "not computed",
-        # which the screen shows as "Not checked" -- a different claim.
-        assert rows["4500000002-10"]["exceptions"] == []
 
 
 class TestOpenLinesOnly:
@@ -993,6 +571,20 @@ class TestRegisterFacets:
         assert facets["repairStatuses"] == ["At Vendor", "PO Issued"]
         assert facets["criticalities"] == ["CRITICAL"]
         assert facets["hasUnrated"] is True
+        # No line names its repair PR's department here.
+        assert facets["departments"] == []
+
+    def test_departments_are_offered_by_code_with_their_names(self, queues, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "app.assistant.departments.name_for",
+            lambda code: {"10305": "Engineering"}.get(code or ""),
+        )
+        queues.lines = (repair_line(1, pr_department="10316"), repair_line(2, pr_department="10305"))
+
+        assert listing(queues, department="10305")["facets"]["departments"] == [
+            {"value": "10305", "name": "Engineering"},
+            {"value": "10316", "name": None},
+        ]
 
 
 # --- Repair PRs with no PO yet (27-Oct-2026) --------------------------------
@@ -1127,8 +719,7 @@ class TestRepairRequestRows:
         assert row["criticality"] == "CRITICAL"
         assert Decimal(row["stockOnHand"]) == 3
         assert Decimal(row["reorderPoint"]) == 1
-        # No check reads a PR row: checked and clean, not "not checked".
-        assert row["exceptions"] == []
+        assert "exceptions" not in row
 
     def test_an_unknown_department_is_its_code_alone(self, queues, monkeypatch) -> None:
         monkeypatch.setattr("app.assistant.departments.name_for", lambda code: None)
@@ -1229,11 +820,6 @@ class TestRepairRequestFilters:
             "4500000002-10",
         ]
 
-    def test_no_check_raises_anything_on_a_pr_row(self, queues) -> None:
-        queues.exceptions = (exception(1),)
-
-        assert ids(listing(queues, withExceptions=True)) == ["4500000001-10"]
-
     def test_criticality(self, queues) -> None:
         queues.universe = (rating("8000000002", "1500", "CRITICAL"),)
 
@@ -1261,7 +847,6 @@ class TestNotOrderedView:
         """27-Oct-2026: a PR row can be declared on, so an undeclared one
         counts as undeclared too."""
         queues.lines = (repair_line(1), repair_line(2, overdue_status="OVERDUE"))
-        queues.exceptions = (exception(1),)
         serve_requests(queues, repair_request(1), repair_request(2))
 
         assert listing(queues)["viewCounts"] == {
@@ -1269,7 +854,6 @@ class TestNotOrderedView:
             "overdue": 1,
             "undeclared": 4,
             "atVendor": 2,
-            "withExceptions": 1,
             "notOrdered": 2,
         }
 
@@ -1281,7 +865,6 @@ class TestNotOrderedView:
         assert ids(listing(queues, view="undeclared")) == ["4500000001-10", "PR-2000029101-10"]
         assert ids(listing(queues, view="atVendor")) == ["4500000001-10"]
         assert listing(queues, view="overdue")["total"] == 0
-        assert listing(queues, view="withExceptions")["total"] == 0
 
     def test_counts_after_the_filters(self, queues) -> None:
         serve_requests(queues, repair_request(1), repair_request(2, plant="1500"))
@@ -1303,14 +886,13 @@ class TestRepairRequestDetail:
         body = response.json()
         assert body["line"]["id"] == "PR-2000029101-10"
         assert body["line"]["lineKind"] == "PR"
-        assert body["line"]["exceptions"] is None
         assert [(s["stage"], s["label"], s["occurredAt"]) for s in body["timeline"]] == [
-            ("pr_raised", "Repair requested", "2026-09-01"),
+            ("pr_raised", "PR raised", "2026-09-01"),
             ("attested", "Condition declared", None),
             ("po_raised", "Repair PO raised", None),
         ]
         assert body["timeline"][0]["evidence"] == (
-            "Repair PR 2000029101/10, requested by department 10305 (Engineering)."
+            "Repair PR 2000029101/10, raised by department 10305 (Engineering)."
         )
         assert body["timeline"][0]["daysSince"] == 47
         assert body["timeline"][1]["evidence"] == "Not declared yet."
@@ -1324,7 +906,7 @@ class TestRepairRequestDetail:
         second = queues.client.get(f"{REGISTER}/PR-2000029102/10").json()
 
         assert first["timeline"][0]["evidence"] == (
-            "Repair PR 2000029101/10, requested by department 10305."
+            "Repair PR 2000029101/10, raised by department 10305."
         )
         assert second["timeline"][0]["evidence"] == "Repair PR 2000029102/10."
 
@@ -1356,144 +938,15 @@ class TestRepairLineDetail:
 
         assert response.status_code == 200
         timeline = response.json()["timeline"]
-        # The repair starts at its request since 27-Oct-2026.
+        # The repair starts at its PR since 27-Oct-2026.
         assert [(s["stage"], s["label"]) for s in timeline] == [
-            ("pr_raised", "Repair requested"),
+            ("pr_raised", "PR raised"),
             ("attested", "Condition declared"),
             ("po_raised", "Repair PO raised"),
             ("dispatched", "Sent to vendor"),
             ("at_vendor", "At vendor"),
         ]
         assert not any("machine" in s["evidence"] for s in timeline)
-
-
-ATTESTATIONS = "/api/i8/attestations"
-
-
-def declaration_body(**overrides) -> dict:
-    body = {
-        "materialId": "8000000001",
-        "plant": "1300",
-        "quantity": "1",
-        "conditionDescription": "Bearing noise",
-        "faultCategory": "BEARING_FAILURE",
-        "recommendation": "REPAIRABLE",
-    }
-    body.update(overrides)
-    return body
-
-
-class TestDeclarationBindingRules:
-    """POST /attestations binds to a repair PO line or (27-Oct-2026) an open
-    repair PR, and refuses a binding that is not open, is for another part, or
-    already has a current declaration."""
-
-    @pytest.fixture
-    def declares(self, queues, factory):
-        from app.initiatives.i8.models import RepairAttestation
-
-        RepairAttestation.__table__.create(factory.kw["bind"])
-        queues.universe = (SimpleNamespace(material_id="8000000001"),)
-        queues.lines = (repair_line(1),)
-        return queues
-
-    def _post(self, queues, **overrides):
-        return queues.client.post(ATTESTATIONS, json=declaration_body(**overrides))
-
-    def test_a_po_line_binds_with_its_type_and_typed_name(self, declares) -> None:
-        response = self._post(
-            declares, repairDocument="4500000001", repairItem="00010", attestorName=" A. Rao "
-        )
-
-        assert response.status_code == 201, response.text
-        body = response.json()
-        assert (body["repairDocument"], body["repairItem"]) == ("4500000001", "10")
-        assert body["repairDocumentType"] == "PO"
-        assert body["attestorName"] == "A. Rao"
-        assert body["sessionId"] is None
-
-    def test_an_open_repair_pr_binds_by_its_own_key_or_row_id(self, declares) -> None:
-        serve_requests(declares, repair_request(1))
-
-        response = self._post(
-            declares, repairDocument="PR-2000029101", repairItem="00010"
-        )
-
-        assert response.status_code == 201, response.text
-        body = response.json()
-        assert (body["repairDocument"], body["repairItem"]) == ("2000029101", "10")
-        assert body["repairDocumentType"] == "PR"
-
-    def test_a_pr_is_not_open_in_the_register_while_pr_rows_are_off(self, declares) -> None:
-        declares.requests = (repair_request(1),)
-
-        response = self._post(
-            declares, repairDocument="2000029101", repairItem="10", repairDocumentType="PR"
-        )
-
-        assert response.status_code == 422
-        assert response.json()["detail"] == "That repair line is not open in the register."
-
-    def test_an_unknown_po_line_is_not_open(self, declares) -> None:
-        response = self._post(declares, repairDocument="4500009999", repairItem="10")
-
-        assert response.status_code == 422
-        assert response.json()["detail"] == "That repair line is not open in the register."
-
-    def test_a_declaration_for_another_part_is_refused(self, declares) -> None:
-        response = self._post(
-            declares, materialId="8000000002", repairDocument="4500000001", repairItem="10"
-        )
-
-        assert response.status_code == 422
-        assert response.json()["detail"] == (
-            "This declaration is for 8000000002 at 1300, but that repair line is "
-            "for 8000000001 at 1300."
-        )
-
-    def test_a_second_declaration_on_a_line_must_amend_the_first(self, declares) -> None:
-        first = self._post(declares, repairDocument="4500000001", repairItem="10").json()
-
-        second = self._post(declares, repairDocument="4500000001", repairItem="10")
-        assert second.status_code == 422
-        assert second.json()["detail"] == (
-            f"This line already has declaration {first['id']}. Amend it instead."
-        )
-
-        no_reason = self._post(
-            declares, repairDocument="4500000001", repairItem="10", supersedes=first["id"]
-        )
-        assert no_reason.status_code == 422
-        assert no_reason.json()["detail"] == "Say why this declaration is being amended."
-
-        amended = self._post(
-            declares,
-            repairDocument="4500000001",
-            repairItem="10",
-            supersedes=first["id"],
-            amendmentReason="Casing cracked on strip-down.",
-            recommendation="SCRAP",
-        )
-        assert amended.status_code == 201, amended.text
-        assert amended.json()["amendmentReason"] == "Casing cracked on strip-down."
-
-    def test_an_unbound_amendment_inherits_the_line_and_its_type(self, declares) -> None:
-        serve_requests(declares, repair_request(1))
-        first = self._post(
-            declares, repairDocument="2000029101", repairItem="10", repairDocumentType="PR"
-        ).json()
-
-        amended = self._post(declares, supersedes=first["id"], amendmentReason="Re-checked.")
-
-        assert amended.status_code == 201, amended.text
-        body = amended.json()
-        assert (body["repairDocument"], body["repairDocumentType"]) == ("2000029101", "PR")
-
-    def test_the_body_cannot_set_the_session(self, declares) -> None:
-        response = self._post(declares, sessionId="S-123")
-
-        assert response.status_code == 201, response.text
-        assert response.json()["sessionId"] is None
 
 
 class TestRepairableUnitRoute:
@@ -1579,70 +1032,6 @@ class TestRepairableUnitRoute:
         assert body["damagedStock"] == "2"
         assert body["stockConditionKnown"] is True
         assert body["stockSource"] == "MCHB"
-
-
-# --- Bought new while a repair was open: PRs on both sides (27-Oct-2026) ------
-
-
-def bought_new(n: int, *, repair_type: str, acquisition_type: str = "PR", **overrides) -> ExceptionItem:
-    """An UNJUSTIFIED_ACQUISITION whose repair is PR ``20000291{n}/10`` (no PO
-    yet) or PO line ``45000000{n}-10``, bought on new-buy PR ``10002012{n}/10``."""
-    repair_document = f"20000291{n:02d}" if repair_type == "PR" else f"45000000{n:02d}"
-    purchase = f"10002012{n:02d}" if acquisition_type == "PR" else f"41001000{n:02d}"
-    prefix = "PR-" if acquisition_type == "PR" else ""
-    return exception(
-        n,
-        type="UNJUSTIFIED_ACQUISITION",
-        id=f"EX-UNJUSTIFIED_ACQUISITION-{prefix}{purchase}-10",
-        purchasing_document=repair_document,
-        acquisition_document=purchase,
-        acquisition_item="10",
-        repair_document_type=repair_type,
-        acquisition_document_type=acquisition_type,
-        **overrides,
-    )
-
-
-class TestBoughtNewOnPurchaseRequests:
-    def test_the_wire_names_each_document_by_its_kind(self, queues) -> None:
-        queues.exceptions = (bought_new(1, repair_type="PR"), bought_new(2, repair_type="PO", acquisition_type="PO"))
-
-        items = {i["id"]: i for i in queues.client.get(EXCEPTIONS).json()["items"]}
-
-        on_pr = items["EX-UNJUSTIFIED_ACQUISITION-PR-1000201201-10"]
-        # The repair PR's number is bare: the frontend builds 'PR-{BANFN}-{BNFPO}'.
-        assert on_pr["repairLine"] == {"type": "PR", "documentNumber": "2000029101", "line": "10"}
-        assert on_pr["acquisitionLine"] == {"type": "PR", "documentNumber": "1000201201", "line": "10"}
-        on_po = items["EX-UNJUSTIFIED_ACQUISITION-4100100002-10"]
-        assert on_po["repairLine"] == {"type": "PO", "documentNumber": "4500000002", "line": "10"}
-        assert on_po["acquisitionLine"] == {"type": "PO", "documentNumber": "4100100002", "line": "10"}
-
-    def test_the_repair_filter_takes_the_pr_row_id(self, queues) -> None:
-        queues.exceptions = (bought_new(1, repair_type="PR"), exception(2))
-
-        def found(repair: str) -> list[str]:
-            return ids(queues.client.get(EXCEPTIONS, params={"repair": repair}).json())
-
-        assert found("PR-2000029101-10") == ["EX-UNJUSTIFIED_ACQUISITION-PR-1000201201-10"]
-        assert found("PR-2000029101") == ["EX-UNJUSTIFIED_ACQUISITION-PR-1000201201-10"]
-        # The bare number is a PO line's form: it never finds the PR's finding.
-        assert found("2000029101-10") == []
-        assert found("4500000002-10") == ["EX-MISSING_ATTESTATION-4500000002-10"]
-        assert found("4500000002") == ["EX-MISSING_ATTESTATION-4500000002-10"]
-
-    def test_search_finds_the_pr_repair_as_its_row_is_named(self, queues) -> None:
-        queues.exceptions = (bought_new(1, repair_type="PR"), exception(2))
-
-        body = queues.client.get(EXCEPTIONS, params={"q": "pr-2000029101-10"}).json()
-
-        assert ids(body) == ["EX-UNJUSTIFIED_ACQUISITION-PR-1000201201-10"]
-
-    def test_a_pr_repairs_finding_never_lands_on_a_po_line_sharing_its_number(self, queues) -> None:
-        # A PO line numbered like the repair PR: the finding is about the PR.
-        queues.lines = (repair_line(1, purchasing_document="2000029101"), repair_line(2))
-        queues.exceptions = (bought_new(1, repair_type="PR"), bought_new(2, repair_type="PO"))
-
-        assert ids(listing(queues, withExceptions=True)) == ["4500000002-10"]
 
 
 class TestDeclarationsOnTheRegister:

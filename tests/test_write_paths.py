@@ -62,18 +62,8 @@ def openapi() -> dict:
 #: SAP, and none of them can: see test_nothing_imports_the_sap_client.
 EXPECTED_WRITES: dict[tuple[str, str], str] = {
     # --- Initiative 08 -----------------------------------------------------
-    ("/api/i8/attestations", "post"): (
-        "W5.3 condition-to-repair attestation -> i8_attestation. Append-only, "
-        "trigger-enforced; an amendment is a new row with supersedes set."
-    ),
-    ("/api/i8/exceptions/{exception_id}/events", "post"): (
-        "FR-11 exception workflow -> i8_exception_event. Appends one entry to "
-        "an item's history (assigned, commented, status moved). The item "
-        "itself is recomputed from SAP data and is not stored, and its status "
-        "and owner are FOLDED from this log rather than held in a column -- "
-        "which is why assigning, commenting and moving are one POST and there "
-        "is no PATCH."
-    ),
+    # None since 3-Nov-2026: a declaration is recorded by the assistant's turn
+    # route (below), and the exception queue with its event route was removed.
     # --- Shared notifications ----------------------------------------------
     ("/api/notifications/read-all", "post"): (
         "Marks the caller's own in-app notifications as read -> notification "

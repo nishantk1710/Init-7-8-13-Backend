@@ -11,18 +11,16 @@ assessment, and the platform has no way to tell a considered decision from a
 reflex.
 
 **We cannot enforce this.** The platform never writes to SAP, so it cannot block
-a dispatch. What it can do is two things: record the attestation when somebody
-makes one -- this module -- and detect its absence, which is
-:mod:`app.initiatives.i8.exceptions`. The second half is where the value is,
-because it makes the gap visible.
+a dispatch. What it can do is record the attestation when somebody makes one --
+this module -- and show its absence: the register's Declaration column reads
+"Required" for a line nobody declared.
 
-The write path, and why it is the only one
--------------------------------------------
-This is **the first thing I08 writes**. W5.1 and W5.2 are read models, and there
-is a contract test asserting the module exposes nothing but ``GET``. That test
-has been changed rather than deleted -- from "nothing writes" to "only
-attestations write, and only to our own table, never to SAP". The distinction is
-the whole guarantee, so it is asserted rather than described.
+Who writes
+----------
+Since 3-Nov-2026 only the reservation assistant records a declaration
+(``app.assistant.turns``), in the visit that removes the faulty unit. The I08
+screens and their ``POST /api/i8/attestations`` no longer do. Nothing here ever
+writes to SAP.
 
 Immutability
 ------------
@@ -119,9 +117,10 @@ class AttestationDraft:
     repair_item: str | None = None
     """EKPO.EBELP of that line. Both or neither; half a key matches nothing."""
     attestor_name: str | None = None
-    """The name the person typed (27-Oct-2026). Not a sign-in: until Entra is
-    wired the server-set ``attestor`` is a placeholder, and an audit record
-    should at least say who claimed to make it."""
+    """Who declared, as a name a person reads. Typed into the form from
+    27-Oct-2026; since 3-Nov-2026 the signed-in requester's name, filled by the
+    assistant (``turns.answer``'s ``actor_name``). ``attestor`` beside it is
+    the server-set identity."""
     amendment_reason: str | None = None
     """Why an amendment replaces its original. Required with ``supersedes``:
     a correction with no reason reads as a quiet rewrite of the record."""
@@ -191,11 +190,10 @@ def validate(
             "in place"
         )
 
+    # Empty since 3-Nov-2026: the assistant's form no longer asks for a
+    # description (the fault category says what is wrong). Kept as a column
+    # for the declarations recorded before then.
     description = (draft.condition_description or "").strip()
-    if not description:
-        raise AttestationError(
-            "conditionDescription is required -- it is the part a human reads"
-        )
 
     fault_category = (draft.fault_category or "").strip().upper()
     if fault_category not in cfg.fault_category_list:
@@ -493,105 +491,6 @@ def _within_window(
         return True
     attested_on = attested_at.date()
     return raised_at - window <= attested_on <= raised_at + window
-
-
-def explain_coverage(
-    attestation: RepairAttestation,
-    lines,
-    cfg: I8Settings | None = None,
-) -> tuple[list[str], str]:
-    """Which repair lines one attestation covers, and a sentence saying why.
-
-    Answers the question a person asks immediately after submitting a form:
-    *did that do anything?* It lives here, beside :func:`coverage`, because it
-    must apply the SAME window rule -- an explanation derived from a second
-    implementation of the rule would eventually contradict the queue it is
-    explaining.
-
-    Returns ``(line ids, note)``. The note is written to be read by a user.
-    """
-    cfg = cfg or get_i8_settings()
-    window = timedelta(days=cfg.attestation_window_days)
-
-    # Named a line outright: nothing to infer and nothing to explain away.
-    if attestation.repair_document and attestation.repair_item:
-        key = (attestation.repair_document, attestation.repair_item)
-        named = [line for line in lines if line.key == key]
-        line_id = f"{attestation.repair_document}-{attestation.repair_item}"
-        if named:
-            return (
-                [line_id],
-                f"Recorded against repair line {line_id}. That line now reads "
-                "as declared, whatever its dates -- the declaration names it, "
-                "so no matching rule was needed.",
-            )
-        # The id was supplied and no such line is in scope. Said plainly: the
-        # record is kept and binds nothing, which is a different outcome from
-        # a declaration that simply missed a window.
-        return (
-            [],
-            f"Recorded, but no repair line {line_id} is in scope, so it covers "
-            "nothing. The declaration is kept and will cover that line if it "
-            "appears.",
-        )
-
-    same_part = [
-        line
-        for line in lines
-        if line.material_id == attestation.material_id
-        and line.plant == attestation.plant
-    ]
-    covered = [
-        line
-        for line in same_part
-        if _within_window(attestation.attested_at, line.raised_at, window)
-    ]
-
-    if covered:
-        return (
-            [f"{line.purchasing_document}-{line.item}" for line in covered],
-            (
-                f"Recorded, and it covers {len(covered)} repair "
-                f"line{'s' if len(covered) != 1 else ''} for "
-                f"{attestation.material_id} at plant {attestation.plant}."
-            ),
-        )
-
-    if not same_part:
-        return (
-            [],
-            (
-                f"Recorded. No repair line exists for {attestation.material_id} "
-                f"at plant {attestation.plant}, so it covers nothing yet -- "
-                "which is the normal case for a part assessed before it is "
-                "sent anywhere."
-            ),
-        )
-
-    # The trap. The part HAS repair lines; they are all outside the window.
-    dates = [line.raised_at for line in same_part if line.raised_at]
-    nearest = max(dates) if dates else None
-    gap = (
-        abs((attestation.attested_at.date() - nearest).days)
-        if nearest is not None
-        else None
-    )
-    return (
-        [],
-        (
-            f"Recorded, but it covers none of the {len(same_part)} repair "
-            f"line{'s' if len(same_part) != 1 else ''} for this part. The most "
-            f"recent was raised {nearest.isoformat() if nearest else 'unknown'}"
-            + (f", {gap} days from this assessment" if gap is not None else "")
-            + f" -- outside the {cfg.attestation_window_days}-day matching "
-            "window, which is how an unbound declaration is matched to a part "
-            "assessed at about the same time. The repair lines here were "
-            "raised long before today, so a new assessment does not "
-            "retrospectively cover them. To declare one of those lines, open "
-            "it and declare from the line itself -- that records the line on "
-            "the declaration and needs no window at all."
-        ),
-    )
 
 
 def coverage(

@@ -1,20 +1,20 @@
-"""FR-8 -- a new unit bought while a repair of the same part was still out.
+"""New purchases of 80-series units, and the justification each one follows.
 
-The duplicate spend Initiative 08 exists to stop, measured after the fact:
-somebody asked SAP to buy a brand-new repairable part at a plant where the
-same part was already away being repaired, or asked for its repair. FR-5 asks
-for a justification at the moment of the reservation; FR-8 flags the purchases
-that went ahead without one. This module finds the purchases and the repair
-each one overlapped. :func:`app.initiatives.i8.exceptions.unjustified_acquisitions`
-decides which of them lack a justification.
+FR-5 asks the assistant for a reason when a requester goes ahead with a new
+unit although a repairable one exists. This module finds the purchases SAP
+then raised, so the Justifications screen can show which purchase each reason
+answered (:func:`purchases_answered`).
+
+Until 3-Nov-2026 the same purchases also fed a bought-new exception (FR-8): a
+purchase made while a repair of the part was open, with no reason recorded.
+The exception queue was removed that day, and its overlap rules with it.
 
 The purchase is the new-buy PR (since 27-Oct-2026)
 --------------------------------------------------
 A new unit is bought through a stock purchase requisition: MRP raises it, or
-an inventory controller raises it by hand. So the check reads the PR, dated by
-its own PR date (EBAN.BADAT), and it can fire before any PO is placed. Until
-27-Oct it read PO lines dated by EKPO.ERDAT, which the live data does not
-carry -- so it was never checked at all (0 of 6,837 purchases).
+an inventory controller raises it by hand. So the PR is read, dated by its own
+PR date (EBAN.BADAT). Until 27-Oct PO lines were read, dated by EKPO.ERDAT,
+which the live data does not carry -- so no purchase was ever dated.
 
 * **A new-buy PR** is an 80-series PR item that is not deleted and is not a
   repair PR: no repair order's line names it, and the reservation it carries
@@ -37,25 +37,6 @@ purchase to the request it answers. A justification carries material, plant
 and date, and a purchase is answered by one for the same part at the same plant
 within the window: the same key the attestation check uses, and it is the rule,
 not a stand-in for an exact match.
-
-What "a repairable unit existed" means here
---------------------------------------------
-FR-6 has two limbs. Only one can be judged for a purchase in the past:
-
-* **An open repair** is -- for the repairs SAP still has open. Those are the
-  open repair PO lines in the register and, since 27-Oct-2026, the open repair
-  PRs with no PO yet (``requisitions.py``), counted whether or not the register
-  serves them. Each has been out since the day it was raised (a PR from its PR
-  date). A repair that was out when the purchase was made and has since been
-  closed in SAP is no longer there to match.
-* **Stock on hand** is not. Stock is a snapshot of today, so it cannot say what
-  was on the shelf the day a 2024 purchase was raised, and reading today's
-  stock into that date would accuse purchases on evidence that did not exist
-  when they were made.
-
-So a purchase is flagged only when a repair of the same material at the same
-plant was raised on or before it and is still open. That is narrower than
-FR-6, deliberately, and it is the case that is unambiguously duplicate spend.
 """
 
 from __future__ import annotations
@@ -65,14 +46,14 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.initiatives.i8.config import I8Settings, get_i8_settings
-from app.initiatives.i8.material_number import is_eighty_series, normalise, series_like_patterns
-from app.initiatives.i8.register import _HEADER_SQL, RepairLine, is_deleted_line, timed_step
-from app.initiatives.i8.requisitions import RepairRequest, is_requisition_deleted
+from app.initiatives.i8.material_number import is_eighty_series, series_like_patterns
+from app.initiatives.i8.register import _HEADER_SQL, is_deleted_line, timed_step
+from app.initiatives.i8.requisitions import is_requisition_deleted
 from app.initiatives.i8.staged import Sources, reading
 from app.shared.sql_lists import fetch_in_chunks, like_any
 
@@ -114,12 +95,6 @@ class NewAcquisition:
     tests construct this positionally."""
     requested_by: str | None = None
     """EBAN.AFNAM on a PR, as SAP sent it. None on a direct PO."""
-    line_created_on: date | None = None
-    """EKPO.ERDAT on a direct PO, None on a PR (29-Oct-2026). Only the check
-    with the complete flow switched off reads it: that is how the purchase was
-    dated before 27-Oct-2026, so it raises what was raised then -- nothing, on
-    data that does not carry ERDAT. Appended with a default, so a stored
-    snapshot without it reads as undated."""
 
     @property
     def key(self) -> tuple[str, str, str]:
@@ -134,61 +109,9 @@ class NewAcquisition:
         return document_reference(self.document_type, self.purchasing_document, self.item)
 
 
-@dataclass(frozen=True)
-class OpenRepair:
-    """A repair that is open in SAP, whichever document it is on so far: a
-    repair PO line from the register, or a repair PR with no PO yet. Built
-    while matching, never stored."""
-
-    document_type: str
-    document: str
-    item: str
-    material_id: str
-    plant: str | None
-    raised_at: date | None
-    """The PO line's raised date, or the PR date."""
-    due_date: date | None
-    """A PO line's promised return. A PR has none: nothing is ordered yet."""
-    description: str | None
-
-    @property
-    def key(self) -> tuple[str, str, str]:
-        return (self.document_type, self.document, self.item)
-
-    @property
-    def reference(self) -> str:
-        return document_reference(self.document_type, self.document, self.item)
-
-    @classmethod
-    def from_line(cls, line: RepairLine) -> OpenRepair:
-        return cls(
-            document_type=PURCHASE_ORDER,
-            document=line.purchasing_document,
-            item=line.item,
-            material_id=line.material_id,
-            plant=line.plant,
-            raised_at=line.raised_at,
-            due_date=line.due_date,
-            description=line.description,
-        )
-
-    @classmethod
-    def from_request(cls, request: RepairRequest) -> OpenRepair:
-        return cls(
-            document_type=PURCHASE_REQUISITION,
-            document=request.purchase_requisition,
-            item=request.item,
-            material_id=request.material_id,
-            plant=request.plant,
-            raised_at=request.requested_on,
-            due_date=None,
-            description=request.description,
-        )
-
-
 def document_reference(document_type: str, document: str, item: str) -> str:
-    """How a register row, a detail link and the exceptions ``repair`` filter
-    name a document line: ``PR-{BANFN}-{BNFPO}`` or ``{EBELN}-{EBELP}``."""
+    """How a register row and a detail link name a document line:
+    ``PR-{BANFN}-{BNFPO}`` or ``{EBELN}-{EBELP}``."""
     if document_type == PURCHASE_REQUISITION:
         return f"PR-{document}-{item}"
     return f"{document}-{item}"
@@ -196,8 +119,8 @@ def document_reference(document_type: str, document: str, item: str) -> str:
 
 @dataclass(frozen=True)
 class JustificationRecord:
-    """A NEW_ACQUISITION justification: what matching needs, and what the
-    register shows on the line it belongs to."""
+    """A NEW_ACQUISITION justification: what matching it to a purchase needs,
+    and what the Justifications screen shows beside it."""
 
     material_id: str
     plant: str
@@ -359,7 +282,6 @@ def find_new_acquisitions(
                 ordered_qty=row["menge"],
                 raised_at=header["aedat"] if header is not None else None,
                 document_type=PURCHASE_ORDER,
-                line_created_on=row.get("erdat"),
             )
         )
     return sorted(found, key=lambda acquisition: acquisition.key)
@@ -433,104 +355,66 @@ def load_new_acquisitions(
     return found
 
 
-# --- the repairs a purchase is matched against --------------------------------
+# --- which purchase a justification answered ----------------------------------
+
+#: The id a bought-new finding had in the exception queue, before it was removed
+#: on 3-Nov-2026. A reason recorded against one still answers that purchase.
+_BOUGHT_NEW_FINDING_PREFIX = "EX-UNJUSTIFIED_ACQUISITION-"
 
 
-def repairs_by_material_plant(
-    lines: Iterable[RepairLine],
-    requests: Iterable[RepairRequest] = (),
-) -> dict[tuple[str, str | None], list[OpenRepair]]:
-    """(material, plant) -> the open repairs: repair PO lines and open repair
-    PRs alike. Built once; thousands of purchases are matched against it rather
-    than each scanning the whole register."""
-    index: dict[tuple[str, str | None], list[OpenRepair]] = {}
-    for repair in [*map(OpenRepair.from_line, lines), *map(OpenRepair.from_request, requests)]:
-        index.setdefault((repair.material_id, repair.plant), []).append(repair)
-    return index
-
-
-def open_repair_at(
-    acquisition: NewAcquisition,
-    repairs: Mapping[tuple[str, str | None], Sequence[OpenRepair]],
-) -> OpenRepair | None:
-    """The repair of the same part at the same plant that was out when this
-    purchase was raised, or None.
-
-    "Out" means raised on or before the purchase. Every repair here is still
-    open in SAP, so one raised by then has been out ever since. Where several
-    overlap, the one due back soonest is returned -- the unit the buyer could
-    most plausibly have waited for. A repair with no due date sorts last (a
-    repair PR never has one), a PO before a PR among those, and the document
-    key breaks ties so the answer is stable.
-    """
-    if acquisition.raised_at is None or acquisition.plant is None:
-        return None
-    bought = acquisition.raised_at
-    overlapping = [
-        repair
-        for repair in repairs.get((acquisition.material_id, acquisition.plant), ())
-        if repair.raised_at is not None and repair.raised_at <= bought
-    ]
-    if not overlapping:
-        return None
-    return min(
-        overlapping,
-        key=lambda repair: (
-            repair.due_date is None,
-            repair.due_date or date.max,
-            repair.document_type != PURCHASE_ORDER,
-            repair.document,
-            repair.item,
-        ),
+def within_justification_window(
+    record: JustificationRecord, acquisition: NewAcquisition, window_days: int
+) -> bool:
+    """Same material, same plant, and the purchase within ``window_days`` of
+    the reason, either side."""
+    return (
+        record.material_id == acquisition.material_id
+        and record.plant == acquisition.plant
+        and acquisition.raised_at is not None
+        and abs((record.recorded_on - acquisition.raised_at).days) <= window_days
     )
 
 
-def load_justifications(db: Session) -> list[JustificationRecord]:
-    """Every NEW_ACQUISITION justification, from the shared WS7 table.
+def purchases_answered(
+    justifications: Sequence[JustificationRecord],
+    acquisitions: Sequence[NewAcquisition],
+    *,
+    window_days: int,
+) -> dict[str, NewAcquisition]:
+    """Justification id -> the new purchase it answers (28-Oct-2026: the
+    Justifications screen's Purchase column).
 
-    One query for the whole table, read once per view build -- the same shape
-    as the attestation coverage check.
+    A reason recorded against a bought-new finding's id answers that purchase.
+    Otherwise it answers a purchase of the same part at the same plant within
+    the window; when several are, the one nearest in date, a purchase raised
+    on or after the reason before one raised before it (the assistant records
+    the reason first). A reason with no entry has no purchase yet.
     """
-    from app.assistant.models import Justification
+    by_finding = {f"{_BOUGHT_NEW_FINDING_PREFIX}{a.reference}": a for a in acquisitions}
+    by_part: dict[tuple[str, str | None], list[NewAcquisition]] = {}
+    for acquisition in acquisitions:
+        by_part.setdefault((acquisition.material_id, acquisition.plant), []).append(acquisition)
 
-    rows = db.execute(
-        select(
-            Justification.material_id,
-            Justification.plant,
-            Justification.recorded_at,
-            Justification.exception_id,
-            Justification.id,
-            Justification.reason_category,
-            Justification.free_text,
-            Justification.author,
-            Justification.session_id,
-        ).where(Justification.kind == NEW_ACQUISITION_KIND)
-    ).all()
-    return [
-        JustificationRecord(
-            # Normalised on both sides, as the attestation check does: a
-            # justification typed against a padded number is about the same
-            # part as a purchase read unpadded.
-            material_id=normalise(material_id) or material_id,
-            plant=(plant or "").strip(),
-            recorded_on=recorded_at.date(),
-            exception_id=exception_id,
-            id=justification_id,
-            reason_category=reason_category,
-            free_text=free_text,
-            author=author,
-            recorded_at=recorded_at,
-            session_id=session_id,
-        )
-        for (
-            material_id,
-            plant,
-            recorded_at,
-            exception_id,
-            justification_id,
-            reason_category,
-            free_text,
-            author,
-            session_id,
-        ) in rows
-    ]
+    answered: dict[str, NewAcquisition] = {}
+    for record in justifications:
+        if record.id is None:
+            continue
+        named = by_finding.get(record.exception_id) if record.exception_id else None
+        if named is not None:
+            answered[record.id] = named
+            continue
+        near = [
+            a
+            for a in by_part.get((record.material_id, record.plant), ())
+            if within_justification_window(record, a, window_days)
+        ]
+        if near:
+            answered[record.id] = min(
+                near,
+                key=lambda a: (
+                    abs((a.raised_at - record.recorded_on).days),  # type: ignore[operator]
+                    a.raised_at < record.recorded_on,  # type: ignore[operator]
+                    a.key,
+                ),
+            )
+    return answered

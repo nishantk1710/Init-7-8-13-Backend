@@ -1080,10 +1080,6 @@ class Settings(BaseSettings):
     # when empty, the final-approval notice goes to the submitter only.
     notification_sap_execution_role: str = ""
 
-    # Which role hears about each exception, as "TYPE:Spares.Role,...", e.g.
-    # "OVERDUE_REPAIR:Spares.Stores". Empty means no one is guessed.
-    i8_notification_recipient_roles: str = ""
-
     # Microsoft Graph sending (Mail.Send application permission, one shared
     # mailbox). All empty until the tenant admin has consented.
     graph_tenant_id: str = ""

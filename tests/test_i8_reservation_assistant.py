@@ -222,7 +222,7 @@ class TestRequestsAndStockConditionInTheRecord:
                 "repairOrder": "940000004981",
             }
         ]
-        assert "requested, not yet ordered (requested 239 days ago)" in record["headline"]
+        assert "PR raised for repair, no PO yet (raised 239 days ago)" in record["headline"]
 
     def test_switched_off_counts_no_requests(self) -> None:
         record = self._record(requests=None)

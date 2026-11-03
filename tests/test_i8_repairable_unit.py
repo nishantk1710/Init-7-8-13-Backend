@@ -371,11 +371,11 @@ class TestRepairRequests:
     def test_one_request_headline_and_caveat(self) -> None:
         verdict = _assess(universe_rows=[_universe_row()], repair_requests=[_repair_request()])
         assert (
-            "There is 1 repair requested, not yet ordered (requested 239 days ago)."
+            "There is 1 PR raised for repair, no PO yet (raised 239 days ago)."
             in verdict.headline
         )
         assert (
-            "A requested repair has no PO yet, so there is no date for its return."
+            "A PR raised for repair has no PO yet, so there is no date for its return."
             in verdict.caveats
         )
 
@@ -390,8 +390,8 @@ class TestRepairRequests:
         )
         assert [e.item for e in verdict.request_evidence] == ["10", "20", "30"]
         assert (
-            "There are 3 repairs requested, not yet ordered "
-            "(the oldest requested 239 days ago)." in verdict.headline
+            "There are 3 PRs raised for repair, no PO yet "
+            "(the oldest raised 239 days ago)." in verdict.headline
         )
 
     def test_with_a_repair_po_too_the_no_date_caveat_is_not_given(self) -> None:
@@ -405,7 +405,7 @@ class TestRepairRequests:
         assert not any("no PO yet" in note for note in verdict.caveats)
         # Each clause is its own sentence (it used to read ". and there").
         assert ". and there" not in verdict.headline
-        assert ". There is 1 repair requested" in verdict.headline
+        assert ". There is 1 PR raised for repair" in verdict.headline
 
     def test_counted_and_none_says_no_open_repair(self) -> None:
         counted = _assess(universe_rows=[_universe_row()], repair_requests=[])

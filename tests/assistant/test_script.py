@@ -52,11 +52,8 @@ def i08_step(answers, assessment=None):
 SKIP = {script.I08_DECLARE_CHOICE: {"choice": script.SKIP_DECLARATION}}
 DECLARATION = {
     "quantity": "1",
-    "condition_description": "Bearing seized.",
     "fault_category": "BEARING_FAILURE",
     "recommendation": "REPAIRABLE",
-    "attestor_name": "J Miller",
-    "evidence_reference": None,
 }
 
 
@@ -458,13 +455,13 @@ class TestI08DeclaresTheFaultyUnit:
         assert step.id == script.I08_DECLARATION
         assert step.kind is StepKind.FORM
         fields = {f.name: f for f in step.fields}
-        assert list(fields) == [
-            "quantity", "condition_description", "fault_category",
-            "recommendation", "attestor_name", "evidence_reference",
-        ]
+        # 3-Nov-2026: no description, typed name or evidence reference. The
+        # declarer is the signed-in requester; the fault says what is wrong.
+        assert list(fields) == ["quantity", "fault_category", "recommendation"]
         assert fields["quantity"].default == 1
-        assert not fields["evidence_reference"].required
-        assert fields["attestor_name"].label == "Your name (typed, not a sign-in)"
+        assert script.RETIRED_ANSWER_FIELDS[script.I08_DECLARATION] == {
+            "condition_description", "attestor_name", "evidence_reference",
+        }
         assert [o.value for o in fields["fault_category"].options] == list(
             get_i8_settings().fault_category_list
         )

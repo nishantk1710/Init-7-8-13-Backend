@@ -1,12 +1,13 @@
 # Shared notifications
 
-One notification service for approvals, repairable-spares exceptions and OAR exceptions. It lives in
+One notification service for approvals and OAR exceptions. It lives in
 `app/integrations/notifications/`; nothing else builds its own client.
 
 ## How it works
 
-1. **Something happens** -- an approval moves (`app/initiatives/i7/notifications.py`), an exception is raised
-   (I08, `app/initiatives/i8/notifications.py`) or goes unanswered (I13, `app/initiatives/i13/act/service.py`).
+1. **Something happens** -- an approval moves (`app/initiatives/i7/notifications.py`) or an exception goes
+   unanswered (I13, `app/initiatives/i13/act/service.py`). Repairable-spares (I08) exceptions were notified here too
+   until 3-Nov-2026, when their exception queue was removed.
 2. **`enqueue`** writes `notification` rows in the caller's own transaction -- an **in-app** row (the inbox) and an
    **email** row for each recipient. A step that fails (HTTP 409) never gets this far, and a step that is saved
    always has its notifications saved with it.
@@ -116,9 +117,6 @@ The person who just acted is not told about their own action (except that an app
   the gap is recorded as a failed notification instead.
 - [ ] Optional: `NOTIFICATION_SAP_EXECUTION_ROLE` -- the Entra role of whoever applies an approved change in SAP.
   Blank means the final-approval notice goes to the submitter only.
-- [ ] Optional: `I8_NOTIFICATION_RECIPIENT_ROLES` -- `OVERDUE_REPAIR:Spares.Stores,MISSING_ATTESTATION:Spares.Stores,...`
-  Blank means no one is told about repairable-spares exceptions through the shared service (the existing exception log
-  is unaffected). These roles also need `notification_recipients` rows.
 - [ ] I13 requester and HOD notifications need the identity to be an Entra object id (the HOD comes from
   `I13_HOD_RECIPIENTS`, `PLANT:identity`). An email address or SAP user name is refused and recorded as a failed
   notification. The recipient needs an email on record (or `NOTIFICATION_FALLBACK_EMAIL`) to be emailed.
@@ -167,15 +165,6 @@ scheduler on does not start it. When on, each run:
 
 A batch that fails is logged and saved nothing. The manual `POST /api/i13/act/run/escalate` is unchanged and unbounded.
 Before enabling, count the exceptions that are overdue so you know how large the first batches will be.
-
-### I08 recovery
-
-The I08 notification log and the shared notifications are saved in the same transaction. If queuing the shared
-notification fails, the log row is kept and the next read of the exception queue queues exactly the logged items that
-have no shared notification yet (current items of a configured type only, at most 200 per read). This also picks up
-items logged while `I8_NOTIFICATION_RECIPIENT_ROLES` was empty, once it is set. Each notification has an idempotency
-key, so repeated reads never duplicate. Turning roles on after a long backlog will queue the whole backlog, 200 reads
-at a time.
 
 ### Scheduler
 
