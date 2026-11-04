@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import TimeoutError as SqlAlchemyTimeoutError
 
@@ -18,6 +19,7 @@ from app.api import root
 from app.api.router import api_router
 from app.core.config import Settings, get_settings
 from app.core.db import pool_status
+from app.core.http_perf import RequestTimingMiddleware, gzip_options
 from app.core.logging import configure_logging, get_logger
 from app.core.security import azure_sdk_identity_warning
 from app.schemas.i7.errors import ApiError, ErrorBody, ErrorResponse
@@ -263,6 +265,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     application = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
 
+    # Compression is added FIRST, so it is the innermost layer and sees each
+    # response whole. The I13 header middleware below is a BaseHTTPMiddleware,
+    # which re-streams every body in chunks; gzip outside it cannot tell how
+    # big a streamed body is and compresses even a 60-byte one.
+    if settings.response_gzip_enabled:
+        application.add_middleware(GZipMiddleware, **gzip_options(settings.response_gzip_min_bytes))
+
     @application.middleware("http")
     async def i13_snapshot_headers(request: Request, call_next):
         """Say which I13 snapshot answered, on every I13 response."""
@@ -275,6 +284,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 response.headers["X-I13-Snapshot-Status"] = "rebuilding" if served["rebuilding"] else "ready"
         return response
 
+    # The last middleware added is the outermost: CORS stays outside the
+    # compression and the I13 header middleware, so it labels every response,
+    # errors included; the timer goes in last so it sees the whole request.
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -283,6 +295,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
         expose_headers=EXPOSED_HEADERS,
     )
+    application.add_middleware(RequestTimingMiddleware, slow_seconds=settings.slow_request_log_seconds)
 
     # Service index at `/`, outside the API prefix.
     application.include_router(root.router)

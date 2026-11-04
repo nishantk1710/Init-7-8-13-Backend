@@ -51,6 +51,18 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
     log_level: str = "INFO"
 
+    # Responses of at least this many bytes are gzip-compressed for clients that
+    # accept it (JSON and text; Excel/PDF downloads are left alone). Switch off
+    # with RESPONSE_GZIP_ENABLED=false if a client ever mishandles it.
+    response_gzip_enabled: bool = True
+    response_gzip_min_bytes: int = 1024
+
+    # A request that takes at least this many seconds is logged as
+    # "slow request: <method> <route> -> <status> in <n>s", so a slow screen can
+    # be traced to its route (the access log has no durations). 0 turns it off.
+    # Every response carries a Server-Timing header either way.
+    slow_request_log_seconds: float = 1.0
+
     # Browser origin(s) allowed to call this API. Comma-separated for multiple.
     frontend_origin: str = "http://localhost:3000"
 
