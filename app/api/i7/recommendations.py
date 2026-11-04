@@ -28,7 +28,7 @@ from app.initiatives.i7.recommendations.consumption_history import monthly_consu
 from app.models.i7_features import DecliningDemandEvaluation
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun
 from app.models.i7_oar import OarDonorExclusion, OarNeighbour
-from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation
+from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation, SapAdoptionResult
 from app.models.i7_staging import StagedMaterial, StagedMaterialPlant
 from app.schemas.i7.errors import ApiError, bad_request
 from app.schemas.i7.recommendations import (
@@ -179,6 +179,7 @@ def _apply_filters(
     consumption_above_threshold: bool | None = None,
     actionable: bool | None = None,
     has_recommended: bool | None = None,
+    adopted_in_sap: bool | None = None,
 ) -> Select:
     """Every filter here maps to a real, persisted column or a keyed lookup.
     Nothing that would require loading rows into Python to evaluate.
@@ -207,6 +208,14 @@ def _apply_filters(
         statement = statement.where(Recommendation.conversion_eligibility == conversion_eligibility)
     if actionable:
         statement = statement.where(_actionable())
+    if adopted_in_sap:
+        # Converted: the SAP reconciliation found SAP holding the recommended values (for an OAR material, Min-Max ordering with a
+        # minimum and maximum filled in). Approval is not conversion, and a recommendation with no SAP change evidence is not in it.
+        statement = statement.where(
+            Recommendation.recommendation_id.in_(
+                select(SapAdoptionResult.recommendation_id).where(SapAdoptionResult.status == "ADOPTED")
+            )
+        )
     if has_recommended:
         statement = statement.where(
             or_(
@@ -549,6 +558,13 @@ def list_recommendations(
             "safety stock or maximum stock) -- leaves out those where nothing could be computed."
         ),
     ] = None,
+    adopted_in_sap: Annotated[
+        bool | None,
+        Query(
+            description="true: only recommendations SAP now matches (the reconciliation's ADOPTED result) -- for an OAR material, "
+            "converted to Min-Max ordering. One with no SAP change evidence yet is left out."
+        ),
+    ] = None,
 ) -> RecommendationListResponse:
     if sort not in SORT_FIELDS:
         raise bad_request(
@@ -582,6 +598,7 @@ def list_recommendations(
             consumption_above_threshold=consumption_above_threshold,
             actionable=actionable,
             has_recommended=has_recommended,
+            adopted_in_sap=adopted_in_sap,
         ).where(_not_smooth())
     )
 

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from typing import NamedTuple
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
@@ -43,7 +44,7 @@ from app.initiatives.i7.kpi_formulas.resolved import Formulas, load_active
 from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql
 from app.initiatives.i7.kpi_formulas.working_capital import working_capital_impact
 from app.initiatives.i7.stockout_risk.counts import stockout_risk_counts
-from app.models.i7_recommendation import Recommendation
+from app.models.i7_recommendation import Recommendation, SapAdoptionResult
 from app.schemas.i7.reports import PositionFigures, StockoutPosition
 
 #: How far from the report's cutoff a stockout measurement can be and still speak for the period.
@@ -139,25 +140,45 @@ def oar_records(session: Session, period_start: date, exclusive_end: date) -> in
     )
 
 
-def min_max_conversion(session: Session, period_start: date, exclusive_end: date) -> tuple[int, int, int]:
-    """``(eligible, oar_material_plants, manually_requested)`` over the OAR recommendations the Recommendations list shows for the
-    period: generated in it, and the newest of their material-plant. Built from the list's own filters, so the card's count and the
-    list behind it can never disagree.
+class MinMaxCounts(NamedTuple):
+    eligible: int
+    """OAR material-plants the conversion rule says may convert to Min-Max ordering."""
+    oar_material_plants: int
+    manually_requested: int
+    """NOT_ELIGIBLE ones a user asked to convert anyway; never added into ``eligible``."""
+    converted: int
+    """Eligible ones SAP now matches (the reconciliation's ADOPTED result): actually converted, not just approved."""
+    with_evidence: int
+    """Eligible ones the SAP reconciliation has any result for (adopted, partially or not adopted). With none, ``converted`` of 0 is
+    "not measured yet", not a measured 0."""
 
-    *Eligible* is the OAR rule's own verdict (``conversion_eligibility`` = ELIGIBLE) that the material-plant may be converted to
-    Min-Max ordering -- not a change made in SAP, which is what SAP adoption measures. *Manually requested* are the NOT_ELIGIBLE
-    ones somebody asked to convert anyway; they are counted apart and never added into *eligible*.
+
+def min_max_conversion(session: Session, period_start: date, exclusive_end: date) -> MinMaxCounts:
+    """Min-Max conversion over the OAR recommendations the Recommendations list shows for the period: generated in it, and the newest of
+    their material-plant. Built from the list's own filters, so every count here and the list behind it can never disagree.
+
+    *Eligible* is the OAR rule's own verdict (``conversion_eligibility`` = ELIGIBLE) that the material-plant may convert -- not a change
+    made in SAP. *Converted* is the eligible ones SAP now matches (SAP adoption evidence): the change was actually made.
     """
-    oar = _latest_only(
-        _apply_filters(
-            select(Recommendation.id), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
-            criticality=None, generated_from=period_start, generated_to=exclusive_end, demand_type="oar",
-        ).where(_not_smooth())
+    def oar_list(**more):
+        return _latest_only(
+            _apply_filters(
+                select(Recommendation.id), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+                criticality=None, generated_from=period_start, generated_to=exclusive_end, demand_type="oar", **more,
+            ).where(_not_smooth())
+        )
+
+    oar = oar_list()
+    eligible = oar.where(Recommendation.conversion_eligibility == "ELIGIBLE")
+    evidence = select(SapAdoptionResult.recommendation_id).where(
+        SapAdoptionResult.status.in_(("ADOPTED", "PARTIALLY_ADOPTED", "NOT_ADOPTED"))
     )
-    return (
-        count_of(session, oar.where(Recommendation.conversion_eligibility == "ELIGIBLE")),
-        count_of(session, oar),
-        count_of(session, oar.where(Recommendation.manually_converted)),
+    return MinMaxCounts(
+        eligible=count_of(session, eligible),
+        oar_material_plants=count_of(session, oar),
+        manually_requested=count_of(session, oar.where(Recommendation.manually_converted)),
+        converted=count_of(session, oar_list(adopted_in_sap=True).where(Recommendation.conversion_eligibility == "ELIGIBLE")),
+        with_evidence=count_of(session, eligible.where(Recommendation.recommendation_id.in_(evidence))),
     )
 
 
