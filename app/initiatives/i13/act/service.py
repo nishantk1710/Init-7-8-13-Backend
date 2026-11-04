@@ -414,6 +414,7 @@ def detect_exceptions(
     quantity_decision_records: Sequence[QuantityDecisionRecord] = (),
     requester_by_reservation: Mapping[tuple[str, str], str] = {},
     no_plan_reason_by_reservation: Mapping[tuple[str, str], NoPlanReason] = {},
+    types: Collection[ExceptionType] | None = None,
 ) -> DetectionRunResult:
     """Run PLAN_BREACH, NO_PLAN/NO_PLAN_GRNI and QUANTITY_OVERRIDE detection
     for the given already-fetched evidence, and persist/update/resolve
@@ -427,7 +428,16 @@ def detect_exceptions(
     reservation_item)`` to the requester W6.4 resolved from ``RESB.WEMPF``.
     Defaulting it to empty keeps every existing caller and test working
     unchanged, and reproduces exactly the old behaviour: plan requester only.
+
+    ``types`` limits the run to those exception types (``I13_DETECTION_TYPES``
+    on the scheduled runs); ``None`` is every type. A type left out is not
+    evaluated at all, so its existing exceptions are neither created nor
+    resolved by this run -- they stay exactly as they were.
     """
+
+    def wanted(exception_type: ExceptionType) -> bool:
+        return types is None or exception_type in types
+
     grace_period = timedelta(days=plan_breach_grace_days)
     response_period = timedelta(days=requester_response_days)
     created = reused = resolved = routed = 0
@@ -456,7 +466,7 @@ def detect_exceptions(
     # collided all unlinked captured plans on ("", "") (gaps G3/G4).
     matcher = PlanMatcher(list(plans), list(ledger_entries))
 
-    for plan in plans:
+    for plan in plans if wanted(ExceptionType.PLAN_BREACH) else ():
         entries = matcher.entries_for(plan)
         breached = detect_plan_breach(plan, entries, as_of_time=as_of_time, grace_period=grace_period)
         c, r, res, rt = _apply_detection(
@@ -489,7 +499,8 @@ def detect_exceptions(
         resolved += res
         routed += rt
 
-    for entry in ledger_entries:
+    no_plan_types = wanted(ExceptionType.NO_PLAN) or wanted(ExceptionType.NO_PLAN_GRNI)
+    for entry in ledger_entries if no_plan_types else ():
         if entry.material_scope is not MaterialScope.OAR:
             continue
         plan = matcher.plan_for(entry)
@@ -516,31 +527,32 @@ def detect_exceptions(
         if no_plan_reason is not None:
             evidence["no_plan_reason"] = no_plan_reason.value
 
-        c, r, res, rt = _apply_detection(
-            exception_id=build_exception_id("NO_PLAN", entry.reservation_number, entry.reservation_item),
-            condition_holds=no_plan_reason is not None,
-            exception_type=ExceptionType.NO_PLAN,
-            material=entry.material,
-            plant=entry.plant,
-            reservation_number=entry.reservation_number,
-            reservation_item=entry.reservation_item,
-            session_id=plan.session_id if plan else None,
-            ledger_entry_id=entry.ledger_id,
-            # THE case this fallback exists for: a NO_PLAN exception has no
-            # plan by definition, so before W6.4 was consulted here the owner
-            # was unconditionally None and nothing ever routed.
-            owner_requester_id=owner_for(plan, entry.reservation_number, entry.reservation_item),
-            reason=f"OAR reservation has no valid plan/session ({no_plan_reason.value if no_plan_reason else 'n/a'})",
-            evidence=evidence,
-            as_of_time=as_of_time,
-            response_period=response_period,
-            repository=repository,
-            notification_port=notification_port,
-        )
-        created += c
-        reused += r
-        resolved += res
-        routed += rt
+        if wanted(ExceptionType.NO_PLAN):
+            c, r, res, rt = _apply_detection(
+                exception_id=build_exception_id("NO_PLAN", entry.reservation_number, entry.reservation_item),
+                condition_holds=no_plan_reason is not None,
+                exception_type=ExceptionType.NO_PLAN,
+                material=entry.material,
+                plant=entry.plant,
+                reservation_number=entry.reservation_number,
+                reservation_item=entry.reservation_item,
+                session_id=plan.session_id if plan else None,
+                ledger_entry_id=entry.ledger_id,
+                # THE case this fallback exists for: a NO_PLAN exception has no
+                # plan by definition, so before W6.4 was consulted here the owner
+                # was unconditionally None and nothing ever routed.
+                owner_requester_id=owner_for(plan, entry.reservation_number, entry.reservation_item),
+                reason=f"OAR reservation has no valid plan/session ({no_plan_reason.value if no_plan_reason else 'n/a'})",
+                evidence=evidence,
+                as_of_time=as_of_time,
+                response_period=response_period,
+                repository=repository,
+                notification_port=notification_port,
+            )
+            created += c
+            reused += r
+            resolved += res
+            routed += rt
 
         grni_evidence = dict(evidence)
         if grni_snapshot is not None:
@@ -549,31 +561,32 @@ def detect_exceptions(
         else:
             grni_evidence["watch_mart_status"] = "SOURCE_UNAVAILABLE"
 
-        c, r, res, rt = _apply_detection(
-            exception_id=build_exception_id("NO_PLAN_GRNI", entry.reservation_number, entry.reservation_item),
-            condition_holds=no_plan_grni_applies(no_plan_reason, grni_flag),
-            exception_type=ExceptionType.NO_PLAN_GRNI,
-            material=entry.material,
-            plant=entry.plant,
-            reservation_number=entry.reservation_number,
-            reservation_item=entry.reservation_item,
-            session_id=plan.session_id if plan else None,
-            ledger_entry_id=entry.ledger_id,
-            # Same reasoning as NO_PLAN above -- this is its GRNI sibling.
-            owner_requester_id=owner_for(plan, entry.reservation_number, entry.reservation_item),
-            reason="No valid plan/session and W6.3's GRNI threshold is exceeded (reused from the WATCH mart, not recalculated)",
-            evidence=grni_evidence,
-            as_of_time=as_of_time,
-            response_period=response_period,
-            repository=repository,
-            notification_port=notification_port,
-        )
-        created += c
-        reused += r
-        resolved += res
-        routed += rt
+        if wanted(ExceptionType.NO_PLAN_GRNI):
+            c, r, res, rt = _apply_detection(
+                exception_id=build_exception_id("NO_PLAN_GRNI", entry.reservation_number, entry.reservation_item),
+                condition_holds=no_plan_grni_applies(no_plan_reason, grni_flag),
+                exception_type=ExceptionType.NO_PLAN_GRNI,
+                material=entry.material,
+                plant=entry.plant,
+                reservation_number=entry.reservation_number,
+                reservation_item=entry.reservation_item,
+                session_id=plan.session_id if plan else None,
+                ledger_entry_id=entry.ledger_id,
+                # Same reasoning as NO_PLAN above -- this is its GRNI sibling.
+                owner_requester_id=owner_for(plan, entry.reservation_number, entry.reservation_item),
+                reason="No valid plan/session and W6.3's GRNI threshold is exceeded (reused from the WATCH mart, not recalculated)",
+                evidence=grni_evidence,
+                as_of_time=as_of_time,
+                response_period=response_period,
+                repository=repository,
+                notification_port=notification_port,
+            )
+            created += c
+            reused += r
+            resolved += res
+            routed += rt
 
-    for record in quantity_decision_records:
+    for record in quantity_decision_records if wanted(ExceptionType.QUANTITY_OVERRIDE) else ():
         evaluation = detect_quantity_override(record)
         evidence = {
             "requested_quantity": str(record.requested_quantity),

@@ -94,6 +94,7 @@ def _detect(
     notification_port=None,
     grni_snapshots=None,
     requester_by_reservation=None,
+    types=None,
 ):
     repository = repository or FakeExceptionRepository()
     notification_port = notification_port or FakeNotificationPort()
@@ -107,6 +108,7 @@ def _detect(
         plan_breach_grace_days=7,
         requester_response_days=5,
         requester_by_reservation=requester_by_reservation or {},
+        types=types,
     )
     return repository, notification_port, result
 
@@ -460,3 +462,50 @@ def test_deleting_a_reservation_resolves_its_open_no_plan_exception() -> None:
 
     assert result.resolved == 1
     assert repository.get("ACT-NO_PLAN-1000000000-0001").status is ExceptionStatus.RESOLVED
+
+
+# --- 4-Nov-2026: a run limited to some exception types (I13_DETECTION_TYPES) ---
+
+
+def test_a_type_left_out_is_not_raised():
+    as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
+    # The plan breaches; the second reservation has no plan (Non-AI).
+    entries = [_ledger_entry(), _ledger_entry(ledger_id="LEDGER-2", reservation_item="0002")]
+
+    repository, _, result = _detect(
+        as_of_time, plans=[_plan()], ledger_entries=entries, types={ExceptionType.PLAN_BREACH}
+    )
+
+    assert len(repository.list(exception_type=ExceptionType.PLAN_BREACH)) == 1
+    assert repository.list(exception_type=ExceptionType.NO_PLAN) == []
+    assert result.created == 1
+
+
+def test_a_type_left_out_is_not_resolved_either():
+    """Leaving Non-AI out holds its queue as it is -- it does not clear it."""
+    repository, _, _ = _detect(datetime(2026, 9, 18, tzinfo=UTC), ledger_entries=[_ledger_entry()])
+    assert len(repository.list(exception_type=ExceptionType.NO_PLAN)) == 1
+
+    # Later the reservation is deleted in SAP, which would resolve it -- but this run skips NO_PLAN.
+    _detect(
+        datetime(2026, 9, 25, tzinfo=UTC),
+        ledger_entries=[_ledger_entry(reservation_deleted=True)],
+        repository=repository,
+        types={ExceptionType.PLAN_BREACH},
+    )
+
+    (still,) = repository.list(exception_type=ExceptionType.NO_PLAN)
+    assert still.status is not ExceptionStatus.RESOLVED
+
+    # Checked with NO_PLAN, the same evidence does resolve it.
+    _detect(datetime(2026, 9, 26, tzinfo=UTC), ledger_entries=[_ledger_entry(reservation_deleted=True)], repository=repository)
+    (resolved,) = repository.list(exception_type=ExceptionType.NO_PLAN)
+    assert resolved.status is ExceptionStatus.RESOLVED
+
+
+def test_no_types_given_is_every_type():
+    as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
+    entries = [_ledger_entry(), _ledger_entry(ledger_id="LEDGER-2", reservation_item="0002")]
+    repository, _, _ = _detect(as_of_time, plans=[_plan()], ledger_entries=entries)
+    assert repository.list(exception_type=ExceptionType.PLAN_BREACH)
+    assert repository.list(exception_type=ExceptionType.NO_PLAN)

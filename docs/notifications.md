@@ -208,6 +208,20 @@ or resolved tonight is seen by escalation in the same tick. A second run on the 
 second instance -- changes nothing: detection only creates what is missing, keeps what exists (no second
 notification) and resolves what cleared.
 
+**After each snapshot build (`I13_DETECT_AFTER_BUILD`, default `false`).** When on, detection runs over every
+material as soon as an I13 snapshot build or re-age has succeeded and made a new version served
+(`snapshot_store/lifecycle.py`): at least once a day (the re-age when the day turns) and again after every SAP load
+that changed the data. So the queue is always checked against the data the screens show. It runs on its own thread
+after the build, one run at a time, and never after a failed build or one another process held. It counts as the
+day's run, so the nightly job above then only fires on a day with no successful build.
+
+**Which types (`I13_DETECTION_TYPES`, default empty = all).** Comma-separated: `PLAN_BREACH`, `NO_PLAN`,
+`NO_PLAN_GRNI`, `QUANTITY_OVERRIDE`. Both automatic runs check only these; a type left out is neither raised nor
+resolved, so its queue stays exactly as it is. An unknown name fails the run rather than silently checking nothing.
+The post-capture and manual runs always check every type. Go-live: `PLAN_BREACH,QUANTITY_OVERRIDE`, adding `NO_PLAN`
+and `NO_PLAN_GRNI` once the Non-AI cutoff is agreed -- GRNI is raised only on a Non-AI reservation, so without the
+cutoff it would raise one for every old reservation of a material with unissued stock.
+
 The dashboard's Planned Overdue and Non-AI cards and the summary report count the same queue (unresolved exceptions
 only), so they match the Exceptions screen once detection is current.
 
