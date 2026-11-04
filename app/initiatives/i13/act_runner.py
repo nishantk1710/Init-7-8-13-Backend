@@ -144,7 +144,14 @@ def run_detection(
     # Both quantity stores: the W7.4 API's and the assistant's (gap G5).
     quantity_decision_records = build_quantity_decision_records(
         db, material=material, plant=plant
-    ) + build_assistant_quantity_decision_records(db, material=material, plant=plant)
+    ) + build_assistant_quantity_decision_records(
+        db,
+        material=material,
+        plant=plant,
+        # The person named in the assistant's Requester box owns the exception when I13_REQUESTER_RECIPIENTS
+        # says who they are; otherwise the person who operated the assistant, as before.
+        requester_aliases=parse_requester_recipients(config.escalation.requester_recipients_raw),
+    )
 
     # W6.4's requester, so a NO_PLAN exception has somebody to route to. Only
     # resolved attributions: an AMBIGUOUS one leaves the exception unowned
@@ -220,7 +227,14 @@ def _run_detection_stored(
     plans = [p for p in snapshot.current_plans() if wanted(p.material, p.plant)]
     quantity_decision_records = build_quantity_decision_records(
         db, material=material, plant=plant
-    ) + build_assistant_quantity_decision_records(db, material=material, plant=plant)
+    ) + build_assistant_quantity_decision_records(
+        db,
+        material=material,
+        plant=plant,
+        # The person named in the assistant's Requester box owns the exception when I13_REQUESTER_RECIPIENTS
+        # says who they are; otherwise the person who operated the assistant, as before.
+        requester_aliases=parse_requester_recipients(config.escalation.requester_recipients_raw),
+    )
     linked = session_by_reservation(db)
     sessions = load_sessions(db, set(linked.values()))
     work = WorkTables(snapshot.version)
