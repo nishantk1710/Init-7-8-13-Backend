@@ -414,6 +414,7 @@ def detect_exceptions(
     quantity_decision_records: Sequence[QuantityDecisionRecord] = (),
     requester_by_reservation: Mapping[tuple[str, str], str] = {},
     no_plan_reason_by_reservation: Mapping[tuple[str, str], NoPlanReason] = {},
+    requester_by_session: Mapping[str, str] = {},
 ) -> DetectionRunResult:
     """Run PLAN_BREACH, NO_PLAN/NO_PLAN_GRNI and QUANTITY_OVERRIDE detection
     for the given already-fetched evidence, and persist/update/resolve
@@ -427,6 +428,11 @@ def detect_exceptions(
     reservation_item)`` to the requester W6.4 resolved from ``RESB.WEMPF``.
     Defaulting it to empty keeps every existing caller and test working
     unchanged, and reproduces exactly the old behaviour: plan requester only.
+
+    ``requester_by_session`` maps a session id to the person named in the assistant's Requester box,
+    where an administrator has said who that name stands for (``I13_REQUESTER_RECIPIENTS``). A
+    PLAN_BREACH whose plan came from such a session is owned by that person instead of the plan's
+    recorded requester (the person who operated the assistant). Empty keeps the old behaviour.
     """
     grace_period = timedelta(days=plan_breach_grace_days)
     response_period = timedelta(days=requester_response_days)
@@ -472,8 +478,12 @@ def detect_exceptions(
             ledger_entry_id=entries[0].ledger_id if entries else None,
             # A plan breach always has a plan, so this is almost always
             # plan.requester. The fallback covers a plan captured with no
-            # requester recorded against it.
-            owner_requester_id=owner_for(plan, plan.reservation_number, plan.reservation_item),
+            # requester recorded against it. The person named in the assistant's
+            # Requester box wins when they are known (requester_by_session).
+            owner_requester_id=(
+                (requester_by_session.get(plan.session_id) if plan.session_id else None)
+                or owner_for(plan, plan.reservation_number, plan.reservation_item)
+            ),
             reason=(
                 f"Consumption plan {plan.plan_id} planned use {plan.breach_reference_date} plus "
                 f"{plan_breach_grace_days}-day grace has expired with no goods issue evidence"
