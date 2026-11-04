@@ -26,6 +26,7 @@ from app.initiatives.i8.requisitions import (
     classify_repair_requests,
     has_live_purchase_order,
     index_back_pointers,
+    index_forward_pointers,
     is_repair_reservation_line,
     is_requisition_deleted,
     is_reservation_line_closed,
@@ -109,6 +110,52 @@ class TestPredicates:
         assert live([ekpo()], {}) is True, "a PO with no header is live"
         assert live([ekpo(bnfpo="20")], order) is False, "another item of the same PR"
         assert live([ekpo(loekz="L"), ekpo(ebeln="4500009999")], order) is True
+
+
+class TestThePoLineAPrNamesItself:
+    """EBAN.EBELN/EBELP (4-Nov-2026). PR 2000029202 named 4500001723/70, a
+    blocked service line with no material ("BER - MOTOR ELEC 15KW...") that
+    never named the PR back, and read as still waiting for a PO."""
+
+    KEY = ("2000029202", "10")
+    ORDER = {"4500001723": {"ebeln": "4500001723", "bsart": "ZREP"}}
+
+    def named(self, loekz=None, ebelp="70") -> tuple[list[dict], list[dict]]:
+        pr = eban(banfn="2000029202", ebeln="4500001723", ebelp="00070")
+        line = dict(ebeln="4500001723", ebelp=ebelp, banfn=None, bnfpo=None, loekz=loekz)
+        return [pr], [line]
+
+    def live(self, eban_rows, po_rows) -> bool:
+        return has_live_purchase_order(
+            self.KEY, {}, self.ORDER, CFG, index_forward_pointers(eban_rows, po_rows)
+        )
+
+    def test_a_blocked_line_it_names_is_an_order(self) -> None:
+        assert self.live(*self.named(loekz="S")) is True
+
+    def test_a_deleted_line_it_names_is_not(self) -> None:
+        # PR 2000029024 on the 15-Oct extract: its PO line was deleted.
+        assert self.live(*self.named(loekz="L")) is False
+
+    def test_a_line_not_in_the_pull_is_not_guessed_at(self) -> None:
+        eban_rows, _ = self.named()
+        assert self.live(eban_rows, []) is False
+        assert self.live(eban_rows, [dict(ebeln="4500001723", ebelp="80", banfn=None, bnfpo=None, loekz=None)]) is False
+
+    def test_the_item_number_is_compared_without_its_padding(self) -> None:
+        assert self.live(*self.named(ebelp="00070")) is True
+
+    def test_a_pr_naming_no_po_has_no_forward_pointer(self) -> None:
+        assert index_forward_pointers([eban()], [ekpo()]) == {}
+
+    def test_the_classification_leaves_it_out(self) -> None:
+        eban_rows, po_rows = self.named(loekz="S")
+        requests, stats = classify_repair_requests(
+            [resb(banfn="2000029202")], eban_rows, {}, self.ORDER, CFG, TODAY,
+            index_forward_pointers(eban_rows, po_rows),
+        )
+        assert requests == ()
+        assert stats.requisitions_excluded_live_po == 1
 
 
 # --- the classification ----------------------------------------------------------

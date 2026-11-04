@@ -117,11 +117,31 @@ class I8Settings(BaseSettings):
     # Every one is confirmed present in the extract -- this is the flow the data
     # actually shows, not a theoretical one.
     #
-    # No goods-receipt movements here since 19-Oct-2026: whether a line is
-    # still open is SAP's "Delivery completed" flag, not a receipt, and the
-    # register no longer reads EKBE.
+    # Whether a line is open is SAP's "Delivery completed" flag first (since
+    # 19-Oct-2026), and the register does not read EKBE. Since 4-Nov-2026 the
+    # goods receipts below are read from MSEG again, for one purpose only: a
+    # line received in full leaves the register even while SAP has not ticked
+    # "Delivery completed" on it.
     dispatch_movement_type: str = "541"
     """Transfer to vendor stock. The unit physically leaving for repair."""
+
+    dispatch_reversal_movement_type: str = "542"
+    """The reversal of a 541. Netted off the 541s on the same line, vendor
+    side only, so a dispatch SAP has reversed no longer puts a line at the
+    vendor (4-Nov-2026; 80 live lines carried one on the October census)."""
+
+    receipt_movement_type: str = "101"
+    """Goods receipt against the PO line: the repaired unit back in stock."""
+
+    receipt_reversal_movement_type: str = "102"
+    """The reversal of a 101, netted off the receipts on the same line."""
+
+    return_to_vendor_movement_type: str = "122"
+    """Return delivery to the vendor after a receipt: the unit is out again,
+    so it is netted off the receipts."""
+
+    return_to_vendor_reversal_movement_type: str = "123"
+    """The reversal of a 122."""
 
     vendor_special_stock: str = "O"
     """Special-stock indicator for vendor-held stock.

@@ -1256,6 +1256,54 @@ class TestTheScreenCacheDropsStaleFastScreens:
         assert calls == [(True, 10)]
 
 
+class TestTheUnscreenedCountForTheMenu:
+    """The menu badge (4-Nov-2026): how many candidates wait for the AI screen,
+    read off the screen the page already built. The badge asks on every page,
+    so the count never builds a screen."""
+
+    @pytest.fixture(autouse=True)
+    def clean_cache(self):
+        from app.initiatives.i8.service import reset_coding_screen
+
+        reset_coding_screen()
+        yield
+        reset_coding_screen()
+
+    def test_nothing_is_built_to_answer(self, monkeypatch) -> None:
+        import app.initiatives.i8.service as svc
+
+        built: list[bool] = []
+        monkeypatch.setattr(svc, "build_coding_screen", lambda *a, **k: built.append(True))
+        assert svc.peek_unscreened_count(get_i8_settings()) is None
+        assert built == []
+
+    def test_it_counts_the_rows_not_screened_yet(self, monkeypatch) -> None:
+        from types import SimpleNamespace
+
+        import app.initiatives.i8.service as svc
+        from app.initiatives.i8.coding_candidates import ScreenStats
+
+        def fake_build(db, snapshot, cfg, *, use_model, limit, sources):
+            verdicts = ("UNSCREENED", "MISCODED_REPAIRABLE", "UNSCREENED")
+            return svc.CodingScreen(
+                candidates=tuple(SimpleNamespace(verdict=v) for v in verdicts),
+                stats=ScreenStats(),
+                built_at=datetime(2026, 11, 4, tzinfo=timezone.utc),
+                build_seconds=0.0,
+                used_model=use_model,
+            )
+
+        monkeypatch.setattr(svc, "build_coding_screen", fake_build)
+        cfg = get_i8_settings()
+        svc.get_coding_screen(None, None, cfg, use_model=False)
+        assert svc.peek_unscreened_count(cfg) == 2
+
+    def test_the_route_answers_null_before_the_page_has_loaded(self) -> None:
+        response = TestClient(app).get("/api/i8/coding-candidates/unscreened")
+        assert response.status_code == 200
+        assert response.json() == {"unscreened": None}
+
+
 class TestAScreenWithoutItsPricesIsNotKept:
     """When the MBEW lookup fails, the screen is served with every price
     LOOKUP_FAILED -- and must not be cached, or it would stay price-less until

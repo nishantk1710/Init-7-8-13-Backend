@@ -51,7 +51,7 @@ from app.core.db import get_sessionmaker, statement_timeout
 from app.core.logging import get_logger
 from app.initiatives.i8.acquisitions import NewAcquisition, load_new_acquisitions
 from app.initiatives.i8.attestation import AttestationCoverage, coverage as attestation_coverage
-from app.initiatives.i8.coding_candidates import CodingCandidate, ScreenStats, screen
+from app.initiatives.i8.coding_candidates import CodingCandidate, ScreenStats, Verdict, screen
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.declarations import DeclarationRow, build_queue
 from app.initiatives.i8.new_item_price import MissingPrice
@@ -883,6 +883,22 @@ def get_coding_screen(
                 return built
             _screens[key] = built
         return _screens[key]
+
+
+def peek_unscreened_count(cfg: I8Settings | None = None) -> int | None:
+    """How many candidates the cached fast screen holds with no verdict yet --
+    the "not screened yet" rows the Repair Candidates page offers to the AI
+    screen -- or None when that screen is not cached (4-Nov-2026).
+
+    Never builds it: the menu's badge asks on every page. The fast screen the
+    page loads is the one keyed (no model, no limit, the default sources).
+    """
+    cfg = cfg or get_i8_settings()
+    with _screen_lock:
+        screen = _screens.get((False, None, cfg.coding_candidate_source_list))
+    if screen is None:
+        return None
+    return sum(1 for candidate in screen.candidates if candidate.verdict == Verdict.UNSCREENED.value)
 
 
 def reset_coding_screen() -> None:

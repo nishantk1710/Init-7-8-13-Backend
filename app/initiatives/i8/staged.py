@@ -260,10 +260,32 @@ def _stage(db: Session, cfg: I8Settings) -> Sources:
     # Kept: repair lines (the register) and 80-series lines (new purchases, and
     # the universe's EKPO slice), each in scope -- the view filters plant too.
     repair = _literal(cfg.repair_item_category)
-    stage("v_ekpo", {"n_ekpo": _narrow(
+    ekpo = _narrow(
         db, "ekpo", "n_ekpo",
         f"{_in_scope()} AND (item_category = {repair} OR {_series('material', cfg)})",
-    )})
+    )
+    # Plus (4-Nov-2026) the other lines on a PO an 80-series PR names itself
+    # (EBAN.EBELN): a buyer can raise a PR's PO line as a service line that
+    # never names the PR back, and the open-PR rule reads it
+    # (requisitions.index_forward_pointers). A direct build reads every line;
+    # every other reader of this copy filters by item category or material.
+    # A second statement, never an OR: see MSEG below.
+    db.execute(text("DROP TABLE IF EXISTS #i8s_pr_docs"))
+    db.execute(text(
+        f"SELECT DISTINCT {_key('purchase_order')} AS ebeln INTO #i8s_pr_docs FROM n_eban "
+        f"WHERE {_in_scope()} AND {_series('material', cfg)} AND {_key('purchase_order')} IS NOT NULL"
+    ))
+    db.execute(text("CREATE CLUSTERED INDEX ix_i8s_pr_docs ON #i8s_pr_docs (ebeln)"))
+    # COALESCE: a service line has no material, and NOT over a NULL LIKE is
+    # NULL, which would leave out exactly the line wanted.
+    any_material = "COALESCE(material, '')"
+    db.execute(text(
+        f"INSERT INTO {ekpo} SELECT * FROM n_ekpo WHERE {_in_scope()} "
+        f"AND COALESCE(item_category, '') <> {repair} "
+        f"AND NOT {_series(any_material, cfg)} "
+        f"AND {_key('purchasing_document')} IN (SELECT ebeln FROM #i8s_pr_docs)"
+    ))
+    stage("v_ekpo", {"n_ekpo": ekpo})
     db.execute(text("DROP TABLE IF EXISTS #i8s_docs"))
     db.execute(text(f"SELECT DISTINCT ebeln INTO #i8s_docs FROM {views['v_ekpo']} WHERE ebeln IS NOT NULL"))
     db.execute(text("CREATE CLUSTERED INDEX ix_i8s_docs ON #i8s_docs (ebeln)"))

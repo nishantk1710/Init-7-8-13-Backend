@@ -344,8 +344,8 @@ class RepairChain(I8Model):
 class RegisterMeta(I8Model):
     """The register's counts. Every line counted is open in SAP; the
     ``excluded*`` figures say how many repair lines SAP has deleted, closed or
-    blocked, or holds on a request for quotation, each counted under the first
-    of the four that applies."""
+    blocked, holds on a request for quotation, or has received in full without
+    closing, each counted under the first of the five that applies."""
 
     total_lines: int
     open_lines: int
@@ -376,6 +376,10 @@ class RegisterMeta(I8Model):
     excluded_rfq_lines: int = 0
     """Item-category-3 lines on a request for quotation (EKKO.BSART), which
     orders nothing."""
+
+    excluded_received_lines: int = 0
+    """Repair lines received in full (goods receipts, MSEG 101 less 102 and
+    122) that SAP has not closed yet (4-Nov-2026)."""
 
     # The repair PRs with no PO yet, counted whether or not they are served
     # (I8_REPAIR_REQUESTS_ENABLED): the lines above stay PO-only. Each PR left
@@ -886,6 +890,15 @@ class SnapshotInfo(I8Model):
     can be traced to a setting without reading the deployment."""
 
 
+class CodingUnscreenedResponse(I8Model):
+    """How many repair candidates wait for the AI screen (4-Nov-2026), for the
+    menu's badge. ``unscreened`` is null when the screen has not been built
+    since the backend started or since an AI run stored verdicts: the badge
+    asks on every page, so it never builds one."""
+
+    unscreened: int | None = None
+
+
 class FeaturesResponse(I8Model):
     """Which I08 features this backend serves (29-Oct-2026).
 
@@ -919,6 +932,8 @@ class RepairEvidenceItem(I8Model):
     vendor_name: str | None = None
     status: str
     dispatched: bool
+    dispatched_at: date | None = None
+    """The first 541 on the line, when one is posted (4-Nov-2026)."""
 
 
 class RepairRequestEvidenceItem(I8Model):
