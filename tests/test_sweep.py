@@ -60,18 +60,22 @@ class Harness:
         monkeypatch.setattr(sweep_mod, "set_watermark", self.advance)
         monkeypatch.setattr(sweep_mod, "get_watermark", lambda name, field: self.marks.get(name))
         monkeypatch.setattr(sweep_mod, "_load_day", lambda table: self.load_days.get(table))
-        # DELTA_SEED_FLOOR, blank unless a test sets one.
+        # DELTA_SEED_FLOOR, blank unless a test sets one; fetches serial.
         self.seed_floor = ""
+        self.fetch_concurrency = 1
         monkeypatch.setattr(
             sweep_mod, "get_settings",
-            lambda: type("S", (), {"delta_seed_floor": self.seed_floor})(),
+            lambda: type("S", (), {
+                "delta_seed_floor": self.seed_floor,
+                "cpi_fetch_concurrency": self.fetch_concurrency,
+            })(),
         )
 
     def resolve_windows(self, chosen, *, since=None):
         self.log.append(("windows",))
         return {name: since or self.marks.get(name) for name in OWNERS}
 
-    def collect(self, client, parent, via_key, since):
+    def collect(self, client, parent, via_key, since, **_):
         self.log.append(("keys", parent, since))
         return list(self.keys[parent])
 
@@ -324,3 +328,70 @@ def test_the_summary_counts_what_the_scheduler_logs(h) -> None:
     assert summary["failed"] == 1
     assert any(SCHED in e for e in summary["errors"])
     assert any("held" in e for e in summary["errors"])
+
+
+class _Memory:
+    """Records what the sweep tells the hand-over memory, in order."""
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    def settle(self, parent, via_key):
+        self.calls.append(("settle", parent, via_key))
+
+    def discard(self, parent, via_key):
+        self.calls.append(("discard", parent, via_key))
+
+
+def test_a_settled_family_settles_the_handover_memory(h) -> None:
+    memory = _Memory()
+    _run(memory=memory)
+    assert sorted(memory.calls) == [("settle", HIST, "Ebeln"), ("settle", ITEMS, "Ebeln")]
+
+
+def test_a_failed_consumer_discards_the_handover_not_just_its_parent(h) -> None:
+    """SCHED consumes both hand-overs, so its failure discards both: settling
+    either would skip rows a child never loaded."""
+    memory = _Memory()
+    h.fail_fetch.add(SCHED)
+    _run(memory=memory)
+    assert sorted(memory.calls) == [("discard", HIST, "Ebeln"), ("discard", ITEMS, "Ebeln")]
+
+
+def test_a_failed_child_load_discards_its_parents_handover(h) -> None:
+    """The same bar as the marks: fetched is not enough, the rows must load."""
+    memory = _Memory()
+    h.fail_load.add(ITEMS)
+    _run(memory=memory)
+    assert ("discard", HIST, "Ebeln") in memory.calls
+    # EKKO and SCHED read through EKPO and settled, so EKPO's hand-over keeps.
+    assert ("settle", ITEMS, "Ebeln") in memory.calls
+
+
+def test_parallel_fetch_keeps_every_sequencing_guarantee(h) -> None:
+    """CPI_FETCH_CONCURRENCY above 1 fetches in threads; parents still fetch
+    before their children collect keys, keys are still collected once per
+    parent, unions still union, and the marks still move last."""
+    h.fetch_concurrency = 3
+    _run()
+    kinds = [e[0] for e in h.log]
+    assert kinds[0] == "windows"
+    assert kinds.index("advance") > max(i for i, k in enumerate(kinds) if k == "load")
+    keys = sorted(e[1:] for e in h.log if e[0] == "keys")
+    assert keys == [(HIST, STORED), (ITEMS, STORED)]
+    # A child's keys are collected only after its parents' fetches finished,
+    # so the parents' window reads are the ones reused rather than repeated.
+    ordered = [(e[0], e[1]) for e in h.log if e[0] in ("fetch", "keys")]
+    assert ordered.index(("fetch", HIST)) < ordered.index(("keys", HIST))
+    assert ordered.index(("fetch", ITEMS)) < ordered.index(("keys", ITEMS))
+    assert h.fetched(SCHED)[4] == ["4500000001", "4500000002", "4500000003"]
+    assert {name: h.marks[name] for name in OWNERS} == {name: ADVANCED for name in OWNERS}
+
+
+def test_parallel_fetch_with_a_failure_holds_the_same_marks(h) -> None:
+    h.fetch_concurrency = 2
+    h.fail_fetch.add(SCHED)
+    report = _run()
+    assert h.marks[ITEMS] == STORED and h.marks[HIST] == STORED
+    assert SCHED in report.held[ITEMS] and SCHED in report.held[HIST]
+    assert h.marks[PO] == ADVANCED

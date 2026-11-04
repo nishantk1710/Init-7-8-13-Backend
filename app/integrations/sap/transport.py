@@ -26,6 +26,7 @@ The ``Accept`` header negotiates JSON but tolerates XML. That is not cosmetic:
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any, Protocol
 
@@ -58,6 +59,45 @@ class HttpTransport(Protocol):
     ) -> requests.Response: ...
 
 
+class SessionPerThread:
+    """``requests.get`` with keep-alive: one ``requests.Session`` per thread.
+
+    Every CPI call used to open its own TCP+TLS connection -- ``requests.get``
+    builds a throwaway session -- and against the CPI tenant that handshake is
+    a measurable slice of the ~0.7 s a small call takes, over a hundred times
+    per delta cycle. A session reuses the connection instead.
+
+    Per THREAD, not one shared session: ``requests.Session`` is not documented
+    thread-safe, and the delta sweep may fetch several sets at once
+    (CPI_FETCH_CONCURRENCY). A connection the server quietly closed between
+    calls surfaces as ``requests.ConnectionError`` on the next one, which the
+    retry loop below already treats as transient -- the retry builds no new
+    session, but the pool replaces the dead connection by itself.
+
+    Sessions are never closed explicitly; each lives as long as its thread and
+    holds a small connection pool, which is the point.
+    """
+
+    def __init__(self) -> None:
+        self._local = threading.local()
+
+    def __call__(
+        self,
+        url: str,
+        *,
+        params: dict,
+        headers: dict,
+        timeout: int,
+        verify: str | bool,
+    ) -> requests.Response:
+        session: requests.Session | None = getattr(self._local, "session", None)
+        if session is None:
+            session = self._local.session = requests.Session()
+        return session.get(
+            url, params=params, headers=headers, timeout=timeout, verify=verify
+        )
+
+
 class CpiTransport:
     """Authenticated HTTP against the CPI generic consumption endpoint."""
 
@@ -71,7 +111,7 @@ class CpiTransport:
     ) -> None:
         self._settings = settings or get_settings()
         self._tokens = tokens or TokenProvider(self._settings)
-        self._transport = transport or requests.get
+        self._transport = transport or SessionPerThread()
         self._max_retries = max_retries
         # Injected so tests do not actually wait out the backoff.
         self._sleep = sleep

@@ -287,6 +287,41 @@ class TestTransport:
         with pytest.raises(SapError, match="CPI_BASE_URL"):
             transport.get("path")
 
+    def test_the_default_transport_keeps_one_session_per_thread(self, monkeypatch) -> None:
+        """Keep-alive: ``requests.get`` opened a new TCP+TLS connection per
+        call; a per-thread Session reuses it. Per thread, because a parallel
+        sweep shares the transport and Session is not thread-safe."""
+        import threading
+
+        from app.integrations.sap import transport as transport_mod
+
+        class FakeSession:
+            instances = 0
+
+            def __init__(self):
+                FakeSession.instances += 1
+                self.calls: list[tuple] = []
+
+            def get(self, url, *, params, headers, timeout, verify):
+                self.calls.append((url, params))
+                return FakeResponse(text="ok")
+
+        monkeypatch.setattr(transport_mod.requests, "Session", FakeSession)
+        caller = transport_mod.SessionPerThread()
+        kwargs = dict(params={}, headers={}, timeout=1, verify=True)
+
+        caller("http://one", **kwargs)
+        caller("http://two", **kwargs)
+        assert FakeSession.instances == 1, "same thread, same session"
+
+        def other_thread():
+            caller("http://three", **kwargs)
+
+        worker = threading.Thread(target=other_thread)
+        worker.start()
+        worker.join()
+        assert FakeSession.instances == 2, "a new thread gets a session of its own"
+
 
 # --- Envelope and decoding ------------------------------------------------
 
