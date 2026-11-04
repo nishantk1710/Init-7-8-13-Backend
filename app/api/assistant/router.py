@@ -445,19 +445,7 @@ def _justification_model(row: Justification) -> JustificationModel:
 
 
 def _declaration_model(row: RepairAttestation) -> SessionDeclarationModel:
-    return SessionDeclarationModel(
-        id=row.id,
-        recommendation=row.recommendation,
-        condition_description=row.condition_description,
-        fault_category=row.fault_category,
-        quantity=str(row.quantity),
-        attestor_name=row.attestor_name,
-        attested_at=row.attested_at,
-        evidence_reference=row.evidence_reference,
-        repair_document=row.repair_document,
-        repair_item=row.repair_item,
-        repair_document_type=row.repair_document_type,
-    )
+    return SessionDeclarationModel.of(row)
 
 
 def _session_declarations(db: DbSession, session_id: str) -> list[RepairAttestation]:

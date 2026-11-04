@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from pydantic import Field as PydanticField
 
-from app.api.assistant.schemas import AssistantModel, LinkedReservationModel
+from app.api.assistant.schemas import AssistantModel, LinkedReservationModel, SessionDeclarationModel
 
 
 # --- preview ---------------------------------------------------------------------
@@ -190,6 +190,11 @@ class RequestLineModel(AssistantModel):
     saving: SavingModel | None = None
     """OAR lines submitted with a required quantity (from 3 Nov 2026)."""
     linked_reservations: list[LinkedReservationModel] = []
+    declaration: SessionDeclarationModel | None = None
+    """Repairable lines: the condition declaration made on the line -- the
+    newest, should there be more than one -- as the session trace shows it
+    (4-Nov-2026). Null when none was made, and always on an OAR line, which has
+    a window and a purpose instead."""
 
 
 class SkippedModel(AssistantModel):
