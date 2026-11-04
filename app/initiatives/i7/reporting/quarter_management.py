@@ -154,7 +154,6 @@ def _cards(
     generated: int,
     assessed: int,
     every: int,
-    awaiting: int,
     approved: int,
     oar_records: int,
     min_max: kpi_definitions.MinMaxCounts,
@@ -314,27 +313,9 @@ def _cards(
         )
     )
 
-    # --- Approval: two statuses as of the date the report was generated -----------------------------
-    # Both are where the period's recommendations stand in the approval chain on that date. Neither says anything about
-    # SAP: whether SAP was updated is the adoption section, a separate process.
-    cards.append(
-        KpiCard(
-            key="pending_approval",
-            title="Pending approval",
-            unit="recommendations",
-            value=Decimal(awaiting),
-            status=AvailabilityStatus.AVAILABLE,
-            explanation=(
-                "Recommendations from this period waiting for an approver's decision (pending or on hold) on the date this "
-                "report was generated. Not the same as waiting for SAP to be updated."
-            ),
-            kind=MetricKind.STATUS_AS_OF,
-            measured_on=as_of,
-            period_label=f"as of {as_of:%d %b %Y}",
-            denominator=generated,
-            denominator_label="recommendations generated in the period",
-        )
-    )
+    # --- Approved: where the period's recommendations stand in the approval chain on the date the report was generated. It says
+    # nothing about SAP: whether SAP was updated is the adoption section, a separate process. What is still waiting for a decision is
+    # in the Approval status section (``adoption.stages.awaiting_approval``), not a card of its own.
     cards.append(
         KpiCard(
             key="approved",
@@ -379,9 +360,9 @@ def _cards(
             key="min_max_conversion",
             title="Min-Max conversion",
             unit="material-plants",
-            value=Decimal(min_max.converted) if measured else None,
-            # With no SAP change evidence for any eligible material-plant, nothing has been measured: that is not a count of 0.
-            status=AvailabilityStatus.AVAILABLE if measured else AvailabilityStatus.UNKNOWN,
+            # The converted count, 0 included: a material-plant counts only when SAP shows it, so with nothing converted the answer is 0.
+            value=Decimal(min_max.converted),
+            status=AvailabilityStatus.AVAILABLE,
             explanation=(
                 "OAR material-plants converted to Min-Max ordering in SAP: eligible by the conversion rule, and SAP now holds Min-Max with "
                 "its minimum and maximum filled in, as the SAP adoption check finds. Approval is not conversion, and a material-plant with "
@@ -392,14 +373,10 @@ def _cards(
             period_label=f"as of {as_of:%d %b %Y}",
             denominator=min_max.eligible,
             denominator_label="eligible to convert",
-            unavailable_reason=(
-                None if measured
-                else "Not yet measured: no SAP change evidence has been recorded for the eligible OAR material-plants, so a conversion "
-                "cannot be confirmed. This is distinct from a measured 0."
-            ),
             note=(
                 f"{min_max.eligible:,} of the period's {min_max.oar_material_plants:,} OAR material-plants are eligible to convert by the "
                 "rule. Eligible is the rule's verdict; converted is what SAP shows."
+                + ("" if measured else " No SAP change evidence has been recorded yet for the eligible material-plants, so 0 means none is confirmed converted.")
                 + (f" {min_max.manually_requested:,} more were not eligible but were requested by a user; they are not counted." if min_max.manually_requested else "")
             ),
         )
@@ -522,7 +499,6 @@ def build_quarter_management(
             generated=generated,
             assessed=assessed,
             every=every,
-            awaiting=awaiting,
             approved=approved,
             oar_records=oar_records,
             min_max=min_max,

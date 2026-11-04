@@ -386,3 +386,59 @@ def test_the_list_filters_by_min_max_conversion_decision(db):
     assert shown(conversion_eligibility="ELIGIBLE") == ["ELIG"]
     assert shown(conversion_eligibility="NOT_ELIGIBLE") == ["NOT"]
     assert shown() == ["ELIG", "NONE", "NOT"]  # no filter: everything
+
+
+# --- Ready for Review: the total, and the part that proposes a change in SAP ---------------------
+
+
+def reviewable(material, *, cur=None, rec=None, is_oar=False, verdict=None, status="READY_FOR_REVIEW", plant="1300"):
+    """A computed recommendation. ``cur`` and ``rec`` are (safety stock, reorder point, max stock) as SAP holds them and as recommended."""
+    row = recommendation(material, "ERRATIC")
+    row.sap_plant_code = plant
+    row.recommendation_id = f"REC-{material}-{plant}"
+    row.status, row.is_oar, row.conversion_eligibility = status, is_oar, verdict
+    if cur:
+        row.current_safety_stock, row.current_rop, row.current_max_stock = cur
+    if rec:
+        row.recommended_safety_stock, row.recommended_rop, row.recommended_max_stock = rec
+    return row
+
+
+def test_ready_for_review_has_a_total_and_the_part_that_proposes_a_change(db):
+    db.add_all([
+        reviewable("CHANGE", cur=(1, 2, 10), rec=(3, 2, 10)),  # safety stock differs: something to adopt
+        reviewable("BLANKCUR", cur=(None, None, None), rec=(3, 5, 9)),  # a recommended value against one SAP leaves blank is a change
+        reviewable("SAME", cur=(1, 2, 10), rec=(1, 2, 10)),  # SAP already holds what is recommended: nothing to adopt
+        reviewable("NOVALUES"),  # nothing recommended
+        reviewable("OAR_ELIGIBLE", is_oar=True, verdict="ELIGIBLE", rec=(1, 2, 3)),  # the Min-Max conversion is the change
+        reviewable("OAR_NOT_ELIGIBLE", is_oar=True, verdict="NOT_ELIGIBLE", rec=(1, 2, 3)),  # not eligible: nothing to adopt
+        reviewable("OAR_UNDECIDED", is_oar=True, verdict=None, rec=(1, 2, 3)),
+        reviewable("APPROVED_ONE", status="PENDING_APPROVAL", cur=(1, 2, 10), rec=(3, 2, 10)),  # another status: not Ready for Review
+    ])
+    db.commit()
+    result = summary(db)
+    assert result.ready_for_review_count == 7  # every computed, unsubmitted recommendation stays available as the total
+    assert result.ready_for_review_actionable_count == 3  # CHANGE, BLANKCUR and OAR_ELIGIBLE
+
+
+def test_the_actionable_ready_for_review_count_is_the_lists_own_actionable_total(db):
+    db.add_all([
+        reviewable("CHANGE", cur=(1, 2, 10), rec=(3, 2, 10)), reviewable("SAME", cur=(1, 2, 10), rec=(1, 2, 10)),
+        reviewable("OAR_ELIGIBLE", is_oar=True, verdict="ELIGIBLE", rec=(1, 2, 3)), reviewable("OAR_NO", is_oar=True, verdict="NOT_ELIGIBLE", rec=(1, 2, 3)),
+    ])
+    db.commit()
+    shown = listing(db, status="READY_FOR_REVIEW", actionable=True)
+    assert shown.total == summary(db).ready_for_review_actionable_count == 2
+    assert sorted(item.material for item in shown.items) == ["CHANGE", "OAR_ELIGIBLE"]
+    assert listing(db, status="READY_FOR_REVIEW").total == summary(db).ready_for_review_count == 4  # without the filter: the total
+
+
+def test_only_the_newest_recommendation_of_a_material_plant_is_counted(db):
+    old = reviewable("A", cur=(1, 2, 10), rec=(3, 2, 10))
+    old.recommendation_id, old.feature_run_id = "REC-A-old", 1
+    new = reviewable("A", cur=(1, 2, 10), rec=(1, 2, 10))  # regenerated: SAP now matches
+    new.recommendation_id, new.feature_run_id = "REC-A-new", 2
+    db.add_all([old, new])
+    db.commit()
+    result = summary(db)
+    assert result.ready_for_review_count == 1 and result.ready_for_review_actionable_count == 0
