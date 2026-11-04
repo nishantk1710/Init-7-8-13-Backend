@@ -1086,6 +1086,16 @@ class Settings(BaseSettings):
     # reservation without an assistant reference, and notifies each requester.
     notification_i13_detection_enabled: bool = False
     notification_i13_detection_hour_utc: int = 1
+    # Detection again as soon as the I13 snapshot has been rebuilt or re-aged (4-Nov-2026), so
+    # the queue is checked against the data the screens now show -- at least daily (the re-age
+    # when the day turns) and after every SAP load that changed it. The timer above stays as
+    # the backup for a day with no successful build. OFF by default, for the same reason.
+    i13_detect_after_build: bool = False
+    # The exception types those two automatic runs check, comma-separated (PLAN_BREACH,
+    # NO_PLAN, NO_PLAN_GRNI, QUANTITY_OVERRIDE). Empty = all. A type left out is neither
+    # raised nor resolved by them -- e.g. NO_PLAN and NO_PLAN_GRNI until the Non-AI
+    # go-live cutoff is agreed. The post-capture and manual (POST /run/detect) runs always check every type.
+    i13_detection_types: str = ""
 
     # A request's requester is told in the app when its lines are linked to an SAP reservation, and reminded
     # once when lines that need a reservation are still unlinked this many hours after the request (0 = no
