@@ -244,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="python -m app.initiatives.i8.demo_seed",
         description=(
             "Seed clearly-marked demo attestations against real open repair "
-            "lines, so the declaration queue and exception queue have something "
+            "lines, so the register's Declaration column has something "
             "to show at UAT. Not a user path -- see the module docstring."
         ),
     )

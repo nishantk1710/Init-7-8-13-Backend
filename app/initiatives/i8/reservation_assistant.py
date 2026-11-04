@@ -154,18 +154,24 @@ class I08Assessment:
         """
         if not self.need_date_advice_enabled:
             return None
+        upcoming = self.next_due_date(today)
+        if upcoming is None:
+            return None
+        # ISO, as the headline gives due dates.
+        return (
+            f"A repaired unit is due back on {upcoming.isoformat()}. If your "
+            "job can wait, set the need date after that, and no new unit is bought."
+        )
+
+    def next_due_date(self, today: date) -> date | None:
+        """The soonest open repair due back ON OR AFTER ``today``: a forecast
+        that has not been missed yet. None when every date has passed."""
         upcoming = [
             item.due_date
             for item in self.verdict.evidence
             if item.due_date is not None and item.due_date >= today
         ]
-        if not upcoming:
-            return None
-        # ISO, as the headline gives due dates.
-        return (
-            f"A repaired unit is due back on {min(upcoming).isoformat()}. If your "
-            "job can wait, set the need date after that, and no new unit is bought."
-        )
+        return min(upcoming) if upcoming else None
 
     def headline(self, today: date) -> str:
         """The sentence of record, written to be read by the person reserving."""
@@ -198,11 +204,7 @@ class I08Assessment:
                 if buying
                 else " No planned delivery time is held for this part."
             )
-            return (
-                f"{opening} That repair was due {overdue_by} days ago and still "
-                f"has not arrived, so its date is no longer a forecast: chase "
-                f"it before relying on it.{tail}"
-            )
+            return f"{opening} {self._overdue_sentence(today, overdue_by)}{tail}"
 
         comparison = self.waiting_beats_buying(today)
 
@@ -226,6 +228,35 @@ class I08Assessment:
             "genuinely be the faster route here."
         )
 
+    def _overdue_sentence(self, today: date, overdue_by: int) -> str:
+        """What to make of the missed dates, for one repair or several
+        (4-Nov-2026: "That repair was due..." was said of eight)."""
+        lines = self.verdict.open_repair_lines
+        overdue = self.verdict.overdue_lines
+        if lines <= 1:
+            return (
+                f"That repair was due {overdue_by} days ago and still has not "
+                "arrived, so its date is no longer a forecast: chase it before "
+                "relying on it."
+            )
+        if overdue >= lines:
+            return (
+                f"All {lines} repairs are past their promised dates, the earliest "
+                f"by {overdue_by} days, so those dates are no longer a forecast: "
+                "chase them before relying on them."
+            )
+        upcoming = self.next_due_date(today)
+        sentence = (
+            f"1 of the {lines} repairs is past its promised date, by {overdue_by} "
+            "days: chase it before relying on it."
+            if overdue == 1
+            else f"{overdue} of the {lines} repairs are past their promised dates, "
+            f"the earliest by {overdue_by} days: chase them before relying on them."
+        )
+        if upcoming is not None:
+            sentence += f" The next is due back {upcoming.isoformat()}."
+        return sentence
+
     def as_record(self, today: date) -> dict[str, Any]:
         """The assessment as a JSON-serialisable dictionary, for storage.
 
@@ -233,10 +264,6 @@ class I08Assessment:
         append-only column and read back months later, so the shape has to be a
         deliberate choice that changes only when somebody means it to -- not
         something that silently gains a field because a dataclass did.
-
-        While the complete flow is off the stock split keys are left out
-        (``RepairableUnitVerdict.stock_condition_checked``), so the record has
-        the shape it had before the split existed.
         """
         record = {
             "flow": "i08",
@@ -270,6 +297,8 @@ class I08Assessment:
                     "vendorName": item.vendor_name,
                     "status": item.status,
                     "dispatched": item.dispatched,
+                    # Since 4-Nov-2026: when the unit was sent (the first 541).
+                    "dispatchedAt": _iso(item.dispatched_at),
                 }
                 for item in self.verdict.evidence
             ],
@@ -306,15 +335,7 @@ class I08Assessment:
             # is part of what the requester was told.
             "needDateAdvice": self.need_date_advice(today),
         }
-        if not self.verdict.stock_condition_checked:
-            for key in _STOCK_SPLIT_KEYS:
-                del record[key]
         return record
-
-
-#: The record keys of the usable/damaged split (27/28-Oct-2026), left out
-#: while the complete flow is off.
-_STOCK_SPLIT_KEYS = ("usableStock", "damagedStock", "stockConditionKnown", "stockSource", "usableBreakdown")
 
 
 def _number(value: Decimal | None) -> str | None:

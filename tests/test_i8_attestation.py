@@ -1,4 +1,9 @@
-"""W5.3 -- the condition-to-repair attestation, its exception, and the queue.
+"""W5.3 -- the condition-to-repair attestation, and the declaration queue.
+
+Since 3-Nov-2026 a declaration is recorded only by the assistant, so the POST
+route these tests once drove is gone, and so is the missing-declaration
+exception (the exception queue was removed). What is left is the record itself,
+how it is matched to a repair line, and the queue the register reads.
 
 Three tiers, the same shape the rest of the I08 suite uses:
 
@@ -8,14 +13,13 @@ Three tiers, the same shape the rest of the I08 suite uses:
 
 The tests that matter most here are the ones about what must NOT happen: a
 second attestation must not overwrite the first, an amendment must not edit the
-original, and the exception must not clear for a line just outside the window.
+original, and a line just outside the window must not read as declared.
 An audit record that can be quietly rewritten is not an audit record, and a
 boundary that is only tested in the middle is not tested.
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -37,12 +41,6 @@ from app.initiatives.i8.attestation import (
 )
 from app.initiatives.i8.config import get_i8_settings
 from app.initiatives.i8.declarations import STATUS_NOTES, build_queue
-from app.initiatives.i8.exceptions import (
-    RAISED_BY_I8,
-    ExceptionType,
-    build_exceptions,
-    overdue_repairs,
-)
 from app.main import app
 from tests.i8_support import needs_db, needs_views
 
@@ -60,7 +58,6 @@ client = TestClient(app)
 
 ATTESTATIONS = "/api/i8/attestations"
 DECLARATIONS = "/api/i8/declarations"
-EXCEPTIONS = "/api/i8/exceptions"
 
 
 def _register_lines() -> int:
@@ -160,7 +157,6 @@ class TestValidation:
             ({"plant": ""}, "plant"),
             ({"quantity": Decimal(0)}, "quantity"),
             ({"quantity": Decimal(-1)}, "quantity"),
-            ({"condition_description": "   "}, "conditionDescription"),
             ({"fault_category": "NOT_A_CATEGORY"}, "faultCategory"),
             ({"recommendation": "PROBABLY"}, "recommendation"),
             # The table is append-only: each of these would be a permanent row.
@@ -181,6 +177,11 @@ class TestValidation:
     def test_rejects(self, overrides, expected) -> None:
         with pytest.raises(AttestationError, match=expected):
             validate(a_draft(**overrides))
+
+    def test_a_declaration_with_no_description_is_accepted(self) -> None:
+        """3-Nov-2026: the assistant's form no longer asks for one; the fault
+        category says what is wrong."""
+        assert validate(a_draft(condition_description="   ")).condition_description == ""
 
     def test_a_bound_declaration_defaults_to_a_po_line(self) -> None:
         clean = validate(a_draft(repair_document="4500000001", repair_item="10"))
@@ -416,28 +417,6 @@ class TestDeclaringAgainstTheLineItself:
             with pytest.raises(AttestationError, match="together"):
                 validate(draft)
 
-    def test_the_note_says_the_line_is_covered_without_mentioning_a_window(
-        self,
-    ) -> None:
-        """What the person reads after saving. A bound declaration needs no
-        explanation about dates, because no dates were consulted."""
-        from app.initiatives.i8.attestation import explain_coverage
-
-        lines = [FakeLine("4500", "10", "8000005632", "1300", date(2021, 3, 11))]
-        covered, note = explain_coverage(
-            self._attestation(
-                datetime(2026, 10, 13, tzinfo=timezone.utc),
-                document="4500",
-                item="10",
-            ),
-            lines,
-        )
-
-        assert covered == ["4500-10"]
-        assert "4500-10" in note
-        assert "matching window" not in note
-
-
 # --- The declaration queue, no database ------------------------------------
 
 
@@ -549,192 +528,6 @@ class TestDeclarationQueue:
         line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
         rows = build_queue([line], self._coverage(uncovered={line.key}))
         assert rows[0].requester == "10316"
-
-
-# --- The exception ---------------------------------------------------------
-
-
-class TestMissingAttestationException:
-    def test_an_uncovered_line_raises_it(self) -> None:
-        line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
-        cover = AttestationCoverage(covered={}, uncovered={line.key}, window_days=30)
-        items, stats = build_exceptions([line], cover)
-
-        assert len(items) == 1
-        assert items[0].type == ExceptionType.MISSING_ATTESTATION.value
-        assert stats.by_type == {"MISSING_ATTESTATION": 1}
-
-    def test_a_covered_line_does_not(self, fake_attestation) -> None:
-        line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
-        cover = AttestationCoverage(
-            covered={line.key: fake_attestation("REPAIRABLE")},
-            uncovered=set(),
-            window_days=30,
-        )
-        items, stats = build_exceptions([line], cover)
-        assert items == []
-        assert stats.total == 0
-        assert stats.lines_covered == 1
-
-    def test_the_detail_says_what_was_searched_for(self) -> None:
-        """So a reader can tell a real gap from a matching rule that did not fit."""
-        line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
-        cover = AttestationCoverage(covered={}, uncovered={line.key}, window_days=30)
-        detail = build_exceptions([line], cover)[0][0].detail
-        assert "8000005632" in detail and "1300" in detail and "30 days" in detail
-
-    def test_every_miss_is_a_warning(self) -> None:
-        """Every register line is open in SAP -- a part out there now with no
-        assessment, which somebody can still act on. Closed lines are not in
-        the register, so nothing here is history to be merely counted."""
-        lines = [
-            FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1)),
-            FakeLine("4500", "20", "8000005633", "1300", date(2026, 5, 1)),
-        ]
-        cover = AttestationCoverage(
-            covered={}, uncovered={line.key for line in lines}, window_days=30
-        )
-        items, _stats = build_exceptions(lines, cover)
-        assert {i.severity for i in items} == {"warning"}
-
-    def test_a_line_raised_before_the_cutover_is_labelled_not_accused(self) -> None:
-        """The 20-Sep ruling: "on them can we show before Spares Automation".
-
-        MISSING_ATTESTATION fires on all 1,225 historical lines because the
-        control did not exist when they were raised. The exception still fires
-        and still counts -- what changes is that it says why.
-        """
-        line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
-        cover = AttestationCoverage(covered={}, uncovered={line.key}, window_days=30)
-        items, stats = build_exceptions([line], cover, cutover=date(2026, 10, 1))
-
-        assert items[0].pre_automation is True
-        assert items[0].title == "Raised before Spares Automation"
-        assert "01 Oct 2026" in items[0].detail
-        # Open, but INFO: there was no form to fill in when it was raised.
-        assert items[0].severity == "info"
-        # Counted, but not as work.
-        assert (stats.total, stats.pre_automation, stats.actionable) == (1, 1, 0)
-
-    def test_a_line_raised_after_the_cutover_is_a_real_miss(self) -> None:
-        line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 11, 1))
-        cover = AttestationCoverage(covered={}, uncovered={line.key}, window_days=30)
-        items, stats = build_exceptions([line], cover, cutover=date(2026, 10, 1))
-
-        assert items[0].pre_automation is False
-        assert items[0].title == "No condition declaration"
-        assert items[0].severity == "warning"
-        assert (stats.total, stats.pre_automation, stats.actionable) == (1, 0, 1)
-
-    def test_no_cutover_configured_changes_nothing(self) -> None:
-        """The shipped default. VZI has not given the date yet, and a guessed
-        one would silently forgive real misses on one side of it."""
-        line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
-        cover = AttestationCoverage(covered={}, uncovered={line.key}, window_days=30)
-        items, stats = build_exceptions([line], cover)
-
-        assert items[0].pre_automation is False
-        assert items[0].title == "No condition declaration"
-        assert (stats.pre_automation, stats.actionable) == (0, 1)
-        assert stats.attestation_cutover_date is None
-
-    def test_a_line_with_no_date_is_not_quietly_forgiven(self) -> None:
-        """Guessing in the forgiving direction is still guessing, and the line
-        it would forgive is the one we know least about."""
-        line = FakeLine("4500", "10", "8000005632", "1300", None)
-        cover = AttestationCoverage(covered={}, uncovered={line.key}, window_days=30)
-        items, _stats = build_exceptions([line], cover, cutover=date(2026, 10, 1))
-        assert items[0].pre_automation is False
-
-    def test_the_full_number_survives_the_label(self) -> None:
-        """The 1,225 figure is the business case for the initiative. The label
-        is about how it reads, not about making it smaller -- so `total` still
-        carries it and `actionable` is served beside it, never instead."""
-        lines = [
-            FakeLine("4500", str(i), "800000563" + str(i % 10), "1300", date(2026, 5, 1))
-            for i in range(10)
-        ]
-        cover = AttestationCoverage(
-            covered={}, uncovered={line.key for line in lines}, window_days=30
-        )
-        _items, stats = build_exceptions(lines, cover, cutover=date(2026, 10, 1))
-        assert stats.total == 10
-        assert stats.actionable == 0
-        assert stats.attestation_cutover_date == date(2026, 10, 1)
-
-    def test_every_declared_type_is_now_raised(self) -> None:
-        """MISSING_SESSION_ID is FR-8 and ours. It was declared and not raised
-        until 27-Oct-2026, when the R-reference typed on the job's reservation
-        line was read back; the API still says which are actually raised, so
-        an empty count is distinguishable from an unimplemented check."""
-        assert {t.value for t in ExceptionType} == {t.value for t in RAISED_BY_I8}
-        assert RAISED_BY_I8 == frozenset(
-            {
-                ExceptionType.MISSING_ATTESTATION,
-                ExceptionType.UNJUSTIFIED_ACQUISITION,
-                ExceptionType.OVERDUE_REPAIR,
-                # The declaration findings, raised since 27-Oct-2026.
-                ExceptionType.REPAIRED_AGAINST_ASSESSMENT,
-                ExceptionType.REPAIR_PR_NOT_DECLARED,
-                ExceptionType.DECLARED_NO_REPAIR_PR,
-                # Job reservation lines with no R-reference, since 27-Oct-2026.
-                ExceptionType.MISSING_SESSION_ID,
-            }
-        )
-
-    def test_an_overdue_open_line_is_raised(self) -> None:
-        """FR-9 asks for overdue "as an explicit dashboard exception state".
-
-        It was a register column and an overview tile and nothing else, so the
-        one screen built to list what needs chasing did not list the repairs
-        that are late -- the most chaseable thing I08 knows about.
-        """
-        line = FakeLine(
-            "4500",
-            "10",
-            "8000005632",
-            "1300",
-            date(2026, 5, 1),
-            overdue_status="OVERDUE",
-            due_date=date(2026, 6, 1),
-            days_remaining=-40,
-        )
-        items = overdue_repairs([line], grace_days=7)
-
-        assert len(items) == 1
-        assert items[0].type == ExceptionType.OVERDUE_REPAIR.value
-        # The rule is traceable from the row: when it was promised, and the
-        # grace it is measured against.
-        assert "01 Jun 2026" in items[0].detail
-        assert "more than 7 days late" in items[0].detail
-        assert "40 days" in items[0].detail
-
-    def test_an_on_time_line_is_not_raised(self) -> None:
-        line = FakeLine("4500", "10", "8000005632", "1300", date(2026, 5, 1))
-        assert overdue_repairs([line], grace_days=7) == []
-
-    def test_overdue_is_read_from_the_register_not_recomputed(self) -> None:
-        """Two places deciding what "overdue" means is how a column and a queue
-        end up disagreeing about the same line."""
-        line = FakeLine(
-            "4500",
-            "10",
-            "8000005632",
-            "1300",
-            date(2026, 5, 1),
-            # A due date long past, but the register says ON_TIME -- whatever
-            # its reason (grace, no schedule line), the queue must agree.
-            overdue_status="ON_TIME",
-            due_date=date(2020, 1, 1),
-        )
-        assert overdue_repairs([line], grace_days=7) == []
-
-    def test_a_line_with_no_plant_is_not_reported(self) -> None:
-        """The material-plant key cannot be formed, so an exception for it could
-        never be cleared by anyone. That is noise, not a finding."""
-        line = FakeLine("4500", "10", "8000005632", None, date(2026, 5, 1))
-        cover = AttestationCoverage(covered={}, uncovered=set(), window_days=30)
-        assert build_exceptions([line], cover)[0] == []
 
 
 @pytest.fixture
@@ -907,121 +700,24 @@ class TestTheWritePath:
 
 @needs_views
 class TestTheApi:
-    @pytest.fixture(autouse=True)
-    def clean_table(self):
-        from app.core.db import get_sessionmaker
-        from app.initiatives.i8.service import reset_attestation_view
-
-        def wipe():
-            with get_sessionmaker()() as db:
-                _set_immutability_trigger(db, "DISABLE")
-                db.execute(text("DELETE FROM i8_attestation"))
-                _set_immutability_trigger(db, "ENABLE")
-                db.commit()
-            reset_attestation_view()
-
-        wipe()
-        yield
-        wipe()
-
-    def body(self, **overrides) -> dict:
-        payload = {
-            "materialId": "8000005632",
-            "plant": "1300",
-            "quantity": 1,
-            "conditionDescription": "Bearing seized, housing intact.",
-            "faultCategory": "BEARING_FAILURE",
-            "recommendation": "REPAIRABLE",
-        }
-        payload.update(overrides)
-        return payload
-
-    def test_post_returns_201_and_the_row_comes_back_on_get(self) -> None:
-        created = client.post(ATTESTATIONS, json=self.body())
-        assert created.status_code == 201
-
-        listed = client.get(f"{ATTESTATIONS}?materialId=8000005632").json()
-        assert listed["total"] == 1
-        assert listed["items"][0]["id"] == created.json()["id"]
-
-    def test_the_response_carries_the_frontend_condition_wording(self) -> None:
-        created = client.post(ATTESTATIONS, json=self.body()).json()
-        assert created["condition"] == "Repairable"
+    """Read-only since 3-Nov-2026: the assistant records a declaration, so
+    there is no POST here to record or amend one."""
 
     def test_the_fault_category_list_is_served_with_the_data(self) -> None:
-        """So a form does not hard-code VZI's vocabulary."""
+        """So a screen does not hard-code VZI's vocabulary."""
         listed = client.get(ATTESTATIONS).json()
         assert "BEARING_FAILURE" in listed["faultCategories"]
 
-    def test_an_unknown_fault_category_is_422_and_says_what_is_allowed(self) -> None:
-        response = client.post(ATTESTATIONS, json=self.body(faultCategory="MADE_UP"))
-        assert response.status_code == 422
-        assert "BEARING_FAILURE" in response.json()["detail"]
-
-    def test_the_amendment_chain_is_visible_on_the_wire(self) -> None:
-        original = client.post(ATTESTATIONS, json=self.body()).json()
-        amendment = client.post(
-            ATTESTATIONS,
-            json=self.body(
-                recommendation="SCRAP",
-                supersedes=original["id"],
-                amendmentReason="Stripped down.",
-            ),
-        ).json()
-
-        listed = client.get(f"{ATTESTATIONS}?materialId=8000005632").json()
-        rows = {r["id"]: r for r in listed["items"]}
-        assert rows[original["id"]]["supersededBy"] == amendment["id"]
-        assert rows[amendment["id"]]["supersedes"] == original["id"]
-        # And the original is still there, unedited.
-        assert rows[original["id"]]["recommendation"] == "REPAIRABLE"
-
-    def test_current_only_hides_superseded_rows(self) -> None:
-        original = client.post(ATTESTATIONS, json=self.body()).json()
-        client.post(
-            ATTESTATIONS,
-            json=self.body(
-                recommendation="SCRAP",
-                supersedes=original["id"],
-                amendmentReason="Stripped down.",
-            ),
-        )
-        current = client.get(f"{ATTESTATIONS}?materialId=8000005632&currentOnly=true").json()
-        assert current["total"] == 1
-        assert current["items"][0]["id"] != original["id"]
-
-    def test_the_attestor_is_not_taken_from_the_body(self) -> None:
-        """An audit record whose author is self-declared is not an audit record."""
-        created = client.post(
-            ATTESTATIONS, json=self.body(attestor="somebody.else")
-        ).json()
-        assert created["attestor"] != "somebody.else"
-
-    @pytest.mark.parametrize(
-        "overrides",
-        [
-            {"materialId": "1000000123"},  # not 80-series
-            {"plant": "1600"},  # out of the two-plant scope
-            {"materialId": "8099999999"},  # 80-series, but nothing knows it
-            {"quantity": 1000000000},  # a typo that could never be corrected
-            {"serialNumber": "X" * 65},  # wider than the column
-            {"evidenceReference": "X" * 501},
-        ],
-    )
-    def test_what_could_never_be_taken_back_is_refused(self, overrides) -> None:
-        response = client.post(ATTESTATIONS, json=self.body(**overrides))
-        assert response.status_code == 422
-        assert client.get(ATTESTATIONS).json()["total"] == 0
+    def test_there_is_no_route_to_record_one(self) -> None:
+        assert client.post(ATTESTATIONS, json={}).status_code == 405
 
 
 @needs_views
 class TestTheViewNoticesWritesFromElsewhere:
-    """Explicit invalidation only covers writes through this process's router.
-
-    `demo_seed` runs in another process, and justifications arrive through the
-    WS7 endpoints -- so the view compares a fingerprint of its source tables on
-    every read. Observed before this: after `demo_seed --clear` a running server
-    kept reporting the seeded lines as covered until it was restarted.
+    """Declarations are written by the assistant and by `demo_seed` (another
+    process), so the view compares a fingerprint of the table on every read.
+    Observed before this: after `demo_seed --clear` a running server kept
+    reporting the seeded lines as covered until it was restarted.
     """
 
     @pytest.fixture(autouse=True)
@@ -1062,37 +758,6 @@ class TestTheViewNoticesWritesFromElsewhere:
         assert second is not first
         assert second.source_fingerprint != first.source_fingerprint
 
-    def test_a_new_justification_rebuilds_it(self) -> None:
-        """Flushed, never committed -- the append-only table is left as found."""
-        from app.assistant.models import Justification
-        from app.core.db import get_sessionmaker
-        from app.initiatives.i8.service import (
-            get_attestation_view,
-            get_snapshot,
-            reset_attestation_view,
-        )
-
-        with get_sessionmaker()() as db:
-            snapshot = get_snapshot(db)
-            first = get_attestation_view(db, snapshot)
-            db.add(
-                Justification(
-                    kind="NEW_ACQUISITION",
-                    reason_category="OTHER",
-                    free_text="Fingerprint test.",
-                    material_id="8000005632",
-                    plant="1300",
-                    author="test",
-                )
-            )
-            db.flush()
-            try:
-                assert get_attestation_view(db, snapshot) is not first
-            finally:
-                db.rollback()
-                reset_attestation_view()
-
-
 @needs_views
 class TestAgainstTheSeededRegister:
     """The queues over the real 1,225-line register."""
@@ -1117,92 +782,6 @@ class TestAgainstTheSeededRegister:
     def test_every_repair_line_is_in_the_declaration_queue(self) -> None:
         meta = client.get(f"{DECLARATIONS}?pageSize=1").json()["meta"]
         assert meta["total"] == _register_lines()
-
-    def test_with_no_attestations_everything_is_an_exception(self) -> None:
-        """**This number is the business case.** Every open repair line, zero
-        attestations, because the control did not exist before this platform.
-
-        If it ever drops without somebody having recorded an attestation, the
-        check has been weakened rather than satisfied.
-        """
-        lines = _register_lines()
-        meta = client.get(f"{EXCEPTIONS}?pageSize=1").json()["meta"]
-        assert meta["linesChecked"] == lines
-        assert meta["linesCovered"] == 0
-        assert meta["byType"]["MISSING_ATTESTATION"] == lines
-        assert meta["total"] == sum(meta["byType"].values())
-
-    def test_every_exception_is_a_warning(self) -> None:
-        """Every line is open in SAP, so every miss is something somebody can
-        still act on; with no cutover configured nothing is pre-automation."""
-        meta = client.get(f"{EXCEPTIONS}?pageSize=1").json()["meta"]
-        assert meta["bySeverity"] == {"warning": meta["total"]}
-
-    def test_unjustified_acquisitions_against_the_seeded_register(self) -> None:
-        """The new 80-series purchases -- new-buy PRs and direct PO lines since
-        27-Oct-2026 -- each matched against the repairs SAP still has open at
-        the same plant, PO lines and repair PRs alike. None has a justification
-        -- the control did not exist when they were bought.
-
-        Was 2,331 PO lines on the July seed. Measured on the 15-Oct extract:
-        5,192 purchases (5,131 new-buy PRs, 61 direct PO lines) and 30 raised.
-        The count depends on which extract is seeded, so it is not pinned."""
-        body = client.get(f"{EXCEPTIONS}?type=UNJUSTIFIED_ACQUISITION&pageSize=500").json()
-        assert body["meta"]["acquisitionsChecked"] > 0
-        assert body["meta"]["byType"].get("UNJUSTIFIED_ACQUISITION", 0) == body["total"]
-        assert "UNJUSTIFIED_ACQUISITION" in body["meta"]["typesRaised"]
-        for item in body["items"]:
-            purchase, repair = item["acquisitionLine"], item["repairLine"]
-            assert purchase["documentNumber"]
-            assert purchase["type"] in {"PR", "PO"} and repair["type"] in {"PR", "PO"}
-            assert (purchase["type"], purchase["documentNumber"], purchase["line"]) != (
-                repair["type"],
-                repair["documentNumber"],
-                repair["line"],
-            )
-            prefix = "PR-" if purchase["type"] == "PR" else ""
-            assert item["id"] == (
-                f"EX-UNJUSTIFIED_ACQUISITION-{prefix}{purchase['documentNumber']}-{purchase['line']}"
-            )
-        missing = client.get(f"{EXCEPTIONS}?type=MISSING_ATTESTATION&pageSize=1").json()
-        assert missing["items"][0]["acquisitionLine"] is None
-
-    def test_the_meta_counts_do_not_change_when_the_list_is_filtered(self) -> None:
-        """"How much of the register is uncovered" must not move because
-        somebody filtered to one plant."""
-        unfiltered = client.get(f"{EXCEPTIONS}?pageSize=1").json()
-        filtered = client.get(f"{EXCEPTIONS}?plant=1300&pageSize=1").json()
-        assert filtered["total"] <= unfiltered["total"]
-        assert filtered["meta"]["total"] == unfiltered["meta"]["total"]
-
-    def test_seeding_a_demo_attestation_clears_its_exception(self) -> None:
-        """The whole loop: before, seed, after.
-
-        Uses the demo seeder rather than the API on purpose -- the API stamps
-        the server clock, and every line in this July extract was raised months
-        outside the matching window of "now". That is not a bug in either one;
-        see app/initiatives/i8/demo_seed.py.
-        """
-        from app.core.db import get_sessionmaker
-        from app.initiatives.i8.demo_seed import seed
-        from app.initiatives.i8.service import reset_attestation_view
-
-        before = client.get(f"{EXCEPTIONS}?pageSize=1").json()["meta"]["total"]
-
-        with get_sessionmaker()() as db:
-            result = seed(db, count=3)
-        reset_attestation_view()
-
-        after = client.get(f"{EXCEPTIONS}?pageSize=1").json()
-        assert result.created == 3
-        assert after["meta"]["total"] < before
-        assert after["meta"]["linesCovered"] >= 3
-
-        # And those lines now read as declared rather than required.
-        lines = _register_lines()
-        statuses = client.get(f"{DECLARATIONS}?pageSize=1").json()["meta"]["byStatus"]
-        assert statuses.get("Required", 0) < lines
-        assert sum(statuses.values()) == lines
 
     def test_declaration_field_names_match_the_frontend_type(self) -> None:
         """Checked against src/features/initiative-8/types/repair.ts.
@@ -1371,153 +950,3 @@ class TestTheLifecycleTimelineAttestedStage:
         assert "Attestation ATT-" in stage["evidence"]
         assert "DEMO_SEED" in stage["evidence"]
         assert stage["daysSince"] is not None and stage["daysSince"] >= 0
-
-
-class TestExplainCoverage:
-    """What a POST actually achieved, in words a person can read.
-
-    This exists because of a trap that is invisible until somebody uses the
-    form. The timestamp is server-set (that is what makes it an audit record)
-    and the register holds years of purchasing history, so an UNBOUND
-    attestation recorded today is outside the matching window of nearly every
-    line and covers none of them.
-
-    Both of those are correct. The danger is a UI that POSTs successfully, shows
-    the row still reading "Required", and invites somebody to "fix" it by
-    widening the window until it stops looking broken -- which would let an
-    assessment from a different repair cycle count. So the API explains itself.
-    """
-
-    def _attestation(self, when: datetime, material="8000005632", plant="1300"):
-        from app.initiatives.i8.models import RepairAttestation
-
-        return RepairAttestation(
-            id="ATT-EXPLAIN",
-            material_id=material,
-            plant=plant,
-            quantity=Decimal(1),
-            condition_description="Assessed.",
-            fault_category="WEAR",
-            recommendation="REPAIRABLE",
-            attestor="tester",
-            attested_at=when,
-        )
-
-    def test_it_reports_the_lines_it_covers(self) -> None:
-        from app.initiatives.i8.attestation import explain_coverage
-
-        raised = date(2026, 5, 1)
-        lines = [
-            FakeLine("4500", "10", "8000005632", "1300", raised),
-            FakeLine("4500", "20", "8000005632", "1300", raised),
-        ]
-        covered, note = explain_coverage(
-            self._attestation(datetime(2026, 5, 3, tzinfo=timezone.utc)), lines
-        )
-
-        # One attestation, two lines -- coverage is per material-plant. This is
-        # open question 4, answered empirically.
-        assert covered == ["4500-10", "4500-20"]
-        assert "covers 2 repair lines" in note
-
-    def test_no_repair_line_for_the_part_is_the_normal_case(self) -> None:
-        """A part assessed BEFORE it is sent anywhere covers nothing yet, and
-        that must not read as a failure."""
-        from app.initiatives.i8.attestation import explain_coverage
-
-        covered, note = explain_coverage(
-            self._attestation(datetime(2026, 5, 3, tzinfo=timezone.utc)),
-            [FakeLine("4500", "10", "8000009999", "1300", date(2026, 5, 1))],
-        )
-        assert covered == []
-        assert "No repair line exists" in note
-        assert "normal case" in note
-
-    def test_the_trap_is_explained_rather_than_left_to_be_inferred(self) -> None:
-        """The part HAS repair lines and they are all outside the window.
-
-        The note must say so, give the gap, and point at the route that does
-        work -- otherwise the next person widens the window.
-        """
-        from app.initiatives.i8.attestation import explain_coverage
-
-        lines = [FakeLine("4500", "10", "8000005632", "1300", date(2025, 4, 7))]
-        covered, note = explain_coverage(
-            self._attestation(datetime(2026, 9, 15, tzinfo=timezone.utc)), lines
-        )
-
-        assert covered == []
-        assert "covers none of the 1 repair line" in note
-        assert "2025-04-07" in note
-        assert "days from this assessment" in note
-        assert "30-day matching window" in note
-        # The fix is naming the line, not a wider window.
-        assert "declare from the line itself" in note
-
-    def test_it_uses_the_same_window_as_the_queue(self) -> None:
-        """An explanation derived from a second copy of the rule would
-        eventually contradict the queue it is explaining."""
-        from app.initiatives.i8.attestation import coverage as queue_coverage
-        from app.initiatives.i8.attestation import explain_coverage
-
-        # Exactly on the boundary: the queue and the explanation must agree.
-        raised = date(2026, 5, 1)
-        window = get_i8_settings().attestation_window_days
-        attested = datetime.combine(
-            raised + timedelta(days=window), datetime.min.time(), tzinfo=timezone.utc
-        )
-        line = FakeLine("4500", "10", "8000005632", "1300", raised)
-
-        covered, _note = explain_coverage(self._attestation(attested), [line])
-        assert covered == ["4500-10"]
-
-        # One day further out, both must say no.
-        covered, _note = explain_coverage(
-            self._attestation(attested + timedelta(days=1)), [line]
-        )
-        assert covered == []
-
-
-@needs_views
-class TestThePostExplainsItself:
-    @pytest.fixture(autouse=True)
-    def clean_table(self):
-        from app.core.db import get_sessionmaker
-        from app.initiatives.i8.service import reset_attestation_view
-
-        def wipe():
-            with get_sessionmaker()() as db:
-                _set_immutability_trigger(db, "DISABLE")
-                db.execute(text("DELETE FROM i8_attestation"))
-                _set_immutability_trigger(db, "ENABLE")
-                db.commit()
-            reset_attestation_view()
-
-        wipe()
-        yield
-        wipe()
-
-    def test_post_says_what_it_covered_and_get_does_not(self) -> None:
-        created = client.post(
-            ATTESTATIONS,
-            json={
-                "materialId": "8000005632",
-                "plant": "1300",
-                "quantity": 1,
-                "conditionDescription": "Assessed.",
-                "faultCategory": "WEAR",
-                "recommendation": "REPAIRABLE",
-            },
-        )
-        assert created.status_code == 201
-        body = created.json()
-
-        # On POST the caller is asking "did that do anything?", so it is told.
-        assert body["coversRepairLines"] is not None
-        assert body["coverageNote"]
-
-        # On GET the caller is reading history, and the fields stay null rather
-        # than recomputing a per-row answer nobody asked for.
-        listed = client.get(ATTESTATIONS).json()["items"][0]
-        assert listed["coversRepairLines"] is None
-        assert listed["coverageNote"] is None

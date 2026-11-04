@@ -144,6 +144,126 @@ def test_the_universe_row_defaults_to_an_unknown_split() -> None:
     assert row.stock_condition_source is None
 
 
+# --- MARD is the stock (3-Nov-2026) -------------------------------------------------
+
+
+def _part(rows, source: str = "MCHB") -> ConditionStock:
+    [part] = _split(rows, source).values()
+    return part
+
+
+def test_a_split_that_adds_up_to_mard_agrees() -> None:
+    part = _part([_row("8000003325", "1300", "NEW", 2), _row("8000003325", "1300", "DAMAGED", 1)])
+    assert universe.condition_total(part) == 3
+    assert universe.agrees_with_mard(part, Decimal(3))
+    assert universe.agrees_with_mard(part, Decimal("3.000"))  # SAP's padding is the same count
+
+
+@pytest.mark.parametrize("mard", [Decimal(2), Decimal(4), None])
+def test_more_fewer_or_no_mard_units_disagree(mard) -> None:
+    """None is no MARD row: there is no stock figure for the split to label."""
+    part = _part([_row("8000003325", "1300", "NEW", 2), _row("8000003325", "1300", "DAMAGED", 1)])
+    assert not universe.agrees_with_mard(part, mard)
+
+
+def test_a_condition_counted_as_neither_still_counts_towards_the_total() -> None:
+    """MBEW's SCRAP is neither usable nor damaged, but its units are on MARD."""
+    part = _part(
+        [_row("8000004885", "1500", "NEW", 3), _row("8000004885", "1500", "SCRAP", 2)],
+        source="MBEW",
+    )
+    assert universe.agrees_with_mard(part, Decimal(5))
+    assert not universe.agrees_with_mard(part, Decimal(3))
+
+
+def test_zero_condition_rows_agree_with_an_empty_shelf() -> None:
+    part = _part([_row("8000000001", "1300", "NEW", 0), _row("8000000001", "1300", "DAMAGED", 0)])
+    assert universe.agrees_with_mard(part, Decimal(0))
+
+
+def _candidate(material: str, plant: str, labst) -> dict:
+    """One row as the candidates query returns it."""
+    return {
+        "matnr": material, "werks": plant, "maktx": "PUMP", "mtart": "ZREP",
+        "labst": labst, "locations": 1, "minbe": None, "dismm": None, "plifz": None,
+        "in_mara": 1, "in_mard": 1, "in_marc": 0, "in_ekpo": 0, "in_zmm065": 0,
+    }
+
+
+@pytest.fixture
+def built(monkeypatch, caplog):
+    """The universe over three parts at 1300, with no database:
+
+    * 8000000001 -- MARD 3, MCHB NEW 2 + DAMAGED 1: agrees, split kept.
+    * 8000000002 -- MARD 3, MCHB NEW 1: one unit MCHB does not cover, split dropped.
+    * 8000000003 -- MARD 2, no MCHB rows: unknown, as before.
+    """
+    candidates = [
+        _candidate("8000000001", "1300", Decimal(3)),
+        _candidate("8000000002", "1300", Decimal(3)),
+        _candidate("8000000003", "1300", Decimal(2)),
+    ]
+    conditions = _split([
+        _row("8000000001", "1300", "NEW", 2),
+        _row("8000000001", "1300", "DAMAGED", 1),
+        _row("8000000002", "1300", "NEW", 1),
+    ])
+    monkeypatch.setattr(universe, "fetch_universe_candidates", lambda *a, **k: candidates)
+    monkeypatch.setattr(universe, "fetch_condition_stock", lambda *a, **k: conditions)
+    criticality = SimpleNamespace(get_many=lambda keys: {})
+    with caplog.at_level("INFO", logger=universe.logger.name):
+        rows, stats = universe.load_universe(
+            db=None, cfg=I8Settings(_env_file=None), criticality_source=criticality
+        )
+    # Copied now: pytest files a fixture's records under setup, not the test.
+    return {row.material_id: row for row in rows}, stats, list(caplog.records)
+
+
+def test_the_universe_keeps_only_a_split_that_agrees_with_mard(built) -> None:
+    rows, stats, _log = built
+    agrees, short, unsplit = rows["8000000001"], rows["8000000002"], rows["8000000003"]
+
+    assert (agrees.stock_on_hand, agrees.usable_stock, agrees.damaged_stock) == (3, 2, 1)
+    assert agrees.stock_condition_source == "MCHB"
+
+    # MARD's 3 stands; MCHB's "1 usable" is not served.
+    assert short.stock_on_hand == 3
+    assert (short.usable_stock, short.damaged_stock, short.stock_by_condition) == (None, None, ())
+    assert short.stock_condition_source is None
+
+    assert unsplit.stock_on_hand == 2 and unsplit.stock_condition_source is None
+
+    assert stats.with_stock_condition == 1
+    assert stats.stock_condition_mismatch == 1
+
+
+def test_the_build_log_names_the_disagreeing_part(built) -> None:
+    _rows, _stats, records = built
+    [warning] = [r for r in records if r.levelname == "WARNING"]
+    assert "8000000002 at 1300: MARD 3, MCHB 1" in warning.getMessage()
+    assert "8000000001" not in warning.getMessage()
+    assert any("1 left at the MARD total" in r.getMessage() for r in records)
+
+
+def test_the_assistant_reads_a_dropped_split_as_the_mard_total(built) -> None:
+    """The requester hears MARD's 3 with the condition unknown, not "1 usable"."""
+    from app.initiatives.i8.repairable_unit import UnitSource, assess
+
+    rows, _stats, _log = built
+    verdict = assess(
+        material_id="8000000002",
+        plant="1300",
+        universe_rows=list(rows.values()),
+        repair_lines=[],
+        today=date(2026, 11, 3),
+    )
+    assert verdict.stock_on_hand == 3
+    assert not verdict.stock_condition_known
+    assert verdict.stock_source == "MARD"
+    assert verdict.sources == (UnitSource.STOCK,)
+    assert "There are 3 in stock at plant 1300 (condition unknown)" in verdict.headline
+
+
 # --- the settings -------------------------------------------------------------------------
 
 

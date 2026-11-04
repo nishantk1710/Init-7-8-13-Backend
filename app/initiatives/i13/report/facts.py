@@ -33,7 +33,7 @@ from app.initiatives.i13.report.labels import plant_label
 from app.initiatives.i13.snapshot import I13Snapshot, current_plans
 from app.initiatives.i13.snapshot_store import kinds
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
-from app.initiatives.i13.summary import summary_from_snapshot
+from app.initiatives.i13.summary import summary_from_snapshot, with_queue_exception_counts
 from app.initiatives.i8.material_number import normalise
 from app.models.i13_act_exception import ActExceptionRecord
 from app.models.i13_snapshot_store import I13SnapshotRecord
@@ -77,8 +77,11 @@ def _describe(names: dict[str, str], material: str) -> str | None:
 
 def _summary(snapshot: I13Snapshot | SqlSnapshot, db: Session, plant: str | None):
     if isinstance(snapshot, SqlSnapshot):
-        return snapshot.summary(snapshot.current_plans(), plant=plant)
-    return summary_from_snapshot(snapshot, current_plans(db, snapshot), plant=plant)
+        summary = snapshot.summary(snapshot.current_plans(), plant=plant)
+    else:
+        summary = summary_from_snapshot(snapshot, current_plans(db, snapshot), plant=plant)
+    # The same Planned Overdue / Non-AI numbers as the dashboard cards.
+    return with_queue_exception_counts(summary, db, plant=plant)
 
 
 def _acquired_vs_plan(snapshot: I13Snapshot | SqlSnapshot, plant: str | None) -> dict[str, int]:

@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
@@ -43,7 +43,7 @@ from app.api.assistant.request_schemas import (
     UnitPriceModel,
     UploadResponse,
 )
-from app.api.assistant.schemas import LinkedReservationModel
+from app.api.assistant.schemas import LinkedReservationModel, SessionDeclarationModel
 from app.api.deps import Actor, get_current_actor
 from app.assistant import departments as department_names
 from app.assistant import link_job
@@ -53,10 +53,10 @@ from app.assistant import script
 from app.assistant.models import AssistantRequest, AssistantSession
 from app.assistant.savings import UnitPrice
 from app.assistant.session import Origin
+from app.core import security
 from app.core.config import Settings, get_settings
 from app.core.db import get_db
 from app.core.security import USER_ROLES, require_roles
-from app.initiatives.i8.config import get_i8_settings
 from app.initiatives.i13.session_link import line_number_note
 from app.shared.material_names import material_names
 
@@ -82,16 +82,6 @@ ActorDep = Annotated[Actor, Depends(get_current_actor)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
-#: Why a line's ``declaration`` is refused while the complete flow is off.
-DECLARING_OFF = "Declaring a faulty unit is not available yet. Remove the declaration and submit again."
-
-
-def _declaring_enabled() -> bool:
-    """Whether a request may declare the faulty unit (option B): only with
-    the I08 complete flow on (``I8_COMPLETE_FLOW_ENABLED``, 29-Oct-2026)."""
-    return get_i8_settings().complete_flow_enabled
-
-
 def _names(materials: list[str]) -> dict[str, str]:
     from app.shared import material_names as names_module
 
@@ -112,21 +102,12 @@ def preview(body: PreviewRequest, db: DbDep, settings: SettingsDep) -> PreviewRe
             ReasonCategoryModel(value=c, label=c.replace("_", " ").title())
             for c in settings.assistant_justification_reason_category_list
         ],
-        # As the conversation's declaration form offers them (script). Empty
-        # while the complete flow is off: nothing can be declared then.
-        fault_categories=(
-            [choice.value for choice in script.fault_category_choices()]
-            if _declaring_enabled()
-            else []
-        ),
-        recommendations=(
-            [
-                ReasonCategoryModel(value=choice.value, label=choice.label)
-                for choice in script.recommendation_choices()
-            ]
-            if _declaring_enabled()
-            else []
-        ),
+        # As the conversation's declaration form offers them (script).
+        fault_categories=[choice.value for choice in script.fault_category_choices()],
+        recommendations=[
+            ReasonCategoryModel(value=choice.value, label=choice.label)
+            for choice in script.recommendation_choices()
+        ],
         lines=[
             PreviewLineModel(
                 material_id=line.material_id,
@@ -173,6 +154,7 @@ def preview(body: PreviewRequest, db: DbDep, settings: SettingsDep) -> PreviewRe
 def create_request(
     body: CreateRequestBody,
     background: BackgroundTasks,
+    request: Request,
     db: DbDep,
     actor: ActorDep,
     settings: SettingsDep,
@@ -199,18 +181,15 @@ def create_request(
         for line in body.lines
     ]
     try:
-        if not _declaring_enabled():
-            # Refused, not dropped: a declaration the requester filled in must
-            # not vanish without a word.
-            for number, line in enumerate(body.lines, start=1):
-                if line.declaration is not None:
-                    raise request_service.RequestError(DECLARING_OFF, line=number)
         created = request_service.create(
             db,
             plant=body.plant,
             lines=lines,
             idempotency_key=body.idempotency_key,
             requester=actor.id,
+            # The declarer of any line's I08 declaration, as a name a person
+            # reads: the signed-in user's, or the requester name sent (sign-in off).
+            requester_name=security.current_user(request).name or None,
             requested_for=body.requested_for,
             origin=Origin(body.origin),
             department=body.department,
@@ -394,12 +373,33 @@ def _link_note(sgtxt: str | None, request_id: str, line_no: int | None, decision
     return " ".join(notes) or None
 
 
+def _declarations(db: DbSession, session_ids: list[str]) -> dict[str, SessionDeclarationModel]:
+    """session id -> the newest condition declaration made in it, one query for
+    the request. Only the assistant writes ``session_id`` on a declaration, so
+    these are the ones made on the line."""
+    from app.initiatives.i8.models import RepairAttestation
+
+    if not session_ids:
+        return {}
+    newest: dict[str, RepairAttestation] = {}
+    for row in db.execute(
+        select(RepairAttestation).where(RepairAttestation.session_id.in_(session_ids))
+    ).scalars():
+        current = newest.get(row.session_id)
+        if current is None or (row.attested_at, row.id) > (current.attested_at, current.id):
+            newest[row.session_id] = row
+    return {session_id: SessionDeclarationModel.of(row) for session_id, row in newest.items()}
+
+
 def _request_response(db: DbSession, request: AssistantRequest, *, replayed: bool = False) -> RequestResponse:
     from app.models.i13_session_link import SessionReservationLink
 
     sessions = request_service.lines_of(db, request.id)
     records = request_service.line_records(db, sessions)
     names = _names([s.material_id for s in sessions])
+    # Repairable lines show their declaration where an OAR line shows its
+    # window and purpose (4-Nov-2026).
+    declarations = _declarations(db, [s.id for s in sessions if s.flow == "i08"])
 
     links: dict[str, list[SessionReservationLink]] = {}
     if sessions:
@@ -462,6 +462,7 @@ def _request_response(db: DbSession, request: AssistantRequest, *, replayed: boo
                     if saving
                     else None
                 ),
+                declaration=declarations.get(session.id),
                 linked_reservations=[
                     LinkedReservationModel(
                         reservation_number=l.reservation_number,

@@ -26,7 +26,10 @@ The open rule, all three at once (ruled 26-Oct-2026)
 2. No live PO points back to it: no EKPO line naming this BANFN/BNFPO that is
    not deleted and is not on a request for quotation. A BLOCKED PO still counts
    as a PO -- the repair has been ordered, SAP is holding it -- and a PO with no
-   EKKO header counts as live, as it does in the register.
+   EKKO header counts as live, as it does in the register. Since 4-Nov-2026 the
+   PO line the PR names itself (EBAN.EBELN/EBELP) counts too, under the same
+   test: PR 2000029202 named a blocked service line ("BER - MOTOR ELEC
+   15KW...") that never named the PR back, and read as still waiting for a PO.
 3. At least one of its 543 lines is neither deleted (RESB.XLOEK) nor
    final-issued (RESB.KZEAR): the repair order still wants the unit repaired.
 
@@ -169,16 +172,21 @@ def has_live_purchase_order(
     back_pointers: Mapping[tuple[str, str], Sequence[Mapping]],
     headers: Mapping[str, Mapping],
     cfg: I8Settings,
+    forward_pointers: Mapping[tuple[str, str], Sequence[Mapping]] | None = None,
 ) -> bool:
-    """Whether some PO line names this PR and is a live order.
+    """Whether a live PO line goes with this PR: one that names the PR
+    (``back_pointers``), or the one the PR names (``forward_pointers``,
+    EBAN.EBELN/EBELP, 4-Nov-2026).
 
     Live: not deleted (EKPO.LOEKZ) and not on a request for quotation
     (EKKO.BSART). Blocked (the other LOEKZ value) is still live -- the repair
     has been ordered and SAP is holding it; treating it as no PO would add 9
     PRs on the 15-Oct extract. A line with no header is live: nothing says it
-    is an RFQ, the register's own reading.
+    is an RFQ, the register's own reading. A PR naming a PO line SAP has since
+    deleted is still waiting (PR 2000029024 on the 15-Oct extract).
     """
-    for po in back_pointers.get(pr_key, ()):
+    named = forward_pointers.get(pr_key, ()) if forward_pointers else ()
+    for po in (*back_pointers.get(pr_key, ()), *named):
         if po["loekz"] == cfg.po_deleted_indicator:
             continue
         header = headers.get(po["ebeln"])
@@ -195,6 +203,32 @@ def index_back_pointers(po_rows: Iterable[Mapping]) -> dict[tuple[str, str], lis
         if row["banfn"] and row["bnfpo"]:
             index[(row["banfn"], row["bnfpo"])].append(row)
     return dict(index)
+
+
+def _item(value: str | None) -> str:
+    """An item number compared without its padding: '00070' and '70' agree."""
+    return (value or "").strip().lstrip("0")
+
+
+def index_forward_pointers(
+    eban_rows: Iterable[Mapping], po_rows: Iterable[Mapping]
+) -> dict[tuple[str, str], list[Mapping]]:
+    """(BANFN, BNFPO) -> the PO line the PR names itself (EBAN.EBELN/EBELP),
+    when ``po_rows`` holds it. A line it does not hold is not guessed at: the
+    PR then reads as it did before 4-Nov-2026."""
+    named: dict[tuple[str, str], tuple[str, str]] = {}
+    for row in eban_rows:
+        if row["banfn"] and row["bnfpo"] and row.get("ebeln") and _item(row.get("ebelp")):
+            named[(row["banfn"], row["bnfpo"])] = (row["ebeln"], _item(row["ebelp"]))
+    if not named:
+        return {}
+    wanted = set(named.values())
+    lines: dict[tuple[str, str], list[Mapping]] = defaultdict(list)
+    for po in po_rows:
+        key = (po["ebeln"], _item(po["ebelp"]))
+        if key in wanted:
+            lines[key].append(po)
+    return {pr: lines[line] for pr, line in named.items() if line in lines}
 
 
 # --- the classification, pure -------------------------------------------------
@@ -221,13 +255,15 @@ def classify_repair_requests(
     headers: Mapping[str, Mapping],
     cfg: I8Settings,
     reference_date: date,
+    forward_pointers: Mapping[tuple[str, str], Sequence[Mapping]] | None = None,
 ) -> tuple[tuple[RepairRequest, ...], RequestStats]:
     """The open repair PRs among ``resb_rows``, and how the rest fell out.
 
     No database: the loader and the extract check both call this. Rows are
     mappings with the ``v_resb`` / ``v_eban`` column names; ``back_pointers``
     comes from :func:`index_back_pointers` over EKPO lines (with ``ebeln``,
-    ``loekz``), ``headers`` maps EBELN to an EKKO row (with ``bsart``).
+    ``loekz``), ``forward_pointers`` from :func:`index_forward_pointers`,
+    ``headers`` maps EBELN to an EKKO row (with ``bsart``).
 
     80-series parts only, in Python as everywhere else: the staged copies are
     narrowed with a superset LIKE, so the exact test has to happen here for a
@@ -258,7 +294,7 @@ def classify_repair_requests(
         if is_requisition_deleted(pr, cfg):
             counts["deleted"] += 1
             continue
-        if has_live_purchase_order(key, back_pointers, headers, cfg):
+        if has_live_purchase_order(key, back_pointers, headers, cfg, forward_pointers):
             counts["live_po"] += 1
             continue
         open_lines = [line for line in lines if not is_reservation_line_closed(line, cfg)]
@@ -326,7 +362,7 @@ _REQUISITION_SQL = """
 -- The PR items those lines name. Every item of each PR is read and the match on
 -- (BANFN, BNFPO) is made in Python, as the register matches its PO lines.
 select banfn, bnfpo, matnr, werks, txz01, menge, meins, badat, lfdat, loekz,
-       statu, bsart, afnam, rsnum
+       statu, bsart, afnam, rsnum, ebeln, ebelp
 from v_eban
 where banfn in :requisitions
 """
@@ -370,9 +406,10 @@ def load_repair_requests(
     ``candidates`` is the EKPO pull the snapshot build already holds (with
     ``banfn``, ``bnfpo``, ``loekz``): it carries every PO line that could point
     back to a repair PR -- staged, it keeps repair and 80-series lines, and a
-    repair PR is on an 80-series part -- so EKPO is not read a second time.
-    The headers are read only for the POs that do point back, through the
-    register's own header query.
+    repair PR is on an 80-series part -- and, since 4-Nov-2026, the lines on
+    the POs an 80-series PR names itself, so EKPO is not read a second time.
+    The headers are read only for those POs, through the register's own header
+    query.
 
     ``reservation_lines`` are the repair-order lines when the caller has read
     them already (:func:`fetch_repair_order_lines`); None reads them here.
@@ -394,7 +431,12 @@ def load_repair_requests(
     back_pointers = index_back_pointers(
         row for row in candidates if (row["banfn"], row["bnfpo"]) in wanted
     )
-    documents = sorted({po["ebeln"] for rows in back_pointers.values() for po in rows})
+    forward_pointers = index_forward_pointers(
+        (row for row in eban_rows if (row["banfn"], row["bnfpo"]) in wanted), candidates
+    )
+    documents = sorted(
+        {po["ebeln"] for pointers in (back_pointers, forward_pointers) for rows in pointers.values() for po in rows}
+    )
     with timed_step("repair PRs' PO headers (EKKO)"):
         headers = (
             {r["ebeln"]: r for r in fetch_in_chunks(db, reading(_HEADER_SQL, sources), "documents", documents)}
@@ -407,7 +449,7 @@ def load_repair_requests(
             ((row["banfn"], row["bnfpo"]), row) for row in eban_rows if row["banfn"] and row["bnfpo"]
         )
     requests, stats = classify_repair_requests(
-        resb_rows, eban_rows, back_pointers, headers, cfg, reference_date
+        resb_rows, eban_rows, back_pointers, headers, cfg, reference_date, forward_pointers
     )
     logger.info(
         "I08 repair PRs: %d open with no PO yet (left out: %d deleted, %d with a live PO, "

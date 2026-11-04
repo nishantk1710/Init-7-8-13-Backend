@@ -33,16 +33,18 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from typing import NamedTuple
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
-from app.api.i7.recommendations import _apply_filters, _not_smooth, _portfolio_currency
+from app.api.i7.recommendations import _apply_filters, _latest_only, _not_smooth, _portfolio_currency
+from app.initiatives.i7.kpi_formulas.inventory_value import inventory_measurements, stock_date_problem, stock_loaded_at
 from app.initiatives.i7.kpi_formulas.resolved import Formulas, load_active
 from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql
 from app.initiatives.i7.kpi_formulas.working_capital import working_capital_impact
 from app.initiatives.i7.stockout_risk.counts import stockout_risk_counts
-from app.models.i7_recommendation import Recommendation
+from app.models.i7_recommendation import Recommendation, SapAdoptionResult
 from app.schemas.i7.reports import PositionFigures, StockoutPosition
 
 #: How far from the report's cutoff a stockout measurement can be and still speak for the period.
@@ -50,6 +52,10 @@ MAX_MEASUREMENT_AGE_DAYS = 31
 
 #: The statuses in which a recommendation is waiting on someone's decision (the Overview's own awaiting-approval set).
 AWAITING_DECISION = ("PENDING_APPROVAL", "HELD")
+
+#: The statuses of a recommendation that has been approved: approved and awaiting SAP execution, and those taken on
+#: to SAP afterwards (the Recommendations table's own "Approved" and "Implemented" groups).
+APPROVED_STATUSES = ("APPROVED", "SAP_EXECUTION_PENDING", "SAP_EXECUTED", "ADOPTED", "PARTIALLY_ADOPTED", "NOT_ADOPTED")
 
 
 def _in_period(period_start: date | None, exclusive_end: date):
@@ -104,6 +110,95 @@ def awaiting_decision(session: Session, period_start: date, exclusive_end: date)
         session,
         select(Recommendation.id).where(
             *_in_period(period_start, exclusive_end), Recommendation.status.in_(AWAITING_DECISION)
+        ),
+    )
+
+
+#: The approval and SAP stages a recommendation's current status falls in. Exclusive; ``AWAITING_DECISION`` and
+#: ``APPROVED_STATUSES`` are these stages' own sets, so the cards and the stages cannot disagree.
+STAGE_STATUSES: dict[str, tuple[str, ...]] = {
+    "not_submitted": ("READY_FOR_REVIEW", "NOT_EVALUABLE"),
+    "awaiting_approval": AWAITING_DECISION,
+    "adjusted_in_chain": ("ADJUSTED",),
+    "approved_awaiting_sap": ("APPROVED", "SAP_EXECUTION_PENDING"),
+    "implemented_in_sap": ("SAP_EXECUTED", "ADOPTED", "PARTIALLY_ADOPTED", "NOT_ADOPTED"),
+    "rejected_or_sent_back": ("REJECTED", "SENT_BACK"),
+}
+
+
+def stage_counts(counts: dict[str, int]) -> dict[str, int]:
+    """The status counts of the period's records grouped into the stages, plus ``total`` and ``other``."""
+    stages = {stage: sum(counts.get(s, 0) for s in statuses) for stage, statuses in STAGE_STATUSES.items()}
+    total = sum(counts.values())
+    return {**stages, "total": total, "other": total - sum(stages.values())}
+
+
+def oar_records(session: Session, period_start: date, exclusive_end: date) -> int:
+    """Recommendation records generated in the period for OAR material-plants -- rows, not distinct materials."""
+    return count_of(
+        session, select(Recommendation.id).where(*_in_period(period_start, exclusive_end), Recommendation.is_oar)
+    )
+
+
+class MinMaxCounts(NamedTuple):
+    eligible: int
+    """OAR material-plants the conversion rule says may convert to Min-Max ordering *and* that have a recommended value -- the same
+    rule SAP adoption uses (an eligible OAR counts only when a value was calculated), so the two never disagree."""
+    without_values: int
+    """Eligible by the rule but with no recommended value at all: nothing to move to Min-Max yet. Counted apart, never in ``eligible``."""
+    oar_material_plants: int
+    manually_requested: int
+    """NOT_ELIGIBLE ones a user asked to convert anyway; never added into ``eligible``."""
+    converted: int
+    """Eligible ones SAP now matches (the reconciliation's ADOPTED result): actually converted, not just approved."""
+    with_evidence: int
+    """Eligible ones the SAP reconciliation has any result for (adopted, partially or not adopted). With none, ``converted`` of 0 is
+    "not measured yet", not a measured 0."""
+
+
+def min_max_conversion(session: Session, period_start: date, exclusive_end: date) -> MinMaxCounts:
+    """Min-Max conversion over the OAR recommendations the Recommendations list shows for the period: generated in it, and the newest of
+    their material-plant. Built from the list's own filters, so every count here and the list behind it can never disagree.
+
+    *Eligible* is the OAR rule's own verdict (``conversion_eligibility`` = ELIGIBLE) that the material-plant may convert, for those with
+    at least one recommended value: a material-plant the rule allows but that has no value calculated has nothing to move, and is counted in
+    ``without_values`` instead. Not a change made in SAP. *Converted* is the eligible ones SAP now matches (SAP adoption evidence): the
+    change was actually made.
+    """
+    def oar_list(**more):
+        return _latest_only(
+            _apply_filters(
+                select(Recommendation.id), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+                criticality=None, generated_from=period_start, generated_to=exclusive_end, demand_type="oar", **more,
+            ).where(_not_smooth())
+        )
+
+    oar = oar_list()
+    by_rule = oar.where(Recommendation.conversion_eligibility == "ELIGIBLE")
+    eligible = oar_list(has_recommended=True).where(Recommendation.conversion_eligibility == "ELIGIBLE")
+    evidence = select(SapAdoptionResult.recommendation_id).where(
+        SapAdoptionResult.status.in_(("ADOPTED", "PARTIALLY_ADOPTED", "NOT_ADOPTED"))
+    )
+    eligible_count = count_of(session, eligible)
+    return MinMaxCounts(
+        eligible=eligible_count,
+        without_values=count_of(session, by_rule) - eligible_count,
+        oar_material_plants=count_of(session, oar),
+        manually_requested=count_of(session, oar.where(Recommendation.manually_converted)),
+        converted=count_of(
+            session, oar_list(adopted_in_sap=True, has_recommended=True).where(Recommendation.conversion_eligibility == "ELIGIBLE")
+        ),
+        with_evidence=count_of(session, eligible.where(Recommendation.recommendation_id.in_(evidence))),
+    )
+
+
+def approved_count(session: Session, period_start: date, exclusive_end: date) -> int:
+    """Records generated in the period that have been approved, as of the report: a status, not a count of approval
+    events."""
+    return count_of(
+        session,
+        select(Recommendation.id).where(
+            *_in_period(period_start, exclusive_end), Recommendation.status.in_(APPROVED_STATUSES)
         ),
     )
 
@@ -193,6 +288,14 @@ def position_figures(
     # The same calculation as the Overview card (kpi_formulas.working_capital): MBEW price and currency in ZAR.
     capital = working_capital_impact(session, base, formulas)
 
+    # Stock held, over the same population. Valued only when the stock load is close enough to the cutoff to speak for
+    # it -- the same age rule the stockout reading answers to -- otherwise it is "not measured", never 0.
+    loaded_at = stock_loaded_at(session)
+    stock_problem = stock_date_problem(loaded_at, cutoff, MAX_MEASUREMENT_AGE_DAYS)
+    held = inventory_measurements(session, base) if stock_problem is None else None
+    newest = session.execute(select(func.max(Recommendation.generated_at)).where(
+        Recommendation.id.in_(newest_in_period_ids(period_start, exclusive_end)))).scalar()
+
     return PositionFigures(
         population=population,
         stockout=stockout_position(session, base, cutoff, plant, formulas),
@@ -203,6 +306,15 @@ def position_figures(
         currency=_portfolio_currency(session),
         working_capital_currency=capital.currency,
         working_capital_excluded_count=capital.excluded_count,
+        inventory_value=held.inventory_value if held else None,
+        inventory_priced_count=held.inventory_priced_count if held else 0,
+        safety_stock_value=held.safety_stock_value if held else None,
+        safety_stock_priced_count=held.safety_stock_priced_count if held else 0,
+        below_reorder_count=held.below_reorder_count if held else None,
+        below_reorder_judged=held.below_reorder_judged if held else 0,
+        inventory_stock_as_of=loaded_at.date() if loaded_at else None,
+        inventory_unavailable_reason=stock_problem,
+        recommendation_reference_date=newest.date() if newest else None,
     )
 
 

@@ -45,12 +45,22 @@ open -- EKPO.ELIKZ not set, and the line neither deleted nor blocked -- and
 nothing else. Until then it decided from goods receipts, so it called 644 lines
 open that SAP had closed (ticked "Delivery completed", nothing received against
 640 of them) and showed ~732 open lines where SAP's own count was ~106; on the
-15-Oct data the new rule gives 104. Goods receipts are not read at all now: a
-line SAP has closed is not in the register whatever came back against it, and
-a line SAP still has open is in it whatever did. The flag is tested in Python
-beside the Pstyp test, not in the query: the OData probe never tested a filter
-on Elikz (NOT_TESTED in ``filter_support.csv``), and a filter SAP has not been
-shown to honour is not one to rely on.
+15-Oct data the new rule gives 104. A line SAP has closed is not in the
+register whatever came back against it. The flag is tested in Python beside the
+Pstyp test, not in the query: the OData probe never tested a filter on Elikz
+(NOT_TESTED in ``filter_support.csv``), and a filter SAP has not been shown to
+honour is not one to rely on.
+
+**A line received in full is not out for repair** (:func:`is_fully_received`).
+Ruled 4-Nov-2026. Buyers do not always tick "Delivery completed" when the
+repaired unit comes back, and stores post the 541 on the day of the receipt, so
+such a line read "At Vendor" and overdue for months after the unit was back on
+the shelf -- and the assistant counted it twice, once in stock and once on
+repair. The goods receipts on the line (MSEG 101, less 102 reversals, less 122
+returns to the vendor plus their 123 reversals) are read for that one purpose:
+a line received in full is left out and counted
+(``excluded_received_lines``); a line received in part stays, with only the
+units still out.
 
 What the data will and will not support
 ---------------------------------------
@@ -108,7 +118,8 @@ ZERO = Decimal(0)
 #                         is found by requisitions.py (27-Oct-2026), which
 #                         owns that status (requisitions.PR_RAISED).
 #   "Received", "Closed"  not since 19-Oct-2026: a line SAP has closed is not
-#                         in the register, and goods receipts are not read.
+#                         in the register, and since 4-Nov-2026 nor is one
+#                         received in full.
 #
 # "In Transit Return" was removed from the union on 07-Oct-2026: it is not an
 # FRS stage, and nothing in MSEG or EKBE distinguishes "the vendor has shipped
@@ -120,8 +131,9 @@ AT_VENDOR = "At Vendor"
 @dataclass(frozen=True)
 class RepairLine:
     """One repair purchase-order line SAP still has open, with its assembled
-    lifecycle. Lines SAP has closed, deleted or blocked, and lines on a request
-    for quotation, are never built -- see :func:`load_repair_lines`."""
+    lifecycle. Lines SAP has closed, deleted or blocked, lines on a request for
+    quotation, and lines received in full are never built -- see
+    :func:`load_repair_lines`."""
 
     # --- identity -------------------------------------------------------
     purchasing_document: str
@@ -159,7 +171,10 @@ class RepairLine:
     due_date: date | None
     schedule_lines: int
     dispatched_at: date | None
+    """The first 541 on the line; None when none is posted or the 542s have
+    reversed them all."""
     dispatched_qty: Decimal
+    """The 541s on the vendor side less their 542 reversals."""
 
     # --- the planned standard, from MARC ---------------------------------
     lead_time_days: int | None
@@ -177,8 +192,8 @@ class RepairLine:
     BEYOND_LEAD_TIME, and that disagreement is a finding, not an error."""
 
     qty_under_repair: Decimal
-    """EKPO.MENGE, the whole ordered quantity. The line is out until SAP
-    closes it, and goods receipts are not read, so nothing is netted off."""
+    """The units still out: EKPO.MENGE less what has been received against the
+    line (:attr:`received_qty`). A line received in full is not built."""
 
     days_open: int | None
     """The same clock as ``days_elapsed``: raised to today. The line is open in
@@ -213,6 +228,11 @@ class RepairLine:
     """EKKO.WAERS: the currency :attr:`net_price` is in, ``ZAR`` on every open
     line today. None when the line has no PO header or the header has no
     currency -- then nobody knows, and the price must not be called rand."""
+
+    # --- goods received against the line (4-Nov-2026) ----------------------
+    received_qty: Decimal = Decimal(0)
+    """MSEG 101 less 102, less 122 plus 123, on this PO line. Above zero only
+    on a line received in part: one received in full is not built."""
 
     @property
     def is_overdue(self) -> bool:
@@ -363,30 +383,53 @@ where ebeln in :documents
 group by ebeln, ebelp
 """
 
-_DISPATCH_SQL = """
--- Dispatch to the vendor: MSEG 541, vendor-stock side only.
+_MOVEMENTS_SQL = """
+-- The goods movements on each repair PO line, one row per line.
 --
--- sobkz = 'O' picks one of the two rows every 541 posts, so quantities are not
--- doubled. ebelp is already NULL in the view where the raw column held '0',
--- and those movements are excluded here rather than attached to a guessed
--- line: 132 of the 710 dispatches on 80-series materials carry no PO item, and
--- inventing a link for them would corrupt per-line aging.
+-- Dispatch to the vendor: MSEG 541, vendor-stock side only, less the 542s that
+-- reversed one (4-Nov-2026). sobkz = 'O' picks one of the two rows every 541
+-- and 542 posts, so quantities are not doubled. ebelp is already NULL in the
+-- view where the raw column held '0', and those movements are excluded here
+-- rather than attached to a guessed line: 132 of the 710 dispatches on
+-- 80-series materials carry no PO item, and inventing a link for them would
+-- corrupt per-line aging.
+--
+-- Received (4-Nov-2026): 101 less 102, less 122 (back to the vendor) plus 123.
+-- One row per receipt, on any special stock, so nothing is filtered by sobkz.
 select
     ebeln,
     ebelp,
-    min(budat) as first_dispatch,
-    max(budat) as last_dispatch,
-    sum(menge) as qty,
-    count(*)   as postings
+    min(case when bwart = :dispatch and sobkz = :vendor_stock then budat end) as first_dispatch,
+    max(case when bwart = :dispatch and sobkz = :vendor_stock then budat end) as last_dispatch,
+    sum(case when bwart = :dispatch and sobkz = :vendor_stock then menge else 0 end)
+      - sum(case when bwart = :dispatch_reversal and sobkz = :vendor_stock then menge else 0 end) as qty,
+    sum(case when bwart = :dispatch and sobkz = :vendor_stock then 1 else 0 end) as postings,
+    sum(case when bwart = :receipt then menge else 0 end)
+      - sum(case when bwart = :receipt_reversal then menge else 0 end)
+      - sum(case when bwart = :return_to_vendor then menge else 0 end)
+      + sum(case when bwart = :return_reversal then menge else 0 end) as received
 from v_mseg
 where ebeln in :documents
   and ebelp is not null
-  and bwart = :dispatch
-  and sobkz = :vendor_stock
+  and bwart in (:dispatch, :dispatch_reversal, :receipt, :receipt_reversal, :return_to_vendor, :return_reversal)
 group by ebeln, ebelp
 """
 
-# On SQL Server the dispatch query reads a staged copy of MSEG, not v_mseg.
+
+def movement_params(cfg: I8Settings) -> dict[str, str]:
+    """The movement types :data:`_MOVEMENTS_SQL` reads, from the settings."""
+    return {
+        "dispatch": cfg.dispatch_movement_type,
+        "dispatch_reversal": cfg.dispatch_reversal_movement_type,
+        "vendor_stock": cfg.vendor_special_stock,
+        "receipt": cfg.receipt_movement_type,
+        "receipt_reversal": cfg.receipt_reversal_movement_type,
+        "return_to_vendor": cfg.return_to_vendor_movement_type,
+        "return_reversal": cfg.return_to_vendor_reversal_movement_type,
+    }
+
+
+# On SQL Server the movements query reads a staged copy of MSEG, not v_mseg.
 #
 # Straight from the view it ran past the 120 s statement limit on all 12 build
 # attempts on the nonprod Azure SQL on 28-Sep, one of them with nothing else
@@ -395,37 +438,42 @@ group by ebeln, ebelp
 # MSEG's ~233k rows before it can discard any, and -- the likely reason it is
 # so slow -- SQL Server does not inline a scalar function whose result the
 # query groups by, so that is ~233k separate function calls. The staged copy
-# holds only the 541 vendor-side rows with a PO item, fetched with the cheap
-# predicates and no GROUP BY (the shape PR #40's staged universe query runs
-# in). The query above then runs over that table unchanged, so its rules stay
-# in one place. Postgres reads v_mseg directly; it has none of this cost.
-_DISPATCH_STAGE_COLUMNS = "ebeln, ebelp, budat, menge, bwart, sobkz"
-_DISPATCH_STAGE_FILTER = "ebelp is not null and bwart = :dispatch and sobkz = :vendor_stock"
-_DISPATCH_STAGE_TABLE = "#i8_mseg_dispatch"
+# holds only the rows with a PO item and one of the movement types read,
+# fetched with the cheap predicates and no GROUP BY (the shape PR #40's staged
+# universe query runs in). The query above then runs over that table unchanged,
+# so its rules stay in one place. Postgres reads v_mseg directly; it has none of
+# this cost.
+_MOVEMENTS_STAGE_COLUMNS = "ebeln, ebelp, budat, menge, bwart, sobkz"
+_MOVEMENTS_STAGE_FILTER = (
+    "ebelp is not null and bwart in "
+    "(:dispatch, :dispatch_reversal, :receipt, :receipt_reversal, :return_to_vendor, :return_reversal)"
+)
+_MOVEMENTS_STAGE_TABLE = "#i8_mseg_lines"
 
 
-def fetch_dispatches(
+def fetch_line_movements(
     db: Session,
     documents: Sequence[str],
     params: Mapping[str, str],
     *,
     source: str = "v_mseg",
 ) -> list[Mapping]:
-    """The dispatch rows for ``documents``: staged through a temp table on SQL Server."""
+    """Each line's dispatches and receipts for ``documents`` (:data:`_MOVEMENTS_SQL`),
+    staged through a temp table on SQL Server. ``params`` is :func:`movement_params`."""
     if db.get_bind().dialect.name != MSSQL:
-        return fetch_in_chunks(db, _DISPATCH_SQL.replace("v_mseg", source), "documents", documents, params)
+        return fetch_in_chunks(db, _MOVEMENTS_SQL.replace("v_mseg", source), "documents", documents, params)
 
-    table, columns = _DISPATCH_STAGE_TABLE, _DISPATCH_STAGE_COLUMNS
+    table, columns = _MOVEMENTS_STAGE_TABLE, _MOVEMENTS_STAGE_COLUMNS
     db.execute(text(f"drop table if exists {table}"))
     # Created without bind parameters, as in universe.fetch_universe_candidates:
     # a parameterised statement runs in sp_executesql, which drops any temp
     # table it creates when it returns.
     db.execute(text(f"select {columns} into {table} from {source} where 1 = 0"))
     db.execute(
-        text(f"insert into {table} select {columns} from {source} where {_DISPATCH_STAGE_FILTER}"),
+        text(f"insert into {table} select {columns} from {source} where {_MOVEMENTS_STAGE_FILTER}"),
         params,
     )
-    rows = fetch_in_chunks(db, _DISPATCH_SQL.replace("v_mseg", table), "documents", documents, params)
+    rows = fetch_in_chunks(db, _MOVEMENTS_SQL.replace("v_mseg", table), "documents", documents, params)
     db.execute(text(f"drop table {table}"))
     return rows
 
@@ -491,8 +539,10 @@ def _evidence(
     per source is thousands of round trips, and the register is served on
     request.
 
-    No goods receipts (EKBE) since 19-Oct-2026: whether a line is open is
-    SAP's "Delivery completed" flag, read off the EKPO row itself.
+    No EKBE since 19-Oct-2026: whether a line is open is SAP's "Delivery
+    completed" flag, read off the EKPO row itself. The receipts in MSEG are
+    read with the dispatches (4-Nov-2026), only to leave out a line received in
+    full.
 
     ``materials`` is separate from ``documents`` because the lead time belongs
     to the material + plant, not to the purchase order -- MARC knows nothing
@@ -511,17 +561,11 @@ def _evidence(
             (r["ebeln"], r["ebelp"]): r
             for r in fetch_in_chunks(db, reading(_SCHEDULE_SQL, sources), "documents", documents)
         }
-    with timed_step("dispatches (MSEG 541)"):
+    with timed_step("dispatches and receipts (MSEG)"):
         dispatches = {
             (r["ebeln"], r["ebelp"]): r
-            for r in fetch_dispatches(
-                db,
-                documents,
-                {
-                    "dispatch": cfg.dispatch_movement_type,
-                    "vendor_stock": cfg.vendor_special_stock,
-                },
-                source=reading("v_mseg", sources),
+            for r in fetch_line_movements(
+                db, documents, movement_params(cfg), source=reading("v_mseg", sources)
             )
         }
     with timed_step("PO headers (EKKO)"):
@@ -555,6 +599,17 @@ def repair_status(*, dispatched_at: date | None) -> str:
     return AT_VENDOR if dispatched_at is not None else PO_ISSUED
 
 
+def is_fully_received(ordered_qty: Decimal, received_qty: Decimal) -> bool:
+    """Whether everything ordered on the line has come back (ruled 4-Nov-2026).
+
+    Such a line is left out of the register even while SAP has not ticked
+    "Delivery completed" on it: the unit is back on the shelf, counted in stock,
+    and no longer out for repair. A line with nothing ordered is never called
+    received -- there is nothing to measure it against.
+    """
+    return ordered_qty > 0 and received_qty >= ordered_qty
+
+
 def _lead_time_days(plifz) -> int | None:
     """MARC.PLIFZ as whole days, or None when it is not maintained.
 
@@ -582,8 +637,11 @@ def _build_line(
 ) -> RepairLine:
     ordered_qty = row["menge"] if row["menge"] is not None else ZERO
 
-    dispatched_at = dispatch["first_dispatch"] if dispatch else None
+    # The 541s less their 542s: a dispatch SAP reversed in full does not put
+    # the line at the vendor (4-Nov-2026).
     dispatched_qty = dispatch["qty"] if dispatch and dispatch["qty"] else ZERO
+    dispatched_at = dispatch["first_dispatch"] if dispatch and dispatched_qty > 0 else None
+    received_qty = max(dispatch["received"] or ZERO, ZERO) if dispatch else ZERO
 
     due_date = schedule["due_date"] if schedule else None
     schedule_lines = int(schedule["schedule_lines"]) if schedule else 0
@@ -632,7 +690,8 @@ def _build_line(
         due_date=due_date,
         schedule_lines=schedule_lines,
         dispatched_at=dispatched_at,
-        dispatched_qty=dispatched_qty,
+        dispatched_qty=max(dispatched_qty, ZERO),
+        received_qty=received_qty,
         repair_status=repair_status(dispatched_at=dispatched_at),
         overdue_status=overdue_state(
             due_date=due_date,
@@ -647,8 +706,8 @@ def _build_line(
         days_over_lead_time=days_over_lead_time(
             elapsed=elapsed, lead_time_days=lead_time
         ),
-        # The whole line: it is out until SAP closes it.
-        qty_under_repair=ordered_qty,
+        # What is still out: a line received in full is never built.
+        qty_under_repair=max(ordered_qty - received_qty, ZERO),
         days_open=elapsed,
         days_at_vendor=days_between(dispatched_at, today),
         days_in_current_stage=days_between(stage_started, today),
@@ -669,10 +728,10 @@ class RegisterStats:
     Every field defaults to zero so the empty register is a valid value rather
     than a special case with a positional argument list to keep in step.
 
-    Every line counted here is open in SAP. The four ``excluded_*`` figures
-    say how many repair lines SAP has deleted, closed or blocked, or holds on a
-    request for quotation, so the total reconciles with a raw EKPO count and
-    with SAP's own open-PO list.
+    Every line counted here is open in SAP. The ``excluded_*`` figures say how
+    many repair lines SAP has deleted, closed or blocked, holds on a request for
+    quotation, or has received in full without closing, so the total
+    reconciles with a raw EKPO count and with SAP's own open-PO list.
     """
 
     total_lines: int = 0
@@ -700,10 +759,10 @@ class RegisterStats:
     lines_corroborated_by_doc_type: int = 0
 
     lines_with_dispatch: int = 0
-    """Lines a dispatch (the 541) is attributable to -- the At Vendor ones. Few:
-    2 of the 104 open lines on the 15-Oct data. Stores post most 541s on the
-    day of the goods receipt, so a dispatch usually appears only as SAP is
-    about to close the line."""
+    """Lines a dispatch (the 541, less its 542s) is attributable to -- the At
+    Vendor ones. Few: stores post most 541s on the day of the goods receipt, so
+    a dispatch usually appears only as the unit comes back, and a line received
+    in full is not counted at all (4-Nov-2026)."""
 
     distinct_materials: int = 0
     distinct_vendors: int = 0
@@ -728,6 +787,11 @@ class RegisterStats:
     """Item-category-3 lines on a request for quotation (EKKO.BSART), left out
     of every figure above: an RFQ orders nothing. Counted only when not already
     deleted, closed or blocked: 1 on the 15-Oct data."""
+
+    excluded_received_lines: int = 0
+    """Repair lines received in full (MSEG 101 less 102 and 122) that SAP has
+    not closed yet -- "Delivery completed" not ticked -- left out of every figure
+    above (4-Nov-2026). Counted last, after the four exclusions above."""
 
     # --- open repair PRs with no PO yet (requisitions.py, 27-Oct-2026) ---
     #
@@ -763,8 +827,9 @@ def load_repair_lines(
     """Build the register. Layers 1 and 2, then the Layer 3 arithmetic.
 
     Returns the repair lines SAP still has open, and only those: a line SAP has
-    deleted, closed ("Delivery completed") or blocked, or one on a request for
-    quotation, is counted in the stats and never built. Every screen that reads
+    deleted, closed ("Delivery completed") or blocked, one on a request for
+    quotation, or one received in full (4-Nov-2026), is counted in the stats
+    and never built. Every screen that reads
     the register -- declarations, exceptions, the assistant -- therefore sees
     open order lines only.
 
@@ -817,7 +882,7 @@ def load_repair_lines(
     order_rows = [row for row in repair_rows if not is_rfq_line(headers.get(row["ebeln"]), cfg)]
     excluded["excluded_rfq_lines"] = len(repair_rows) - len(order_rows)
 
-    lines = [
+    built = [
         _build_line(
             row,
             schedule=schedules.get((row["ebeln"], row["ebelp"])),
@@ -830,6 +895,11 @@ def load_repair_lines(
         )
         for row in order_rows
     ]
+    # Received in full but not closed in SAP: back on the shelf, not out for
+    # repair (ruled 4-Nov-2026). Counted last, so a line SAP has also closed,
+    # deleted or blocked is counted as that.
+    lines = [line for line in built if not is_fully_received(line.ordered_qty, line.received_qty)]
+    excluded["excluded_received_lines"] = len(built) - len(lines)
 
     vendors = {line.vendor for line in lines if line.vendor}
     stats = RegisterStats(
@@ -860,7 +930,8 @@ def load_repair_lines(
     )
     logger.info(
         "I08 register: %d open repair lines of %d candidates (%d overdue; "
-        "left out: %d delivery completed, %d blocked, %d deleted in SAP, %d on an RFQ)",
+        "left out: %d delivery completed, %d blocked, %d deleted in SAP, %d on an RFQ, "
+        "%d received in full but not closed)",
         stats.total_lines,
         stats.candidates_scanned,
         stats.overdue_lines,
@@ -868,6 +939,7 @@ def load_repair_lines(
         stats.excluded_blocked_lines,
         stats.excluded_deleted_lines,
         stats.excluded_rfq_lines,
+        stats.excluded_received_lines,
     )
     return lines, stats
 

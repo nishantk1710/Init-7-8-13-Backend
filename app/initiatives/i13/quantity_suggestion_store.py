@@ -30,6 +30,7 @@ they accepted, their own where they did not.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
 
@@ -370,9 +371,32 @@ def build_quantity_decision_records(
                 override_justification=(
                     f"{latest.reason_category}: {latest.free_text}" if latest is not None else None
                 ),
+                override_reason_category=latest.reason_category if latest is not None else None,
+                override_free_text=latest.free_text if latest is not None else None,
             )
         )
     return records
+
+
+def owner_for_assistant_decision(
+    requester: str | None, requested_for: str | None, aliases: Mapping[str, str] | None
+) -> str | None:
+    """Who owns (and is notified about) an assistant quantity override: the person the part is for, if known.
+
+    ``requested_for`` is the name typed in the assistant's Requester box ("who the parts are for"). It is
+    free text and is never identity, so it is used only when an administrator has said who that name
+    stands for -- it is a key of ``aliases`` (``I13_REQUESTER_RECIPIENTS``, matched ignoring case and
+    surrounding spaces). Then the exception is owned by, and its "Confirm Exception" goes to, that person.
+    Otherwise it stays with the person who operated the assistant, so nobody is left unnotified and a typed
+    name is never guessed at. The author recorded on the session itself is untouched either way.
+
+    Returns the name as typed, trimmed: the notification service turns it into the person's identity
+    with the same aliases, and escalation and the exception list show a name rather than an id.
+    """
+    named = (requested_for or "").strip()
+    if named and aliases and named.lower() in aliases:
+        return named
+    return requester
 
 
 def build_assistant_quantity_decision_records(
@@ -380,6 +404,7 @@ def build_assistant_quantity_decision_records(
     *,
     material: str | None = None,
     plant: str | None = None,
+    requester_aliases: Mapping[str, str] | None = None,
 ) -> list[QuantityDecisionRecord]:
     """The reservation assistant's FR-3 decisions, as ``QuantityDecisionRecord``s.
 
@@ -395,12 +420,16 @@ def build_assistant_quantity_decision_records(
     ``NO_SUGGESTION``). ``requested_quantity`` is what was **kept** -- the
     accepted quantity -- so ``requested != suggested`` means an override.
     Business key: the session ID (the reservation does not exist yet, FR-8).
+
+    The record's requester is the person the part is for when ``requested_for`` names someone in
+    ``requester_aliases`` (see :func:`owner_for_assistant_decision`), otherwise the person who operated
+    the assistant.
     """
     from app.assistant.models import AssistantSession, Justification
     from app.assistant.models import QuantitySuggestionRecord as AssistantSuggestionRecord
 
     stmt = (
-        select(AssistantSuggestionRecord, AssistantSession.requester)
+        select(AssistantSuggestionRecord, AssistantSession.requester, AssistantSession.requested_for)
         .join(AssistantSession, AssistantSession.id == AssistantSuggestionRecord.session_id)
         .where(AssistantSuggestionRecord.suggested_quantity.is_not(None))
     )
@@ -413,15 +442,15 @@ def build_assistant_quantity_decision_records(
     if not rows:
         return []
 
-    session_ids = [row.session_id for row, _ in rows]
-    reasons: dict[str, str] = {}
+    session_ids = [row.session_id for row, _, _ in rows]
+    reasons: dict[str, Justification] = {}
     justification_stmt = (
         select(Justification)
         .where(Justification.session_id.in_(session_ids), Justification.kind == "QUANTITY_OVERRIDE")
         .order_by(Justification.recorded_at)
     )
     for justification in session.execute(justification_stmt).scalars().all():
-        reasons[justification.session_id] = f"{justification.reason_category}: {justification.free_text}"
+        reasons[justification.session_id] = justification
 
     return [
         QuantityDecisionRecord(
@@ -430,11 +459,16 @@ def build_assistant_quantity_decision_records(
             reservation_number=None,
             reservation_item=None,
             session_id=row.session_id,
-            requester_id=requester,
+            requester_id=owner_for_assistant_decision(requester, requested_for, requester_aliases),
             requested_quantity=row.accepted_quantity,
             suggested_quantity=row.suggested_quantity,
             suggestion_reason="ASSISTANT_FR3",
-            override_justification=reasons.get(row.session_id),
+            override_justification=(
+                f"{reason.reason_category}: {reason.free_text}" if reason is not None else None
+            ),
+            override_reason_category=reason.reason_category if reason is not None else None,
+            override_free_text=reason.free_text if reason is not None else None,
         )
-        for row, requester in rows
+        for row, requester, requested_for in rows
+        for reason in (reasons.get(row.session_id),)
     ]

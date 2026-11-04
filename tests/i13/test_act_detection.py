@@ -181,6 +181,14 @@ def test_quantity_override_not_detected_when_quantities_match() -> None:
     assert evaluation.variance == Decimal("0")
 
 
+def test_quantity_override_not_detected_when_requested_is_below_suggestion() -> None:
+    record = _quantity_record(requested_quantity=Decimal("3"), suggested_quantity=Decimal("5"))
+    evaluation = detect_quantity_override(record)
+    assert evaluation.available is True
+    assert evaluation.override is False
+    assert evaluation.variance == Decimal("-2")
+
+
 def test_quantity_override_unavailable_when_no_suggestion_source() -> None:
     record = _quantity_record(requested_quantity=Decimal("12"), suggested_quantity=None)
     evaluation = detect_quantity_override(record)

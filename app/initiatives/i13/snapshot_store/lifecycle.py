@@ -237,6 +237,8 @@ def _launch_and_wait(reason: str, after: threading.Thread | None, manual: bool, 
             _state.last_error = error
             _state.last_check = time.monotonic()
         logger.info("I13 store: build process finished with code %s (%s)", code, reason)
+        if code == 0:
+            _start_detection_after_build(reason)
     except Exception as exc:
         logger.exception("I13 store: could not run a build (%s)", reason)
         with _lock:
@@ -245,6 +247,33 @@ def _launch_and_wait(reason: str, after: threading.Thread | None, manual: bool, 
         with _lock:
             _state.process = None
             _state.building_since = None
+
+
+# --- detection, once a version is served ----------------------------------------
+#
+# The exception queue is only as current as its last detection run, and the
+# dashboard's exception cards count that queue. So a build or re-age that has
+# just made a new version served hands over to detection (when
+# I13_DETECT_AFTER_BUILD is on). On its own thread: inside the build thread it
+# would keep ``building()`` true -- and the snapshot status saying "building" --
+# for as long as detection takes. One run at a time: a second build that
+# finishes meanwhile waits its turn and then runs against the newer version.
+
+_detection_lock = threading.Lock()
+
+
+def _detect_after_build(reason: str) -> None:
+    from app.services.notification_jobs import detect_after_build
+
+    with _detection_lock:
+        try:
+            logger.info("I13 detection after build (%s): %s", reason, detect_after_build(reason))
+        except Exception:  # logged by the job; never the build's failure
+            logger.exception("I13 detection after build (%s) failed", reason)
+
+
+def _start_detection_after_build(reason: str) -> None:
+    threading.Thread(target=_detect_after_build, args=(reason,), name="i13-detect-after-build", daemon=True).start()
 
 
 def start_background_build(

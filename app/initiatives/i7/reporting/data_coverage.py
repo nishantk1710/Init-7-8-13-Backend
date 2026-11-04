@@ -22,16 +22,20 @@ from sqlalchemy import extract, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.initiatives.i7.kpi_formulas.inventory_value import stock_loaded_at
 from app.initiatives.i7.reporting import kpi_definitions
 from app.initiatives.i7.reporting.kpi_definitions import MAX_MEASUREMENT_AGE_DAYS
 from app.initiatives.i7.reporting.period import exclusive_end_of, month_label, month_state, months_of
 from app.models.i7_recommendation import Recommendation
-from app.models.i7_staging import StagingRun
 from app.models.i7_stockout_risk import StockoutRiskInput
 from app.schemas.i7.reports import (
+    AvailabilityStatus,
+    CoverageItem,
     DataCoverage,
+    ForecastActualSection,
     MonthCoverage,
     PositionFigures,
+    QuarterEnd,
     SourceActivitySection,
     SourceMonthStatus,
 )
@@ -61,13 +65,7 @@ def _latest_issue_date(session: Session) -> date | None:
 
 
 def _stock_loaded_at(session: Session) -> datetime | None:
-    try:
-        return session.execute(
-            select(func.max(StagingRun.finished_at)).where(StagingRun.stock_staged > 0, StagingRun.finished_at.isnot(None))
-        ).scalar()
-    except SQLAlchemyError:
-        session.rollback()
-        return None
+    return stock_loaded_at(session)
 
 
 def build_data_coverage(
@@ -141,3 +139,98 @@ def build_data_coverage(
         basis="current_calculation",
         warnings=warnings,
     )
+
+
+# --- Each source, with a plain status ------------------------------------------------------------------------
+
+AVAILABLE, STALE, NOT_AVAILABLE, NOT_COVERED, INSUFFICIENT_HISTORY = (
+    "Available", "Stale", "Not available", "Not covered", "Insufficient history",
+)
+
+
+def _day(value: date | datetime | None) -> str | None:
+    return None if value is None else f"{value.day} {value:%b} {value.year}"
+
+
+def coverage_items(
+    coverage: DataCoverage, position: PositionFigures, quarter_end: QuarterEnd | None, forecast: ForecastActualSection
+) -> list[CoverageItem]:
+    """What each important figure rests on, with a status and the reason. One definition, saved with the report, so the
+    page, the PDF and the Excel show the same statuses and none re-derives them."""
+    stockout = position.stockout
+    uncovered = [m for m in coverage.months if m.consumption_status in (SourceMonthStatus.NOT_COVERED, SourceMonthStatus.NO_SOURCE_DATA)]
+    currency = position.working_capital_currency or position.currency
+    excluded = position.working_capital_excluded_count
+    stock_status = (
+        NOT_AVAILABLE if coverage.latest_stock_loaded_at is None else (STALE if position.inventory_unavailable_reason else AVAILABLE)
+    )
+    return [
+        CoverageItem(
+            key="goods_issue", label="Latest SAP goods issue", value=_day(coverage.latest_consumption_date),
+            status=NOT_AVAILABLE if coverage.latest_consumption_date is None else AVAILABLE,
+            detail="The stockout usage has not been built." if coverage.latest_consumption_date is None else None,
+        ),
+        CoverageItem(
+            key="consumption_month", label="Latest staged consumption month",
+            value=None if coverage.latest_consumption_month is None else f"{coverage.latest_consumption_month:%b %Y}",
+            status=NOT_AVAILABLE if coverage.latest_consumption_month is None else (NOT_COVERED if uncovered else AVAILABLE),
+            detail=(
+                f"{', '.join(m.label for m in uncovered)} {'has' if len(uncovered) == 1 else 'have'} no consumption data: shown as not "
+                "available, never as zero."
+                if uncovered else None
+            ),
+        ),
+        CoverageItem(
+            key="stockout", label="Latest stockout measurement", value=_day(stockout.as_of),
+            status=NOT_AVAILABLE if stockout.as_of is None else (STALE if stockout.stale else AVAILABLE),
+            detail=(
+                stockout.stale_note if stockout.stale
+                else "The stockout usage has not been built, so risk cannot be judged. This is not zero risk." if stockout.as_of is None
+                else None
+            ),
+        ),
+        CoverageItem(
+            key="stock_load", label="Stock on hand last loaded", value=_day(coverage.latest_stock_loaded_at), status=stock_status,
+            detail=position.inventory_unavailable_reason
+            or ("No stock-on-hand load is recorded." if coverage.latest_stock_loaded_at is None else None),
+        ),
+        CoverageItem(
+            key="recommendation_date", label="Newest recommendation in the figures", value=_day(position.recommendation_reference_date),
+            status=AVAILABLE if position.recommendation_reference_date else NOT_AVAILABLE,
+            detail=(
+                "The SAP values compared against are the ones stored on it." if position.recommendation_reference_date
+                else "No recommendation in the period."
+            ),
+        ),
+        CoverageItem(
+            key="recommendation_counts", label="Recommendations · material-plants computed",
+            value=f"{coverage.eligible_recommendations:,} · {coverage.eligible_material_plants:,}", status=AVAILABLE,
+            detail="Records generated in the period, and distinct material-plants with a computed recommendation.",
+        ),
+        CoverageItem(
+            key="snapshot", label="Month-end snapshot",
+            value=_day(quarter_end.measured_on) if quarter_end and quarter_end.status == AvailabilityStatus.AVAILABLE else None,
+            status=AVAILABLE if quarter_end and quarter_end.status == AvailabilityStatus.AVAILABLE else NOT_AVAILABLE,
+            detail=(
+                None if quarter_end and quarter_end.status == AvailabilityStatus.AVAILABLE
+                else (quarter_end.reason if quarter_end else "This report was made before snapshots existed.")
+            ),
+        ),
+        CoverageItem(
+            key="forecast", label="Forecast data",
+            value=f"{len(forecast.months)} month{'' if len(forecast.months) == 1 else 's'}" if forecast.status == AvailabilityStatus.AVAILABLE else None,
+            status=(
+                AVAILABLE if forecast.status == AvailabilityStatus.AVAILABLE
+                else NOT_AVAILABLE if forecast.status == AvailabilityStatus.NOT_AVAILABLE else INSUFFICIENT_HISTORY
+            ),
+            detail=None if forecast.status == AvailabilityStatus.AVAILABLE else forecast.note,
+        ),
+        CoverageItem(
+            key="currency", label="Currency", value=currency, status=AVAILABLE if currency else NOT_AVAILABLE,
+            detail=(
+                f"{excluded:,} material-plants are left out of working capital (another or no stated currency, no valid price, or no "
+                "reorder point). Only ZAR, and NAD at 1:1, are counted; nothing else is converted."
+                if excluded > 0 else None
+            ),
+        ),
+    ]

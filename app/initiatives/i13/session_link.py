@@ -245,6 +245,26 @@ def load_sessions(db: Session, session_ids: Iterable[str] | None = None) -> dict
     }
 
 
+def session_references(db: Session, session_ids: Iterable[str]) -> dict[str, str]:
+    """How each session is quoted on screen, by ID: ``R.../n`` for a line of a
+    multi-material request, the session ID for a single-material session --
+    ``AssistantSession.reference``. A request line's session ID is internal; the
+    requester only ever sees the request reference. An unknown ID is left out."""
+    from app.assistant.models import AssistantSession
+
+    wanted = list(session_ids)
+    if not wanted:
+        return {}
+    return {
+        sid: f"{request_id}/{line_no}" if request_id and line_no else sid
+        for sid, request_id, line_no in db.execute(
+            select(AssistantSession.id, AssistantSession.request_id, AssistantSession.line_no).where(
+                AssistantSession.id.in_(wanted)
+            )
+        ).all()
+    }
+
+
 def _links_wanted(
     rows: Iterable[Row],
     sessions: Mapping[str, SessionInfo],

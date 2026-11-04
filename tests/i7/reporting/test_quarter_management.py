@@ -277,15 +277,65 @@ def test_materials_assessed_counts_distinct_material_plants_not_records(db):
     assert card(management, "recommendations_generated").value == 4
 
 
-def test_pending_approval_is_a_status_on_the_day_the_report_was_generated_not_at_the_quarters_end(db):
-    db.add_all([rec("A", at(2026, 10), status="PENDING_APPROVAL"), rec("B", at(2026, 10), status="HELD"), rec("C", at(2026, 10)), rec("D", at(2026, 10), status="APPROVED")])
+def test_approved_is_a_status_on_the_day_the_report_was_generated_not_at_the_quarters_end(db):
+    db.add_all([
+        rec("A", at(2026, 10), status="PENDING_APPROVAL"), rec("B", at(2026, 10), status="HELD"),
+        rec("C", at(2026, 10)), rec("D", at(2026, 10), status="APPROVED"), rec("E", at(2026, 11), status="ADOPTED"),
+    ])
     db.commit()
-    pending = card(build(db, AFTER_Q4), "pending_approval")
-    assert pending.value == 2
-    assert pending.kind is MetricKind.STATUS_AS_OF
-    assert pending.measured_on == AFTER_Q4  # the generation date; the quarter ended on 31 Dec
-    assert pending.period_label == "as of 15 Jan 2027"
-    assert pending.denominator == 4
+    management = build(db, AFTER_Q4)
+    approved = card(management, "approved")
+    assert approved.value == 2  # D approved, E taken on in SAP; pending and held ones are not
+    assert approved.kind is MetricKind.STATUS_AS_OF
+    assert approved.measured_on == AFTER_Q4  # the generation date; the quarter ended on 31 Dec
+    assert approved.period_label == "as of 15 Jan 2027"
+    assert approved.denominator == 5
+    # What is waiting for a decision is not a top card: it is in the Approval status section, with every other stage.
+    assert all(c.key != "pending_approval" for c in management.kpis)
+    assert management.adoption.stages.awaiting_approval == 2  # A pending, B held
+    assert management.adoption.pending_approvals == 2
+    assert "SAP" in approved.explanation
+
+
+def test_the_three_counts_are_records_then_distinct_material_plants_then_those_with_a_computed_recommendation(db):
+    db.add_all([
+        rec("A", at(2026, 10), run=1), rec("A", at(2026, 10, 20), run=2),  # A regenerated: two records, one material-plant
+        rec("B", at(2026, 10)), rec("C", at(2026, 10), status="NOT_EVALUABLE"),  # C was looked at, nothing computed
+    ])
+    db.commit()
+    management = build(db, AFTER_Q4)
+    computed, records = card(management, "materials_assessed"), card(management, "recommendations_generated")
+    assert records.value == 4 and records.unit == "recommendation records"
+    assert computed.value == 2  # A and B
+    assert computed.denominator == 3  # distinct material-plants looked at: A, B, C
+    assert "distinct" in computed.denominator_label
+    assert computed.title == "Material-plants with a computed recommendation"
+    assert "1 of the 3" in computed.note  # C
+    assert "4 records over 3 distinct material-plants" in records.note and "1 are repeat runs" in records.note
+
+
+def test_stages_separate_approval_from_sap_and_add_up_to_the_records_generated(db):
+    statuses = ["READY_FOR_REVIEW", "NOT_EVALUABLE", "PENDING_APPROVAL", "HELD", "ADJUSTED", "APPROVED", "SAP_EXECUTION_PENDING",
+                "SAP_EXECUTED", "ADOPTED", "REJECTED", "SENT_BACK"]
+    db.add_all([rec(f"M{i}", at(2026, 10), status=s) for i, s in enumerate(statuses)])
+    db.commit()
+    management = build(db, AFTER_Q4)
+    stages = management.adoption.stages
+    assert stages.total == 11 and stages.other == 0
+    assert (stages.not_submitted, stages.awaiting_approval, stages.adjusted_in_chain) == (2, 2, 1)
+    assert (stages.approved_awaiting_sap, stages.implemented_in_sap, stages.rejected_or_sent_back) == (2, 2, 2)
+    assert sum([stages.not_submitted, stages.awaiting_approval, stages.adjusted_in_chain, stages.approved_awaiting_sap,
+                stages.implemented_in_sap, stages.rejected_or_sent_back, stages.other]) == stages.total
+    # The cards read the same sets as the stages.
+    assert stages.awaiting_approval == management.adoption.pending_approvals == 2  # PENDING_APPROVAL and HELD
+    assert card(management, "approved").value == stages.approved_awaiting_sap + stages.implemented_in_sap
+
+
+def test_the_approval_card_sets_and_the_stage_sets_are_one_definition():
+    approved = kpi_definitions.STAGE_STATUSES["approved_awaiting_sap"] + kpi_definitions.STAGE_STATUSES["implemented_in_sap"]
+    assert set(approved) == set(kpi_definitions.APPROVED_STATUSES)
+    assert kpi_definitions.STAGE_STATUSES["awaiting_approval"] == kpi_definitions.AWAITING_DECISION
+    assert kpi_definitions.stage_counts({"SOMETHING_NEW": 3, "APPROVED": 1})["other"] == 3
 
 
 def test_working_capital_is_not_available_not_zero_when_nothing_has_a_price_and_both_reorder_points(db):
@@ -409,6 +459,9 @@ def test_adoption_is_not_measured_without_sap_evidence_and_an_approval_is_not_an
     assert "not an adoption" in adoption.reason
     # Nothing is adopted and nothing is "not adopted": every one with a change is simply pending.
     assert (adoption.tracked, adoption.adopted, adoption.not_adopted, adoption.pending) == (2, 0, 0, 2)
+    assert adoption.adoption_rate is None  # no evidence: not a measured 0%
+    # SAP "pending" (2) covers an approved and a pending-approval recommendation alike; approval stages are separate.
+    assert (adoption.stages.approved_awaiting_sap, adoption.stages.awaiting_approval) == (1, 1)
 
 
 def test_adoption_counts_confirmed_results_for_this_periods_recommendations_only(db):
@@ -426,6 +479,7 @@ def test_adoption_counts_confirmed_results_for_this_periods_recommendations_only
     assert adoption.status is AvailabilityStatus.AVAILABLE
     assert adoption.confirmed_adoptions == 1
     assert (adoption.tracked, adoption.adopted, adoption.not_adopted, adoption.pending) == (3, 1, 1, 1)  # OLD is another period
+    assert adoption.adoption_rate == Decimal("0.5")  # 1 adopted of the 2 SAP has evidence for (the Overview's formula); C is pending, not a miss
 
 
 def test_a_recommendation_with_nothing_to_adopt_is_not_counted_in_adoption(db):
@@ -506,3 +560,160 @@ def test_each_plants_stockout_is_asked_for_that_plant_only(db, monkeypatch):
     # All plants once -- the card and the chart read the same figures -- then each plant, never one plant's counts
     # standing in for another's.
     assert asked == [None, "1300", "1500"]
+
+
+# --- data coverage statuses -------------------------------------------------------------------
+
+
+def coverage_items(management):
+    return {item.key: item for item in management.data_coverage.items}
+
+
+def test_each_source_gets_a_status_and_a_reason_saved_with_the_report(db, monkeypatch):
+    monkeypatch.setattr(
+        kpi_definitions, "stockout_risk_counts",
+        lambda session, base, **kw: StockoutRiskCounts(at_risk=4, evaluated=40, insufficient_data=1, as_of=date(2026, 5, 31)),
+    )
+    db.add(rec("A", at(2026, 10)))
+    db.commit()
+    items = coverage_items(build(db, AFTER_Q4))
+    assert items["stockout"].status == "Stale" and "31 May 2026" in items["stockout"].detail
+    assert items["stockout"].value == "31 May 2026"
+    assert items["snapshot"].status == "Not available" and "snapshot" in items["snapshot"].detail
+    assert items["forecast"].status == "Not available"
+    assert items["recommendation_date"].status == "Available" and items["recommendation_date"].value == "10 Oct 2026"
+    assert items["recommendation_counts"].value == "1 · 1"
+    assert items["currency"].status == "Available" and items["currency"].value == "ZAR"
+
+
+def test_an_unbuilt_stockout_usage_and_no_stock_load_are_not_available_and_not_zero_risk(db):
+    db.add(rec("A", at(2026, 10)))
+    db.commit()
+    items = coverage_items(build(db, AFTER_Q4))
+    assert items["stockout"].status == "Not available" and "not zero risk" in items["stockout"].detail
+    assert items["stock_load"].status == "Not available"
+    assert items["goods_issue"].status == "Not available"
+
+
+def test_a_month_without_staged_consumption_is_not_covered_never_zero(db):
+    db.add_all([rec("A", at(2026, 10)), consumed("A", date(2026, 9, 1))])
+    db.commit()
+    item = coverage_items(build(db, AFTER_Q4))["consumption_month"]
+    assert item.status == "Not covered" and "never as zero" in item.detail
+
+
+# --- OAR records and Min-Max conversion ---------------------------------------------------------
+
+
+def oar(material, when, *, verdict="ELIGIBLE", manual=False, run=1, plant="1300", is_oar=True, valued=True):
+    """An OAR recommendation. ``valued=False`` is one with no recommended value at all, as an eligible material the system could not size."""
+    row = rec(material, when, run=run, plant=plant, rec_rop=5 if valued else None)
+    row.is_oar, row.conversion_eligibility, row.manually_converted = is_oar, verdict, manual
+    return row
+
+
+def test_oar_records_are_counted_as_records_not_materials(db):
+    db.add_all([
+        oar("A", at(2026, 10), run=1), oar("A", at(2026, 10, 20), run=2),  # one OAR material-plant, two runs
+        oar("B", at(2026, 10)), oar("N", at(2026, 10), is_oar=False, verdict=None),  # a stock item is not OAR
+        oar("OLD", at(2026, 6)),  # another period
+    ])
+    db.commit()
+    card_ = card(build(db, AFTER_Q4), "oar_recommendations")
+    assert card_.value == 3 and card_.unit == "recommendation records"
+    assert card_.denominator == 4  # every record generated in the period, OAR or not
+    assert "records, not materials" in card_.explanation
+
+
+def adoption(material, status, *, run=1, plant="1300"):
+    return SapAdoptionResult(recommendation_id=f"REC-{material}-{plant}-{run}", status=status, evaluated_at=at(2026, 11))
+
+
+def test_min_max_conversion_is_zero_when_nothing_is_converted_and_says_why(db):
+    db.add_all([oar("E1", at(2026, 10)), oar("E2", at(2026, 10), plant="1500"), oar("NO", at(2026, 10), verdict="NOT_ELIGIBLE")])
+    db.commit()
+    c = card(build(db, AFTER_Q4), "min_max_conversion")
+    assert c.value == 0 and c.status is AvailabilityStatus.AVAILABLE  # a material-plant counts only when SAP shows it converted
+    assert c.unavailable_reason is None
+    assert c.denominator == 2 and c.denominator_label == "eligible to convert, with recommended values"  # E1 and E2 may convert
+    assert "converted is what SAP shows" in c.note
+    assert "0 means none is confirmed converted" in c.note  # no SAP change evidence yet: the 0 is explained, not hidden
+
+
+def test_min_max_conversion_counts_the_eligible_material_plants_sap_now_matches(db):
+    db.add_all([
+        oar("E1", at(2026, 10)), oar("E2", at(2026, 10), plant="1500"), oar("E3", at(2026, 10)), oar("NO", at(2026, 10), verdict="NOT_ELIGIBLE"),
+        oar("ASKED", at(2026, 10), verdict="NOT_ELIGIBLE", manual=True), oar("STOCK", at(2026, 10), is_oar=False, verdict=None),
+        oar("OLD", at(2026, 6)),  # generated in another period
+    ])
+    db.add_all([
+        adoption("E1", "ADOPTED"), adoption("E2", "NOT_ADOPTED", plant="1500"),  # E3 has no result yet: pending, not converted
+        adoption("ASKED", "ADOPTED"),  # converted, but the rule did not make it eligible: not counted here
+        adoption("OLD", "ADOPTED"),  # another period
+    ])
+    db.commit()
+    c = card(build(db, AFTER_Q4), "min_max_conversion")
+    assert c.value == 1  # E1 only
+    assert c.status is AvailabilityStatus.AVAILABLE and c.unavailable_reason is None
+    assert "0 means none is confirmed converted" not in c.note  # SAP has evidence for some, so the note does not say that
+    assert c.denominator == 3  # E1, E2, E3 are eligible
+    assert c.kind is MetricKind.STATUS_AS_OF and c.period_label == "as of 15 Jan 2027"
+    assert "1 more were not eligible" in c.note  # ASKED, apart from the counts
+    counts = kpi_definitions.min_max_conversion(db, Q4_START, date(2027, 1, 1))
+    assert (counts.eligible, counts.converted, counts.with_evidence, counts.oar_material_plants, counts.manually_requested) == (3, 1, 2, 5, 1)
+
+
+def test_an_adoption_result_on_a_superseded_run_does_not_count_as_converted(db):
+    db.add_all([oar("RERUN", at(2026, 10), run=1), oar("RERUN", at(2026, 10, 25), run=2)])
+    db.add(adoption("RERUN", "ADOPTED", run=1))  # SAP matched the older run; the newest run has no result yet
+    db.commit()
+    counts = kpi_definitions.min_max_conversion(db, Q4_START, date(2027, 1, 1))
+    assert (counts.eligible, counts.converted, counts.with_evidence) == (1, 0, 0)
+    assert card(build(db, AFTER_Q4), "min_max_conversion").value == 0
+
+
+def test_the_min_max_card_and_the_lists_behind_it_agree(db):
+    """The counts use the Recommendations list's own filters, so each click-through list holds exactly the counted material-plants."""
+    from app.api.i7 import recommendations as api
+
+    db.add_all([
+        oar("E1", at(2026, 10)), oar("E2", at(2026, 11), plant="1500"), oar("E3", at(2026, 10)), oar("NO", at(2026, 10), verdict="NOT_ELIGIBLE"),
+        oar("EARLY", at(2026, 9)),  # before the period
+    ])
+    db.add_all([adoption("E1", "ADOPTED"), adoption("E2", "ADOPTED", plant="1500"), adoption("NO", "ADOPTED")])
+    db.commit()
+
+    def listed(**more):
+        return api.list_recommendations(
+            session=db, page=1, page_size=50, sort="generated_at", sort_desc=True, status=None, plant=None, material=None, demand_class=None,
+            is_oar=None, confidence=None, criticality=None, generated_from=datetime(2026, 10, 1), generated_to=datetime(2027, 1, 1),
+            demand_type="oar", search=None, criticality_level=None, status_group=None, risk=None, conversion_eligibility="ELIGIBLE", has_recommended=True, **more,
+        )
+
+    management = build(db, AFTER_Q4)
+    converted, eligible = listed(adopted_in_sap=True), listed()
+    c = card(management, "min_max_conversion")
+    assert c.value == converted.total == 2 and c.denominator == eligible.total == 3
+    assert sorted(item.material for item in converted.items) == ["E1", "E2"]  # NO was adopted but is not eligible
+    assert sorted(item.material for item in eligible.items) == ["E1", "E2", "E3"]
+
+
+def test_an_eligible_material_with_no_recommended_value_has_nothing_to_move_and_is_counted_apart(db):
+    # The rule allows all four, but only two have a value worked out: the others cannot be moved to Min-Max yet.
+    db.add_all([
+        oar("HAS1", at(2026, 10)), oar("HAS2", at(2026, 10), plant="1500"),
+        oar("NOVAL1", at(2026, 10), valued=False), oar("NOVAL2", at(2026, 10), valued=False, plant="1500"),
+    ])
+    db.add(adoption("HAS1", "ADOPTED"))
+    db.commit()
+    c = card(build(db, AFTER_Q4), "min_max_conversion")
+    assert c.denominator == 2 and c.value == 1  # HAS1 and HAS2 can move; HAS1 has moved
+    assert "2 more are eligible by the rule but have no recommended value yet" in c.note
+    counts = kpi_definitions.min_max_conversion(db, Q4_START, date(2027, 1, 1))
+    assert (counts.eligible, counts.without_values, counts.converted, counts.oar_material_plants) == (2, 2, 1, 4)
+
+
+def test_without_any_eligible_value_the_note_stays_quiet_about_it(db):
+    db.add_all([oar("A", at(2026, 10)), oar("B", at(2026, 10), plant="1500")])
+    db.commit()
+    assert "no recommended value yet" not in card(build(db, AFTER_Q4), "min_max_conversion").note

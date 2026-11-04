@@ -1,12 +1,13 @@
 # Shared notifications
 
-One notification service for approvals, repairable-spares exceptions and OAR exceptions. It lives in
+One notification service for approvals and OAR exceptions. It lives in
 `app/integrations/notifications/`; nothing else builds its own client.
 
 ## How it works
 
-1. **Something happens** -- an approval moves (`app/initiatives/i7/notifications.py`), an exception is raised
-   (I08, `app/initiatives/i8/notifications.py`) or goes unanswered (I13, `app/initiatives/i13/act/service.py`).
+1. **Something happens** -- an approval moves (`app/initiatives/i7/notifications.py`) or an exception goes
+   unanswered (I13, `app/initiatives/i13/act/service.py`). Repairable-spares (I08) exceptions were notified here too
+   until 3-Nov-2026, when their exception queue was removed.
 2. **`enqueue`** writes `notification` rows in the caller's own transaction -- an **in-app** row (the inbox) and an
    **email** row for each recipient. A step that fails (HTTP 409) never gets this far, and a step that is saved
    always has its notifications saved with it.
@@ -137,8 +138,8 @@ When SAP posts a requisition to `/api/events/pr`, the inbox is told once SAP has
 - [ ] Optional: `NOTIFICATION_SAP_EXECUTION_ROLE` -- the Entra role of whoever applies an approved change in SAP.
   Blank means the final-approval notice goes to the submitter only.
 - Repairable Spares (I08) sends **no** in-app or email notification, so there is nothing to configure for it
-  (`I8_NOTIFICATION_RECIPIENT_ROLES` no longer exists; remove it from any environment that still sets it). Its exception
-  log is unaffected. Notifications it sent earlier stay in the table but are kept out of every inbox, unread count and
+  (`I8_NOTIFICATION_RECIPIENT_ROLES` no longer exists; remove it from any environment that still sets it). It has no
+  exception queue or log either (removed 3-Nov-2026). Notifications it sent earlier stay in the table but are kept out of every inbox, unread count and
   mark-all-read. Emails it had already queued as `PENDING` are still sent unless cancelled: check for
   `module = 'I08'` rows in `notification` with `status = 'PENDING'` and cancel them if they should not go out.
 - [ ] **I13 requester and HOD** -- see "I13 requester and HOD" below. Both need an Entra object id, and the requester
@@ -193,6 +194,46 @@ Delivery is off until all of these are done. `NOTIFICATION_EMAIL_PROVIDER` stays
 
 Links open the normal review page and require the normal sign-in: an unauthenticated visitor is sent to the login page
 and returned to the page afterwards (`src/proxy.ts`). There is no approving from an email link.
+
+### I13 nightly exception detection (off until you turn it on)
+
+`NOTIFICATION_I13_DETECTION_ENABLED` defaults to **`false`**. Without it, detection runs only after an assistant
+session (for that one material and plant) or through `POST /api/i13/act/run/detect`, so the Exceptions screen fell
+behind the data: a plan that went overdue was not raised until somebody happened to run detection for its material.
+
+When on, the `exception_detection` job runs detection over every material once a day, in the first tick at or after
+`NOTIFICATION_I13_DETECTION_HOUR_UTC` (default 1). It reads the I13 snapshot exactly as the manual endpoint does, and
+skips (trying again next tick) while there is none. It runs before `requester_escalations`, so an exception raised
+or resolved tonight is seen by escalation in the same tick. A second run on the same day -- after a restart, or on a
+second instance -- changes nothing: detection only creates what is missing, keeps what exists (no second
+notification) and resolves what cleared.
+
+**After each snapshot build (`I13_DETECT_AFTER_BUILD`, default `false`).** When on, detection runs over every
+material as soon as an I13 snapshot build or re-age has succeeded and made a new version served
+(`snapshot_store/lifecycle.py`): at least once a day (the re-age when the day turns) and again after every SAP load
+that changed the data. So the queue is always checked against the data the screens show. It runs on its own thread
+after the build, one run at a time, and never after a failed build or one another process held. It counts as the
+day's run, so the nightly job above then only fires on a day with no successful build.
+
+**Which types (`I13_DETECTION_TYPES`, default empty = all).** Comma-separated: `PLAN_BREACH`, `NO_PLAN`,
+`NO_PLAN_GRNI`, `QUANTITY_OVERRIDE`. Both automatic runs check only these; a type left out is neither raised nor
+resolved, so its queue stays exactly as it is. An unknown name fails the run rather than silently checking nothing.
+The post-capture and manual runs always check every type. Go-live: `PLAN_BREACH,QUANTITY_OVERRIDE`, adding `NO_PLAN`
+and `NO_PLAN_GRNI` once the Non-AI cutoff is agreed -- GRNI is raised only on a Non-AI reservation, so without the
+cutoff it would raise one for every old reservation of a material with unissued stock.
+
+**A quantity override notifies nobody.** The assistant does not let a requester keep more than the suggestion
+without a reason, so a `QUANTITY_OVERRIDE` is recorded already **Confirmed** with that reason: no "Confirm
+Exception", no due date, and escalation skips it. It is still listed on the Exceptions screen, so overrides can be
+counted. One without a recorded reason stays Open, unsent. One still waiting from before 4-Nov-2026 is confirmed by
+the next run that sees its reason.
+
+The dashboard's Planned Overdue and Non-AI cards and the summary report count the same queue (unresolved exceptions
+only), so they match the Exceptions screen once detection is current.
+
+**Before turning it on:** the first run raises a Non-AI exception for every OAR reservation whose SAP item text has no
+assistant reference -- on non-prod about 29,000 more than the queue holds today, most from before the assistant
+existed -- and notifies each requester it can resolve.
 
 ### I13 automatic escalation (off until you turn it on)
 

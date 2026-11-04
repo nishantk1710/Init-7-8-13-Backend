@@ -48,6 +48,11 @@ def _confirm_override_from_conversation(db: DbSession, session_id: str) -> bool:
     Goes through ``submit_confirmation`` (state-machine validated, audited as
     REQUESTER_CONFIRMED + JUSTIFICATION_ADDED), exactly as if they had answered
     on the Exceptions screen, and only when the exception is waiting on them.
+
+    Since 4-Nov-2026 detection confirms the override itself, with the same
+    reason, and never sends it to the requester (``service._confirm_recorded_override``),
+    so this normally finds it already CONFIRMED and does nothing. Kept for an
+    exception still waiting from before that change.
     """
     from sqlalchemy import select
 

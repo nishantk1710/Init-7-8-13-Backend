@@ -1086,6 +1086,32 @@ class Settings(BaseSettings):
     notification_i13_escalation_enabled: bool = False
     notification_i13_escalation_batch_size: int = 100
 
+    # I13 nightly exception detection. Detection otherwise runs only after an assistant
+    # session (for that one material and plant) or by hand, so the Exceptions screen fell
+    # behind the data: a plan went overdue and nothing raised it. When on, the scheduler
+    # runs detection over every material once a day, in the first tick at or after this
+    # hour (UTC). OFF by default: the first run raises a Non-AI exception for every OAR
+    # reservation without an assistant reference, and notifies each requester.
+    notification_i13_detection_enabled: bool = False
+    notification_i13_detection_hour_utc: int = 1
+    # Detection again as soon as the I13 snapshot has been rebuilt or re-aged (4-Nov-2026), so
+    # the queue is checked against the data the screens now show -- at least daily (the re-age
+    # when the day turns) and after every SAP load that changed it. The timer above stays as
+    # the backup for a day with no successful build. OFF by default, for the same reason.
+    i13_detect_after_build: bool = False
+    # The exception types those two automatic runs check, comma-separated (PLAN_BREACH,
+    # NO_PLAN, NO_PLAN_GRNI, QUANTITY_OVERRIDE). Empty = all. A type left out is neither
+    # raised nor resolved by them -- e.g. NO_PLAN and NO_PLAN_GRNI until the Non-AI
+    # go-live cutoff is agreed. The post-capture and manual (POST /run/detect) runs always check every type.
+    i13_detection_types: str = ""
+
+    # A request's requester is told in the app when its lines are linked to an SAP reservation, and reminded
+    # once when lines that need a reservation are still unlinked this many hours after the request (0 = no
+    # reminder). Both look back only this many hours, so switching it on does not notify about old requests.
+    assistant_link_notifications_enabled: bool = True
+    assistant_link_reminder_hours: int = 24
+    assistant_link_notice_lookback_hours: int = 48
+
     # Master switch for email. When false, no email notification is created or sent at all: the
     # in-app inbox is the only channel. (A notification that cannot be delivered to anyone is
     # still recorded as a failed row, but not as an email.) Independent of the provider below.

@@ -260,10 +260,37 @@ def _stage(db: Session, cfg: I8Settings) -> Sources:
     # Kept: repair lines (the register) and 80-series lines (new purchases, and
     # the universe's EKPO slice), each in scope -- the view filters plant too.
     repair = _literal(cfg.repair_item_category)
-    stage("v_ekpo", {"n_ekpo": _narrow(
+    ekpo = _narrow(
         db, "ekpo", "n_ekpo",
         f"{_in_scope()} AND (item_category = {repair} OR {_series('material', cfg)})",
-    )})
+    )
+    # Plus (4-Nov-2026) the other lines on a PO an 80-series PR names itself
+    # (EBAN.EBELN): a buyer can raise a PR's PO line as a service line that
+    # never names the PR back, and the open-PR rule reads it
+    # (requisitions.index_forward_pointers). A direct build reads every line;
+    # every other reader of this copy filters by item category or material.
+    # A second statement, never an OR: see MSEG below.
+    # CAST to a bounded type: read straight off the raw table, the key is
+    # nvarchar(max) on Azure, and SQL Server cannot index that (error 1919:
+    # every nonprod snapshot build failed on 4-Nov-2026 until this cast; CI's
+    # fixture columns are NVARCHAR(200), so CI built fine). The other temp
+    # tables here select from a staged view, whose keys are NVARCHAR(4000).
+    db.execute(text("DROP TABLE IF EXISTS #i8s_pr_docs"))
+    db.execute(text(
+        f"SELECT DISTINCT CAST({_key('purchase_order')} AS NVARCHAR(40)) AS ebeln INTO #i8s_pr_docs FROM n_eban "
+        f"WHERE {_in_scope()} AND {_series('material', cfg)} AND {_key('purchase_order')} IS NOT NULL"
+    ))
+    db.execute(text("CREATE CLUSTERED INDEX ix_i8s_pr_docs ON #i8s_pr_docs (ebeln)"))
+    # COALESCE: a service line has no material, and NOT over a NULL LIKE is
+    # NULL, which would leave out exactly the line wanted.
+    any_material = "COALESCE(material, '')"
+    db.execute(text(
+        f"INSERT INTO {ekpo} SELECT * FROM n_ekpo WHERE {_in_scope()} "
+        f"AND COALESCE(item_category, '') <> {repair} "
+        f"AND NOT {_series(any_material, cfg)} "
+        f"AND {_key('purchasing_document')} IN (SELECT ebeln FROM #i8s_pr_docs)"
+    ))
+    stage("v_ekpo", {"n_ekpo": ekpo})
     db.execute(text("DROP TABLE IF EXISTS #i8s_docs"))
     db.execute(text(f"SELECT DISTINCT ebeln INTO #i8s_docs FROM {views['v_ekpo']} WHERE ebeln IS NOT NULL"))
     db.execute(text("CREATE CLUSTERED INDEX ix_i8s_docs ON #i8s_docs (ebeln)"))
@@ -284,14 +311,13 @@ def _stage(db: Session, cfg: I8Settings) -> Sources:
     # Since 27-Oct-2026 every other 80-series line WITH TEXT is kept too: the
     # job's reservation line names the assistant session there
     # (session_jobs.py); the movement-type rule stays in Python. Staged ahead
-    # of MSEG, whose narrowing reads these reservation numbers. And every
-    # job (consumption) line, text or not: one with none is the
-    # MISSING_SESSION_ID finding (session_jobs.unreferenced_lines).
+    # of MSEG, whose narrowing reads these reservation numbers. Until
+    # 3-Nov-2026 every job line with no text was kept too, for the
+    # missing-session check; that check went with the exception queue.
     stage("v_resb", {"n_resb": _narrow(
         db, "resb", "n_resb",
         f"{_in_scope()} AND {_series('material', cfg)} "
-        f"AND (movement_type IN ({_literal(cfg.repair_reservation_movement_type)}, "
-        f"{_literal(cfg.job_issue_movement_type)}) "
+        f"AND (movement_type = {_literal(cfg.repair_reservation_movement_type)} "
         f"OR COALESCE(text, '') <> '')",
     )})
     # MSEG: the staged POs' movements, plus (27-Oct-2026) the job's 261/262

@@ -70,6 +70,33 @@ class TestTheOverdueTrap:
         )
         assert "waiting looks faster" not in assessment.headline(TODAY)
 
+    def test_several_repairs_all_late_are_not_called_that_repair(self) -> None:
+        """8000005216 at 1500: eight overdue repairs read "That repair was due
+        117 days ago" (4-Nov-2026)."""
+        assessment = _assessment(
+            rows=[universe_row(planned_delivery_days=30)],
+            lines=[
+                repair_line(item="10", due_date=date(2026, 7, 1)),
+                repair_line(item="20", due_date=date(2026, 7, 21)),
+            ],
+        )
+        headline = assessment.headline(TODAY)
+        assert "That repair" not in headline
+        assert "All 2 repairs are past their promised dates, the earliest by 30 days" in headline
+        assert "chase them before relying on them" in headline
+
+    def test_some_late_and_some_not_names_the_next_date(self) -> None:
+        assessment = _assessment(
+            rows=[universe_row(planned_delivery_days=30)],
+            lines=[
+                repair_line(item="10", due_date=date(2026, 7, 1)),
+                repair_line(item="20", due_date=date(2026, 8, 20)),
+            ],
+        )
+        headline = assessment.headline(TODAY)
+        assert "1 of the 2 repairs is past its promised date, by 30 days: chase it" in headline
+        assert "The next is due back 2026-08-20." in headline
+
     def test_it_says_the_date_is_no_longer_a_forecast(self) -> None:
         assessment = _assessment(
             rows=[universe_row(planned_delivery_days=30)],
@@ -147,6 +174,18 @@ class TestFieldsAreTakenFromRowsThatKnow:
         assert assessment.criticality is None
 
 
+class TestTheDispatchInTheRecord:
+    def test_the_record_says_when_the_unit_was_sent(self) -> None:
+        assessment = _assessment(lines=[repair_line(dispatched_at=date(2026, 7, 24), repair_status="At Vendor")])
+        [repair] = assessment.as_record(TODAY)["openRepairs"]
+        assert repair["dispatched"] is True
+        assert repair["dispatchedAt"] == "2026-07-24"
+
+    def test_no_dispatch_is_null(self) -> None:
+        [repair] = _assessment().as_record(TODAY)["openRepairs"]
+        assert repair["dispatchedAt"] is None
+
+
 class TestTheStoredRecord:
     def test_it_is_json_serialisable(self) -> None:
         import json
@@ -222,7 +261,7 @@ class TestRequestsAndStockConditionInTheRecord:
                 "repairOrder": "940000004981",
             }
         ]
-        assert "requested, not yet ordered (requested 239 days ago)" in record["headline"]
+        assert "PR raised for repair, no PO yet (raised 239 days ago)" in record["headline"]
 
     def test_switched_off_counts_no_requests(self) -> None:
         record = self._record(requests=None)

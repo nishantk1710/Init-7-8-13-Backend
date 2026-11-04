@@ -101,6 +101,7 @@ def test_summary_returns_200_with_expected_shape():
         "normal_count",
         "awaiting_approval_count",
         "ready_for_review_count",
+        "ready_for_review_actionable_count",
         "not_evaluable_count",
         "currency",
         "net_safety_stock_value_impact",

@@ -1,4 +1,8 @@
-"""H3: I13 automatic escalation is safe by default."""
+"""H3: I13 automatic escalation is safe by default.
+
+M4 (I08 shared notifications are recoverable) was tested here too until
+3-Nov-2026, when the I08 exception queue and its notifications were removed.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +16,7 @@ from app.initiatives.i13.act.service import process_escalations
 from app.initiatives.i13.act_hod_provider import ConfigEscalationRecipientProvider
 from app.integrations.notifications.service import SharedNotificationPort
 from app.models.base import Base
-from tests.notifications.test_i08_and_i13 import (  # noqa: F401 -- fixtures and helpers shared with that module
+from tests.notifications.test_i13_shared import (  # noqa: F401 -- fixtures and helpers shared with that module
     HOD,
     NOW,
     OID,

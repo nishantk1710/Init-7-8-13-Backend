@@ -138,6 +138,11 @@ def compute(session: Session, month: date, today: date) -> _Computed:
         net_rop_value_impact=position.net_rop_value_impact,
         priced_count=position.priced_count,
         currency=position.currency,
+        # Stock held, as loaded on ``stock_loaded_at``; None when that load was too far from the cutoff to stand for it.
+        inventory_value=position.inventory_value,
+        safety_stock_value=position.safety_stock_value,
+        below_reorder_count=position.below_reorder_count,
+        below_reorder_judged=position.below_reorder_judged if position.below_reorder_count is not None else None,
         calc_version=CALC_VERSION,
     )
     # A month-end position needs the month to have ended and the measurement to be close to its end. An open month's
