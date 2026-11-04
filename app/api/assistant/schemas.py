@@ -396,6 +396,24 @@ class SessionDeclarationModel(AssistantModel):
     repair_document_type: str | None = None
     """'PO' or 'PR' when the declaration names a repair line; null otherwise."""
 
+    @classmethod
+    def of(cls, row: Any) -> SessionDeclarationModel:
+        """From an ``i8_attestation`` row: the session trace's declarations and
+        a request line's (4-Nov-2026) read the same fields."""
+        return cls(
+            id=row.id,
+            recommendation=row.recommendation,
+            condition_description=row.condition_description,
+            fault_category=row.fault_category,
+            quantity=str(row.quantity),
+            attestor_name=row.attestor_name,
+            attested_at=row.attested_at,
+            evidence_reference=row.evidence_reference,
+            repair_document=row.repair_document,
+            repair_item=row.repair_item,
+            repair_document_type=row.repair_document_type,
+        )
+
 
 class SessionTraceResponse(AssistantModel):
     """The FR-8 demo: one session, everything it produced.

@@ -837,6 +837,28 @@ class TestRoutes:
         assert (rows[declared_sid]["declared"], rows[declared_sid]["declarationRecommendation"]) == (True, "SCRAP")
         assert (rows[other_sid]["declared"], rows[other_sid]["declarationRecommendation"]) == (False, None)
 
+    def test_a_repairable_line_carries_its_declaration_and_an_oar_line_does_not(self, client) -> None:
+        """4-Nov-2026: the request page shows a repairable line's declaration
+        where an OAR line shows its window and purpose."""
+        response = client.post("/api/assistant/requests", headers={"X-Actor-Id": "J Miller"}, json=self._body(
+            key="draft-request-declaration", lines=[
+                {"materialId": REPAIR_NONE, "plant": PLANT, "declaration": {
+                    "quantity": 2, "faultCategory": "SEAL_LEAK", "recommendation": "REPAIRABLE",
+                }},
+                {"materialId": REPAIR_EXISTING, "plant": PLANT, "decision": "use_existing"},
+            ],
+        ))
+        assert response.status_code == 201, response.text
+        request_id = response.json()["requestId"]
+        for body in (response.json(), client.get(f"/api/assistant/requests/{request_id}").json()):
+            declared, plain = body["lines"]
+            assert declared["declaration"]["recommendation"] == "REPAIRABLE"
+            assert declared["declaration"]["faultCategory"] == "SEAL_LEAK"
+            assert Decimal(declared["declaration"]["quantity"]) == Decimal("2")
+            assert declared["declaration"]["attestorName"] == "J Miller"
+            assert plain["declaration"] is None
+            assert (declared["windowStart"], declared["purpose"]) == (None, None)
+
     def test_create_then_read_back(self, client, monkeypatch) -> None:
         monkeypatch.setattr(departments, "_names", {"10100": "FINANCE-COMMERCIAL DEPARTMENT"})
         response = client.post("/api/assistant/requests", json=self._body())

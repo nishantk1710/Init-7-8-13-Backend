@@ -43,7 +43,7 @@ from app.api.assistant.request_schemas import (
     UnitPriceModel,
     UploadResponse,
 )
-from app.api.assistant.schemas import LinkedReservationModel
+from app.api.assistant.schemas import LinkedReservationModel, SessionDeclarationModel
 from app.api.deps import Actor, get_current_actor
 from app.assistant import departments as department_names
 from app.assistant import link_job
@@ -373,12 +373,33 @@ def _link_note(sgtxt: str | None, request_id: str, line_no: int | None, decision
     return " ".join(notes) or None
 
 
+def _declarations(db: DbSession, session_ids: list[str]) -> dict[str, SessionDeclarationModel]:
+    """session id -> the newest condition declaration made in it, one query for
+    the request. Only the assistant writes ``session_id`` on a declaration, so
+    these are the ones made on the line."""
+    from app.initiatives.i8.models import RepairAttestation
+
+    if not session_ids:
+        return {}
+    newest: dict[str, RepairAttestation] = {}
+    for row in db.execute(
+        select(RepairAttestation).where(RepairAttestation.session_id.in_(session_ids))
+    ).scalars():
+        current = newest.get(row.session_id)
+        if current is None or (row.attested_at, row.id) > (current.attested_at, current.id):
+            newest[row.session_id] = row
+    return {session_id: SessionDeclarationModel.of(row) for session_id, row in newest.items()}
+
+
 def _request_response(db: DbSession, request: AssistantRequest, *, replayed: bool = False) -> RequestResponse:
     from app.models.i13_session_link import SessionReservationLink
 
     sessions = request_service.lines_of(db, request.id)
     records = request_service.line_records(db, sessions)
     names = _names([s.material_id for s in sessions])
+    # Repairable lines show their declaration where an OAR line shows its
+    # window and purpose (4-Nov-2026).
+    declarations = _declarations(db, [s.id for s in sessions if s.flow == "i08"])
 
     links: dict[str, list[SessionReservationLink]] = {}
     if sessions:
@@ -441,6 +462,7 @@ def _request_response(db: DbSession, request: AssistantRequest, *, replayed: boo
                     if saving
                     else None
                 ),
+                declaration=declarations.get(session.id),
                 linked_reservations=[
                     LinkedReservationModel(
                         reservation_number=l.reservation_number,
