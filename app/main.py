@@ -67,6 +67,94 @@ def _watch_fingerprint(
             logger.exception("%s snapshot fingerprint check failed", label)
 
 
+def _warm_on_startup(settings: Settings) -> None:
+    """The start-up warm-up. Runs on its own thread, so the server takes requests at once.
+
+    The views first, then the in-memory loaders, then the I08 and I13 snapshots,
+    one after the other and never side by side: built together they starved the
+    one-vCore Azure SQL (see app/shared/snapshot_builds.py).
+
+    One exception. When a stored I08 snapshot is ready, I08 starts as soon as the
+    material names are in, ahead of the delivery-date map (~20 s on the nonprod
+    extract) and the material index (~5 s). Serving a stored snapshot is a read of
+    one row and a decode of ~0.2 MB, not a build, so it can sit beside those two
+    loaders; before this, I08 answered 503 "building" for the ~25 s they took
+    (measured on nonprod, 4-Nov-2026). The names stay first, as before: screens ask
+    for them as soon as the server is up. With nothing stored (a new database, or
+    a codec bump) I08 has to build, and keeps its place after the loaders.
+
+    A failed warm-up must not take the API down: it is logged and the API serves.
+    """
+    try:
+        i8_warm: threading.Thread | None = None
+        i8_wanted = bool(settings.database_url and settings.i8_snapshot_warm_on_startup)
+        if settings.database_url:
+            # First, so the I08 views and snapshots below are built over the
+            # criticality the July delivery supplies. Idempotent, and it
+            # logs rather than raises when the database or seed is absent.
+            from app.integrations.criticality import baseline
+
+            baseline.run()
+        if settings.database_url and settings.normalise_views_on_startup:
+            from app.shared import sap_normalise
+
+            # Skipped when another worker or instance is rebuilding them.
+            sap_normalise.rebuild_read_layers(at_start_up=True)
+        if settings.database_url:
+            # After the views (n_makt is one), before the snapshot builds:
+            # material names are then ready by the time screens ask, rather
+            # than loading on the first request after every deploy.
+            from app.shared import material_names
+
+            material_names.start_loading()
+            material_names.wait_for_load(material_names.STARTUP_WAIT_SECONDS)
+
+            # I08 now, when a stored snapshot is ready: it is a load (see the
+            # docstring), and no I08 route reads what the two loaders below
+            # produce -- the I13 ledger takes the delivery dates, the assistant's
+            # material search takes the index. I13's snapshot still waits for I08.
+            if i8_wanted:
+                from app.initiatives.i8 import service as i8_service
+                from app.initiatives.i8.snapshot_store import lifecycle as i8_store
+
+                if i8_store.stored_ready():
+                    i8_service.start_background_build("start-up")
+                    i8_warm = i8_service.build_thread()
+
+            # EKET is small: the ledger's expected delivery dates, loaded
+            # now so the first ledger page has them.
+            from app.initiatives.i13 import expected_delivery
+
+            expected_delivery.start_loading()
+            expected_delivery.wait_for_load(material_names.STARTUP_WAIT_SECONDS)
+
+            # The material search's copy of MAKT, ZMM065, MARC and MARD.
+            # Waited for, like names: it scans the same views, and the
+            # snapshot builds below should not scan alongside it.
+            from app.assistant import material_index
+
+            material_index.start_loading()
+            material_index.wait_for_load(material_index.STARTUP_WAIT_SECONDS)
+
+            # The opener's department list (n_eban). Not waited for: it is
+            # one DISTINCT, and until it lands the opener checks the
+            # code's shape only.
+            from app.assistant import departments
+
+            departments.start_loading()
+        # Nothing stored to load (or the check failed): I08 builds here, after the
+        # loaders, as it always did.
+        if i8_wanted and i8_warm is None:
+            from app.initiatives.i8 import service as i8_service
+
+            i8_service.start_background_build("start-up")
+            i8_warm = i8_service.build_thread()
+        if settings.i13_snapshot_enabled and settings.i13_snapshot_warm_on_startup:
+            i13_snapshot.start_background_build("start-up", after=i8_warm)
+    except Exception:  # a failed warm-up must not take the API down
+        logger.exception("start-up warm-up failed; the API keeps serving")
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     """Build the normalise views, then start the I08 and I13 snapshot builds
@@ -97,62 +185,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     # while they are rebuilt; only a brand-new database has none for a moment.
     stop = threading.Event()
 
-    def warm() -> None:
-        try:
-            if settings.database_url:
-                # First, so the I08 views and snapshots below are built over the
-                # criticality the July delivery supplies. Idempotent, and it
-                # logs rather than raises when the database or seed is absent.
-                from app.integrations.criticality import baseline
-
-                baseline.run()
-            if settings.database_url and settings.normalise_views_on_startup:
-                from app.shared import sap_normalise
-
-                # Skipped when another worker or instance is rebuilding them.
-                sap_normalise.rebuild_read_layers(at_start_up=True)
-            if settings.database_url:
-                # After the views (n_makt is one), before the snapshot builds:
-                # material names are then ready by the time screens ask, rather
-                # than loading on the first request after every deploy.
-                from app.shared import material_names
-
-                material_names.start_loading()
-                material_names.wait_for_load(material_names.STARTUP_WAIT_SECONDS)
-
-                # EKET is small: the ledger's expected delivery dates, loaded
-                # now so the first ledger page has them.
-                from app.initiatives.i13 import expected_delivery
-
-                expected_delivery.start_loading()
-                expected_delivery.wait_for_load(material_names.STARTUP_WAIT_SECONDS)
-
-                # The material search's copy of MAKT, ZMM065, MARC and MARD.
-                # Waited for, like names: it scans the same views, and the
-                # snapshot builds below should not scan alongside it.
-                from app.assistant import material_index
-
-                material_index.start_loading()
-                material_index.wait_for_load(material_index.STARTUP_WAIT_SECONDS)
-
-                # The opener's department list (n_eban). Not waited for: it is
-                # one DISTINCT, and until it lands the opener checks the
-                # code's shape only.
-                from app.assistant import departments
-
-                departments.start_loading()
-            i8_warm: threading.Thread | None = None
-            if settings.database_url and settings.i8_snapshot_warm_on_startup:
-                from app.initiatives.i8 import service as i8_service
-
-                i8_service.start_background_build("start-up")
-                i8_warm = i8_service.build_thread()
-            if settings.i13_snapshot_enabled and settings.i13_snapshot_warm_on_startup:
-                i13_snapshot.start_background_build("start-up", after=i8_warm)
-        except Exception:  # a failed warm-up must not take the API down
-            logger.exception("start-up warm-up failed; the API keeps serving")
-
-    threading.Thread(target=warm, name="start-up-warm", daemon=True).start()
+    threading.Thread(target=_warm_on_startup, args=(settings,), name="start-up-warm", daemon=True).start()
 
     if settings.database_url and settings.i8_snapshot_warm_on_startup:
         from app.initiatives.i8 import service as i8_service
