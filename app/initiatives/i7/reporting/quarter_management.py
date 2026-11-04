@@ -364,18 +364,24 @@ def _cards(
             value=Decimal(min_max.converted),
             status=AvailabilityStatus.AVAILABLE,
             explanation=(
-                "OAR material-plants converted to Min-Max ordering in SAP: eligible by the conversion rule, and SAP now holds Min-Max with "
-                "its minimum and maximum filled in, as the SAP adoption check finds. Approval is not conversion, and a material-plant with "
-                "no SAP change evidence yet is not counted."
+                "OAR material-plants converted to Min-Max ordering in SAP, out of those that can move: eligible by the conversion rule and "
+                "with recommended values worked out. SAP now holds Min-Max with its minimum and maximum filled in, as the SAP adoption check "
+                "finds. Approval is not conversion, and a material-plant with no SAP change evidence yet is not counted."
             ),
             kind=MetricKind.STATUS_AS_OF,
             measured_on=as_of,
             period_label=f"as of {as_of:%d %b %Y}",
             denominator=min_max.eligible,
-            denominator_label="eligible to convert",
+            denominator_label="eligible to convert, with recommended values",
             note=(
                 f"{min_max.eligible:,} of the period's {min_max.oar_material_plants:,} OAR material-plants are eligible to convert by the "
-                "rule. Eligible is the rule's verdict; converted is what SAP shows."
+                "rule and have recommended values. Eligible is the rule's verdict; converted is what SAP shows."
+                + (
+                    f" {min_max.without_values:,} more are eligible by the rule but have no recommended value yet, so there is nothing to move; "
+                    "they are not counted."
+                    if min_max.without_values
+                    else ""
+                )
                 + ("" if measured else " No SAP change evidence has been recorded yet for the eligible material-plants, so 0 means none is confirmed converted.")
                 + (f" {min_max.manually_requested:,} more were not eligible but were requested by a user; they are not counted." if min_max.manually_requested else "")
             ),
