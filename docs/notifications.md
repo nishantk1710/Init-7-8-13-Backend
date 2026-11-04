@@ -222,6 +222,12 @@ The post-capture and manual runs always check every type. Go-live: `PLAN_BREACH,
 and `NO_PLAN_GRNI` once the Non-AI cutoff is agreed -- GRNI is raised only on a Non-AI reservation, so without the
 cutoff it would raise one for every old reservation of a material with unissued stock.
 
+**A quantity override notifies nobody.** The assistant does not let a requester keep more than the suggestion
+without a reason, so a `QUANTITY_OVERRIDE` is recorded already **Confirmed** with that reason: no "Confirm
+Exception", no due date, and escalation skips it. It is still listed on the Exceptions screen, so overrides can be
+counted. One without a recorded reason stays Open, unsent. One still waiting from before 4-Nov-2026 is confirmed by
+the next run that sees its reason.
+
 The dashboard's Planned Overdue and Non-AI cards and the summary report count the same queue (unresolved exceptions
 only), so they match the Exceptions screen once detection is current.
 

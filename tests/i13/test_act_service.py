@@ -95,6 +95,7 @@ def _detect(
     grni_snapshots=None,
     requester_by_reservation=None,
     types=None,
+    quantity_decision_records=(),
 ):
     repository = repository or FakeExceptionRepository()
     notification_port = notification_port or FakeNotificationPort()
@@ -109,6 +110,7 @@ def _detect(
         requester_response_days=5,
         requester_by_reservation=requester_by_reservation or {},
         types=types,
+        quantity_decision_records=list(quantity_decision_records),
     )
     return repository, notification_port, result
 
@@ -509,3 +511,122 @@ def test_no_types_given_is_every_type():
     repository, _, _ = _detect(as_of_time, plans=[_plan()], ledger_entries=entries)
     assert repository.list(exception_type=ExceptionType.PLAN_BREACH)
     assert repository.list(exception_type=ExceptionType.NO_PLAN)
+
+
+# --- 4-Nov-2026: a quantity override is a record, not a question ---------------
+#
+# The assistant does not let a requester keep more than the suggestion without a
+# reason, and that reason is the confirmation. So the exception is shown (it can
+# be counted) but nobody is asked, notified, given a due date or escalated to.
+
+
+def _override(**overrides):
+    from app.initiatives.i13.act.domain import QuantityDecisionRecord
+
+    fields = dict(
+        material="MAT1",
+        plant="1000",
+        reservation_number=None,
+        reservation_item=None,
+        session_id="SLINE1",
+        requester_id="REQ1",
+        requested_quantity=Decimal("12"),
+        suggested_quantity=Decimal("8"),
+        suggestion_reason="ASSISTANT_FR3",
+        override_justification="SHUTDOWN: two pumps out at once",
+        override_reason_category="SHUTDOWN",
+        override_free_text="two pumps out at once",
+    )
+    fields.update(overrides)
+    return QuantityDecisionRecord(**fields)
+
+
+QO_ID = "ACT-QUANTITY_OVERRIDE-SESSION-SLINE1"
+
+
+def test_an_override_with_its_reason_is_confirmed_and_nobody_is_notified():
+    as_of_time = datetime(2026, 11, 4, tzinfo=UTC)
+    repository, notification_port, result = _detect(as_of_time, quantity_decision_records=[_override()])
+
+    exception = repository.get(QO_ID)
+    assert exception.status is ExceptionStatus.CONFIRMED
+    assert exception.owner_requester_id == "REQ1"
+    assert exception.requester_due_at is None
+    assert notification_port.sent == []
+    assert result.created == 1 and result.routed == 0
+    confirmation = repository.get_confirmation(QO_ID)
+    assert (confirmation.reason_category, confirmation.free_text) == ("SHUTDOWN", "two pumps out at once")
+
+    # The next run keeps it as it is: no second confirmation, still nobody told.
+    _detect(as_of_time + timedelta(days=1), quantity_decision_records=[_override()], repository=repository, notification_port=notification_port)
+    assert repository.get(QO_ID).status is ExceptionStatus.CONFIRMED
+    assert notification_port.sent == []
+
+
+def test_an_override_without_a_reason_stays_open_and_is_not_sent_out():
+    repository, notification_port, _ = _detect(
+        datetime(2026, 11, 4, tzinfo=UTC),
+        quantity_decision_records=[_override(override_justification=None, override_reason_category=None, override_free_text=None)],
+    )
+
+    exception = repository.get(QO_ID)
+    assert exception.status is ExceptionStatus.OPEN
+    assert exception.requester_due_at is None
+    assert notification_port.sent == []
+
+
+def test_one_still_waiting_from_before_is_confirmed_on_the_next_run():
+    import dataclasses
+
+    as_of_time = datetime(2026, 11, 4, tzinfo=UTC)
+    no_reason = _override(override_justification=None, override_reason_category=None, override_free_text=None)
+    repository, notification_port, _ = _detect(as_of_time, quantity_decision_records=[no_reason])
+    # As overrides were raised before this change: sent to the requester, due in 5 days.
+    repository.upsert(
+        dataclasses.replace(
+            repository.get(QO_ID),
+            status=ExceptionStatus.AWAITING_REQUESTER,
+            owner_requester_id="REQ1",
+            requester_due_at=as_of_time + timedelta(days=5),
+        )
+    )
+
+    _detect(as_of_time + timedelta(hours=1), quantity_decision_records=[_override()], repository=repository, notification_port=notification_port)
+
+    assert repository.get(QO_ID).status is ExceptionStatus.CONFIRMED
+
+
+def test_an_override_is_never_escalated_to_the_hod():
+    import dataclasses
+
+    as_of_time = datetime(2026, 11, 4, tzinfo=UTC)
+    no_reason = _override(override_justification=None, override_reason_category=None, override_free_text=None)
+    repository, notification_port, _ = _detect(as_of_time, quantity_decision_records=[no_reason])
+    repository.upsert(
+        dataclasses.replace(
+            repository.get(QO_ID),
+            status=ExceptionStatus.AWAITING_REQUESTER,
+            owner_requester_id="REQ1",
+            requester_due_at=as_of_time + timedelta(days=5),
+        )
+    )
+
+    result = process_escalations(
+        as_of_time + timedelta(days=6),
+        repository=repository,
+        escalation_recipient_provider=FakeEscalationRecipientProvider({"1000": "HOD1"}),
+        notification_port=notification_port,
+    )
+
+    assert result.escalated == 0
+    assert repository.get(QO_ID).status is ExceptionStatus.AWAITING_REQUESTER
+    assert notification_port.sent == []
+
+
+def test_a_plan_breach_is_still_sent_to_the_requester():
+    """Only the override changed: every other type is routed as before."""
+    repository, notification_port, _ = _detect(
+        datetime(2026, 9, 18, tzinfo=UTC), plans=[_plan()], quantity_decision_records=[_override()]
+    )
+    assert repository.get("ACT-PLAN_BREACH-PLAN-1").status is ExceptionStatus.AWAITING_REQUESTER
+    assert len(notification_port.sent) == 2  # the breach's platform + email; none for the override

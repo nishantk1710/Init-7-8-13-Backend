@@ -323,10 +323,15 @@ def _apply_detection(
     response_period: timedelta,
     repository: ExceptionRepository,
     notification_port: NotificationPort,
+    route: bool = True,
 ) -> tuple[int, int, int, int]:
     """One exception type's evaluation against one business key. Returns
     ``(created, reused, resolved, routed)`` counts. See this module's
-    docstring for the dedup/reopen rule this implements."""
+    docstring for the dedup/reopen rule this implements.
+
+    ``route=False`` records the exception without sending it to its owner:
+    nobody is asked, notified or given a due date (QUANTITY_OVERRIDE, whose
+    reason is already on file -- see :func:`_confirm_recorded_override`)."""
     existing = repository.get(exception_id)
 
     if not condition_holds:
@@ -383,7 +388,7 @@ def _apply_detection(
             )
         )
         routed = 0
-        if owner_requester_id:
+        if owner_requester_id and route:
             _route_to_requester(new_exception, owner_requester_id, response_period, as_of_time, repository, notification_port)
             routed = 1
         return (1, 0, 0, routed)
@@ -394,11 +399,63 @@ def _apply_detection(
         return (0, 1, 0, 0)
 
     routed = 0
-    if existing.status is ExceptionStatus.OPEN and owner_requester_id and not existing.owner_requester_id:
+    if route and existing.status is ExceptionStatus.OPEN and owner_requester_id and not existing.owner_requester_id:
         with_owner = dataclasses.replace(existing, owner_requester_id=owner_requester_id)
         _route_to_requester(with_owner, owner_requester_id, response_period, as_of_time, repository, notification_port)
         routed = 1
     return (0, 1, 0, routed)
+
+
+def _confirm_recorded_override(
+    exception_id: str,
+    record: QuantityDecisionRecord,
+    *,
+    as_of_time: datetime,
+    repository: ExceptionRepository,
+) -> bool:
+    """Confirm a QUANTITY_OVERRIDE with the reason recorded with the decision.
+
+    The override is shown on the Exceptions screen so it can be counted, but
+    there is nothing to ask anyone: the reason given in the assistant *is* the
+    requester's confirmation. The state machine only confirms from
+    AWAITING_REQUESTER, so an OPEN one is first assigned to its owner --
+    audited, but with no notification and no due date, so it can never be
+    escalated -- and confirmed in the same run. One already waiting (raised
+    before 4-Nov-2026, when overrides were still sent out) is confirmed as it
+    stands. Without a recorded reason it stays as it is. Returns whether it
+    confirmed one.
+    """
+    if not record.override_reason_category:
+        return False
+    exception = repository.get(exception_id)
+    if exception is None or exception.status not in (ExceptionStatus.OPEN, ExceptionStatus.AWAITING_REQUESTER):
+        return False
+    owner = exception.owner_requester_id or record.requester_id
+    if exception.status is ExceptionStatus.OPEN:
+        _transition(
+            exception,
+            ExceptionStatus.AWAITING_REQUESTER,
+            repository=repository,
+            as_of_time=as_of_time,
+            actor_id=None,
+            actor_type="SYSTEM",
+            event_type=EventType.ROUTED_TO_REQUESTER,
+            metadata={"requester_id": owner or "", "notified": "false", "note": "reason already recorded in the assistant"},
+            owner_requester_id=owner,
+            requester_due_at=None,
+            current_assignee_type=AssigneeType.REQUESTER if owner else None,
+            current_assignee_id=owner,
+            routing_status=RoutingStatus.RESOLVED if owner else None,
+        )
+    submit_confirmation(
+        exception_id=exception_id,
+        reason_category=record.override_reason_category,
+        free_text=record.override_free_text or "",
+        actor_id=owner or "ASSISTANT",
+        as_of_time=as_of_time,
+        repository=repository,
+    )
+    return True
 
 
 def detect_exceptions(
@@ -621,11 +678,22 @@ def detect_exceptions(
             response_period=response_period,
             repository=repository,
             notification_port=notification_port,
+            # Nothing to ask: the assistant does not let a requester keep more
+            # than the suggestion without a reason, and that reason is the
+            # confirmation. So no "Confirm Exception", no due date, no HOD.
+            route=False,
         )
         created += c
         reused += r
         resolved += res
         routed += rt
+        if evaluation.available and evaluation.override:
+            _confirm_recorded_override(
+                build_exception_id("QUANTITY_OVERRIDE", quantity_override_business_key(record)),
+                record,
+                as_of_time=as_of_time,
+                repository=repository,
+            )
 
     return DetectionRunResult(as_of_time=as_of_time, created=created, reused=reused, resolved=resolved, routed=routed)
 
@@ -676,6 +744,8 @@ def process_escalations(
             )
             if limit is not None:
                 due = due[:limit]
+    # A quantity override is a record, not a question: never the HOD's to chase.
+    due = [exc for exc in due if exc.exception_type is not ExceptionType.QUANTITY_OVERRIDE]
     for exception in due:
         hod_id = escalation_recipient_provider.get_hod(
             material=exception.material, plant=exception.plant, requester_id=exception.owner_requester_id
