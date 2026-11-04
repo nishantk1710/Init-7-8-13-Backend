@@ -355,3 +355,53 @@ class TestPurchase:
 
         assert body["purchasesChecked"] is False
         assert body["items"][0]["purchase"] is None
+
+
+# --- 4-Nov-2026: a request line is quoted R.../n, never by its session ID ----
+
+
+def line(sid: str, request_id: str, line_no: int) -> AssistantSession:
+    row = session(sid, None)
+    row.request_id = request_id
+    row.line_no = line_no
+    row.material_id = f"800000459{line_no}"  # a request holds each material once
+    return row
+
+
+class TestSessionReference:
+    def test_a_request_line_is_its_request_and_line(self, client, factory, snapshot):
+        seed(
+            factory,
+            line("SLINE1", "RREQ01", 1),
+            line("SLINE2", "RREQ01", 2),
+            session("SOLD", None),
+            record(1, session_id="SLINE1"),
+            record(2, session_id="SLINE2"),
+            record(3, session_id="SOLD"),
+            record(4),
+        )
+
+        items = {i["id"]: i for i in client.get(URL).json()["items"]}
+
+        assert items["J0001"]["sessionReference"] == "RREQ01/1"
+        assert items["J0002"]["sessionReference"] == "RREQ01/2"
+        assert items["J0003"]["sessionReference"] == "SOLD"  # single-material, as before
+        assert items["J0004"]["sessionReference"] is None
+        assert items["J0001"]["sessionId"] == "SLINE1"  # the link still opens the line
+
+    def test_search_finds_the_lines_by_request_and_by_line(self, client, factory, snapshot):
+        seed(
+            factory,
+            line("SLINE1", "RREQ01", 1),
+            line("SLINE2", "RREQ01", 2),
+            record(1, session_id="SLINE1"),
+            record(2, session_id="SLINE2"),
+            record(3),
+        )
+
+        def ids(q: str) -> set[str]:
+            return {i["id"] for i in client.get(URL, params={"q": q}).json()["items"]}
+
+        assert ids("rreq01") == {"J0001", "J0002"}
+        assert ids("RREQ01/2") == {"J0002"}
+        assert ids("/2") == set()

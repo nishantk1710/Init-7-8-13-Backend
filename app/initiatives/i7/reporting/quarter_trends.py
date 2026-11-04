@@ -87,7 +87,9 @@ def _trend_month(month: date, row: KpiSnapshot | None) -> TrendMonth:
         stockout_evaluated=row.stockout_evaluated if trusted else None,
         stockout_insufficient=row.stockout_insufficient if trusted else None,
         excess_count=row.excess_count, excess_opportunity=_dec(row.excess_opportunity),
-        net_rop_value_impact=_dec(row.net_rop_value_impact), currency=row.currency, revision=row.revision,
+        net_rop_value_impact=_dec(row.net_rop_value_impact), currency=row.currency,
+        inventory_value=_dec(row.inventory_value), safety_stock_value=_dec(row.safety_stock_value),
+        below_reorder_count=row.below_reorder_count, revision=row.revision,
         calc_version=row.calc_version, note=" ".join(notes) or None,
     )
 

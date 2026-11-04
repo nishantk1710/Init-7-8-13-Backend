@@ -267,6 +267,38 @@ class TestSecondsUntilWeekday:
         assert scheduler.seconds_until_weekday(6, 2, now) == 30 * 60
 
 
+class TestSecondsUntilNextSlot:
+    """The delta timer sits on the clock, not an interval after the last run.
+
+    What that buys: with two workers, the loser of the lock used to sleep the
+    interval from its own skipped tick and land just after the winner's cycle
+    ended, re-pulling the same windows -- 63 of 271 cycles between 13 and 22
+    Oct ran back to back that way. On a shared boundary the loser's next slot
+    IS the winner's next slot."""
+
+    def test_an_hourly_tick_lands_on_the_hour(self) -> None:
+        now = datetime(2026, 11, 4, 10, 59, 0, tzinfo=timezone.utc)
+        assert scheduler.seconds_until_next_slot(3600, now) == pytest.approx(60)
+
+    def test_on_the_boundary_the_next_slot_is_a_full_interval_away(self) -> None:
+        now = datetime(2026, 11, 4, 11, 0, 0, tzinfo=timezone.utc)
+        assert scheduler.seconds_until_next_slot(3600, now) == pytest.approx(3600)
+
+    def test_a_fast_cycle_cannot_refire_the_slot_it_just_ran(self) -> None:
+        # Within a second of the boundary counts as that slot already fired.
+        now = datetime(2026, 11, 4, 10, 59, 59, 500000, tzinfo=timezone.utc)
+        assert scheduler.seconds_until_next_slot(3600, now) == pytest.approx(3600.5)
+
+    def test_both_workers_compute_the_same_boundary(self) -> None:
+        """However far apart their cycles ended, they wake together -- which is
+        what lets the lock's loser skip instead of re-running the winner's work."""
+        a = datetime(2026, 11, 4, 10, 7, 13, tzinfo=timezone.utc)
+        b = datetime(2026, 11, 4, 10, 51, 42, tzinfo=timezone.utc)
+        wake_a = a.timestamp() + scheduler.seconds_until_next_slot(3600, a)
+        wake_b = b.timestamp() + scheduler.seconds_until_next_slot(3600, b)
+        assert wake_a == pytest.approx(wake_b)
+
+
 class TestSecondsUntil:
     def test_later_today(self) -> None:
         now = datetime(2026, 9, 28, 0, 30, tzinfo=timezone.utc)

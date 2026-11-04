@@ -200,3 +200,41 @@ class TestTheCodingDenominator:
 
     def test_an_unknown_source_has_no_plain_count(self) -> None:
         assert staged.plain_text_total("NOT_A_SOURCE") is None
+
+
+class _Recorder:
+    """Every statement staging runs, each answered with a count of 0."""
+
+    def __init__(self) -> None:
+        self.sql: list[str] = []
+
+    def execute(self, statement, params=None):
+        self.sql.append(str(statement))
+        from types import SimpleNamespace
+
+        return SimpleNamespace(scalar_one=lambda: 0)
+
+
+def test_an_indexed_temp_table_filled_from_a_raw_table_casts_its_key(monkeypatch) -> None:
+    """4-Nov-2026: #i8s_pr_docs took EBAN's PO number straight off the raw
+    table, nvarchar(max) on Azure, and its index failed (SQL Server error 1919)
+    on every nonprod build. CI's raw columns are NVARCHAR(200), so only this
+    test can see it: a key read from an n_ table must be cast to a bounded type."""
+    import re
+
+    from app.initiatives.i8 import staged
+    from app.initiatives.i8.config import I8Settings
+    from app.shared import optional_tables
+
+    monkeypatch.setattr(optional_tables, "existing", lambda db, tables: [])
+    db = _Recorder()
+    staged._stage(db, I8Settings(_env_file=None))
+
+    indexed = re.findall(r"CREATE CLUSTERED INDEX \w+ ON (#\w+) \((\w+)\)", "\n".join(db.sql))
+    assert indexed, "no indexed temp tables found"
+    for table, column in indexed:
+        [select] = [s for s in db.sql if f" INTO {table} " in s]
+        source = re.search(r"\bFROM (\S+)", select.split(f" INTO {table} ", 1)[1]).group(1)
+        if source.startswith("n_"):
+            head = select.split(f" INTO {table} ", 1)[0]
+            assert re.search(rf"CAST\(.*AS NVARCHAR\(\d+\)\) AS {column}\b", head), (table, head)

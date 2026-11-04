@@ -1035,6 +1035,101 @@ def test_saps_initial_value_is_not_a_key(no_watermark_io) -> None:
     assert keys == ["0000000123"]
 
 
+def test_one_window_read_serves_every_via_key(no_watermark_io) -> None:
+    """GoodsMovementItemSet used to be read three times a cycle: its own
+    fetch, once for Matnr (MARD and MCHB) and once for Rsnum (RESB). With the
+    sweep's window cache it is read once and the keys come from the rows."""
+    client = StubClient(StubExtract(
+        [{"Matnr": "000000000011", "Rsnum": "0000000123"},
+         {"Matnr": "000000000012", "Rsnum": "0000000000"}],
+        order_by=("Mblnr", "Mjahr", "Zeile"),
+    ))
+    reads = fetch_mod.WindowReads()
+
+    materials = fetch_mod.collect_parent_keys(
+        client, "GoodsMovementItemSet", "Matnr", "2026-09-15", window_reads=reads)
+    reservations = fetch_mod.collect_parent_keys(
+        client, "GoodsMovementItemSet", "Rsnum", "2026-09-15", window_reads=reads)
+
+    assert materials == ["000000000011", "000000000012"]
+    assert reservations == ["0000000123"]
+    assert client.filters == ["CpudtMkpf ge '15.09.2026'"], "one read, not one per via_key"
+
+
+def test_the_parents_own_fetch_fills_the_window_cache(storage, no_watermark_io) -> None:
+    """POHistorySet's fetch reads its window; EKPO's key collection reuses
+    that read instead of asking SAP for the same rows again."""
+    history = spec_for("POHistorySet")
+    client = StubClient(StubExtract(
+        [{"Ebeln": "4500000001", "Cpudt": "20260915"}],
+        order_by=("Ebeln", "Ebelp", "Zekkn", "Vgabe", "Gjahr", "Belnr", "Buzei"),
+    ))
+    reads = fetch_mod.WindowReads()
+
+    result = fetch_mod.fetch_set(
+        history, root="odata", client=client, storage=storage, run_date=RUN_DATE,
+        mode="delta", since="2026-09-15", advance_watermark=False, window_reads=reads,
+    )
+    keys = fetch_mod.collect_parent_keys(
+        client, "POHistorySet", "Ebeln", "2026-09-15", window_reads=reads)
+
+    assert result.ok and keys == ["4500000001"]
+    assert client.filters == ["Cpudt ge '20260915'"], "the fetch's read was reused"
+
+
+class TestParentWindowMemory:
+    ROWS = [{"Ebeln": "1", "Menge": "5"}, {"Ebeln": "2", "Menge": "7"}]
+
+    def test_settled_rows_are_not_handed_again(self) -> None:
+        memory = fetch_mod.ParentWindowMemory()
+        assert memory.begin("POHistorySet", "Ebeln", "2026-09-15", list(self.ROWS)) == self.ROWS
+        memory.settle("POHistorySet", "Ebeln")
+        assert memory.begin("POHistorySet", "Ebeln", "2026-09-15", list(self.ROWS)) == []
+
+    def test_a_changed_row_is_new_whatever_its_key(self) -> None:
+        """Same Ebeln, new values -- EKPO's window re-serves an item changed
+        again the same day, and its children must be re-read for it."""
+        memory = fetch_mod.ParentWindowMemory()
+        memory.begin("POHistorySet", "Ebeln", "2026-09-15", list(self.ROWS))
+        memory.settle("POHistorySet", "Ebeln")
+        changed = [dict(self.ROWS[0], Menge="9"), self.ROWS[1]]
+        assert memory.begin("POHistorySet", "Ebeln", "2026-09-15", changed) == [changed[0]]
+
+    def test_an_unsettled_batch_is_handed_again(self) -> None:
+        """A failed child discards the batch; nothing is remembered."""
+        memory = fetch_mod.ParentWindowMemory()
+        memory.begin("POHistorySet", "Ebeln", "2026-09-15", list(self.ROWS))
+        memory.discard("POHistorySet", "Ebeln")
+        assert memory.begin("POHistorySet", "Ebeln", "2026-09-15", list(self.ROWS)) == self.ROWS
+
+    def test_a_moved_window_starts_a_new_slate(self) -> None:
+        memory = fetch_mod.ParentWindowMemory()
+        memory.begin("POHistorySet", "Ebeln", "2026-09-15", list(self.ROWS))
+        memory.settle("POHistorySet", "Ebeln")
+        assert memory.begin("POHistorySet", "Ebeln", "2026-09-16", list(self.ROWS)) == self.ROWS
+
+    def test_settling_also_forgets_rows_that_left_the_window(self) -> None:
+        """The settled set is always the whole last window read, so the memory
+        cannot grow past one window and never carries rows out of it."""
+        memory = fetch_mod.ParentWindowMemory()
+        memory.begin("POHistorySet", "Ebeln", "2026-09-15", list(self.ROWS))
+        memory.settle("POHistorySet", "Ebeln")
+        memory.begin("POHistorySet", "Ebeln", "2026-09-15", [self.ROWS[1]])
+        memory.settle("POHistorySet", "Ebeln")
+        # The first row fell out of the window and was forgotten with it.
+        assert memory.begin(
+            "POHistorySet", "Ebeln", "2026-09-15", list(self.ROWS)) == [self.ROWS[0]]
+
+    def test_the_memory_filters_what_collect_hands_over(self, no_watermark_io) -> None:
+        client = StubClient(StubExtract([{"Ebeln": "1"}, {"Ebeln": "2"}]))
+        memory = fetch_mod.ParentWindowMemory()
+        assert fetch_mod.collect_parent_keys(
+            client, "POHistorySet", "Ebeln", "2026-09-15", memory=memory) == ["1", "2"]
+        memory.settle("POHistorySet", "Ebeln")
+        assert fetch_mod.collect_parent_keys(
+            client, "POHistorySet", "Ebeln", "2026-09-15", memory=memory) == []
+
+
 def test_a_requested_full_pull_seeds_the_mark_too(storage, no_watermark_io) -> None:
     """--full on a set with a direct delta reads every row; the highest date
     seen is exactly where the next increment should start."""

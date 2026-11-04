@@ -31,18 +31,21 @@ wait needs to know which kind they are being offered.
 
 Since 27-Oct-2026 there are two more things to keep apart:
 
-* **Requested, not yet ordered** -- an open repair PR with no PO
+* **PR raised, no PO yet** -- an open repair PR with no PO
   (``requisitions.RepairRequest``). The repair order has asked for the unit to
   be repaired, but purchasing has not ordered it, so there is no vendor and no
   return date. 108 of them on the 15-Oct extract, invisible to the PO-only
   register. Counted only when the caller passes them, which it does only while
-  ``I8_REPAIR_REQUESTS_ENABLED`` is on.
+  ``I8_REPAIR_REQUESTS_ENABLED`` is on. Worded "repair requested" until
+  3-Nov-2026, when the business asked for SAP's own term.
 * **Usable or damaged** -- the stock on hand is the MARD total, which counts a
   damaged unit the same as a new one. Where the part has condition rows (MCHB
   batches by default: NEW 1,667 / REFURBISHD 975 / DAMAGED 790 on the 15-Oct
   extract) only the usable conditions count, so a shelf holding nothing but
-  damaged units no longer reads as "a unit exists". Where it has none, the
-  MARD total stands and the answer says the condition is unknown.
+  damaged units no longer reads as "a unit exists". Where it has none, or
+  they do not add up to the MARD total (the universe drops such a split: MARD
+  is the stock, SAP said on 3-Nov-2026), the MARD total stands and the answer
+  says the condition is unknown.
 
 What this rule may NOT say, given today's data
 -----------------------------------------------
@@ -75,7 +78,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import TYPE_CHECKING, Callable, Sequence
 
-from app.initiatives.i8.material_number import normalise
+from app.initiatives.i8.material_number import is_eighty_series, normalise
 from app.initiatives.i8.register import RepairLine
 from app.initiatives.i8.universe import UniverseRow
 from app.shared.numbers import plain
@@ -108,18 +111,18 @@ def _condition_word(condition: str) -> str:
 
 
 def request_age_phrase(days: int | None) -> str:
-    """``requested N days ago``, as the frontend's ``requestAgePhrase`` words it.
+    """``raised N days ago``, as the frontend's ``requestAgePhrase`` words it.
 
     A PR dated after the reference date cannot happen in SAP order; if the data
     ever says so it reads as today rather than a negative age.
     """
     if days is None:
-        return "request date not known"
+        return "PR date not known"
     if days <= 0:
-        return "requested today"
+        return "raised today"
     if days == 1:
-        return "requested 1 day ago"
-    return f"requested {days} days ago"
+        return "raised 1 day ago"
+    return f"raised {days} days ago"
 
 
 @dataclass(frozen=True)
@@ -178,6 +181,10 @@ class RepairEvidence:
     dispatched: bool
     """Whether a dispatch movement exists. False on every open line today, and
     the reason the assistant does not claim the vendor holds the unit."""
+
+    dispatched_at: date | None = None
+    """The first 541 on the line, when there is one (4-Nov-2026): the card says
+    when the unit was sent. Appended with a default; older records lack it."""
 
 
 @dataclass(frozen=True)
@@ -241,16 +248,18 @@ class RepairableUnitVerdict:
     (``I8_USABLE_STOCK_CONDITIONS``), conditions holding none left out."""
 
     stock_condition_known: bool = False
-    """True when the part has condition rows, so the split can be trusted."""
+    """True when the part has condition rows that add up to the MARD total,
+    so the split can be trusted."""
 
     stock_source: str | None = None
     """``MCHB`` / ``MBEW`` when the condition is known, ``MARD`` when only the
     total is (the fallback), None when there is no stock record at all."""
 
-    stock_condition_checked: bool = True
-    """False while the complete flow is off (29-Oct-2026): the condition was
-    not looked at, so the stock is the MARD total, said as it was before the
-    split existed -- no "(condition unknown)", no note about it."""
+    eighty_series: bool = False
+    """Whether the material number is 80-series (4-Nov-2026). A part can be
+    80-series and still have no row at the plant asked about -- no stock,
+    planning or repair record there -- and must not then be told it is not
+    80-series."""
 
     @property
     def has_stock(self) -> bool:
@@ -282,6 +291,12 @@ class RepairableUnitVerdict:
         record and it is the one stored.
         """
         if not self.is_repairable_material:
+            if self.eighty_series:
+                at = f" at plant {self.plant}" if self.plant else ""
+                return (
+                    f"{self.material_id} has no stock, planning or repair record{at}, "
+                    "so there is no repairable unit to look for there."
+                )
             return (
                 f"{self.material_id} is not an 80-series repairable part, so "
                 "there is no repairable unit to look for."
@@ -299,9 +314,12 @@ class RepairableUnitVerdict:
         if self.stock_condition_known:
             if self.has_usable_stock:
                 usable = self.usable_stock
+                # The locations hold the damaged units too, and nothing says
+                # which hold the usable ones: "1 usable across 2 storage
+                # locations" read as if both did (4-Nov-2026).
                 clause = (
                     f"There {'is' if usable == 1 else 'are'} {plain(usable)} "
-                    f"usable in stock at plant {self.plant}{where}"
+                    f"usable in stock at plant {self.plant}{'' if self.damaged_stock else where}"
                 )
                 # The breakdown only says something when there is more than
                 # one condition to tell apart.
@@ -317,7 +335,7 @@ class RepairableUnitVerdict:
             parts.append(
                 f"There {'is' if self.stock_on_hand == 1 else 'are'} "
                 f"{plain(self.stock_on_hand)} in stock at plant {self.plant}{where}"
-                + (" (condition unknown)" if self.stock_condition_checked else "")
+                " (condition unknown)"
             )
 
         if self.open_repair_lines:
@@ -347,9 +365,9 @@ class RepairableUnitVerdict:
             ]
             if count == 1:
                 age = request_age_phrase(self.request_evidence[0].days_since_requested)
-                parts.append(f"There is 1 repair requested, not yet ordered ({age})")
+                parts.append(f"There is 1 PR raised for repair, no PO yet ({age})")
             else:
-                clause = f"There are {count} repairs requested, not yet ordered"
+                clause = f"There are {count} PRs raised for repair, no PO yet"
                 if known_ages:
                     clause += f" (the oldest {request_age_phrase(max(known_ages))})"
                 parts.append(clause)
@@ -408,7 +426,6 @@ class RepairableUnitVerdict:
         # rows on the 15-Oct extract all hold 0).
         if (
             self.is_repairable_material
-            and self.stock_condition_checked
             and not self.stock_condition_known
             and self.has_stock
         ):
@@ -419,7 +436,7 @@ class RepairableUnitVerdict:
 
         if self.request_evidence and not self.open_repair_lines:
             notes.append(
-                "A requested repair has no PO yet, so there is no date for its return."
+                "A PR raised for repair has no PO yet, so there is no date for its return."
             )
 
         if self.open_repair_lines and not any(e.dispatched for e in self.evidence):
@@ -459,7 +476,6 @@ def assess(
     repair_requests: Sequence[RepairRequest] | None = None,
     department_name: Callable[[str | None], str | None] | None = None,
     usable_conditions: Sequence[str] | None = None,
-    stock_by_condition: bool | None = None,
 ) -> RepairableUnitVerdict:
     """Decide FR-6 for one material at one plant.
 
@@ -475,10 +491,6 @@ def assess(
     department code into its name (``departments.name_for``); without it, or
     when it has no name, the code is shown alone. ``usable_conditions`` orders
     the usable breakdown; it defaults to ``I8_USABLE_STOCK_CONDITIONS``.
-
-    ``stock_by_condition`` False reads the stock as the MARD total, as before
-    27-Oct-2026: a damaged-only shelf counts as stock again. ``None`` follows
-    ``I8_COMPLETE_FLOW_ENABLED``.
     """
     material_key = normalise(material_id) or ""
     plant_key = (plant or "").strip() or None
@@ -497,6 +509,7 @@ def assess(
         return RepairableUnitVerdict(
             material_id=material_key,
             plant=plant_key,
+            eighty_series=is_eighty_series(material_key),
             is_repairable_material=False,
             exists=False,
             sources=(),
@@ -544,6 +557,7 @@ def assess(
             vendor_name=line.vendor_name,
             status=line.repair_status,
             dispatched=line.dispatched_at is not None,
+            dispatched_at=line.dispatched_at,
         )
         for line in open_lines
     )
@@ -553,11 +567,7 @@ def assess(
         (line.qty_under_repair for line in open_lines), Decimal(0)
     )
 
-    if stock_by_condition is None:
-        from app.initiatives.i8.config import get_i8_settings
-
-        stock_by_condition = get_i8_settings().complete_flow_enabled
-    split = _stock_split(rows, usable_conditions) if stock_by_condition else _UNKNOWN_SPLIT
+    split = _stock_split(rows, usable_conditions)
 
     open_requests = (
         [
@@ -607,6 +617,7 @@ def assess(
     return RepairableUnitVerdict(
         material_id=material_key,
         plant=plant_key,
+        eighty_series=True,
         is_repairable_material=True,
         exists=bool(sources),
         sources=tuple(sources),
@@ -623,12 +634,7 @@ def assess(
         damaged_stock=split.damaged,
         usable_breakdown=split.breakdown,
         stock_condition_known=split.known,
-        stock_source=(
-            (split.source if split.known else ("MARD" if stock_on_hand is not None else None))
-            if stock_by_condition
-            else None
-        ),
-        stock_condition_checked=stock_by_condition,
+        stock_source=split.source if split.known else ("MARD" if stock_on_hand is not None else None),
     )
 
 

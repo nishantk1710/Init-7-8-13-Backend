@@ -2,9 +2,11 @@
 
 Run on a timer by the notification scheduler. For each recommendation that is
 waiting on an approver it asks: has this stage waited long enough for a reminder,
-or long enough to escalate? The timings come from the ``notification_sla`` table.
-**With no active row nothing is reminded or escalated**; the notifications sent
-when an approval moves (``notifications.py``) do not depend on it at all.
+or long enough to escalate? The timings come from the ``notification_sla`` table;
+where that has no active row for a step, from the ``I7_*`` day settings
+(:func:`settings_sla`). **With neither, nothing is reminded or escalated**; the
+notifications sent when an approval moves (``notifications.py``) do not depend
+on it at all.
 
 What keeps it safe to run repeatedly, on several workers, and across restarts:
 
@@ -54,6 +56,43 @@ class ReminderResult:
     escalations: int = 0
 
 
+@dataclass(frozen=True)
+class SlaTiming:
+    """Reminder timings in minutes, shaped like a ``notification_sla`` row, for the ones that come from settings."""
+
+    first_reminder_minutes: int
+    repeat_minutes: int
+    max_reminders: int
+    escalate_after_minutes: int | None
+    escalation_role: str | None
+
+
+_MINUTES_PER_DAY = 24 * 60
+
+
+def settings_sla(settings=None) -> SlaTiming | None:
+    """The ``I7_*`` day settings as timings, or ``None`` when they are off.
+
+    Off means ``I7_REMINDER_FIRST_DAYS`` and ``I7_ESCALATE_AFTER_DAYS`` are both 0 (the default). Reminders need a
+    positive first interval and maximum; escalation needs a positive number of days **and** a role, so a role with
+    no days, or days with no role, never half-escalates.
+    """
+    settings = settings or get_settings()
+    first, escalate = settings.i7_reminder_first_days, settings.i7_escalate_after_days
+    role = (settings.i7_escalation_role or "").strip() or None
+    reminders_on = first > 0 and settings.i7_reminder_max > 0
+    escalation_on = escalate > 0 and role is not None
+    if not reminders_on and not escalation_on:
+        return None
+    return SlaTiming(
+        first_reminder_minutes=max(first, 1) * _MINUTES_PER_DAY,
+        repeat_minutes=max(settings.i7_reminder_repeat_days, 1) * _MINUTES_PER_DAY,
+        max_reminders=settings.i7_reminder_max if reminders_on else 0,
+        escalate_after_minutes=escalate * _MINUTES_PER_DAY if escalation_on else None,
+        escalation_role=role if escalation_on else None,
+    )
+
+
 def _aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
@@ -72,14 +111,16 @@ def _is_latest(db: Session, row: Recommendation) -> bool:
 def run_reminders(db: Session, now: datetime | None = None) -> ReminderResult:
     """One pass. Queues the messages and saves the state; the caller commits."""
     now = _aware(now or datetime.now(timezone.utc))
-    if db.scalars(select(NotificationSla.id).where(NotificationSla.active).limit(1)).first() is None:
+    from_settings = settings_sla()
+    has_sla_row = db.scalars(select(NotificationSla.id).where(NotificationSla.active).limit(1)).first() is not None
+    if not has_sla_row and from_settings is None:
         return ReminderResult()
 
     policy = PolicyDocument()
     reminders = escalations = 0
     for row in list(db.scalars(select(Recommendation).where(Recommendation.status.in_(WAITING)))):
         try:
-            sent, escalated = _check_one(db, row, policy, now)
+            sent, escalated = _check_one(db, row, policy, now, from_settings)
         except Exception:  # noqa: BLE001 -- one bad recommendation must not stop the rest
             logger.exception("I07 reminders: could not check %s", row.recommendation_id)
             continue
@@ -88,7 +129,9 @@ def run_reminders(db: Session, now: datetime | None = None) -> ReminderResult:
     return ReminderResult(reminders=reminders, escalations=escalations)
 
 
-def _check_one(db: Session, row: Recommendation, policy: PolicyDocument, now: datetime) -> tuple[int, int]:
+def _check_one(
+    db: Session, row: Recommendation, policy: PolicyDocument, now: datetime, from_settings: SlaTiming | None = None
+) -> tuple[int, int]:
     if not _is_latest(db, row):
         return 0, 0
     role = pending_role(row, policy)
@@ -102,7 +145,8 @@ def _check_one(db: Session, row: Recommendation, policy: PolicyDocument, now: da
         return 0, 0
 
     entra_role = APPROVAL_ROLE_TO_ENTRA[role]
-    sla = active_sla_for(db, "OAR" if row.is_oar else "ROP_MAX", entra_role)
+    # A row in notification_sla (most specific first) always wins; the I7_* settings are what is used when there is none.
+    sla = active_sla_for(db, "OAR" if row.is_oar else "ROP_MAX", entra_role) or from_settings
     if sla is None:
         return 0, 0
 

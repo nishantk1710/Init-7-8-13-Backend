@@ -122,7 +122,13 @@ def test_it_starts_a_daemon_thread_that_stops_with_the_event():
     assert not thread.is_alive()
 
 
-def test_the_real_job_list_is_reminders_then_escalations_then_delivery():
+def test_the_real_job_list_is_reminders_then_detection_then_escalations_then_link_notices_then_delivery():
     from app.services.notification_jobs import build_jobs
 
-    assert [job.name for job in build_jobs()] == ["approval_reminders", "requester_escalations", "deliver_pending"]
+    assert [job.name for job in build_jobs()] == [
+        "approval_reminders",
+        "exception_detection",
+        "requester_escalations",
+        "request_link_notices",
+        "deliver_pending",
+    ]

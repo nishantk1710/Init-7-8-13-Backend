@@ -64,7 +64,7 @@ RAW: dict[str, list[str]] = {
     "raw_resb": ["RSNUM", "RSPOS", "MATNR", "WERKS", "LGORT", "BWART", "BANFN", "BNFPO", "AUFNR", "XLOEK",
                  "KZEAR", "BDTER", "BDMNG", "MEINS"],
     "raw_eban": ["BANFN", "BNFPO", "LOEKZ", "TXZ01", "MATNR", "WERKS", "MENGE", "MEINS", "BADAT", "LFDAT",
-                 "STATU", "BSART", "AFNAM", "RSNUM"],
+                 "STATU", "BSART", "AFNAM", "RSNUM", "EBELN", "EBELP"],
     "raw_mchb": ["MATNR", "WERKS", "LGORT", "CHARG", "CLABS"],
     # What the monthly criticality reports add up to (not a raw workbook table).
     "criticality_current": ["material", "material_raw", "plant", "criticality", "description", "mattyp", "mrp_type"],
@@ -78,7 +78,7 @@ ROWS: dict[str, list[tuple]] = {
         (N, "1300", "VB", "10", "5"), (A, "3000", "ND", "99", ""),
     ],
     "raw_mard": [
-        (A, "1300", "0001", "3"), (A, "1300", "0002", "4,5"), (C, "1500", "0001", "2"),
+        (A, "1300", "0001", "3"), (A, "1300", "0002", "4"), (C, "1500", "0001", "2"),
         (N, "1300", "0001", "9"), (A, "3000", "0001", "50"),
     ],
     "raw_ekko": [
@@ -104,6 +104,10 @@ ROWS: dict[str, list[tuple]] = {
          "ZREP", "SMITHK", "10.06.2026"),
         ("4100000005", "10", "", "11.06.2026", "OUT OF SCOPE", A, "3000", "1", "100", "", "3", "EA", "", "",
          "ZREP", "MILLERJ", "11.06.2026"),
+        # The blocked service line PR 10000008 names (4-Nov-2026): no material,
+        # not a repair line, and it does not name the PR back.
+        ("4100000001", "40", "S", "16.09.2026", "BER - PUMP ASSESSMENT", "", "1300", "1", "500", "", "9", "AU",
+         "", "", "", "MILLERJ", "16.09.2026"),
         # A new 80-series purchase, and lines the staging drops but the register still scans.
         ("4500000010", "10", "", "01.09.2026", "NEW VALVE", C, "1300", "1", "5.000", "", "0", "EA", "", "",
          "ZREP", "JONESP", "01.09.2026"),
@@ -137,6 +141,14 @@ ROWS: dict[str, list[tuple]] = {
         ("4900000003", "2026", "1", "541", B, "1300", "0001", "2", "04.07.2026", "O", "100235", "S",
          "4100000001", "0"),
         ("4900000004", "2026", "1", "101", A, "1300", "0001", "1", "20.07.2026", "", "", "S", "4100000001", "10"),
+        # 4-Nov-2026: one of 4100000001/10's dispatches reversed (542, with its
+        # twin), and its receipt reversed (102), so it is still out; and
+        # 4100000001/20 received in full, so it leaves the register.
+        ("4900000007", "2026", "1", "542", A, "1300", "0001", "1", "04.07.2026", "O", "0000100234", "H",
+         "4100000001", "10"),
+        ("4900000007", "2026", "2", "542", A, "1300", "0001", "1", "04.07.2026", "", "", "S", "4100000001", "10"),
+        ("4900000008", "2026", "1", "102", A, "1300", "0001", "1", "21.07.2026", "", "", "H", "4100000001", "10"),
+        ("4900000009", "2026", "1", "101", B, "1300", "0001", "2", "22.07.2026", "", "", "S", "4100000001", "20"),
         ("4900000005", "2026", "1", "541", A, "3000", "0001", "1", "05.07.2026", "O", "", "S", "4100000005", "10"),
         ("4900000006", "2026", "1", "261", N, "1300", "0001", "5", "06.07.2026", "", "", "H", "", ""),
     ],
@@ -158,22 +170,29 @@ ROWS: dict[str, list[tuple]] = {
          "940000000006", "", "", "15.09.2026", "1", "EA"),  # out of scope
         ("0001900007", "0001", A, "1300", "0001", "261", "0010000007", "00010",
          "", "", "", "15.09.2026", "1", "EA"),  # a maintenance order: not a repair
+        ("0001900008", "0001", A, "1300", "0001", "543", "0010000008", "00010",
+         "940000000008", "", "", "15.09.2026", "1", "EA"),  # names a blocked service line
     ],
     "raw_eban": [
         ("0010000001", "00010", "", "PUMP REPAIR", A, "1300", "1", "EA", "01.06.2026", "05.06.2026",
-         "B", "ZMNP", "10305", "0001900001"),
+         "B", "ZMNP", "10305", "0001900001", "", ""),
         ("0010000002", "00010", "", "PUMP REPAIR", "000000008000000001", "1300", "2", "EA", "15.09.2026",
-         "20.09.2026", "N", "ZMNP", "10305", "0001900002"),
+         "20.09.2026", "N", "ZMNP", "10305", "0001900002", "", ""),
         ("0010000003", "00010", "X", "PUMP REPAIR", A, "1300", "1", "EA", "15.09.2026", "20.09.2026",
-         "N", "ZMNP", "10305", "0001900003"),
+         "N", "ZMNP", "10305", "0001900003", "", ""),
         ("0010000004", "00010", "", "VALVE REPAIR", B, "1500", "1", "EA", "15.09.2026", "20.09.2026",
-         "N", "ZMNP", "40301", "0001900004"),
+         "N", "ZMNP", "40301", "0001900004", "", ""),
         ("0010000005", "00010", "", "GLOVES", N, "1300", "1", "PR", "15.09.2026", "20.09.2026",
-         "N", "ZMNP", "10305", "0001900005"),
+         "N", "ZMNP", "10305", "0001900005", "", ""),
         ("0010000006", "00010", "", "PUMP REPAIR", A, "3000", "1", "EA", "15.09.2026", "20.09.2026",
-         "N", "ZMNP", "10305", "0001900006"),
+         "N", "ZMNP", "10305", "0001900006", "", ""),
         ("0010000007", "00010", "", "PUMP", A, "1300", "1", "EA", "15.09.2026", "20.09.2026",
-         "N", "ZMNP", "10305", "0001900007"),
+         "N", "ZMNP", "10305", "0001900007", "", ""),
+        # 4-Nov-2026: a repair PR naming its PO line itself -- a blocked service
+        # line with no material that never names the PR back. Ordered, so not
+        # open; a staged build must stage that line to see it.
+        ("0010000008", "00010", "", "PUMP REPAIR", A, "1300", "1", "EA", "15.09.2026", "20.09.2026",
+         "A", "ZMNP", "10305", "0001900008", "4100000001", "00040"),
     ],
     "raw_mchb": [
         # A at 1300: new and damaged in one bin, refurbished in another.
@@ -263,17 +282,21 @@ def test_the_tenant_crosses_every_filter(built) -> None:
     """Guards the comparison below against passing on an empty build."""
     direct, _, _ = built
     keys = {line.key for line in direct.lines}
-    # Open in SAP only: not the deleted (3/10), blocked (4/10) or delivery-completed (1/30) lines.
-    assert keys == {("4100000001", "10"), ("4100000001", "20"), ("4100000002", "10")}
+    # Open in SAP only: not the deleted (3/10), blocked (4/10) or delivery-completed (1/30) lines,
+    # nor (4-Nov-2026) the one received in full (1/20).
+    assert keys == {("4100000001", "10"), ("4100000002", "10")}
     by_key = {line.key: line for line in direct.lines}
     assert by_key[("4100000002", "10")].lead_time_days == 45  # non-80 repair, MARC via staged materials
-    assert by_key[("4100000001", "10")].dispatched_qty == 2  # vendor side only, twin excluded
+    # Two sent, one reversed by a 542; vendor side only, twins excluded.
+    assert by_key[("4100000001", "10")].dispatched_qty == 1
     assert by_key[("4100000001", "10")].repair_status == "At Vendor"
+    assert by_key[("4100000001", "10")].received_qty == 0  # its 101 reversed by a 102
+    assert direct.register_stats.excluded_received_lines == 1
     assert by_key[("4100000001", "10")].vendor_name == "ACME ROTATING"
     assert direct.register_stats.excluded_deleted_lines == 1
     assert direct.register_stats.excluded_delivery_completed_lines == 1
     assert direct.register_stats.excluded_blocked_lines == 1
-    assert direct.register_stats.candidates_scanned == 8  # every in-scope line with a PO and an item
+    assert direct.register_stats.candidates_scanned == 9  # every in-scope line with a PO and an item
     # New purchases (27-Oct-2026): the direct PO line with no PR, dated by its
     # header, and the one PR item no repair order names or reserved for (its
     # reservation holds only a 261). The repair PRs, the deleted one and the
@@ -289,12 +312,15 @@ def test_the_tenant_crosses_every_filter(built) -> None:
     assert direct.repair_requests[0].repair_order == "940000000002"
     assert direct.repair_requests[0].days_open == 16
     assert direct.register_stats.open_repair_requests == 1
-    assert direct.register_stats.requisitions_excluded_live_po == 1
+    # 10000001 (its PO points back) and 10000008 (it names a blocked PO line).
+    assert direct.register_stats.requisitions_excluded_live_po == 2
     assert direct.register_stats.requisitions_excluded_deleted == 1
     assert direct.register_stats.requisitions_excluded_reservation_closed == 1
     # Stock per condition (MCHB, the default): summed across bins, split by the
-    # configured conditions; B has no MCHB rows, so its split is unknown.
+    # configured conditions; B has no MCHB rows, so its split is unknown. A split
+    # is kept only where MCHB adds up to MARD (A: 3 + 4 = 2 + 1 + 4), since 3-Nov-2026.
     universe = {(r.material_id, r.plant): r for r in direct.universe}
+    assert universe[(A, "1300")].stock_on_hand == 7
     assert universe[(A, "1300")].usable_stock == 6
     assert universe[(A, "1300")].damaged_stock == 1
     assert universe[(A, "1300")].stock_condition_source == "MCHB"

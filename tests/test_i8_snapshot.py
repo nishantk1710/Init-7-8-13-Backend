@@ -528,21 +528,33 @@ _MSEG_ROWS = (
     " ('4100000372', '20', '2026-07-03', 4, '541', 'O'),"
     " ('4100000372', '10', '2026-07-20', 3, '101', null),"
     " ('4100000410', null, '2026-07-05', 5, '541', 'O'),"
-    " ('4100009999', '10', '2026-07-06', 6, '541', 'O')"
+    " ('4100009999', '10', '2026-07-06', 6, '541', 'O'),"
+    # Since 4-Nov-2026: a 542 reversing one unit of line 10's dispatches (with
+    # its plant-side twin, which must not count), a receipt reversed by a 102,
+    # and a return to the vendor on line 20.
+    " ('4100000372', '10', '2026-07-10', 1, '542', 'O'),"
+    " ('4100000372', '10', '2026-07-10', 1, '542', null),"
+    " ('4100000372', '10', '2026-07-21', 1, '102', null),"
+    " ('4100000372', '20', '2026-07-22', 2, '101', null),"
+    " ('4100000372', '20', '2026-07-23', 1, '122', null)"
 )
 
 
 @needs_db
 def test_the_staged_dispatch_query_returns_what_the_direct_one_does() -> None:
-    """Against a stand-in for v_mseg, created and rolled back in one transaction."""
-    from app.initiatives.i8.register import _DISPATCH_SQL, fetch_dispatches
+    """Against a stand-in for v_mseg, created and rolled back in one transaction.
+
+    Since 4-Nov-2026 the query nets 542s off the 541s and reads the receipts
+    (101 less 102, less 122 plus 123) on the same lines."""
+    from app.initiatives.i8.config import I8Settings
+    from app.initiatives.i8.register import _MOVEMENTS_SQL, fetch_line_movements, movement_params
 
     db = get_sessionmaker()()
     try:
         db.execute(text(f"create table i8t_mseg ({_MSEG_COLUMNS})"))
         db.execute(text(_MSEG_ROWS))
         documents = ["4100000372", "4100000410"]
-        params = {"dispatch": "541", "vendor_stock": "O"}
+        params = movement_params(I8Settings(_env_file=None))
 
         def key(row):
             return (row["ebeln"], row["ebelp"])
@@ -551,25 +563,28 @@ def test_the_staged_dispatch_query_returns_what_the_direct_one_does() -> None:
             (
                 dict(r)
                 for r in fetch_in_chunks(
-                    db, _DISPATCH_SQL.replace("v_mseg", "i8t_mseg"), "documents", documents, params
+                    db, _MOVEMENTS_SQL.replace("v_mseg", "i8t_mseg"), "documents", documents, params
                 )
             ),
             key=key,
         )
         staged = sorted(
-            (dict(r) for r in fetch_dispatches(db, documents, params, source="i8t_mseg")),
+            (dict(r) for r in fetch_line_movements(db, documents, params, source="i8t_mseg")),
             key=key,
         )
-        again = fetch_dispatches(db, documents, params, source="i8t_mseg")
+        again = fetch_line_movements(db, documents, params, source="i8t_mseg")
 
         assert staged == direct
         assert len(again) == len(staged)
         assert [key(r) for r in staged] == [("4100000372", "10"), ("4100000372", "20")]
-        line = staged[0]
-        assert line["qty"] == 3
+        line, other = staged
+        assert line["qty"] == 2  # 1 + 2 sent, 1 reversed by the 542
         assert line["postings"] == 2
         assert str(line["first_dispatch"]) == "2026-07-01"
         assert str(line["last_dispatch"]) == "2026-07-09"
+        assert line["received"] == 2  # 3 received, 1 reversed by the 102
+        assert other["qty"] == 4
+        assert other["received"] == 1  # 2 received, 1 returned to the vendor
     finally:
         db.rollback()
         db.close()

@@ -32,9 +32,9 @@ What this table deliberately does NOT do
 ----------------------------------------
 It does not block anything. The platform never writes to SAP, so it cannot stop
 a dispatch, and pretending otherwise in the data model would be a lie told in
-schema form. Recording the attestation is half the value; **detecting its
-absence** is the other half, and that is
-:mod:`app.initiatives.i8.exceptions`.
+schema form. Recording the attestation is half the value; showing its absence
+is the other half -- the register's Declaration column. (The exception queue
+that also raised it was removed on 3-Nov-2026; its tables, below, are kept.)
 """
 
 from __future__ import annotations
@@ -334,6 +334,8 @@ def new_exception_event_id() -> str:
     return f"EXE-{stamp:014X}{uuid.uuid4().hex[:6].upper()}"
 
 
+# Kept so the table and its history stay: nothing writes it since the exception
+# queue was removed on 3-Nov-2026.
 class ExceptionEvent(Base):
     """One thing that happened to an exception-queue item, and the ONLY thing
     this module stores about one.
@@ -408,6 +410,8 @@ class ExceptionEvent(Base):
         return f"<ExceptionEvent {self.id} {self.exception_id} {self.kind} by {self.actor}>"
 
 
+# Kept so the table and its log stay: nothing writes it since the exception
+# queue was removed on 3-Nov-2026.
 class Notification(Base):
     """One notification logged for an exception-queue item (FR-11).
 

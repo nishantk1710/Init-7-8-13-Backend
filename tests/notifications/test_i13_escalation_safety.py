@@ -1,168 +1,29 @@
-"""M4 (I08 shared notifications are recoverable) and H3 (I13 automatic escalation is safe by default)."""
+"""H3: I13 automatic escalation is safe by default.
+
+M4 (I08 shared notifications are recoverable) was tested here too until
+3-Nov-2026, when the I08 exception queue and its notifications were removed.
+"""
 
 from __future__ import annotations
 
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import func, select, text
 
 from app.core.config import get_settings
 from app.initiatives.i13.act.domain import ActException, ExceptionStatus
 from app.initiatives.i13.act.service import process_escalations
 from app.initiatives.i13.act_hod_provider import ConfigEscalationRecipientProvider
-from app.initiatives.i8.models import Notification
-from app.initiatives.i8.notifications import log_new
 from app.integrations.notifications.service import SharedNotificationPort
-from app.models.app_user import AppUser
 from app.models.base import Base
-from app.models.notification import NotificationRecipient
-from tests.notifications.test_i08_and_i13 import (  # noqa: F401 -- fixtures and helpers shared with that module
+from tests.notifications.test_i13_shared import (  # noqa: F401 -- fixtures and helpers shared with that module
     HOD,
     NOW,
     OID,
     act_exception,
-    cfg,
-    i8_db,
-    item,
     repository,
     shared,
 )
-
-
-# --- M4: I08 shared notifications are recoverable ----------------------------
-
-
-def logged(db):
-    return db.scalar(select(func.count()).select_from(Notification))
-
-
-def stores(db, monkeypatch, roles="OVERDUE_REPAIR:Spares.Stores,MISSING_ATTESTATION:Spares.Stores"):
-    monkeypatch.setattr(get_settings(), "i8_notification_recipient_roles", roles)
-    if roles:
-        db.add(AppUser(oid=OID, name="Stores", email="stores@example.com"))
-        db.add(NotificationRecipient(role="Spares.Stores", plant="1300", user_oid=OID, active=True))
-        db.commit()
-
-
-def inbox_for(db, exception_id):
-    return [r for r in shared(db) if r.channel == "IN_APP" and r.entity_id == exception_id]
-
-
-def refuse_notification_inserts(db):
-    db.execute(text("CREATE TRIGGER refuse_notification BEFORE INSERT ON notification BEGIN SELECT RAISE(ABORT, 'refused'); END"))
-    db.commit()
-
-
-def test_a_shared_queue_failure_keeps_the_log_and_the_next_read_queues_the_item(i8_db, cfg, monkeypatch):
-    stores(i8_db, monkeypatch)
-    real = log_new.__globals__["enqueue"]
-    monkeypatch.setattr("app.initiatives.i8.notifications.enqueue", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
-
-    assert log_new(i8_db, [item(1)], cfg) == 1  # the log row is written
-    assert logged(i8_db) == 1 and shared(i8_db) == []  # the shared notification is not
-
-    monkeypatch.setattr("app.initiatives.i8.notifications.enqueue", real)
-    assert log_new(i8_db, [item(1)], cfg) == 0  # nothing NEW to log...
-
-    assert logged(i8_db) == 1  # ...the log is not duplicated
-    assert len(inbox_for(i8_db, item(1).id)) == 1  # ...but the missed notification was recovered
-
-
-def test_a_database_level_failure_inside_the_shared_queue_does_not_cost_the_log_row(i8_db, cfg, monkeypatch):
-    stores(i8_db, monkeypatch)
-    refuse_notification_inserts(i8_db)
-
-    assert log_new(i8_db, [item(1), item(2)], cfg) == 2
-
-    i8_db.expire_all()
-    assert logged(i8_db) == 2 and shared(i8_db) == []
-    i8_db.execute(text("DROP TRIGGER refuse_notification"))
-    i8_db.commit()
-    log_new(i8_db, [item(1), item(2)], cfg)
-    assert len(inbox_for(i8_db, item(1).id)) == 1 and len(inbox_for(i8_db, item(2).id)) == 1
-
-
-def test_the_failure_is_logged_and_says_it_will_be_retried(i8_db, cfg, monkeypatch, caplog):
-    stores(i8_db, monkeypatch)
-    monkeypatch.setattr("app.initiatives.i8.notifications.enqueue", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
-
-    with caplog.at_level("WARNING"):
-        log_new(i8_db, [item(1)], cfg)
-
-    messages = " ".join(r.getMessage() for r in caplog.records)
-    assert "could not queue 1 shared notification" in messages
-    assert "queued again on the next read" in messages and "RuntimeError" in messages
-
-
-def test_items_logged_while_roles_were_empty_are_processed_once_roles_are_configured(i8_db, cfg, monkeypatch):
-    monkeypatch.setattr(get_settings(), "i8_notification_recipient_roles", "")
-    assert log_new(i8_db, [item(1), item(2)], cfg) == 2
-    assert shared(i8_db) == [] and logged(i8_db) == 2
-
-    stores(i8_db, monkeypatch)  # roles configured later
-    assert log_new(i8_db, [item(1), item(2)], cfg) == 0  # no new log rows
-
-    assert logged(i8_db) == 2
-    assert len(inbox_for(i8_db, item(1).id)) == 1 and len(inbox_for(i8_db, item(2).id)) == 1
-
-
-def test_repeated_reads_add_nothing(i8_db, cfg, monkeypatch):
-    stores(i8_db, monkeypatch)
-    log_new(i8_db, [item(1), item(2)], cfg)
-    after_first = len(shared(i8_db))
-
-    for _ in range(3):
-        assert log_new(i8_db, [item(1), item(2)], cfg) == 0
-
-    assert len(shared(i8_db)) == after_first and logged(i8_db) == 2
-
-
-def test_an_item_that_already_has_a_shared_notification_is_not_queued_again(i8_db, cfg, monkeypatch):
-    stores(i8_db, monkeypatch)
-    log_new(i8_db, [item(1)], cfg)
-    keys_before = {r.idempotency_key for r in shared(i8_db)}
-
-    # the log row is lost but the shared notification remains: the idempotency key still prevents a repeat
-    i8_db.execute(text("DELETE FROM i8_notification"))
-    i8_db.commit()
-    log_new(i8_db, [item(1)], cfg)
-
-    assert {r.idempotency_key for r in shared(i8_db)} == keys_before
-
-
-def test_recovery_works_through_a_backlog_a_batch_at_a_time(i8_db, cfg, monkeypatch):
-    monkeypatch.setattr("app.initiatives.i8.notifications.RECOVERY_BATCH", 2)
-    monkeypatch.setattr(get_settings(), "i8_notification_recipient_roles", "")
-    items = [item(n) for n in range(1, 6)]
-    log_new(i8_db, items, cfg)
-    stores(i8_db, monkeypatch)
-
-    done = []
-    for _ in range(4):
-        log_new(i8_db, items, cfg)
-        done.append(len({r.entity_id for r in shared(i8_db) if r.channel == "IN_APP"}))
-
-    assert done == [2, 4, 5, 5]  # two per read, then nothing left to do
-
-
-def test_only_current_items_of_a_mapped_type_are_recovered(i8_db, cfg, monkeypatch):
-    monkeypatch.setattr(get_settings(), "i8_notification_recipient_roles", "")
-    log_new(i8_db, [item(1), item(2, "MISSING_ATTESTATION")], cfg)
-    stores(i8_db, monkeypatch, roles="OVERDUE_REPAIR:Spares.Stores")  # MISSING_ATTESTATION is not mapped
-
-    log_new(i8_db, [item(2, "MISSING_ATTESTATION")], cfg)  # item 1 is no longer in the queue (resolved)
-
-    assert shared(i8_db) == []
-
-
-def test_recovery_respects_the_feature_flag(i8_db, cfg, monkeypatch):
-    stores(i8_db, monkeypatch)
-    off = cfg.model_copy(update={"complete_flow_enabled": False})
-
-    assert log_new(i8_db, [item(1)], off) == 0
-
-    assert shared(i8_db) == [] and logged(i8_db) == 0
 
 
 # --- H3: I13 automatic escalation is safe by default -------------------------

@@ -7,9 +7,11 @@ Postgres-backed: composes ``movement_metrics.py`` (W3.5), ``exceptions.py``
 and ``reclassification.py`` rather than reading a gateway/CSV directly.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
+
+from sqlalchemy.orm import Session
 
 from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.exceptions import build_exception_queue
@@ -40,6 +42,29 @@ class I13Summary:
     #: can say how much of acquired-versus-plan rests on fabricated input
     #: instead of hard-coding a number that is only true in one environment.
     reference_plan_count: int
+
+
+def with_queue_exception_counts(
+    summary: I13Summary, db: Session, *, plant: str | None = None, material: str | None = None
+) -> I13Summary:
+    """``summary`` with its Planned Overdue and Non-AI counts read from the ACT
+    exception queue -- the table the Exceptions screen lists.
+
+    The counts above are the legacy queue recomputed on every request; the
+    Exceptions screen shows what detection last saved. Between detection runs
+    the two disagreed (a plan that went overdue was on the card days before it
+    was on the screen). Both now read the queue, unresolved exceptions only,
+    and the nightly detection job keeps the queue current.
+    """
+    from app.initiatives.i13.act.domain import ExceptionType as ActExceptionType
+    from app.initiatives.i13.act_exception_store import SqlExceptionRepository
+
+    counts = SqlExceptionRepository(db).active_counts_by_type(material=material, plant=plant)
+    return replace(
+        summary,
+        plan_breach_count=counts[ActExceptionType.PLAN_BREACH],
+        no_plan_count=counts[ActExceptionType.NO_PLAN],
+    )
 
 
 def _in_scope(material: str, plant: str, *, plant_filter: str | None, material_filter: str | None) -> bool:

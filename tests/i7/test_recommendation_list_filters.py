@@ -227,3 +227,49 @@ def test_the_new_filters_compile_for_sql_server_without_a_window_function_or_is_
     assert not re.search(r"row_number", joined, re.I)
     assert not re.search(r"\bIS 1\b", joined)
     assert "LIKE" in joined.upper()
+
+
+# --- has_recommended: only recommendations with something recommended -------------------------------
+
+
+def valued(material, *, rop=None, safety=None, max_stock=None, **kw):
+    row = rec(material, **kw)
+    row.recommended_rop, row.recommended_safety_stock, row.recommended_max_stock = rop, safety, max_stock
+    return row
+
+
+def test_has_recommended_keeps_a_row_with_at_least_one_recommended_value_and_drops_one_with_none(db):
+    db.add_all([
+        valued("ALL3", rop=5, safety=2, max_stock=9), valued("ONE", safety=2), valued("NONE", status="NOT_EVALUABLE"),
+    ])
+    db.commit()
+    assert materials(listing(db)) == ["ALL3", "NONE", "ONE"]  # off by default: nothing changes for existing callers
+    kept = listing(db, has_recommended=True)
+    assert materials(kept) == ["ALL3", "ONE"]
+    assert kept.total == 2  # the footer count follows the filter
+
+
+def test_a_recommended_zero_is_a_value_not_a_missing_one(db):
+    db.add_all([valued("ZERO", rop=0), valued("NONE")])
+    db.commit()
+    assert materials(listing(db, has_recommended=True)) == ["ZERO"]
+
+
+def test_has_recommended_combines_with_search_and_paging(db):
+    db.add_all([valued(f"M{i:02d}", rop=1) for i in range(7)] + [valued("M99"), valued("OLD", rop=1)])
+    db.commit()
+    first = listing(db, has_recommended=True, page=1, page_size=3)
+    assert first.total == 8 and len(first.items) == 3  # M99 has nothing recommended, so it is not counted
+    third = listing(db, has_recommended=True, page=3, page_size=3)
+    assert third.total == 8 and len(third.items) == 2
+    assert materials(listing(db, has_recommended=True, search="M99")) == []
+    assert materials(listing(db, has_recommended=True, search="M03")) == ["M03"]
+
+
+def test_has_recommended_compiles_for_sql_server():
+    statement = api._apply_filters(
+        api.select(api.Recommendation.id), status=None, plant=None, material=None, demand_class=None, is_oar=None,
+        confidence=None, criticality=None, generated_from=None, generated_to=None, has_recommended=True,
+    )
+    sql = str(statement.compile(dialect=mssql.dialect()))
+    assert sql.count("IS NOT NULL") == 3 and " OR " in sql

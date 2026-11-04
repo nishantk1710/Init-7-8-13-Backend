@@ -52,11 +52,8 @@ def i08_step(answers, assessment=None):
 SKIP = {script.I08_DECLARE_CHOICE: {"choice": script.SKIP_DECLARATION}}
 DECLARATION = {
     "quantity": "1",
-    "condition_description": "Bearing seized.",
     "fault_category": "BEARING_FAILURE",
     "recommendation": "REPAIRABLE",
-    "attestor_name": "J Miller",
-    "evidence_reference": None,
 }
 
 
@@ -70,6 +67,22 @@ def i13_step(answers, assessment=None, suggestion=None):
         reason_categories=CATEGORIES,
         suggestion=suggestion,
     )
+
+
+class TestI08Endings:
+    def test_no_stock_record_does_not_say_go_ahead(self) -> None:
+        """The headline says a physical check is worth making; "go ahead" after
+        it contradicted that (4-Nov-2026)."""
+        assessment = i08_assessment(rows=[universe_row(stock_on_hand=None)], lines=[])
+        step = i08_step(SKIP, assessment)
+        assert step.kind is StepKind.TERMINAL
+        assert "Worth a physical check before buying new." in step.prompt
+        assert "go ahead" not in step.prompt
+
+    def test_nothing_in_stock_or_on_repair_still_says_go_ahead(self) -> None:
+        assessment = i08_assessment(rows=[universe_row(stock_on_hand=0)], lines=[])
+        step = i08_step(SKIP, assessment)
+        assert "Nothing here suggests holding off, so go ahead." in step.prompt
 
 
 class TestI08Shape:
@@ -458,13 +471,13 @@ class TestI08DeclaresTheFaultyUnit:
         assert step.id == script.I08_DECLARATION
         assert step.kind is StepKind.FORM
         fields = {f.name: f for f in step.fields}
-        assert list(fields) == [
-            "quantity", "condition_description", "fault_category",
-            "recommendation", "attestor_name", "evidence_reference",
-        ]
+        # 3-Nov-2026: no description, typed name or evidence reference. The
+        # declarer is the signed-in requester; the fault says what is wrong.
+        assert list(fields) == ["quantity", "fault_category", "recommendation"]
         assert fields["quantity"].default == 1
-        assert not fields["evidence_reference"].required
-        assert fields["attestor_name"].label == "Your name (typed, not a sign-in)"
+        assert script.RETIRED_ANSWER_FIELDS[script.I08_DECLARATION] == {
+            "condition_description", "attestor_name", "evidence_reference",
+        }
         assert [o.value for o in fields["fault_category"].options] == list(
             get_i8_settings().fault_category_list
         )

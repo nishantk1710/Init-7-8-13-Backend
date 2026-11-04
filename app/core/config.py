@@ -407,6 +407,14 @@ class Settings(BaseSettings):
     # Rows per page. Conservative -- SAP's real server-side limit is unproven.
     cpi_page_size: int = 1000
 
+    # Entity sets a delta sweep fetches at once. 1 -- the default -- is the
+    # serial behaviour the pipeline has always had. Above 1, the sweep fetches
+    # that many independent sets in parallel threads; loads stay serial, and a
+    # set is never fetched before the parents it reads keys through. Raise it
+    # (3 was fine on QA and PRD in the 4-Nov live checks) only once SAP Basis
+    # confirms the gateway's appetite for concurrent reads from one user.
+    cpi_fetch_concurrency: int = 1
+
     # Seconds. Generous: some sets take over a minute to answer a $count.
     cpi_timeout_seconds: int = 120
 
@@ -1036,6 +1044,12 @@ class Settings(BaseSettings):
     # inventing a recipient.
     i13_hod_recipients: str = ""
 
+    # The requester on an OAR exception is a SAP name ("Darren"), but a person can only be notified by Entra
+    # object id. "SAP name:object id,SAP name:object id" maps one to the other so the requester gets their
+    # "Confirm Exception" notification (see app.initiatives.i13.act_requester_directory). Empty by default: a
+    # requester not listed (and not already an object id) is recorded as a failed notification, never guessed.
+    i13_requester_recipients: str = ""
+
     # --- Shared notifications (I07, I08, I13) -----------------------------
     #
     # Only technical values have defaults. No business value (reminder timing,
@@ -1051,12 +1065,52 @@ class Settings(BaseSettings):
     notification_retry_max: int = 3
     notification_retry_interval_seconds: int = 300
 
+    # I07 approval reminders and escalation, in DAYS, as production settings (the way I13 has its five days). They apply
+    # to a step only when the notification_sla table has no active row for it: a row there always wins. Everything
+    # is OFF at 0 / blank, so deploying this changes nothing until someone sets them.
+    #   first days   -- how long an approver waits before the first reminder (0 = no reminders)
+    #   repeat days  -- the gap between later reminders
+    #   max          -- how many reminders in all
+    #   escalate     -- days before it is escalated (0 = never); needs the role below, which must have
+    #                   notification_recipients rows for each plant, or the escalation is recorded as failed
+    i7_reminder_first_days: int = 0
+    i7_reminder_repeat_days: int = 1
+    i7_reminder_max: int = 3
+    i7_escalate_after_days: int = 0
+    i7_escalation_role: str = ""
+
     # I13 automatic escalation (an exception nobody answered goes to the HOD). OFF by
     # default and separate from the scheduler switch above: turning the scheduler on does
     # not start it. It needs I13_HOD_RECIPIENTS, and each run handles at most this many
     # exceptions, oldest overdue first, so a backlog is worked through in steps.
     notification_i13_escalation_enabled: bool = False
     notification_i13_escalation_batch_size: int = 100
+
+    # I13 nightly exception detection. Detection otherwise runs only after an assistant
+    # session (for that one material and plant) or by hand, so the Exceptions screen fell
+    # behind the data: a plan went overdue and nothing raised it. When on, the scheduler
+    # runs detection over every material once a day, in the first tick at or after this
+    # hour (UTC). OFF by default: the first run raises a Non-AI exception for every OAR
+    # reservation without an assistant reference, and notifies each requester.
+    notification_i13_detection_enabled: bool = False
+    notification_i13_detection_hour_utc: int = 1
+    # Detection again as soon as the I13 snapshot has been rebuilt or re-aged (4-Nov-2026), so
+    # the queue is checked against the data the screens now show -- at least daily (the re-age
+    # when the day turns) and after every SAP load that changed it. The timer above stays as
+    # the backup for a day with no successful build. OFF by default, for the same reason.
+    i13_detect_after_build: bool = False
+    # The exception types those two automatic runs check, comma-separated (PLAN_BREACH,
+    # NO_PLAN, NO_PLAN_GRNI, QUANTITY_OVERRIDE). Empty = all. A type left out is neither
+    # raised nor resolved by them -- e.g. NO_PLAN and NO_PLAN_GRNI until the Non-AI
+    # go-live cutoff is agreed. The post-capture and manual (POST /run/detect) runs always check every type.
+    i13_detection_types: str = ""
+
+    # A request's requester is told in the app when its lines are linked to an SAP reservation, and reminded
+    # once when lines that need a reservation are still unlinked this many hours after the request (0 = no
+    # reminder). Both look back only this many hours, so switching it on does not notify about old requests.
+    assistant_link_notifications_enabled: bool = True
+    assistant_link_reminder_hours: int = 24
+    assistant_link_notice_lookback_hours: int = 48
 
     # Master switch for email. When false, no email notification is created or sent at all: the
     # in-app inbox is the only channel. (A notification that cannot be delivered to anyone is
@@ -1079,10 +1133,6 @@ class Settings(BaseSettings):
     # The Entra role of whoever executes an approved change in SAP. No default:
     # when empty, the final-approval notice goes to the submitter only.
     notification_sap_execution_role: str = ""
-
-    # Which role hears about each exception, as "TYPE:Spares.Role,...", e.g.
-    # "OVERDUE_REPAIR:Spares.Stores". Empty means no one is guessed.
-    i8_notification_recipient_roles: str = ""
 
     # A purchase requisition SAP posts to /api/events/pr: an in-app notice for everyone
     # who has signed in ("a requisition was received", no details) and one with the PR

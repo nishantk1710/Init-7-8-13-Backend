@@ -311,7 +311,7 @@ def test_there_is_a_single_migration_head():
             if line.startswith("down_revision"):
                 value = line.split("=", 1)[1].strip()
                 parents.update(part.strip().strip("'\"") for part in value.strip("()[] ").split(",") if part.strip().strip("'\"") not in ("", "None"))
-    assert revisions - parents == {"c4d8e2f71a39"}
+    assert revisions - parents == {"e5b7c1d93a64"}
 
 
 def test_an_existing_recommendation_is_not_a_manual_request(db):

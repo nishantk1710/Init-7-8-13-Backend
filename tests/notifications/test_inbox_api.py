@@ -128,3 +128,20 @@ def test_a_notification_created_by_an_approval_appears_in_the_approvers_inbox(db
     assert [i["title"] for i in mine["items"]] == ["Approval Required – Material Recommendation"]
     assert api.get(BASE, headers=as_user(SUBMITTER)).json()["total"] == 0  # the submitter is not asked to approve
     assert db.scalar(select(NotificationRow.module).limit(1)) == "I07"  # kept internally, never served
+
+
+def test_repairable_spares_notifications_already_stored_are_kept_out_of_the_inbox(db, api):
+    add(db, ME, 1)
+    old = add(db, ME, 2)
+    old.module = "I08"  # sent before Repairable Spares stopped notifying anyone
+    db.commit()
+
+    body = api.get(BASE, headers=as_user(ME)).json()
+
+    assert [i["title"] for i in body["items"]] == ["Approval Required 1"]
+    assert body["total"] == 1 and body["unreadCount"] == 1  # not counted as unread either
+    assert api.get(f"{BASE}/unread-count", headers=as_user(ME)).json() == {"unread": 1}
+    assert api.get(f"{BASE}/{old.id}", headers=as_user(ME)).status_code == 404
+    assert api.post(f"{BASE}/read-all", headers=as_user(ME)).json() == {"updated": 1}
+    db.refresh(old)
+    assert old.is_read is False  # mark-all-read leaves what the person cannot see alone

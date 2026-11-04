@@ -26,10 +26,11 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from app.initiatives.i13.act.domain import NoPlanReason, WatchGrniSnapshot
+from app.initiatives.i13.act.domain import ExceptionType, NoPlanReason, WatchGrniSnapshot
 from app.initiatives.i13.act.service import DetectionRunResult, EscalationRunResult, detect_exceptions, process_escalations
 from app.initiatives.i13.act_exception_store import SqlExceptionRepository
 from app.initiatives.i13.act_hod_provider import ConfigEscalationRecipientProvider
+from app.initiatives.i13.act_requester_directory import parse_requester_recipients
 from app.initiatives.i13.act_watch_snapshot import build_grni_snapshot_index
 from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.consumption_attribution import ConsumptionAttributionService
@@ -54,6 +55,12 @@ from app.integrations.sap.postgres_procurement import PostgresProcurementReposit
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
 
 
+def _notification_port(db: Session, config: I13Config) -> SharedNotificationPort:
+    """The shared notification service, told which Entra user each SAP requester name stands for
+    (``I13_REQUESTER_RECIPIENTS``), so the requester's "Confirm Exception" reaches their inbox."""
+    return SharedNotificationPort(db, identity_aliases=parse_requester_recipients(config.escalation.requester_recipients_raw))
+
+
 def run_escalations(
     db: Session,
     config: I13Config,
@@ -74,7 +81,7 @@ def run_escalations(
         escalation_recipient_provider=ConfigEscalationRecipientProvider.from_config_string(
             config.escalation.hod_recipients_raw
         ),
-        notification_port=SharedNotificationPort(db),
+        notification_port=_notification_port(db, config),
         limit=limit,
         plants=plants,
     )
@@ -82,6 +89,23 @@ def run_escalations(
 
 def _in_scope(material: str | None, plant: str | None):
     return lambda m, p: (not material or m == material) and (not plant or p == plant)
+
+
+def detection_types(raw: str) -> frozenset[ExceptionType] | None:
+    """``I13_DETECTION_TYPES`` as exception types: comma-separated names such as
+    ``PLAN_BREACH,NO_PLAN_GRNI``. Empty is every type (``None``). An unknown
+    name is an error, not skipped: a typo that silently ran nothing would leave
+    the queue stale with no sign why."""
+    names = [part.strip().upper() for part in (raw or "").split(",") if part.strip()]
+    if not names:
+        return None
+    unknown = [name for name in names if name not in ExceptionType.__members__]
+    if unknown:
+        raise ValueError(
+            f"I13_DETECTION_TYPES names unknown exception types {unknown}; "
+            f"use any of {', '.join(ExceptionType.__members__)}"
+        )
+    return frozenset(ExceptionType[name] for name in names)
 
 
 def run_detection(
@@ -93,11 +117,16 @@ def run_detection(
     material: str | None = None,
     plant: str | None = None,
     snapshot: I13Snapshot | SqlSnapshot | None = None,
+    types: Collection[ExceptionType] | None = None,
 ) -> DetectionRunResult:
-    """Gather detection's evidence and run it. The caller commits."""
+    """Gather detection's evidence and run it. The caller commits.
+
+    ``types`` limits the run to those exception types -- see
+    :func:`detection_types`; ``None`` (the capture and manual runs) is every type.
+    """
     if isinstance(snapshot, SqlSnapshot):
         return _run_detection_stored(
-            db, config, snapshot, as_of_time=as_of_time, material=material, plant=plant
+            db, config, snapshot, as_of_time=as_of_time, material=material, plant=plant, types=types
         )
     wanted = _in_scope(material, plant)
     reservation_repo = PostgresReservationRepository(db)
@@ -137,7 +166,14 @@ def run_detection(
     # Both quantity stores: the W7.4 API's and the assistant's (gap G5).
     quantity_decision_records = build_quantity_decision_records(
         db, material=material, plant=plant
-    ) + build_assistant_quantity_decision_records(db, material=material, plant=plant)
+    ) + build_assistant_quantity_decision_records(
+        db,
+        material=material,
+        plant=plant,
+        # The person named in the assistant's Requester box owns the exception when I13_REQUESTER_RECIPIENTS
+        # says who they are; otherwise the person who operated the assistant, as before.
+        requester_aliases=parse_requester_recipients(config.escalation.requester_recipients_raw),
+    )
 
     # W6.4's requester, so a NO_PLAN exception has somebody to route to. Only
     # resolved attributions: an AMBIGUOUS one leaves the exception unowned
@@ -158,12 +194,13 @@ def run_detection(
         plans=plans,
         grni_snapshots=grni_snapshots,
         repository=SqlExceptionRepository(db),
-        notification_port=SharedNotificationPort(db),
+        notification_port=_notification_port(db, config),
         plan_breach_grace_days=config.exceptions.plan_breach_grace_days,
         requester_response_days=config.escalation.requester_response_days,
         quantity_decision_records=quantity_decision_records,
         requester_by_reservation=requester_by_reservation,
         no_plan_reason_by_reservation=no_plan_reason_by_reservation,
+        types=types,
     )
 
 
@@ -194,6 +231,7 @@ def _run_detection_stored(
     as_of_time: datetime,
     material: str | None,
     plant: str | None,
+    types: Collection[ExceptionType] | None = None,
 ) -> DetectionRunResult:
     """:func:`run_detection` over the SQL store, one slice of materials at a time.
 
@@ -213,7 +251,14 @@ def _run_detection_stored(
     plans = [p for p in snapshot.current_plans() if wanted(p.material, p.plant)]
     quantity_decision_records = build_quantity_decision_records(
         db, material=material, plant=plant
-    ) + build_assistant_quantity_decision_records(db, material=material, plant=plant)
+    ) + build_assistant_quantity_decision_records(
+        db,
+        material=material,
+        plant=plant,
+        # The person named in the assistant's Requester box owns the exception when I13_REQUESTER_RECIPIENTS
+        # says who they are; otherwise the person who operated the assistant, as before.
+        requester_aliases=parse_requester_recipients(config.escalation.requester_recipients_raw),
+    )
     linked = session_by_reservation(db)
     sessions = load_sessions(db, set(linked.values()))
     work = WorkTables(snapshot.version)
@@ -237,7 +282,7 @@ def _run_detection_stored(
             plans=slice_plans,
             grni_snapshots=grni_snapshots,
             repository=SqlExceptionRepository(db),
-            notification_port=SharedNotificationPort(db),
+            notification_port=_notification_port(db, config),
             plan_breach_grace_days=config.exceptions.plan_breach_grace_days,
             requester_response_days=config.escalation.requester_response_days,
             quantity_decision_records=quantity_records,
@@ -245,6 +290,7 @@ def _run_detection_stored(
                 (a.reservation_number, a.reservation_item): a.requester_id for a in attributions if a.requester_id
             },
             no_plan_reason_by_reservation=reasons,
+            types=types,
         )
         for name in totals:
             totals[name] += getattr(result, name)

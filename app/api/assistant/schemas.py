@@ -362,6 +362,10 @@ class JustificationModel(AssistantModel):
     """The name typed as the requester on the session this reason was recorded
     in (28-Oct-2026). Typed, not a sign-in; null when the reason has no session
     or none was typed. Served by the justification list only."""
+    session_reference: str | None = None
+    """How the session is quoted on screen (4-Nov-2026): ``R.../n`` for a line
+    of a request, the session ID for an older single-material session. Null
+    when the reason has no session. Served by the justification list only."""
     purchase: JustificationPurchaseModel | None = None
     """NEW_ACQUISITION only, on the justification list: the new purchase this
     reason answers under the bought-new check's rule. Null when no purchase has
@@ -391,6 +395,24 @@ class SessionDeclarationModel(AssistantModel):
     repair_item: str | None = None
     repair_document_type: str | None = None
     """'PO' or 'PR' when the declaration names a repair line; null otherwise."""
+
+    @classmethod
+    def of(cls, row: Any) -> SessionDeclarationModel:
+        """From an ``i8_attestation`` row: the session trace's declarations and
+        a request line's (4-Nov-2026) read the same fields."""
+        return cls(
+            id=row.id,
+            recommendation=row.recommendation,
+            condition_description=row.condition_description,
+            fault_category=row.fault_category,
+            quantity=str(row.quantity),
+            attestor_name=row.attestor_name,
+            attested_at=row.attested_at,
+            evidence_reference=row.evidence_reference,
+            repair_document=row.repair_document,
+            repair_item=row.repair_item,
+            repair_document_type=row.repair_document_type,
+        )
 
 
 class SessionTraceResponse(AssistantModel):

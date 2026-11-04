@@ -44,9 +44,8 @@ PENDING: dict[tuple[str, str], str] = {
     ("/api/v1/i7/kpi-formulas/preview", "POST"): "I07",
     ("/api/v1/i7/kpi-formulas/reset", "POST"): "I07",
     ("/api/criticality/uploads", "POST"): "I07",
-    # --- I08: repairable spares (Varad) ---
-    ("/api/i8/attestations", "POST"): "I08",
-    ("/api/i8/exceptions/{exception_id}/events", "POST"): "I08",
+    # --- I08: repairable spares (Varad) --- none since 3-Nov-2026: declaring is
+    # the assistant's (its turn route), and the exception queue was removed.
     # --- I13: OAR utilisation and the reservation assistant (Shravani) ---
     ("/api/i13/act/exceptions/{exception_id}/confirmation", "POST"): "I13",
     ("/api/i13/act/run/detect", "POST"): "I13",

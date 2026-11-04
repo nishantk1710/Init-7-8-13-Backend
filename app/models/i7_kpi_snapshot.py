@@ -73,6 +73,15 @@ class KpiSnapshot(Base):
     priced_count: Mapped[int] = mapped_column(Integer)
     currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
+    # --- Stock held, in ZAR (added after the first snapshots: NULL there, and never filled in afterwards) ------
+    inventory_value: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
+    """Stock on hand x MBEW price over the population. NULL = not measured (an older snapshot, or no stock load close
+    enough to the cutoff), never 0. Stock on hand is known only as it is now, so this cannot be rebuilt for a past month."""
+    safety_stock_value: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
+    below_reorder_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    below_reorder_judged: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    """How many material-plants ``below_reorder_count`` is out of."""
+
     payload_json: Mapped[str] = mapped_column(Text)
     """Everything else, serialised: the per-plant positions and the current-vs-recommended stock levels."""
     payload_sha256: Mapped[str] = mapped_column(String(64))
