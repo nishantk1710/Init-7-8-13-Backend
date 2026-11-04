@@ -270,9 +270,14 @@ def _stage(db: Session, cfg: I8Settings) -> Sources:
     # (requisitions.index_forward_pointers). A direct build reads every line;
     # every other reader of this copy filters by item category or material.
     # A second statement, never an OR: see MSEG below.
+    # CAST to a bounded type: read straight off the raw table, the key is
+    # nvarchar(max) on Azure, and SQL Server cannot index that (error 1919:
+    # every nonprod snapshot build failed on 4-Nov-2026 until this cast; CI's
+    # fixture columns are NVARCHAR(200), so CI built fine). The other temp
+    # tables here select from a staged view, whose keys are NVARCHAR(4000).
     db.execute(text("DROP TABLE IF EXISTS #i8s_pr_docs"))
     db.execute(text(
-        f"SELECT DISTINCT {_key('purchase_order')} AS ebeln INTO #i8s_pr_docs FROM n_eban "
+        f"SELECT DISTINCT CAST({_key('purchase_order')} AS NVARCHAR(40)) AS ebeln INTO #i8s_pr_docs FROM n_eban "
         f"WHERE {_in_scope()} AND {_series('material', cfg)} AND {_key('purchase_order')} IS NOT NULL"
     ))
     db.execute(text("CREATE CLUSTERED INDEX ix_i8s_pr_docs ON #i8s_pr_docs (ebeln)"))
