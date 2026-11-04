@@ -164,6 +164,9 @@ class ReservationLedgerEntryResponse(BaseModel):
 
     #: The assistant session this reservation's item text (SGTXT) names.
     session_id: str | None = None
+    #: That session as the requester knows it: ``R.../n`` for a request line,
+    #: the session ID for a single-material session. ``None`` when unlinked.
+    session_reference: str | None = None
     #: RESB.SGTXT as loaded (or as the UAT overlay says).
     sgtxt: str | None = None
     #: A reservation that exists only in the UAT overlay (simulated).
