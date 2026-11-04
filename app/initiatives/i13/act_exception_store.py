@@ -233,6 +233,18 @@ class SqlExceptionRepository:
         )
         return {"total": sum(by_status.values()), "by_status": by_status, "with_requester": with_requester}
 
+    def active_counts_by_type(self, *, material: str | None = None, plant: str | None = None) -> dict[ExceptionType, int]:
+        """Exceptions not yet resolved, per type -- what the dashboard cards
+        count, so a card and the Exceptions screen are the same number."""
+        counts = {exception_type: 0 for exception_type in ExceptionType}
+        stmt = self._filtered(
+            select(ActExceptionRecord.exception_type, func.count()).select_from(ActExceptionRecord),
+            material=material, plant=plant, exception_type=None, status=None, owner_requester_id=None,
+        ).where(ActExceptionRecord.status != ExceptionStatus.RESOLVED.value)
+        for exception_type, n in self._session.execute(stmt.group_by(ActExceptionRecord.exception_type)).all():
+            counts[ExceptionType(exception_type)] = int(n)
+        return counts
+
     def list_confirmations(
         self,
         *,
