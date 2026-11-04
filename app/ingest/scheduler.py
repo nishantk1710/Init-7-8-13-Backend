@@ -331,13 +331,39 @@ def check_snapshots(trigger: str) -> dict[str, bool]:
     return started
 
 
+def seconds_until_next_slot(interval_seconds: int, now: datetime) -> float:
+    """Seconds from ``now`` to the next whole multiple of the interval.
+
+    Measured from the epoch, so every worker -- and every instance, if this
+    App Service ever scales out -- computes the same slot. An hourly interval
+    ticks at the top of each UTC hour.
+    """
+    remainder = now.timestamp() % interval_seconds
+    wait = interval_seconds - remainder
+    # Within a second of the boundary means this slot just fired (a fast
+    # cycle, or clock jitter): the next one is a full interval away.
+    return wait if wait >= 1 else wait + interval_seconds
+
+
 async def _loop(interval_seconds: int, initial_delay: int) -> None:
     # A delay before the first tick so a deploy does not start a pull while the
     # instance is still warming and migrations may still be running.
     await asyncio.sleep(initial_delay)
+    await _tick()
+    # From here, ticks sit on the clock (seconds_until_next_slot) rather than
+    # an interval after whenever the last cycle happened to end. Sleeping the
+    # interval drifted -- and, worse, ran everything twice: with two workers,
+    # the loser of the lock skipped its tick and slept the interval from THAT
+    # moment, landing just after the winner's cycle ended and re-pulling the
+    # same windows. 63 of 271 cycles between 13 and 22 Oct ran back to back
+    # that way, 14% of the nonprod database's CPU. On a shared boundary the
+    # loser's next slot is the winner's next slot, so it skips, not re-runs.
+    # A cycle that outlives the interval makes both workers sit out the slot
+    # that passed mid-run (one is busy, the other loses the lock); the next
+    # boundary picks up, and an event cycle can always run sooner.
     while True:
+        await asyncio.sleep(seconds_until_next_slot(interval_seconds, datetime.now(timezone.utc)))
         await _tick()
-        await asyncio.sleep(interval_seconds)
 
 
 # --- A cycle on request: the PR event ---------------------------------------

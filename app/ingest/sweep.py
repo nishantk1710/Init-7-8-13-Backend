@@ -49,6 +49,7 @@ window the merge absorbs; advancing it costs rows.
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, timedelta, timezone
 
@@ -60,6 +61,8 @@ from app.ingest.fetch import (
     MODE_DELTA,
     MODE_FULL,
     FetchResult,
+    ParentWindowMemory,
+    WindowReads,
     collect_parent_keys,
     fetch_order,
     fetch_set,
@@ -79,6 +82,13 @@ logger = get_logger(__name__)
 # load day alone could miss the day before. Three days of re-reading is a
 # handful of rows the merge absorbs; a missed day is rows nobody asks for again.
 SEED_MARGIN_DAYS = 3
+
+# What the scheduler's cycles share across a process's lifetime: the parent
+# rows already handed over and settled, so a day-granular window does not
+# re-read every child for the same keys every hour, all day. See
+# fetch.ParentWindowMemory for why the skip cannot lose a row. The CLI's
+# one-shot process starts and exits with it empty, which is the old behaviour.
+_HANDOVER_MEMORY = ParentWindowMemory()
 
 
 def _load_day(raw_table: str) -> date | None:
@@ -271,15 +281,26 @@ def run_delta_sweep(
     storage: Storage | None = None,
     since: str | None = None,
     load: bool = True,
+    memory: ParentWindowMemory | None = None,
 ) -> SweepReport:
     """Fetch every chosen set incrementally, load what landed, advance the marks.
 
     A set with no runnable delta is fetched in full by ``fetch_set``'s own
     degrade, and says so. Callers that do not want that -- the scheduler, and
     ``--delta --all`` -- filter on ``IngestSpec.runnable_delta`` first.
+
+    Each window is read against SAP once per sweep (``WindowReads``: a
+    parent's own fetch and its children's key collections share the read), and
+    parent rows a previous cycle of the same window handed over and settled
+    are not handed again (``memory``, the process-wide ``_HANDOVER_MEMORY``
+    unless a test passes its own). With CPI_FETCH_CONCURRENCY above 1 the
+    fetches of independent sets run in parallel threads; a set still never
+    fetches before the parents it reads keys through, and the loads and the
+    marks stay serial, in the order the sets were chosen.
     """
     client = client or SapClient()
     storage = storage or get_storage()
+    memory = memory if memory is not None else _HANDOVER_MEMORY
     report = SweepReport()
 
     # 0. A set with rows but no mark starts from its load day. Not when the
@@ -314,61 +335,95 @@ def run_delta_sweep(
                 spec.name, spec.raw_table,
             )
 
-    # 3. Fetch, parents first, each parent's keys collected once.
+    # 3. Fetch, parents first, each parent's keys collected once, each window
+    #    read once (the parent's own fetch populates ``window_reads`` and the
+    #    key collections reuse it). With CPI_FETCH_CONCURRENCY above 1 the
+    #    fetches run in a thread pool; a child waits for its parents' fetches
+    #    before collecting keys, both so the windows that were read once stay
+    #    read once and so the log keeps its shape.
+    window_reads = WindowReads()
     key_cache: dict[tuple[str, str], list[str]] = {}
-    for spec in fetch_order(chosen):
-        mode = MODE_FULL if spec.name in forced_full else MODE_DELTA
-        outcome = SetOutcome(name=spec.name, mode=mode)
-        report.outcomes.append(outcome)
+    workers = max(1, int(get_settings().cpi_fetch_concurrency or 1))
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="delta-fetch") if workers > 1 else None
+    futures: dict[str, Future] = {}
 
-        window: str | None = None
-        parent_keys: list[str] | None = None
-        delta = spec.runnable_delta if mode == MODE_DELTA else None
-        if delta is not None and delta.direct:
-            window = windows.get(spec.name)
-        if delta is not None and delta.derived:
-            parent_windows = {p: windows.get(p) for p in delta.via}
-            if all(w is not None for w in parent_windows.values()):
-                union: dict[str, None] = {}
-                try:
-                    for parent, parent_window in parent_windows.items():
-                        cache_key = (parent, delta.via_key or "")
-                        if cache_key not in key_cache:
-                            key_cache[cache_key] = collect_parent_keys(
-                                client, parent, delta.via_key or "", parent_window
-                            )
-                        for key in key_cache[cache_key]:
-                            union.setdefault(key, None)
-                except Exception as exc:
-                    outcome.error = f"could not read a parent window: {exc}"
-                    logger.error("%s: %s", spec.name, outcome.error)
-                    continue
-                parent_keys = list(union)
-                if not delta.direct:
-                    # Recorded on the result as the window this set was read
-                    # through; with several parents, the earliest of theirs.
-                    window = min(w for w in parent_windows.values() if w is not None)
-            else:
-                # A parent has no mark yet: no window, no keys. Pulled in
-                # full, deliberately -- reading that parent whole to collect
-                # keys would be this whole set fifty keys at a time.
-                mode = outcome.mode = MODE_FULL
-                logger.info(
-                    "%s: %s has no watermark yet, so this runs as a full pull.",
-                    spec.name,
-                    ", ".join(p for p, w in parent_windows.items() if w is None),
+    def await_parents(names) -> None:
+        for name in names:
+            future = futures.get(name)
+            if future is not None:
+                future.result()
+
+    try:
+        for spec in fetch_order(chosen):
+            mode = MODE_FULL if spec.name in forced_full else MODE_DELTA
+            outcome = SetOutcome(name=spec.name, mode=mode)
+            report.outcomes.append(outcome)
+
+            window: str | None = None
+            parent_keys: list[str] | None = None
+            delta = spec.runnable_delta if mode == MODE_DELTA else None
+            if delta is not None and delta.direct:
+                window = windows.get(spec.name)
+            if delta is not None and delta.derived:
+                parent_windows = {p: windows.get(p) for p in delta.via}
+                if all(w is not None for w in parent_windows.values()):
+                    await_parents(parent_windows)
+                    union: dict[str, None] = {}
+                    try:
+                        for parent, parent_window in parent_windows.items():
+                            cache_key = (parent, delta.via_key or "")
+                            if cache_key not in key_cache:
+                                key_cache[cache_key] = collect_parent_keys(
+                                    client, parent, delta.via_key or "", parent_window,
+                                    window_reads=window_reads, memory=memory,
+                                )
+                            for key in key_cache[cache_key]:
+                                union.setdefault(key, None)
+                    except Exception as exc:
+                        outcome.error = f"could not read a parent window: {exc}"
+                        logger.error("%s: %s", spec.name, outcome.error)
+                        continue
+                    parent_keys = list(union)
+                    if not delta.direct:
+                        # Recorded on the result as the window this set was read
+                        # through; with several parents, the earliest of theirs.
+                        window = min(w for w in parent_windows.values() if w is not None)
+                else:
+                    # A parent has no mark yet: no window, no keys. Pulled in
+                    # full, deliberately -- reading that parent whole to collect
+                    # keys would be this whole set fifty keys at a time.
+                    mode = outcome.mode = MODE_FULL
+                    logger.info(
+                        "%s: %s has no watermark yet, so this runs as a full pull.",
+                        spec.name,
+                        ", ".join(p for p, w in parent_windows.items() if w is None),
+                    )
+
+            def fetch_one(
+                spec=spec, outcome=outcome, mode=mode, window=window, parent_keys=parent_keys
+            ) -> None:
+                outcome.fetch = fetch_set(
+                    spec,
+                    root=root,
+                    client=client,
+                    storage=storage,
+                    mode=mode,
+                    since=window,
+                    parent_keys=parent_keys,
+                    advance_watermark=False,
+                    window_reads=window_reads,
                 )
 
-        outcome.fetch = fetch_set(
-            spec,
-            root=root,
-            client=client,
-            storage=storage,
-            mode=mode,
-            since=window,
-            parent_keys=parent_keys,
-            advance_watermark=False,
-        )
+            if pool is None:
+                fetch_one()
+            else:
+                futures[spec.name] = pool.submit(fetch_one)
+
+        for future in futures.values():
+            future.result()
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True)
 
     # 4. Load what landed.
     if load:
@@ -423,5 +478,22 @@ def run_delta_sweep(
             continue
         set_watermark(spec.name, delta.field or "", mark, outcome.fetch.rows)
         report.advanced[spec.name] = mark
+
+    # 6. The hand-over memory, same bar as the marks: a (parent, via_key)
+    #    batch is remembered only when every set that consumed its keys
+    #    fetched and loaded, and forgotten otherwise, so a failed child is
+    #    handed the whole window again next cycle.
+    for parent, via_key in key_cache:
+        consumers = [
+            o for o in report.outcomes
+            if o.mode == MODE_DELTA
+            and (child := by_name[o.name].delta) is not None
+            and parent in child.via
+            and (child.via_key or "") == via_key
+        ]
+        if consumers and all(settled(o) for o in consumers):
+            memory.settle(parent, via_key)
+        else:
+            memory.discard(parent, via_key)
 
     return report

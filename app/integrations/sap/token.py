@@ -16,6 +16,7 @@ call it knows will fail.
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Protocol
 
@@ -62,17 +63,25 @@ class TokenProvider:
         self._transport = transport or requests.post
         self._token: str | None = None
         self._expires_at: float = 0.0
+        # One provider serves every thread of a parallel fetch
+        # (CPI_FETCH_CONCURRENCY). Serialised so a token that just expired is
+        # fetched once, not once per thread, and a half-written cache is never
+        # read. Held across the fetch itself: the other threads need the token
+        # anyway, and waiting on the one request in flight IS the fast path.
+        self._lock = threading.Lock()
 
     def get(self, *, force_refresh: bool = False) -> str:
         """A valid bearer token, fetching one only when needed."""
-        if not force_refresh and self._token and time.time() < self._expires_at:
-            return self._token
-        return self._fetch()
+        with self._lock:
+            if not force_refresh and self._token and time.time() < self._expires_at:
+                return self._token
+            return self._fetch()
 
     def invalidate(self) -> None:
         """Forget the cached token. Called after a 401 -- see transport.py."""
-        self._token = None
-        self._expires_at = 0.0
+        with self._lock:
+            self._token = None
+            self._expires_at = 0.0
 
     def _fetch(self) -> str:
         settings = self._settings

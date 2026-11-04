@@ -34,7 +34,9 @@ purchase orders that lands 19 is as wrong as a full pull that lands 3,139 of
 
 from __future__ import annotations
 
+import hashlib
 import json
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone
@@ -338,6 +340,111 @@ def _read_keys(client: SapClient, spec: IngestSpec, keys: list[str]) -> _Read:
     return read
 
 
+class WindowReads:
+    """One sweep's window reads, each taken against SAP once.
+
+    The same window used to be read up to three times a cycle: a parent's own
+    fetch read it, and ``collect_parent_keys`` read it again for every
+    ``via_key`` a child needed (GoodsMovementItemSet: its fetch, then once for
+    Matnr, then once for Rsnum). The rows are identical by construction -- the
+    sweep resolves every window once, up front, before anything is fetched --
+    so the read is cached by (set, window) and the keys are extracted from the
+    cached rows.
+
+    Scoped to one sweep, never longer: a cached read held across cycles would
+    hand children yesterday's keys. Thread-safe because a parallel sweep
+    (CPI_FETCH_CONCURRENCY) shares it; two threads racing a cold entry read
+    twice and keep one, which costs a request, never a row.
+    """
+
+    def __init__(self) -> None:
+        self._reads: dict[tuple[str, str], _Read] = {}
+        self._lock = threading.Lock()
+
+    def read_direct(self, client: SapClient, spec: IngestSpec, since: str) -> _Read:
+        key = (spec.name, since)
+        with self._lock:
+            cached = self._reads.get(key)
+        if cached is not None:
+            logger.info(
+                "%s: window from %s already read this sweep; reusing its %d row(s)",
+                spec.name, since, len(cached.rows),
+            )
+            return cached
+        read = _read_direct(client, spec, since)
+        with self._lock:
+            return self._reads.setdefault(key, read)
+
+
+def _row_digest(row: dict) -> str:
+    """One row, as a stable fingerprint. Content, not identity: a parent row
+    UPDATED in place (EKPO's Aedat window re-serves the changed item) must
+    look new, or its children would never be re-read for the change."""
+    return hashlib.sha1(
+        json.dumps(row, sort_keys=True, separators=(",", ":"), default=_json_default).encode("utf-8")
+    ).hexdigest()
+
+
+class ParentWindowMemory:
+    """Parent rows whose keys were handed over AND whose children all loaded.
+
+    A delta window is a day, so until the mark moves the same parent rows come
+    back every cycle, and every cycle used to re-read every child for the same
+    keys -- on PRD that is hundreds of purchase orders and materials re-read
+    hourly, all day, for nothing. This remembers, per (parent, via_key), the
+    rows already handed over in THIS window whose consumers all fetched and
+    loaded; only rows not yet settled hand keys over again.
+
+    What makes the skip safe, point by point:
+
+    * **Content, not key.** A row is remembered by a digest of its values
+      (``_row_digest``), so a parent row that changed again -- same key, new
+      values -- is a new row and its key is handed over again. Only a row SAP
+      re-served byte-for-byte is skipped, and a byte-identical parent row is
+      the same hand-over the children already acted on.
+    * **Settled only.** Rows are remembered (``settle``) only after every
+      child that consumes this (parent, via_key) fetched AND loaded -- the
+      same bar the watermarks use. A failed child discards the batch and the
+      next cycle re-hands everything not previously settled.
+    * **One window.** The memory is keyed to the window it was read from and
+      resets the moment the mark moves: nothing learned about one window says
+      anything about the next.
+    * **Per process, in memory.** A restart, or the other worker winning the
+      lock, starts cold and simply re-reads -- the failure mode is the old
+      behaviour, never a skipped row.
+    """
+
+    def __init__(self) -> None:
+        self._settled: dict[tuple[str, str], tuple[str, frozenset[str]]] = {}
+        self._pending: dict[tuple[str, str], tuple[str, frozenset[str]]] = {}
+        self._lock = threading.Lock()
+
+    def begin(self, parent: str, via_key: str, since: str, rows: list[dict]) -> list[dict]:
+        """The rows of this window read not yet settled. Call once per sweep
+        per (parent, via_key); the full window becomes the pending batch, so a
+        later ``settle`` also lets rows that left the window fall away."""
+        key = (parent, via_key)
+        with self._lock:
+            settled_since, settled = self._settled.get(key, ("", frozenset()))
+            if settled_since != since:
+                settled = frozenset()  # the window moved; a new slate
+            digests = {id(row): _row_digest(row) for row in rows}
+            self._pending[key] = (since, frozenset(digests.values()))
+            return [row for row in rows if digests[id(row)] not in settled]
+
+    def settle(self, parent: str, via_key: str) -> None:
+        """Every consumer of this hand-over fetched and loaded: remember it."""
+        with self._lock:
+            pending = self._pending.pop((parent, via_key), None)
+            if pending is not None:
+                self._settled[(parent, via_key)] = pending
+
+    def discard(self, parent: str, via_key: str) -> None:
+        """A consumer did not settle: forget the batch, re-hand it next cycle."""
+        with self._lock:
+            self._pending.pop((parent, via_key), None)
+
+
 def has_window(parent: IngestSpec) -> bool:
     """Whether this set can be read by a date, i.e. can hand keys to a child.
 
@@ -348,14 +455,43 @@ def has_window(parent: IngestSpec) -> bool:
     return parent.delta is not None and parent.delta.direct
 
 
+def _keys_from_rows(rows: list[dict], via_key: str) -> list[str]:
+    """Distinct ``via_key`` values worth asking a child for, in row order."""
+    seen: dict[str, None] = {}
+    for row in rows:
+        value = row.get(via_key)
+        if value in (None, ""):
+            continue
+        key = str(value)
+        if key.strip("0 ") == "":
+            # SAP's initial value for a numeric key: a movement line with no
+            # reservation carries Rsnum '0000000000'. Not a key -- a child
+            # asked for it answers nothing, one request per fifty, every run.
+            continue
+        seen.setdefault(key, None)
+    return list(seen)
+
+
 def collect_parent_keys(
-    client: SapClient, parent_name: str, via_key: str, since: str | None
+    client: SapClient,
+    parent_name: str,
+    via_key: str,
+    since: str | None,
+    *,
+    window_reads: WindowReads | None = None,
+    memory: ParentWindowMemory | None = None,
 ) -> list[str]:
     """Distinct values of ``via_key`` in the parent's own delta window.
 
     Exposed rather than private so a sweep can read a parent once and hand the
     same keys to every child: POHistorySet hands keys to EKPO and EKET, and
     reading it once per child would be pure waste.
+
+    ``window_reads`` reuses a window this sweep already read -- the parent's
+    own fetch, or another via_key's collection -- instead of reading it again.
+    ``memory`` drops the rows a previous cycle of the same window already
+    handed over and settled (``ParentWindowMemory``); both default to off, and
+    off is exactly the old behaviour.
     """
     parent = spec_for(parent_name)
     if not has_window(parent):
@@ -378,25 +514,26 @@ def collect_parent_keys(
             "whole parent."
         )
 
-    read = _read_direct(client, parent, since)
+    if window_reads is not None:
+        read = window_reads.read_direct(client, parent, since)
+    else:
+        read = _read_direct(client, parent, since)
     shortfall = read.shortfall()
     if shortfall:
         # A parent window that lost rows hands over too few keys, and the
         # child would land an increment missing exactly those purchase orders.
         raise ValueError(f"{parent.name} window: {shortfall}")
-    seen: dict[str, None] = {}
-    for row in read.rows:
-        value = row.get(via_key)
-        if value in (None, ""):
-            continue
-        key = str(value)
-        if key.strip("0 ") == "":
-            # SAP's initial value for a numeric key: a movement line with no
-            # reservation carries Rsnum '0000000000'. Not a key -- a child
-            # asked for it answers nothing, one request per fifty, every run.
-            continue
-        seen.setdefault(key, None)
-    return list(seen)
+    rows = read.rows
+    if memory is not None:
+        kept = memory.begin(parent_name, via_key, since, rows)
+        if len(kept) < len(rows):
+            logger.info(
+                "%s: %d of %d window row(s) already handed over on %s and "
+                "settled in an earlier cycle; handing over the other %d",
+                parent_name, len(rows) - len(kept), len(rows), via_key, len(kept),
+            )
+        rows = kept
+    return _keys_from_rows(rows, via_key)
 
 
 def fetch_order(chosen) -> list[IngestSpec]:
@@ -476,6 +613,7 @@ def fetch_set(
     since: str | None = None,
     parent_keys: list[str] | None = None,
     advance_watermark: bool = True,
+    window_reads: WindowReads | None = None,
 ) -> FetchResult:
     """Pull one entity set and land it. Never raises -- failures are returned.
 
@@ -486,7 +624,9 @@ def fetch_set(
     for a set with only parents, of every parent's); ``parent_keys`` is the
     union of the keys the parents' windows handed over, when the caller has
     already read them -- a sweep does, once per parent. Left None, both are
-    resolved here from the watermark table.
+    resolved here from the watermark table. ``window_reads`` is the sweep's
+    window cache: this set's own window read lands there, where the children
+    that read keys through this set find it instead of reading it again.
     """
     client = client or SapClient()
     storage = storage or get_storage()
@@ -545,7 +685,10 @@ def fetch_set(
             else:
                 keys: dict[str, None] = {}
                 for parent_name, window in result.parent_windows.items():
-                    for key in collect_parent_keys(client, parent_name, delta.via_key or "", window):
+                    for key in collect_parent_keys(
+                        client, parent_name, delta.via_key or "", window,
+                        window_reads=window_reads,
+                    ):
                         keys.setdefault(key, None)
                 parent_keys = list(keys)
 
@@ -554,7 +697,11 @@ def fetch_set(
             reads.append(_read_whole(client, spec))
         else:
             if delta.direct:
-                reads.append(_read_direct(client, spec, result.since or ""))
+                since_day = result.since or ""
+                if window_reads is not None:
+                    reads.append(window_reads.read_direct(client, spec, since_day))
+                else:
+                    reads.append(_read_direct(client, spec, since_day))
             if delta.derived:
                 result.parent_keys = len(parent_keys or [])
                 if parent_keys:

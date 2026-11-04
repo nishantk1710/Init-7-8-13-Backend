@@ -407,6 +407,14 @@ class Settings(BaseSettings):
     # Rows per page. Conservative -- SAP's real server-side limit is unproven.
     cpi_page_size: int = 1000
 
+    # Entity sets a delta sweep fetches at once. 1 -- the default -- is the
+    # serial behaviour the pipeline has always had. Above 1, the sweep fetches
+    # that many independent sets in parallel threads; loads stay serial, and a
+    # set is never fetched before the parents it reads keys through. Raise it
+    # (3 was fine on QA and PRD in the 4-Nov live checks) only once SAP Basis
+    # confirms the gateway's appetite for concurrent reads from one user.
+    cpi_fetch_concurrency: int = 1
+
     # Seconds. Generous: some sets take over a minute to answer a $count.
     cpi_timeout_seconds: int = 120
 
