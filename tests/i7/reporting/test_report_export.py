@@ -301,15 +301,15 @@ def test_the_export_is_a_valid_workbook_that_opens_and_has_no_empty_sheets(db):
 # --- the sheets added with the monthly report improvements -----------------------------------------
 
 
-def test_the_kpi_sheet_carries_pending_approval_and_approved_as_separate_cards(db):
+def test_the_kpi_sheet_carries_approved_and_leaves_what_is_waiting_to_the_approval_stages(db):
     header, body = table_after(workbook(generated(db))["KPI Cards"], "Card")
     cards = {row[0]: dict(zip(header, row)) for row in body}
-    assert cards["Pending approval"]["Value"] == 1  # B
+    assert "Pending approval" not in cards  # what is waiting for a decision is in the SAP Adoption sheet's approval stages
     assert cards["Approved"]["Value"] == 1  # C
     assert "Material-plants with a computed recommendation" in cards
     assert cards["OAR recommendations"]["Unit"] == "recommendation records"  # records, not materials
     assert cards["Min-Max conversion"]["Unit"] == "material-plants" and "Approval is not conversion" in cards["Min-Max conversion"]["What it means"]
-    assert "not the same as waiting for sap" in cards["Pending approval"]["What it means"].lower()
+    assert "approved is not adopted" in cards["Approved"]["What it means"].lower()
 
 
 def test_the_position_sheet_has_the_stock_figures_and_does_not_make_them_zero_when_there_is_no_stock_load(db):

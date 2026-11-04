@@ -654,6 +654,11 @@ class RecommendationSummaryStats(BaseModel):
     chain" (see ``app.initiatives.i7.recommendations.workflow``)."""
 
     ready_for_review_count: int
+    """Every computed recommendation not yet sent for approval -- the total, whether or not it proposes a change in SAP."""
+    ready_for_review_actionable_count: int = 0
+    """The part of ``ready_for_review_count`` with something to adopt in SAP (the ``actionable`` rule): a stock item with a recommended
+    value that differs from SAP's, or an OAR material eligible for the Min-Max conversion. The rest propose no change. Added beside the
+    total, never in place of it."""
     not_evaluable_count: int
     currency: str | None = None
     """ISO code of every money figure below, when all priced materials share

@@ -771,6 +771,13 @@ def get_recommendation_summary(
         "HELD", 0
     )
     ready_for_review_count = status_counts.get("READY_FOR_REVIEW", 0)
+    # The same rule the Recommendations list's ``actionable=true`` and every SAP adoption count use, so the Pipeline's Ready for Review
+    # figure and the list under it count the same material-plants. The total above stays available beside it.
+    ready_for_review_actionable_count = session.execute(
+        select(func.count()).select_from(
+            base.where(Recommendation.status == "READY_FOR_REVIEW", _actionable()).subquery()
+        )
+    ).scalar_one()
     not_evaluable_count = status_counts.get("NOT_EVALUABLE", 0)
 
     net_value_row = session.execute(
@@ -842,6 +849,7 @@ def get_recommendation_summary(
         normal_count=normal_count,
         awaiting_approval_count=awaiting_approval_count,
         ready_for_review_count=ready_for_review_count,
+        ready_for_review_actionable_count=ready_for_review_actionable_count,
         not_evaluable_count=not_evaluable_count,
         currency=_portfolio_currency(session),
         net_safety_stock_value_impact=net_value_row,

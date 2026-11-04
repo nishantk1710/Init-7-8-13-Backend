@@ -290,12 +290,11 @@ def test_approved_is_a_status_on_the_day_the_report_was_generated_not_at_the_qua
     assert approved.measured_on == AFTER_Q4  # the generation date; the quarter ended on 31 Dec
     assert approved.period_label == "as of 15 Jan 2027"
     assert approved.denominator == 5
-    # Pending approval is its own card, a different set of recommendations from the approved ones.
-    pending = card(management, "pending_approval")
-    assert pending.value == 2  # A pending, B held
-    assert pending.kind is MetricKind.STATUS_AS_OF
-    assert pending.period_label == "as of 15 Jan 2027"
-    assert "SAP" in pending.explanation and "SAP" in approved.explanation
+    # What is waiting for a decision is not a top card: it is in the Approval status section, with every other stage.
+    assert all(c.key != "pending_approval" for c in management.kpis)
+    assert management.adoption.stages.awaiting_approval == 2  # A pending, B held
+    assert management.adoption.pending_approvals == 2
+    assert "SAP" in approved.explanation
 
 
 def test_the_three_counts_are_records_then_distinct_material_plants_then_those_with_a_computed_recommendation(db):
@@ -328,7 +327,7 @@ def test_stages_separate_approval_from_sap_and_add_up_to_the_records_generated(d
     assert sum([stages.not_submitted, stages.awaiting_approval, stages.adjusted_in_chain, stages.approved_awaiting_sap,
                 stages.implemented_in_sap, stages.rejected_or_sent_back, stages.other]) == stages.total
     # The cards read the same sets as the stages.
-    assert card(management, "pending_approval").value == stages.awaiting_approval
+    assert stages.awaiting_approval == management.adoption.pending_approvals == 2  # PENDING_APPROVAL and HELD
     assert card(management, "approved").value == stages.approved_awaiting_sap + stages.implemented_in_sap
 
 
@@ -629,14 +628,15 @@ def adoption(material, status, *, run=1, plant="1300"):
     return SapAdoptionResult(recommendation_id=f"REC-{material}-{plant}-{run}", status=status, evaluated_at=at(2026, 11))
 
 
-def test_min_max_conversion_is_not_yet_measured_when_sap_has_no_change_evidence(db):
+def test_min_max_conversion_is_zero_when_nothing_is_converted_and_says_why(db):
     db.add_all([oar("E1", at(2026, 10)), oar("E2", at(2026, 10), plant="1500"), oar("NO", at(2026, 10), verdict="NOT_ELIGIBLE")])
     db.commit()
     c = card(build(db, AFTER_Q4), "min_max_conversion")
-    assert c.value is None and c.status is AvailabilityStatus.UNKNOWN  # not a measured 0
-    assert "Not yet measured" in c.unavailable_reason
+    assert c.value == 0 and c.status is AvailabilityStatus.AVAILABLE  # a material-plant counts only when SAP shows it converted
+    assert c.unavailable_reason is None
     assert c.denominator == 2 and c.denominator_label == "eligible to convert"  # E1 and E2 may convert
-    assert "eligible" in c.note and "converted is what SAP shows" in c.note
+    assert "converted is what SAP shows" in c.note
+    assert "0 means none is confirmed converted" in c.note  # no SAP change evidence yet: the 0 is explained, not hidden
 
 
 def test_min_max_conversion_counts_the_eligible_material_plants_sap_now_matches(db):
@@ -654,6 +654,7 @@ def test_min_max_conversion_counts_the_eligible_material_plants_sap_now_matches(
     c = card(build(db, AFTER_Q4), "min_max_conversion")
     assert c.value == 1  # E1 only
     assert c.status is AvailabilityStatus.AVAILABLE and c.unavailable_reason is None
+    assert "0 means none is confirmed converted" not in c.note  # SAP has evidence for some, so the note does not say that
     assert c.denominator == 3  # E1, E2, E3 are eligible
     assert c.kind is MetricKind.STATUS_AS_OF and c.period_label == "as of 15 Jan 2027"
     assert "1 more were not eligible" in c.note  # ASKED, apart from the counts
@@ -667,7 +668,7 @@ def test_an_adoption_result_on_a_superseded_run_does_not_count_as_converted(db):
     db.commit()
     counts = kpi_definitions.min_max_conversion(db, Q4_START, date(2027, 1, 1))
     assert (counts.eligible, counts.converted, counts.with_evidence) == (1, 0, 0)
-    assert card(build(db, AFTER_Q4), "min_max_conversion").value is None
+    assert card(build(db, AFTER_Q4), "min_max_conversion").value == 0
 
 
 def test_the_min_max_card_and_the_lists_behind_it_agree(db):
