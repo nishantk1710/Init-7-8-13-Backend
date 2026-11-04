@@ -335,6 +335,11 @@ class RepairChain(I8Model):
     made in one. Null for a declaration recorded on a register screen, and
     when nothing covers the row."""
 
+    declaration_session_reference: str | None = None
+    """How that session is quoted on screen (4-Nov-2026): ``R.../n`` for a line
+    of a request, the session ID for an older single-material session. Null
+    exactly when ``declaration_session_id`` is."""
+
 
 class RegisterMeta(I8Model):
     """The register's counts. Every line counted is open in SAP; the

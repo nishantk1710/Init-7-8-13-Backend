@@ -44,7 +44,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session as DbSession
 
-from app.initiatives.i13.session_link import links_by_session, links_for_sessions
+from app.initiatives.i13.session_link import (
+    links_by_session,
+    links_for_sessions,
+    session_references,
+)
 from app.models.i13_session_link import SessionReservationLink
 from app.api.assistant.schemas import (
     AnswerRequest,
@@ -796,6 +800,23 @@ def _requester_names(db: DbSession, session_ids: list[str | None]) -> dict[str, 
     return {sid: name.strip() for sid, name in rows if name and name.strip()}
 
 
+def _sessions_quoted_as(needle: str):
+    """The sessions whose ``R.../n`` reference a search for ``needle`` matches:
+    every line of a request whose ID contains it, or the one line it names
+    when it carries a ``/n``. A subquery, so the search stays one statement."""
+    request_part, _, line_part = needle.partition("/")
+    statement = select(AssistantSession.id).where(
+        AssistantSession.request_id.is_not(None),
+        AssistantSession.request_id.icontains(request_part.strip(), autoescape=True),
+    )
+    if not request_part.strip():
+        # "/2" alone would otherwise match line 2 of every request.
+        return statement.where(False)
+    if line_part.strip().isdigit():
+        statement = statement.where(AssistantSession.line_no == int(line_part.strip()))
+    return statement
+
+
 def _purchases_answered(
     rows: list[Justification],
 ) -> dict[str, JustificationPurchaseModel] | None:
@@ -870,7 +891,9 @@ def list_justifications(
     through the rest.
 
     ``q`` is a case-insensitive substring search over the fields a reader sees
-    on a card: material, free text, author, session and reason. A space in it
+    on a card: material, free text, author, session and reason. A request
+    line's card shows ``R.../n``, so ``q`` also finds it by its request ID, and
+    by ``R.../n`` for that one line. A space in it
     also matches the underscore in a reason, so "urgent breakdown" finds
     ``URGENT_BREAKDOWN`` the way the card prints it.
     """
@@ -899,6 +922,7 @@ def list_justifications(
                 Justification.free_text.icontains(needle, autoescape=True),
                 Justification.author.icontains(needle, autoescape=True),
                 Justification.session_id.icontains(needle, autoescape=True),
+                Justification.session_id.in_(_sessions_quoted_as(needle)),
                 Justification.reason_category.icontains(
                     needle.replace(" ", "_"), autoescape=True
                 ),
@@ -921,9 +945,12 @@ def list_justifications(
     ).scalar_one()
     items = [_justification_model(row) for row in rows]
     names = _requester_names(db, [row.session_id for row in rows])
+    references = session_references(db, {row.session_id for row in rows if row.session_id})
     purchases = _purchases_answered(rows)
     for item in items:
         item.requester_name = names.get(item.session_id or "")
+        if item.session_id:
+            item.session_reference = references.get(item.session_id, item.session_id)
         if purchases is not None and item.id in purchases:
             item.purchase = purchases[item.id]
     facets = JustificationFacets(

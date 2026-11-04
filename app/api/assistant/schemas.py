@@ -362,6 +362,10 @@ class JustificationModel(AssistantModel):
     """The name typed as the requester on the session this reason was recorded
     in (28-Oct-2026). Typed, not a sign-in; null when the reason has no session
     or none was typed. Served by the justification list only."""
+    session_reference: str | None = None
+    """How the session is quoted on screen (4-Nov-2026): ``R.../n`` for a line
+    of a request, the session ID for an older single-material session. Null
+    when the reason has no session. Served by the justification list only."""
     purchase: JustificationPurchaseModel | None = None
     """NEW_ACQUISITION only, on the justification list: the new purchase this
     reason answers under the bought-new check's rule. Null when no purchase has
