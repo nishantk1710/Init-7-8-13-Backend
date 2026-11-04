@@ -157,7 +157,7 @@ def _cards(
     awaiting: int,
     approved: int,
     oar_records: int,
-    min_max: tuple[int, int, int],
+    min_max: kpi_definitions.MinMaxCounts,
     position: PositionFigures,
 ) -> list[KpiCard]:
     stockout = position.stockout
@@ -354,8 +354,7 @@ def _cards(
             denominator_label="recommendations generated in the period",
         )
     )
-    # --- OAR: how many records, and how many material-plants may convert to Min-Max ordering ------------
-    eligible, oar_material_plants, manual = min_max
+    # --- OAR: how many records, and how many material-plants have converted to Min-Max ordering ---------
     cards.append(
         KpiCard(
             key="oar_recommendations",
@@ -374,27 +373,34 @@ def _cards(
             denominator_label="recommendations generated in the period",
         )
     )
+    measured = min_max.with_evidence > 0
     cards.append(
         KpiCard(
             key="min_max_conversion",
             title="Min-Max conversion",
             unit="material-plants",
-            value=Decimal(eligible),
-            status=AvailabilityStatus.AVAILABLE,
+            value=Decimal(min_max.converted) if measured else None,
+            # With no SAP change evidence for any eligible material-plant, nothing has been measured: that is not a count of 0.
+            status=AvailabilityStatus.AVAILABLE if measured else AvailabilityStatus.UNKNOWN,
             explanation=(
-                "OAR material-plants whose newest recommendation from this period is eligible to be converted to Min-Max ordering, by the "
-                "conversion rule. Eligible is the rule's verdict, not a change made in SAP: whether SAP was changed is the SAP adoption "
-                "section."
+                "OAR material-plants converted to Min-Max ordering in SAP: eligible by the conversion rule, and SAP now holds Min-Max with "
+                "its minimum and maximum filled in, as the SAP adoption check finds. Approval is not conversion, and a material-plant with "
+                "no SAP change evidence yet is not counted."
             ),
             kind=MetricKind.STATUS_AS_OF,
             measured_on=as_of,
             period_label=f"as of {as_of:%d %b %Y}",
-            denominator=oar_material_plants,
-            denominator_label="OAR material-plants",
+            denominator=min_max.eligible,
+            denominator_label="eligible to convert",
+            unavailable_reason=(
+                None if measured
+                else "Not yet measured: no SAP change evidence has been recorded for the eligible OAR material-plants, so a conversion "
+                "cannot be confirmed. This is distinct from a measured 0."
+            ),
             note=(
-                f"{manual:,} more were not eligible but were requested for conversion by a user; they are not counted here."
-                if manual
-                else None
+                f"{min_max.eligible:,} of the period's {min_max.oar_material_plants:,} OAR material-plants are eligible to convert by the "
+                "rule. Eligible is the rule's verdict; converted is what SAP shows."
+                + (f" {min_max.manually_requested:,} more were not eligible but were requested by a user; they are not counted." if min_max.manually_requested else "")
             ),
         )
     )

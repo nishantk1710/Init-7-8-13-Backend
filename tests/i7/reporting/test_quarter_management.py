@@ -625,40 +625,72 @@ def test_oar_records_are_counted_as_records_not_materials(db):
     assert "records, not materials" in card_.explanation
 
 
-def test_min_max_conversion_counts_eligible_oar_material_plants_and_keeps_manual_requests_apart(db):
+def adoption(material, status, *, run=1, plant="1300"):
+    return SapAdoptionResult(recommendation_id=f"REC-{material}-{plant}-{run}", status=status, evaluated_at=at(2026, 11))
+
+
+def test_min_max_conversion_is_not_yet_measured_when_sap_has_no_change_evidence(db):
+    db.add_all([oar("E1", at(2026, 10)), oar("E2", at(2026, 10), plant="1500"), oar("NO", at(2026, 10), verdict="NOT_ELIGIBLE")])
+    db.commit()
+    c = card(build(db, AFTER_Q4), "min_max_conversion")
+    assert c.value is None and c.status is AvailabilityStatus.UNKNOWN  # not a measured 0
+    assert "Not yet measured" in c.unavailable_reason
+    assert c.denominator == 2 and c.denominator_label == "eligible to convert"  # E1 and E2 may convert
+    assert "eligible" in c.note and "converted is what SAP shows" in c.note
+
+
+def test_min_max_conversion_counts_the_eligible_material_plants_sap_now_matches(db):
     db.add_all([
-        oar("ELIG1", at(2026, 10)), oar("ELIG2", at(2026, 10), plant="1500"),
-        oar("NO", at(2026, 10), verdict="NOT_ELIGIBLE"),
-        oar("ASKED", at(2026, 10), verdict="NOT_ELIGIBLE", manual=True),  # the rule said no and somebody asked anyway
-        oar("STOCK", at(2026, 10), is_oar=False, verdict=None),
+        oar("E1", at(2026, 10)), oar("E2", at(2026, 10), plant="1500"), oar("E3", at(2026, 10)), oar("NO", at(2026, 10), verdict="NOT_ELIGIBLE"),
+        oar("ASKED", at(2026, 10), verdict="NOT_ELIGIBLE", manual=True), oar("STOCK", at(2026, 10), is_oar=False, verdict=None),
         oar("OLD", at(2026, 6)),  # generated in another period
-        oar("RERUN", at(2026, 10), verdict="NOT_ELIGIBLE", run=1), oar("RERUN", at(2026, 10, 25), verdict="ELIGIBLE", run=2),  # the newest wins
+    ])
+    db.add_all([
+        adoption("E1", "ADOPTED"), adoption("E2", "NOT_ADOPTED", plant="1500"),  # E3 has no result yet: pending, not converted
+        adoption("ASKED", "ADOPTED"),  # converted, but the rule did not make it eligible: not counted here
+        adoption("OLD", "ADOPTED"),  # another period
     ])
     db.commit()
     c = card(build(db, AFTER_Q4), "min_max_conversion")
-    assert c.value == 3  # ELIG1, ELIG2 and RERUN's newest run; ASKED is not eligible
-    assert c.denominator == 5 and c.denominator_label == "OAR material-plants"  # ELIG1, ELIG2, NO, ASKED, RERUN; not STOCK or OLD
+    assert c.value == 1  # E1 only
+    assert c.status is AvailabilityStatus.AVAILABLE and c.unavailable_reason is None
+    assert c.denominator == 3  # E1, E2, E3 are eligible
     assert c.kind is MetricKind.STATUS_AS_OF and c.period_label == "as of 15 Jan 2027"
-    assert "1 more were not eligible" in c.note  # ASKED, apart from the eligible count
-    assert "not a change made in SAP" in c.explanation
+    assert "1 more were not eligible" in c.note  # ASKED, apart from the counts
+    counts = kpi_definitions.min_max_conversion(db, Q4_START, date(2027, 1, 1))
+    assert (counts.eligible, counts.converted, counts.with_evidence, counts.oar_material_plants, counts.manually_requested) == (3, 1, 2, 5, 1)
 
 
-def test_the_min_max_card_and_the_list_behind_it_agree(db):
-    """The card is worked out with the Recommendations list's own filters, so clicking it lists exactly the counted material-plants."""
+def test_an_adoption_result_on_a_superseded_run_does_not_count_as_converted(db):
+    db.add_all([oar("RERUN", at(2026, 10), run=1), oar("RERUN", at(2026, 10, 25), run=2)])
+    db.add(adoption("RERUN", "ADOPTED", run=1))  # SAP matched the older run; the newest run has no result yet
+    db.commit()
+    counts = kpi_definitions.min_max_conversion(db, Q4_START, date(2027, 1, 1))
+    assert (counts.eligible, counts.converted, counts.with_evidence) == (1, 0, 0)
+    assert card(build(db, AFTER_Q4), "min_max_conversion").value is None
+
+
+def test_the_min_max_card_and_the_lists_behind_it_agree(db):
+    """The counts use the Recommendations list's own filters, so each click-through list holds exactly the counted material-plants."""
     from app.api.i7 import recommendations as api
 
     db.add_all([
-        oar("E1", at(2026, 10)), oar("E2", at(2026, 11), plant="1500"), oar("NO", at(2026, 10), verdict="NOT_ELIGIBLE"),
-        oar("RERUN", at(2026, 10), run=1), oar("RERUN", at(2026, 12, 20), run=2),  # regenerated late: the list shows its newest run
+        oar("E1", at(2026, 10)), oar("E2", at(2026, 11), plant="1500"), oar("E3", at(2026, 10)), oar("NO", at(2026, 10), verdict="NOT_ELIGIBLE"),
         oar("EARLY", at(2026, 9)),  # before the period
     ])
+    db.add_all([adoption("E1", "ADOPTED"), adoption("E2", "ADOPTED", plant="1500"), adoption("NO", "ADOPTED")])
     db.commit()
-    start, end = Q4_START, date(2027, 1, 1)
-    listed = api.list_recommendations(
-        session=db, page=1, page_size=50, sort="generated_at", sort_desc=True, status=None, plant=None, material=None, demand_class=None,
-        is_oar=None, confidence=None, criticality=None, generated_from=datetime(2026, 10, 1), generated_to=datetime(2027, 1, 1), demand_type="oar",
-        search=None, criticality_level=None, status_group=None, risk=None, conversion_eligibility="ELIGIBLE",
-    )
-    assert card(build(db, AFTER_Q4), "min_max_conversion").value == listed.total == 3  # E1, E2, RERUN
-    assert sorted(item.material for item in listed.items) == ["E1", "E2", "RERUN"]
-    assert kpi_definitions.min_max_conversion(db, start, end)[0] == listed.total
+
+    def listed(**more):
+        return api.list_recommendations(
+            session=db, page=1, page_size=50, sort="generated_at", sort_desc=True, status=None, plant=None, material=None, demand_class=None,
+            is_oar=None, confidence=None, criticality=None, generated_from=datetime(2026, 10, 1), generated_to=datetime(2027, 1, 1),
+            demand_type="oar", search=None, criticality_level=None, status_group=None, risk=None, conversion_eligibility="ELIGIBLE", **more,
+        )
+
+    management = build(db, AFTER_Q4)
+    converted, eligible = listed(adopted_in_sap=True), listed()
+    c = card(management, "min_max_conversion")
+    assert c.value == converted.total == 2 and c.denominator == eligible.total == 3
+    assert sorted(item.material for item in converted.items) == ["E1", "E2"]  # NO was adopted but is not eligible
+    assert sorted(item.material for item in eligible.items) == ["E1", "E2", "E3"]

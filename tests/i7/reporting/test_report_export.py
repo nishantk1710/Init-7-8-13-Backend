@@ -308,7 +308,7 @@ def test_the_kpi_sheet_carries_pending_approval_and_approved_as_separate_cards(d
     assert cards["Approved"]["Value"] == 1  # C
     assert "Material-plants with a computed recommendation" in cards
     assert cards["OAR recommendations"]["Unit"] == "recommendation records"  # records, not materials
-    assert cards["Min-Max conversion"]["Unit"] == "material-plants" and "not a change made in SAP" in cards["Min-Max conversion"]["What it means"]
+    assert cards["Min-Max conversion"]["Unit"] == "material-plants" and "Approval is not conversion" in cards["Min-Max conversion"]["What it means"]
     assert "not the same as waiting for sap" in cards["Pending approval"]["What it means"].lower()
 
 
