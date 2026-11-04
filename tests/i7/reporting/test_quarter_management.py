@@ -605,8 +605,9 @@ def test_a_month_without_staged_consumption_is_not_covered_never_zero(db):
 # --- OAR records and Min-Max conversion ---------------------------------------------------------
 
 
-def oar(material, when, *, verdict="ELIGIBLE", manual=False, run=1, plant="1300", is_oar=True):
-    row = rec(material, when, run=run, plant=plant)
+def oar(material, when, *, verdict="ELIGIBLE", manual=False, run=1, plant="1300", is_oar=True, valued=True):
+    """An OAR recommendation. ``valued=False`` is one with no recommended value at all, as an eligible material the system could not size."""
+    row = rec(material, when, run=run, plant=plant, rec_rop=5 if valued else None)
     row.is_oar, row.conversion_eligibility, row.manually_converted = is_oar, verdict, manual
     return row
 
@@ -634,7 +635,7 @@ def test_min_max_conversion_is_zero_when_nothing_is_converted_and_says_why(db):
     c = card(build(db, AFTER_Q4), "min_max_conversion")
     assert c.value == 0 and c.status is AvailabilityStatus.AVAILABLE  # a material-plant counts only when SAP shows it converted
     assert c.unavailable_reason is None
-    assert c.denominator == 2 and c.denominator_label == "eligible to convert"  # E1 and E2 may convert
+    assert c.denominator == 2 and c.denominator_label == "eligible to convert, with recommended values"  # E1 and E2 may convert
     assert "converted is what SAP shows" in c.note
     assert "0 means none is confirmed converted" in c.note  # no SAP change evidence yet: the 0 is explained, not hidden
 
@@ -686,7 +687,7 @@ def test_the_min_max_card_and_the_lists_behind_it_agree(db):
         return api.list_recommendations(
             session=db, page=1, page_size=50, sort="generated_at", sort_desc=True, status=None, plant=None, material=None, demand_class=None,
             is_oar=None, confidence=None, criticality=None, generated_from=datetime(2026, 10, 1), generated_to=datetime(2027, 1, 1),
-            demand_type="oar", search=None, criticality_level=None, status_group=None, risk=None, conversion_eligibility="ELIGIBLE", **more,
+            demand_type="oar", search=None, criticality_level=None, status_group=None, risk=None, conversion_eligibility="ELIGIBLE", has_recommended=True, **more,
         )
 
     management = build(db, AFTER_Q4)
@@ -695,3 +696,24 @@ def test_the_min_max_card_and_the_lists_behind_it_agree(db):
     assert c.value == converted.total == 2 and c.denominator == eligible.total == 3
     assert sorted(item.material for item in converted.items) == ["E1", "E2"]  # NO was adopted but is not eligible
     assert sorted(item.material for item in eligible.items) == ["E1", "E2", "E3"]
+
+
+def test_an_eligible_material_with_no_recommended_value_has_nothing_to_move_and_is_counted_apart(db):
+    # The rule allows all four, but only two have a value worked out: the others cannot be moved to Min-Max yet.
+    db.add_all([
+        oar("HAS1", at(2026, 10)), oar("HAS2", at(2026, 10), plant="1500"),
+        oar("NOVAL1", at(2026, 10), valued=False), oar("NOVAL2", at(2026, 10), valued=False, plant="1500"),
+    ])
+    db.add(adoption("HAS1", "ADOPTED"))
+    db.commit()
+    c = card(build(db, AFTER_Q4), "min_max_conversion")
+    assert c.denominator == 2 and c.value == 1  # HAS1 and HAS2 can move; HAS1 has moved
+    assert "2 more are eligible by the rule but have no recommended value yet" in c.note
+    counts = kpi_definitions.min_max_conversion(db, Q4_START, date(2027, 1, 1))
+    assert (counts.eligible, counts.without_values, counts.converted, counts.oar_material_plants) == (2, 2, 1, 4)
+
+
+def test_without_any_eligible_value_the_note_stays_quiet_about_it(db):
+    db.add_all([oar("A", at(2026, 10)), oar("B", at(2026, 10), plant="1500")])
+    db.commit()
+    assert "no recommended value yet" not in card(build(db, AFTER_Q4), "min_max_conversion").note

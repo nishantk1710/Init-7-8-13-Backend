@@ -142,7 +142,10 @@ def oar_records(session: Session, period_start: date, exclusive_end: date) -> in
 
 class MinMaxCounts(NamedTuple):
     eligible: int
-    """OAR material-plants the conversion rule says may convert to Min-Max ordering."""
+    """OAR material-plants the conversion rule says may convert to Min-Max ordering *and* that have a recommended value -- the same
+    rule SAP adoption uses (an eligible OAR counts only when a value was calculated), so the two never disagree."""
+    without_values: int
+    """Eligible by the rule but with no recommended value at all: nothing to move to Min-Max yet. Counted apart, never in ``eligible``."""
     oar_material_plants: int
     manually_requested: int
     """NOT_ELIGIBLE ones a user asked to convert anyway; never added into ``eligible``."""
@@ -157,8 +160,10 @@ def min_max_conversion(session: Session, period_start: date, exclusive_end: date
     """Min-Max conversion over the OAR recommendations the Recommendations list shows for the period: generated in it, and the newest of
     their material-plant. Built from the list's own filters, so every count here and the list behind it can never disagree.
 
-    *Eligible* is the OAR rule's own verdict (``conversion_eligibility`` = ELIGIBLE) that the material-plant may convert -- not a change
-    made in SAP. *Converted* is the eligible ones SAP now matches (SAP adoption evidence): the change was actually made.
+    *Eligible* is the OAR rule's own verdict (``conversion_eligibility`` = ELIGIBLE) that the material-plant may convert, for those with
+    at least one recommended value: a material-plant the rule allows but that has no value calculated has nothing to move, and is counted in
+    ``without_values`` instead. Not a change made in SAP. *Converted* is the eligible ones SAP now matches (SAP adoption evidence): the
+    change was actually made.
     """
     def oar_list(**more):
         return _latest_only(
@@ -169,15 +174,20 @@ def min_max_conversion(session: Session, period_start: date, exclusive_end: date
         )
 
     oar = oar_list()
-    eligible = oar.where(Recommendation.conversion_eligibility == "ELIGIBLE")
+    by_rule = oar.where(Recommendation.conversion_eligibility == "ELIGIBLE")
+    eligible = oar_list(has_recommended=True).where(Recommendation.conversion_eligibility == "ELIGIBLE")
     evidence = select(SapAdoptionResult.recommendation_id).where(
         SapAdoptionResult.status.in_(("ADOPTED", "PARTIALLY_ADOPTED", "NOT_ADOPTED"))
     )
+    eligible_count = count_of(session, eligible)
     return MinMaxCounts(
-        eligible=count_of(session, eligible),
+        eligible=eligible_count,
+        without_values=count_of(session, by_rule) - eligible_count,
         oar_material_plants=count_of(session, oar),
         manually_requested=count_of(session, oar.where(Recommendation.manually_converted)),
-        converted=count_of(session, oar_list(adopted_in_sap=True).where(Recommendation.conversion_eligibility == "ELIGIBLE")),
+        converted=count_of(
+            session, oar_list(adopted_in_sap=True, has_recommended=True).where(Recommendation.conversion_eligibility == "ELIGIBLE")
+        ),
         with_evidence=count_of(session, eligible.where(Recommendation.recommendation_id.in_(evidence))),
     )
 
