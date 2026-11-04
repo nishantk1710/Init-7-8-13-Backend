@@ -149,8 +149,13 @@ def factory():
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
-    # No tables: everything these routes read comes from the view and the
-    # snapshot, which are replaced below.
+    # Only the sessions table, which the register reads to quote a
+    # declaration's session as ``R.../n`` (4-Nov-2026). Everything else these
+    # routes read comes from the view and the snapshot, which are replaced below.
+    from app.assistant.models import AssistantSession
+    from app.models.base import Base
+
+    Base.metadata.create_all(engine, tables=[AssistantSession.__table__])
     return sessionmaker(bind=engine)
 
 
@@ -1133,6 +1138,9 @@ class TestDeclarationsOnTheRegister:
         assert rows["4500000002-10"]["declarationSessionId"] is None
         assert rows["4500000003-10"]["declarationSessionId"] is None  # nothing covers it
         assert rows["PR-2000029104-10"]["declarationSessionId"] == "SQ4X9B2T7M"
+        # Not on record here, so each is quoted by its own ID.
+        assert rows["4500000001-10"]["declarationSessionReference"] == "S7K2M4P8Q1"
+        assert rows["4500000002-10"]["declarationSessionReference"] is None
 
 
 class TestStockSplitOnTheRegister:

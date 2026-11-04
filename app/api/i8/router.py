@@ -88,6 +88,7 @@ from app.initiatives.i8.service import (
     get_snapshot,
 )
 from app.initiatives.i8.universe import UniverseRow
+from app.initiatives.i13.session_link import session_references
 from app.shared import get_criticality_source
 
 router = APIRouter(prefix="/i8", tags=["i8 - refurbishable spares"])
@@ -221,6 +222,26 @@ def _request_chain(
         declaration=_request_declaration(request, view) if view else None,
         **stock_split(row, cfg),
     )
+
+
+def _with_session_references(db: Session, chains: list[RepairChain]) -> list[RepairChain]:
+    """The rows, each with how its declaration's session is quoted on screen.
+
+    A request line's session ID is internal: the requester only ever saw
+    ``R.../n``. One query for the page; the ID stands in for a session that is
+    no longer on record.
+    """
+    refs = session_references(
+        db, {c.declaration_session_id for c in chains if c.declaration_session_id}
+    )
+    return [
+        c.model_copy(
+            update={"declaration_session_reference": refs.get(c.declaration_session_id, c.declaration_session_id)}
+        )
+        if c.declaration_session_id
+        else c
+        for c in chains
+    ]
 
 
 def _criticality_of(
@@ -392,6 +413,7 @@ def get_universe_material(
     summary="Open repair lines, at material + repair-PO-line grain",
 )
 def get_register(
+    db: DbDep,
     snapshot: SnapshotDep,
     cfg: SettingsDep,
     view: AttestationViewDep,
@@ -635,12 +657,15 @@ def get_register(
     rows: tuple[RepairLine | RepairRequest, ...] = (*lines, *requests)
     page_rows, total = _paginate(rows, page, page_size)
     return RegisterResponse(
-        items=[
-            _request_chain(row, cfg, lookup, view=view)
-            if isinstance(row, RepairRequest)
-            else _chain(row, cfg, lookup, view)
-            for row in page_rows
-        ],
+        items=_with_session_references(
+            db,
+            [
+                _request_chain(row, cfg, lookup, view=view)
+                if isinstance(row, RepairRequest)
+                else _chain(row, cfg, lookup, view)
+                for row in page_rows
+            ],
+        ),
         page=page,
         page_size=page_size,
         total=total,
@@ -659,6 +684,7 @@ def get_register(
 def get_repair_line(
     document: str,
     item: str,
+    db: DbDep,
     snapshot: SnapshotDep,
     cfg: SettingsDep,
     view: AttestationViewDep,
@@ -682,7 +708,7 @@ def get_repair_line(
                 detail=f"No open repair request {document}/{item}.",
             )
         return RepairDetail(
-            line=_request_chain(request, cfg, _stock_lookup(snapshot), view=view),
+            line=_with_session_references(db, [_request_chain(request, cfg, _stock_lookup(snapshot), view=view)])[0],
             timeline=request_timeline(
                 request,
                 snapshot.reference_date,
@@ -699,7 +725,7 @@ def get_repair_line(
             detail=f"No repair line {document}/{item} in this extract.",
         )
     return RepairDetail(
-        line=_chain(line, cfg, _stock_lookup(snapshot), view),
+        line=_with_session_references(db, [_chain(line, cfg, _stock_lookup(snapshot), view)])[0],
         timeline=timeline(
             line,
             snapshot.reference_date,

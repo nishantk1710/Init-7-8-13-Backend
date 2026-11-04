@@ -271,7 +271,7 @@ class TestResponseShapeMatchesTheFrontend:
         from app.api.i8.schemas import RepairChain, UniverseItem
 
         chain = {field.alias or name: field for name, field in RepairChain.model_fields.items()}
-        for name in ("usableStock", "damagedStock", "stockConditionKnown", "declarationSessionId"):
+        for name in ("usableStock", "damagedStock", "stockConditionKnown", "declarationSessionId", "declarationSessionReference"):
             assert chain[name].default is None, name
         item = {field.alias or name: field for name, field in UniverseItem.model_fields.items()}
         for name in ("usableStock", "damagedStock"):
