@@ -80,8 +80,43 @@ env:
     app-vzi-aicom-nonprod-san-hkhabvd6dkegfbh4.southafricanorth-01.azurewebsites.net
 
 jobs:
+  # The one test run per merge to dev. ci.yml deliberately does not run on dev
+  # pushes any more: this job carries the same SQL Server service container,
+  # migrations and marker filter ci.yml uses on PRs, so the gate is the strong
+  # (DB-backed) suite rather than the old weaker copy that let the database
+  # tests skip -- and the suite runs once per merge instead of twice.
   test:
     runs-on: ubuntu-latest
+
+    services:
+      mssql:
+        # Same container as ci.yml: the app only ever talks to Azure SQL
+        # (mssql+pyodbc); a different engine here would test a database nobody
+        # deploys against.
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "ci-Passw0rd!"
+        ports:
+          - 1433:1433
+        # Without this the job can start connecting before SQL Server accepts
+        # connections, and the first migration fails intermittently.
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P ci-Passw0rd! -C -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      # See ci.yml for why 127.0.0.1 (not localhost) and why
+      # TrustServerCertificate=yes is acceptable ONLY against this container.
+      DATABASE_URL: >-
+        mssql+pyodbc://sa:ci-Passw0rd!@127.0.0.1:1433/spares_ai_ci
+        ?driver=ODBC+Driver+18+for+SQL+Server&Encrypt=yes&TrustServerCertificate=yes
+      # Deliberately unset: the SAP extracts are not in CI, and the tests that
+      # need them skip and say so.
+      STORAGE_URL: ""
+
     steps:
       - uses: actions/checkout@v4
 
@@ -89,22 +124,41 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install ODBC Driver 18 for SQL Server
+        # pyodbc needs this system package; see ci.yml.
+        run: |
+          curl https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc
+          curl https://packages.microsoft.com/config/ubuntu/22.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+          sudo apt-get update
+          ACCEPT_EULA=Y sudo apt-get install -y msodbcsql18 unixodbc-dev mssql-tools18
 
       - run: pip install -r requirements.txt
+
+      - name: Create test database
+        run: |
+          /opt/mssql-tools18/bin/sqlcmd -S 127.0.0.1 -U sa -P "ci-Passw0rd!" -C \
+            -Q "IF DB_ID('spares_ai_ci') IS NULL CREATE DATABASE spares_ai_ci"
+
+      - name: Apply migrations
+        # Proves the migrations actually run against an empty database -- which
+        # `pytest` alone does not, since it finds the schema already there.
+        run: alembic upgrade head
 
       # The build gate. Azure-dependent tests skip here by design -- this runner
       # is outside the VNet -- so what runs is everything that does not need
       # Azure, including the storage conformance suite against its fake.
       #
-      # Both markers are spelled out because a command-line -m REPLACES the one
-      # in pytest.ini's addopts rather than combining with it. Writing only
+      # All three markers are spelled out because a command-line -m REPLACES the
+      # one in pytest.ini's addopts rather than combining with it. Writing only
       # "not drift" here would silently re-enable the live SAP tests and have
       # this runner call CPI on every push.
       #
       # Green here does NOT mean the deployment works. The smoke checks below,
       # and W2.2 from inside the App Service, are what prove that.
       - name: Tests
-        run: python -m pytest -q -m "not live and not drift"
+        run: python -m pytest -q -rs -m "not live and not drift and not needs_seed_data"
 
       # Drift is reported, never blocking. These compare our recorded knowledge
       # of SAP against itself; they fail when SAP changes, which is information
