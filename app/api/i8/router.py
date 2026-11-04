@@ -49,6 +49,7 @@ from app.api.i8.schemas import (
     SessionJobResponse,
     AttestationResponse,
     CodingCandidateResponse,
+    CodingUnscreenedResponse,
     DeclarationResponse,
     FeaturesResponse,
     MaterialReference,
@@ -86,6 +87,7 @@ from app.initiatives.i8.service import (
     get_attestation_view,
     get_coding_screen,
     get_snapshot,
+    peek_unscreened_count,
 )
 from app.initiatives.i8.universe import UniverseRow
 from app.initiatives.i13.session_link import session_references
@@ -1118,6 +1120,19 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
 
 
 @router.get(
+    "/coding-candidates/unscreened",
+    response_model=CodingUnscreenedResponse,
+    summary="How many repair candidates wait for the AI screen",
+)
+def get_coding_unscreened(cfg: SettingsDep) -> CodingUnscreenedResponse:
+    """The count the Repair Candidates page shows as "not screened yet", read
+    off the screen already built for that page (4-Nov-2026). Null when none is
+    built: this answers on every page for the menu's badge, so it never builds
+    the screen, which takes seconds the first time after a data reload."""
+    return CodingUnscreenedResponse(unscreened=peek_unscreened_count(cfg))
+
+
+@router.get(
     "/features",
     response_model=FeaturesResponse,
     summary="Which I08 features this backend serves",
@@ -1195,6 +1210,7 @@ def get_repairable_unit(
                 vendor_name=item.vendor_name,
                 status=item.status,
                 dispatched=item.dispatched,
+                dispatched_at=item.dispatched_at,
             )
             for item in verdict.evidence
         ],

@@ -69,6 +69,22 @@ def i13_step(answers, assessment=None, suggestion=None):
     )
 
 
+class TestI08Endings:
+    def test_no_stock_record_does_not_say_go_ahead(self) -> None:
+        """The headline says a physical check is worth making; "go ahead" after
+        it contradicted that (4-Nov-2026)."""
+        assessment = i08_assessment(rows=[universe_row(stock_on_hand=None)], lines=[])
+        step = i08_step(SKIP, assessment)
+        assert step.kind is StepKind.TERMINAL
+        assert "Worth a physical check before buying new." in step.prompt
+        assert "go ahead" not in step.prompt
+
+    def test_nothing_in_stock_or_on_repair_still_says_go_ahead(self) -> None:
+        assessment = i08_assessment(rows=[universe_row(stock_on_hand=0)], lines=[])
+        step = i08_step(SKIP, assessment)
+        assert "Nothing here suggests holding off, so go ahead." in step.prompt
+
+
 class TestI08Shape:
     def test_it_opens_by_challenging_the_purchase(self) -> None:
         step = i08_step({})

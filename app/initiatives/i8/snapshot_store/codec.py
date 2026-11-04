@@ -79,7 +79,13 @@ from typing import Any
 # again) the exception queue was removed: the Snapshot lost unreferenced_lines
 # and session_check_start, and NewAcquisition lost line_created_on. A version-6
 # payload naming them would no longer construct.
-CODEC_VERSION = 7
+#
+# 8 since 4-Nov-2026: RepairLine gained received_qty, and the register leaves
+# out a line received in full and nets the 542s off its dispatches. A version-7
+# payload would construct -- the field defaults -- but would go on serving
+# received lines as out for repair, and reversed dispatches as at the vendor,
+# until the next rebuild.
+CODEC_VERSION = 8
 _ALLOWED = "app.initiatives.i8."
 
 

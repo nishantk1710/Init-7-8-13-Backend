@@ -119,6 +119,18 @@ class TestNotARepairablePart:
         assert verdict.exists is False
         assert "not an 80-series repairable part" in verdict.headline
 
+    def test_an_80_series_part_with_no_row_at_the_plant_is_not_called_non_80(self) -> None:
+        """8000001910 at 1300 (it is stocked at 1500 only) was told it was "not
+        an 80-series repairable part" (4-Nov-2026)."""
+        verdict = _assess(universe_rows=[_universe_row(material_id="8000001910", plant="1500")], material="8000001910")
+        assert verdict.is_repairable_material is False
+        assert verdict.eighty_series is True
+        assert "not an 80-series" not in verdict.headline
+        assert verdict.headline == (
+            "8000001910 has no stock, planning or repair record at plant 1300, "
+            "so there is no repairable unit to look for there."
+        )
+
     def test_nothing_is_reported_as_zero_when_nothing_was_checked(self) -> None:
         """Zeros would read as "we looked and found none". We did not look."""
         verdict = _assess(universe_rows=[], material="1000000123")
@@ -436,6 +448,29 @@ class TestUsableAndDamagedStock:
             "There are 2 usable in stock at plant 1300 (1 new, 1 refurbished); "
             "1 damaged unit is not counted."
         )
+
+    def test_the_storage_locations_are_not_claimed_for_the_usable_units(self) -> None:
+        """8000000948 at 1300: 1 usable and 1 damaged in two locations read
+        "1 usable in stock across 2 storage locations" (4-Nov-2026)."""
+        verdict = _assess(
+            universe_rows=[
+                _universe_row(
+                    stock_on_hand=Decimal("2"), storage_locations=2,
+                    **_known(usable=1, damaged=1, NEW=1, DAMAGED=1),
+                )
+            ]
+        )
+        assert verdict.headline.startswith(
+            "There is 1 usable in stock at plant 1300; 1 damaged unit is not counted."
+        )
+
+    def test_the_storage_locations_are_named_when_every_unit_is_usable(self) -> None:
+        verdict = _assess(
+            universe_rows=[
+                _universe_row(stock_on_hand=Decimal("2"), storage_locations=2, **_known(usable=2, NEW=2))
+            ]
+        )
+        assert verdict.headline.startswith("There are 2 usable in stock at plant 1300 across 2 storage locations.")
 
     def test_one_condition_gives_no_breakdown_and_no_damaged_clause(self) -> None:
         verdict = _assess(

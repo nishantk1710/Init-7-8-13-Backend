@@ -78,7 +78,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import TYPE_CHECKING, Callable, Sequence
 
-from app.initiatives.i8.material_number import normalise
+from app.initiatives.i8.material_number import is_eighty_series, normalise
 from app.initiatives.i8.register import RepairLine
 from app.initiatives.i8.universe import UniverseRow
 from app.shared.numbers import plain
@@ -182,6 +182,10 @@ class RepairEvidence:
     """Whether a dispatch movement exists. False on every open line today, and
     the reason the assistant does not claim the vendor holds the unit."""
 
+    dispatched_at: date | None = None
+    """The first 541 on the line, when there is one (4-Nov-2026): the card says
+    when the unit was sent. Appended with a default; older records lack it."""
+
 
 @dataclass(frozen=True)
 class RepairableUnitVerdict:
@@ -251,6 +255,12 @@ class RepairableUnitVerdict:
     """``MCHB`` / ``MBEW`` when the condition is known, ``MARD`` when only the
     total is (the fallback), None when there is no stock record at all."""
 
+    eighty_series: bool = False
+    """Whether the material number is 80-series (4-Nov-2026). A part can be
+    80-series and still have no row at the plant asked about -- no stock,
+    planning or repair record there -- and must not then be told it is not
+    80-series."""
+
     @property
     def has_stock(self) -> bool:
         """True only when stock is *known* and positive. The MARD total."""
@@ -281,6 +291,12 @@ class RepairableUnitVerdict:
         record and it is the one stored.
         """
         if not self.is_repairable_material:
+            if self.eighty_series:
+                at = f" at plant {self.plant}" if self.plant else ""
+                return (
+                    f"{self.material_id} has no stock, planning or repair record{at}, "
+                    "so there is no repairable unit to look for there."
+                )
             return (
                 f"{self.material_id} is not an 80-series repairable part, so "
                 "there is no repairable unit to look for."
@@ -298,9 +314,12 @@ class RepairableUnitVerdict:
         if self.stock_condition_known:
             if self.has_usable_stock:
                 usable = self.usable_stock
+                # The locations hold the damaged units too, and nothing says
+                # which hold the usable ones: "1 usable across 2 storage
+                # locations" read as if both did (4-Nov-2026).
                 clause = (
                     f"There {'is' if usable == 1 else 'are'} {plain(usable)} "
-                    f"usable in stock at plant {self.plant}{where}"
+                    f"usable in stock at plant {self.plant}{'' if self.damaged_stock else where}"
                 )
                 # The breakdown only says something when there is more than
                 # one condition to tell apart.
@@ -490,6 +509,7 @@ def assess(
         return RepairableUnitVerdict(
             material_id=material_key,
             plant=plant_key,
+            eighty_series=is_eighty_series(material_key),
             is_repairable_material=False,
             exists=False,
             sources=(),
@@ -537,6 +557,7 @@ def assess(
             vendor_name=line.vendor_name,
             status=line.repair_status,
             dispatched=line.dispatched_at is not None,
+            dispatched_at=line.dispatched_at,
         )
         for line in open_lines
     )
@@ -596,6 +617,7 @@ def assess(
     return RepairableUnitVerdict(
         material_id=material_key,
         plant=plant_key,
+        eighty_series=True,
         is_repairable_material=True,
         exists=bool(sources),
         sources=tuple(sources),

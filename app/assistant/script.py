@@ -284,10 +284,16 @@ def _i08(
             #
             # The declaration question is still asked, and as the first step
             # it carries the card the terminal used to sit under.
+            #
+            # No "go ahead" when no stock record exists: the headline has just
+            # said a physical check is worth making before buying new, and the
+            # two read as contradicting each other (4-Nov-2026).
+            verdict = assessment.verdict
+            unknown_stock = verdict.is_repairable_material and verdict.stock_is_unknown
             return _declaration_or_end(
                 session_id=session_id,
                 answers=answers,
-                ending=f"{headline} Nothing here suggests holding off, so go ahead.",
+                ending=headline if unknown_stock else f"{headline} Nothing here suggests holding off, so go ahead.",
                 facts=facts,
                 request_id=request_id,
             )
