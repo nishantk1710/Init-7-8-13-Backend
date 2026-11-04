@@ -371,6 +371,8 @@ def build_quantity_decision_records(
                 override_justification=(
                     f"{latest.reason_category}: {latest.free_text}" if latest is not None else None
                 ),
+                override_reason_category=latest.reason_category if latest is not None else None,
+                override_free_text=latest.free_text if latest is not None else None,
             )
         )
     return records
@@ -441,14 +443,14 @@ def build_assistant_quantity_decision_records(
         return []
 
     session_ids = [row.session_id for row, _, _ in rows]
-    reasons: dict[str, str] = {}
+    reasons: dict[str, Justification] = {}
     justification_stmt = (
         select(Justification)
         .where(Justification.session_id.in_(session_ids), Justification.kind == "QUANTITY_OVERRIDE")
         .order_by(Justification.recorded_at)
     )
     for justification in session.execute(justification_stmt).scalars().all():
-        reasons[justification.session_id] = f"{justification.reason_category}: {justification.free_text}"
+        reasons[justification.session_id] = justification
 
     return [
         QuantityDecisionRecord(
@@ -461,7 +463,12 @@ def build_assistant_quantity_decision_records(
             requested_quantity=row.accepted_quantity,
             suggested_quantity=row.suggested_quantity,
             suggestion_reason="ASSISTANT_FR3",
-            override_justification=reasons.get(row.session_id),
+            override_justification=(
+                f"{reason.reason_category}: {reason.free_text}" if reason is not None else None
+            ),
+            override_reason_category=reason.reason_category if reason is not None else None,
+            override_free_text=reason.free_text if reason is not None else None,
         )
         for row, requester, requested_for in rows
+        for reason in (reasons.get(row.session_id),)
     ]

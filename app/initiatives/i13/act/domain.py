@@ -213,6 +213,11 @@ class QuantityDecisionRecord:
     suggested_quantity: Decimal | None
     suggestion_reason: str | None = None
     override_justification: str | None = None
+    # The requester's reason as recorded with the decision (4-Nov-2026), when there
+    # is one: a QUANTITY_OVERRIDE is confirmed with it at detection, never sent back
+    # to the requester to give it a second time.
+    override_reason_category: str | None = None
+    override_free_text: str | None = None
 
 
 @dataclass(frozen=True)

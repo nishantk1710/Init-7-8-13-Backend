@@ -323,10 +323,15 @@ def _apply_detection(
     response_period: timedelta,
     repository: ExceptionRepository,
     notification_port: NotificationPort,
+    route: bool = True,
 ) -> tuple[int, int, int, int]:
     """One exception type's evaluation against one business key. Returns
     ``(created, reused, resolved, routed)`` counts. See this module's
-    docstring for the dedup/reopen rule this implements."""
+    docstring for the dedup/reopen rule this implements.
+
+    ``route=False`` records the exception without sending it to its owner:
+    nobody is asked, notified or given a due date (QUANTITY_OVERRIDE, whose
+    reason is already on file -- see :func:`_confirm_recorded_override`)."""
     existing = repository.get(exception_id)
 
     if not condition_holds:
@@ -383,7 +388,7 @@ def _apply_detection(
             )
         )
         routed = 0
-        if owner_requester_id:
+        if owner_requester_id and route:
             _route_to_requester(new_exception, owner_requester_id, response_period, as_of_time, repository, notification_port)
             routed = 1
         return (1, 0, 0, routed)
@@ -394,11 +399,63 @@ def _apply_detection(
         return (0, 1, 0, 0)
 
     routed = 0
-    if existing.status is ExceptionStatus.OPEN and owner_requester_id and not existing.owner_requester_id:
+    if route and existing.status is ExceptionStatus.OPEN and owner_requester_id and not existing.owner_requester_id:
         with_owner = dataclasses.replace(existing, owner_requester_id=owner_requester_id)
         _route_to_requester(with_owner, owner_requester_id, response_period, as_of_time, repository, notification_port)
         routed = 1
     return (0, 1, 0, routed)
+
+
+def _confirm_recorded_override(
+    exception_id: str,
+    record: QuantityDecisionRecord,
+    *,
+    as_of_time: datetime,
+    repository: ExceptionRepository,
+) -> bool:
+    """Confirm a QUANTITY_OVERRIDE with the reason recorded with the decision.
+
+    The override is shown on the Exceptions screen so it can be counted, but
+    there is nothing to ask anyone: the reason given in the assistant *is* the
+    requester's confirmation. The state machine only confirms from
+    AWAITING_REQUESTER, so an OPEN one is first assigned to its owner --
+    audited, but with no notification and no due date, so it can never be
+    escalated -- and confirmed in the same run. One already waiting (raised
+    before 4-Nov-2026, when overrides were still sent out) is confirmed as it
+    stands. Without a recorded reason it stays as it is. Returns whether it
+    confirmed one.
+    """
+    if not record.override_reason_category:
+        return False
+    exception = repository.get(exception_id)
+    if exception is None or exception.status not in (ExceptionStatus.OPEN, ExceptionStatus.AWAITING_REQUESTER):
+        return False
+    owner = exception.owner_requester_id or record.requester_id
+    if exception.status is ExceptionStatus.OPEN:
+        _transition(
+            exception,
+            ExceptionStatus.AWAITING_REQUESTER,
+            repository=repository,
+            as_of_time=as_of_time,
+            actor_id=None,
+            actor_type="SYSTEM",
+            event_type=EventType.ROUTED_TO_REQUESTER,
+            metadata={"requester_id": owner or "", "notified": "false", "note": "reason already recorded in the assistant"},
+            owner_requester_id=owner,
+            requester_due_at=None,
+            current_assignee_type=AssigneeType.REQUESTER if owner else None,
+            current_assignee_id=owner,
+            routing_status=RoutingStatus.RESOLVED if owner else None,
+        )
+    submit_confirmation(
+        exception_id=exception_id,
+        reason_category=record.override_reason_category,
+        free_text=record.override_free_text or "",
+        actor_id=owner or "ASSISTANT",
+        as_of_time=as_of_time,
+        repository=repository,
+    )
+    return True
 
 
 def detect_exceptions(
@@ -415,6 +472,7 @@ def detect_exceptions(
     requester_by_reservation: Mapping[tuple[str, str], str] = {},
     no_plan_reason_by_reservation: Mapping[tuple[str, str], NoPlanReason] = {},
     requester_by_session: Mapping[str, str] = {},
+    types: Collection[ExceptionType] | None = None,
 ) -> DetectionRunResult:
     """Run PLAN_BREACH, NO_PLAN/NO_PLAN_GRNI and QUANTITY_OVERRIDE detection
     for the given already-fetched evidence, and persist/update/resolve
@@ -433,7 +491,16 @@ def detect_exceptions(
     where an administrator has said who that name stands for (``I13_REQUESTER_RECIPIENTS``). A
     PLAN_BREACH whose plan came from such a session is owned by that person instead of the plan's
     recorded requester (the person who operated the assistant). Empty keeps the old behaviour.
+
+    ``types`` limits the run to those exception types (``I13_DETECTION_TYPES``
+    on the scheduled runs); ``None`` is every type. A type left out is not
+    evaluated at all, so its existing exceptions are neither created nor
+    resolved by this run -- they stay exactly as they were.
     """
+
+    def wanted(exception_type: ExceptionType) -> bool:
+        return types is None or exception_type in types
+
     grace_period = timedelta(days=plan_breach_grace_days)
     response_period = timedelta(days=requester_response_days)
     created = reused = resolved = routed = 0
@@ -462,7 +529,7 @@ def detect_exceptions(
     # collided all unlinked captured plans on ("", "") (gaps G3/G4).
     matcher = PlanMatcher(list(plans), list(ledger_entries))
 
-    for plan in plans:
+    for plan in plans if wanted(ExceptionType.PLAN_BREACH) else ():
         entries = matcher.entries_for(plan)
         breached = detect_plan_breach(plan, entries, as_of_time=as_of_time, grace_period=grace_period)
         c, r, res, rt = _apply_detection(
@@ -499,7 +566,8 @@ def detect_exceptions(
         resolved += res
         routed += rt
 
-    for entry in ledger_entries:
+    no_plan_types = wanted(ExceptionType.NO_PLAN) or wanted(ExceptionType.NO_PLAN_GRNI)
+    for entry in ledger_entries if no_plan_types else ():
         if entry.material_scope is not MaterialScope.OAR:
             continue
         plan = matcher.plan_for(entry)
@@ -526,31 +594,32 @@ def detect_exceptions(
         if no_plan_reason is not None:
             evidence["no_plan_reason"] = no_plan_reason.value
 
-        c, r, res, rt = _apply_detection(
-            exception_id=build_exception_id("NO_PLAN", entry.reservation_number, entry.reservation_item),
-            condition_holds=no_plan_reason is not None,
-            exception_type=ExceptionType.NO_PLAN,
-            material=entry.material,
-            plant=entry.plant,
-            reservation_number=entry.reservation_number,
-            reservation_item=entry.reservation_item,
-            session_id=plan.session_id if plan else None,
-            ledger_entry_id=entry.ledger_id,
-            # THE case this fallback exists for: a NO_PLAN exception has no
-            # plan by definition, so before W6.4 was consulted here the owner
-            # was unconditionally None and nothing ever routed.
-            owner_requester_id=owner_for(plan, entry.reservation_number, entry.reservation_item),
-            reason=f"OAR reservation has no valid plan/session ({no_plan_reason.value if no_plan_reason else 'n/a'})",
-            evidence=evidence,
-            as_of_time=as_of_time,
-            response_period=response_period,
-            repository=repository,
-            notification_port=notification_port,
-        )
-        created += c
-        reused += r
-        resolved += res
-        routed += rt
+        if wanted(ExceptionType.NO_PLAN):
+            c, r, res, rt = _apply_detection(
+                exception_id=build_exception_id("NO_PLAN", entry.reservation_number, entry.reservation_item),
+                condition_holds=no_plan_reason is not None,
+                exception_type=ExceptionType.NO_PLAN,
+                material=entry.material,
+                plant=entry.plant,
+                reservation_number=entry.reservation_number,
+                reservation_item=entry.reservation_item,
+                session_id=plan.session_id if plan else None,
+                ledger_entry_id=entry.ledger_id,
+                # THE case this fallback exists for: a NO_PLAN exception has no
+                # plan by definition, so before W6.4 was consulted here the owner
+                # was unconditionally None and nothing ever routed.
+                owner_requester_id=owner_for(plan, entry.reservation_number, entry.reservation_item),
+                reason=f"OAR reservation has no valid plan/session ({no_plan_reason.value if no_plan_reason else 'n/a'})",
+                evidence=evidence,
+                as_of_time=as_of_time,
+                response_period=response_period,
+                repository=repository,
+                notification_port=notification_port,
+            )
+            created += c
+            reused += r
+            resolved += res
+            routed += rt
 
         grni_evidence = dict(evidence)
         if grni_snapshot is not None:
@@ -559,31 +628,32 @@ def detect_exceptions(
         else:
             grni_evidence["watch_mart_status"] = "SOURCE_UNAVAILABLE"
 
-        c, r, res, rt = _apply_detection(
-            exception_id=build_exception_id("NO_PLAN_GRNI", entry.reservation_number, entry.reservation_item),
-            condition_holds=no_plan_grni_applies(no_plan_reason, grni_flag),
-            exception_type=ExceptionType.NO_PLAN_GRNI,
-            material=entry.material,
-            plant=entry.plant,
-            reservation_number=entry.reservation_number,
-            reservation_item=entry.reservation_item,
-            session_id=plan.session_id if plan else None,
-            ledger_entry_id=entry.ledger_id,
-            # Same reasoning as NO_PLAN above -- this is its GRNI sibling.
-            owner_requester_id=owner_for(plan, entry.reservation_number, entry.reservation_item),
-            reason="No valid plan/session and W6.3's GRNI threshold is exceeded (reused from the WATCH mart, not recalculated)",
-            evidence=grni_evidence,
-            as_of_time=as_of_time,
-            response_period=response_period,
-            repository=repository,
-            notification_port=notification_port,
-        )
-        created += c
-        reused += r
-        resolved += res
-        routed += rt
+        if wanted(ExceptionType.NO_PLAN_GRNI):
+            c, r, res, rt = _apply_detection(
+                exception_id=build_exception_id("NO_PLAN_GRNI", entry.reservation_number, entry.reservation_item),
+                condition_holds=no_plan_grni_applies(no_plan_reason, grni_flag),
+                exception_type=ExceptionType.NO_PLAN_GRNI,
+                material=entry.material,
+                plant=entry.plant,
+                reservation_number=entry.reservation_number,
+                reservation_item=entry.reservation_item,
+                session_id=plan.session_id if plan else None,
+                ledger_entry_id=entry.ledger_id,
+                # Same reasoning as NO_PLAN above -- this is its GRNI sibling.
+                owner_requester_id=owner_for(plan, entry.reservation_number, entry.reservation_item),
+                reason="No valid plan/session and W6.3's GRNI threshold is exceeded (reused from the WATCH mart, not recalculated)",
+                evidence=grni_evidence,
+                as_of_time=as_of_time,
+                response_period=response_period,
+                repository=repository,
+                notification_port=notification_port,
+            )
+            created += c
+            reused += r
+            resolved += res
+            routed += rt
 
-    for record in quantity_decision_records:
+    for record in quantity_decision_records if wanted(ExceptionType.QUANTITY_OVERRIDE) else ():
         evaluation = detect_quantity_override(record)
         evidence = {
             "requested_quantity": str(record.requested_quantity),
@@ -618,11 +688,22 @@ def detect_exceptions(
             response_period=response_period,
             repository=repository,
             notification_port=notification_port,
+            # Nothing to ask: the assistant does not let a requester keep more
+            # than the suggestion without a reason, and that reason is the
+            # confirmation. So no "Confirm Exception", no due date, no HOD.
+            route=False,
         )
         created += c
         reused += r
         resolved += res
         routed += rt
+        if evaluation.available and evaluation.override:
+            _confirm_recorded_override(
+                build_exception_id("QUANTITY_OVERRIDE", quantity_override_business_key(record)),
+                record,
+                as_of_time=as_of_time,
+                repository=repository,
+            )
 
     return DetectionRunResult(as_of_time=as_of_time, created=created, reused=reused, resolved=resolved, routed=routed)
 
@@ -673,6 +754,8 @@ def process_escalations(
             )
             if limit is not None:
                 due = due[:limit]
+    # A quantity override is a record, not a question: never the HOD's to chase.
+    due = [exc for exc in due if exc.exception_type is not ExceptionType.QUANTITY_OVERRIDE]
     for exception in due:
         hod_id = escalation_recipient_provider.get_hod(
             material=exception.material, plant=exception.plant, requester_id=exception.owner_requester_id
