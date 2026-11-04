@@ -32,7 +32,7 @@ from app.core.db import get_db
 from app.initiatives.i13.config import I13Config, get_i13_config
 from app.initiatives.i13.snapshot import I13Snapshot, current_plans, snapshot_status, start_background_build
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
-from app.initiatives.i13.summary import build_summary, summary_from_snapshot
+from app.initiatives.i13.summary import build_summary, summary_from_snapshot, with_queue_exception_counts
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
@@ -99,10 +99,10 @@ def get_summary(
 ) -> I13SummaryResponse:
     if isinstance(snapshot, SqlSnapshot):
         summary = snapshot.summary(snapshot.current_plans(), plant=plant, material=material)
-        return I13SummaryResponse(**asdict(summary))
+        return I13SummaryResponse(**asdict(with_queue_exception_counts(summary, db, plant=plant, material=material)))
     if snapshot is not None:
         summary = summary_from_snapshot(snapshot, current_plans(db, snapshot), plant=plant, material=material)
-        return I13SummaryResponse(**asdict(summary))
+        return I13SummaryResponse(**asdict(with_queue_exception_counts(summary, db, plant=plant, material=material)))
 
     movement_repo = PostgresMovementRepository(db)
     procurement_repo = PostgresProcurementRepository(db)
@@ -119,7 +119,7 @@ def get_summary(
         plant=plant,
         material=material,
     )
-    return I13SummaryResponse(**asdict(summary))
+    return I13SummaryResponse(**asdict(with_queue_exception_counts(summary, db, plant=plant, material=material)))
 
 
 @router.get("/snapshot", response_model=SnapshotStatusResponse)

@@ -93,7 +93,14 @@ def classify_no_plan_reason(plan: ConsumptionPlan | None) -> NoPlanReason | None
 
 
 def detect_quantity_override(record: QuantityDecisionRecord) -> QuantityOverrideEvaluation:
-    """quantity_override = requested_quantity != suggested_quantity.
+    """quantity_override = requested_quantity > suggested_quantity.
+
+    Only keeping MORE than the suggestion is an override: the finding is stock
+    reserved beyond what the history supports. Keeping less ties up less OAR
+    stock, so it is the requester's call, not an exception -- the same rule as
+    ``QuantityDecision.is_override`` (``app.initiatives.i13.quantity``).
+    ``variance`` is still the signed difference, so a lower quantity reads as a
+    negative variance rather than none.
 
     ``record.suggested_quantity is None`` means the suggestion source
     (W7.4) did not answer -- reported as unavailable, never coerced into
@@ -105,7 +112,7 @@ def detect_quantity_override(record: QuantityDecisionRecord) -> QuantityOverride
     suggested = Decimal(str(record.suggested_quantity))
     requested = Decimal(str(record.requested_quantity))
     variance = requested - suggested
-    return QuantityOverrideEvaluation(available=True, override=variance != 0, variance=variance)
+    return QuantityOverrideEvaluation(available=True, override=variance > 0, variance=variance)
 
 
 def quantity_override_business_key(record: QuantityDecisionRecord) -> str:

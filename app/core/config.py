@@ -1078,6 +1078,15 @@ class Settings(BaseSettings):
     notification_i13_escalation_enabled: bool = False
     notification_i13_escalation_batch_size: int = 100
 
+    # I13 nightly exception detection. Detection otherwise runs only after an assistant
+    # session (for that one material and plant) or by hand, so the Exceptions screen fell
+    # behind the data: a plan went overdue and nothing raised it. When on, the scheduler
+    # runs detection over every material once a day, in the first tick at or after this
+    # hour (UTC). OFF by default: the first run raises a Non-AI exception for every OAR
+    # reservation without an assistant reference, and notifies each requester.
+    notification_i13_detection_enabled: bool = False
+    notification_i13_detection_hour_utc: int = 1
+
     # A request's requester is told in the app when its lines are linked to an SAP reservation, and reminded
     # once when lines that need a reservation are still unlinked this many hours after the request (0 = no
     # reminder). Both look back only this many hours, so switching it on does not notify about old requests.

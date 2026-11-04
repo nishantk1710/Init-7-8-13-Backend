@@ -195,6 +195,26 @@ Delivery is off until all of these are done. `NOTIFICATION_EMAIL_PROVIDER` stays
 Links open the normal review page and require the normal sign-in: an unauthenticated visitor is sent to the login page
 and returned to the page afterwards (`src/proxy.ts`). There is no approving from an email link.
 
+### I13 nightly exception detection (off until you turn it on)
+
+`NOTIFICATION_I13_DETECTION_ENABLED` defaults to **`false`**. Without it, detection runs only after an assistant
+session (for that one material and plant) or through `POST /api/i13/act/run/detect`, so the Exceptions screen fell
+behind the data: a plan that went overdue was not raised until somebody happened to run detection for its material.
+
+When on, the `exception_detection` job runs detection over every material once a day, in the first tick at or after
+`NOTIFICATION_I13_DETECTION_HOUR_UTC` (default 1). It reads the I13 snapshot exactly as the manual endpoint does, and
+skips (trying again next tick) while there is none. It runs before `requester_escalations`, so an exception raised
+or resolved tonight is seen by escalation in the same tick. A second run on the same day -- after a restart, or on a
+second instance -- changes nothing: detection only creates what is missing, keeps what exists (no second
+notification) and resolves what cleared.
+
+The dashboard's Planned Overdue and Non-AI cards and the summary report count the same queue (unresolved exceptions
+only), so they match the Exceptions screen once detection is current.
+
+**Before turning it on:** the first run raises a Non-AI exception for every OAR reservation whose SAP item text has no
+assistant reference -- on non-prod about 29,000 more than the queue holds today, most from before the assistant
+existed -- and notifies each requester it can resolve.
+
 ### I13 automatic escalation (off until you turn it on)
 
 `NOTIFICATION_I13_ESCALATION_ENABLED` defaults to **`false`** and is separate from the scheduler switch. Turning the
