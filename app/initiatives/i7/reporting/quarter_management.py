@@ -361,7 +361,7 @@ def _cards(
     cards.append(
         KpiCard(
             key="working_capital_potential",
-            title="Working capital impact if all eligible OAR are adopted",
+            title="Working capital if all eligible OAR adopted",
             unit=_unit(position.working_capital_currency or position.currency),
             value=position.working_capital_oar_potential,
             status=AvailabilityStatus.AVAILABLE if position.working_capital_oar_potential is not None else AvailabilityStatus.NOT_AVAILABLE,

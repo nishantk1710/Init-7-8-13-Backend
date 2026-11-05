@@ -20,11 +20,11 @@ from sqlalchemy.pool import StaticPool
 import app.models  # noqa: F401  (registers every model on Base.metadata)
 from app.initiatives.i7.reporting import kpi_definitions, snapshots
 from app.initiatives.i7.reporting import service as report_service
-from app.initiatives.i7.reporting.report_export import NOT_AVAILABLE, build_quarterly_report_workbook
+from app.initiatives.i7.reporting.report_export import NOT_AVAILABLE, _PAGE_CARD_ORDER, _card_value, build_quarterly_report_workbook
 from app.initiatives.i7.reporting.service import generate_quarterly_report
 from app.initiatives.i7.stockout_risk.counts import StockoutRiskCounts
 from app.models.base import Base
-from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation
+from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation, SapAdoptionResult
 from app.models.i7_staging import StagedConsumption
 
 ORIGINAL_SHEETS = ["Metadata", "Baseline Comparison", "Scope & Data Quality", "Limitations"]
@@ -173,8 +173,12 @@ def test_every_kpi_card_on_the_sheet_is_the_reports_card(db):
     report = generated(db)
     header, body = table_after(workbook(report)["KPI Cards"], "Card")
     col = {name: i for i, name in enumerate(header)}
-    assert [r[col["Card"]] for r in body] == [c.title for c in report.management.kpis]
-    for row, card in zip(body, report.management.kpis):
+    # The cards the report page shows, in its order: the three it hides are not in the sheet.
+    shown = [c for key in _PAGE_CARD_ORDER for c in report.management.kpis if c.key == key]
+    assert [r[col["Card"]] for r in body] == [c.title for c in shown]
+    hidden = {"materials_assessed", "recommendations_generated", "working_capital_impact"}
+    assert hidden.isdisjoint({c.key for c in shown})
+    for row, card in zip(body, shown):
         assert row[col["Unit"]] == card.unit
         assert row[col["Kind"]] == card.kind.value
         assert row[col["Basis"]] == card.basis
@@ -306,10 +310,54 @@ def test_the_kpi_sheet_carries_approved_and_leaves_what_is_waiting_to_the_approv
     cards = {row[0]: dict(zip(header, row)) for row in body}
     assert "Pending approval" not in cards  # what is waiting for a decision is in the SAP Adoption sheet's approval stages
     assert cards["Approved"]["Value"] == 1  # C
-    assert "Material-plants with a computed recommendation" in cards
+    for hidden_title in ("Material-plants with a computed recommendation", "Recommendations generated", "Working capital impact"):
+        assert hidden_title not in cards  # the page does not show these three cards, so neither does the workbook
+    for shown_title in ("Working capital impact: stock items", "Working capital impact: OAR", "Working capital if all eligible OAR adopted"):
+        assert shown_title in cards
     assert cards["OAR recommendations"]["Unit"] == "material-plants"  # eligible OAR material-plants, each once
     assert cards["Min-Max conversion"]["Unit"] == "material-plants" and "Approval is not conversion" in cards["Min-Max conversion"]["What it means"]
     assert "approved is not adopted" in cards["Approved"]["What it means"].lower()
+
+
+def test_working_capital_is_written_with_released_cash_as_a_minus_like_the_page(db):
+    report = generated(db)
+    card = next(c for c in report.management.kpis if c.key == "working_capital_stock")
+    released = card.model_copy(update={"value": Decimal("100"), "status": card.status.__class__.AVAILABLE})
+    tied_up = released.model_copy(update={"value": Decimal("-40")})
+    nothing = released.model_copy(update={"value": Decimal("0")})
+    assert _card_value(released) == Decimal("-100")  # stored positive (released): written as a minus
+    assert _card_value(tied_up) == Decimal("40")
+    assert _card_value(nothing) == 0
+    other = next(c for c in report.management.kpis if c.key == "excess_inventory_opportunity")
+    assert _card_value(other.model_copy(update={"value": Decimal("5"), "status": other.status.__class__.AVAILABLE})) == Decimal("5")
+
+
+def test_the_two_material_tables_of_the_page_are_sheets_of_the_workbook(db):
+    seed(db)
+    oar = Recommendation(
+        recommendation_id="REC-O-1300-1", sap_material_number="O", sap_plant_code="1300", feature_run_id=1, forecast_run_id=1,
+        inventory_run_id=1, oar_run_id=1, policy_id="p", policy_version=1, formula_version="f", status="READY_FOR_REVIEW", impact_status="X",
+        generated_at=at(2026, 10), unit_price=Decimal("10"), current_rop=0, recommended_rop=4, current_max_stock=0, recommended_max_stock=5,
+        current_safety_stock=0, recommended_safety_stock=1, is_oar=True, conversion_eligibility="ELIGIBLE",
+    )
+    db.add_all([oar, SapAdoptionResult(recommendation_id="REC-A-1300-1", status="ADOPTED", evaluated_at=at(2026, 11))])
+    db.commit()
+    report = generate_quarterly_report(db, "Q4 2026")
+    wb = load_workbook(BytesIO(build_quarterly_report_workbook(report, db).getvalue()))
+
+    header, body = table_after(wb["Current vs Recommended"], "Material")
+    assert [r[0] for r in body] == ["O"]  # only the eligible OAR material, with what SAP holds and what is suggested
+    row = dict(zip(header, body[0]))
+    assert (row["Safety stock: SAP now"], row["Safety stock: suggested"]) == (0, 1)
+    assert (row["Reorder point: SAP now"], row["Reorder point: suggested"]) == (0, 4)
+    assert (row["Maximum stock: SAP now"], row["Maximum stock: suggested"]) == (0, 5)
+
+    _, adopted = table_after(wb["Adopted Recommendations"], "Material")
+    assert [r[0] for r in adopted] == ["A"]  # only what SAP has adopted
+
+    # Without a session (the technical preview) the two sheets are simply not there.
+    plain = workbook(report)
+    assert "Current vs Recommended" not in plain.sheetnames and "Adopted Recommendations" not in plain.sheetnames
 
 
 def test_the_position_sheet_has_the_stock_figures_and_does_not_make_them_zero_when_there_is_no_stock_load(db):
