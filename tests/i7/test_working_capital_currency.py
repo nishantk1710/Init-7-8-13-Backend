@@ -18,11 +18,11 @@ from app.initiatives.i7.kpi_formulas.working_capital import REPORTING_CURRENCY, 
 from app.initiatives.i7.reporting import kpi_definitions
 from app.initiatives.i7.stockout_risk.counts import StockoutRiskCounts
 from app.models.i7_features import MaterialFeature
-from app.models.i7_recommendation import Recommendation
+from app.models.i7_recommendation import Recommendation, SapAdoptionResult
 from app.models.i7_staging import StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun
 from app.models.i7_stockout_risk import StockoutRiskInput
 
-TABLES = (Recommendation, StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun, StockoutRiskInput, MaterialFeature)
+TABLES = (Recommendation, SapAdoptionResult, StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun, StockoutRiskInput, MaterialFeature)
 
 
 @pytest.fixture
@@ -182,10 +182,13 @@ def test_the_report_and_the_overview_calculation_agree(db):
     shared = impact(db)
     position = kpi_definitions.position_figures(db, None, date(2027, 1, 1), date(2026, 10, 21))
 
-    assert position.net_rop_value_impact == shared.amount == Decimal("270")  # 300 + (-30)
-    assert position.priced_count == shared.included_count == 2
-    assert position.working_capital_excluded_count == shared.excluded_count == 1
+    # The report's "if every eligible material were adopted" figure is the Overview's calculation, so the two agree. The report's
+    # headline working capital counts only what SAP has adopted, which is nothing here.
+    assert position.working_capital_potential == shared.amount == Decimal("270")  # 300 + (-30)
+    assert position.working_capital_potential_count == shared.included_count == 2
+    assert position.population - position.working_capital_potential_count == shared.excluded_count == 1
     assert position.working_capital_currency == "ZAR"
+    assert position.net_rop_value_impact == 0 and position.priced_count == 0  # nothing adopted in SAP yet
 
 
 def test_a_material_with_no_price_unit_is_left_out_and_counted_not_priced_at_verpr_or_zero(db):

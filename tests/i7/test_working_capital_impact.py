@@ -12,7 +12,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.models.i7_recommendation import Recommendation
+from app.models.i7_recommendation import Recommendation, SapAdoptionResult
 from app.schemas.i7.recommendations import RecommendationDetail, RecommendationSummary, working_capital_impact
 
 
@@ -126,7 +126,7 @@ def test_the_rows_add_up_to_the_card_over_the_same_recommendations(monkeypatch):
     )
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     metadata = MetaData()
-    for model in (Recommendation, StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun, StockoutRiskInput, MaterialFeature):
+    for model in (Recommendation, SapAdoptionResult, StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun, StockoutRiskInput, MaterialFeature):
         model.__table__.to_metadata(metadata).indexes.clear()
     metadata.create_all(engine)
 
@@ -150,5 +150,7 @@ def test_the_rows_add_up_to_the_card_over_the_same_recommendations(monkeypatch):
         per_row = [working_capital_impact(row) for row in rows]
 
     assert per_row == [Decimal("-100"), Decimal("28"), None, None]
-    assert figures.net_rop_value_impact == sum(v for v in per_row if v is not None)
-    assert figures.priced_count == sum(1 for v in per_row if v is not None)
+    # The report's "if every eligible material were adopted" figure is the card's calculation over the same rows.
+    assert figures.working_capital_potential == sum(v for v in per_row if v is not None)
+    assert figures.working_capital_potential_count == sum(1 for v in per_row if v is not None)
+    assert figures.net_rop_value_impact == 0  # the headline counts only what SAP has adopted: nothing here
