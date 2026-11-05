@@ -517,10 +517,9 @@ def detect_exceptions(
             return None
         return requester_by_reservation.get((reservation_number, reservation_item))
 
-    # Reference plans match reservations by number; captured plans not yet
-    # linked to one (FR-8) match by material, plant and window -- see
-    # PlanMatcher. Keying every plan by reservation number, as this did,
-    # collided all unlinked captured plans on ("", "") (gaps G3/G4).
+    # Reference plans match reservations by number, captured plans by the
+    # reservations their ID is typed on; an unlinked captured plan matches none
+    # (PlanMatcher), so it can breach and never clears another's NO_PLAN.
     matcher = PlanMatcher(list(plans), list(ledger_entries))
 
     for plan in plans if wanted(ExceptionType.PLAN_BREACH) else ():

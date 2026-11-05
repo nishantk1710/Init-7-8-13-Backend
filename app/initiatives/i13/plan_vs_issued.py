@@ -6,8 +6,8 @@ assistant plan exists -- every other position reads "no plan". This tab shows
 the reservation-level picture underneath, from both sources:
 
 * **Via assistant** -- one row per captured plan: planned quantity against the
-  goods issued on the reservations that stand for it (``plan_outcomes``: its
-  session or request ID in the item text, else required inside its window).
+  goods issued on the reservations that stand for it (``plan_outcomes``: the
+  ones whose item text carries its request or session ID -- nothing else).
 * **Direct from SAP** -- one row per OAR reservation item no plan owns: the
   reserved quantity against the goods issued on it.
 

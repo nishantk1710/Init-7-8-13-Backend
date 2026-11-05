@@ -27,7 +27,7 @@ from app.initiatives.i13.models import (
     ReservationLedgerEntry,
     ReservationPrLinkStatus,
 )
-from app.initiatives.i13.plans import ConsumptionPlan
+from app.initiatives.i13.plans import ConsumptionPlan, PlanSource
 from app.shared.material_scope import MaterialScope
 from tests.i13.conftest import FakeEscalationRecipientProvider, FakeExceptionRepository, FakeNotificationPort
 
@@ -116,6 +116,41 @@ def _detect(
 
 
 # --- detection + routing ---
+
+
+def _unlinked_capture(**overrides) -> ConsumptionPlan:
+    """A captured plan no reservation's item text carries the ID of yet."""
+    return _plan(
+        reservation_number="", reservation_item="", source=PlanSource.CAPTURED,
+        planned_use_date=date(2026, 9, 1), window_end=date(2026, 9, 10), **overrides,
+    )
+
+
+def test_an_unlinked_plan_breaches_although_another_reservation_in_its_window_was_issued() -> None:
+    """Someone else's reservation for the same part, required inside the
+    window and issued, is not the plan's: its issue cannot keep the plan from
+    going overdue, and the plan does not clear that reservation's NO_PLAN."""
+    others = _ledger_entry(requirement_date=date(2026, 9, 5), issued_quantity=Decimal("10"))
+    repository, _, _ = _detect(
+        datetime(2026, 9, 18, tzinfo=UTC),
+        plans=[_unlinked_capture()],
+        ledger_entries=[others],
+        types={ExceptionType.PLAN_BREACH, ExceptionType.NO_PLAN},
+    )
+    assert repository.get("ACT-PLAN_BREACH-PLAN-1") is not None
+    assert repository.get("ACT-NO_PLAN-1000000000-0001") is not None
+
+
+def test_a_linked_plan_is_satisfied_by_its_own_reservations_issue() -> None:
+    own = _ledger_entry(requirement_date=date(2026, 9, 5), issued_quantity=Decimal("10"))
+    repository, _, _ = _detect(
+        datetime(2026, 9, 18, tzinfo=UTC),
+        plans=[_unlinked_capture(linked_reservations=(("1000000000", "0001"),))],
+        ledger_entries=[own],
+        types={ExceptionType.PLAN_BREACH, ExceptionType.NO_PLAN},
+    )
+    assert repository.get("ACT-PLAN_BREACH-PLAN-1") is None
+    assert repository.get("ACT-NO_PLAN-1000000000-0001") is None
 
 
 def test_plan_breach_detected_and_routed_to_requester() -> None:

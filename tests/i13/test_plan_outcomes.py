@@ -18,7 +18,7 @@ from app.shared.material_scope import MaterialScope
 
 
 def _captured(plan_id: str = "P1", **overrides) -> ConsumptionPlan:
-    """A captured plan with no SGTXT link, window 1-31 Oct 2026."""
+    """A captured plan, window 1-31 Oct 2026; no SGTXT link unless given one."""
     defaults = dict(
         plan_id=plan_id,
         session_id=f"S-{plan_id}",
@@ -76,15 +76,29 @@ def _by_id(outcomes):
     return {o.plan.plan_id: o for o in outcomes}
 
 
-def test_an_unlinked_plan_takes_the_reservations_required_in_its_window() -> None:
+def _linked(*items: str) -> tuple[tuple[str, str], ...]:
+    """Reservation items of 1000000000 whose item text carries the plan's ID."""
+    return tuple(("1000000000", item) for item in items)
+
+
+def test_an_unlinked_plan_takes_no_reservation_even_inside_its_window() -> None:
+    """Same material and plant, required inside the window, issued -- but no
+    item text carries the plan's ID, so it is someone else's reservation."""
+    entries = [_entry("0001", "4"), _entry("0002", "6", requirement_date=date(2026, 10, 30))]
+    outcome = _by_id(plan_outcomes([_captured()], entries))["P1"]
+    assert outcome.reservations == ()
+    assert outcome.issued_quantity == 0
+
+
+def test_a_linked_plan_takes_only_its_linked_reservations() -> None:
+    plan = _captured(linked_reservations=_linked("0001", "0002"))
     entries = [
         _entry("0001", "4"),
-        _entry("0002", "6", requirement_date=date(2026, 10, 30)),
-        _entry("0003", "9", requirement_date=date(2026, 11, 5)),  # after the window
-        _entry("0004", "9", material="MAT2"),  # another material
+        _entry("0002", "6", requirement_date=date(2026, 12, 1)),  # outside the window: still its own
+        _entry("0003", "9"),  # inside the window, not linked
     ]
-    outcome = _by_id(plan_outcomes([_captured()], entries))["P1"]
-    assert outcome.reservations == (("1000000000", "0001"), ("1000000000", "0002"))
+    outcome = _by_id(plan_outcomes([plan], entries))["P1"]
+    assert outcome.reservations == _linked("0001", "0002")
     assert outcome.issued_quantity == 10
 
 
@@ -97,15 +111,15 @@ def test_an_sgtxt_link_wins_over_the_window() -> None:
 
 
 def test_overlapping_plans_never_claim_the_same_reservation() -> None:
-    """Two unlinked plans whose windows both cover the reservation: it counts
-    for the more recently captured one only."""
-    older = _captured("P1")
-    newer = _captured("P2", captured_on=date(2026, 10, 2))
-    outcomes = _by_id(plan_outcomes([older, newer], [_entry("0001", "10")]))
-    assert outcomes["P1"].reservations == ()
-    assert outcomes["P1"].issued_quantity == 0
-    assert outcomes["P2"].reservations == (("1000000000", "0001"),)
-    assert outcomes["P2"].issued_quantity == 10
+    """Two plans for the same part and window: each takes the reservation its
+    own ID is on, never the other's."""
+    first = _captured("P1", linked_reservations=_linked("0001"))
+    second = _captured("P2", linked_reservations=_linked("0002"))
+    outcomes = _by_id(plan_outcomes([first, second], [_entry("0001", "10"), _entry("0002", "3")]))
+    assert outcomes["P1"].reservations == _linked("0001")
+    assert outcomes["P1"].issued_quantity == 10
+    assert outcomes["P2"].reservations == _linked("0002")
+    assert outcomes["P2"].issued_quantity == 3
 
 
 def test_a_reservation_split_over_po_lines_is_counted_once() -> None:
@@ -113,7 +127,7 @@ def test_a_reservation_split_over_po_lines_is_counted_once() -> None:
         _entry("0001", "10", ledger_id="RESCHAIN-1000000000-0001-0", po_number="4500000000"),
         _entry("0001", "10", ledger_id="RESCHAIN-1000000000-0001-1", po_number="4500000001"),
     ]
-    outcome = _by_id(plan_outcomes([_captured()], entries))["P1"]
+    outcome = _by_id(plan_outcomes([_captured(linked_reservations=_linked("0001"))], entries))["P1"]
     assert outcome.reservations == (("1000000000", "0001"),)
     assert outcome.issued_quantity == 10
 
@@ -123,7 +137,7 @@ def test_a_deleted_reservation_counts_only_if_something_was_issued() -> None:
         _entry("0001", "0", reservation_deleted=True),
         _entry("0002", "3", reservation_deleted=True),
     ]
-    outcome = _by_id(plan_outcomes([_captured()], entries))["P1"]
+    outcome = _by_id(plan_outcomes([_captured(linked_reservations=_linked("0001", "0002"))], entries))["P1"]
     assert outcome.reservations == (("1000000000", "0002"),)
     assert outcome.issued_quantity == 3
 
@@ -145,7 +159,7 @@ def _plan_model() -> PlanModel:
 
 
 def test_the_plan_list_row_carries_the_comparison() -> None:
-    outcome = _by_id(plan_outcomes([_captured()], [_entry("0001", "4")]))["P1"]
+    outcome = _by_id(plan_outcomes([_captured(linked_reservations=_linked("0001"))], [_entry("0001", "4")]))["P1"]
     row = _with_outcome(_plan_model(), outcome).model_dump(by_alias=True)
     assert row["matchedReservations"] == ["1000000000/0001"]
     assert row["issuedQuantity"] == "4"

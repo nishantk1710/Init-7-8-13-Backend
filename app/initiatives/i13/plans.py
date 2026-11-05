@@ -97,11 +97,12 @@ class ConsumptionPlan:
 
     @property
     def is_unlinked_capture(self) -> bool:
-        """A captured plan not yet linked to a SAP reservation.
+        """A captured plan no SAP reservation is linked to yet.
 
-        The normal state of every captured plan until FR-8 (blocker B2): the
-        assistant runs while the reservation is being created, so there is no
-        reservation number to record.
+        The assistant runs while the reservation is being created, so a plan
+        has no reservation until the requester types its request (or session)
+        ID into the reservation's item text and the next build reads it back
+        (``session_link``). Until then it stands for no reservation at all.
         """
         return self.source is PlanSource.CAPTURED and not self.reservation_number and not self.linked_reservations
 
@@ -115,31 +116,6 @@ class ConsumptionPlan:
         even closed (gap G4).
         """
         return self.window_end or self.planned_use_date
-
-    def covers(self, entry) -> bool:
-        """Whether this unlinked captured plan stands for ``entry``'s reservation.
-
-        Until a captured plan is linked by reservation number (FR-8), it is
-        matched the only way the data allows: same material and plant, and a
-        reservation requirement date inside the plan's window. With only a
-        window start, anything required from that day on; with no window at
-        all, anything required on or after the day the plan was captured. A
-        reservation with no requirement date is never matched -- there is
-        nothing to place it in the window with.
-        """
-        if not self.is_unlinked_capture or self.status != "OPEN":
-            return False
-        if (entry.material, entry.plant) != (self.material, self.plant):
-            return False
-        required = getattr(entry, "requirement_date", None)
-        if required is None:
-            return False
-        start = self.planned_use_date or self.captured_on
-        if start is not None and required < start:
-            return False
-        if self.window_end is not None and required > self.window_end:
-            return False
-        return start is not None or self.window_end is not None
 
 
 def reference_plans_enabled() -> bool:
@@ -257,8 +233,7 @@ def _captured_plan(row, links: tuple[tuple[str, str], ...], first: tuple[str, st
         planned_quantity=row.planned_quantity,
         # The window's start is still the plan's "use date" for anything
         # that reads one date. Breach timing reads `breach_reference_date`
-        # (the window end), and reservation matching reads the whole
-        # window -- see ConsumptionPlan.covers and PlanMatcher below.
+        # (the window end). Reservations match by link only (PlanMatcher).
         planned_use_date=row.window_start,
         status=row.status,
         source=PlanSource.CAPTURED,
@@ -271,14 +246,15 @@ def _captured_plan(row, links: tuple[tuple[str, str], ...], first: tuple[str, st
 class PlanMatcher:
     """Which plan stands for which reservation-ledger entry, and back.
 
-    Reference plans (and any captured plan once FR-8 links it) match on
-    reservation number and item, exactly as before. A captured plan with no
-    reservation number used to be keyed on ``("", "")``: every one of them
-    collided on that key and none could ever match a real reservation, so it
-    could neither clear a NO_PLAN exception nor be satisfied by an issue (gaps
-    G3/G4). Those now match through :meth:`ConsumptionPlan.covers`.
+    Only by reservation: a reference plan's own reservation number and item,
+    a captured plan's linked reservations (its request or session ID in the
+    item text, ``session_link``). A captured plan no reservation carries the ID
+    of stands for none.
 
-    A direct reservation match always wins over a window match.
+    Until 5-Nov-2026 an unlinked captured plan was also matched to any
+    reservation of the same material and plant required inside its window.
+    That attached other people's reservations to it: their issues kept the
+    plan from going overdue, and the plan cleared their NO_PLAN exception.
     """
 
     def __init__(self, plans: list[ConsumptionPlan], ledger_entries) -> None:
@@ -288,34 +264,20 @@ class PlanMatcher:
                 continue
             for key in plan.linked_reservations or ((plan.reservation_number, plan.reservation_item),):
                 self._direct[key] = plan
-        self._unlinked_by_key: dict[tuple[str, str], list[ConsumptionPlan]] = {}
-        for plan in plans:
-            if plan.is_unlinked_capture:
-                self._unlinked_by_key.setdefault((plan.material, plan.plant), []).append(plan)
 
         self._entries_by_reservation: dict[tuple[str, str], list] = {}
-        self._entries_by_key: dict[tuple[str, str], list] = {}
         for entry in ledger_entries:
             self._entries_by_reservation.setdefault((entry.reservation_number, entry.reservation_item), []).append(entry)
-            if (entry.material, entry.plant) in self._unlinked_by_key:
-                self._entries_by_key.setdefault((entry.material, entry.plant), []).append(entry)
 
     def plan_for(self, entry) -> ConsumptionPlan | None:
-        direct = self._direct.get((entry.reservation_number, entry.reservation_item))
-        if direct is not None:
-            return direct
-        # The most recently captured covering plan, if several overlap.
-        for plan in reversed(self._unlinked_by_key.get((entry.material, entry.plant), [])):
-            if plan.covers(entry):
-                return plan
-        return None
+        return self._direct.get((entry.reservation_number, entry.reservation_item))
 
     def entries_for(self, plan: ConsumptionPlan) -> list:
         if plan.linked_reservations:
             return [e for key in plan.linked_reservations for e in self._entries_by_reservation.get(key, [])]
-        if not plan.is_unlinked_capture:
-            return self._entries_by_reservation.get((plan.reservation_number, plan.reservation_item), [])
-        return [entry for entry in self._entries_by_key.get((plan.material, plan.plant), []) if plan.covers(entry)]
+        if plan.is_unlinked_capture:
+            return []
+        return self._entries_by_reservation.get((plan.reservation_number, plan.reservation_item), [])
 
 
 @dataclass(frozen=True)
@@ -337,9 +299,8 @@ def plan_outcomes(plans: list[ConsumptionPlan], ledger_entries) -> list[PlanOutc
     PO behind it at all.
 
     Each reservation item counts for one plan only: the one
-    :meth:`PlanMatcher.plan_for` picks (an SGTXT link first, else the most
-    recently captured plan whose window covers it), so two overlapping plans
-    never both claim the same issue. Issued is taken once per item: a
+    :meth:`PlanMatcher.plan_for` picks (the plan its item text links it to), so
+    two plans never both claim the same issue. Issued is taken once per item: a
     reservation whose PR split across PO lines has one ledger entry per line,
     each carrying the item's whole issued quantity. A deleted reservation item
     (RESB.XLOEK) is not a live demand and is left out unless something was
