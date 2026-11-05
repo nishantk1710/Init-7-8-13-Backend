@@ -61,6 +61,30 @@ _CHANGE_DOCUMENT_SQL = """
 # exist yet.
 
 
+_HISTORY_THROUGH_SQL = """
+    SELECT MAX(h.date) AS through
+      FROM n_cdhdr h
+     WHERE h.change_doc_object = 'MATERIAL'
+"""
+
+
+def material_history_through(session: Session) -> str | None:
+    """The latest date (ISO ``YYYY-MM-DD``) the material change history reaches, or ``None`` when it has
+    no material change at all or cannot be read.
+
+    This is how far SAP's change history can be *trusted to have looked*: an extract whose newest
+    material change is 3 Nov says nothing about 4 Nov onward, so "no change found" for a window
+    that ends later is a gap in the data, not a finding. The same ISO text the window filter above
+    compares, so the two agree on a date.
+    """
+    try:
+        value = session.execute(text(_HISTORY_THROUGH_SQL)).scalar()
+    except Exception:  # noqa: BLE001 -- the change-history view does not exist yet: no history at all
+        session.rollback()
+        return None
+    return str(value)[:10] if value else None
+
+
 class ChangeDocumentRow(NamedTuple):
     """One field-change event, as plain data -- no SQLAlchemy row, no table
     name, reaches the caller."""

@@ -47,7 +47,10 @@ _MISSING_TEXT = {
     "price_not_in_mbew": "no MBEW row at this plant",
     "price_no_new_valuation": "no NEW or NEW-INS valuation",
     "price_unreadable": "MBEW price unreadable",
-    "price_bad_price_unit": "MBEW price unit (PEINH) is blank or zero",
+    "price_unit_column_missing": "MBEW extract has no price unit (PEINH) column",
+    "price_unit_missing": "MBEW price unit (PEINH) is blank",
+    "price_unit_invalid": "MBEW price unit (PEINH) is zero, negative or not a number",
+    "price_bad_price_unit": "MBEW price unit (PEINH) is blank or zero",  # legacy code on older staged rows
     "price_missing_currency": "MBEW row has no currency",
     "price_token_value": "MBEW holds a placeholder price",
     "price_ambiguous": "MBEW rows disagree",

@@ -409,17 +409,37 @@ class TestValuationRow:
 
         assert row.price == Decimal("33.3333")
 
-    @pytest.mark.parametrize("peinh", ["0", "", "-5", "abc"])
-    def test_a_present_but_unusable_price_unit_is_refused_not_assumed_to_be_one(self, peinh: str) -> None:
+    @pytest.mark.parametrize(
+        ("verpr", "peinh", "expected"),
+        [("500", "100", "5.0000"), ("2000", "1000", "2.0000"), ("500", "1", "500.0000")],
+    )
+    def test_a_valid_price_unit_divides_verpr(self, verpr: str, peinh: str, expected: str) -> None:
+        row = extract._valuation_row(None, verpr, peinh, peinh_present=True)
+
+        assert row.price == Decimal(expected)
+        assert row.problem is None
+
+    @pytest.mark.parametrize("peinh", [None, "", "   "])
+    def test_a_null_or_blank_price_unit_is_refused_not_assumed_to_be_one(self, peinh) -> None:
         row = extract._valuation_row(None, "10.00", peinh, peinh_present=True)
 
         assert row.price is None
-        assert row.problem is PriceMissing.BAD_PRICE_UNIT
+        assert row.problem is PriceMissing.PRICE_UNIT_MISSING
 
-    def test_an_absent_price_unit_column_means_one_unit(self) -> None:
-        row = extract._valuation_row(None, "10.00", None, peinh_present=False)
+    @pytest.mark.parametrize("peinh", ["0", "-5", "-10", "abc"])
+    def test_a_zero_negative_or_unreadable_price_unit_is_refused(self, peinh: str) -> None:
+        row = extract._valuation_row(None, "10.00", peinh, peinh_present=True)
 
-        assert row.price == Decimal("10.0000")
+        assert row.price is None
+        assert row.problem is PriceMissing.PRICE_UNIT_INVALID
+
+    @pytest.mark.parametrize("peinh", [None, "", "1", "100"])
+    def test_an_absent_price_unit_column_is_never_read_as_one_unit(self, peinh) -> None:
+        """Whatever the row holds, no column means the unit is unknown: no price, and not VERPR as it is."""
+        row = extract._valuation_row(None, "10.00", peinh, peinh_present=False)
+
+        assert row.price is None
+        assert row.problem is PriceMissing.PRICE_UNIT_COLUMN_MISSING
 
     @pytest.mark.parametrize("verpr", ["", None, "n/a"])
     def test_an_unreadable_price_is_named(self, verpr) -> None:
@@ -427,6 +447,9 @@ class TestValuationRow:
 
         assert row.price is None
         assert row.problem is PriceMissing.UNREADABLE_PRICE
+
+    def test_an_unreadable_price_is_named_before_the_price_unit_is_looked_at(self) -> None:
+        assert extract._valuation_row(None, None, None, peinh_present=False).problem is PriceMissing.UNREADABLE_PRICE
 
     def test_a_blank_currency_is_a_defect_only_when_the_source_has_a_currency_column(self) -> None:
         stated = extract._valuation_row(None, "10", "1", peinh_present=True, currency="", currency_present=True)
@@ -464,7 +487,7 @@ class TestOdataValuations:
 
         [row] = valuations[("11251001", "1300")]
         assert row.price is None
-        assert row.problem is PriceMissing.BAD_PRICE_UNIT
+        assert row.problem is PriceMissing.PRICE_UNIT_INVALID
 
     def test_a_blank_currency_is_rejected_not_staged_with_a_guess(self) -> None:
         with _valuation_session("('000000000011251001', '1300', '10.00', '1', '')") as session:
@@ -565,14 +588,27 @@ class TestMbewValuations:
         with _mbew_session([("5000000001", "1300", "", "250.00", "")]) as session:
             valuations = extract._valuations_by_plant(session)
 
-        assert choose_unit_price(valuations[("5000000001", "1300")]).missing is PriceMissing.BAD_PRICE_UNIT
+        assert choose_unit_price(valuations[("5000000001", "1300")]).missing is PriceMissing.PRICE_UNIT_MISSING
 
-    def test_a_delivery_without_a_price_unit_column_means_one_unit(self, monkeypatch) -> None:
+    def test_a_delivery_without_a_price_unit_column_has_no_price_and_says_so(self, monkeypatch, caplog) -> None:
         monkeypatch.setattr(extract, "_columns", lambda session, table: ["MATNR", "BWKEY", "BWTAR", "VERPR"])
         with _mbew_session([("5000000001", "1300", "", "250.00", None)]) as session:
+            with caplog.at_level("ERROR"):
+                valuations = extract._valuations_by_plant(session)
+
+        choice = choose_unit_price(valuations[("5000000001", "1300")])
+        assert choice.price is None  # not 250: VERPR alone is never the unit price
+        assert choice.missing is PriceMissing.PRICE_UNIT_COLUMN_MISSING
+        assert any("PEINH" in r.getMessage() and r.levelname == "ERROR" for r in caplog.records)
+
+    def test_a_delivery_without_a_price_unit_column_is_refused_even_when_the_price_looks_fine(self, monkeypatch) -> None:
+        monkeypatch.setattr(extract, "_columns", lambda session, table: ["MATNR", "BWKEY", "BWTAR", "VERPR"])
+        rows = [("5000000001", "1300", "", "500", "100"), ("5000000002", "1300", "", "500", "1")]
+        with _mbew_session(rows) as session:
             valuations = extract._valuations_by_plant(session)
 
-        assert choose_unit_price(valuations[("5000000001", "1300")]).price == Decimal("250.0000")
+        for key in (("5000000001", "1300"), ("5000000002", "1300")):
+            assert choose_unit_price(valuations[key]).price is None
 
     def test_a_plant_outside_the_scope_is_not_read(self, monkeypatch) -> None:
         monkeypatch.setattr(extract, "_columns", lambda session, table: MBEW_COLUMNS)
@@ -697,6 +733,20 @@ class TestPlantUnitPriceStaging:
         assert row["unit_price"] is None
         assert row["price_missing_reason"] == PriceMissing.NOT_IN_MBEW.value
         assert rejections.counts == {PriceMissing.NOT_IN_MBEW.value: 1}
+
+    @pytest.mark.parametrize(
+        "problem",
+        [PriceMissing.PRICE_UNIT_COLUMN_MISSING, PriceMissing.PRICE_UNIT_MISSING, PriceMissing.PRICE_UNIT_INVALID],
+    )
+    def test_a_price_unit_problem_stages_no_price_with_its_own_reason_and_is_counted(self, monkeypatch, problem) -> None:
+        valuations = {("5000000006", "1300"): [Valuation(None, None, problem=problem)]}
+
+        staged, rejections = self._stage(monkeypatch, [_marc("5000000006", "1300")], valuations)
+        row = staged[("5000000006", "1300")]
+
+        assert row["unit_price"] is None  # not zero, not VERPR
+        assert row["price_missing_reason"] == problem.value
+        assert rejections.counts == {problem.value: 1}
 
     def test_a_material_plant_flagged_for_deletion_is_not_priced(self, monkeypatch) -> None:
         valuations = {("5000000004", "1300"): [Valuation(None, Decimal("200.00"))]}

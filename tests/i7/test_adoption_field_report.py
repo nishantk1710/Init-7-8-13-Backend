@@ -14,7 +14,7 @@ from sqlalchemy import MetaData, create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.api.i7.adoption import _approval_dates
+from app.api.i7.adoption import _handoff_dates
 from app.initiatives.i7.adapters.change_documents import ChangeDocumentRow
 from app.initiatives.i7.recommendations import sap_change_documents
 from app.initiatives.i7.recommendations.adoption import (
@@ -136,7 +136,7 @@ def _provider(monkeypatch, rows):
         return rows
 
     monkeypatch.setattr(sap_change_documents, "material_marc_changes", fake)
-    return RawChangeDocumentProvider(None, recommendation_date=date(2026, 10, 11), monitoring_window_days=15), calls
+    return RawChangeDocumentProvider(None, recommendation_date=date(2026, 10, 11), monitoring_window_days=7), calls
 
 
 def test_field_changes_keep_before_now_and_when(monkeypatch):
@@ -164,8 +164,8 @@ def test_the_change_rows_are_read_once_for_state_and_changes(monkeypatch):
     provider.current_state("8000001", "1500")
     provider.field_changes("8000001", "1500")
     assert len(calls) == 1
-    # window: the anchor date to anchor + 15 days
-    assert calls[0][1:] == ("2026-10-11", "2026-10-26")
+    # window: the anchor date to anchor + 7 days
+    assert calls[0][1:] == ("2026-10-11", "2026-10-18")
 
 
 # --- sentences -----------------------------------------------------------------
@@ -188,7 +188,7 @@ def test_an_adopted_check_lists_each_field_with_dates_and_days():
     reports = build_field_reports(result, changes, ANCHOR)
     assert [r.label for r in reports] == ["Safety stock", "Reorder point", "Max stock"]
     assert [r.days_after for r in reports] == [3, 3, 5]
-    text = plain_detail(result, reports, anchor_name="approval", window_days=15, window_open=True)
+    text = plain_detail(result, reports, anchor_name="approval", window_days=7, window_open=True)
     assert "Reorder point: 0 → 435 on 14 Oct 2026, 10:32 (3 days after the approval)." in text
     assert "Max stock: 0 → 526 on 16 Oct 2026, 09:10 (5 days after the approval)." in text
     assert "Safety stock: 0 → 379 on 14 Oct 2026 (3 days after the approval)." in text
@@ -200,7 +200,7 @@ def test_a_partial_check_says_which_field_did_not_change():
     result = _parameter_result({"minbe": "435"})
     assert result.status is AdoptionStatus.PARTIALLY_ADOPTED
     reports = build_field_reports(result, changes, ANCHOR)
-    text = plain_detail(result, reports, anchor_name="approval", window_days=15, window_open=True)
+    text = plain_detail(result, reports, anchor_name="approval", window_days=7, window_open=True)
     assert "Reorder point: 0 → 435" in text
     assert "Safety stock: no change recorded in SAP." in text
     assert "Max stock: no change recorded in SAP." in text
@@ -210,7 +210,7 @@ def test_a_change_to_the_wrong_value_says_what_was_approved():
     changes = {"minbe": AdoptionFieldChange("minbe", "0", "300", date(2026, 10, 14), "10:32", 1)}
     result = evaluate_parameter_adoption("M1", "1500", None, 435, None, FakeState(state={"minbe": "300"}))
     text = plain_detail(
-        result, build_field_reports(result, changes, ANCHOR), anchor_name="approval", window_days=15, window_open=True
+        result, build_field_reports(result, changes, ANCHOR), anchor_name="approval", window_days=7, window_open=True
     )
     assert "Reorder point: 0 → 300 on 14 Oct 2026, 10:32 (3 days after the approval), but 435 was approved." in text
 
@@ -219,11 +219,11 @@ def test_a_change_on_the_same_day_or_before_is_worded_correctly():
     changes = {"minbe": AdoptionFieldChange("minbe", "0", "435", ANCHOR, None, 1)}
     result = evaluate_parameter_adoption("M1", "1500", None, 435, None, FakeState(state={"minbe": "435"}))
     same = plain_detail(
-        result, build_field_reports(result, changes, ANCHOR), anchor_name="approval", window_days=15, window_open=True
+        result, build_field_reports(result, changes, ANCHOR), anchor_name="approval", window_days=7, window_open=True
     )
     assert "(the same day as the approval)" in same
     one = build_field_reports(result, {"minbe": AdoptionFieldChange("minbe", "0", "435", date(2026, 10, 12), None, 1)}, ANCHOR)
-    assert "(1 day after the approval)" in plain_detail(result, one, anchor_name="approval", window_days=15, window_open=True)
+    assert "(1 day after the approval)" in plain_detail(result, one, anchor_name="approval", window_days=7, window_open=True)
 
 
 def test_no_evidence_is_pending_while_the_window_is_open_then_says_so():
@@ -231,11 +231,11 @@ def test_no_evidence_is_pending_while_the_window_is_open_then_says_so():
     assert result.status is AdoptionStatus.UNKNOWN
     reports = build_field_reports(result, None, ANCHOR)
     assert all(r.matched is None and r.now is None for r in reports)
-    assert plain_detail(result, reports, anchor_name="approval", window_days=15, window_open=True) == (
+    assert plain_detail(result, reports, anchor_name="approval", window_days=7, window_open=True) == (
         "No change recorded in SAP yet."
     )
-    assert plain_detail(result, reports, anchor_name="approval", window_days=15, window_open=False) == (
-        "No change recorded in SAP within 15 days of the approval."
+    assert plain_detail(result, reports, anchor_name="approval", window_days=7, window_open=False) == (
+        "No change recorded in SAP within 7 days of the approval."
     )
     assert is_pending(result.status, True) and not is_pending(result.status, False)
     assert not is_pending(AdoptionStatus.ADOPTED, True)
@@ -254,7 +254,7 @@ def test_a_conversion_check_names_mrp_type_reorder_point_and_max_stock():
     assert check_type_label(reports, True) == "MRP type · Reorder point · Max stock"
     assert [r.expected for r in reports] == ["VB", "filled in", "filled in"]
     assert "MRP type: ND → VB on 14 Oct 2026, 10:32" in plain_detail(
-        result, reports, anchor_name="approval", window_days=15, window_open=True
+        result, reports, anchor_name="approval", window_days=7, window_open=True
     )
 
 
@@ -263,7 +263,7 @@ def test_with_no_fields_the_check_type_falls_back_to_a_plain_name():
     assert check_type_label((), False) == "Planning parameters"
 
 
-# --- approval dates (SQLite) ------------------------------------------------
+# --- SAP handover dates (SQLite) ------------------------------------------------
 
 
 @pytest.fixture
@@ -293,14 +293,22 @@ def _ledger(action, new_status, stamp, rec_id="REC-STD-M1-1500", version=1):
     )
 
 
-def test_the_approval_date_is_the_final_approval_not_an_earlier_role(session):
+def test_the_handover_date_is_the_final_approval_not_an_earlier_role(session):
+    """Final approval ends at SAP_EXECUTION_PENDING -- the workflow never produces APPROVED -- and that is the
+    entry that starts the SAP window."""
     session.add_all(
         [
             _ledger("APPROVE", "PENDING_APPROVAL", datetime(2026, 10, 9, 8, tzinfo=timezone.utc)),
-            _ledger("APPROVE", "APPROVED", datetime(2026, 10, 11, 9, tzinfo=timezone.utc)),
+            _ledger("APPROVE", "SAP_EXECUTION_PENDING", datetime(2026, 10, 11, 9, tzinfo=timezone.utc)),
             _ledger("HOLD", "HELD", datetime(2026, 10, 12, 9, tzinfo=timezone.utc)),
         ]
     )
     session.commit()
-    assert _approval_dates(session, ["REC-STD-M1-1500", "REC-NONE"]) == {"REC-STD-M1-1500": date(2026, 10, 11)}
-    assert _approval_dates(session, []) == {}
+    assert _handoff_dates(session, ["REC-STD-M1-1500", "REC-NONE"]) == {"REC-STD-M1-1500": date(2026, 10, 11)}
+    assert _handoff_dates(session, []) == {}
+
+
+def test_a_recommendation_still_in_the_approval_chain_has_no_handover_date(session):
+    session.add(_ledger("APPROVE", "PENDING_APPROVAL", datetime(2026, 10, 9, 8, tzinfo=timezone.utc)))
+    session.commit()
+    assert _handoff_dates(session, ["REC-STD-M1-1500"]) == {}

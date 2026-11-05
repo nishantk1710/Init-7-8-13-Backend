@@ -593,13 +593,16 @@ class AdoptionPolicy(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    monitoring_window_days: int | None = 15
-    """Default 15 days, per business direction (2026-09-22) -- the FRS calls
+    monitoring_window_days: int | None = 7
+    """Default 7 days, per business direction (changed from 15 on 2026-11-05) -- the FRS calls
     the window configurable and to be tuned during calibration but never
     itself states a value, so this is a deliberate starting default, not a
-    value drawn from the FRS. Still overridable per policy document; a future
-    calibration exercise may confirm a different number without a code
-    change."""
+    value drawn from the FRS. Still overridable per policy document.
+
+    **The one place the length lives.** The window starts on the day the final approval hands
+    the recommendation to SAP (see ``app/api/i7/adoption.py``) and runs this many days from it;
+    the daily check, the end date on the API and the texts the page shows all read this field
+    -- nothing else states a number of days."""
 
     converted_mrp_type: str = "VB"
     """Conversion is adopted when MRP type becomes VB with MINBE and MABST
