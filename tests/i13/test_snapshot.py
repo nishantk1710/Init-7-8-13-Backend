@@ -59,49 +59,38 @@ def _plan(**overrides) -> ConsumptionPlan:
 
 
 class TestCapturedPlanMatching:
-    def test_an_unlinked_capture_covers_a_reservation_required_inside_its_window(self) -> None:
+    def test_an_unlinked_capture_matches_no_reservation_even_inside_its_window(self) -> None:
+        """Same material, plant and window, but no item text carries its ID:
+        someone else's reservation, never the plan's (5-Nov-2026)."""
         plan = _plan()
-        assert plan.covers(_Entry("R1", "1", "M1", "1300", date(2026, 10, 15)))
+        entry = _Entry("R1", "1", "M1", "1300", date(2026, 10, 15))
+        matcher = PlanMatcher([plan], [entry])
+        assert matcher.plan_for(entry) is None
+        assert matcher.entries_for(plan) == []
 
-    def test_it_does_not_cover_outside_the_window_or_another_material(self) -> None:
-        plan = _plan()
-        assert not plan.covers(_Entry("R1", "1", "M1", "1300", date(2026, 9, 30)))
-        assert not plan.covers(_Entry("R1", "1", "M1", "1300", date(2026, 11, 1)))
-        assert not plan.covers(_Entry("R1", "1", "M2", "1300", date(2026, 10, 15)))
-        assert not plan.covers(_Entry("R1", "1", "M1", "1500", date(2026, 10, 15)))
-
-    def test_no_requirement_date_is_never_matched(self) -> None:
-        assert not _plan().covers(_Entry("R1", "1", "M1", "1300", None))
-
-    def test_no_window_falls_back_to_the_capture_date(self) -> None:
-        plan = _plan(planned_use_date=None, window_end=None)
-        assert plan.covers(_Entry("R1", "1", "M1", "1300", date(2026, 9, 21)))
-        assert not plan.covers(_Entry("R1", "1", "M1", "1300", date(2026, 9, 19)))
+    def test_a_linked_capture_matches_only_its_linked_reservations(self) -> None:
+        plan = _plan(linked_reservations=(("R1", "1"),))
+        own = _Entry("R1", "1", "M1", "1300", date(2026, 12, 1))
+        other = _Entry("R2", "1", "M1", "1300", date(2026, 10, 15))
+        matcher = PlanMatcher([plan], [own, other])
+        assert matcher.plan_for(own) is plan
+        assert matcher.plan_for(other) is None
+        assert matcher.entries_for(plan) == [own]
 
     def test_reference_plans_still_match_by_reservation_only(self) -> None:
         reference = _plan(
             reservation_number="R9", reservation_item="2", source=PlanSource.REFERENCE_CSV, window_end=None
         )
-        assert not reference.covers(_Entry("R9", "2", "M1", "1300", date(2026, 10, 15)))
         matcher = PlanMatcher([reference], [_Entry("R9", "2", "M1", "1300", None)])
         assert matcher.plan_for(_Entry("R9", "2", "M1", "1300", None)) is reference
+        assert matcher.plan_for(_Entry("R8", "1", "M1", "1300", date(2026, 10, 15))) is None
 
-    def test_unlinked_captures_no_longer_collide_on_an_empty_key(self) -> None:
+    def test_unlinked_captures_never_collide_on_an_empty_key(self) -> None:
         """Gap G3: every unlinked capture used to be keyed on ("", "")."""
         a = _plan(plan_id="A", material="M1")
         b = _plan(plan_id="B", material="M2")
-        entry_a = _Entry("R1", "1", "M1", "1300", date(2026, 10, 10))
-        entry_b = _Entry("R2", "1", "M2", "1300", date(2026, 10, 10))
-        matcher = PlanMatcher([a, b], [entry_a, entry_b])
-        assert matcher.plan_for(entry_a) is a
-        assert matcher.plan_for(entry_b) is b
-        assert matcher.entries_for(a) == [entry_a]
-
-    def test_a_direct_reservation_match_wins_over_a_window_match(self) -> None:
-        direct = _plan(plan_id="D", reservation_number="R1", reservation_item="1", source=PlanSource.CAPTURED)
-        window = _plan(plan_id="W")
-        entry = _Entry("R1", "1", "M1", "1300", date(2026, 10, 10))
-        assert PlanMatcher([window, direct], [entry]).plan_for(entry) is direct
+        blank = _Entry("", "", "M1", "1300", date(2026, 10, 10))
+        assert PlanMatcher([a, b], [blank]).plan_for(blank) is None
 
     def test_breach_is_measured_from_the_window_end(self) -> None:
         """Gap G4: a captured plan breached from its window START before."""
@@ -156,7 +145,7 @@ class TestExceptionQueueFromComponents:
             (e.type, e.material, e.reservation_number) for e in built
         ]
 
-    def test_a_captured_plan_now_clears_no_plan(self, i13_config, data_dir) -> None:
+    def test_only_a_linked_captured_plan_clears_no_plan(self, i13_config, data_dir) -> None:
         from app.initiatives.i13.reservation_ledger import build_reservation_ledger
 
         _, procurement, reservations, scope = self._fixture(i13_config)
@@ -166,7 +155,15 @@ class TestExceptionQueueFromComponents:
         without = exception_queue_from(ledger, [], [], i13_config, as_of=TODAY)
         assert any(e.type is ExceptionType.NO_PLAN for e in without)
 
-        plan = _plan(planned_use_date=date(2026, 10, 1), window_end=date(2026, 10, 31))
+        # A plan for the same part and window does not cover it: no item text
+        # links the two, so the reservation is still Non-AI.
+        unlinked = _plan(planned_use_date=date(2026, 10, 1), window_end=date(2026, 10, 31))
+        assert any(
+            e.type is ExceptionType.NO_PLAN
+            for e in exception_queue_from(ledger, [unlinked], [], i13_config, as_of=TODAY)
+        )
+
+        plan = _plan(planned_use_date=date(2026, 10, 1), window_end=date(2026, 10, 31), linked_reservations=(("R1", "1"),))
         with_plan = exception_queue_from(ledger, [plan], [], i13_config, as_of=TODAY)
         assert not any(e.type is ExceptionType.NO_PLAN for e in with_plan)
         # ...and it is not already breached: its window has not closed.
