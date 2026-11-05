@@ -146,6 +146,35 @@ def eligible_oar_material_plants(session: Session, period_start: date, exclusive
     return count_of(session, statement)
 
 
+#: The most rows a report's material lists put in a file: a spreadsheet of this period's materials, not the whole catalogue.
+EXPORT_ROW_CAP = 5000
+
+
+def eligible_oar_rows(session: Session, period_start: date, exclusive_end: date) -> list[Recommendation]:
+    """The rows of the report page's "Current vs recommended" table: eligible OAR material-plants of the period (conversion verdict
+    ELIGIBLE, with a recommended value), the newest recommendation of each, newest first. The same filters the page sends."""
+    statement = _latest_only(
+        _apply_filters(
+            select(Recommendation), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+            criticality=None, generated_from=period_start, generated_to=exclusive_end, demand_type="oar", has_recommended=True,
+            conversion_eligibility=ELIGIBLE,
+        ).where(_not_smooth())
+    ).order_by(Recommendation.generated_at.desc(), Recommendation.id.desc()).limit(EXPORT_ROW_CAP)
+    return list(session.execute(statement).scalars().all())
+
+
+def adopted_rows(session: Session, period_start: date, exclusive_end: date) -> list[Recommendation]:
+    """The rows of the report page's "Adopted recommendations" table: the period's recommendations SAP now matches (the reconciliation's
+    ADOPTED result), the newest of each material-plant, newest first. The same filters the page sends."""
+    statement = _latest_only(
+        _apply_filters(
+            select(Recommendation), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+            criticality=None, generated_from=period_start, generated_to=exclusive_end, adopted_in_sap=True,
+        ).where(_not_smooth())
+    ).order_by(Recommendation.generated_at.desc(), Recommendation.id.desc()).limit(EXPORT_ROW_CAP)
+    return list(session.execute(statement).scalars().all())
+
+
 def oar_records(session: Session, period_start: date, exclusive_end: date) -> int:
     """Recommendation records generated in the period for *eligible* OAR material-plants -- rows, not distinct materials.
 
