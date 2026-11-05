@@ -600,7 +600,8 @@ def build_quarter_management(
         plant_positions=plant_positions,
         status_distribution=distribution,
         forecast_actual=forecast,
-        adoption=_adoption(session, period_start, exclusive_end, awaiting, WorkflowStages(**kpi_definitions.stage_counts(counts))),
+        adoption=_adoption(session, period_start, exclusive_end, awaiting, WorkflowStages(**kpi_definitions.stage_counts(
+            kpi_definitions.actionable_status_counts(session, period_start, exclusive_end)))),
         data_coverage=_coverage(
             session, period_start, period_end, today, cutoff,
             source_activity=source_activity, position=position, trends=trends, from_snapshot=from_snapshot, forecast=forecast,

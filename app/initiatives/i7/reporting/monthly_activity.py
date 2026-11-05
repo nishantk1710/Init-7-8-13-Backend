@@ -37,7 +37,7 @@ from sqlalchemy.orm import Session
 from app.initiatives.i7.reporting import kpi_definitions
 from app.initiatives.i7.reporting.data_coverage import generated_by_month
 from app.initiatives.i7.reporting.period import exclusive_end_of, month_label, month_state, months_of
-from app.models.i7_recommendation import ApprovalLedgerEntry
+from app.models.i7_recommendation import ApprovalLedgerEntry, SapAdoptionResult
 from app.schemas.i7.reports import (
     ActivityRow,
     AvailabilityStatus,
@@ -92,6 +92,31 @@ def _events_by_month(session: Session, action: str | tuple[str, ...], period_sta
         )
     ).all()
     return {(int(y), int(m)): int(n) for y, m, n in rows}
+
+
+def _adoptions_by_month(session: Session, period_start: date, exclusive_end: date) -> dict[tuple[int, int], int]:
+    """ADOPTED results by the month of the SAP change (``adopted_on``)."""
+    rows = session.execute(
+        select(extract("year", SapAdoptionResult.adopted_on), extract("month", SapAdoptionResult.adopted_on), func.count())
+        .where(
+            SapAdoptionResult.status == "ADOPTED",
+            SapAdoptionResult.adopted_on >= period_start,
+            SapAdoptionResult.adopted_on < exclusive_end,
+        )
+        .group_by(extract("year", SapAdoptionResult.adopted_on), extract("month", SapAdoptionResult.adopted_on))
+    ).all()
+    return {(int(y), int(m)): int(n) for y, m, n in rows}
+
+
+def _adoptions_without_a_date(session: Session) -> int:
+    """ADOPTED results with no change date: recorded before ``adopted_on`` existed, or the extract's date could not be read."""
+    return int(
+        session.execute(
+            select(func.count()).select_from(SapAdoptionResult).where(
+                SapAdoptionResult.status == "ADOPTED", SapAdoptionResult.adopted_on.is_(None)
+            )
+        ).scalar_one()
+    )
 
 
 def _distinct_events_in_period(session: Session, action: str | tuple[str, ...], period_start: date, exclusive_end: date) -> int:
@@ -185,23 +210,25 @@ def build_monthly_activity(
     )
 
     # --- Recommendations generated ---------------------------------------------------------------
-    generated = _month_values(generated_by_month(session, period_start, exclusive_end), months, states)
+    # The recommendations with something to change in SAP, once per material-plant: the Overview's number, not every record.
+    generated_counts = kpi_definitions.actionable_generated_by_month(session, period_start, exclusive_end)
+    generated = _month_values(generated_counts, months, states)
     generated_total = _sum(generated)
     rows.append(
         ActivityRow(
             key="recommendations_generated",
             label="Recommendations generated",
-            unit="recommendation records",
+            unit="recommendations",
             kind=MetricKind.EVENT,
             months=generated,
             quarter_total=generated_total,
             status=AvailabilityStatus.AVAILABLE if generated_total is not None else AvailabilityStatus.NOT_AVAILABLE,
-            reconciles=(
-                generated_total == kpi_definitions.records_generated(session, period_start, exclusive_end)
-                if generated_total is not None
-                else None
+            reconciles=generated_total == sum(generated_counts.values()) if generated_total is not None else None,
+            note=(
+                "Recommendations with something to change in SAP, one per material-plant in each month (its newest): the same set as "
+                "the Overview's SAP adoption. Not every record: a material-plant recalculated in the month counts once, and one with "
+                "nothing to change is not counted."
             ),
-            note="Records, not distinct materials: a material-plant regenerated in the period has one record per run.",
         )
     )
 
@@ -227,19 +254,32 @@ def build_monthly_activity(
             )
         )
 
-    # --- SAP adoption: not tracked as dated events -----------------------------------------------
+    # --- Confirmed SAP adoptions, by the day SAP made the change ---------------------------------
+    # The month is the date of the SAP change that confirmed the adoption (CDHDR's change date, joined to CDPOS for the field),
+    # saved on the ledger row as ``adopted_on`` -- not when the check last ran. A 0 is "SAP's change history shows no matching
+    # change in that month": SAP was looked at, nothing matched.
+    adopted_counts = _adoptions_by_month(session, period_start, exclusive_end)
+    adopted = _month_values(adopted_counts, months, states)
+    adopted_total = _sum(adopted)
+    undated = _adoptions_without_a_date(session)
     rows.append(
         ActivityRow(
             key="sap_adoptions_confirmed",
             label="Confirmed SAP adoptions",
             unit="adoptions",
             kind=MetricKind.EVENT,
-            months=[None for _ in months],
-            quarter_total=None,
-            status=AvailabilityStatus.UNKNOWN,
+            months=adopted,
+            quarter_total=adopted_total,
+            status=AvailabilityStatus.AVAILABLE if adopted_total is not None else AvailabilityStatus.NOT_AVAILABLE,
+            reconciles=adopted_total == sum(adopted_counts.values()) if adopted_total is not None else None,
             note=(
-                "Not measured by month: adoption is stored as the latest result for each recommendation, not as dated "
-                "events, so it cannot be placed in a month. See the quarter-level SAP adoption card."
+                "Counted in the month SAP made the matching change, read from SAP's change history (CDHDR for the date, CDPOS for the "
+                "field and its old and new value). 0 means no matching change was found in that month."
+                + (
+                    f" {undated:,} adoption(s) recorded before the change date was kept, or whose date could not be read, are in no month."
+                    if undated
+                    else ""
+                )
             ),
         )
     )

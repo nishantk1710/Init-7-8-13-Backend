@@ -207,7 +207,7 @@ def test_monthly_activity_has_the_three_months_the_totals_and_whether_they_add_u
     # A month that has not started or is not covered is the words, not a blank or a zero.
     consumption = by_label["SAP consumption"]
     assert consumption[3] == 3 and consumption[4] == NOT_AVAILABLE
-    assert by_label["Confirmed SAP adoptions"][3:7] == [NOT_AVAILABLE] * 4
+    assert by_label["Confirmed SAP adoptions"][3:7] == [0, 0, 0, 0]  # SAP's change history shows no matching change in any month
 
 
 def test_decisions_come_from_dated_events(db):
