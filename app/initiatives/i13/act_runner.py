@@ -4,12 +4,11 @@
 (``app.assistant.turns``) both run detection through :func:`run_detection`, so
 there is one way to gather its evidence:
 
-* **ledger entries and GRNI evidence** come from the I13 snapshot's reservation
-  ledger and WATCH rows. Before the snapshot, GRNI evidence came from
-  ``i13_watch_metric_mart`` -- a table nothing in the app refreshed, holding
-  7,184 of ~45k rows -- so most NO_PLAN_GRNI checks read "source unavailable".
-  With no snapshot (``?live=true``, snapshot disabled) the ledger is rebuilt
-  live exactly as the route always did, and GRNI falls back to that mart;
+* **ledger entries** come from the I13 snapshot's reservation ledger. With
+  no snapshot (``?live=true``, snapshot disabled) the ledger is rebuilt live
+  exactly as the route always did;
+* **which reservation items SAP has closed** (RESB-KZEAR, for
+  NOT_ISSUED_30_DAYS) from the reservation rows read for attribution anyway;
 * **plans, quantity decisions, requesters** are read live, since people write
   them.
 
@@ -26,12 +25,18 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from app.initiatives.i13.act.domain import ExceptionType, NoPlanReason, WatchGrniSnapshot
-from app.initiatives.i13.act.service import DetectionRunResult, EscalationRunResult, detect_exceptions, process_escalations
+from app.core.logging import get_logger
+from app.initiatives.i13.act.domain import ExceptionType, NoPlanReason
+from app.initiatives.i13.act.service import (
+    DetectionRunResult,
+    EscalationRunResult,
+    detect_exceptions,
+    process_escalations,
+    retire_no_plan_grni,
+)
 from app.initiatives.i13.act_exception_store import SqlExceptionRepository
 from app.initiatives.i13.act_hod_provider import ConfigEscalationRecipientProvider
 from app.initiatives.i13.act_requester_directory import named_requesters_by_session, parse_requester_recipients
-from app.initiatives.i13.act_watch_snapshot import build_grni_snapshot_index
 from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.consumption_attribution import ConsumptionAttributionService
 from app.initiatives.i13.plans import load_consumption_plans
@@ -48,11 +53,13 @@ from app.initiatives.i13.session_link import (
 )
 from app.initiatives.i13.snapshot import I13Snapshot, current_plans
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
-from app.initiatives.i13.watch_mart import list_watch_metrics
 from app.integrations.notifications.service import SharedNotificationPort
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
 from app.integrations.sap.postgres_reservation import PostgresReservationRepository
+
+
+logger = get_logger(__name__)
 
 
 def _notification_port(db: Session, config: I13Config) -> SharedNotificationPort:
@@ -91,14 +98,26 @@ def _in_scope(material: str | None, plant: str | None):
     return lambda m, p: (not material or m == material) and (not plant or p == plant)
 
 
+def _final_issued(reservation_rows) -> frozenset[tuple[str, str]]:
+    """Reservation items SAP has closed for further issues (RESB-KZEAR)."""
+    return frozenset((row["Rsnum"], row["Rspos"]) for row in reservation_rows if row.get("Kzear"))
+
+
 def detection_types(raw: str) -> frozenset[ExceptionType] | None:
     """``I13_DETECTION_TYPES`` as exception types: comma-separated names such as
-    ``PLAN_BREACH,NO_PLAN_GRNI``. Empty is every type (``None``). An unknown
+    ``PLAN_BREACH,QUANTITY_OVERRIDE``. Empty is every type (``None``). An unknown
     name is an error, not skipped: a typo that silently ran nothing would leave
-    the queue stale with no sign why."""
+    the queue stale with no sign why. ``NO_PLAN_GRNI`` (retired 5-Nov-2026) is
+    dropped with a warning: there is nothing left to run for it."""
     names = [part.strip().upper() for part in (raw or "").split(",") if part.strip()]
     if not names:
         return None
+    if ExceptionType.NO_PLAN_GRNI.value in names:
+        logger.warning("I13_DETECTION_TYPES names NO_PLAN_GRNI, which is retired; ignoring it")
+        names = [name for name in names if name != ExceptionType.NO_PLAN_GRNI.value]
+        if not names:
+            # Only the retired type was named: check nothing, never "every type".
+            return frozenset()
     unknown = [name for name in names if name not in ExceptionType.__members__]
     if unknown:
         raise ValueError(
@@ -124,6 +143,9 @@ def run_detection(
     ``types`` limits the run to those exception types -- see
     :func:`detection_types`; ``None`` (the capture and manual runs) is every type.
     """
+    retired = retire_no_plan_grni(as_of_time=as_of_time, repository=SqlExceptionRepository(db))
+    if retired:
+        logger.info("I13 detection: resolved %d retired NO_PLAN_GRNI exceptions", retired)
     if isinstance(snapshot, SqlSnapshot):
         return _run_detection_stored(
             db, config, snapshot, as_of_time=as_of_time, material=material, plant=plant, types=types
@@ -134,17 +156,6 @@ def run_detection(
     if snapshot is not None:
         ledger_entries = [e for e in snapshot.reservation_ledger if wanted(e.material, e.plant)]
         plans = [p for p in current_plans(db, snapshot) if wanted(p.material, p.plant)]
-        grni_snapshots = {
-            key: WatchGrniSnapshot(
-                material=m.material,
-                plant=m.plant,
-                gr_not_issued_flag=m.gr_not_issued_flag,
-                gr_not_issued_days_since_gr=m.gr_not_issued_days_since_gr,
-                gr_not_issued_threshold_days=m.gr_not_issued_threshold_days,
-            )
-            for key, m in snapshot.watch.items()
-            if wanted(*key)
-        }
         reservation_rows = reservation_repo.get_reservations(material=material, plant=plant)
     else:
         procurement_repo = PostgresProcurementRepository(db)
@@ -159,7 +170,6 @@ def run_detection(
         )
         # `db` passed so detection sees plans CAPTURED through the assistant.
         plans = [p for p in load_consumption_plans(data_dir, db) if wanted(p.material, p.plant)]
-        grni_snapshots = build_grni_snapshot_index(list_watch_metrics(db, plant=plant, material=material))
         # Same repository instance build_reservation_ledger just used: memoized.
         reservation_rows = reservation_repo.get_reservations(material=material, plant=plant)
 
@@ -197,7 +207,6 @@ def run_detection(
         as_of_time,
         ledger_entries=ledger_entries,
         plans=plans,
-        grni_snapshots=grni_snapshots,
         repository=SqlExceptionRepository(db),
         notification_port=_notification_port(db, config),
         plan_breach_grace_days=config.exceptions.plan_breach_grace_days,
@@ -207,6 +216,8 @@ def run_detection(
         no_plan_reason_by_reservation=no_plan_reason_by_reservation,
         requester_by_session=requester_by_session,
         types=types,
+        not_issued_days=config.watch.gr_not_issued_threshold_days,
+        final_issued=_final_issued(reservation_rows),
     )
 
 
@@ -277,7 +288,7 @@ def _run_detection_stored(
     covered_plans: set[int] = set()
     ranges = snapshot.material_ranges(material=material, plant=plant)
 
-    def detect(ledger_entries, slice_plans, grni_snapshots, reservation_rows, sgtxt, quantity_records) -> None:
+    def detect(ledger_entries, slice_plans, reservation_rows, sgtxt, quantity_records) -> None:
         attributions = attributor.attribute_entries(ledger_entries, reservation_rows, slice_plans)
         reasons = {}
         for entry in ledger_entries:
@@ -289,7 +300,6 @@ def _run_detection_stored(
             as_of_time,
             ledger_entries=ledger_entries,
             plans=slice_plans,
-            grni_snapshots=grni_snapshots,
             repository=SqlExceptionRepository(db),
             notification_port=_notification_port(db, config),
             plan_breach_grace_days=config.exceptions.plan_breach_grace_days,
@@ -301,6 +311,8 @@ def _run_detection_stored(
             no_plan_reason_by_reservation=reasons,
             requester_by_session=requester_by_session,
             types=types,
+            not_issued_days=config.watch.gr_not_issued_threshold_days,
+            final_issued=_final_issued(reservation_rows),
         )
         for name in totals:
             totals[name] += getattr(result, name)
@@ -312,22 +324,11 @@ def _run_detection_stored(
         sgtxt = {(e.reservation_number, e.reservation_item): t for e, t in rows if t}
         slice_plans = [p for p in plans if batch.holds(p.material, p.plant)]
         covered_plans.update(id(p) for p in slice_plans)
-        grni_snapshots = {
-            (m.material, m.plant): WatchGrniSnapshot(
-                material=m.material,
-                plant=m.plant,
-                gr_not_issued_flag=m.gr_not_issued_flag,
-                gr_not_issued_days_since_gr=m.gr_not_issued_days_since_gr,
-                gr_not_issued_threshold_days=m.gr_not_issued_threshold_days,
-            )
-            for m in snapshot.watch_in_range(lo, hi, plant=plant)
-            if wanted(m.material, m.plant)
-        }
         reservation_rows = BatchReservationRepository(db, work, batch).get_reservations(material=material)
-        detect(ledger_entries, slice_plans, grni_snapshots, reservation_rows, sgtxt, [])
+        detect(ledger_entries, slice_plans, reservation_rows, sgtxt, [])
 
     leftover = [p for p in plans if id(p) not in covered_plans]
     if leftover or quantity_decision_records:
-        detect([], leftover, {}, [], {}, quantity_decision_records)
+        detect([], leftover, [], {}, quantity_decision_records)
 
     return DetectionRunResult(as_of_time=as_of_time, **totals)

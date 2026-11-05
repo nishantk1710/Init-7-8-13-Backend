@@ -1118,9 +1118,11 @@ class Settings(BaseSettings):
     # the backup for a day with no successful build. OFF by default, for the same reason.
     i13_detect_after_build: bool = False
     # The exception types those two automatic runs check, comma-separated (PLAN_BREACH,
-    # NO_PLAN, NO_PLAN_GRNI, QUANTITY_OVERRIDE). Empty = all. A type left out is neither
-    # raised nor resolved by them -- e.g. NO_PLAN and NO_PLAN_GRNI until the Non-AI
-    # go-live cutoff is agreed. The post-capture and manual (POST /run/detect) runs always check every type.
+    # NO_PLAN, NOT_ISSUED_30_DAYS, QUANTITY_OVERRIDE). Empty = all. A type left out is neither
+    # raised nor resolved by them -- e.g. NO_PLAN until the Non-AI go-live cutoff is agreed.
+    # NO_PLAN_GRNI is retired (5-Nov-2026) and ignored here. NOT_ISSUED_30_DAYS uses
+    # i13_gr_not_issued_threshold_days. The post-capture and manual (POST /run/detect) runs
+    # always check every type.
     i13_detection_types: str = ""
 
     # A request's requester is told in the app when its lines are linked to an SAP reservation, and reminded

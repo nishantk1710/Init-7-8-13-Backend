@@ -216,11 +216,22 @@ after the build, one run at a time, and never after a failed build or one anothe
 day's run, so the nightly job above then only fires on a day with no successful build.
 
 **Which types (`I13_DETECTION_TYPES`, default empty = all).** Comma-separated: `PLAN_BREACH`, `NO_PLAN`,
-`NO_PLAN_GRNI`, `QUANTITY_OVERRIDE`. Both automatic runs check only these; a type left out is neither raised nor
+`NOT_ISSUED_30_DAYS`, `QUANTITY_OVERRIDE`. Both automatic runs check only these; a type left out is neither raised nor
 resolved, so its queue stays exactly as it is. An unknown name fails the run rather than silently checking nothing.
-The post-capture and manual runs always check every type. Go-live: `PLAN_BREACH,QUANTITY_OVERRIDE`, adding `NO_PLAN`
-and `NO_PLAN_GRNI` once the Non-AI cutoff is agreed -- GRNI is raised only on a Non-AI reservation, so without the
-cutoff it would raise one for every old reservation of a material with unissued stock.
+The post-capture and manual runs always check every type. Go-live: `PLAN_BREACH,QUANTITY_OVERRIDE,NOT_ISSUED_30_DAYS`,
+adding `NO_PLAN` once the Non-AI cutoff is agreed -- without the cutoff it would raise one for every old reservation
+that carries no assistant reference.
+
+**Not issued 30 days (`NOT_ISSUED_30_DAYS`, 5-Nov-2026).** One per reservation item of an assistant request line --
+an OAR reservation whose item text carries the request (R-ID) or session ID -- with **nothing issued** against it
+(MSEG 201/261 by RSNUM/RSPOS) `I13_GR_NOT_ISSUED_THRESHOLD_DAYS` (30) days after its goods receipt, when the
+reservation raised its own PR and the PO was received, or else after its requirement date (OAR is normally issued
+from stock on the shelf). Routed to the requester like a breach. Resolved by any issue, by the item being deleted
+(RESB-XLOEK) or closed for further issues (RESB-KZEAR). A Non-AI reservation never gets one.
+
+**Non-AI + 30 days (`NO_PLAN_GRNI`) is retired (5-Nov-2026).** It counted each Non-AI reservation a second time
+beside `NO_PLAN`, on a material-wide flag that was not the reservation's own. Detection no longer raises it, and every
+run resolves any left open. Unused stock stays visible on the Live Consumption 30-day GR-not-issued tab.
 
 **A quantity override notifies nobody.** The assistant does not let a requester keep more than the suggestion
 without a reason, so a `QUANTITY_OVERRIDE` is recorded already **Confirmed** with that reason: no "Confirm
