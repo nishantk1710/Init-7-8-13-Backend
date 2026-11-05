@@ -960,6 +960,9 @@ class PositionFigures(BaseModel):
     # adopted or not). ``None`` is "no row included" or a report saved before this existed.
     working_capital_potential: Decimal | None = None
     working_capital_potential_count: int = 0
+    # The same, over OAR material-plants only: what the report's "if all eligible are adopted" card shows.
+    working_capital_oar_potential: Decimal | None = None
+    working_capital_oar_potential_count: int = 0
 
     # --- Stock held, valued in ZAR over the same population ------------------------------------------------
     # Stock on hand is as loaded when the figures were worked out (``inventory_stock_as_of``): it is month-end only

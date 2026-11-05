@@ -316,6 +316,7 @@ def position_figures(
     capital_oar = working_capital_impact(session, base, formulas, segment="oar", adopted_only=True)
     # What it would be if every eligible material-plant were adopted: the Overview's calculation, adopted or not.
     capital_potential = working_capital_impact(session, base, formulas)
+    capital_oar_potential = working_capital_impact(session, base, formulas, segment="oar")
 
     # Stock held, over the same population. Valued only when the stock load is close enough to the cutoff to speak for
     # it -- the same age rule the stockout reading answers to -- otherwise it is "not measured", never 0.
@@ -342,6 +343,8 @@ def position_figures(
         working_capital_oar_count=capital_oar.included_count,
         working_capital_potential=capital_potential.amount,
         working_capital_potential_count=capital_potential.included_count,
+        working_capital_oar_potential=capital_oar_potential.amount,
+        working_capital_oar_potential_count=capital_oar_potential.included_count,
         inventory_value=held.inventory_value if held else None,
         inventory_priced_count=held.inventory_priced_count if held else 0,
         safety_stock_value=held.safety_stock_value if held else None,

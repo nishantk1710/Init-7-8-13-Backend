@@ -361,25 +361,25 @@ def _cards(
     cards.append(
         KpiCard(
             key="working_capital_potential",
-            title="Working capital impact if all eligible are adopted",
+            title="Working capital impact if all eligible OAR are adopted",
             unit=_unit(position.working_capital_currency or position.currency),
-            value=position.working_capital_potential,
-            status=AvailabilityStatus.AVAILABLE if position.working_capital_potential is not None else AvailabilityStatus.NOT_AVAILABLE,
+            value=position.working_capital_oar_potential,
+            status=AvailabilityStatus.AVAILABLE if position.working_capital_oar_potential is not None else AvailabilityStatus.NOT_AVAILABLE,
             explanation=(
-                "What the working capital impact would be if every eligible material-plant's recommended reorder point were adopted "
-                "in SAP: stock items, eligible OAR materials, and non-eligible OAR materials with a live conversion request. A minus "
-                "is cash released, a plus is cash tied up. A projection, not a realised saving; what SAP has actually adopted is "
-                f"in the cards above. {position.working_capital_potential_count} material-plants included."
+                "What the working capital impact would be if every eligible OAR material-plant's recommended reorder point were adopted "
+                "in SAP: eligible OAR materials, and non-eligible OAR materials with a live conversion request. Stock items are not "
+                "included. A minus is cash released, a plus is cash tied up. A projection, not a realised saving; what SAP has "
+                f"actually adopted is in the cards above. {position.working_capital_oar_potential_count} material-plants included."
             ),
             kind=MetricKind.MEASUREMENT,
             measured_on=cutoff if split_live else position_measured_on,
             period_label=period_label if split_live else f"{quarter_end_label} month-end",
-            denominator=position.working_capital_potential_count,
-            denominator_label="eligible material-plants included",
+            denominator=position.working_capital_oar_potential_count,
+            denominator_label="eligible OAR material-plants included",
             basis="current_calculation" if split_live else basis,
             unavailable_reason=(
-                None if position.working_capital_potential is not None
-                else "No eligible recommendation has a ZAR or NAD unit price and both reorder points (or this report was saved before this figure existed)."
+                None if position.working_capital_oar_potential is not None
+                else "No eligible OAR recommendation has a ZAR or NAD unit price and both reorder points (or this report was saved before this figure existed)."
             ),
             note=" ".join(n for n in (split_note, reference_note, MONEY_CAVEAT) if n),
         )
@@ -534,7 +534,8 @@ def build_quarter_management(
             # the current recommendations, and the cards say so -- not shown as missing.
             update = {name: getattr(live_position, name) for name in (
                 "working_capital_split", "working_capital_stock", "working_capital_stock_count", "working_capital_oar",
-                "working_capital_oar_count", "working_capital_potential", "working_capital_potential_count")}
+                "working_capital_oar_count", "working_capital_potential", "working_capital_potential_count",
+                "working_capital_oar_potential", "working_capital_oar_potential_count")}
             position = position.model_copy(update={**update, "working_capital_split_is_current": True})
     forecast = build_forecast_actual(session, period_start, period_end)
 

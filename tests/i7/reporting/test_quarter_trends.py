@@ -239,7 +239,8 @@ def test_a_snapshot_saved_before_the_working_capital_split_gets_the_split_worked
     management = build(db, date(2027, 1, 15))
     assert management.position_basis == "snapshot"
     potential = card(management, "working_capital_potential")
-    assert potential.status is AvailabilityStatus.AVAILABLE and potential.value == Decimal("-100")  # worked out now, not "Not available"
+    assert potential.status is AvailabilityStatus.NOT_AVAILABLE  # A is a stock item, so no OAR material is in it; worked out now all the same
+    assert potential.basis == "current_calculation" and potential.unavailable_reason
     assert potential.basis == "current_calculation" and "made before this figure existed" in (potential.note or "")
     for key in ("working_capital_stock", "working_capital_oar"):
         assert card(management, key).status is AvailabilityStatus.AVAILABLE  # nothing adopted: 0, a number
