@@ -294,8 +294,9 @@ def _cards(
             value=position.net_rop_value_impact,
             status=AvailabilityStatus.AVAILABLE if position.net_rop_value_impact is not None else AvailabilityStatus.NOT_AVAILABLE,
             explanation=(
-                "Estimated change in cash tied up in stock if every recommended reorder point were adopted: negative "
-                "means more tied up, positive means released. An estimate, not a realised saving. In ZAR, from each "
+                "Change in cash tied up in stock from the recommendations SAP has adopted (SAP now holds the recommended values; "
+                "approval alone does not count): a minus is cash released, a plus is cash tied up. 0 when none has been "
+                "adopted yet. Worked out on the reorder point, not a realised saving. In ZAR, from each "
                 "material's SAP valuation price (ZAR, and NAD at 1:1): "
                 f"{position.priced_count} material-plants included, {position.working_capital_excluded_count} left out "
                 "(another currency, no stated currency, no valid price or no reorder point)."
@@ -308,6 +309,70 @@ def _cards(
             basis=basis,
             unavailable_reason=(
                 None if position.net_rop_value_impact is not None else "No recommendation has a ZAR or NAD unit price and both a current and a recommended reorder point."
+            ),
+            note=" ".join(n for n in (position_note, reference_note, MONEY_CAVEAT) if n),
+        )
+    )
+
+    # --- The same working capital figure, split: stock items and OAR material-plants are different populations (OAR levels are
+    # sized from similar materials), so each gets its own card. They add up to the card above.
+    for key, title, amount, count, what in (
+        ("working_capital_stock", "Working capital impact: stock items", position.working_capital_stock,
+         position.working_capital_stock_count, "stock-item"),
+        ("working_capital_oar", "Working capital impact: OAR", position.working_capital_oar,
+         position.working_capital_oar_count, "OAR"),
+    ):
+        cards.append(
+            KpiCard(
+                key=key,
+                title=title,
+                unit=_unit(position.working_capital_currency or position.currency),
+                value=amount,
+                status=AvailabilityStatus.AVAILABLE if amount is not None else AvailabilityStatus.NOT_AVAILABLE,
+                explanation=(
+                    f"The working capital impact of the {what} recommendations SAP has adopted, worked out the same way as the card above "
+                    f"({count} material-plants included). The stock-item and OAR figures add up to the total. An estimate, not a "
+                    "realised saving."
+                    + (" For OAR, a material the rule marks not eligible counts only once a request to convert it has been submitted "
+                       "and not rejected." if key == "working_capital_oar" else "")
+                ),
+                kind=MetricKind.MEASUREMENT,
+                measured_on=position_measured_on if from_snapshot else cutoff,
+                period_label=f"{quarter_end_label} month-end" if from_snapshot else period_label,
+                denominator=count,
+                denominator_label=f"{what} material-plants included",
+                basis=basis,
+                unavailable_reason=(
+                    None if amount is not None
+                    else f"No {what} recommendation has a ZAR or NAD unit price and both reorder points (or this report was saved before the split)."
+                ),
+                note=" ".join(n for n in (position_note, reference_note, MONEY_CAVEAT) if n),
+            )
+        )
+
+    # --- If every eligible material-plant were adopted: the Overview's own figure, to set beside what SAP has actually adopted.
+    cards.append(
+        KpiCard(
+            key="working_capital_potential",
+            title="Working capital impact if all eligible are adopted",
+            unit=_unit(position.working_capital_currency or position.currency),
+            value=position.working_capital_potential,
+            status=AvailabilityStatus.AVAILABLE if position.working_capital_potential is not None else AvailabilityStatus.NOT_AVAILABLE,
+            explanation=(
+                "What the working capital impact would be if every eligible material-plant's recommended reorder point were adopted "
+                "in SAP: stock items, eligible OAR materials, and non-eligible OAR materials with a live conversion request. A minus "
+                "is cash released, a plus is cash tied up. A projection, not a realised saving; what SAP has actually adopted is "
+                f"in the cards above. {position.working_capital_potential_count} material-plants included."
+            ),
+            kind=MetricKind.MEASUREMENT,
+            measured_on=position_measured_on if from_snapshot else cutoff,
+            period_label=f"{quarter_end_label} month-end" if from_snapshot else period_label,
+            denominator=position.working_capital_potential_count,
+            denominator_label="eligible material-plants included",
+            basis=basis,
+            unavailable_reason=(
+                None if position.working_capital_potential is not None
+                else "No eligible recommendation has a ZAR or NAD unit price and both reorder points (or this report was saved before this figure existed)."
             ),
             note=" ".join(n for n in (position_note, reference_note, MONEY_CAVEAT) if n),
         )
@@ -344,8 +409,10 @@ def _cards(
             value=Decimal(oar_records),
             status=AvailabilityStatus.AVAILABLE,
             explanation=(
-                "Recommendation records generated in this period for OAR material-plants, whose levels are sized from similar "
-                "materials. These are records, not materials: an OAR material-plant that was recalculated has a record for each run."
+                "Recommendation records generated in this period for eligible OAR material-plants, whose levels are sized from similar "
+                "materials. A material the rule marks not eligible is counted only once someone has submitted a request to convert it "
+                "and that request has not been rejected (the same rule as Working Capital Impact). These are records, not materials: an "
+                "OAR material-plant that was recalculated has a record for each run."
             ),
             kind=MetricKind.EVENT,
             measured_on=None,

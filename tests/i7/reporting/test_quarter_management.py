@@ -338,13 +338,15 @@ def test_the_approval_card_sets_and_the_stage_sets_are_one_definition():
     assert kpi_definitions.stage_counts({"SOMETHING_NEW": 3, "APPROVED": 1})["other"] == 3
 
 
-def test_working_capital_is_not_available_not_zero_when_nothing_has_a_price_and_both_reorder_points(db):
-    db.add_all([rec("A", at(2026, 10), price=None, cur_rop=1, rec_rop=5), rec("B", at(2026, 10), price=Decimal("10"), cur_rop=None, rec_rop=5)])
+def test_working_capital_is_zero_when_nothing_has_been_adopted_in_sap(db):
+    # Priced, with both reorder points, and approved -- but SAP has not adopted it, so it has not taken effect: 0, not an estimate.
+    db.add_all([rec("A", at(2026, 10), price=Decimal("10"), cur_rop=2, rec_rop=12, status="APPROVED")])
     db.commit()
-    working_capital = card(build(db, AFTER_Q4), "working_capital_impact")
-    assert working_capital.status is AvailabilityStatus.NOT_AVAILABLE
-    assert working_capital.value is None
-    assert working_capital.unavailable_reason
+    management = build(db, AFTER_Q4)
+    for key in ("working_capital_impact", "working_capital_stock", "working_capital_oar"):
+        working_capital = card(management, key)
+        assert working_capital.status is AvailabilityStatus.AVAILABLE and working_capital.value == 0
+        assert working_capital.denominator == 0
 
 
 def test_working_capital_is_on_the_reorder_point_over_priced_rows_only(db):
@@ -353,6 +355,8 @@ def test_working_capital_is_on_the_reorder_point_over_priced_rows_only(db):
         rec("B", at(2026, 10), price=Decimal("3"), cur_rop=9, rec_rop=4),     # 3 x (9 - 4) = +15
         rec("C", at(2026, 10), price=None, cur_rop=1, rec_rop=100),           # no price: left out, not zero
         rec("D", at(2026, 10), price=Decimal("50"), cur_rop=1, rec_rop=2),    # priced in USD: left out, not converted
+        rec("E", at(2026, 10), price=Decimal("7"), cur_rop=1, rec_rop=100),   # priced, but SAP has not adopted it: left out
+        *[adoption(m, "ADOPTED") for m in ("A", "B", "C", "D")],
         # The currency each price is stated in (MBEW WAERS): only ZAR and NAD count.
         *[
             StagedMaterialPlant(sap_material_number=m, sap_plant_code="1300", unit_price=p, currency=c,
@@ -368,6 +372,27 @@ def test_working_capital_is_on_the_reorder_point_over_priced_rows_only(db):
     assert working_capital.denominator == 2
     assert management.position.priced_count == 2
     assert management.position.working_capital_excluded_count == 2  # C (no price) and D (USD)
+
+
+def test_working_capital_is_also_shown_apart_for_stock_items_and_oar_and_they_add_up(db):
+    stock = rec("A", at(2026, 10), price=Decimal("10"), cur_rop=2, rec_rop=12)   # stock item: 10 x (2 - 12) = -100
+    eligible = rec("B", at(2026, 10), price=Decimal("3"), cur_rop=9, rec_rop=4)  # OAR, eligible: +15
+    unrequested = rec("C", at(2026, 10), price=Decimal("5"), cur_rop=9, rec_rop=4)  # OAR, not eligible, no request: left out
+    not_adopted = rec("E", at(2026, 10), price=Decimal("4"), cur_rop=9, rec_rop=1)  # stock item SAP has not adopted: left out
+    for row, verdict in ((eligible, "ELIGIBLE"), (unrequested, "NOT_ELIGIBLE")):
+        row.is_oar, row.conversion_eligibility, row.manually_converted = True, verdict, False
+    db.add_all([
+        stock, eligible, unrequested, not_adopted, *[adoption(m, "ADOPTED") for m in ("A", "B", "C")],
+        *[StagedMaterialPlant(sap_material_number=m, sap_plant_code="1300", unit_price=Decimal(p), currency="ZAR",
+                              staging_run_id=1, source_table="n_mbew") for m, p in (("A", "10"), ("B", "3"), ("C", "5"), ("E", "4"))],
+    ])
+    db.commit()
+    management = build(db, AFTER_Q4)
+    assert card(management, "working_capital_stock").value == Decimal("-100")
+    assert card(management, "working_capital_oar").value == Decimal("15")  # C is not eligible and has no request
+    assert card(management, "working_capital_impact").value == Decimal("-85")  # the two add up to the total
+    # If every eligible material-plant were adopted: A (-100), B (+15) and E (4 x (9 - 1) = +32); C is not eligible.
+    assert card(management, "working_capital_potential").value == Decimal("-53")
 
 
 def test_excess_opportunity_counts_only_where_current_max_is_above_the_recommended(db):
@@ -605,9 +630,9 @@ def test_a_month_without_staged_consumption_is_not_covered_never_zero(db):
 # --- OAR records and Min-Max conversion ---------------------------------------------------------
 
 
-def oar(material, when, *, verdict="ELIGIBLE", manual=False, run=1, plant="1300", is_oar=True, valued=True):
+def oar(material, when, *, verdict="ELIGIBLE", manual=False, run=1, plant="1300", is_oar=True, valued=True, status="READY_FOR_REVIEW"):
     """An OAR recommendation. ``valued=False`` is one with no recommended value at all, as an eligible material the system could not size."""
-    row = rec(material, when, run=run, plant=plant, rec_rop=5 if valued else None)
+    row = rec(material, when, run=run, plant=plant, rec_rop=5 if valued else None, status=status)
     row.is_oar, row.conversion_eligibility, row.manually_converted = is_oar, verdict, manual
     return row
 
@@ -623,6 +648,19 @@ def test_oar_records_are_counted_as_records_not_materials(db):
     assert card_.value == 3 and card_.unit == "recommendation records"
     assert card_.denominator == 4  # every record generated in the period, OAR or not
     assert "records, not materials" in card_.explanation
+
+
+def test_oar_card_counts_eligible_only_until_a_not_eligible_one_is_submitted_for_approval(db):
+    db.add_all([
+        oar("E", at(2026, 10)),  # eligible: counts
+        oar("ER", at(2026, 10), status="REJECTED"),  # eligible but rejected: not counted
+        oar("N0", at(2026, 10), verdict="NOT_ELIGIBLE"),  # not eligible, no request: not counted
+        oar("N1", at(2026, 10), verdict="NOT_ELIGIBLE", manual=True, status="PENDING_APPROVAL"),  # submitted: counts
+        oar("N2", at(2026, 10), verdict="NOT_ELIGIBLE", manual=True, status="REJECTED"),  # request turned down: not counted
+        oar("NV", at(2026, 10), verdict=None),  # no verdict: not counted
+    ])
+    db.commit()
+    assert card(build(db, AFTER_Q4), "oar_recommendations").value == 2
 
 
 def adoption(material, status, *, run=1, plant="1300"):

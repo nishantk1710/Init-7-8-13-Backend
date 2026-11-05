@@ -42,7 +42,7 @@ from app.api.i7.recommendations import _apply_filters, _latest_only, _not_smooth
 from app.initiatives.i7.kpi_formulas.inventory_value import inventory_measurements, stock_date_problem, stock_loaded_at
 from app.initiatives.i7.kpi_formulas.resolved import Formulas, load_active
 from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql
-from app.initiatives.i7.kpi_formulas.working_capital import working_capital_impact
+from app.initiatives.i7.kpi_formulas.working_capital import ELIGIBLE, NOT_ELIGIBLE, oar_rule, working_capital_impact
 from app.initiatives.i7.stockout_risk.counts import stockout_risk_counts
 from app.models.i7_recommendation import Recommendation, SapAdoptionResult
 from app.schemas.i7.reports import PositionFigures, StockoutPosition
@@ -134,9 +134,20 @@ def stage_counts(counts: dict[str, int]) -> dict[str, int]:
 
 
 def oar_records(session: Session, period_start: date, exclusive_end: date) -> int:
-    """Recommendation records generated in the period for OAR material-plants -- rows, not distinct materials."""
+    """Recommendation records generated in the period for *eligible* OAR material-plants -- rows, not distinct materials.
+
+    The same OAR rule the Overview's Working Capital Impact uses (:func:`~app.initiatives.i7.kpi_formulas.working_capital.oar_rule`):
+    an ELIGIBLE record counts unless it was rejected; a NOT_ELIGIBLE record counts only once somebody has asked to convert it and the
+    request is alive (submitted for approval and not rejected). A NOT_ELIGIBLE record with no request, or a rejected one, is left out,
+    and an OAR record with no eligibility verdict at all is not counted."""
     return count_of(
-        session, select(Recommendation.id).where(*_in_period(period_start, exclusive_end), Recommendation.is_oar)
+        session,
+        select(Recommendation.id).where(
+            *_in_period(period_start, exclusive_end),
+            Recommendation.is_oar,
+            Recommendation.conversion_eligibility.in_((ELIGIBLE, NOT_ELIGIBLE)),
+            oar_rule(),
+        ),
     )
 
 
@@ -286,7 +297,12 @@ def position_figures(
     ).scalar()
 
     # The same calculation as the Overview card (kpi_formulas.working_capital): MBEW price and currency in ZAR.
-    capital = working_capital_impact(session, base, formulas)
+    # In the report, working capital is the impact of what SAP has actually adopted -- not the estimate if everything were adopted.
+    capital = working_capital_impact(session, base, formulas, adopted_only=True)
+    capital_stock = working_capital_impact(session, base, formulas, segment="stock", adopted_only=True)
+    capital_oar = working_capital_impact(session, base, formulas, segment="oar", adopted_only=True)
+    # What it would be if every eligible material-plant were adopted: the Overview's calculation, adopted or not.
+    capital_potential = working_capital_impact(session, base, formulas)
 
     # Stock held, over the same population. Valued only when the stock load is close enough to the cutoff to speak for
     # it -- the same age rule the stockout reading answers to -- otherwise it is "not measured", never 0.
@@ -306,6 +322,12 @@ def position_figures(
         currency=_portfolio_currency(session),
         working_capital_currency=capital.currency,
         working_capital_excluded_count=capital.excluded_count,
+        working_capital_stock=capital_stock.amount,
+        working_capital_stock_count=capital_stock.included_count,
+        working_capital_oar=capital_oar.amount,
+        working_capital_oar_count=capital_oar.included_count,
+        working_capital_potential=capital_potential.amount,
+        working_capital_potential_count=capital_potential.included_count,
         inventory_value=held.inventory_value if held else None,
         inventory_priced_count=held.inventory_priced_count if held else 0,
         safety_stock_value=held.safety_stock_value if held else None,
