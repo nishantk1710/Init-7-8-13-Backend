@@ -34,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from sqlalchemy import Select, and_, case, func, select
+from sqlalchemy import Select, and_, case, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -44,6 +44,12 @@ from app.models.i7_features import MaterialFeature
 from app.models.i7_recommendation import Recommendation
 from app.models.i7_staging import StagedStock
 from app.models.i7_stockout_risk import StockoutRiskInput
+
+
+# The ZMM065 tier behind each named display level -- the same table as app/api/i7/recommendations.py's
+# CRITICALITY_TIERS (initiatives do not import the API layer, so it is repeated here).
+_NAMED_TIERS_BY_LEVEL = {"Critical": "CRITICAL", "High": "IMPACT", "Medium": "INSURANCE"}
+_NAMED_TIERS = tuple(_NAMED_TIERS_BY_LEVEL.values())
 
 
 @dataclass(frozen=True)
@@ -71,6 +77,7 @@ def stockout_risk_counts(
     material: str | None = None,
     demand_class: str | None = None,
     criticality: str | None = None,
+    criticality_level: str | None = None,
     status: str | None = None,
     is_oar: bool | None = None,
     confidence: str | None = None,
@@ -168,6 +175,13 @@ def stockout_risk_counts(
         source = source.where(feature.demand_class == demand_class)
     if criticality is not None:
         source = source.where(feature.criticality == criticality)
+    if criticality_level is not None:
+        # The page's display level (Critical / High / Medium / Low), the same split the recommendation list
+        # uses: the three named tiers, and Low for everything else (NORMAL, OBSOLETE, or no tier at all).
+        if criticality_level == "Low":
+            source = source.where(or_(feature.criticality.is_(None), feature.criticality.not_in(_NAMED_TIERS)))
+        else:
+            source = source.where(feature.criticality == _NAMED_TIERS_BY_LEVEL[criticality_level])
 
     eligible, at_risk_count, evaluated_count = session.execute(source).one()
 

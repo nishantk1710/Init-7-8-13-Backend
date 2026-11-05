@@ -30,7 +30,7 @@ from app.initiatives.i13.act.domain import ExceptionType, NoPlanReason, WatchGrn
 from app.initiatives.i13.act.service import DetectionRunResult, EscalationRunResult, detect_exceptions, process_escalations
 from app.initiatives.i13.act_exception_store import SqlExceptionRepository
 from app.initiatives.i13.act_hod_provider import ConfigEscalationRecipientProvider
-from app.initiatives.i13.act_requester_directory import parse_requester_recipients
+from app.initiatives.i13.act_requester_directory import named_requesters_by_session, parse_requester_recipients
 from app.initiatives.i13.act_watch_snapshot import build_grni_snapshot_index
 from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.consumption_attribution import ConsumptionAttributionService
@@ -188,6 +188,11 @@ def run_detection(
     # FR-4: which session, if any, each reservation's item text (SGTXT) names.
     no_plan_reason_by_reservation = _no_plan_reasons(db, ledger_entries, snapshot)
 
+    # The person named in the assistant's Requester box, per session, where I13_REQUESTER_RECIPIENTS knows them.
+    requester_by_session = named_requesters_by_session(
+        db, parse_requester_recipients(config.escalation.requester_recipients_raw)
+    )
+
     return detect_exceptions(
         as_of_time,
         ledger_entries=ledger_entries,
@@ -200,6 +205,7 @@ def run_detection(
         quantity_decision_records=quantity_decision_records,
         requester_by_reservation=requester_by_reservation,
         no_plan_reason_by_reservation=no_plan_reason_by_reservation,
+        requester_by_session=requester_by_session,
         types=types,
     )
 
@@ -259,6 +265,9 @@ def _run_detection_stored(
         # says who they are; otherwise the person who operated the assistant, as before.
         requester_aliases=parse_requester_recipients(config.escalation.requester_recipients_raw),
     )
+    requester_by_session = named_requesters_by_session(
+        db, parse_requester_recipients(config.escalation.requester_recipients_raw)
+    )
     linked = session_by_reservation(db)
     sessions = load_sessions(db, set(linked.values()))
     work = WorkTables(snapshot.version)
@@ -290,6 +299,7 @@ def _run_detection_stored(
                 (a.reservation_number, a.reservation_item): a.requester_id for a in attributions if a.requester_id
             },
             no_plan_reason_by_reservation=reasons,
+            requester_by_session=requester_by_session,
             types=types,
         )
         for name in totals:

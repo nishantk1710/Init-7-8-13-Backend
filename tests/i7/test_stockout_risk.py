@@ -507,6 +507,24 @@ def test_the_demand_class_and_criticality_filters_read_the_feature_store(db):
     assert counts(db, criticality="IMPACT").evaluated == 0
 
 
+def test_the_low_level_counts_every_material_that_is_not_critical_impact_or_insurance(db):
+    """The Overview's NORMAL option is the display level Low: NORMAL, OBSOLETE and no tier at all. It is counted over
+    every such material-plant, so no page size can limit it."""
+    rows = [("CR", "CRITICAL"), ("IM", "IMPACT"), ("IN", "INSURANCE"), ("NO", "NORMAL"), ("OB", "OBSOLETE"), ("NT", None)]
+    for material, tier in rows:
+        db.add_all([feature(material, criticality=tier), usage(material), stock(material, "1")])
+    db.commit()
+
+    def evaluated(level):
+        return stockout_risk_counts(db, select(Recommendation), criticality_level=level).evaluated
+
+    assert evaluated("Low") == 3  # NORMAL, OBSOLETE, no tier
+    assert evaluated("Critical") == 1
+    assert evaluated("High") == 1
+    assert evaluated("Medium") == 1
+    assert stockout_risk_counts(db, select(Recommendation)).evaluated == 6  # no filter: all of them
+
+
 def test_a_filter_only_a_recommendation_has_restricts_the_count_to_recommended_material_plants(db):
     db.add_all(
         [

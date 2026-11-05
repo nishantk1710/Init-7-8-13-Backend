@@ -102,6 +102,8 @@ class SchedulePolicy:
     """Also generate the report for a month that has just ended (``I7_MONTHLY_REPORT_AUTO_ENABLED``)."""
     monthly_report_window_days: int = 7
     """Days after a month ends in which that generation still runs (``I7_MONTHLY_REPORT_AUTO_WINDOW_DAYS``)."""
+    adoption_check_enabled: bool = True
+    """Also check SAP change history for recommendations handed over to SAP, once a day (``I7_ADOPTION_DAILY_CHECK_ENABLED``)."""
 
     @classmethod
     def from_settings(cls, settings) -> "SchedulePolicy":
@@ -137,6 +139,7 @@ class SchedulePolicy:
         return cls(
             hour, retries, interval, delay, bool(getattr(settings, "i7_kpi_snapshot_enabled", False)), report, window,
             monthly, monthly_window,
+            adoption_check_enabled=bool(getattr(settings, "i7_adoption_daily_check_enabled", True)),
         )
 
 
@@ -198,6 +201,32 @@ def capture_snapshots(session_factory: Callable[[], Session], now: datetime | No
     return ", ".join(f"{r.month:%Y-%m} {r.action}" for r in results) or "up to date"
 
 
+def adoption_check_step() -> Callable[[Callable[[], Session], datetime | None], str]:
+    """The nightly SAP-adoption step, as the argument :func:`tick` takes.
+
+    Checks SAP's change history for every recommendation handed over to SAP and records what it finds
+    (``run_daily_adoption_check``). Repeating it is harmless and cheap -- a result written today, an
+    adopted one and a closed window's last verdict are all skipped -- but the slot lets this run on every tick
+    for an hour, so the closure also remembers the day it last finished cleanly and does nothing more that day. A
+    restart forgets that and does one cheap pass, which the skips make a no-op.
+    """
+    done_on: list = []
+
+    def step(session_factory: Callable[[], Session], now: datetime | None = None) -> str:
+        # Imported here: it lives with the adoption endpoints, which import a great deal.
+        from app.api.i7.adoption import run_daily_adoption_check
+
+        today = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date()
+        if done_on and done_on[0] == today:
+            return "already checked today"
+        summary = run_daily_adoption_check(session_factory, today)
+        if summary.failed == 0:
+            done_on[:] = [today]
+        return str(summary)
+
+    return step
+
+
 def report_step(
     policy: SchedulePolicy, kind: str, *, generate: Callable[..., object] | None = None
 ) -> Callable[[Callable[[], Session], datetime | None], str]:
@@ -256,6 +285,7 @@ def tick(
     capture: Callable[[Callable[[], Session], datetime | None], str] | None = None,
     report: Callable[[Callable[[], Session], datetime | None], str] | None = None,
     monthly: Callable[[Callable[[], Session], datetime | None], str] | None = None,
+    adoption: Callable[[Callable[[], Session], datetime | None], str] | None = None,
 ) -> str:
     """One look. Returns a one-line description of what it did, for the log.
 
@@ -280,6 +310,12 @@ def tick(
         except Exception as exc:  # noqa: BLE001 -- see the docstring
             logger.exception("I07 nightly: the KPI snapshot capture failed (logged in i7_kpi_snapshot_log; retried next tick)")
             outcome = f"{outcome}; snapshots failed: {type(exc).__name__}"
+    if adoption is not None and policy.adoption_check_enabled:
+        try:
+            outcome = f"{outcome}; adoption: {adoption(session_factory, now)}"
+        except Exception as exc:  # noqa: BLE001 -- see the docstring
+            logger.exception("I07 nightly: the SAP adoption check failed (retried next tick)")
+            outcome = f"{outcome}; adoption failed: {type(exc).__name__}"
     if monthly is not None and policy.monthly_report_enabled:
         try:
             outcome = f"{outcome}; monthly report: {monthly(session_factory, now)}"
@@ -345,6 +381,7 @@ def run_loop(
     capture: Callable[[Callable[[], Session], datetime | None], str] | None = None,
     report: Callable[[Callable[[], Session], datetime | None], str] | None = None,
     monthly: Callable[[Callable[[], Session], datetime | None], str] | None = None,
+    adoption: Callable[[Callable[[], Session], datetime | None], str] | None = None,
 ) -> None:
     """Tick every ``policy.interval_seconds`` until ``stop`` is set.
 
@@ -366,6 +403,7 @@ def run_loop(
                 capture=capture,
                 report=report,
                 monthly=monthly,
+                adoption=adoption,
             )
             logger.debug("I07 nightly tick: %s", outcome)
         except Exception:  # noqa: BLE001 -- a bad tick must never end the loop
@@ -400,6 +438,7 @@ def start(stop: threading.Event, settings) -> threading.Thread | None:
             "capture": capture_snapshots,
             "report": quarterly_report_step(policy) if policy.quarterly_report_enabled else None,
             "monthly": monthly_report_step(policy) if policy.monthly_report_enabled else None,
+            "adoption": adoption_check_step() if policy.adoption_check_enabled else None,
         },
         name="i7-pipeline-nightly",
         daemon=True,
@@ -413,6 +452,8 @@ def start(stop: threading.Event, settings) -> threading.Thread | None:
         "y" if policy.retries == 1 else "ies",
         policy.interval_seconds,
     )
+    if policy.adoption_check_enabled:
+        logger.info("I07 SAP adoption: change history checked once a day for recommendations handed over to SAP")
     if policy.quarterly_report_enabled:
         logger.info(
             "I07 quarterly report: generated automatically for a quarter that closed in the last %d days",

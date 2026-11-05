@@ -94,6 +94,7 @@ def _detect(
     notification_port=None,
     grni_snapshots=None,
     requester_by_reservation=None,
+    requester_by_session=None,
     types=None,
     quantity_decision_records=(),
 ):
@@ -109,6 +110,7 @@ def _detect(
         plan_breach_grace_days=7,
         requester_response_days=5,
         requester_by_reservation=requester_by_reservation or {},
+        requester_by_session=requester_by_session or {},
         types=types,
         quantity_decision_records=list(quantity_decision_records),
     )
@@ -167,6 +169,42 @@ def test_plan_breach_detected_and_routed_to_requester() -> None:
     assert exception.requester_due_at == as_of_time + timedelta(days=5)
     # Platform queue + email, both attempted.
     assert len(notification_port.sent) == 2
+
+
+def test_a_plan_breach_is_owned_by_the_person_named_for_its_session() -> None:
+    """The Requester box names someone the administrator has mapped: they own the breach, not the operator."""
+    as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
+    repository, notification_port, result = _detect(
+        as_of_time,
+        plans=[_plan(requester="OPERATOR-GUID", session_id="SESS-1")],
+        requester_by_session={"SESS-1": "darren"},
+    )
+
+    assert result.created == 1 and result.routed == 1
+    [exception] = repository.list(exception_type=ExceptionType.PLAN_BREACH)
+    assert exception.owner_requester_id == "darren"
+    assert exception.current_assignee_id == "darren"
+    # The notice is addressed to the named person, not to the operator.
+    assert {sent.recipient for sent in notification_port.sent} == {"darren"}
+
+
+def test_a_plan_breach_stays_with_the_operator_when_nobody_is_named_for_its_session() -> None:
+    as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
+    for named in ({}, {"OTHER-SESSION": "darren"}):
+        repository, _, _ = _detect(
+            as_of_time, plans=[_plan(requester="OPERATOR-GUID", session_id="SESS-1")], requester_by_session=named
+        )
+        [exception] = repository.list(exception_type=ExceptionType.PLAN_BREACH)
+        assert exception.owner_requester_id == "OPERATOR-GUID"
+
+
+def test_a_plan_with_no_session_is_never_matched_to_a_named_person() -> None:
+    as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
+    repository, _, _ = _detect(
+        as_of_time, plans=[_plan(requester="OPERATOR-GUID", session_id="")], requester_by_session={"": "darren"}
+    )
+    [exception] = repository.list(exception_type=ExceptionType.PLAN_BREACH)
+    assert exception.owner_requester_id == "OPERATOR-GUID"
 
 
 def test_no_plan_exception_detected_for_oar_reservation_without_a_plan() -> None:

@@ -163,13 +163,19 @@ class TestAmbiguousAndUnusableRows:
     def test_a_row_with_no_price_and_no_stated_problem_is_unreadable(self) -> None:
         assert choose_unit_price([v(None)]).missing is PriceMissing.UNREADABLE_PRICE
 
-    @pytest.mark.parametrize("problem", [PriceMissing.BAD_PRICE_UNIT, PriceMissing.MISSING_CURRENCY])
+    @pytest.mark.parametrize("problem", [
+            PriceMissing.PRICE_UNIT_COLUMN_MISSING,
+            PriceMissing.PRICE_UNIT_MISSING,
+            PriceMissing.PRICE_UNIT_INVALID,
+            PriceMissing.BAD_PRICE_UNIT,
+            PriceMissing.MISSING_CURRENCY,
+        ])
     def test_the_rows_own_problem_is_the_reason(self, problem: PriceMissing) -> None:
         assert choose_unit_price([v(None, problem=problem)]).missing is problem
 
     def test_a_problem_row_is_never_read_as_a_price(self) -> None:
         """A row flagged bad is excluded even if a price value was left on it."""
-        bad = Valuation(None, Decimal("500"), problem=PriceMissing.BAD_PRICE_UNIT)
+        bad = Valuation(None, Decimal("500"), problem=PriceMissing.PRICE_UNIT_COLUMN_MISSING)
 
         assert choose_unit_price([bad]).price is None
 

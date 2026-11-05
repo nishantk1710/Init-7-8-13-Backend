@@ -834,6 +834,12 @@ class Settings(BaseSettings):
     # capture can be run by hand: python -m app.reporting.capture_snapshot.
     i7_kpi_snapshot_enabled: bool = False
 
+    # Whether the nightly watcher also checks SAP's change history (CDHDR/CDPOS) for every recommendation that has
+    # been handed over to SAP (app/api/i7/adoption.py::run_daily_adoption_check), so a matching change is found the
+    # day it is made. Read-only towards SAP, safe to repeat, needs no migration. ON by default; it only runs when the
+    # watcher itself (i7_pipeline_watch_enabled) is on. Set false to leave adoption to the page and the window's end.
+    i7_adoption_daily_check_enabled: bool = True
+
     # Whether the nightly watcher also generates the Quarterly Report for the quarter that just closed
     # (app/initiatives/i7/reporting/auto_generate.py), after the pipeline check and the snapshots. OFF by default, and it
     # only acts when the watcher itself is on (i7_pipeline_watch_enabled) -- there is no second timer. Nothing else in the

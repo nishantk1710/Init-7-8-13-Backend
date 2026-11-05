@@ -51,10 +51,13 @@ class AdoptionResponse(BaseModel):
     check_type: str = ""
     fields: list[AdoptionFieldRow] = []
     approved_on: date | None = None
+    """The day the final approval handed the recommendation to SAP -- the start of the monitoring window
+    (the field keeps its name for the frontend). ``None`` until then."""
     window_ends_on: date | None = None
+    """``approved_on`` plus the policy's monitoring window (``AdoptionPolicy.monitoring_window_days``, 7 days)."""
     window_open: bool = True
     pending: bool = False
-    """UNKNOWN while the tracking window is still open -- waiting for SAP."""
+    """UNKNOWN while the tracking window is still open (or not yet started) -- waiting for SAP."""
 
     is_conversion_adoption: bool = False
     """Whether this result is FR-9's OAR-conversion check (ND/PD -> VB with

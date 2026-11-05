@@ -57,6 +57,7 @@ from datetime import date, datetime, time, timedelta
 
 from app.initiatives.i7.adapters.change_documents import (
     ChangeDocumentRow,
+    material_history_through,
     material_marc_changes,
 )
 from app.initiatives.i7.recommendations.types import AdoptionFieldChange
@@ -199,6 +200,16 @@ class RawChangeDocumentProvider:
             )
             self._cache[key] = _rows_for_plant(_dedupe(rows), plant)
         return self._cache[key]
+
+    def history_covers(self, through: date) -> bool:
+        """Whether SAP's material change history reaches ``through`` (inclusive).
+
+        Only then does "no matching change" mean SAP was looked at for the whole window. One read of
+        the history's newest date, remembered, since every recommendation asks it about its own window end.
+        """
+        if not hasattr(self, "_history_through"):
+            self._history_through = material_history_through(self._session)
+        return self._history_through is not None and self._history_through >= through.isoformat()
 
     def field_changes(self, material: str, plant: str) -> dict[str, AdoptionFieldChange] | None:
         """Per tracked field: what SAP held before, what it holds now, and when

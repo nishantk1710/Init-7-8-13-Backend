@@ -186,3 +186,25 @@ def test_the_report_and_the_overview_calculation_agree(db):
     assert position.priced_count == shared.included_count == 2
     assert position.working_capital_excluded_count == shared.excluded_count == 1
     assert position.working_capital_currency == "ZAR"
+
+
+def test_a_material_with_no_price_unit_is_left_out_and_counted_not_priced_at_verpr_or_zero(db):
+    """Staging gives a price-less row (NULL price, with its reason) when PEINH is missing or bad. It adds nothing,
+    and the figure still says it left one out."""
+    add(db, "A", currency="ZAR", price="100", current="5", recommended="2")  # 100 x 3 = 300, counted
+    add(db, "B", currency="ZAR", price=None, current="5", recommended="2")  # PEINH missing: no unit price
+
+    result = impact(db)
+
+    assert result.amount == Decimal("300")  # B added nothing: not 0 x 3 hidden in the sum, not a raw VERPR
+    assert (result.included_count, result.excluded_count) == (1, 1)
+
+
+def test_when_every_price_lacks_its_unit_the_figure_is_none_not_zero(db):
+    add(db, "A", currency="ZAR", price=None, current="5", recommended="2")
+    add(db, "B", currency="ZAR", price=None, current="9", recommended="1")
+
+    result = impact(db)
+
+    assert result.amount is None
+    assert (result.included_count, result.excluded_count) == (0, 2)
