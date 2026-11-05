@@ -947,6 +947,11 @@ class PositionFigures(BaseModel):
     price, or no reorder point."""
     # --- The same working capital figure, split between stock items and OAR material-plants. The two add up to
     # ``net_rop_value_impact``. ``None`` amount is "no row included" (or a report saved before the split), never 0.
+    working_capital_split: bool = False
+    """True when the split figures below were worked out for this position. A month-end snapshot saved before they existed
+    reads False, and the report works them out now instead of showing them as missing."""
+    working_capital_split_is_current: bool = False
+    """True when the split was worked out now and laid over a saved month-end snapshot that lacked it."""
     working_capital_stock: Decimal | None = None
     working_capital_stock_count: int = 0
     working_capital_oar: Decimal | None = None

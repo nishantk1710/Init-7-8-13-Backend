@@ -637,7 +637,7 @@ def oar(material, when, *, verdict="ELIGIBLE", manual=False, run=1, plant="1300"
     return row
 
 
-def test_oar_records_are_counted_as_records_not_materials(db):
+def test_oar_card_counts_material_plants_once_not_records(db):
     db.add_all([
         oar("A", at(2026, 10), run=1), oar("A", at(2026, 10, 20), run=2),  # one OAR material-plant, two runs
         oar("B", at(2026, 10)), oar("N", at(2026, 10), is_oar=False, verdict=None),  # a stock item is not OAR
@@ -645,9 +645,9 @@ def test_oar_records_are_counted_as_records_not_materials(db):
     ])
     db.commit()
     card_ = card(build(db, AFTER_Q4), "oar_recommendations")
-    assert card_.value == 3 and card_.unit == "recommendation records"
-    assert card_.denominator == 4  # every record generated in the period, OAR or not
-    assert "records, not materials" in card_.explanation
+    assert card_.value == 2 and card_.unit == "material-plants"  # A (once, on its newest run) and B
+    assert card_.denominator == 2  # the OAR material-plants of the period
+    assert "counts once" in card_.explanation
 
 
 def test_oar_card_counts_eligible_only_until_a_not_eligible_one_is_submitted_for_approval(db):

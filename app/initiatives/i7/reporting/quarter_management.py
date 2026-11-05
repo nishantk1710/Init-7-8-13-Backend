@@ -315,7 +315,14 @@ def _cards(
     )
 
     # --- The same working capital figure, split: stock items and OAR material-plants are different populations (OAR levels are
-    # sized from similar materials), so each gets its own card. They add up to the card above.
+    # sized from similar materials), so each gets its own card. They add up to the card above. Over a saved month-end snapshot that
+    # predates the split, they are worked out now and say so.
+    split_live = (not from_snapshot) or position.working_capital_split_is_current
+    split_note = (
+        "Worked out now over the current recommendations: the saved month-end snapshot for this period was made before this figure existed."
+        if from_snapshot and position.working_capital_split_is_current
+        else position_note
+    )
     for key, title, amount, count, what in (
         ("working_capital_stock", "Working capital impact: stock items", position.working_capital_stock,
          position.working_capital_stock_count, "stock-item"),
@@ -337,16 +344,16 @@ def _cards(
                        "and not rejected." if key == "working_capital_oar" else "")
                 ),
                 kind=MetricKind.MEASUREMENT,
-                measured_on=position_measured_on if from_snapshot else cutoff,
-                period_label=f"{quarter_end_label} month-end" if from_snapshot else period_label,
+                measured_on=cutoff if split_live else position_measured_on,
+                period_label=period_label if split_live else f"{quarter_end_label} month-end",
                 denominator=count,
                 denominator_label=f"{what} material-plants included",
-                basis=basis,
+                basis="current_calculation" if split_live else basis,
                 unavailable_reason=(
                     None if amount is not None
                     else f"No {what} recommendation has a ZAR or NAD unit price and both reorder points (or this report was saved before the split)."
                 ),
-                note=" ".join(n for n in (position_note, reference_note, MONEY_CAVEAT) if n),
+                note=" ".join(n for n in (split_note, reference_note, MONEY_CAVEAT) if n),
             )
         )
 
@@ -365,16 +372,16 @@ def _cards(
                 f"in the cards above. {position.working_capital_potential_count} material-plants included."
             ),
             kind=MetricKind.MEASUREMENT,
-            measured_on=position_measured_on if from_snapshot else cutoff,
-            period_label=f"{quarter_end_label} month-end" if from_snapshot else period_label,
+            measured_on=cutoff if split_live else position_measured_on,
+            period_label=period_label if split_live else f"{quarter_end_label} month-end",
             denominator=position.working_capital_potential_count,
             denominator_label="eligible material-plants included",
-            basis=basis,
+            basis="current_calculation" if split_live else basis,
             unavailable_reason=(
                 None if position.working_capital_potential is not None
                 else "No eligible recommendation has a ZAR or NAD unit price and both reorder points (or this report was saved before this figure existed)."
             ),
-            note=" ".join(n for n in (position_note, reference_note, MONEY_CAVEAT) if n),
+            note=" ".join(n for n in (split_note, reference_note, MONEY_CAVEAT) if n),
         )
     )
 
@@ -405,20 +412,20 @@ def _cards(
         KpiCard(
             key="oar_recommendations",
             title="OAR recommendations",
-            unit="recommendation records",
+            unit="material-plants",
             value=Decimal(oar_records),
             status=AvailabilityStatus.AVAILABLE,
             explanation=(
-                "Recommendation records generated in this period for eligible OAR material-plants, whose levels are sized from similar "
-                "materials. A material the rule marks not eligible is counted only once someone has submitted a request to convert it "
-                "and that request has not been rejected (the same rule as Working Capital Impact). These are records, not materials: an "
-                "OAR material-plant that was recalculated has a record for each run."
+                "Eligible OAR material-plants with a recommendation generated in this period, whose levels are sized from similar "
+                "materials. Each counts once, on its newest recommendation, however many times it was recalculated. A material the rule "
+                "marks not eligible is counted only once someone has submitted a request to convert it and that request has not been "
+                "rejected (the same rule as Working Capital Impact)."
             ),
             kind=MetricKind.EVENT,
             measured_on=None,
             period_label=period_label,
-            denominator=generated,
-            denominator_label="recommendations generated in the period",
+            denominator=min_max.oar_material_plants,
+            denominator_label="OAR material-plants in the period",
         )
     )
     measured = min_max.with_evidence > 0
@@ -505,7 +512,7 @@ def build_quarter_management(
     assessed, every = kpi_definitions.material_plants_assessed(session, period_start, exclusive_end)
     awaiting = kpi_definitions.awaiting_decision(session, period_start, exclusive_end)
     approved = kpi_definitions.approved_count(session, period_start, exclusive_end)
-    oar_records = kpi_definitions.oar_records(session, period_start, exclusive_end)
+    oar_eligible = kpi_definitions.eligible_oar_material_plants(session, period_start, exclusive_end)
     min_max = kpi_definitions.min_max_conversion(session, period_start, exclusive_end)
     position = kpi_definitions.position_figures(session, period_start, exclusive_end, cutoff)
     # The Overview's by-plant charts: every plant, then each plant it offers. Narrowed to the plants this
@@ -520,7 +527,15 @@ def build_quarter_management(
     trends, snapshot_position, snapshot_plants = build_trends(session, period_start, period_end)
     from_snapshot = snapshot_position is not None
     if from_snapshot:
+        live_position = position
         position, plant_positions = snapshot_position, snapshot_plants
+        if not position.working_capital_split:
+            # A month-end snapshot saved before the stock/OAR split existed has no such figures. They are worked out now, over
+            # the current recommendations, and the cards say so -- not shown as missing.
+            update = {name: getattr(live_position, name) for name in (
+                "working_capital_split", "working_capital_stock", "working_capital_stock_count", "working_capital_oar",
+                "working_capital_oar_count", "working_capital_potential", "working_capital_potential_count")}
+            position = position.model_copy(update={**update, "working_capital_split_is_current": True})
     forecast = build_forecast_actual(session, period_start, period_end)
 
     months = period_months(period_start, period_end, today, source_activity)
@@ -573,7 +588,7 @@ def build_quarter_management(
             assessed=assessed,
             every=every,
             approved=approved,
-            oar_records=oar_records,
+            oar_records=oar_eligible,
             min_max=min_max,
             position=position,
         ),

@@ -307,7 +307,7 @@ def test_the_kpi_sheet_carries_approved_and_leaves_what_is_waiting_to_the_approv
     assert "Pending approval" not in cards  # what is waiting for a decision is in the SAP Adoption sheet's approval stages
     assert cards["Approved"]["Value"] == 1  # C
     assert "Material-plants with a computed recommendation" in cards
-    assert cards["OAR recommendations"]["Unit"] == "recommendation records"  # records, not materials
+    assert cards["OAR recommendations"]["Unit"] == "material-plants"  # eligible OAR material-plants, each once
     assert cards["Min-Max conversion"]["Unit"] == "material-plants" and "Approval is not conversion" in cards["Min-Max conversion"]["What it means"]
     assert "approved is not adopted" in cards["Approved"]["What it means"].lower()
 

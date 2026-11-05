@@ -133,6 +133,19 @@ def stage_counts(counts: dict[str, int]) -> dict[str, int]:
     return {**stages, "total": total, "other": total - sum(stages.values())}
 
 
+def eligible_oar_material_plants(session: Session, period_start: date, exclusive_end: date) -> int:
+    """Eligible OAR material-plants in the period: the newest recommendation of each, with a recommended value, that the OAR rule
+    counts (eligible and not rejected, or not eligible but with a live conversion request). One per material-plant, so a material
+    recalculated several times counts once -- the same population as the Min-Max card and the Current vs recommended table."""
+    statement = _latest_only(
+        _apply_filters(
+            select(Recommendation.id), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+            criticality=None, generated_from=period_start, generated_to=exclusive_end, demand_type="oar", has_recommended=True,
+        ).where(_not_smooth())
+    ).where(Recommendation.conversion_eligibility.in_((ELIGIBLE, NOT_ELIGIBLE)), oar_rule())
+    return count_of(session, statement)
+
+
 def oar_records(session: Session, period_start: date, exclusive_end: date) -> int:
     """Recommendation records generated in the period for *eligible* OAR material-plants -- rows, not distinct materials.
 
@@ -322,6 +335,7 @@ def position_figures(
         currency=_portfolio_currency(session),
         working_capital_currency=capital.currency,
         working_capital_excluded_count=capital.excluded_count,
+        working_capital_split=True,
         working_capital_stock=capital_stock.amount,
         working_capital_stock_count=capital_stock.included_count,
         working_capital_oar=capital_oar.amount,
