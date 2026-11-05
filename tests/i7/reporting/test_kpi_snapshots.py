@@ -21,12 +21,12 @@ from app.initiatives.i7.reporting import kpi_definitions, quarter_trends, snapsh
 from app.initiatives.i7.stockout_risk.counts import StockoutRiskCounts
 from app.models.i7_features import MaterialFeature
 from app.models.i7_kpi_snapshot import STATUS_FINAL, STATUS_OPEN, KpiSnapshot, KpiSnapshotLog
-from app.models.i7_recommendation import Recommendation
+from app.models.i7_recommendation import Recommendation, SapAdoptionResult
 from app.models.i7_staging import StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun
 from app.models.i7_stockout_risk import StockoutRiskInput
 from app.schemas.i7.reports import PositionFigures
 
-TABLES = (Recommendation, KpiSnapshot, KpiSnapshotLog, StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun, StockoutRiskInput, MaterialFeature)
+TABLES = (Recommendation, SapAdoptionResult, KpiSnapshot, KpiSnapshotLog, StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun, StockoutRiskInput, MaterialFeature)
 OCT = date(2026, 10, 1)
 NOV = date(2026, 11, 1)
 MID_OCT = date(2026, 10, 21)
@@ -100,6 +100,9 @@ def test_capturing_the_current_month_saves_an_open_rolling_reading(db):
 def test_a_snapshot_holds_the_headline_figures_and_the_per_plant_payload(db):
     db.add_all([
         rec("A", at(2026, 10), plant="1300"), rec("B", at(2026, 10), plant="1500"),
+        # Working capital counts only what SAP has adopted.
+        SapAdoptionResult(recommendation_id="REC-A-1300-1", status="ADOPTED", evaluated_at=at(2026, 11)),
+        SapAdoptionResult(recommendation_id="REC-B-1500-1", status="ADOPTED", evaluated_at=at(2026, 11)),
         # The currency of each price: working capital counts ZAR (and NAD) only.
         StagedMaterialPlant(sap_material_number="A", sap_plant_code="1300", unit_price=Decimal("10"), currency="ZAR",
                             staging_run_id=1, source_table="n_mbew"),

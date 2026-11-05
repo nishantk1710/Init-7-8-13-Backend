@@ -188,6 +188,9 @@ def test_an_open_month_is_a_rolling_reading_and_says_so(db):
 def test_the_working_capital_change_is_between_months_with_the_same_calculation_only(db):
     db.add_all([
         rec("A", at(2026, 10), cur_rop=2, rec_rop=12),  # 10 x (2 - 12) = -100
+        # Working capital counts only what SAP has adopted.
+        SapAdoptionResult(recommendation_id="REC-A-1300-1", status="ADOPTED", evaluated_at=at(2026, 11)),
+        SapAdoptionResult(recommendation_id="REC-A-1300-2", status="ADOPTED", evaluated_at=at(2026, 12)),
         StagedMaterialPlant(sap_material_number="A", sap_plant_code="1300", unit_price=Decimal("10"), currency="ZAR",
                             staging_run_id=1, source_table="n_mbew"),  # the price's currency: only ZAR / NAD counts
     ])
