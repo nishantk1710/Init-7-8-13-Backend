@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import Select, and_, case, func, or_, select
+from sqlalchemy import Select, and_, case, false, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.initiatives.i7.kpi_formulas.currency import REPORTING_CURRENCY, TO_ZAR
@@ -109,9 +109,10 @@ def working_capital_impact(
             Recommendation.recommendation_id.in_(select(SapAdoptionResult.recommendation_id).where(SapAdoptionResult.status == "ADOPTED"))
         )
     if segment == "oar":
-        base = base.where(Recommendation.is_oar.is_(True))
+        # ``== true()``, not ``IS``: SQL Server rejects ``IS 1`` / ``IS 0`` on a bit column.
+        base = base.where(Recommendation.is_oar == true())
     elif segment == "stock":
-        base = base.where(or_(Recommendation.is_oar.is_(None), Recommendation.is_oar.is_(False)))
+        base = base.where(or_(Recommendation.is_oar.is_(None), Recommendation.is_oar == false()))
     currency = _price_currency()
     rate = case(*[(currency == code, factor) for code, factor in TO_ZAR.items()], else_=None)
     value = working_capital_sql(formulas)
