@@ -391,8 +391,8 @@ def test_working_capital_is_also_shown_apart_for_stock_items_and_oar_and_they_ad
     assert card(management, "working_capital_stock").value == Decimal("-100")
     assert card(management, "working_capital_oar").value == Decimal("15")  # C is not eligible and has no request
     assert card(management, "working_capital_impact").value == Decimal("-85")  # the two add up to the total
-    # If every eligible material-plant were adopted: A (-100), B (+15) and E (4 x (9 - 1) = +32); C is not eligible.
-    assert card(management, "working_capital_potential").value == Decimal("-53")
+    # If every eligible OAR material-plant were adopted: only B (+15). Stock items A and E are not in it, and C is not eligible.
+    assert card(management, "working_capital_potential").value == Decimal("15")
 
 
 def test_excess_opportunity_counts_only_where_current_max_is_above_the_recommended(db):
