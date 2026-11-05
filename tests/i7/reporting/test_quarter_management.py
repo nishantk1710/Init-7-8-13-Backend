@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.initiatives.i7.reporting import kpi_definitions
-from app.initiatives.i7.reporting.period import resolve_quarter
+from app.initiatives.i7.reporting.period import resolve_period, resolve_quarter
 from app.initiatives.i7.reporting.quarter_management import build_quarter_management
 from app.initiatives.i7.reporting.source_activity import build_source_activity
 from app.initiatives.i7.stockout_risk.counts import StockoutRiskCounts
@@ -129,7 +129,7 @@ def test_the_three_months_of_q4_roll_over_the_year_correctly(db):
 
 
 def test_recommendations_are_counted_in_the_month_they_were_generated_and_the_months_add_up(db):
-    db.add_all([rec("A", at(2026, 10)), rec("B", at(2026, 10, 31)), rec("C", at(2026, 11)), rec("D", at(2026, 12, 31))])
+    db.add_all([rec("A", at(2026, 10), rec_rop=5), rec("B", at(2026, 10, 31), rec_rop=5), rec("C", at(2026, 11), rec_rop=5), rec("D", at(2026, 12, 31), rec_rop=5)])
     db.commit()
     generated = row(build(db, AFTER_Q4), "recommendations_generated")
     assert generated.months == [2, 1, 1]
@@ -139,7 +139,7 @@ def test_recommendations_are_counted_in_the_month_they_were_generated_and_the_mo
 
 
 def test_a_record_on_the_last_day_of_the_quarter_is_in_it_and_one_on_the_next_day_is_not(db):
-    db.add_all([rec("A", datetime(2026, 12, 31, 23, 59, tzinfo=timezone.utc)), rec("B", datetime(2027, 1, 1, 0, 0, tzinfo=timezone.utc))])
+    db.add_all([rec("A", datetime(2026, 12, 31, 23, 59, tzinfo=timezone.utc), rec_rop=5), rec("B", datetime(2027, 1, 1, 0, 0, tzinfo=timezone.utc), rec_rop=5)])
     db.commit()
     generated = row(build(db, AFTER_Q4), "recommendations_generated")
     assert generated.quarter_total == 1
@@ -179,22 +179,50 @@ def test_events_outside_the_quarter_are_not_counted(db):
 
 
 def test_months_that_have_not_started_are_not_available_rather_than_zero(db):
-    db.add(rec("A", at(2026, 10, 5)))
+    db.add(rec("A", at(2026, 10, 5), rec_rop=5))
     db.commit()
     generated = row(build(db, MID_Q4), "recommendations_generated")
     assert generated.months == [1, None, None]
     assert generated.quarter_total == 1
 
 
-def test_a_month_with_nothing_is_a_real_zero_but_an_untracked_series_is_not_available(db):
+def test_the_activity_row_counts_what_has_something_to_change_in_sap_once_per_material_plant_and_month(db):
+    db.add_all([
+        rec("A", at(2026, 10), rec_rop=5), rec("A", at(2026, 10, 20), run=2, rec_rop=6),  # one material-plant, two runs: once
+        rec("B", at(2026, 10)),                                                           # nothing recommended: not counted
+        rec("C", at(2026, 10), cur_rop=5, rec_rop=5),                                     # recommends what SAP holds: not counted
+        rec("A", at(2026, 11), run=3, rec_rop=7),                                         # the same material-plant in another month
+    ])
+    db.commit()
+    generated = row(build(db, AFTER_Q4), "recommendations_generated")
+    assert generated.months == [1, 1, 0] and generated.quarter_total == 2 and generated.unit == "recommendations"
+
+
+def test_confirmed_sap_adoptions_are_counted_in_the_month_of_the_sap_change(db):
+    day = lambda y, m, d: date(y, m, d)  # noqa: E731
+    db.add_all([
+        SapAdoptionResult(recommendation_id="R1", status="ADOPTED", evaluated_at=at(2027, 1), adopted_on=day(2026, 10, 20)),
+        SapAdoptionResult(recommendation_id="R2", status="ADOPTED", evaluated_at=at(2027, 1), adopted_on=day(2026, 10, 31)),
+        SapAdoptionResult(recommendation_id="R3", status="ADOPTED", evaluated_at=at(2027, 1), adopted_on=day(2026, 12, 1)),
+        SapAdoptionResult(recommendation_id="R4", status="ADOPTED", evaluated_at=at(2027, 1), adopted_on=day(2027, 1, 5)),    # next quarter
+        SapAdoptionResult(recommendation_id="R5", status="PARTIALLY_ADOPTED", evaluated_at=at(2027, 1), adopted_on=day(2026, 11, 2)),  # not confirmed
+        SapAdoptionResult(recommendation_id="R6", status="ADOPTED", evaluated_at=at(2027, 1)),                                # no date: in no month
+    ])
+    db.commit()
+    adoption = row(build(db, AFTER_Q4), "sap_adoptions_confirmed")
+    assert adoption.months == [2, 0, 1] and adoption.quarter_total == 3 and adoption.reconciles is True
+    assert "CDHDR" in adoption.note and "1 adoption(s)" in adoption.note  # R6 is said to be in no month
+
+
+def test_a_month_with_nothing_is_a_real_zero(db):
     management = build(db, AFTER_Q4)
     generated = row(management, "recommendations_generated")
     assert generated.months == [0, 0, 0]
     assert generated.quarter_total == 0
     adoption = row(management, "sap_adoptions_confirmed")
-    assert adoption.months == [None, None, None]
-    assert adoption.quarter_total is None
-    assert adoption.status is AvailabilityStatus.UNKNOWN
+    assert adoption.months == [0, 0, 0]  # no matching SAP change in any month: a real zero
+    assert adoption.quarter_total == 0
+    assert adoption.status is AvailabilityStatus.AVAILABLE
 
 
 def test_consumption_by_month_blanks_months_the_staged_data_does_not_cover(db):
@@ -279,8 +307,8 @@ def test_materials_assessed_counts_distinct_material_plants_not_records(db):
 
 def test_approved_is_a_status_on_the_day_the_report_was_generated_not_at_the_quarters_end(db):
     db.add_all([
-        rec("A", at(2026, 10), status="PENDING_APPROVAL"), rec("B", at(2026, 10), status="HELD"),
-        rec("C", at(2026, 10)), rec("D", at(2026, 10), status="APPROVED"), rec("E", at(2026, 11), status="ADOPTED"),
+        rec("A", at(2026, 10), status="PENDING_APPROVAL", rec_rop=5), rec("B", at(2026, 10), status="HELD", rec_rop=5),
+        rec("C", at(2026, 10), rec_rop=5), rec("D", at(2026, 10), status="APPROVED", rec_rop=5), rec("E", at(2026, 11), status="ADOPTED", rec_rop=5),
     ])
     db.commit()
     management = build(db, AFTER_Q4)
@@ -314,10 +342,29 @@ def test_the_three_counts_are_records_then_distinct_material_plants_then_those_w
     assert "4 records over 3 distinct material-plants" in records.note and "1 are repeat runs" in records.note
 
 
+def test_the_approval_stages_count_the_materials_with_something_to_change_in_sap_for_the_month(db):
+    db.add_all([
+        rec("A", at(2026, 10), status="PENDING_APPROVAL", rec_rop=5),            # something to change: counted
+        rec("A", at(2026, 10, 20), run=2, status="PENDING_APPROVAL", rec_rop=6),  # the same material-plant again: counted once
+        rec("B", at(2026, 10), status="APPROVED", cur_rop=5, rec_rop=5),           # recommends what SAP already holds: nothing to change
+        rec("C", at(2026, 10), status="HELD"),                                     # no recommended value at all: nothing to change
+        rec("D", at(2026, 11), status="PENDING_APPROVAL", rec_rop=5),              # another month
+    ])
+    db.commit()
+    def month(label):
+        start, end = resolve_period(label)
+        source = build_source_activity(db, start, end, recommendations_in_period=0)
+        return build_quarter_management(db, start, end, today=AFTER_Q4, source_activity=source).adoption.stages
+
+    october = month("Oct 2026")
+    assert october.total == 1 and october.awaiting_approval == 1  # only A, once, and only October's
+    assert month("Nov 2026").total == 1  # only D
+
+
 def test_stages_separate_approval_from_sap_and_add_up_to_the_records_generated(db):
     statuses = ["READY_FOR_REVIEW", "NOT_EVALUABLE", "PENDING_APPROVAL", "HELD", "ADJUSTED", "APPROVED", "SAP_EXECUTION_PENDING",
                 "SAP_EXECUTED", "ADOPTED", "REJECTED", "SENT_BACK"]
-    db.add_all([rec(f"M{i}", at(2026, 10), status=s) for i, s in enumerate(statuses)])
+    db.add_all([rec(f"M{i}", at(2026, 10), status=s, rec_rop=5) for i, s in enumerate(statuses)])
     db.commit()
     management = build(db, AFTER_Q4)
     stages = management.adoption.stages

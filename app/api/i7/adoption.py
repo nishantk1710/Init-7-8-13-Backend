@@ -274,12 +274,22 @@ def _evaluate_row(row: Recommendation, provider: RawChangeDocumentProvider) -> t
     return result, is_conversion_adoption
 
 
+def _adopted_on(view: "_AdoptionView") -> date | None:
+    """When SAP made the change that confirmed this adoption: the latest change date among the fields that matched, from CDHDR/CDPOS.
+    ``None`` unless the result is ADOPTED, or when the extract's date could not be read."""
+    if view.result.status is not AdoptionStatus.ADOPTED:
+        return None
+    dates = [report.changed_on for report in view.reports if report.matched and report.changed_on is not None]
+    return max(dates) if dates else None
+
+
 def _persist_result(
     session: Session,
     recommendation_id: str,
     result: AdoptionResult,
     detail: str,
     evaluated_at: datetime | None = None,
+    adopted_on: date | None = None,
 ) -> None:
     """Upsert FR-9's ledger entry for one recommendation -- get-then-update-
     or-insert, the same pattern ``save_report`` uses for the quarterly report
@@ -302,6 +312,7 @@ def _persist_result(
         mismatched_fields=", ".join(result.mismatched_fields),
         detail=detail[:500],
         evaluated_at=evaluated_at or datetime.now(timezone.utc),
+        adopted_on=adopted_on,
     )
     if existing is None:
         session.add(SapAdoptionResult(recommendation_id=recommendation_id, **fields))
@@ -429,7 +440,7 @@ def run_daily_adoption_check(
                 continue
             try:
                 view = _build_view(session, row, policy, handed_off_on, today)
-                _persist_result(session, recommendation_id, view.result, view.detail, stamped_at)
+                _persist_result(session, recommendation_id, view.result, view.detail, stamped_at, _adopted_on(view))
             except Exception:  # noqa: BLE001 -- one bad recommendation must not stop the others
                 session.rollback()
                 logger.exception("adoption check failed for %s", recommendation_id)
@@ -484,7 +495,7 @@ def get_adoption(
         # MINBE + MABST), not inferred from any other field changing.
         detail = "Awaiting SAP test change: " + detail
 
-    _persist_result(session, recommendation_id, result, detail)
+    _persist_result(session, recommendation_id, result, detail, adopted_on=_adopted_on(view))
 
     return AdoptionResponse(
         recommendation_id=recommendation_id,
@@ -569,7 +580,7 @@ def list_adoption(
     items = []
     for row in rows:
         view = _build_view(session, row, policy, handed_off.get(row.recommendation_id))
-        _persist_result(session, row.recommendation_id, view.result, view.detail)
+        _persist_result(session, row.recommendation_id, view.result, view.detail, adopted_on=_adopted_on(view))
         items.append(
             AdoptionListItem(
                 recommendation_id=row.recommendation_id,

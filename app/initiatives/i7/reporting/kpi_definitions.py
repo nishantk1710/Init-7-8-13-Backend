@@ -237,6 +237,38 @@ def status_counts(session: Session, period_start: date, exclusive_end: date) -> 
     return {status: count for status, count in rows}
 
 
+def actionable_status_counts(session: Session, period_start: date, exclusive_end: date) -> dict[str, int]:
+    """The current status of the period's recommendations that have something to adopt in SAP: the Overview's ``actionable`` rule, over
+    the newest recommendation of each material-plant. The same set the SAP adoption counts cover, so the approval stages and the
+    adoption card count the same material-plants (and the same number the Overview shows), not every record generated."""
+    tracked = _apply_filters(
+        select(Recommendation.id), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+        criticality=None, generated_from=None, generated_to=None, actionable=True,
+    ).where(Recommendation.id.in_(newest_in_period_ids(period_start, exclusive_end)))
+    rows = session.execute(
+        select(Recommendation.status, func.count()).where(Recommendation.id.in_(tracked)).group_by(Recommendation.status)
+    ).all()
+    return {status: count for status, count in rows}
+
+
+def actionable_generated_by_month(session: Session, period_start: date, exclusive_end: date) -> dict[tuple[int, int], int]:
+    """For each month of the period: the recommendations generated in it that have something to change in SAP (the Overview's
+    ``actionable`` rule), one per material-plant on its newest recommendation of that month. The same set the SAP adoption count
+    and the approval stages cover, so the activity table matches the Overview's number rather than counting every record."""
+    counts: dict[tuple[int, int], int] = {}
+    year, month = period_start.year, period_start.month
+    while date(year, month, 1) < exclusive_end:
+        lo = max(date(year, month, 1), period_start)
+        hi = min(date(year + (month == 12), month % 12 + 1, 1), exclusive_end)
+        tracked = _apply_filters(
+            select(Recommendation.id), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+            criticality=None, generated_from=None, generated_to=None, actionable=True,
+        ).where(Recommendation.id.in_(newest_in_period_ids(lo, hi)))
+        counts[(year, month)] = count_of(session, tracked)
+        year, month = year + (month == 12), month % 12 + 1
+    return counts
+
+
 # --- Position: the newest recommendation of each material-plant -------------------------------------
 
 
