@@ -95,12 +95,13 @@ def test_the_i08_views_build(engine, loaded) -> None:
 
 def test_the_i07_material_extract_runs(engine) -> None:
     from app.core.db import get_sessionmaker
-    from app.initiatives.i7.adapters.extract import _material_sql
+    from app.initiatives.i7.adapters.extract import _MATERIAL_SQL, _criticality_by_material_plant
 
     session = get_sessionmaker()()
     try:
-        session.execute(text(_material_sql(session))).fetchall()
+        session.execute(text(_MATERIAL_SQL)).fetchall()
+        assert _criticality_by_material_plant([("1000000001", "1300")]) == {("1000000001", "1300"): None}
         _load(engine, [("1000000001", "1300", "CRITICAL")])
-        session.execute(text(_material_sql(session))).fetchall()
+        assert _criticality_by_material_plant([("1000000001", "1300")])[("1000000001", "1300")] is not None
     finally:
         session.close()

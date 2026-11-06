@@ -149,7 +149,8 @@ class StagedMaterial(Base):
     deletion_flag: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     criticality: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
-    """ZMM065 tier. Reaches ~24% of the MARC population."""
+    """RETIRED -- criticality is per material-plant and now lives on ``StagedMaterialPlant``.
+    Staging writes NULL here; nothing reads it. Kept as a column, not dropped."""
 
     unit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
@@ -193,6 +194,11 @@ class StagedMaterialPlant(Base):
     current_maximum_stock: Mapped[Decimal | None] = mapped_column(QUANTITY, nullable=True)
 
     deletion_flag: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    criticality: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    """THIS plant's ZMM065 tier, from the shared criticality port. The same material can be
+    CRITICAL at one plant and NORMAL at another and each keeps its own. NULL means unknown --
+    never defaulted to NORMAL."""
 
     unit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
     """THIS plant's replacement price (MBEW VERPR / PEINH), read from this plant's own

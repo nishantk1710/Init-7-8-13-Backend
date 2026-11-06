@@ -372,7 +372,7 @@ _ATTRIBUTE_SQL = """
            p.current_maximum_stock,
            p.planned_delivery_time_days,
            m.material_status,
-           m.criticality,
+           p.criticality,
            p.unit_price,
            p.currency
       FROM universe u
