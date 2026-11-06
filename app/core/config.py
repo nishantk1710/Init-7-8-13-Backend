@@ -840,6 +840,16 @@ class Settings(BaseSettings):
     # watcher itself (i7_pipeline_watch_enabled) is on. Set false to leave adoption to the page and the window's end.
     i7_adoption_daily_check_enabled: bool = True
 
+    # Telling the Inventory Controller, after a recommendation's final approval, to change the approved values in SAP,
+    # and reminding them while the adoption monitoring window is open (app/initiatives/i7/adoption_notices.py). The
+    # window length is the policy's monitoring_window_days -- nothing here sets it. Day 0 is the final approval; the
+    # first reminder goes on this day after it, then every i7_adoption_reminder_every_days, and the last on the day
+    # before the window closes. Reminders stop once SAP matches the approved values. Independent of the nightly
+    # watcher: it reads SAP's change history itself and writes nothing but notifications.
+    i7_adoption_notices_enabled: bool = True
+    i7_adoption_reminder_first_day: int = 3
+    i7_adoption_reminder_every_days: int = 2
+
     # Whether the nightly watcher also generates the Quarterly Report for the quarter that just closed
     # (app/initiatives/i7/reporting/auto_generate.py), after the pipeline check and the snapshots. OFF by default, and it
     # only acts when the watcher itself is on (i7_pipeline_watch_enabled) -- there is no second timer. Nothing else in the
