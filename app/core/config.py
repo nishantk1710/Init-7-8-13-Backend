@@ -302,6 +302,40 @@ class Settings(BaseSettings):
     # writes the plain shape, which the us rule reads unchanged.
     csv_number_format: str = "us"
 
+    # What the CSV loaders do with a number column BEFORE it is written.
+    #
+    # Empty (the default): the text is stored exactly as SAP sent it and the
+    # n_<table> views read it in CSV_NUMBER_FORMAT, as always. "german" or
+    # "us": every column the views read as a number is rewritten into the
+    # plain shape -- decimal point, no grouping, SAP's trailing minus kept --
+    # as it is loaded (csv_load, and the CSV increment in csv_delta), so the
+    # table holds the same shape the OData delta writes (raw_merge.shape) and
+    # one view rule reads both.
+    #
+    # Needed where the two routes disagree. Measured on PRD 6 Nov 2026: the
+    # extract job writes German (1.393,100) while the same system's OData
+    # services send plain (1393.100), and no single view rule reads both --
+    # the German rule turns the delta's 4437980.33 into 443798033, the US
+    # rule turns the extract's 1.800,000 into 1.8. With this set the loaders
+    # settle it at the door. CSV_NUMBER_FORMAT must then be "us", whose rule
+    # leaves a plain number alone; the loaders refuse to run otherwise.
+    # Tables loaded before it was set are not rewritten.
+    csv_load_number_format: str = ""
+
+    # --- Sets left out of every sweep -----------------------------------------
+    #
+    # OData entity sets -- and the CSV tables behind them -- that no sweep
+    # touches: not the hourly delta, not --delta/--fetch --all, not --csv-pull
+    # or --csv-load --all, not the nightly full refresh. Named one at a time
+    # (--set GatePassHeaderSet, --table ZMM_GP_HDR) they still run: the list
+    # governs sweeps, not an operator re-testing one set. Comma-separated;
+    # empty re-enables everything.
+    #
+    # Gate pass is here (6 Nov 2026): descoped from I08, read by no view, and
+    # on PRD its CSV extract delivers nothing while its OData sets answer --
+    # an hourly delta would re-read three sets nothing consumes.
+    ingest_disabled_sets: str = "GatePassHeaderSet,GatePassItemSet,GatePassReturnSet"
+
     # --- CSV receiver (/api/events/csv) -------------------------------------
     #
     # How many pushed CSV chunks one worker decodes, parses and lands at the
@@ -1353,6 +1387,10 @@ class Settings(BaseSettings):
     @property
     def odata_full_pull_set_list(self) -> list[str]:
         return [name.strip() for name in self.odata_full_pull_sets.split(",") if name.strip()]
+
+    @property
+    def ingest_disabled_set_list(self) -> frozenset[str]:
+        return frozenset(name.strip() for name in self.ingest_disabled_sets.split(",") if name.strip())
 
     @property
     def csv_delta_table_list(self) -> list[str]:

@@ -201,6 +201,87 @@ def _open_csv(storage: Storage, key: str) -> Iterator[tuple[list[str], Iterator[
         yield ([c.strip() for c in header] if header else []), reader
 
 
+def number_settings_problem(settings=None) -> str | None:
+    """Why CSV_LOAD_NUMBER_FORMAT cannot be honoured as configured, or None.
+
+    A loader that writes plain numbers under a view that strips dots would
+    turn 1393.100 into 1393100 on the way back out -- the exact fault the
+    setting exists to prevent, moved one step along. So the pair is checked
+    before a row is written, and a load refuses rather than guesses.
+    """
+    settings = settings or get_settings()
+    load_format = (settings.csv_load_number_format or "").strip().lower()
+    if not load_format:
+        return None
+    if load_format not in sap_normalise.CSV_NUMBER_FORMATS:
+        return (
+            f"CSV_LOAD_NUMBER_FORMAT={settings.csv_load_number_format!r} is not one of "
+            f"{sorted(sap_normalise.CSV_NUMBER_FORMATS)} (or empty to store numbers as sent)"
+        )
+    if settings.csv_number_format != sap_normalise.FORMAT_US:
+        return (
+            f"CSV_LOAD_NUMBER_FORMAT={load_format} stores plain numbers, which only the "
+            f"'us' view rule reads unchanged; CSV_NUMBER_FORMAT is {settings.csv_number_format!r}"
+        )
+    return None
+
+
+# A number as SAP writes one: digits with grouping and decimal marks, an
+# optional leading sign, and SAP's own trailing minus. Anything else -- a date,
+# a code, free text that happens to sit in a number column -- is left alone.
+_SAP_NUMBER = re.compile(r"^[-+]?[0-9][0-9.,]*-?$")
+
+
+def plain_number(value: str | None, load_format: str) -> str | None:
+    """One extract value in the plain shape: decimal point, no grouping.
+
+    ``load_format`` is how the extract wrote it (CSV_LOAD_NUMBER_FORMAT).
+    German: the grouping dots go first, then the decimal comma becomes a
+    point -- in that order, or "0,989" would become 989. US: only the
+    grouping commas go. A trailing minus is kept; the view moves it.
+    """
+    if value is None:
+        return None
+    text = value.strip()
+    if not text or not _SAP_NUMBER.match(text):
+        return value
+    if load_format == sap_normalise.FORMAT_GERMAN:
+        return text.replace(".", "").replace(",", ".")
+    if load_format == sap_normalise.FORMAT_US:
+        return text.replace(",", "")
+    return value
+
+
+def number_columns(table: str, columns: list[str]) -> list[int]:
+    """Positions, in ``columns``, of the ones the n_<table> view reads as numbers.
+
+    The view's own mapping decides (``sap_normalise.TABLES``): a column the
+    view parses with ``sap_num`` is a number column, nothing else is. A table
+    the normalise layer does not know has none.
+    """
+    if table not in sap_normalise.TABLES:
+        return []
+    kinds = {c.label: c.kind for c in sap_normalise.TABLES[table]}
+    numeric = {
+        r.source.lower()
+        for r in sap_normalise.resolve(table, columns)
+        if r.source and kinds.get(r.label) == "num"
+    }
+    return [i for i, name in enumerate(columns) if name.lower() in numeric]
+
+
+def plain_rows(rows, positions: list[int], load_format: str):
+    """``rows`` with the number columns at ``positions`` made plain."""
+    if not positions:
+        yield from rows
+        return
+    for row in rows:
+        row = list(row)
+        for i in positions:
+            row[i] = plain_number(row[i], load_format)
+        yield tuple(row)
+
+
 def _safe_columns(header: list[str]) -> list[str]:
     """Usable column names, with SAP's blank and duplicate headers resolved.
 
@@ -292,6 +373,15 @@ def load_table(
     except Exception as exc:
         return failure(f"could not check which SAP system the database holds: {exc}")
 
+    # Numbers written plain at the door, when CSV_LOAD_NUMBER_FORMAT says the
+    # extract's notation (see Settings). Checked before the replace, for the
+    # same reason as the system check above.
+    settings = get_settings()
+    load_format = (settings.csv_load_number_format or "").strip().lower()
+    problem = number_settings_problem(settings)
+    if problem:
+        return failure(f"refused: {problem}")
+
     loaded = 0
     columns: list[str] = []
     watermark_value: str | None = None
@@ -313,6 +403,14 @@ def load_table(
 
                 columns = _safe_columns(header)
                 watermark_index = _watermark_index(spec, columns)
+                numeric = number_columns(spec.table, columns) if load_format else []
+                if numeric:
+                    rows = plain_rows(rows, numeric, load_format)
+                    logger.info(
+                        "%s: %d number column(s) written plain, from %s (%s)",
+                        spec.sap_table, len(numeric), load_format,
+                        ", ".join(columns[i] for i in numeric),
+                    )
                 key_index = key_index_columns(spec, columns) if with_key_index else []
                 writer = RawTableWriter(
                     indexed_columns=tuple(key_index), indexed_chars=key_column_chars(len(key_index))
@@ -566,9 +664,9 @@ def load_all(
 ) -> list[CsvLoadResult]:
     """Every table with a reconciled extract waiting. Independent, so one
     failure does not stop the rest."""
-    from app.ingest.csv_tables import CSV_TABLES
+    from app.ingest.csv_tables import enabled_tables
 
-    names = tables or [t.sap_table for t in CSV_TABLES]
+    names = tables or [t.sap_table for t in enabled_tables()]
     results = []
     for name in names:
         result = load_table(name, allow_unreconciled=allow_unreconciled)

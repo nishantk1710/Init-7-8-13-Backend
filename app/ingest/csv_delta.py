@@ -266,6 +266,17 @@ def merge_increment(
             key_idx = [col_upper[k] for k in keys]
             key_targets = [targets[i] for i in key_idx]
 
+            # The same number shape the whole-table loader writes, or the
+            # increment would put German text beside the plain rows it is
+            # meant to update (csv_load.plain_number, CSV_LOAD_NUMBER_FORMAT).
+            settings = get_settings()
+            problem = csv_load.number_settings_problem(settings)
+            if problem:
+                outcome.error = f"refused: {problem}"
+                return outcome
+            load_format = (settings.csv_load_number_format or "").strip().lower()
+            numeric = csv_load.number_columns(spec.table, columns) if load_format else []
+
             # One row per key, last one wins; keys padded; blank keys skipped.
             by_key: dict[tuple, tuple] = {}
             width = len(columns)
@@ -276,6 +287,8 @@ def merge_increment(
                     row = row[:width]
                 outcome.rows += 1
                 padded = list(row)
+                for i in numeric:
+                    padded[i] = csv_load.plain_number(padded[i], load_format)
                 for i, k in zip(key_idx, keys):
                     before = padded[i]
                     padded[i] = pad_key(before, widths.get(k))

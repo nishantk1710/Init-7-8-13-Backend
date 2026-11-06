@@ -668,10 +668,19 @@ def test_cdpos_reads_its_own_date_not_its_parents_keys() -> None:
     assert spec_for("ChangeDocItemSet").required_filter == "Objectclas eq 'MATERIAL'"
 
 
-def test_the_sets_sap_dated_in_october_read_the_dates_they_were_given() -> None:
+def test_the_sets_sap_dated_in_october_read_the_dates_they_were_given(monkeypatch, request) -> None:
     """Measured on DEV 2026-10-15 (delta_support.csv): each field answers 0
     for an impossible day, its rows for a real one, and a complete window."""
+    from app.core.config import get_settings
     from app.ingest.manifest import LITERAL_MONTH, delta_support
+
+    # Whether a set is switched off (INGEST_DISABLED_SETS -- gate pass is, by
+    # default) is a separate question from whether SAP honours its date; this
+    # test asks the second one, so every set is on for its duration. The
+    # cached Settings built under this env must not outlive the test.
+    monkeypatch.setenv("INGEST_DISABLED_SETS", "")
+    get_settings.cache_clear()
+    request.addfinalizer(get_settings.cache_clear)
 
     expected = {
         "StockMovementStatisticSet": ("Letztbew", LITERAL_DATS),
@@ -1199,14 +1208,20 @@ def test_fetch_order_puts_parents_first() -> None:
     assert set(order[:2]) == {"PurchaseOrderItemSet", "POHistorySet"}
 
 
-def test_only_deltas_that_can_run_are_runnable(monkeypatch) -> None:
+def test_only_deltas_that_can_run_are_runnable(monkeypatch, request) -> None:
     """Every declared delta runs today: the purchase-order family, MKPF and
     MSEG by entry date, CDHDR and CDPOS by change date, EBAN by requisition
     date, and the sets SAP dated in the 2026-10 transport. MBEW, with no
     date, does not: it is the weekly full pull."""
+    from app.core.config import get_settings
     from app.ingest import manifest as manifest_mod
 
     monkeypatch.setattr(manifest_mod, "READ_BROKEN_SETS", {})
+    # Which deltas SAP can serve is the question here; which ones an operator
+    # has switched off (INGEST_DISABLED_SETS, gate pass by default) is not.
+    monkeypatch.setenv("INGEST_DISABLED_SETS", "")
+    get_settings.cache_clear()
+    request.addfinalizer(get_settings.cache_clear)
     runnable = {s.name for s in specs() if s.runnable_delta is not None}
     assert runnable == {
         "PurchaseOrderSet", "PurchaseOrderItemSet", "POScheduleLineSet", "POHistorySet",
