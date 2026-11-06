@@ -403,6 +403,17 @@ class IngestSpec:
         return READ_BROKEN_SETS.get(self.entity_set.name)
 
     @property
+    def disabled(self) -> bool:
+        """Left out of every sweep by INGEST_DISABLED_SETS (Settings).
+
+        A decision, not a measurement: the set may read fine, nothing consumes
+        it. Named explicitly (``--set NAME``) it still runs.
+        """
+        from app.core.config import get_settings
+
+        return self.entity_set.name in get_settings().ingest_disabled_set_list
+
+    @property
     def runnable_delta(self) -> Delta | None:
         """The delta this set can run today, or None.
 
@@ -412,10 +423,12 @@ class IngestSpec:
         declaration at face value would read that parent whole and call it an
         increment. And a set SAP cannot serve rows from (``blocked``) has
         nothing to run either, whatever it declares -- nor does a set reading
-        through a blocked parent, which has no keys to hand over.
+        through a blocked parent, which has no keys to hand over. A set
+        switched off (``disabled``) has no delta to run for the same reason a
+        set nothing reads has no reason to be read.
         """
         delta = self.delta
-        if delta is None or self.blocked:
+        if delta is None or self.blocked or self.disabled:
             return None
         for parent_name in delta.via:
             parent = spec_for(parent_name)
@@ -430,6 +443,8 @@ class IngestSpec:
             return None
         if self.blocked:
             return f"blocked: {self.blocked}"
+        if self.disabled:
+            return "disabled by INGEST_DISABLED_SETS"
         if self.delta is None:
             return "full pull only"
         return f"via {', '.join(self.delta.via)} (no window: full)"

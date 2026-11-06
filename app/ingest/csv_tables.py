@@ -255,6 +255,20 @@ BY_TABLE: dict[str, CsvTable] = {t.sap_table: t for t in CSV_TABLES}
 BY_ENTITY_SET: dict[str, CsvTable] = {t.entity_set: t for t in CSV_TABLES}
 
 
+def enabled_tables() -> tuple[CsvTable, ...]:
+    """``CSV_TABLES`` minus the ones INGEST_DISABLED_SETS switches off.
+
+    What every sweep iterates -- ``--csv-pull --all``, ``--csv-load --all``,
+    the nightly full refresh -- so a set nothing consumes is not fired, waited
+    on for its timeout, and reported as failed every night. A table named
+    explicitly (``--table NAME``) does not come through here and still runs.
+    """
+    from app.core.config import get_settings
+
+    disabled = get_settings().ingest_disabled_set_list
+    return tuple(t for t in CSV_TABLES if t.entity_set not in disabled)
+
+
 def csv_table(name: str) -> CsvTable:
     """Look up by SAP table name, case-insensitively."""
     try:
