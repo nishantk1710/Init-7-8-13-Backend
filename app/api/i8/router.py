@@ -16,7 +16,7 @@ and records its own findings beside it.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Annotated, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -65,7 +65,7 @@ from app.api.i8.schemas import (
     UniverseResponse,
 )
 from app.core.config import get_settings
-from app.core.db import get_db
+from app.core.db import get_db, get_sessionmaker
 from app.initiatives.i8.aging import aging_bucket as band_of
 from app.initiatives.i8.aging import bucket_labels
 from app.initiatives.i8.attestation import find as find_attestations
@@ -145,6 +145,29 @@ def attestation_view_dependency(
 
 AttestationViewDep = Annotated[AttestationView, Depends(attestation_view_dependency)]
 DbDep = Annotated[Session, Depends(get_db)]
+
+
+def optional_db_dependency() -> Iterator[Session | None]:
+    """A session, or None when one cannot be opened.
+
+    For a route that is asked on EVERY page and has to answer anyway. The
+    menu's badge is the only one: it needs a database for one thing only --
+    checking that its cached count has not been overtaken by another worker --
+    and a database that is unconfigured, paused or still resuming should cost
+    it that check, not the whole answer. ``get_db`` would fail the request.
+    """
+    try:
+        session = get_sessionmaker()()
+    except Exception:  # noqa: BLE001 -- "no database" is an answer here, not a failure
+        yield None
+        return
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+OptionalDbDep = Annotated[Session | None, Depends(optional_db_dependency)]
 
 
 def _paginate(
@@ -1004,7 +1027,19 @@ def get_coding_candidates(
     """
     wanted = _parse_sources(sources)
     result = get_coding_screen(
-        db, snapshot, cfg, use_model=screen, limit=limit, sources=wanted
+        db,
+        snapshot,
+        cfg,
+        use_model=screen,
+        limit=limit,
+        sources=wanted,
+        # Asking for the model is an explicit act, so it runs rather than being
+        # answered from the last run's cache. It is not wasted work: verdicts
+        # already on record are still reused, so only the materials nothing has
+        # judged -- including any the provider failed on last time, which are
+        # never stored -- reach the model. Without this the button returned the
+        # earlier run in 0.15 s and retried nothing (prod, 6-Nov-2026).
+        refresh=screen,
     )
     items = result.candidates
 
@@ -1124,12 +1159,15 @@ def get_snapshot_info(snapshot: SnapshotDep, cfg: SettingsDep) -> SnapshotInfo:
     response_model=CodingUnscreenedResponse,
     summary="How many repair candidates wait for the AI screen",
 )
-def get_coding_unscreened(cfg: SettingsDep) -> CodingUnscreenedResponse:
+def get_coding_unscreened(db: OptionalDbDep, cfg: SettingsDep) -> CodingUnscreenedResponse:
     """The count the Repair Candidates page shows as "not screened yet", read
     off the screen already built for that page (4-Nov-2026). Null when none is
     built: this answers on every page for the menu's badge, so it never builds
-    the screen, which takes seconds the first time after a data reload."""
-    return CodingUnscreenedResponse(unscreened=peek_unscreened_count(cfg))
+    the screen, which takes seconds the first time after a data reload.
+
+    ``db`` is for the verdict-table check only -- one aggregate -- so the badge
+    cannot keep offering rows another worker has already judged."""
+    return CodingUnscreenedResponse(unscreened=peek_unscreened_count(cfg, db=db))
 
 
 @router.get(
