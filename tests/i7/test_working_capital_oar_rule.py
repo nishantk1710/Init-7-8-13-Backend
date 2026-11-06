@@ -311,7 +311,8 @@ def test_there_is_a_single_migration_head():
             if line.startswith("down_revision"):
                 value = line.split("=", 1)[1].strip()
                 parents.update(part.strip().strip("'\"") for part in value.strip("()[] ").split(",") if part.strip().strip("'\"") not in ("", "None"))
-    assert revisions - parents == {"a7c3e9d15b82"}
+    # Exactly one head. The head's id is not pinned: a pin fails every new migration for the wrong reason.
+    assert len(revisions - parents) == 1, revisions - parents
 
 
 def test_an_existing_recommendation_is_not_a_manual_request(db):
