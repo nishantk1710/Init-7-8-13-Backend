@@ -1,6 +1,6 @@
 """W6.6 pure detection rule tests -- no database, no fake repositories,
 matching every scenario in the W6.6 task spec (plan breach, no-plan,
-no-plan/GRNI, quantity override)."""
+quantity override) and NOT_ISSUED_30_DAYS (5-Nov-2026)."""
 
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -8,9 +8,10 @@ from decimal import Decimal
 from app.initiatives.i13.act.detection import (
     build_exception_id,
     classify_no_plan_reason,
+    NotIssuedBasis,
+    detect_not_issued,
     detect_plan_breach,
     detect_quantity_override,
-    no_plan_grni_applies,
     quantity_override_business_key,
 )
 from app.initiatives.i13.act.domain import NoPlanReason, QuantityDecisionRecord
@@ -128,23 +129,57 @@ def test_no_plan_not_raised_for_valid_session_and_plan() -> None:
     assert classify_no_plan_reason(plan) is None
 
 
-# --- NO_PLAN_GRNI (reuses W6.3's GRNI flag, never recalculated) ---
+# --- NOT_ISSUED_30_DAYS ---
+
+NOV_5 = date(2026, 11, 5)
 
 
-def test_no_plan_grni_applies_when_no_plan_and_watch_grni_flag_true() -> None:
-    assert no_plan_grni_applies(NoPlanReason.MISSING_SESSION, True) is True
+def _not_issued(entries, *, as_of=NOV_5, final_issued=False):
+    return detect_not_issued(entries, as_of=as_of, threshold_days=30, final_issued=final_issued)
 
 
-def test_no_plan_grni_does_not_apply_when_watch_grni_flag_false() -> None:
-    assert no_plan_grni_applies(NoPlanReason.MISSING_SESSION, False) is False
+def test_not_issued_from_the_requirement_date_at_30_days_not_29() -> None:
+    entry = _ledger_entry(requirement_date=date(2026, 10, 6))  # 30 days before 5 Nov
+    finding = _not_issued([entry])
+    assert finding is not None
+    assert (finding.basis, finding.since, finding.days) == (NotIssuedBasis.REQUIRED, date(2026, 10, 6), 30)
+    assert _not_issued([entry], as_of=date(2026, 11, 4)) is None
 
 
-def test_no_plan_grni_does_not_apply_when_plan_is_valid() -> None:
-    assert no_plan_grni_applies(None, True) is False
+def test_not_issued_from_its_own_goods_receipt_first() -> None:
+    """The reservation raised its PR and the PO was received: the receipt is
+    the date, even when the requirement date is later or earlier."""
+    entries = [
+        _ledger_entry(ledger_id="A", po_number="4500000001", first_gr_date=date(2026, 10, 1), requirement_date=date(2026, 9, 1)),
+        _ledger_entry(ledger_id="B", po_number="4500000002", first_gr_date=date(2026, 10, 20), requirement_date=date(2026, 9, 1)),
+    ]
+    finding = _not_issued(entries)
+    assert finding is not None
+    assert (finding.basis, finding.since, finding.days) == (NotIssuedBasis.RECEIVED, date(2026, 10, 1), 35)
 
 
-def test_no_plan_grni_does_not_apply_when_grni_evidence_unavailable() -> None:
-    assert no_plan_grni_applies(NoPlanReason.MISSING_SESSION, None) is False
+def test_a_receipt_under_30_days_old_is_no_finding_whatever_the_requirement_date() -> None:
+    entry = _ledger_entry(po_number="4500000001", first_gr_date=date(2026, 10, 20), requirement_date=date(2026, 8, 1))
+    assert _not_issued([entry]) is None
+
+
+def test_any_issue_means_no_finding() -> None:
+    entries = [
+        _ledger_entry(ledger_id="A", requirement_date=date(2026, 9, 1)),
+        _ledger_entry(ledger_id="B", requirement_date=date(2026, 9, 1), issued_quantity=Decimal("1")),
+    ]
+    assert _not_issued(entries) is None
+
+
+def test_a_deleted_or_closed_item_is_never_chased() -> None:
+    entry = _ledger_entry(requirement_date=date(2026, 9, 1))
+    assert _not_issued([entry], final_issued=True) is None
+    assert _not_issued([_ledger_entry(requirement_date=date(2026, 9, 1), reservation_deleted=True)]) is None
+
+
+def test_no_date_at_all_is_no_finding() -> None:
+    assert _not_issued([_ledger_entry()]) is None
+    assert _not_issued([]) is None
 
 
 # --- QUANTITY_OVERRIDE ---

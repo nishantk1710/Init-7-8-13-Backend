@@ -66,6 +66,10 @@ class LedgerUtilisationStatus(str, Enum):
     # Delivered before the earliest goods movement the extract holds: what was
     # issued out of it then cannot be seen (stock_issue_matching).
     BEFORE_ISSUE_HISTORY = "BEFORE_ISSUE_HISTORY"
+    # A line no reservation raised (a stock refill): SAP records no PO on a
+    # goods issue, so what was issued from this line is not an SAP fact.
+    # The procurement view shows it as such (procurement_view, 5-Nov-2026).
+    NOT_TRACKED = "NOT_TRACKED"
 
 
 class LinkageStatus(str, Enum):
@@ -122,6 +126,33 @@ DELIVERY_STATES = ("DELIVERED", "PARTIAL", "NOT_DELIVERED", "CLOSED", "NOT_AN_OR
 """The procurement view's delivery filter -- the frontend's
 ``deliveryStatusFromProcurement``, decided here so it can be filtered on in
 SQL over every line rather than over the lines a page happened to load."""
+
+
+def procurement_view(entry: LegacyLedgerEntry) -> LegacyLedgerEntry:
+    """A line as the procurement lines screen shows it: only what SAP recorded.
+
+    A line a reservation raised (RESB-BANFN) keeps its issues -- they are that
+    reservation's own goods issues (MSEG RSNUM/RSPOS), exact. Any other line
+    is a stock refill: SAP never says which delivery a goods issue came out of,
+    so its issued quantity, issue dates, stock left and next planned issue are
+    the oldest-stock-first estimate (stock_issue_matching), and are left off
+    here -- ``NOT_TRACKED``. The 30-day GR-not-issued view keeps the estimate,
+    labelled as one: it reads the stored line, not this view.
+    """
+    if entry.reservation_number is not None:
+        return entry
+    return replace(
+        entry,
+        issued_quantity=Decimal("0"),
+        open_quantity=entry.received_quantity,
+        first_gi_date=None,
+        latest_gi_date=None,
+        utilisation_status=LedgerUtilisationStatus.NOT_TRACKED,
+        next_planned_issue_date=None,
+        next_planned_issue_quantity=None,
+        attribution_status=None,
+        attribution_evidence=None,
+    )
 
 
 def delivery_state(entry: LegacyLedgerEntry) -> str:

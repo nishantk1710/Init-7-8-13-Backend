@@ -188,6 +188,9 @@ def test_an_open_month_is_a_rolling_reading_and_says_so(db):
 def test_the_working_capital_change_is_between_months_with_the_same_calculation_only(db):
     db.add_all([
         rec("A", at(2026, 10), cur_rop=2, rec_rop=12),  # 10 x (2 - 12) = -100
+        # Working capital counts only what SAP has adopted.
+        SapAdoptionResult(recommendation_id="REC-A-1300-1", status="ADOPTED", evaluated_at=at(2026, 11)),
+        SapAdoptionResult(recommendation_id="REC-A-1300-2", status="ADOPTED", evaluated_at=at(2026, 12)),
         StagedMaterialPlant(sap_material_number="A", sap_plant_code="1300", unit_price=Decimal("10"), currency="ZAR",
                             staging_run_id=1, source_table="n_mbew"),  # the price's currency: only ZAR / NAD counts
     ])
@@ -213,6 +216,34 @@ def test_the_trend_never_calls_an_estimate_a_realised_saving(db):
 
 
 # --- the quarter-end position ----------------------------------------------------------------
+
+
+def test_a_snapshot_saved_before_the_working_capital_split_gets_the_split_worked_out_now(db, monkeypatch):
+    import json
+
+    usage(monkeypatch, date(2026, 12, 30), at_risk=7, evaluated=40)
+    db.add_all([
+        rec("A", at(2026, 10), cur_rop=2, rec_rop=12),
+        StagedMaterialPlant(sap_material_number="A", sap_plant_code="1300", unit_price=Decimal("10"), currency="ZAR",
+                            staging_run_id=1, source_table="n_mbew"),
+    ])
+    db.commit()
+    capture_all(db)
+    for row in db.execute(select(KpiSnapshot)).scalars():  # make them look like snapshots saved before the split existed
+        payload = json.loads(row.payload_json)
+        for entry in payload["plant_positions"]:
+            for name in ("working_capital_split", "working_capital_stock", "working_capital_oar", "working_capital_potential"):
+                entry["figures"].pop(name, None)
+        row.payload_json = json.dumps(payload)
+    db.commit()
+    management = build(db, date(2027, 1, 15))
+    assert management.position_basis == "snapshot"
+    potential = card(management, "working_capital_potential")
+    assert potential.status is AvailabilityStatus.NOT_AVAILABLE  # A is a stock item, so no OAR material is in it; worked out now all the same
+    assert potential.basis == "current_calculation" and potential.unavailable_reason
+    assert potential.basis == "current_calculation" and "made before this figure existed" in (potential.note or "")
+    for key in ("working_capital_stock", "working_capital_oar"):
+        assert card(management, key).status is AvailabilityStatus.AVAILABLE  # nothing adopted: 0, a number
 
 
 def test_the_last_months_valid_snapshot_is_the_quarter_end_and_the_cards_and_charts_read_it(db, monkeypatch):

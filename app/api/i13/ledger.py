@@ -30,7 +30,12 @@ from sqlalchemy.orm import Session
 from app.api.i13.deps import page, snapshot_or_live, with_expected_delivery, with_material_names
 from app.core.db import get_db
 from app.core.logging import get_logger
-from app.initiatives.i13.ledger_compat import LegacyLedgerEntry, build_legacy_ledger, delivery_state
+from app.initiatives.i13.ledger_compat import (
+    LegacyLedgerEntry,
+    build_legacy_ledger,
+    delivery_state,
+    procurement_view,
+)
 from app.initiatives.i13.snapshot import I13Snapshot
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.integrations.sap.postgres_material import fetch_material_scope_index
@@ -46,7 +51,13 @@ router = APIRouter()
 
 _STATUS_FILTERS = dict(
     procurement_status=Query(None, description="OPEN, PARTIALLY_RECEIVED, RECEIVED, CLOSED or NOT_AN_ORDER."),
-    utilisation_status=Query(None, description="NOT_ISSUED, PARTIALLY_ISSUED or FULLY_ISSUED."),
+    utilisation_status=Query(
+        None,
+        description=(
+            "NOT_ISSUED, PARTIALLY_ISSUED or FULLY_ISSUED (a line a reservation raised), "
+            "or NOT_TRACKED (a stock refill)."
+        ),
+    ),
     delivery_status=Query(None, description="DELIVERED, PARTIAL, NOT_DELIVERED, CLOSED, NOT_AN_ORDER or NO_PO."),
 )
 
@@ -60,13 +71,14 @@ def _matching(
     utilisation_status: str | None,
     delivery_status: str | None,
 ) -> list[LegacyLedgerEntry]:
-    """The in-memory and live paths' version of the stored filters."""
+    """The in-memory and live paths' version of the stored filters, over each
+    line as the screen shows it (:func:`procurement_view`)."""
     wanted_p = procurement_status.upper() if procurement_status else None
     wanted_u = utilisation_status.upper() if utilisation_status else None
     wanted_d = delivery_status.upper() if delivery_status else None
     return [
         e
-        for e in entries
+        for e in map(procurement_view, entries)
         if (not plant or e.plant == plant)
         and (not material or e.material == material)
         and (wanted_p is None or e.procurement_status.value == wanted_p)
@@ -144,7 +156,9 @@ def list_ledger_entries(
             **filters,
         )
         response.headers["X-Total-Count"] = str(total)
-        return _with_ordered_quantity([UtilisationLedgerEntryResponse.model_validate(row) for row in rows], snapshot)
+        return _with_ordered_quantity(
+            [UtilisationLedgerEntryResponse.model_validate(procurement_view(row)) for row in rows], snapshot
+        )
     entries = _matching(
         _unstored_entries(db, snapshot, plant=plant, material=material, include_out_of_scope=include_out_of_scope),
         plant=plant, material=material, **filters,
@@ -201,13 +215,17 @@ def get_ledger_entry(
         found = snapshot.legacy_entry(ledger_id, oar_only=not include_out_of_scope)
         if found is None:
             raise HTTPException(status_code=404, detail="Ledger entry not found")
-        return _with_ordered_quantity([UtilisationLedgerEntryResponse.model_validate(found)], snapshot)[0]
+        return _with_ordered_quantity(
+            [UtilisationLedgerEntryResponse.model_validate(procurement_view(found))], snapshot
+        )[0]
     if snapshot is not None:
         entry = snapshot.legacy_ledger_by_id.get(ledger_id)
         if entry is not None and (
             include_out_of_scope or snapshot.scope_of(entry.material, entry.plant) is MaterialScope.OAR
         ):
-            return _with_ordered_quantity([UtilisationLedgerEntryResponse.model_validate(entry)], snapshot)[0]
+            return _with_ordered_quantity(
+                [UtilisationLedgerEntryResponse.model_validate(procurement_view(entry))], snapshot
+            )[0]
         raise HTTPException(status_code=404, detail="Ledger entry not found")
 
     procurement_repo = PostgresProcurementRepository(db)
@@ -219,5 +237,5 @@ def get_ledger_entry(
     )
     for entry in entries:
         if entry.ledger_id == ledger_id:
-            return UtilisationLedgerEntryResponse.model_validate(entry)
+            return UtilisationLedgerEntryResponse.model_validate(procurement_view(entry))
     raise HTTPException(status_code=404, detail="Ledger entry not found")

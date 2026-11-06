@@ -194,7 +194,7 @@ def export_quarterly_report(
             quarter=quarter,
         )
     report = QuarterlyReport.from_report_json(row.report_json)
-    workbook = build_quarterly_report_workbook(report)
+    workbook = build_quarterly_report_workbook(report, session)
     try:
         kind = "monthly" if period_kind(quarter) == "month" else "quarterly"
     except ValueError:

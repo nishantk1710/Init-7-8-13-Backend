@@ -19,11 +19,12 @@ Portable constructs only: no ``JSONB``, no ``ARRAY``, matching every earlier
 phase.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Index,
     Integer,
@@ -337,3 +338,7 @@ class SapAdoptionResult(Base):
     evaluated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    adopted_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    """The day SAP made the matching change, from SAP's change history (CDHDR's change date, joined to CDPOS for the field).
+    Only for an ADOPTED result; ``None`` otherwise, and for an adoption recorded before this column existed. It is what places
+    a confirmed adoption in a month: ``evaluated_at`` is when the check last ran, not when SAP changed."""

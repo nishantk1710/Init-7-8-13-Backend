@@ -1290,8 +1290,15 @@ class TestUndeliveredTables:
 
         csv_pull.pull_all(gap=0, sleeper=lambda s: None, wait_for_open=False)
 
+        from app.ingest.csv_tables import enabled_tables
+
         assert "EKKO" in fired and "EKET" in fired
-        assert len(fired) == len(CSV_TABLES)
+        # Every ENABLED table: the undelivered ones are still asked for; the
+        # switched-off ones (INGEST_DISABLED_SETS -- gate pass, by default)
+        # are not, because nothing reads what they would deliver.
+        assert len(fired) == len(enabled_tables())
+        assert len(enabled_tables()) < len(CSV_TABLES)
+        assert "ZMM_GP_HDR" not in fired and "ZMM_GP_ITEM" not in fired and "ZMM_GP_IN" not in fired
 
     def test_asked_for_by_name_it_still_fires(self, db) -> None:
         """That is how the condition gets re-tested once SAP fixes the job."""

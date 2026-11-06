@@ -151,6 +151,11 @@ def _queue(db: Session, row: Recommendation, policy: PolicyDocument) -> None:
             event_type, recipients = templates.APPROVAL_REQUIRED, role_holders(db, waiting, row.sap_plant_code)
         else:
             event_type, to_decide = templates.APPROVAL_COMPLETED, False
+            # The last approver in this recommendation's route just approved: the Inventory Controller is told
+            # what to change in SAP, and by when (adoption_notices.py also reminds them while the window is open).
+            from app.initiatives.i7 import adoption_notices
+
+            adoption_notices.queue_handover_notice(db, row, entry, policy)
             recipients = list(submitter_recipients)
             executor = get_settings().notification_sap_execution_role.strip()
             if executor:

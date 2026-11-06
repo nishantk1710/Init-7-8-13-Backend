@@ -369,14 +369,15 @@ def _csv(args) -> int:
     """The CSV route: pull, load, or both, for one table or all of them."""
     from app.ingest.csv_load import load_all, load_table
     from app.ingest.csv_pull import pull_all, pull_one
-    from app.ingest.csv_tables import CSV_TABLES, configured_window
+    from app.ingest.csv_tables import configured_window, enabled_tables
 
     if not (args.all or args.table):
         print("Nothing selected: pass --all or --table NAME. See --help.")
         return 2
 
+    # --all is every ENABLED table; one named with --table runs regardless.
     names = (
-        [t.sap_table for t in CSV_TABLES] if args.all else [args.table.upper()]
+        [t.sap_table for t in enabled_tables()] if args.all else [args.table.upper()]
     )
     failures = 0
 
@@ -422,7 +423,7 @@ def _csv(args) -> int:
                 else "fired together, then collected"
             )
         if args.all:
-            for t in CSV_TABLES:
+            for t in enabled_tables():
                 if t.blocked:
                     print(f"  {t.sap_table}: fired for the record, expect a timeout -- {t.blocked}")
         print(f"CSV pull: {len(names)} table(s), {shape}")
@@ -730,7 +731,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        chosen: tuple[IngestSpec, ...] = specs() if args.all else (spec_for(args.set),)
+        # --all leaves out the sets INGEST_DISABLED_SETS switches off; one
+        # named with --set runs regardless, so a switched-off set can still be
+        # re-tested by hand.
+        chosen: tuple[IngestSpec, ...] = (
+            tuple(s for s in specs() if not s.disabled) if args.all else (spec_for(args.set),)
+        )
     except KeyError as exc:
         print(exc)
         return 2

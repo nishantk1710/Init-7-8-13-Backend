@@ -51,6 +51,18 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
     log_level: str = "INFO"
 
+    # Responses of at least this many bytes are gzip-compressed for clients that
+    # accept it (JSON and text; Excel/PDF downloads are left alone). Switch off
+    # with RESPONSE_GZIP_ENABLED=false if a client ever mishandles it.
+    response_gzip_enabled: bool = True
+    response_gzip_min_bytes: int = 1024
+
+    # A request that takes at least this many seconds is logged as
+    # "slow request: <method> <route> -> <status> in <n>s", so a slow screen can
+    # be traced to its route (the access log has no durations). 0 turns it off.
+    # Every response carries a Server-Timing header either way.
+    slow_request_log_seconds: float = 1.0
+
     # Browser origin(s) allowed to call this API. Comma-separated for multiple.
     frontend_origin: str = "http://localhost:3000"
 
@@ -289,6 +301,40 @@ class Settings(BaseSettings):
     # the other); measure a delivery before changing it. The OData delta
     # writes the plain shape, which the us rule reads unchanged.
     csv_number_format: str = "us"
+
+    # What the CSV loaders do with a number column BEFORE it is written.
+    #
+    # Empty (the default): the text is stored exactly as SAP sent it and the
+    # n_<table> views read it in CSV_NUMBER_FORMAT, as always. "german" or
+    # "us": every column the views read as a number is rewritten into the
+    # plain shape -- decimal point, no grouping, SAP's trailing minus kept --
+    # as it is loaded (csv_load, and the CSV increment in csv_delta), so the
+    # table holds the same shape the OData delta writes (raw_merge.shape) and
+    # one view rule reads both.
+    #
+    # Needed where the two routes disagree. Measured on PRD 6 Nov 2026: the
+    # extract job writes German (1.393,100) while the same system's OData
+    # services send plain (1393.100), and no single view rule reads both --
+    # the German rule turns the delta's 4437980.33 into 443798033, the US
+    # rule turns the extract's 1.800,000 into 1.8. With this set the loaders
+    # settle it at the door. CSV_NUMBER_FORMAT must then be "us", whose rule
+    # leaves a plain number alone; the loaders refuse to run otherwise.
+    # Tables loaded before it was set are not rewritten.
+    csv_load_number_format: str = ""
+
+    # --- Sets left out of every sweep -----------------------------------------
+    #
+    # OData entity sets -- and the CSV tables behind them -- that no sweep
+    # touches: not the hourly delta, not --delta/--fetch --all, not --csv-pull
+    # or --csv-load --all, not the nightly full refresh. Named one at a time
+    # (--set GatePassHeaderSet, --table ZMM_GP_HDR) they still run: the list
+    # governs sweeps, not an operator re-testing one set. Comma-separated;
+    # empty re-enables everything.
+    #
+    # Gate pass is here (6 Nov 2026): descoped from I08, read by no view, and
+    # on PRD its CSV extract delivers nothing while its OData sets answer --
+    # an hourly delta would re-read three sets nothing consumes.
+    ingest_disabled_sets: str = "GatePassHeaderSet,GatePassItemSet,GatePassReturnSet"
 
     # --- CSV receiver (/api/events/csv) -------------------------------------
     #
@@ -822,6 +868,22 @@ class Settings(BaseSettings):
     # capture can be run by hand: python -m app.reporting.capture_snapshot.
     i7_kpi_snapshot_enabled: bool = False
 
+    # Whether the nightly watcher also checks SAP's change history (CDHDR/CDPOS) for every recommendation that has
+    # been handed over to SAP (app/api/i7/adoption.py::run_daily_adoption_check), so a matching change is found the
+    # day it is made. Read-only towards SAP, safe to repeat, needs no migration. ON by default; it only runs when the
+    # watcher itself (i7_pipeline_watch_enabled) is on. Set false to leave adoption to the page and the window's end.
+    i7_adoption_daily_check_enabled: bool = True
+
+    # Telling the Inventory Controller, after a recommendation's final approval, to change the approved values in SAP,
+    # and reminding them while the adoption monitoring window is open (app/initiatives/i7/adoption_notices.py). The
+    # window length is the policy's monitoring_window_days -- nothing here sets it. Day 0 is the final approval; the
+    # first reminder goes on this day after it, then every i7_adoption_reminder_every_days, and the last on the day
+    # before the window closes. Reminders stop once SAP matches the approved values. Independent of the nightly
+    # watcher: it reads SAP's change history itself and writes nothing but notifications.
+    i7_adoption_notices_enabled: bool = True
+    i7_adoption_reminder_first_day: int = 3
+    i7_adoption_reminder_every_days: int = 2
+
     # Whether the nightly watcher also generates the Quarterly Report for the quarter that just closed
     # (app/initiatives/i7/reporting/auto_generate.py), after the pipeline check and the snapshots. OFF by default, and it
     # only acts when the watcher itself is on (i7_pipeline_watch_enabled) -- there is no second timer. Nothing else in the
@@ -1100,9 +1162,11 @@ class Settings(BaseSettings):
     # the backup for a day with no successful build. OFF by default, for the same reason.
     i13_detect_after_build: bool = False
     # The exception types those two automatic runs check, comma-separated (PLAN_BREACH,
-    # NO_PLAN, NO_PLAN_GRNI, QUANTITY_OVERRIDE). Empty = all. A type left out is neither
-    # raised nor resolved by them -- e.g. NO_PLAN and NO_PLAN_GRNI until the Non-AI
-    # go-live cutoff is agreed. The post-capture and manual (POST /run/detect) runs always check every type.
+    # NO_PLAN, NOT_ISSUED_30_DAYS, QUANTITY_OVERRIDE). Empty = all. A type left out is neither
+    # raised nor resolved by them -- e.g. NO_PLAN until the Non-AI go-live cutoff is agreed.
+    # NO_PLAN_GRNI is retired (5-Nov-2026) and ignored here. NOT_ISSUED_30_DAYS uses
+    # i13_gr_not_issued_threshold_days. The post-capture and manual (POST /run/detect) runs
+    # always check every type.
     i13_detection_types: str = ""
 
     # A request's requester is told in the app when its lines are linked to an SAP reservation, and reminded
@@ -1323,6 +1387,10 @@ class Settings(BaseSettings):
     @property
     def odata_full_pull_set_list(self) -> list[str]:
         return [name.strip() for name in self.odata_full_pull_sets.split(",") if name.strip()]
+
+    @property
+    def ingest_disabled_set_list(self) -> frozenset[str]:
+        return frozenset(name.strip() for name in self.ingest_disabled_sets.split(",") if name.strip())
 
     @property
     def csv_delta_table_list(self) -> list[str]:

@@ -42,7 +42,7 @@ from app.api.i7.recommendations import _apply_filters, _latest_only, _not_smooth
 from app.initiatives.i7.kpi_formulas.inventory_value import inventory_measurements, stock_date_problem, stock_loaded_at
 from app.initiatives.i7.kpi_formulas.resolved import Formulas, load_active
 from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql
-from app.initiatives.i7.kpi_formulas.working_capital import working_capital_impact
+from app.initiatives.i7.kpi_formulas.working_capital import ELIGIBLE, NOT_ELIGIBLE, oar_rule, working_capital_impact
 from app.initiatives.i7.stockout_risk.counts import stockout_risk_counts
 from app.models.i7_recommendation import Recommendation, SapAdoptionResult
 from app.schemas.i7.reports import PositionFigures, StockoutPosition
@@ -133,10 +133,63 @@ def stage_counts(counts: dict[str, int]) -> dict[str, int]:
     return {**stages, "total": total, "other": total - sum(stages.values())}
 
 
+def eligible_oar_material_plants(session: Session, period_start: date, exclusive_end: date) -> int:
+    """Eligible OAR material-plants in the period: the newest recommendation of each, with a recommended value, that the OAR rule
+    counts (eligible and not rejected, or not eligible but with a live conversion request). One per material-plant, so a material
+    recalculated several times counts once -- the same population as the Min-Max card and the Current vs recommended table."""
+    statement = _latest_only(
+        _apply_filters(
+            select(Recommendation.id), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+            criticality=None, generated_from=period_start, generated_to=exclusive_end, demand_type="oar", has_recommended=True,
+        ).where(_not_smooth())
+    ).where(Recommendation.conversion_eligibility.in_((ELIGIBLE, NOT_ELIGIBLE)), oar_rule())
+    return count_of(session, statement)
+
+
+#: The most rows a report's material lists put in a file: a spreadsheet of this period's materials, not the whole catalogue.
+EXPORT_ROW_CAP = 5000
+
+
+def eligible_oar_rows(session: Session, period_start: date, exclusive_end: date) -> list[Recommendation]:
+    """The rows of the report page's "Current vs recommended" table: eligible OAR material-plants of the period (conversion verdict
+    ELIGIBLE, with a recommended value), the newest recommendation of each, newest first. The same filters the page sends."""
+    statement = _latest_only(
+        _apply_filters(
+            select(Recommendation), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+            criticality=None, generated_from=period_start, generated_to=exclusive_end, demand_type="oar", has_recommended=True,
+            conversion_eligibility=ELIGIBLE,
+        ).where(_not_smooth())
+    ).order_by(Recommendation.generated_at.desc(), Recommendation.id.desc()).limit(EXPORT_ROW_CAP)
+    return list(session.execute(statement).scalars().all())
+
+
+def adopted_rows(session: Session, period_start: date, exclusive_end: date) -> list[Recommendation]:
+    """The rows of the report page's "Adopted recommendations" table: the period's recommendations SAP now matches (the reconciliation's
+    ADOPTED result), the newest of each material-plant, newest first. The same filters the page sends."""
+    statement = _latest_only(
+        _apply_filters(
+            select(Recommendation), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+            criticality=None, generated_from=period_start, generated_to=exclusive_end, adopted_in_sap=True,
+        ).where(_not_smooth())
+    ).order_by(Recommendation.generated_at.desc(), Recommendation.id.desc()).limit(EXPORT_ROW_CAP)
+    return list(session.execute(statement).scalars().all())
+
+
 def oar_records(session: Session, period_start: date, exclusive_end: date) -> int:
-    """Recommendation records generated in the period for OAR material-plants -- rows, not distinct materials."""
+    """Recommendation records generated in the period for *eligible* OAR material-plants -- rows, not distinct materials.
+
+    The same OAR rule the Overview's Working Capital Impact uses (:func:`~app.initiatives.i7.kpi_formulas.working_capital.oar_rule`):
+    an ELIGIBLE record counts unless it was rejected; a NOT_ELIGIBLE record counts only once somebody has asked to convert it and the
+    request is alive (submitted for approval and not rejected). A NOT_ELIGIBLE record with no request, or a rejected one, is left out,
+    and an OAR record with no eligibility verdict at all is not counted."""
     return count_of(
-        session, select(Recommendation.id).where(*_in_period(period_start, exclusive_end), Recommendation.is_oar)
+        session,
+        select(Recommendation.id).where(
+            *_in_period(period_start, exclusive_end),
+            Recommendation.is_oar,
+            Recommendation.conversion_eligibility.in_((ELIGIBLE, NOT_ELIGIBLE)),
+            oar_rule(),
+        ),
     )
 
 
@@ -192,14 +245,26 @@ def min_max_conversion(session: Session, period_start: date, exclusive_end: date
     )
 
 
+def _actionable_ids(period_start: date, exclusive_end: date) -> Select:
+    """The period's recommendations that have something to change in SAP (the Overview's ``actionable`` rule), the newest of each
+    material-plant: the set the SAP adoption count, the approval stages and the cards below it all cover."""
+    return _apply_filters(
+        select(Recommendation.id), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+        criticality=None, generated_from=None, generated_to=None, actionable=True,
+    ).where(Recommendation.id.in_(newest_in_period_ids(period_start, exclusive_end)))
+
+
+def actionable_total(session: Session, period_start: date, exclusive_end: date) -> int:
+    """How many recommendations of the period have something to change in SAP, one per material-plant: the number the Overview's SAP
+    adoption shows, and the report's approval stages and Approved card are out of."""
+    return count_of(session, _actionable_ids(period_start, exclusive_end))
+
+
 def approved_count(session: Session, period_start: date, exclusive_end: date) -> int:
-    """Records generated in the period that have been approved, as of the report: a status, not a count of approval
-    events."""
+    """Recommendations of the period (those with something to change in SAP, one per material-plant) that have been approved, as of the
+    report: a status, not a count of approval events."""
     return count_of(
-        session,
-        select(Recommendation.id).where(
-            *_in_period(period_start, exclusive_end), Recommendation.status.in_(APPROVED_STATUSES)
-        ),
+        session, _actionable_ids(period_start, exclusive_end).where(Recommendation.status.in_(APPROVED_STATUSES))
     )
 
 
@@ -211,6 +276,38 @@ def status_counts(session: Session, period_start: date, exclusive_end: date) -> 
         .group_by(Recommendation.status)
     ).all()
     return {status: count for status, count in rows}
+
+
+def actionable_status_counts(session: Session, period_start: date, exclusive_end: date) -> dict[str, int]:
+    """The current status of the period's recommendations that have something to adopt in SAP: the Overview's ``actionable`` rule, over
+    the newest recommendation of each material-plant. The same set the SAP adoption counts cover, so the approval stages and the
+    adoption card count the same material-plants (and the same number the Overview shows), not every record generated."""
+    tracked = _apply_filters(
+        select(Recommendation.id), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+        criticality=None, generated_from=None, generated_to=None, actionable=True,
+    ).where(Recommendation.id.in_(newest_in_period_ids(period_start, exclusive_end)))
+    rows = session.execute(
+        select(Recommendation.status, func.count()).where(Recommendation.id.in_(tracked)).group_by(Recommendation.status)
+    ).all()
+    return {status: count for status, count in rows}
+
+
+def actionable_generated_by_month(session: Session, period_start: date, exclusive_end: date) -> dict[tuple[int, int], int]:
+    """For each month of the period: the recommendations generated in it that have something to change in SAP (the Overview's
+    ``actionable`` rule), one per material-plant on its newest recommendation of that month. The same set the SAP adoption count
+    and the approval stages cover, so the activity table matches the Overview's number rather than counting every record."""
+    counts: dict[tuple[int, int], int] = {}
+    year, month = period_start.year, period_start.month
+    while date(year, month, 1) < exclusive_end:
+        lo = max(date(year, month, 1), period_start)
+        hi = min(date(year + (month == 12), month % 12 + 1, 1), exclusive_end)
+        tracked = _apply_filters(
+            select(Recommendation.id), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+            criticality=None, generated_from=None, generated_to=None, actionable=True,
+        ).where(Recommendation.id.in_(newest_in_period_ids(lo, hi)))
+        counts[(year, month)] = count_of(session, tracked)
+        year, month = year + (month == 12), month % 12 + 1
+    return counts
 
 
 # --- Position: the newest recommendation of each material-plant -------------------------------------
@@ -286,7 +383,13 @@ def position_figures(
     ).scalar()
 
     # The same calculation as the Overview card (kpi_formulas.working_capital): MBEW price and currency in ZAR.
-    capital = working_capital_impact(session, base, formulas)
+    # In the report, working capital is the impact of what SAP has actually adopted -- not the estimate if everything were adopted.
+    capital = working_capital_impact(session, base, formulas, adopted_only=True)
+    capital_stock = working_capital_impact(session, base, formulas, segment="stock", adopted_only=True)
+    capital_oar = working_capital_impact(session, base, formulas, segment="oar", adopted_only=True)
+    # What it would be if every eligible material-plant were adopted: the Overview's calculation, adopted or not.
+    capital_potential = working_capital_impact(session, base, formulas)
+    capital_oar_potential = working_capital_impact(session, base, formulas, segment="oar")
 
     # Stock held, over the same population. Valued only when the stock load is close enough to the cutoff to speak for
     # it -- the same age rule the stockout reading answers to -- otherwise it is "not measured", never 0.
@@ -306,6 +409,15 @@ def position_figures(
         currency=_portfolio_currency(session),
         working_capital_currency=capital.currency,
         working_capital_excluded_count=capital.excluded_count,
+        working_capital_split=True,
+        working_capital_stock=capital_stock.amount,
+        working_capital_stock_count=capital_stock.included_count,
+        working_capital_oar=capital_oar.amount,
+        working_capital_oar_count=capital_oar.included_count,
+        working_capital_potential=capital_potential.amount,
+        working_capital_potential_count=capital_potential.included_count,
+        working_capital_oar_potential=capital_oar_potential.amount,
+        working_capital_oar_potential_count=capital_oar_potential.included_count,
         inventory_value=held.inventory_value if held else None,
         inventory_priced_count=held.inventory_priced_count if held else 0,
         safety_stock_value=held.safety_stock_value if held else None,

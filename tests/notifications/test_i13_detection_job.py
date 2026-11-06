@@ -140,11 +140,20 @@ def test_checks_only_the_configured_types(runs):
     from app.initiatives.i13.act.domain import ExceptionType
 
     outcome = notification_jobs.run_exception_detection(
-        enabled(i13_detection_types="plan_breach, NO_PLAN_GRNI"), session_factory=FakeSession, now=NIGHT
+        enabled(i13_detection_types="plan_breach, NOT_ISSUED_30_DAYS"), session_factory=FakeSession, now=NIGHT
     )
 
-    assert runs[0]["types"] == frozenset({ExceptionType.PLAN_BREACH, ExceptionType.NO_PLAN_GRNI})
-    assert outcome.endswith("(NO_PLAN_GRNI, PLAN_BREACH)")
+    assert runs[0]["types"] == frozenset({ExceptionType.PLAN_BREACH, ExceptionType.NOT_ISSUED_30_DAYS})
+    assert outcome.endswith("(NOT_ISSUED_30_DAYS, PLAN_BREACH)")
+
+
+def test_the_retired_no_plan_grni_is_ignored_not_refused():
+    from app.initiatives.i13.act.domain import ExceptionType
+    from app.initiatives.i13.act_runner import detection_types
+
+    assert detection_types("PLAN_BREACH, NO_PLAN_GRNI") == frozenset({ExceptionType.PLAN_BREACH})
+    # Only the retired type named: run nothing, never "every type".
+    assert detection_types("NO_PLAN_GRNI") == frozenset()
 
 
 def test_an_unknown_type_is_refused_not_ignored(runs):

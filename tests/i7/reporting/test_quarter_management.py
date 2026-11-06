@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.initiatives.i7.reporting import kpi_definitions
-from app.initiatives.i7.reporting.period import resolve_quarter
+from app.initiatives.i7.reporting.period import resolve_period, resolve_quarter
 from app.initiatives.i7.reporting.quarter_management import build_quarter_management
 from app.initiatives.i7.reporting.source_activity import build_source_activity
 from app.initiatives.i7.stockout_risk.counts import StockoutRiskCounts
@@ -129,7 +129,7 @@ def test_the_three_months_of_q4_roll_over_the_year_correctly(db):
 
 
 def test_recommendations_are_counted_in_the_month_they_were_generated_and_the_months_add_up(db):
-    db.add_all([rec("A", at(2026, 10)), rec("B", at(2026, 10, 31)), rec("C", at(2026, 11)), rec("D", at(2026, 12, 31))])
+    db.add_all([rec("A", at(2026, 10), rec_rop=5), rec("B", at(2026, 10, 31), rec_rop=5), rec("C", at(2026, 11), rec_rop=5), rec("D", at(2026, 12, 31), rec_rop=5)])
     db.commit()
     generated = row(build(db, AFTER_Q4), "recommendations_generated")
     assert generated.months == [2, 1, 1]
@@ -139,7 +139,7 @@ def test_recommendations_are_counted_in_the_month_they_were_generated_and_the_mo
 
 
 def test_a_record_on_the_last_day_of_the_quarter_is_in_it_and_one_on_the_next_day_is_not(db):
-    db.add_all([rec("A", datetime(2026, 12, 31, 23, 59, tzinfo=timezone.utc)), rec("B", datetime(2027, 1, 1, 0, 0, tzinfo=timezone.utc))])
+    db.add_all([rec("A", datetime(2026, 12, 31, 23, 59, tzinfo=timezone.utc), rec_rop=5), rec("B", datetime(2027, 1, 1, 0, 0, tzinfo=timezone.utc), rec_rop=5)])
     db.commit()
     generated = row(build(db, AFTER_Q4), "recommendations_generated")
     assert generated.quarter_total == 1
@@ -179,22 +179,50 @@ def test_events_outside_the_quarter_are_not_counted(db):
 
 
 def test_months_that_have_not_started_are_not_available_rather_than_zero(db):
-    db.add(rec("A", at(2026, 10, 5)))
+    db.add(rec("A", at(2026, 10, 5), rec_rop=5))
     db.commit()
     generated = row(build(db, MID_Q4), "recommendations_generated")
     assert generated.months == [1, None, None]
     assert generated.quarter_total == 1
 
 
-def test_a_month_with_nothing_is_a_real_zero_but_an_untracked_series_is_not_available(db):
+def test_the_activity_row_counts_what_has_something_to_change_in_sap_once_per_material_plant_and_month(db):
+    db.add_all([
+        rec("A", at(2026, 10), rec_rop=5), rec("A", at(2026, 10, 20), run=2, rec_rop=6),  # one material-plant, two runs: once
+        rec("B", at(2026, 10)),                                                           # nothing recommended: not counted
+        rec("C", at(2026, 10), cur_rop=5, rec_rop=5),                                     # recommends what SAP holds: not counted
+        rec("A", at(2026, 11), run=3, rec_rop=7),                                         # the same material-plant in another month
+    ])
+    db.commit()
+    generated = row(build(db, AFTER_Q4), "recommendations_generated")
+    assert generated.months == [1, 1, 0] and generated.quarter_total == 2 and generated.unit == "recommendations"
+
+
+def test_confirmed_sap_adoptions_are_counted_in_the_month_of_the_sap_change(db):
+    day = lambda y, m, d: date(y, m, d)  # noqa: E731
+    db.add_all([
+        SapAdoptionResult(recommendation_id="R1", status="ADOPTED", evaluated_at=at(2027, 1), adopted_on=day(2026, 10, 20)),
+        SapAdoptionResult(recommendation_id="R2", status="ADOPTED", evaluated_at=at(2027, 1), adopted_on=day(2026, 10, 31)),
+        SapAdoptionResult(recommendation_id="R3", status="ADOPTED", evaluated_at=at(2027, 1), adopted_on=day(2026, 12, 1)),
+        SapAdoptionResult(recommendation_id="R4", status="ADOPTED", evaluated_at=at(2027, 1), adopted_on=day(2027, 1, 5)),    # next quarter
+        SapAdoptionResult(recommendation_id="R5", status="PARTIALLY_ADOPTED", evaluated_at=at(2027, 1), adopted_on=day(2026, 11, 2)),  # not confirmed
+        SapAdoptionResult(recommendation_id="R6", status="ADOPTED", evaluated_at=at(2027, 1)),                                # no date: in no month
+    ])
+    db.commit()
+    adoption = row(build(db, AFTER_Q4), "sap_adoptions_confirmed")
+    assert adoption.months == [2, 0, 1] and adoption.quarter_total == 3 and adoption.reconciles is True
+    assert "CDHDR" in adoption.note and "1 adoption(s)" in adoption.note  # R6 is said to be in no month
+
+
+def test_a_month_with_nothing_is_a_real_zero(db):
     management = build(db, AFTER_Q4)
     generated = row(management, "recommendations_generated")
     assert generated.months == [0, 0, 0]
     assert generated.quarter_total == 0
     adoption = row(management, "sap_adoptions_confirmed")
-    assert adoption.months == [None, None, None]
-    assert adoption.quarter_total is None
-    assert adoption.status is AvailabilityStatus.UNKNOWN
+    assert adoption.months == [0, 0, 0]  # no matching SAP change in any month: a real zero
+    assert adoption.quarter_total == 0
+    assert adoption.status is AvailabilityStatus.AVAILABLE
 
 
 def test_consumption_by_month_blanks_months_the_staged_data_does_not_cover(db):
@@ -279,8 +307,8 @@ def test_materials_assessed_counts_distinct_material_plants_not_records(db):
 
 def test_approved_is_a_status_on_the_day_the_report_was_generated_not_at_the_quarters_end(db):
     db.add_all([
-        rec("A", at(2026, 10), status="PENDING_APPROVAL"), rec("B", at(2026, 10), status="HELD"),
-        rec("C", at(2026, 10)), rec("D", at(2026, 10), status="APPROVED"), rec("E", at(2026, 11), status="ADOPTED"),
+        rec("A", at(2026, 10), status="PENDING_APPROVAL", rec_rop=5), rec("B", at(2026, 10), status="HELD", rec_rop=5),
+        rec("C", at(2026, 10), rec_rop=5), rec("D", at(2026, 10), status="APPROVED", rec_rop=5), rec("E", at(2026, 11), status="ADOPTED", rec_rop=5),
     ])
     db.commit()
     management = build(db, AFTER_Q4)
@@ -314,10 +342,29 @@ def test_the_three_counts_are_records_then_distinct_material_plants_then_those_w
     assert "4 records over 3 distinct material-plants" in records.note and "1 are repeat runs" in records.note
 
 
+def test_the_approval_stages_count_the_materials_with_something_to_change_in_sap_for_the_month(db):
+    db.add_all([
+        rec("A", at(2026, 10), status="PENDING_APPROVAL", rec_rop=5),            # something to change: counted
+        rec("A", at(2026, 10, 20), run=2, status="PENDING_APPROVAL", rec_rop=6),  # the same material-plant again: counted once
+        rec("B", at(2026, 10), status="APPROVED", cur_rop=5, rec_rop=5),           # recommends what SAP already holds: nothing to change
+        rec("C", at(2026, 10), status="HELD"),                                     # no recommended value at all: nothing to change
+        rec("D", at(2026, 11), status="PENDING_APPROVAL", rec_rop=5),              # another month
+    ])
+    db.commit()
+    def month(label):
+        start, end = resolve_period(label)
+        source = build_source_activity(db, start, end, recommendations_in_period=0)
+        return build_quarter_management(db, start, end, today=AFTER_Q4, source_activity=source).adoption.stages
+
+    october = month("Oct 2026")
+    assert october.total == 1 and october.awaiting_approval == 1  # only A, once, and only October's
+    assert month("Nov 2026").total == 1  # only D
+
+
 def test_stages_separate_approval_from_sap_and_add_up_to_the_records_generated(db):
     statuses = ["READY_FOR_REVIEW", "NOT_EVALUABLE", "PENDING_APPROVAL", "HELD", "ADJUSTED", "APPROVED", "SAP_EXECUTION_PENDING",
                 "SAP_EXECUTED", "ADOPTED", "REJECTED", "SENT_BACK"]
-    db.add_all([rec(f"M{i}", at(2026, 10), status=s) for i, s in enumerate(statuses)])
+    db.add_all([rec(f"M{i}", at(2026, 10), status=s, rec_rop=5) for i, s in enumerate(statuses)])
     db.commit()
     management = build(db, AFTER_Q4)
     stages = management.adoption.stages
@@ -338,13 +385,15 @@ def test_the_approval_card_sets_and_the_stage_sets_are_one_definition():
     assert kpi_definitions.stage_counts({"SOMETHING_NEW": 3, "APPROVED": 1})["other"] == 3
 
 
-def test_working_capital_is_not_available_not_zero_when_nothing_has_a_price_and_both_reorder_points(db):
-    db.add_all([rec("A", at(2026, 10), price=None, cur_rop=1, rec_rop=5), rec("B", at(2026, 10), price=Decimal("10"), cur_rop=None, rec_rop=5)])
+def test_working_capital_is_zero_when_nothing_has_been_adopted_in_sap(db):
+    # Priced, with both reorder points, and approved -- but SAP has not adopted it, so it has not taken effect: 0, not an estimate.
+    db.add_all([rec("A", at(2026, 10), price=Decimal("10"), cur_rop=2, rec_rop=12, status="APPROVED")])
     db.commit()
-    working_capital = card(build(db, AFTER_Q4), "working_capital_impact")
-    assert working_capital.status is AvailabilityStatus.NOT_AVAILABLE
-    assert working_capital.value is None
-    assert working_capital.unavailable_reason
+    management = build(db, AFTER_Q4)
+    for key in ("working_capital_impact", "working_capital_stock", "working_capital_oar"):
+        working_capital = card(management, key)
+        assert working_capital.status is AvailabilityStatus.AVAILABLE and working_capital.value == 0
+        assert working_capital.denominator == 0
 
 
 def test_working_capital_is_on_the_reorder_point_over_priced_rows_only(db):
@@ -353,6 +402,8 @@ def test_working_capital_is_on_the_reorder_point_over_priced_rows_only(db):
         rec("B", at(2026, 10), price=Decimal("3"), cur_rop=9, rec_rop=4),     # 3 x (9 - 4) = +15
         rec("C", at(2026, 10), price=None, cur_rop=1, rec_rop=100),           # no price: left out, not zero
         rec("D", at(2026, 10), price=Decimal("50"), cur_rop=1, rec_rop=2),    # priced in USD: left out, not converted
+        rec("E", at(2026, 10), price=Decimal("7"), cur_rop=1, rec_rop=100),   # priced, but SAP has not adopted it: left out
+        *[adoption(m, "ADOPTED") for m in ("A", "B", "C", "D")],
         # The currency each price is stated in (MBEW WAERS): only ZAR and NAD count.
         *[
             StagedMaterialPlant(sap_material_number=m, sap_plant_code="1300", unit_price=p, currency=c,
@@ -368,6 +419,27 @@ def test_working_capital_is_on_the_reorder_point_over_priced_rows_only(db):
     assert working_capital.denominator == 2
     assert management.position.priced_count == 2
     assert management.position.working_capital_excluded_count == 2  # C (no price) and D (USD)
+
+
+def test_working_capital_is_also_shown_apart_for_stock_items_and_oar_and_they_add_up(db):
+    stock = rec("A", at(2026, 10), price=Decimal("10"), cur_rop=2, rec_rop=12)   # stock item: 10 x (2 - 12) = -100
+    eligible = rec("B", at(2026, 10), price=Decimal("3"), cur_rop=9, rec_rop=4)  # OAR, eligible: +15
+    unrequested = rec("C", at(2026, 10), price=Decimal("5"), cur_rop=9, rec_rop=4)  # OAR, not eligible, no request: left out
+    not_adopted = rec("E", at(2026, 10), price=Decimal("4"), cur_rop=9, rec_rop=1)  # stock item SAP has not adopted: left out
+    for row, verdict in ((eligible, "ELIGIBLE"), (unrequested, "NOT_ELIGIBLE")):
+        row.is_oar, row.conversion_eligibility, row.manually_converted = True, verdict, False
+    db.add_all([
+        stock, eligible, unrequested, not_adopted, *[adoption(m, "ADOPTED") for m in ("A", "B", "C")],
+        *[StagedMaterialPlant(sap_material_number=m, sap_plant_code="1300", unit_price=Decimal(p), currency="ZAR",
+                              staging_run_id=1, source_table="n_mbew") for m, p in (("A", "10"), ("B", "3"), ("C", "5"), ("E", "4"))],
+    ])
+    db.commit()
+    management = build(db, AFTER_Q4)
+    assert card(management, "working_capital_stock").value == Decimal("-100")
+    assert card(management, "working_capital_oar").value == Decimal("15")  # C is not eligible and has no request
+    assert card(management, "working_capital_impact").value == Decimal("-85")  # the two add up to the total
+    # If every eligible OAR material-plant were adopted: only B (+15). Stock items A and E are not in it, and C is not eligible.
+    assert card(management, "working_capital_potential").value == Decimal("15")
 
 
 def test_excess_opportunity_counts_only_where_current_max_is_above_the_recommended(db):
@@ -491,8 +563,34 @@ def test_a_recommendation_with_nothing_to_adopt_is_not_counted_in_adoption(db):
 # --- data coverage ---------------------------------------------------------------------------
 
 
+def test_coverage_counts_what_has_something_to_change_in_sap_once_per_material_plant_like_the_rest_of_the_report(db):
+    db.add_all([
+        rec("A", at(2026, 10), rec_rop=5), rec("A", at(2026, 10, 20), run=2, rec_rop=6),  # one material-plant, two runs: once
+        rec("B", at(2026, 10)),                                                           # computed, but nothing to change: not counted
+    ])
+    db.commit()
+    management = build(db, AFTER_Q4)
+    coverage = management.data_coverage
+    assert coverage.eligible_recommendations == 1 == management.adoption.tracked  # the SAP adoption's own number
+    assert coverage.eligible_material_plants == 2  # both were computed
+    assert [m.recommendations_generated for m in coverage.months] == [1, 0, 0]
+    assert coverage_items(management)["recommendation_counts"].value == "1 · 2"
+
+
+def test_the_approved_card_is_out_of_the_recommendations_with_something_to_change_in_sap(db):
+    db.add_all([
+        rec("A", at(2026, 10), status="APPROVED", rec_rop=5), rec("A", at(2026, 10, 20), run=2, status="APPROVED", rec_rop=6),
+        rec("B", at(2026, 10), status="APPROVED"),  # approved, but nothing to change in SAP: in neither number
+        rec("C", at(2026, 10), rec_rop=5),
+    ])
+    db.commit()
+    approved = card(build(db, AFTER_Q4), "approved")
+    assert approved.value == 1 and approved.denominator == 2  # A (once) of A and C
+    assert approved.denominator_label == "recommendations with something to change in SAP"
+
+
 def test_coverage_names_the_months_the_staged_data_does_not_reach_and_never_calls_them_zero(db):
-    db.add_all([consumed("M1", date(2026, 5, 1)), rec("A", at(2026, 10))])
+    db.add_all([consumed("M1", date(2026, 5, 1)), rec("A", at(2026, 10), rec_rop=5)])  # has something to change in SAP
     db.commit()
     coverage = build(db, AFTER_Q4).data_coverage
     assert coverage.latest_consumption_month == date(2026, 5, 1)
@@ -574,7 +672,7 @@ def test_each_source_gets_a_status_and_a_reason_saved_with_the_report(db, monkey
         kpi_definitions, "stockout_risk_counts",
         lambda session, base, **kw: StockoutRiskCounts(at_risk=4, evaluated=40, insufficient_data=1, as_of=date(2026, 5, 31)),
     )
-    db.add(rec("A", at(2026, 10)))
+    db.add(rec("A", at(2026, 10), rec_rop=5))
     db.commit()
     items = coverage_items(build(db, AFTER_Q4))
     assert items["stockout"].status == "Stale" and "31 May 2026" in items["stockout"].detail
@@ -605,14 +703,14 @@ def test_a_month_without_staged_consumption_is_not_covered_never_zero(db):
 # --- OAR records and Min-Max conversion ---------------------------------------------------------
 
 
-def oar(material, when, *, verdict="ELIGIBLE", manual=False, run=1, plant="1300", is_oar=True, valued=True):
+def oar(material, when, *, verdict="ELIGIBLE", manual=False, run=1, plant="1300", is_oar=True, valued=True, status="READY_FOR_REVIEW"):
     """An OAR recommendation. ``valued=False`` is one with no recommended value at all, as an eligible material the system could not size."""
-    row = rec(material, when, run=run, plant=plant, rec_rop=5 if valued else None)
+    row = rec(material, when, run=run, plant=plant, rec_rop=5 if valued else None, status=status)
     row.is_oar, row.conversion_eligibility, row.manually_converted = is_oar, verdict, manual
     return row
 
 
-def test_oar_records_are_counted_as_records_not_materials(db):
+def test_oar_card_counts_material_plants_once_not_records(db):
     db.add_all([
         oar("A", at(2026, 10), run=1), oar("A", at(2026, 10, 20), run=2),  # one OAR material-plant, two runs
         oar("B", at(2026, 10)), oar("N", at(2026, 10), is_oar=False, verdict=None),  # a stock item is not OAR
@@ -620,9 +718,22 @@ def test_oar_records_are_counted_as_records_not_materials(db):
     ])
     db.commit()
     card_ = card(build(db, AFTER_Q4), "oar_recommendations")
-    assert card_.value == 3 and card_.unit == "recommendation records"
-    assert card_.denominator == 4  # every record generated in the period, OAR or not
-    assert "records, not materials" in card_.explanation
+    assert card_.value == 2 and card_.unit == "material-plants"  # A (once, on its newest run) and B
+    assert card_.denominator == 2  # the OAR material-plants of the period
+    assert "counts once" in card_.explanation
+
+
+def test_oar_card_counts_eligible_only_until_a_not_eligible_one_is_submitted_for_approval(db):
+    db.add_all([
+        oar("E", at(2026, 10)),  # eligible: counts
+        oar("ER", at(2026, 10), status="REJECTED"),  # eligible but rejected: not counted
+        oar("N0", at(2026, 10), verdict="NOT_ELIGIBLE"),  # not eligible, no request: not counted
+        oar("N1", at(2026, 10), verdict="NOT_ELIGIBLE", manual=True, status="PENDING_APPROVAL"),  # submitted: counts
+        oar("N2", at(2026, 10), verdict="NOT_ELIGIBLE", manual=True, status="REJECTED"),  # request turned down: not counted
+        oar("NV", at(2026, 10), verdict=None),  # no verdict: not counted
+    ])
+    db.commit()
+    assert card(build(db, AFTER_Q4), "oar_recommendations").value == 2
 
 
 def adoption(material, status, *, run=1, plant="1300"):

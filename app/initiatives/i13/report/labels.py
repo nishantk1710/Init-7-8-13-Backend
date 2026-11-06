@@ -39,8 +39,9 @@ EXCEPTION_STATUS = {
 EXCEPTION_TYPE = {
     "PLAN_BREACH": "Planned Overdue",
     "NO_PLAN": "Non-AI",
-    "NO_PLAN_GRNI": "Non-AI + 30-day not issued",
+    "NO_PLAN_GRNI": "Non-AI + 30-day not issued (retired)",
     "QUANTITY_OVERRIDE": "Quantity Overridden",
+    "NOT_ISSUED_30_DAYS": "Not issued 30 days",
 }
 
 #: As the I13 screens name them (``src/lib/shared-data/sap-plants.ts``) --

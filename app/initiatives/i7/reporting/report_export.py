@@ -42,7 +42,7 @@ def _availability(value) -> str:
     return "" if value is None else value
 
 
-def build_quarterly_report_workbook(report: QuarterlyReport) -> BytesIO:
+def build_quarterly_report_workbook(report: QuarterlyReport, session=None) -> BytesIO:
     """Build the raw/detail export workbook for one generated report.
 
     Sheets:
@@ -144,6 +144,9 @@ def build_quarterly_report_workbook(report: QuarterlyReport) -> BytesIO:
     _write_technical_sheets(workbook, report)
     if report.management is not None:
         _write_management_sheets(workbook, report.management)
+        if session is not None:
+            # The two material lists the report page shows: they are rows of recommendations, not part of the saved report.
+            _write_material_sheets(workbook, session, report.metadata)
 
     for sheet in workbook.worksheets:
         _autosize(sheet)
@@ -265,6 +268,75 @@ def _write_technical_sheets(workbook: Workbook, report: QuarterlyReport) -> None
 
 # --- The management view (report version 1.2) ------------------------------------------------------
 
+#: The KPI cards the report page shows, in its order. The page leaves out "Materials with a recommendation", "Recommendations generated"
+#: and the combined "Working capital impact" (stock items and OAR are shown apart), so the workbook leaves them out too.
+_PAGE_CARD_ORDER = (
+    "critical_stockout_risk", "excess_inventory_opportunity", "approved", "working_capital_stock", "working_capital_oar",
+    "working_capital_potential", "oar_recommendations", "min_max_conversion", "pending_approval",
+)
+_WORKING_CAPITAL_KEYS = frozenset({"working_capital_stock", "working_capital_oar", "working_capital_potential"})
+_SIGN_NOTE = "Shown as on the report page: a minus is cash released (stock held goes down), a plus is cash tied up."
+
+
+def _page_cards(cards) -> list:
+    by_key = {card.key: card for card in cards}
+    return [by_key[key] for key in _PAGE_CARD_ORDER if key in by_key]
+
+
+def _card_value(card):
+    """The card's figure as the page shows it: working capital with released cash as a minus (the report stores it the other way round)."""
+    if card.status.value != "AVAILABLE" or card.value is None:
+        return NOT_AVAILABLE
+    if card.key in _WORKING_CAPITAL_KEYS and card.value != 0:
+        return -card.value
+    return card.value
+
+
+def _level(rec, name: str):
+    return _na(getattr(rec, f"current_{name}")), _na(getattr(rec, f"recommended_{name}"))
+
+
+def _material_rows(session, recs) -> list[list]:
+    from app.api.i7.recommendations import _display_fields_for
+
+    display = _display_fields_for(session, {rec.sap_material_number for rec in recs})
+    rows = []
+    for rec in recs:
+        description = display.get(rec.sap_material_number, (None, None))[0]
+        rop_now, rop = _level(rec, "rop")
+        safety_now, safety = _level(rec, "safety_stock")
+        max_now, maximum = _level(rec, "max_stock")
+        rows.append([
+            rec.sap_material_number, description or NOT_AVAILABLE, rec.sap_plant_code, rec.generated_at.isoformat()[:10], rec.status,
+            safety_now, safety, rop_now, rop, max_now, maximum,
+        ])
+    return rows
+
+
+def _write_material_sheets(workbook: Workbook, session, metadata) -> None:
+    """The report page's two material tables, one sheet each: the eligible OAR materials with what SAP holds and what we suggest, and
+    the recommendations SAP has adopted. Read now over the report's period with the page's own filters."""
+    from datetime import timedelta
+
+    from app.initiatives.i7.reporting import kpi_definitions
+
+    start, exclusive_end = metadata.period_start, metadata.period_end + timedelta(days=1)
+    headers = ["Material", "Description", "Plant", "Generated", "Status", "Safety stock: SAP now", "Safety stock: suggested",
+               "Reorder point: SAP now", "Reorder point: suggested", "Maximum stock: SAP now", "Maximum stock: suggested"]
+    for title, rows, note in (
+        ("Current vs Recommended", kpi_definitions.eligible_oar_rows(session, start, exclusive_end),
+         "Eligible OAR materials only (OAR materials that can move to Min-Max ordering), the newest recommendation of each, newest first. "
+         "SAP now is the value SAP held when the recommendation was generated. Stock items and other materials are in the Recommendations list."),
+        ("Adopted Recommendations", kpi_definitions.adopted_rows(session, start, exclusive_end),
+         "Recommendations generated in this period that SAP now matches (the SAP adoption check found the approved values in SAP's change "
+         "history), the newest of each material-plant, newest first. An empty list means none has been adopted yet."),
+    ):
+        sheet = workbook.create_sheet(title)
+        sheet.append([note])
+        sheet.append([f"Period: {metadata.quarter}. {len(rows):,} material-plant(s) listed."])
+        sheet.append([])
+        _table(sheet, headers, _material_rows(session, rows))
+
 
 def _write_management_sheets(workbook: Workbook, management) -> None:
     period = workbook.create_sheet("Period")
@@ -282,11 +354,12 @@ def _write_management_sheets(workbook: Workbook, management) -> None:
          "What it means", "Why not available", "Note"],
         [
             [
-                card.title, _na(card.value) if card.status.value == "AVAILABLE" else NOT_AVAILABLE, card.unit, card.kind.value,
+                card.title, _card_value(card), card.unit, card.kind.value,
                 card.status.value, _iso(card.measured_on), card.period_label, _na(card.denominator), card.denominator_label or "",
-                card.basis, card.explanation, card.unavailable_reason or "", card.note or "",
+                card.basis, card.explanation, card.unavailable_reason or "",
+                " ".join(part for part in (card.note, _SIGN_NOTE if card.key in _WORKING_CAPITAL_KEYS else None) if part),
             ]
-            for card in management.kpis
+            for card in _page_cards(management.kpis)
         ],
     )
 
@@ -311,11 +384,13 @@ def _write_management_sheets(workbook: Workbook, management) -> None:
     _table(
         position,
         ["Plant", "Material-plants", "At stockout risk", "Judged", "Could not be judged", "Stockout measured as of", "Stockout reading stale",
-         "Excess candidates", "Excess opportunity", "Working capital impact (estimate)", "Working capital currency",
+         "Excess candidates", "Excess opportunity", "Working capital impact, adopted, all (+ cash released, - tied up)", "Working capital currency",
          "Working capital: included", "Working capital: left out", "Currency",
          "Inventory value (ZAR)", "Inventory value: material-plants", "Safety stock value (ZAR)", "Safety stock value: material-plants",
          "Below reorder point", "Below reorder point: out of", "Stock on hand loaded", "Why stock figures are not available",
-         "Newest recommendation in the figures"],
+         "Newest recommendation in the figures",
+         "Working capital: stock items, adopted (+ cash released, - tied up)", "Working capital: OAR, adopted (+ cash released, - tied up)",
+         "Working capital: if all eligible OAR adopted (+ cash released, - tied up)"],
         [
             [
                 "All plants" if entry.plant is None else entry.plant, entry.figures.population, entry.figures.stockout.at_risk,
@@ -327,6 +402,7 @@ def _write_management_sheets(workbook: Workbook, management) -> None:
                 entry.figures.safety_stock_priced_count, _na(entry.figures.below_reorder_count), entry.figures.below_reorder_judged,
                 _iso(entry.figures.inventory_stock_as_of), entry.figures.inventory_unavailable_reason or "",
                 _iso(entry.figures.recommendation_reference_date),
+                _na(entry.figures.working_capital_stock), _na(entry.figures.working_capital_oar), _na(entry.figures.working_capital_oar_potential),
             ]
             for entry in management.plant_positions
         ],

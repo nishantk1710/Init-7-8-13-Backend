@@ -24,6 +24,12 @@ APPROVAL_ADJUSTED = "APPROVAL_ADJUSTED"
 APPROVAL_COMPLETED = "APPROVAL_COMPLETED"
 APPROVAL_REMINDER = "APPROVAL_REMINDER"
 APPROVAL_ESCALATED = "APPROVAL_ESCALATED"
+# After the final approval: tell the Inventory Controller to change the approved values in SAP, remind them while the
+# monitoring window is open (the last reminder is the one-day-left warning), and say how it ended.
+APPROVAL_SAP_UPDATE_REQUIRED = "APPROVAL_SAP_UPDATE_REQUIRED"
+APPROVAL_SAP_UPDATE_REMINDER = "APPROVAL_SAP_UPDATE_REMINDER"
+APPROVAL_SAP_UPDATE_FINAL_REMINDER = "APPROVAL_SAP_UPDATE_FINAL_REMINDER"
+APPROVAL_SAP_UPDATE_RESULT = "APPROVAL_SAP_UPDATE_RESULT"
 EXCEPTION_ACTION_REQUIRED = "EXCEPTION_ACTION_REQUIRED"
 EXCEPTION_RESPONSE_REQUIRED = "EXCEPTION_RESPONSE_REQUIRED"
 EXCEPTION_ESCALATED = "EXCEPTION_ESCALATED"
@@ -117,6 +123,50 @@ _TEMPLATES: dict[str, _Template] = {
         "A recommendation for Plant {plant} has waited too long for approval from {pending_role}.\n"
         "Material: {material}\n"
         "Action required: Follow up with the approver.",
+        _REVIEW,
+    ),
+    APPROVAL_SAP_UPDATE_REQUIRED: _Template(
+        "Approved – Update SAP for Material {material}",
+        "A recommendation for Plant {plant} was fully approved. The approved values now need to be changed in SAP.\n"
+        "Material: {material}\n"
+        "Final approver: {approver_role}\n"
+        "{values}\n"
+        "Deadline: {deadline}\n"
+        "Action required: update these values in SAP by the deadline. If SAP is not confirmed to match them by then, "
+        "the recommendation is marked Not adopted.",
+        _REVIEW,
+    ),
+    APPROVAL_SAP_UPDATE_REMINDER: _Template(
+        "Reminder: SAP Update Pending – Material {material}",
+        "The approved recommendation for Plant {plant} is not yet confirmed in SAP.\n"
+        "Material: {material}\n"
+        "Final approver: {approver_role}\n"
+        "{values}\n"
+        "Deadline: {deadline} ({days_left} day(s) left)\n"
+        "Action required: update these values in SAP. If SAP is not confirmed to match them by the deadline, "
+        "the recommendation is marked Not adopted.",
+        _REVIEW,
+    ),
+    APPROVAL_SAP_UPDATE_FINAL_REMINDER: _Template(
+        "Final Reminder: SAP Update Due {deadline} – Material {material}",
+        "The monitoring window for the approved recommendation at Plant {plant} closes on {deadline}; "
+        "the SAP update is not yet confirmed.\n"
+        "Material: {material}\n"
+        "Final approver: {approver_role}\n"
+        "{values}\n"
+        "Deadline: {deadline} ({days_left} day(s) left)\n"
+        "Action required: update these values in SAP now. If SAP is not confirmed to match them by the deadline, "
+        "the recommendation is marked Not adopted.",
+        _REVIEW,
+    ),
+    APPROVAL_SAP_UPDATE_RESULT: _Template(
+        "SAP Update {outcome} – Material {material}",
+        "The SAP check for the approved recommendation at Plant {plant} is complete: {outcome}.\n"
+        "Material: {material}\n"
+        "Final approver: {approver_role}\n"
+        "{values}\n"
+        "Deadline was: {deadline}\n"
+        "{detail}",
         _REVIEW,
     ),
     EXCEPTION_ACTION_REQUIRED: _Template(

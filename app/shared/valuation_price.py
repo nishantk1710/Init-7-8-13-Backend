@@ -71,8 +71,19 @@ class PriceMissing(str, Enum):
     UNREADABLE_PRICE = "price_unreadable"
     """The row to read has no parseable VERPR."""
 
+    PRICE_UNIT_COLUMN_MISSING = "price_unit_column_missing"
+    """The extract has no PEINH column at all. A price whose unit is unknown is not a unit price: it is
+    never read as "per one unit", and VERPR alone is never used."""
+
+    PRICE_UNIT_MISSING = "price_unit_missing"
+    """The PEINH column exists but this row's PEINH is NULL or blank. Not assumed to be 1."""
+
+    PRICE_UNIT_INVALID = "price_unit_invalid"
+    """PEINH is zero, negative or not a number. Not assumed to be 1."""
+
     BAD_PRICE_UNIT = "price_bad_price_unit"
-    """PEINH is present but blank, zero or negative. Not assumed to be 1."""
+    """Legacy code, no longer written: rows staged before the three ``price_unit_*`` codes above existed
+    carry it. Kept so those rows still read; it means PEINH was blank, zero or negative."""
 
     MISSING_CURRENCY = "price_missing_currency"
     """The source carries a currency column and this row's is blank."""

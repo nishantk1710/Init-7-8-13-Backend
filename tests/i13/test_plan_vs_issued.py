@@ -16,7 +16,7 @@ from app.initiatives.i13.plan_vs_issued import (
 from app.initiatives.i13.plans import PlanSource
 from app.initiatives.i13.snapshot_store import kinds
 from app.shared.material_scope import MaterialScope
-from tests.i13.test_plan_outcomes import _captured, _entry
+from tests.i13.test_plan_outcomes import _captured, _entry, _linked
 
 TODAY = date(2026, 11, 2)
 PAST = date(2026, 10, 15)
@@ -117,7 +117,7 @@ def test_nothing_reserved_and_nothing_issued_is_no_row() -> None:
 
 
 def test_a_reservation_a_plan_owns_is_on_the_plan_row_only() -> None:
-    plan = _captured("P1", planned_quantity=Decimal("10"))
+    plan = _captured("P1", planned_quantity=Decimal("10"), linked_reservations=_linked("0001"))
     rows = _rows([plan], [_entry("0001", "10"), _sap("0002", issued="3")])
     plan_row = next(r for r in rows if r.source is RowSource.ASSISTANT)
     assert plan_row.reservations == ("1000000000/0001",)
@@ -125,9 +125,19 @@ def test_a_reservation_a_plan_owns_is_on_the_plan_row_only() -> None:
     assert [r.reservations for r in rows if r.source is RowSource.SAP] == [("1000000000/0002",)]
 
 
+def test_a_reservation_in_an_unlinked_plans_window_stays_a_sap_row() -> None:
+    """Same material, plant and window, but no item text carries the plan's
+    ID: someone else's reservation. The plan awaits its own; the reservation
+    keeps its own row."""
+    rows = _rows([_captured("P1")], [_entry("0001", "10")])
+    plan_row = next(r for r in rows if r.source is RowSource.ASSISTANT)
+    assert plan_row.status is RowStatus.NO_RESERVATION and plan_row.reservations == ()
+    assert [r.reservations for r in rows if r.source is RowSource.SAP] == [("1000000000/0001",)]
+
+
 def test_plan_rows_read_below_and_above_plan() -> None:
-    below = _rows([_captured("P1")], [_entry("0001", "4")])
-    above = _rows([_captured("P1")], [_entry("0001", "12")])
+    below = _rows([_captured("P1", linked_reservations=_linked("0001"))], [_entry("0001", "4")])
+    above = _rows([_captured("P1", linked_reservations=_linked("0001"))], [_entry("0001", "12")])
     assert _status(below, "PLAN-P1") is RowStatus.BELOW_PLAN
     assert _status(above, "PLAN-P1") is RowStatus.ABOVE_PLAN
     assert next(r for r in above if r.row_id == "PLAN-P1").variance_quantity == Decimal("2")
@@ -172,14 +182,17 @@ def test_payload_round_trips() -> None:
 
 
 def test_the_stored_record_carries_its_filter_columns() -> None:
-    (row,) = _rows([_captured("P1")], [_entry("0007", "4")])
+    (row,) = _rows([_captured("P1", linked_reservations=_linked("0007"))], [_entry("0007", "4")])
     record = kinds.planvs(row)
     assert (record.kind, record.f1, record.f2, record.f3) == ("planvs", "ASSISTANT", "BELOW_PLAN", "1000000000")
     assert (record.rec_key, record.d1, record.text1) == ("PLAN-P1", date(2026, 10, 31), "S-P1")
 
 
 def test_the_route_filters_by_source_status_and_reservation() -> None:
-    rows = _rows([_captured("P1")], [_entry("0001", "4"), _sap("0002", issued="10", reservation_number="2000")])
+    rows = _rows(
+        [_captured("P1", linked_reservations=_linked("0001"))],
+        [_entry("0001", "4"), _sap("0002", issued="10", reservation_number="2000")],
+    )
     sap = next(r for r in rows if r.source is RowSource.SAP)
     assert _matches(sap, source="sap", status="on_plan", reservation="2000")
     assert not _matches(sap, source="ASSISTANT", status=None, reservation=None)

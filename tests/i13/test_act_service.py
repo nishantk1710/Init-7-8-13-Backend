@@ -27,7 +27,7 @@ from app.initiatives.i13.models import (
     ReservationLedgerEntry,
     ReservationPrLinkStatus,
 )
-from app.initiatives.i13.plans import ConsumptionPlan
+from app.initiatives.i13.plans import ConsumptionPlan, PlanSource
 from app.shared.material_scope import MaterialScope
 from tests.i13.conftest import FakeEscalationRecipientProvider, FakeExceptionRepository, FakeNotificationPort
 
@@ -92,8 +92,8 @@ def _detect(
     ledger_entries=(),
     repository=None,
     notification_port=None,
-    grni_snapshots=None,
     requester_by_reservation=None,
+    requester_by_session=None,
     types=None,
     quantity_decision_records=(),
 ):
@@ -103,12 +103,12 @@ def _detect(
         as_of_time,
         ledger_entries=list(ledger_entries),
         plans=list(plans),
-        grni_snapshots=grni_snapshots or {},
         repository=repository,
         notification_port=notification_port,
         plan_breach_grace_days=7,
         requester_response_days=5,
         requester_by_reservation=requester_by_reservation or {},
+        requester_by_session=requester_by_session or {},
         types=types,
         quantity_decision_records=list(quantity_decision_records),
     )
@@ -116,6 +116,41 @@ def _detect(
 
 
 # --- detection + routing ---
+
+
+def _unlinked_capture(**overrides) -> ConsumptionPlan:
+    """A captured plan no reservation's item text carries the ID of yet."""
+    return _plan(
+        reservation_number="", reservation_item="", source=PlanSource.CAPTURED,
+        planned_use_date=date(2026, 9, 1), window_end=date(2026, 9, 10), **overrides,
+    )
+
+
+def test_an_unlinked_plan_breaches_although_another_reservation_in_its_window_was_issued() -> None:
+    """Someone else's reservation for the same part, required inside the
+    window and issued, is not the plan's: its issue cannot keep the plan from
+    going overdue, and the plan does not clear that reservation's NO_PLAN."""
+    others = _ledger_entry(requirement_date=date(2026, 9, 5), issued_quantity=Decimal("10"))
+    repository, _, _ = _detect(
+        datetime(2026, 9, 18, tzinfo=UTC),
+        plans=[_unlinked_capture()],
+        ledger_entries=[others],
+        types={ExceptionType.PLAN_BREACH, ExceptionType.NO_PLAN},
+    )
+    assert repository.get("ACT-PLAN_BREACH-PLAN-1") is not None
+    assert repository.get("ACT-NO_PLAN-1000000000-0001") is not None
+
+
+def test_a_linked_plan_is_satisfied_by_its_own_reservations_issue() -> None:
+    own = _ledger_entry(requirement_date=date(2026, 9, 5), issued_quantity=Decimal("10"))
+    repository, _, _ = _detect(
+        datetime(2026, 9, 18, tzinfo=UTC),
+        plans=[_unlinked_capture(linked_reservations=(("1000000000", "0001"),))],
+        ledger_entries=[own],
+        types={ExceptionType.PLAN_BREACH, ExceptionType.NO_PLAN},
+    )
+    assert repository.get("ACT-PLAN_BREACH-PLAN-1") is None
+    assert repository.get("ACT-NO_PLAN-1000000000-0001") is None
 
 
 def test_plan_breach_detected_and_routed_to_requester() -> None:
@@ -132,6 +167,42 @@ def test_plan_breach_detected_and_routed_to_requester() -> None:
     assert exception.requester_due_at == as_of_time + timedelta(days=5)
     # Platform queue + email, both attempted.
     assert len(notification_port.sent) == 2
+
+
+def test_a_plan_breach_is_owned_by_the_person_named_for_its_session() -> None:
+    """The Requester box names someone the administrator has mapped: they own the breach, not the operator."""
+    as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
+    repository, notification_port, result = _detect(
+        as_of_time,
+        plans=[_plan(requester="OPERATOR-GUID", session_id="SESS-1")],
+        requester_by_session={"SESS-1": "darren"},
+    )
+
+    assert result.created == 1 and result.routed == 1
+    [exception] = repository.list(exception_type=ExceptionType.PLAN_BREACH)
+    assert exception.owner_requester_id == "darren"
+    assert exception.current_assignee_id == "darren"
+    # The notice is addressed to the named person, not to the operator.
+    assert {sent.recipient for sent in notification_port.sent} == {"darren"}
+
+
+def test_a_plan_breach_stays_with_the_operator_when_nobody_is_named_for_its_session() -> None:
+    as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
+    for named in ({}, {"OTHER-SESSION": "darren"}):
+        repository, _, _ = _detect(
+            as_of_time, plans=[_plan(requester="OPERATOR-GUID", session_id="SESS-1")], requester_by_session=named
+        )
+        [exception] = repository.list(exception_type=ExceptionType.PLAN_BREACH)
+        assert exception.owner_requester_id == "OPERATOR-GUID"
+
+
+def test_a_plan_with_no_session_is_never_matched_to_a_named_person() -> None:
+    as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
+    repository, _, _ = _detect(
+        as_of_time, plans=[_plan(requester="OPERATOR-GUID", session_id="")], requester_by_session={"": "darren"}
+    )
+    [exception] = repository.list(exception_type=ExceptionType.PLAN_BREACH)
+    assert exception.owner_requester_id == "OPERATOR-GUID"
 
 
 def test_no_plan_exception_detected_for_oar_reservation_without_a_plan() -> None:
@@ -630,3 +701,123 @@ def test_a_plan_breach_is_still_sent_to_the_requester():
     )
     assert repository.get("ACT-PLAN_BREACH-PLAN-1").status is ExceptionStatus.AWAITING_REQUESTER
     assert len(notification_port.sent) == 2  # the breach's platform + email; none for the override
+
+
+# --- NOT_ISSUED_30_DAYS (5-Nov-2026) ------------------------------------------
+
+NOV_5 = datetime(2026, 11, 5, tzinfo=UTC)
+NOT_ISSUED_ID = "ACT-NOT_ISSUED_30_DAYS-1000000000-0001"
+
+
+def _request_line(**overrides) -> ConsumptionPlan:
+    """An assistant plan whose R-ID is on reservation 1000000000/0001."""
+    return _unlinked_capture(linked_reservations=(("1000000000", "0001"),), **overrides)
+
+
+def _detect_not_issued(entries, *, plans=None, as_of=NOV_5, final_issued=frozenset(), repository=None):
+    repository = repository or FakeExceptionRepository()
+    notification_port = FakeNotificationPort()
+    detect_exceptions(
+        as_of,
+        ledger_entries=list(entries),
+        plans=list(plans if plans is not None else [_request_line()]),
+        repository=repository,
+        notification_port=notification_port,
+        plan_breach_grace_days=7,
+        requester_response_days=5,
+        types={ExceptionType.NOT_ISSUED_30_DAYS},
+        not_issued_days=30,
+        final_issued=final_issued,
+    )
+    return repository, notification_port
+
+
+def test_a_request_line_not_issued_30_days_after_it_was_required_is_raised_and_routed() -> None:
+    repository, notification_port = _detect_not_issued([_ledger_entry(requirement_date=date(2026, 10, 6))])
+    exception = repository.get(NOT_ISSUED_ID)
+    assert exception is not None
+    assert exception.status is ExceptionStatus.AWAITING_REQUESTER
+    assert exception.owner_requester_id == "REQ1"
+    assert exception.evidence["basis"] == "REQUIRED" and exception.evidence["since"] == "2026-10-06"
+    assert exception.reason.startswith("Required by 2026-10-06")
+    assert len(notification_port.sent) == 2
+
+
+def test_its_own_receipt_is_the_basis_when_the_reservation_raised_the_pr() -> None:
+    entry = _ledger_entry(
+        requirement_date=date(2026, 10, 30), po_number="4500000001", first_gr_date=date(2026, 10, 1)
+    )
+    repository, _ = _detect_not_issued([entry])
+    exception = repository.get(NOT_ISSUED_ID)
+    assert exception.evidence["basis"] == "RECEIVED" and exception.evidence["since"] == "2026-10-01"
+
+
+def test_a_non_ai_reservation_never_gets_one() -> None:
+    entry = _ledger_entry(requirement_date=date(2026, 9, 1))
+    repository, _ = _detect_not_issued([entry], plans=[_unlinked_capture()])
+    assert repository.get(NOT_ISSUED_ID) is None
+
+
+def test_a_non_oar_request_line_never_gets_one() -> None:
+    entry = _ledger_entry(requirement_date=date(2026, 9, 1), material_scope=MaterialScope.EXCLUDED)
+    repository, _ = _detect_not_issued([entry])
+    assert repository.get(NOT_ISSUED_ID) is None
+
+
+def test_an_issue_a_deletion_or_a_closed_item_resolves_it() -> None:
+    raised = _ledger_entry(requirement_date=date(2026, 9, 1))
+    for later in (
+        dict(entries=[_ledger_entry(requirement_date=date(2026, 9, 1), issued_quantity=Decimal("1"))]),
+        dict(entries=[_ledger_entry(requirement_date=date(2026, 9, 1), reservation_deleted=True)]),
+        dict(entries=[raised], final_issued=frozenset({("1000000000", "0001")})),
+    ):
+        repository, _ = _detect_not_issued([raised])
+        assert repository.get(NOT_ISSUED_ID).status is ExceptionStatus.AWAITING_REQUESTER
+        _detect_not_issued(later["entries"], final_issued=later.get("final_issued", frozenset()), repository=repository)
+        assert repository.get(NOT_ISSUED_ID).status is ExceptionStatus.RESOLVED
+
+
+def test_it_resolves_when_the_r_id_is_no_longer_on_the_reservation() -> None:
+    entry = _ledger_entry(requirement_date=date(2026, 9, 1))
+    repository, _ = _detect_not_issued([entry])
+    _detect_not_issued([entry], plans=[_unlinked_capture()], repository=repository)
+    assert repository.get(NOT_ISSUED_ID).status is ExceptionStatus.RESOLVED
+
+
+def test_not_issued_follows_the_types_filter() -> None:
+    entry = _ledger_entry(requirement_date=date(2026, 9, 1))
+    repository, _, _ = _detect(
+        NOV_5, plans=[_request_line()], ledger_entries=[entry], types={ExceptionType.PLAN_BREACH}
+    )
+    assert repository.get(NOT_ISSUED_ID) is None
+
+
+# --- NO_PLAN_GRNI retired (5-Nov-2026) ----------------------------------------
+
+
+def test_no_plan_grni_is_never_raised_any_more() -> None:
+    entry = _ledger_entry(requirement_date=date(2026, 9, 1))
+    repository, _, _ = _detect(NOV_5, plans=[], ledger_entries=[entry])
+    assert repository.get("ACT-NO_PLAN-1000000000-0001") is not None
+    assert repository.list(exception_type=ExceptionType.NO_PLAN_GRNI) == []
+
+
+def test_open_no_plan_grni_exceptions_are_resolved_and_audited() -> None:
+    from app.initiatives.i13.act.domain import ActException
+    from app.initiatives.i13.act.service import retire_no_plan_grni
+
+    repository = FakeExceptionRepository()
+    for item, status in (("0001", ExceptionStatus.OPEN), ("0002", ExceptionStatus.AWAITING_REQUESTER),
+                         ("0003", ExceptionStatus.CONFIRMED), ("0004", ExceptionStatus.RESOLVED)):
+        repository.upsert(ActException(
+            exception_id=f"ACT-NO_PLAN_GRNI-1000000000-{item}", exception_type=ExceptionType.NO_PLAN_GRNI,
+            status=status, material="MAT1", plant="1000", reservation_number="1000000000",
+            reservation_item=item, session_id=None, ledger_entry_id=None, owner_requester_id=None,
+            detected_at=NOV_5, requester_due_at=None, escalated_at=None, resolved_at=None,
+            current_assignee_type=None, current_assignee_id=None, routing_status=None, reason="old",
+        ))
+
+    assert retire_no_plan_grni(as_of_time=NOV_5, repository=repository) == 3
+    assert {e.status for e in repository.list(exception_type=ExceptionType.NO_PLAN_GRNI)} == {ExceptionStatus.RESOLVED}
+    assert repository.list_events("ACT-NO_PLAN_GRNI-1000000000-0001")[-1].event_type is EventType.RESOLVED
+    assert retire_no_plan_grni(as_of_time=NOV_5, repository=repository) == 0

@@ -81,7 +81,7 @@ from sqlalchemy import select
 
 from app.core.db import get_sessionmaker
 from app.core.logging import get_logger
-from app.ingest.csv_tables import CsvTable, CSV_TABLES, csv_table, requested_window
+from app.ingest.csv_tables import CsvTable, csv_table, enabled_tables, requested_window
 from app.integrations.sap.client import SapClient
 from app.integrations.sap.errors import SapError
 from app.integrations.sap.transport import CpiTransport
@@ -637,10 +637,11 @@ def pull_all(
     no deliveries to wait between. A table that fails does not stop the run:
     the others are independent, and a partial refresh beats no refresh.
     """
-    # Every table, the undelivered ones included: a sweep is the evidence that
-    # SAP was asked, and the day the job is fixed it just starts delivering.
-    # Those two cost the sweep their 15-minute timeout, nothing else.
-    names = list(tables) if tables is not None else [t.sap_table for t in CSV_TABLES]
+    # Every enabled table, the undelivered ones included: a sweep is the
+    # evidence that SAP was asked, and the day the job is fixed it just starts
+    # delivering. A table switched off (INGEST_DISABLED_SETS) is not asked for
+    # at all -- nothing reads it, so its 15-minute timeout buys nothing.
+    names = list(tables) if tables is not None else [t.sap_table for t in enabled_tables()]
 
     if wait_for_open and not wait_for_clear(names):
         detail = (

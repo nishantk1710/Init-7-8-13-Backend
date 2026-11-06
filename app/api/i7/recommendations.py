@@ -672,6 +672,10 @@ def get_recommendation_summary(
     is_oar: bool | None = None,
     confidence: str | None = None,
     criticality: str | None = None,
+    criticality_level: Annotated[
+        Literal["Low", "Medium", "High", "Critical"] | None,
+        Query(description="The page's display level; Low is every material that is not CRITICAL, IMPACT or INSURANCE."),
+    ] = None,
 ) -> RecommendationSummaryStats:
     # Performance (2026-09-22): _latest_only(base) wraps a row_number() OVER
     # (...) window function computed across the WHOLE table. Reusing the
@@ -710,6 +714,7 @@ def get_recommendation_summary(
             is_oar=is_oar,
             confidence=confidence,
             criticality=criticality,
+            criticality_level=criticality_level,
             generated_from=None,
             generated_to=None,
         ).where(_not_smooth())
@@ -818,6 +823,7 @@ def get_recommendation_summary(
         material=material,
         demand_class=demand_class,
         criticality=criticality,
+        criticality_level=criticality_level,
         status=status,
         is_oar=is_oar,
         confidence=confidence,

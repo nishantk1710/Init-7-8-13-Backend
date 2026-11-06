@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from app.assistant import requests as request_service
+from app.initiatives.i13.act_requester_directory import named_requesters_by_session
 from app.initiatives.i13.quantity_suggestion_store import (
     build_assistant_quantity_decision_records,
     owner_for_assistant_decision,
@@ -85,3 +86,34 @@ def test_with_nobody_named_it_stays_with_the_operator(factory, settings) -> None
     with factory() as db:
         make_request(db, settings, requested_for=None)
         assert override_record(db, requester_aliases=ALIASES).requester_id == OPERATOR
+
+
+class TestNamedRequestersBySession:
+    """The lookup a plan breach uses: session id -> the known person named in the Requester box."""
+
+    def sessions_of(self, db, request_id: str) -> set[str]:
+        return {s.id for s in request_service.lines_of(db, request_id)}
+
+    def test_every_session_of_a_request_naming_a_known_person_is_mapped_to_them(self, factory, settings) -> None:
+        with factory() as db:
+            request_id = make_request(db, settings, requested_for="darren")
+            mapping = named_requesters_by_session(db, ALIASES)
+            assert set(mapping) == self.sessions_of(db, request_id)
+            assert set(mapping.values()) == {"darren"}
+
+    def test_matched_ignoring_case_and_spaces_and_returned_as_typed_trimmed(self, factory, settings) -> None:
+        with factory() as db:
+            make_request(db, settings, requested_for="  Darren ")
+            assert set(named_requesters_by_session(db, ALIASES).values()) == {"Darren"}
+
+    @pytest.mark.parametrize("named", [None, "J Miller"])
+    def test_an_unknown_or_missing_name_is_not_mapped(self, factory, settings, named) -> None:
+        with factory() as db:
+            make_request(db, settings, requested_for=named)
+            assert named_requesters_by_session(db, ALIASES) == {}
+
+    @pytest.mark.parametrize("aliases", [None, {}])
+    def test_with_no_aliases_nothing_is_mapped(self, factory, settings, aliases) -> None:
+        with factory() as db:
+            make_request(db, settings, requested_for="darren")
+            assert named_requesters_by_session(db, aliases) == {}
