@@ -123,6 +123,22 @@ class TestSourceFingerprint:
 
         assert source_fingerprint(session) != before
 
+    def test_the_fingerprint_fits_its_columns_with_every_table_loaded(self, session) -> None:
+        """Regression: spelled out, twelve watched tables came to ~600 characters
+        and SQL Server refused the insert into the String(512) columns on
+        production ('string or binary data would be truncated')."""
+        from app.models.i7_features import FeatureBuildRun
+        from app.models.i7_staging import StagingRun
+
+        for minutes, table in enumerate(I7_RAW_TABLES):
+            _load(session, table, minutes=minutes)
+
+        fingerprint = source_fingerprint(session)
+
+        assert fingerprint
+        for model in (StagingRun, FeatureBuildRun, PipelineRun):
+            assert len(fingerprint) <= model.source_fingerprint.type.length
+
     def test_every_watched_table_is_an_i7_source(self) -> None:
         """raw_mkpf is deliberately absent: MSEG carries BUDAT_MKPF
         denormalised and I07 staging never joins MKPF."""

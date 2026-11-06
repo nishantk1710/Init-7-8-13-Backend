@@ -237,6 +237,6 @@ def test_an_upload_moves_the_i07_source_fingerprint(session) -> None:
     before = source_fingerprint(session)
     _store(session, [("1", "NORMAL")], JUL)
     after = source_fingerprint(session)
-    assert before == "" and after.startswith("criticality_current:")
+    assert before == "" and after.startswith("sha256:")
     _store(session, [("1", "NORMAL")], AUG)
     assert source_fingerprint(session) != after

@@ -38,6 +38,7 @@ could be forgotten.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
@@ -70,6 +71,16 @@ def source_fingerprint(session: Session) -> str:
     the fingerprint, or the pipeline would run against data the loader itself
     says is not there. A table that has never loaded simply contributes nothing,
     which is the honest representation -- it is absent, not empty.
+
+    The result is a SHA-256 digest of the per-table ``table:run_id:finished``
+    entries, not the entries themselves. Spelled out, one entry per watched table
+    runs to about 50 characters, so twelve tables came to ~600 and overflowed the
+    ``String(512)`` ``source_fingerprint`` columns (``i7_staging_run``,
+    ``i7_feature_run``, ``i7_pipeline_run``) -- SQL Server rejects the insert
+    rather than truncating it. A digest is a fixed 71 characters however many
+    tables are watched, needs no migration, and compares exactly as the
+    readable string did. "No successful load of anything" is still ``""``,
+    which :func:`should_run` reads as "nothing to do".
     """
     rows = session.execute(
         select(
@@ -84,7 +95,10 @@ def source_fingerprint(session: Session) -> str:
         .group_by(IngestionRun.target_table)
         .order_by(IngestionRun.target_table)
     ).all()
-    return "|".join(f"{table}:{run_id}:{finished}" for table, run_id, finished in rows)
+    if not rows:
+        return ""
+    entries = "|".join(f"{table}:{run_id}:{finished}" for table, run_id, finished in rows)
+    return "sha256:" + hashlib.sha256(entries.encode("utf-8")).hexdigest()
 
 
 def should_run(session: Session) -> TriggerDecision:
