@@ -1134,6 +1134,99 @@ def _from_stored(
     )
 
 
+#: Why a candidate that HAD a verdict is unscreened again. Only reachable
+#: through :func:`app.initiatives.i8.coding_store.forget_verdicts`, which is a
+#: deliberate act, so it says so rather than reading like a failure.
+FORGOTTEN_VERDICT_REASON = (
+    "the verdict that covered this text is no longer on record -- it was "
+    "cleared for a deliberate re-screen. Run the screen to judge it again."
+)
+
+
+def reapply_stored_verdicts(
+    db: Session,
+    candidates: Sequence[CodingCandidate],
+    stats: ScreenStats,
+) -> tuple[list[CodingCandidate], ScreenStats]:
+    """The same candidates, carrying the verdicts the table holds NOW.
+
+    For a cached screen whose verdicts were written by somebody else -- in
+    practice the other worker, after the model run somebody asked it for. Only
+    the judgement is re-read: the materials, their lines, the twins and the
+    new-item prices are facts about the extract, and the extract cannot have
+    moved, because a reload drops the cached screen outright. So this is one
+    indexed query over ~113 materials instead of the 10-24 s that rebuilding
+    those facts costs.
+
+    A material whose current text has nothing on record keeps what it already
+    said -- UNSCREENED, with the reason that explains why nobody judged it.
+    One that HAD a verdict and no longer does goes back to UNSCREENED rather
+    than keeping an answer the store no longer stands behind.
+    """
+    fingerprints = {
+        candidate.material_id: text_fingerprint(
+            line.short_text for line in candidate.lines
+        )
+        for candidate in candidates
+    }
+    stored = load_verdicts(db, fingerprints)
+
+    rebuilt: list[CodingCandidate] = []
+    reused = 0
+    for candidate in candidates:
+        already = stored.get(candidate.material_id)
+        if already is not None:
+            # replace() rather than _from_stored(): the price column is already
+            # attached here and rebuilding the candidate would drop it.
+            reused += 1
+            rebuilt.append(
+                replace(
+                    candidate,
+                    verdict=already.verdict,
+                    confidence=already.confidence,
+                    reason=already.reason,
+                    model=already.model,
+                    provider=already.provider,
+                    prompt_version=already.prompt_version,
+                    screened_at=already.screened_at,
+                )
+            )
+        elif candidate.verdict != Verdict.UNSCREENED.value:
+            rebuilt.append(
+                replace(
+                    candidate,
+                    verdict=Verdict.UNSCREENED.value,
+                    confidence="",
+                    reason=FORGOTTEN_VERDICT_REASON,
+                    model="",
+                    provider="",
+                    prompt_version=None,
+                    screened_at=None,
+                )
+            )
+        else:
+            rebuilt.append(candidate)
+
+    # Re-ranked: the verdict is the second sort key, so a material that has
+    # just been judged belongs further up the page than where it sat unjudged.
+    ranked = rank_candidates(rebuilt)
+
+    by_verdict: dict[str, int] = {}
+    for candidate in ranked:
+        by_verdict[candidate.verdict] = by_verdict.get(candidate.verdict, 0) + 1
+
+    return ranked, replace(
+        stats,
+        verdicts_reused=reused,
+        # This pass only read. Saying otherwise would tell the caller to drop
+        # cached screens over verdicts it did not write.
+        verdicts_stored=0,
+        by_verdict=by_verdict,
+        provider=next((c.provider for c in ranked if c.provider), ""),
+        model=next((c.model for c in ranked if c.model), ""),
+    )
+
+
 def screen(
     db: Session,
     cfg: I8Settings | None = None,
