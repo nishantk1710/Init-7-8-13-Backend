@@ -166,6 +166,43 @@ escalation is recorded as a failed notification. Example (first reminder after 1
 3 days): `I7_REMINDER_FIRST_DAYS=1`, `I7_REMINDER_REPEAT_DAYS=1`, `I7_REMINDER_MAX=3`, `I7_ESCALATE_AFTER_DAYS=3`,
 `I7_ESCALATION_ROLE=Spares.PlantHead`. A settings change restarts the app.
 
+### SAP update notices (after the final approval)
+
+When the last approver in a recommendation's route approves (Warehouse Supervisor on the default stock route, Commercial
+Head on the OAR route -- whoever the route ends with), the **Inventory Controller at the plant** is told to change the
+approved values in SAP, and reminded while the adoption monitoring window is open. Every message names the material,
+plant, final approver role, SAP's current values, the recommended values and the deadline.
+
+Counted from the final approval (day 0), for the default 7-day window: **day 0** first notice, **day 3** and **day 5**
+reminders, **day 6** final reminder (one day before the window closes on day 7). The days follow the policy's
+`monitoring_window_days`; the first reminder day and the spacing are `I7_ADOPTION_REMINDER_FIRST_DAY` (3) and
+`I7_ADOPTION_REMINDER_EVERY_DAYS` (2). `I7_ADOPTION_NOTICES_ENABLED=false` switches the whole thing off.
+
+* Reminders say the update is **not yet confirmed**, never that SAP was not updated. They stop as soon as SAP matches
+  (Adopted), and when the window closes.
+* When the outcome is decided, the Inventory Controller is told once: Adopted, Partially adopted, or Not adopted. Not
+  adopted is only said when SAP's change history covers the whole window and holds no matching change; an incomplete
+  history stays Unknown and sends no outcome notice.
+* No table: what was sent is read from the notification rows. Each message's key names the handover date and the step
+  (`sap-20261105-d3`, `sap-20261105-result`) and is unique in the database, so a repeat pass, a restart or a second
+  worker adds nothing, and a recommendation handed over a second time starts its own cycle. A scheduler that was down
+  sends only the latest step that is due. On the first deployment a recommendation already inside its window gets one
+  message for where it is now (for example the day-3 reminder, with the real days left) and then the later steps on
+  their days; nothing is sent for the earlier steps it missed. Outcomes are only announced for handovers up to two
+  windows old.
+* **Recipient:** the Inventory Controller step is `Spares.InventoryControllerApprover` (the role the approval chain and
+  `security.APPROVAL_STAGE_ROLES` use for that step), looked up in `notification_recipients` for the recommendation's
+  plant -- the same lookup that tells them an approval is waiting. If a plant has no such row the gap is recorded as a
+  failed notification (or goes to `NOTIFICATION_FALLBACK_EMAIL` when set); nobody is guessed.
+* **Dependency on SAP change documents.** Whether SAP now matches the approved values is read from the MATERIAL/MARC
+  change documents (CDHDR/CDPOS). Until that extraction is reliably loaded the check cannot confirm an update: the
+  status stays **Unknown**, the reminders keep saying "not yet confirmed", and **Not adopted is never reported** unless
+  the change history covers the whole window. (On the extract delivered so far CDPOS holds no MATERIAL/MARC rows, so
+  every result is Unknown.) Reliable Adopted / Not adopted outcomes, and the reminders stopping the day SAP is updated,
+  depend on that extraction.
+* Runs in the notification scheduler (`sap_adoption_notices`), so `NOTIFICATION_SCHEDULER_ENABLED` must be on. It reads SAP's
+  change history itself; it does not need the nightly pipeline watcher.
+
 **Option B -- `notification_sla` rows, in minutes, for finer control** (a different timing per route or step). A row
 always wins over the settings for the steps it covers:
 
@@ -216,11 +253,22 @@ after the build, one run at a time, and never after a failed build or one anothe
 day's run, so the nightly job above then only fires on a day with no successful build.
 
 **Which types (`I13_DETECTION_TYPES`, default empty = all).** Comma-separated: `PLAN_BREACH`, `NO_PLAN`,
-`NO_PLAN_GRNI`, `QUANTITY_OVERRIDE`. Both automatic runs check only these; a type left out is neither raised nor
+`NOT_ISSUED_30_DAYS`, `QUANTITY_OVERRIDE`. Both automatic runs check only these; a type left out is neither raised nor
 resolved, so its queue stays exactly as it is. An unknown name fails the run rather than silently checking nothing.
-The post-capture and manual runs always check every type. Go-live: `PLAN_BREACH,QUANTITY_OVERRIDE`, adding `NO_PLAN`
-and `NO_PLAN_GRNI` once the Non-AI cutoff is agreed -- GRNI is raised only on a Non-AI reservation, so without the
-cutoff it would raise one for every old reservation of a material with unissued stock.
+The post-capture and manual runs always check every type. Go-live: `PLAN_BREACH,QUANTITY_OVERRIDE,NOT_ISSUED_30_DAYS`,
+adding `NO_PLAN` once the Non-AI cutoff is agreed -- without the cutoff it would raise one for every old reservation
+that carries no assistant reference.
+
+**Not issued 30 days (`NOT_ISSUED_30_DAYS`, 5-Nov-2026).** One per reservation item of an assistant request line --
+an OAR reservation whose item text carries the request (R-ID) or session ID -- with **nothing issued** against it
+(MSEG 201/261 by RSNUM/RSPOS) `I13_GR_NOT_ISSUED_THRESHOLD_DAYS` (30) days after its goods receipt, when the
+reservation raised its own PR and the PO was received, or else after its requirement date (OAR is normally issued
+from stock on the shelf). Routed to the requester like a breach. Resolved by any issue, by the item being deleted
+(RESB-XLOEK) or closed for further issues (RESB-KZEAR). A Non-AI reservation never gets one.
+
+**Non-AI + 30 days (`NO_PLAN_GRNI`) is retired (5-Nov-2026).** It counted each Non-AI reservation a second time
+beside `NO_PLAN`, on a material-wide flag that was not the reservation's own. Detection no longer raises it, and every
+run resolves any left open. Unused stock stays visible on the Live Consumption 30-day GR-not-issued tab.
 
 **A quantity override notifies nobody.** The assistant does not let a requester keep more than the suggestion
 without a reason, so a `QUANTITY_OVERRIDE` is recorded already **Confirmed** with that reason: no "Confirm

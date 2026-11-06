@@ -29,12 +29,17 @@ from app.integrations.notifications.models import (  # noqa: F401
 class ExceptionType(str, Enum):
     PLAN_BREACH = "PLAN_BREACH"
     NO_PLAN = "NO_PLAN"
-    # No valid consumption plan/session AND W6.3's GRNI evidence (reused, not
-    # recomputed) shows the received stock has sat unissued past its
-    # configured threshold -- the FRS's "30-day GRNI fallback" for materials
-    # that also have no plan to check a breach against.
+    # Retired 5-Nov-2026: a Non-AI reservation whose material had stock received
+    # 30+ days ago and not issued. It counted every such reservation a second
+    # time beside NO_PLAN, on a material-wide flag that was not the
+    # reservation's own. Never raised now; each run resolves any left open.
+    # Kept so the rows already stored still read.
     NO_PLAN_GRNI = "NO_PLAN_GRNI"
     QUANTITY_OVERRIDE = "QUANTITY_OVERRIDE"
+    # An assistant request line's reservation with nothing issued 30 days after
+    # its own goods receipt (its PR -> PO was received) or, without one, after
+    # its requirement date (5-Nov-2026). See ``detection.detect_not_issued``.
+    NOT_ISSUED_30_DAYS = "NOT_ISSUED_30_DAYS"
 
 
 class ExceptionStatus(str, Enum):
@@ -175,20 +180,6 @@ class NotificationAttempt:
     detail: str
     attempted_at: datetime
     notification_id: str | None = None
-
-
-@dataclass(frozen=True)
-class WatchGrniSnapshot:
-    """The one slice of W6.3's ``WatchMetricMart`` the NO_PLAN_GRNI rule
-    needs -- reused, never recomputed. Built by the persistence adapter
-    (``act_exception_store.py``) from the mart row so this domain module
-    never imports the ORM model directly."""
-
-    material: str
-    plant: str
-    gr_not_issued_flag: bool
-    gr_not_issued_days_since_gr: int | None
-    gr_not_issued_threshold_days: int
 
 
 @dataclass(frozen=True)

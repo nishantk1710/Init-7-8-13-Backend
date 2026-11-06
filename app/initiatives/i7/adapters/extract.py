@@ -403,16 +403,21 @@ def _valuation_row(
     """One MBEW row as the price rule reads it: ``VERPR / PEINH`` or the reason it has none.
 
     VERPR is quoted per PEINH units (250.00 per 10 EA is 25.00 each), so the division is what
-    makes it a unit price. A PEINH column that is *absent* means every price is per one unit; a
-    PEINH that is present but blank, zero or negative is refused, never assumed to be 1.
+    makes it a unit price. PEINH is never assumed to be 1: an absent column, a blank or NULL value,
+    zero, a negative or a non-number each give no price, under their own reason, because a price
+    whose unit is unknown cannot be read as a per-unit price.
     """
     valuation_type = normalise_valuation_type(bwtar)
     price = parse_decimal(verpr)
     if price is None:
         return Valuation(valuation_type, None, problem=PriceMissing.UNREADABLE_PRICE)
-    per = parse_decimal(peinh) if peinh_present else Decimal(1)
+    if not peinh_present:
+        return Valuation(valuation_type, None, problem=PriceMissing.PRICE_UNIT_COLUMN_MISSING)
+    if clean(peinh) is None:
+        return Valuation(valuation_type, None, problem=PriceMissing.PRICE_UNIT_MISSING)
+    per = parse_decimal(peinh)
     if per is None or per <= 0:
-        return Valuation(valuation_type, None, problem=PriceMissing.BAD_PRICE_UNIT)
+        return Valuation(valuation_type, None, problem=PriceMissing.PRICE_UNIT_INVALID)
     stated = clean(currency)
     if currency_present and stated is None:
         return Valuation(valuation_type, None, problem=PriceMissing.MISSING_CURRENCY)
@@ -436,6 +441,13 @@ def _valuations_by_plant(
         return _odata_valuations(session, scope)
 
     peinh_present = bool(resolved.get("price_unit") and resolved["price_unit"].source is not None)
+    if not peinh_present:
+        # Data-quality gate: reported once here, and again per material-plant as the
+        # ``price_unit_column_missing`` rejection. Every price from this extract is left out.
+        logger.error(
+            "raw_mbew has a moving price but no PEINH (price unit) column: every price from it is "
+            "refused (price_unit_column_missing). Re-deliver the MBEW extract with PEINH."
+        )
     # WAERS is read only when the extract delivers it; an extract without the column
     # still stages a price with no currency, as before.
     currency_present = bool(resolved.get("currency") and resolved["currency"].source is not None)

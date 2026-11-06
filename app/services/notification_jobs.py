@@ -159,7 +159,7 @@ def _detect_everything(settings, *, session_factory, now: datetime) -> str:
         logger.exception("I13 detection failed; nothing from this run was saved")
         raise
     _last_detection_date = now.date()
-    scope = ", ".join(sorted(t.value for t in types)) if types else "all types"
+    scope = "all types" if types is None else ", ".join(sorted(t.value for t in types)) or "no types"
     return f"{result.created} created, {result.reused} kept, {result.resolved} resolved, {result.routed} routed ({scope})"
 
 
@@ -178,10 +178,18 @@ def _request_link_notices() -> str:
     return run_job()
 
 
+def _sap_adoption_notices() -> str:
+    """Remind the Inventory Controller to change approved values in SAP, while the monitoring window is open."""
+    from app.initiatives.i7.adoption_notices import run_job
+
+    return run_job()
+
+
 def build_jobs() -> list[Job]:
     # Reminders, detection and escalations run before delivery, so what they queue goes out in the same tick.
     return [
         Job("approval_reminders", _approval_reminders),
+        Job("sap_adoption_notices", _sap_adoption_notices),
         # Before escalations, so an exception raised or resolved tonight is seen by them.
         Job("exception_detection", _exception_detection),
         Job("requester_escalations", _requester_escalations),

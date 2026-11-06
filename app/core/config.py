@@ -51,6 +51,18 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
     log_level: str = "INFO"
 
+    # Responses of at least this many bytes are gzip-compressed for clients that
+    # accept it (JSON and text; Excel/PDF downloads are left alone). Switch off
+    # with RESPONSE_GZIP_ENABLED=false if a client ever mishandles it.
+    response_gzip_enabled: bool = True
+    response_gzip_min_bytes: int = 1024
+
+    # A request that takes at least this many seconds is logged as
+    # "slow request: <method> <route> -> <status> in <n>s", so a slow screen can
+    # be traced to its route (the access log has no durations). 0 turns it off.
+    # Every response carries a Server-Timing header either way.
+    slow_request_log_seconds: float = 1.0
+
     # Browser origin(s) allowed to call this API. Comma-separated for multiple.
     frontend_origin: str = "http://localhost:3000"
 
@@ -856,6 +868,22 @@ class Settings(BaseSettings):
     # capture can be run by hand: python -m app.reporting.capture_snapshot.
     i7_kpi_snapshot_enabled: bool = False
 
+    # Whether the nightly watcher also checks SAP's change history (CDHDR/CDPOS) for every recommendation that has
+    # been handed over to SAP (app/api/i7/adoption.py::run_daily_adoption_check), so a matching change is found the
+    # day it is made. Read-only towards SAP, safe to repeat, needs no migration. ON by default; it only runs when the
+    # watcher itself (i7_pipeline_watch_enabled) is on. Set false to leave adoption to the page and the window's end.
+    i7_adoption_daily_check_enabled: bool = True
+
+    # Telling the Inventory Controller, after a recommendation's final approval, to change the approved values in SAP,
+    # and reminding them while the adoption monitoring window is open (app/initiatives/i7/adoption_notices.py). The
+    # window length is the policy's monitoring_window_days -- nothing here sets it. Day 0 is the final approval; the
+    # first reminder goes on this day after it, then every i7_adoption_reminder_every_days, and the last on the day
+    # before the window closes. Reminders stop once SAP matches the approved values. Independent of the nightly
+    # watcher: it reads SAP's change history itself and writes nothing but notifications.
+    i7_adoption_notices_enabled: bool = True
+    i7_adoption_reminder_first_day: int = 3
+    i7_adoption_reminder_every_days: int = 2
+
     # Whether the nightly watcher also generates the Quarterly Report for the quarter that just closed
     # (app/initiatives/i7/reporting/auto_generate.py), after the pipeline check and the snapshots. OFF by default, and it
     # only acts when the watcher itself is on (i7_pipeline_watch_enabled) -- there is no second timer. Nothing else in the
@@ -1134,9 +1162,11 @@ class Settings(BaseSettings):
     # the backup for a day with no successful build. OFF by default, for the same reason.
     i13_detect_after_build: bool = False
     # The exception types those two automatic runs check, comma-separated (PLAN_BREACH,
-    # NO_PLAN, NO_PLAN_GRNI, QUANTITY_OVERRIDE). Empty = all. A type left out is neither
-    # raised nor resolved by them -- e.g. NO_PLAN and NO_PLAN_GRNI until the Non-AI
-    # go-live cutoff is agreed. The post-capture and manual (POST /run/detect) runs always check every type.
+    # NO_PLAN, NOT_ISSUED_30_DAYS, QUANTITY_OVERRIDE). Empty = all. A type left out is neither
+    # raised nor resolved by them -- e.g. NO_PLAN until the Non-AI go-live cutoff is agreed.
+    # NO_PLAN_GRNI is retired (5-Nov-2026) and ignored here. NOT_ISSUED_30_DAYS uses
+    # i13_gr_not_issued_threshold_days. The post-capture and manual (POST /run/detect) runs
+    # always check every type.
     i13_detection_types: str = ""
 
     # A request's requester is told in the app when its lines are linked to an SAP reservation, and reminded

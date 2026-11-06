@@ -18,11 +18,11 @@ from app.initiatives.i7.kpi_formulas.working_capital import REPORTING_CURRENCY, 
 from app.initiatives.i7.reporting import kpi_definitions
 from app.initiatives.i7.stockout_risk.counts import StockoutRiskCounts
 from app.models.i7_features import MaterialFeature
-from app.models.i7_recommendation import Recommendation
+from app.models.i7_recommendation import Recommendation, SapAdoptionResult
 from app.models.i7_staging import StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun
 from app.models.i7_stockout_risk import StockoutRiskInput
 
-TABLES = (Recommendation, StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun, StockoutRiskInput, MaterialFeature)
+TABLES = (Recommendation, SapAdoptionResult, StagedMaterial, StagedMaterialPlant, StagedStock, StagingRun, StockoutRiskInput, MaterialFeature)
 
 
 @pytest.fixture
@@ -182,7 +182,32 @@ def test_the_report_and_the_overview_calculation_agree(db):
     shared = impact(db)
     position = kpi_definitions.position_figures(db, None, date(2027, 1, 1), date(2026, 10, 21))
 
-    assert position.net_rop_value_impact == shared.amount == Decimal("270")  # 300 + (-30)
-    assert position.priced_count == shared.included_count == 2
-    assert position.working_capital_excluded_count == shared.excluded_count == 1
+    # The report's "if every eligible material were adopted" figure is the Overview's calculation, so the two agree. The report's
+    # headline working capital counts only what SAP has adopted, which is nothing here.
+    assert position.working_capital_potential == shared.amount == Decimal("270")  # 300 + (-30)
+    assert position.working_capital_potential_count == shared.included_count == 2
+    assert position.population - position.working_capital_potential_count == shared.excluded_count == 1
     assert position.working_capital_currency == "ZAR"
+    assert position.net_rop_value_impact == 0 and position.priced_count == 0  # nothing adopted in SAP yet
+
+
+def test_a_material_with_no_price_unit_is_left_out_and_counted_not_priced_at_verpr_or_zero(db):
+    """Staging gives a price-less row (NULL price, with its reason) when PEINH is missing or bad. It adds nothing,
+    and the figure still says it left one out."""
+    add(db, "A", currency="ZAR", price="100", current="5", recommended="2")  # 100 x 3 = 300, counted
+    add(db, "B", currency="ZAR", price=None, current="5", recommended="2")  # PEINH missing: no unit price
+
+    result = impact(db)
+
+    assert result.amount == Decimal("300")  # B added nothing: not 0 x 3 hidden in the sum, not a raw VERPR
+    assert (result.included_count, result.excluded_count) == (1, 1)
+
+
+def test_when_every_price_lacks_its_unit_the_figure_is_none_not_zero(db):
+    add(db, "A", currency="ZAR", price=None, current="5", recommended="2")
+    add(db, "B", currency="ZAR", price=None, current="9", recommended="1")
+
+    result = impact(db)
+
+    assert result.amount is None
+    assert (result.included_count, result.excluded_count) == (0, 2)

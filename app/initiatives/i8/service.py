@@ -431,6 +431,7 @@ def _build_locked(
     # window where the two disagree.
     reset_attestation_view()
     reset_coding_screen()
+    _schedule_coding_prewarm(snapshot)
     return snapshot
 
 
@@ -894,8 +895,14 @@ def peek_unscreened_count(cfg: I8Settings | None = None) -> int | None:
     page loads is the one keyed (no model, no limit, the default sources).
     """
     cfg = cfg or get_i8_settings()
-    with _screen_lock:
+    # Not `with _screen_lock`: a screen being built holds the lock for ~10 s, and
+    # this is asked on every page. Busy means "not ready", which is None.
+    if not _screen_lock.acquire(blocking=False):
+        return None
+    try:
         screen = _screens.get((False, None, cfg.coding_candidate_source_list))
+    finally:
+        _screen_lock.release()
     if screen is None:
         return None
     return sum(1 for candidate in screen.candidates if candidate.verdict == Verdict.UNSCREENED.value)
@@ -905,3 +912,43 @@ def reset_coding_screen() -> None:
     """Drop every cached screen. For tests, and for a deliberate re-run."""
     with _screen_lock:
         _screens.clear()
+
+
+def _schedule_coding_prewarm(snapshot: Snapshot) -> None:
+    """Build the Repair Candidates screen a little after ``snapshot`` goes live.
+
+    A swap drops the cached screen (see :func:`_build_locked`), so the first
+    open of the page after every rebuild paid the whole ~10 s build, and the
+    menu's badge -- which only reads a built screen -- showed nothing until
+    somebody opened it. This builds the one the page and the badge read, in the
+    background, :attr:`I8Settings.coding_prewarm_delay_seconds` later.
+    """
+    cfg = get_i8_settings()
+    if not cfg.coding_prewarm_enabled:
+        return
+    timer = threading.Timer(max(cfg.coding_prewarm_delay_seconds, 0.0), _prewarm_coding_screen, args=(snapshot,))
+    timer.daemon = True
+    timer.name = "i8-coding-prewarm"
+    timer.start()
+
+
+def _prewarm_coding_screen(snapshot: Snapshot) -> None:
+    """The default screen (fast, no limit, default sources: the key the page and
+    the badge use), built with its own session.
+
+    Skipped when another snapshot has replaced this one meanwhile -- that one
+    schedules its own. Never raises: a failure is logged and the page builds
+    the screen on first open, as it always did.
+    """
+    with _state_lock:
+        if _state.snapshot is not snapshot:
+            return
+    db = get_sessionmaker()()
+    try:
+        started = time.monotonic()
+        get_coding_screen(db, snapshot)
+        logger.info("I08 coding candidates: screen ready in %.1fs", time.monotonic() - started)
+    except Exception:
+        logger.exception("I08 coding candidates: the background build failed; the page builds it on first open")
+    finally:
+        db.close()

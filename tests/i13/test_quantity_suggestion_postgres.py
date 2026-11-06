@@ -383,7 +383,6 @@ def _detect(records) -> tuple[FakeExceptionRepository, object]:
         AS_OF,
         ledger_entries=[],
         plans=[],
-        grni_snapshots={},
         repository=repository,
         notification_port=FakeNotificationPort(),
         plan_breach_grace_days=14,

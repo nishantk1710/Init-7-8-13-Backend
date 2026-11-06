@@ -4,18 +4,34 @@ Calls the existing Phase 7 evaluators directly -- no SAP client is imported
 here, and none exists to import. ``RawChangeDocumentProvider`` reads the raw
 ``raw_cdhdr``/``raw_cdpos`` extract tables (real data, no SAP call), scoped to
 FR-9's configurable monitoring window (``PolicyDocument().adoption.
-monitoring_window_days``, default 15 days per the 2026-09-22 business
-direction) after each recommendation's own ``generated_at`` date. On the
-current extract every result is still UNKNOWN, because that extract's CDPOS
-table contains no MATERIAL/MARC change rows at all -- see
-``sap_change_documents.py`` for the verification.
+monitoring_window_days``, 7 days by default -- the one place the length is set).
+
+**The window starts at the SAP handover**, not when the recommendation was
+generated and not while it waits for approval: the day its final approval put it
+at ``SAP_EXECUTION_PENDING`` (``_handoff_dates``). A recommendation that has not
+been handed over has no window yet, is Pending, and reads no change history at
+all -- so a slow approval never uses up the time SAP has to act.
+
+**Checked every day, not once at the end** (``run_daily_adoption_check``, called
+by the nightly timer): a matching SAP change is picked up the day it appears.
+While the window is open a recommendation stays Pending until a change matches
+the approved value; changes that do not match yet are shown but do not make it
+Not adopted until the window has closed. When it has closed, Not adopted is
+said only if SAP's change history reaches the window's last day and holds no
+matching change; if the history is incomplete the answer stays Unknown. On the current extract every
+result is still UNKNOWN, because that extract's CDPOS table contains no
+MATERIAL/MARC change rows at all -- see ``sap_change_documents.py`` for the
+verification.
 
 Every evaluated result is also persisted to ``i7_sap_adoption``
 (``SapAdoptionResult``) -- FR-9's "recommendation ledger" -- as a side effect
-of being viewed through either endpoint below, upserted by
-``recommendation_id`` so repeated views of the same recommendation update the
-one row rather than accumulating history (the ledger records the latest
-known reconciliation, not an append-only log of every request)."""
+of being viewed through either endpoint below -- and by the daily check --
+upserted by ``recommendation_id`` so repeated views or runs of the same
+recommendation update the one row rather than accumulating history (the ledger
+records the latest known reconciliation, not an append-only log of every
+request)."""
+
+import logging
 
 from dataclasses import dataclass
 from decimal import Decimal
@@ -32,6 +48,7 @@ from app.initiatives.i7.kpi_formulas.expression import evaluate
 from app.initiatives.i7.kpi_formulas.resolved import load_active
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations.adoption import (
+    NoSapStateAvailable,
     evaluate_conversion_adoption,
     evaluate_parameter_adoption,
 )
@@ -45,6 +62,7 @@ from app.initiatives.i7.recommendations.sap_change_documents import RawChangeDoc
 from app.initiatives.i7.recommendations.types import (
     AdoptionFieldReport,
     AdoptionResult,
+    AdoptionStatus,
     ApprovalAction,
     LifecycleStatus,
 )
@@ -65,15 +83,27 @@ MAX_PAGE_SIZE = 200
 bulk export."""
 
 
+logger = logging.getLogger(__name__)
+
+HANDED_OFF_STATUSES: tuple[str, ...] = (
+    LifecycleStatus.SAP_EXECUTION_PENDING.value,
+    LifecycleStatus.SAP_EXECUTED.value,
+    LifecycleStatus.ADOPTED.value,
+    LifecycleStatus.PARTIALLY_ADOPTED.value,
+    LifecycleStatus.NOT_ADOPTED.value,
+)
+"""Every state a recommendation can be in once its final approval has handed it to SAP."""
+
+_ID_CHUNK = 500
+
+
 def _provider_for(
     session: Session, anchor: date | None, policy: PolicyDocument
 ) -> RawChangeDocumentProvider:
     """One provider per recommendation, windowed to FR-9's monitoring period
-    starting at that recommendation's own anchor date -- never a single
+    starting on that recommendation's own SAP handover date -- never a single
     session-wide provider, since each recommendation's window starts on a
-    different date. The anchor is the approval date when there is one (the
-    changes worth tracking are the ones made after someone approved), else the
-    recommendation's ``generated_at`` date."""
+    different date."""
     return RawChangeDocumentProvider(
         session,
         recommendation_date=anchor,
@@ -81,11 +111,18 @@ def _provider_for(
     )
 
 
-def _approval_dates(session: Session, recommendation_ids: list[str]) -> dict[str, date]:
-    """The date each recommendation reached final approval, in one query.
+def _handoff_dates(session: Session, recommendation_ids: list[str]) -> dict[str, date]:
+    """The date each recommendation was handed over for SAP implementation, in one query.
 
-    The newest ledger entry where the action was an approval that ended in the
-    APPROVED state -- the last step of the chain, not an earlier role's approval.
+    The newest ledger entry where the action was an approval that ended in
+    ``SAP_EXECUTION_PENDING`` -- the final step of the chain, which is what hands the
+    recommendation to VZI to change in SAP. An earlier role's approval ends in
+    ``PENDING_APPROVAL`` and is not it. Nothing before this entry (generation, review,
+    waiting in the approval chain) counts towards the monitoring window.
+
+    (This used to look for ``APPROVED``, a state the workflow never produces: final approval
+    goes straight to ``SAP_EXECUTION_PENDING``. So no date was ever found and every window
+    started at ``generated_at``.)
     """
     if not recommendation_ids:
         return {}
@@ -94,7 +131,7 @@ def _approval_dates(session: Session, recommendation_ids: list[str]) -> dict[str
         .where(
             ApprovalLedgerEntry.recommendation_id.in_(recommendation_ids),
             ApprovalLedgerEntry.action == ApprovalAction.APPROVE.value,
-            ApprovalLedgerEntry.new_status == LifecycleStatus.APPROVED.value,
+            ApprovalLedgerEntry.new_status == LifecycleStatus.SAP_EXECUTION_PENDING.value,
         )
         .group_by(ApprovalLedgerEntry.recommendation_id)
     ).all()
@@ -116,29 +153,87 @@ class _AdoptionView:
     pending: bool
 
 
+def _not_started_detail(row: Recommendation, window_days: int | None) -> str:
+    if row.status == LifecycleStatus.REJECTED.value:
+        return "Rejected: it will not be handed over to SAP."
+    days = f"{window_days}-day " if window_days is not None else ""
+    return f"Waiting for final approval and handover to SAP. The {days}SAP check has not started."
+
+
 def _build_view(
-    session: Session, row: Recommendation, policy: PolicyDocument, approved_on: date | None
+    session: Session,
+    row: Recommendation,
+    policy: PolicyDocument,
+    handed_off_on: date | None,
+    today: date | None = None,
 ) -> _AdoptionView:
-    anchor = approved_on or (row.generated_at.date() if row.generated_at else None)
-    anchor_name = "approval" if approved_on else "recommendation"
-    provider = _provider_for(session, anchor, policy)
+    """One recommendation's adoption, as of ``today``.
+
+    ``handed_off_on`` is the day the final approval handed it to SAP (``_handoff_dates``).
+    ``None`` means it has not been: no window has started, SAP's change history is not read
+    (an unbounded read would pick up changes from before the recommendation existed), and the
+    row is Pending.
+    """
+    today = today or datetime.now(timezone.utc).date()
+    window_days = policy.adoption.monitoring_window_days
+
+    if handed_off_on is None:
+        result, is_conversion = _evaluate_row(row, NoSapStateAvailable())
+        return _AdoptionView(
+            result=result,
+            is_conversion=is_conversion,
+            reports=(),
+            detail=_not_started_detail(row, window_days),
+            check_type=check_type_label((), is_conversion),
+            approved_on=None,
+            window_ends_on=None,
+            window_open=True,
+            pending=True,
+        )
+
+    provider = _provider_for(session, handed_off_on, policy)
     result, is_conversion = _evaluate_row(row, provider)
     changes = provider.field_changes(row.sap_material_number, row.sap_plant_code)
-    reports = build_field_reports(result, changes, anchor)
+    reports = build_field_reports(result, changes, handed_off_on)
 
-    window_days = policy.adoption.monitoring_window_days
-    window_ends_on = anchor + timedelta(days=window_days) if anchor and window_days is not None else None
-    window_open = window_ends_on is None or datetime.now(timezone.utc).date() <= window_ends_on
+    window_ends_on = handed_off_on + timedelta(days=window_days) if window_days is not None else None
+    window_open = window_ends_on is None or today <= window_ends_on
+
+    note: str | None = None
+    if not window_open and result.expected and result.status in (AdoptionStatus.UNKNOWN, AdoptionStatus.NOT_ADOPTED):
+        # The window is over and nothing matches. That is "not adopted" only if SAP's history was
+        # complete for the whole window; a history that stops early could simply not have the change.
+        if provider.history_covers(window_ends_on):
+            if result.status is AdoptionStatus.UNKNOWN:
+                result = result._replace(status=AdoptionStatus.NOT_ADOPTED)
+            note = "SAP change history covers the whole window, and no matching change was found."
+        else:
+            result = result._replace(status=AdoptionStatus.UNKNOWN)
+            note = (
+                f"SAP change history is not complete through {window_ends_on.isoformat()}, "
+                "so adoption cannot be confirmed."
+            )
+
+    if window_open and result.status is AdoptionStatus.NOT_ADOPTED:
+        # SAP changed something, but nothing that matches the approved values *yet*. While the
+        # window is open the change may still be corrected or completed, so it stays Pending;
+        # the changes found are still listed in the detail. Only a closed window calls it.
+        result = result._replace(status=AdoptionStatus.UNKNOWN)
+        note = "SAP changed, but no change matches the approved values yet; the check window is still open."
+
+    detail = plain_detail(
+        result, reports, anchor_name="SAP handover", window_days=window_days, window_open=window_open
+    )
+    if note:
+        detail = f"{detail}\n{note}"
 
     return _AdoptionView(
         result=result,
         is_conversion=is_conversion,
         reports=reports,
-        detail=plain_detail(
-            result, reports, anchor_name=anchor_name, window_days=window_days, window_open=window_open
-        ),
+        detail=detail,
         check_type=check_type_label(reports, is_conversion),
-        approved_on=approved_on,
+        approved_on=handed_off_on,
         window_ends_on=window_ends_on,
         window_open=window_open,
         pending=is_pending(result.status, window_open),
@@ -179,14 +274,35 @@ def _evaluate_row(row: Recommendation, provider: RawChangeDocumentProvider) -> t
     return result, is_conversion_adoption
 
 
-def _persist_result(session: Session, recommendation_id: str, result: AdoptionResult, detail: str) -> None:
+def _adopted_on(view: "_AdoptionView") -> date | None:
+    """When SAP made the change that confirmed this adoption: the latest change date among the fields that matched, from CDHDR/CDPOS.
+    ``None`` unless the result is ADOPTED, or when the extract's date could not be read."""
+    if view.result.status is not AdoptionStatus.ADOPTED:
+        return None
+    dates = [report.changed_on for report in view.reports if report.matched and report.changed_on is not None]
+    return max(dates) if dates else None
+
+
+def _persist_result(
+    session: Session,
+    recommendation_id: str,
+    result: AdoptionResult,
+    detail: str,
+    evaluated_at: datetime | None = None,
+    adopted_on: date | None = None,
+) -> None:
     """Upsert FR-9's ledger entry for one recommendation -- get-then-update-
     or-insert, the same pattern ``save_report`` uses for the quarterly report
     (see ``reporting/repository.py``), never a database-specific ``ON
     CONFLICT`` (the portability rule rules that out here too)."""
+    # ``.first()`` of the newest, not ``scalar_one_or_none``: the table has no unique key on
+    # ``recommendation_id``, so a race between two writers could once have left two rows, and
+    # that must not make every later check of this recommendation fail.
     existing = session.execute(
-        select(SapAdoptionResult).where(SapAdoptionResult.recommendation_id == recommendation_id)
-    ).scalar_one_or_none()
+        select(SapAdoptionResult)
+        .where(SapAdoptionResult.recommendation_id == recommendation_id)
+        .order_by(SapAdoptionResult.id.desc())
+    ).scalars().first()
 
     fields = dict(
         status=result.status.value,
@@ -195,7 +311,8 @@ def _persist_result(session: Session, recommendation_id: str, result: AdoptionRe
         matched_fields=", ".join(result.matched_fields),
         mismatched_fields=", ".join(result.mismatched_fields),
         detail=detail[:500],
-        evaluated_at=datetime.now(timezone.utc),
+        evaluated_at=evaluated_at or datetime.now(timezone.utc),
+        adopted_on=adopted_on,
     )
     if existing is None:
         session.add(SapAdoptionResult(recommendation_id=recommendation_id, **fields))
@@ -205,14 +322,154 @@ def _persist_result(session: Session, recommendation_id: str, result: AdoptionRe
     session.commit()
 
 
+@dataclass(frozen=True)
+class AdoptionRunSummary:
+    """What one daily check did, for the nightly log."""
+
+    checked: int = 0
+    adopted: int = 0
+    partially_adopted: int = 0
+    not_adopted: int = 0
+    pending: int = 0
+    """Checked, and still waiting: no matching SAP change yet (including no change history at all)."""
+    skipped: int = 0
+    """Left alone: already checked today, already final, or no handover date on record."""
+    failed: int = 0
+
+    def __str__(self) -> str:
+        return (
+            f"{self.checked} checked ({self.adopted} adopted, {self.partially_adopted} partially adopted, "
+            f"{self.not_adopted} not adopted, {self.pending} pending), {self.skipped} skipped, {self.failed} failed"
+        )
+
+
+def _already_final(existing: SapAdoptionResult, window_ends_on: date | None, today: date) -> str | None:
+    """Why this recommendation needs no more checking today, or ``None`` when it does.
+
+    This is what makes a run safe to repeat -- the next tick, a second instance, a restart: a result
+    written today is as current as a new one, an ADOPTED result cannot get better, and once the
+    window has closed a verdict written after it is the last word -- unless that verdict is
+    UNKNOWN, which means SAP's change history did not yet reach the window's end. That one is
+    checked again each day until a newer extract lets it be decided.
+    """
+    if existing.status == AdoptionStatus.ADOPTED.value:
+        return "already adopted"
+    if existing.evaluated_at is not None:
+        checked_on = existing.evaluated_at.date()
+        if checked_on >= today:
+            return "already checked today"
+        if (
+            window_ends_on is not None
+            and window_ends_on < today
+            and checked_on > window_ends_on
+            and existing.status != AdoptionStatus.UNKNOWN.value
+        ):
+            return "final result recorded after the window closed"
+    return None
+
+
+def run_daily_adoption_check(
+    session_factory, today: date | None = None
+) -> AdoptionRunSummary:
+    """Check SAP's change history for every recommendation that has been handed over to SAP.
+
+    Run once a day by the nightly timer, so a matching change is found the day it is made instead
+    of when someone next opens the page or the window ends. Read-only towards SAP; the only write
+    is the one ``i7_sap_adoption`` row per recommendation.
+
+    * Only recommendations a final approval has handed over (status ``SAP_EXECUTION_PENDING`` or
+      later, with that approval on the ledger) have a window, so only they are looked at. Ones
+      still in approval stay Pending and cost nothing.
+    * Each is judged by exactly the rule the Adoption page uses (``_build_view``), so a daily result
+      and a page view never disagree.
+    * Repeating the run changes nothing: see ``_already_final``. One recommendation failing is logged
+      and counted, and does not stop the rest.
+    """
+    today = today or datetime.now(timezone.utc).date()
+    policy = PolicyDocument()
+    window_days = policy.adoption.monitoring_window_days
+    # The time of day is now; the date is the run's own (the same thing outside tests), so "checked today" means the day being run.
+    stamped_at = datetime.combine(today, datetime.now(timezone.utc).timetz())
+    counts = {"checked": 0, "adopted": 0, "partially_adopted": 0, "not_adopted": 0, "pending": 0, "skipped": 0, "failed": 0}
+
+    with session_factory() as session:
+        statement = _latest_only(
+            _apply_filters(
+                select(Recommendation),
+                status=None,
+                plant=None,
+                material=None,
+                demand_class=None,
+                is_oar=None,
+                confidence=None,
+                criticality=None,
+                generated_from=None,
+                generated_to=None,
+                actionable=True,
+            )
+        ).where(Recommendation.status.in_(HANDED_OFF_STATUSES))
+        rows = session.execute(statement).scalars().all()
+        ids = [row.recommendation_id for row in rows]
+        # In chunks: SQL Server allows about 2,100 parameters in one statement.
+        handed_off: dict[str, date] = {}
+        latest: dict[str, SapAdoptionResult] = {}
+        for start in range(0, len(ids), _ID_CHUNK):
+            chunk = ids[start : start + _ID_CHUNK]
+            handed_off.update(_handoff_dates(session, chunk))
+            for result in session.execute(
+                select(SapAdoptionResult)
+                .where(SapAdoptionResult.recommendation_id.in_(chunk))
+                .order_by(SapAdoptionResult.id)
+            ).scalars():
+                latest[result.recommendation_id] = result  # the newest id wins
+
+        for row in rows:
+            recommendation_id = row.recommendation_id
+            handed_off_on = handed_off.get(recommendation_id)
+            if handed_off_on is None:
+                logger.warning(
+                    "adoption check: %s is at %s but no final approval is on the ledger; no window to check",
+                    recommendation_id, row.status,
+                )
+                counts["skipped"] += 1
+                continue
+            window_ends_on = handed_off_on + timedelta(days=window_days) if window_days is not None else None
+            existing = latest.get(recommendation_id)
+            if existing is not None and _already_final(existing, window_ends_on, today):
+                counts["skipped"] += 1
+                continue
+            try:
+                view = _build_view(session, row, policy, handed_off_on, today)
+                _persist_result(session, recommendation_id, view.result, view.detail, stamped_at, _adopted_on(view))
+            except Exception:  # noqa: BLE001 -- one bad recommendation must not stop the others
+                session.rollback()
+                logger.exception("adoption check failed for %s", recommendation_id)
+                counts["failed"] += 1
+                continue
+            counts["checked"] += 1
+            status = view.result.status
+            if status is AdoptionStatus.ADOPTED:
+                counts["adopted"] += 1
+            elif status is AdoptionStatus.PARTIALLY_ADOPTED:
+                counts["partially_adopted"] += 1
+            elif status is AdoptionStatus.NOT_ADOPTED:
+                counts["not_adopted"] += 1
+            else:
+                counts["pending"] += 1
+
+    summary = AdoptionRunSummary(**counts)
+    logger.info("adoption check for %s: %s", today.isoformat(), summary)
+    return summary
+
+
 @router.get(
     "/recommendations/{recommendation_id}/adoption",
     response_model=AdoptionResponse,
     summary="Get SAP adoption reconciliation status",
     description="ADOPTED / PARTIALLY_ADOPTED / NOT_ADOPTED / UNKNOWN, "
     "computed read-only through the existing Phase 7 adoption evaluators, "
-    "scoped to FR-9's configurable monitoring window after the "
-    "recommendation's own date, and persisted to the recommendation ledger "
+    "scoped to FR-9's configurable monitoring window, which starts when the "
+    "final approval hands the recommendation to SAP, and persisted to the recommendation ledger "
     "(i7_sap_adoption) as a side effect. UNKNOWN means no SAP evidence is "
     "available -- it is never reported as NOT_ADOPTED. No SAP call is made; "
     "the current extract has no staged CDHDR/CDPOS, so every result on this "
@@ -225,7 +482,7 @@ def get_adoption(
     row: Recommendation = load_latest_recommendation(session, recommendation_id)
     policy = PolicyDocument()
     view = _build_view(
-        session, row, policy, _approval_dates(session, [recommendation_id]).get(recommendation_id)
+        session, row, policy, _handoff_dates(session, [recommendation_id]).get(recommendation_id)
     )
     result, is_conversion_adoption = view.result, view.is_conversion
 
@@ -238,7 +495,7 @@ def get_adoption(
         # MINBE + MABST), not inferred from any other field changing.
         detail = "Awaiting SAP test change: " + detail
 
-    _persist_result(session, recommendation_id, result, detail)
+    _persist_result(session, recommendation_id, result, detail, adopted_on=_adopted_on(view))
 
     return AdoptionResponse(
         recommendation_id=recommendation_id,
@@ -319,11 +576,11 @@ def list_adoption(
     rows = session.execute(statement).scalars().all()
 
     policy = PolicyDocument()
-    approved_on = _approval_dates(session, [row.recommendation_id for row in rows])
+    handed_off = _handoff_dates(session, [row.recommendation_id for row in rows])
     items = []
     for row in rows:
-        view = _build_view(session, row, policy, approved_on.get(row.recommendation_id))
-        _persist_result(session, row.recommendation_id, view.result, view.detail)
+        view = _build_view(session, row, policy, handed_off.get(row.recommendation_id))
+        _persist_result(session, row.recommendation_id, view.result, view.detail, adopted_on=_adopted_on(view))
         items.append(
             AdoptionListItem(
                 recommendation_id=row.recommendation_id,

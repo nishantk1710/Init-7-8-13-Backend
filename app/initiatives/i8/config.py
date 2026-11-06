@@ -401,6 +401,16 @@ class I8Settings(BaseSettings):
     # `actionableOnly` filters rather than silently drops.
     coding_candidate_confidence_threshold: str = "low"
 
+    # Build the Repair Candidates screen in the background once a new snapshot is
+    # live (start-up, or SAP data moved). Every snapshot swap drops the cached
+    # screen, so without this each rebuild leaves the first person to open the
+    # page waiting ~10 s, and the menu badge -- which only reads a built screen,
+    # never builds one -- blank until somebody does. The delay keeps the build
+    # clear of the start-up loaders and of a build that follows a rebuild.
+    # I8_CODING_PREWARM_ENABLED=false switches it off.
+    coding_prewarm_enabled: bool = True
+    coding_prewarm_delay_seconds: float = 60.0
+
     # --- New Item Price (FR-2 coding screen) ------------------------------
 
     # BWTAR of the NEW condition on a split-valuated material. Every 80-series

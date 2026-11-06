@@ -28,14 +28,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import Select, and_, case, func, or_, select
+from sqlalchemy import Select, and_, case, false, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.initiatives.i7.kpi_formulas.currency import REPORTING_CURRENCY, TO_ZAR
 from app.initiatives.i7.kpi_formulas.resolved import Formulas
 from app.initiatives.i7.kpi_formulas.sql import working_capital_sql
 from app.initiatives.i7.recommendations.types import LifecycleStatus
-from app.models.i7_recommendation import Recommendation
+from app.models.i7_recommendation import Recommendation, SapAdoptionResult
 from app.models.i7_staging import StagedMaterialPlant
 from app.shared.valuation_price import DEFAULT_TOKEN_MAX
 
@@ -95,8 +95,24 @@ def _price_currency():
     )
 
 
-def working_capital_impact(session: Session, base: Select, formulas: Formulas) -> WorkingCapitalImpact:
-    """The Working Capital Impact over ``base`` (a ``select(Recommendation)`` population), in ZAR."""
+def working_capital_impact(
+    session: Session, base: Select, formulas: Formulas, segment: str | None = None, *, adopted_only: bool = False
+) -> WorkingCapitalImpact:
+    """The Working Capital Impact over ``base`` (a ``select(Recommendation)`` population), in ZAR.
+
+    ``segment`` narrows the population: ``"oar"`` for OAR material-plants, ``"stock"`` for stock items (everything not OAR);
+    ``None`` is both. The two segments add up to the whole: a row is in exactly one of them."""
+    if adopted_only:
+        # Only what SAP now holds: the reconciliation's ADOPTED result (the same evidence as "converted to Min-Max"). Approval alone
+        # is not adoption. With nothing adopted the figure is 0 (measured: nothing has taken effect), not "not available".
+        base = base.where(
+            Recommendation.recommendation_id.in_(select(SapAdoptionResult.recommendation_id).where(SapAdoptionResult.status == "ADOPTED"))
+        )
+    if segment == "oar":
+        # ``== true()``, not ``IS``: SQL Server rejects ``IS 1`` / ``IS 0`` on a bit column.
+        base = base.where(Recommendation.is_oar == true())
+    elif segment == "stock":
+        base = base.where(or_(Recommendation.is_oar.is_(None), Recommendation.is_oar == false()))
     currency = _price_currency()
     rate = case(*[(currency == code, factor) for code, factor in TO_ZAR.items()], else_=None)
     value = working_capital_sql(formulas)
@@ -115,7 +131,7 @@ def working_capital_impact(session: Session, base: Select, formulas: Formulas) -
         )
     ).one()
     return WorkingCapitalImpact(
-        amount=Decimal(str(amount)) if amount is not None else None,
+        amount=Decimal(str(amount)) if amount is not None else (Decimal(0) if adopted_only else None),
         currency=REPORTING_CURRENCY,
         included_count=int(included_count),
         excluded_count=int(total) - int(included_count),

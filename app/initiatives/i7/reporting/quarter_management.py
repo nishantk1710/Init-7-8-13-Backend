@@ -152,6 +152,7 @@ def _cards(
     cutoff: date,
     as_of: date,
     generated: int,
+    tracked: int,
     assessed: int,
     every: int,
     approved: int,
@@ -294,8 +295,9 @@ def _cards(
             value=position.net_rop_value_impact,
             status=AvailabilityStatus.AVAILABLE if position.net_rop_value_impact is not None else AvailabilityStatus.NOT_AVAILABLE,
             explanation=(
-                "Estimated change in cash tied up in stock if every recommended reorder point were adopted: negative "
-                "means more tied up, positive means released. An estimate, not a realised saving. In ZAR, from each "
+                "Change in cash tied up in stock from the recommendations SAP has adopted (SAP now holds the recommended values; "
+                "approval alone does not count): a minus is cash released, a plus is cash tied up. 0 when none has been "
+                "adopted yet. Worked out on the reorder point, not a realised saving. In ZAR, from each "
                 "material's SAP valuation price (ZAR, and NAD at 1:1): "
                 f"{position.priced_count} material-plants included, {position.working_capital_excluded_count} left out "
                 "(another currency, no stated currency, no valid price or no reorder point)."
@@ -313,6 +315,77 @@ def _cards(
         )
     )
 
+    # --- The same working capital figure, split: stock items and OAR material-plants are different populations (OAR levels are
+    # sized from similar materials), so each gets its own card. They add up to the card above. Over a saved month-end snapshot that
+    # predates the split, they are worked out now and say so.
+    split_live = (not from_snapshot) or position.working_capital_split_is_current
+    split_note = (
+        "Worked out now over the current recommendations: the saved month-end snapshot for this period was made before this figure existed."
+        if from_snapshot and position.working_capital_split_is_current
+        else position_note
+    )
+    for key, title, amount, count, what in (
+        ("working_capital_stock", "Working capital impact: stock items", position.working_capital_stock,
+         position.working_capital_stock_count, "stock-item"),
+        ("working_capital_oar", "Working capital impact: OAR", position.working_capital_oar,
+         position.working_capital_oar_count, "OAR"),
+    ):
+        cards.append(
+            KpiCard(
+                key=key,
+                title=title,
+                unit=_unit(position.working_capital_currency or position.currency),
+                value=amount,
+                status=AvailabilityStatus.AVAILABLE if amount is not None else AvailabilityStatus.NOT_AVAILABLE,
+                explanation=(
+                    f"The working capital impact of the {what} recommendations SAP has adopted, worked out the same way as the card above "
+                    f"({count} material-plants included). The stock-item and OAR figures add up to the total. An estimate, not a "
+                    "realised saving."
+                    + (" For OAR, a material the rule marks not eligible counts only once a request to convert it has been submitted "
+                       "and not rejected." if key == "working_capital_oar" else "")
+                ),
+                kind=MetricKind.MEASUREMENT,
+                measured_on=cutoff if split_live else position_measured_on,
+                period_label=period_label if split_live else f"{quarter_end_label} month-end",
+                denominator=count,
+                denominator_label=f"{what} material-plants included",
+                basis="current_calculation" if split_live else basis,
+                unavailable_reason=(
+                    None if amount is not None
+                    else f"No {what} recommendation has a ZAR or NAD unit price and both reorder points (or this report was saved before the split)."
+                ),
+                note=" ".join(n for n in (split_note, reference_note, MONEY_CAVEAT) if n),
+            )
+        )
+
+    # --- If every eligible material-plant were adopted: the Overview's own figure, to set beside what SAP has actually adopted.
+    cards.append(
+        KpiCard(
+            key="working_capital_potential",
+            title="Working capital if all eligible OAR adopted",
+            unit=_unit(position.working_capital_currency or position.currency),
+            value=position.working_capital_oar_potential,
+            status=AvailabilityStatus.AVAILABLE if position.working_capital_oar_potential is not None else AvailabilityStatus.NOT_AVAILABLE,
+            explanation=(
+                "What the working capital impact would be if every eligible OAR material-plant's recommended reorder point were adopted "
+                "in SAP: eligible OAR materials, and non-eligible OAR materials with a live conversion request. Stock items are not "
+                "included. A minus is cash released, a plus is cash tied up. A projection, not a realised saving; what SAP has "
+                f"actually adopted is in the cards above. {position.working_capital_oar_potential_count} material-plants included."
+            ),
+            kind=MetricKind.MEASUREMENT,
+            measured_on=cutoff if split_live else position_measured_on,
+            period_label=period_label if split_live else f"{quarter_end_label} month-end",
+            denominator=position.working_capital_oar_potential_count,
+            denominator_label="eligible OAR material-plants included",
+            basis="current_calculation" if split_live else basis,
+            unavailable_reason=(
+                None if position.working_capital_oar_potential is not None
+                else "No eligible OAR recommendation has a ZAR or NAD unit price and both reorder points (or this report was saved before this figure existed)."
+            ),
+            note=" ".join(n for n in (split_note, reference_note, MONEY_CAVEAT) if n),
+        )
+    )
+
     # --- Approved: where the period's recommendations stand in the approval chain on the date the report was generated. It says
     # nothing about SAP: whether SAP was updated is the adoption section, a separate process. What is still waiting for a decision is
     # in the Approval status section (``adoption.stages.awaiting_approval``), not a card of its own.
@@ -324,15 +397,15 @@ def _cards(
             value=Decimal(approved),
             status=AvailabilityStatus.AVAILABLE,
             explanation=(
-                "Recommendations generated in this period that are in an approved status (approved, or approved and "
-                "since acted on in SAP) on the date this report was generated. Approved is not adopted: whether SAP "
-                "changed is the adoption section."
+                "Recommendations of this period with something to change in SAP, one per material-plant, that are in an approved "
+                "status (approved, or approved and since acted on in SAP) on the date this report was generated. Approved is not "
+                "adopted: whether SAP changed is the adoption section."
             ),
             kind=MetricKind.STATUS_AS_OF,
             measured_on=as_of,
             period_label=f"as of {as_of:%d %b %Y}",
-            denominator=generated,
-            denominator_label="recommendations generated in the period",
+            denominator=tracked,
+            denominator_label="recommendations with something to change in SAP",
         )
     )
     # --- OAR: how many records, and how many material-plants have converted to Min-Max ordering ---------
@@ -340,18 +413,20 @@ def _cards(
         KpiCard(
             key="oar_recommendations",
             title="OAR recommendations",
-            unit="recommendation records",
+            unit="material-plants",
             value=Decimal(oar_records),
             status=AvailabilityStatus.AVAILABLE,
             explanation=(
-                "Recommendation records generated in this period for OAR material-plants, whose levels are sized from similar "
-                "materials. These are records, not materials: an OAR material-plant that was recalculated has a record for each run."
+                "Eligible OAR material-plants with a recommendation generated in this period, whose levels are sized from similar "
+                "materials. Each counts once, on its newest recommendation, however many times it was recalculated. A material the rule "
+                "marks not eligible is counted only once someone has submitted a request to convert it and that request has not been "
+                "rejected (the same rule as Working Capital Impact)."
             ),
             kind=MetricKind.EVENT,
             measured_on=None,
             period_label=period_label,
-            denominator=generated,
-            denominator_label="recommendations generated in the period",
+            denominator=min_max.oar_material_plants,
+            denominator_label="OAR material-plants in the period",
         )
     )
     measured = min_max.with_evidence > 0
@@ -438,7 +513,8 @@ def build_quarter_management(
     assessed, every = kpi_definitions.material_plants_assessed(session, period_start, exclusive_end)
     awaiting = kpi_definitions.awaiting_decision(session, period_start, exclusive_end)
     approved = kpi_definitions.approved_count(session, period_start, exclusive_end)
-    oar_records = kpi_definitions.oar_records(session, period_start, exclusive_end)
+    tracked = kpi_definitions.actionable_total(session, period_start, exclusive_end)
+    oar_eligible = kpi_definitions.eligible_oar_material_plants(session, period_start, exclusive_end)
     min_max = kpi_definitions.min_max_conversion(session, period_start, exclusive_end)
     position = kpi_definitions.position_figures(session, period_start, exclusive_end, cutoff)
     # The Overview's by-plant charts: every plant, then each plant it offers. Narrowed to the plants this
@@ -453,7 +529,16 @@ def build_quarter_management(
     trends, snapshot_position, snapshot_plants = build_trends(session, period_start, period_end)
     from_snapshot = snapshot_position is not None
     if from_snapshot:
+        live_position = position
         position, plant_positions = snapshot_position, snapshot_plants
+        if not position.working_capital_split:
+            # A month-end snapshot saved before the stock/OAR split existed has no such figures. They are worked out now, over
+            # the current recommendations, and the cards say so -- not shown as missing.
+            update = {name: getattr(live_position, name) for name in (
+                "working_capital_split", "working_capital_stock", "working_capital_stock_count", "working_capital_oar",
+                "working_capital_oar_count", "working_capital_potential", "working_capital_potential_count",
+                "working_capital_oar_potential", "working_capital_oar_potential_count")}
+            position = position.model_copy(update={**update, "working_capital_split_is_current": True})
     forecast = build_forecast_actual(session, period_start, period_end)
 
     months = period_months(period_start, period_end, today, source_activity)
@@ -503,10 +588,11 @@ def build_quarter_management(
             cutoff=cutoff,
             as_of=today,
             generated=generated,
+            tracked=tracked,
             assessed=assessed,
             every=every,
             approved=approved,
-            oar_records=oar_records,
+            oar_records=oar_eligible,
             min_max=min_max,
             position=position,
         ),
@@ -517,7 +603,8 @@ def build_quarter_management(
         plant_positions=plant_positions,
         status_distribution=distribution,
         forecast_actual=forecast,
-        adoption=_adoption(session, period_start, exclusive_end, awaiting, WorkflowStages(**kpi_definitions.stage_counts(counts))),
+        adoption=_adoption(session, period_start, exclusive_end, awaiting, WorkflowStages(**kpi_definitions.stage_counts(
+            kpi_definitions.actionable_status_counts(session, period_start, exclusive_end)))),
         data_coverage=_coverage(
             session, period_start, period_end, today, cutoff,
             source_activity=source_activity, position=position, trends=trends, from_snapshot=from_snapshot, forecast=forecast,

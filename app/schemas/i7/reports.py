@@ -945,6 +945,24 @@ class PositionFigures(BaseModel):
     working_capital_excluded_count: int = 0
     """Material-plants of the population left out of ``net_rop_value_impact``: other or missing currency, no valid
     price, or no reorder point."""
+    # --- The same working capital figure, split between stock items and OAR material-plants. The two add up to
+    # ``net_rop_value_impact``. ``None`` amount is "no row included" (or a report saved before the split), never 0.
+    working_capital_split: bool = False
+    """True when the split figures below were worked out for this position. A month-end snapshot saved before they existed
+    reads False, and the report works them out now instead of showing them as missing."""
+    working_capital_split_is_current: bool = False
+    """True when the split was worked out now and laid over a saved month-end snapshot that lacked it."""
+    working_capital_stock: Decimal | None = None
+    working_capital_stock_count: int = 0
+    working_capital_oar: Decimal | None = None
+    working_capital_oar_count: int = 0
+    # --- What the working capital impact would be if every eligible material-plant were adopted (the Overview's own figure:
+    # adopted or not). ``None`` is "no row included" or a report saved before this existed.
+    working_capital_potential: Decimal | None = None
+    working_capital_potential_count: int = 0
+    # The same, over OAR material-plants only: what the report's "if all eligible are adopted" card shows.
+    working_capital_oar_potential: Decimal | None = None
+    working_capital_oar_potential_count: int = 0
 
     # --- Stock held, valued in ZAR over the same population ------------------------------------------------
     # Stock on hand is as loaded when the figures were worked out (``inventory_stock_as_of``): it is month-end only

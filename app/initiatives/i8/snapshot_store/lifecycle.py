@@ -27,6 +27,32 @@ def enabled() -> bool:
     return get_settings().i8_snapshot_store == "sql"
 
 
+def stored_ready() -> bool:
+    """True when a stored snapshot this code can decode is ready to be served.
+
+    The start-up warm-up asks this to decide whether I08 may start at once.
+    Serving a stored snapshot is a read of one row and a decode; a build is
+    minutes of scans that must not run beside the other loaders. It asks the
+    same question :func:`load_or_build` does (``store.latest_ready``), so a True
+    here is a load there and never a build. Any failure answers False: the old
+    order, which is always safe, then applies.
+    """
+    if not enabled():
+        return False
+    from app.core.db import get_sessionmaker
+    from app.initiatives.i8.snapshot_store import store
+
+    try:
+        db = get_sessionmaker()()
+        try:
+            return store.latest_ready(db) is not None
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("I08 snapshot: could not look for a stored version; start-up keeps the old order")
+        return False
+
+
 def run_build(reason: str, *, force: bool = False) -> int:
     """Run one build process and wait for it. Returns its exit code."""
     command = [sys.executable, "-m", "app.initiatives.i8.snapshot_store", "build", "--reason", reason]
