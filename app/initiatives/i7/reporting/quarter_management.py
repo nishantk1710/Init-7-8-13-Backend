@@ -152,6 +152,7 @@ def _cards(
     cutoff: date,
     as_of: date,
     generated: int,
+    tracked: int,
     assessed: int,
     every: int,
     approved: int,
@@ -396,15 +397,15 @@ def _cards(
             value=Decimal(approved),
             status=AvailabilityStatus.AVAILABLE,
             explanation=(
-                "Recommendations generated in this period that are in an approved status (approved, or approved and "
-                "since acted on in SAP) on the date this report was generated. Approved is not adopted: whether SAP "
-                "changed is the adoption section."
+                "Recommendations of this period with something to change in SAP, one per material-plant, that are in an approved "
+                "status (approved, or approved and since acted on in SAP) on the date this report was generated. Approved is not "
+                "adopted: whether SAP changed is the adoption section."
             ),
             kind=MetricKind.STATUS_AS_OF,
             measured_on=as_of,
             period_label=f"as of {as_of:%d %b %Y}",
-            denominator=generated,
-            denominator_label="recommendations generated in the period",
+            denominator=tracked,
+            denominator_label="recommendations with something to change in SAP",
         )
     )
     # --- OAR: how many records, and how many material-plants have converted to Min-Max ordering ---------
@@ -512,6 +513,7 @@ def build_quarter_management(
     assessed, every = kpi_definitions.material_plants_assessed(session, period_start, exclusive_end)
     awaiting = kpi_definitions.awaiting_decision(session, period_start, exclusive_end)
     approved = kpi_definitions.approved_count(session, period_start, exclusive_end)
+    tracked = kpi_definitions.actionable_total(session, period_start, exclusive_end)
     oar_eligible = kpi_definitions.eligible_oar_material_plants(session, period_start, exclusive_end)
     min_max = kpi_definitions.min_max_conversion(session, period_start, exclusive_end)
     position = kpi_definitions.position_figures(session, period_start, exclusive_end, cutoff)
@@ -586,6 +588,7 @@ def build_quarter_management(
             cutoff=cutoff,
             as_of=today,
             generated=generated,
+            tracked=tracked,
             assessed=assessed,
             every=every,
             approved=approved,

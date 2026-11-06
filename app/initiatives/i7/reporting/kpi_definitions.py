@@ -245,14 +245,26 @@ def min_max_conversion(session: Session, period_start: date, exclusive_end: date
     )
 
 
+def _actionable_ids(period_start: date, exclusive_end: date) -> Select:
+    """The period's recommendations that have something to change in SAP (the Overview's ``actionable`` rule), the newest of each
+    material-plant: the set the SAP adoption count, the approval stages and the cards below it all cover."""
+    return _apply_filters(
+        select(Recommendation.id), status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+        criticality=None, generated_from=None, generated_to=None, actionable=True,
+    ).where(Recommendation.id.in_(newest_in_period_ids(period_start, exclusive_end)))
+
+
+def actionable_total(session: Session, period_start: date, exclusive_end: date) -> int:
+    """How many recommendations of the period have something to change in SAP, one per material-plant: the number the Overview's SAP
+    adoption shows, and the report's approval stages and Approved card are out of."""
+    return count_of(session, _actionable_ids(period_start, exclusive_end))
+
+
 def approved_count(session: Session, period_start: date, exclusive_end: date) -> int:
-    """Records generated in the period that have been approved, as of the report: a status, not a count of approval
-    events."""
+    """Recommendations of the period (those with something to change in SAP, one per material-plant) that have been approved, as of the
+    report: a status, not a count of approval events."""
     return count_of(
-        session,
-        select(Recommendation.id).where(
-            *_in_period(period_start, exclusive_end), Recommendation.status.in_(APPROVED_STATUSES)
-        ),
+        session, _actionable_ids(period_start, exclusive_end).where(Recommendation.status.in_(APPROVED_STATUSES))
     )
 
 

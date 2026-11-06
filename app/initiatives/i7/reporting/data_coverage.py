@@ -80,7 +80,10 @@ def build_data_coverage(
 ) -> DataCoverage:
     exclusive_end = exclusive_end_of(period_end)
     months = months_of(period_start, period_end)
-    generated = generated_by_month(session, period_start, exclusive_end)
+    # The recommendations with something to change in SAP, one per material-plant: the number the report's other sections show, not
+    # every record generated (a recalculated material-plant has a record for each run).
+    generated = kpi_definitions.actionable_generated_by_month(session, period_start, exclusive_end)
+    tracked = kpi_definitions.actionable_total(session, period_start, exclusive_end)
     staged_by_month = {m.month: m.status for m in (source_activity.months if source_activity else [])}
     evaluated, _ = kpi_definitions.material_plants_assessed(session, period_start, exclusive_end)
     latest_issue = _latest_issue_date(session)
@@ -134,7 +137,7 @@ def build_data_coverage(
             )
             for m in months
         ],
-        eligible_recommendations=sum(generated.values()),
+        eligible_recommendations=tracked,
         eligible_material_plants=evaluated,
         basis="current_calculation",
         warnings=warnings,
@@ -203,9 +206,12 @@ def coverage_items(
             ),
         ),
         CoverageItem(
-            key="recommendation_counts", label="Recommendations · material-plants computed",
+            key="recommendation_counts", label="Recommendations to adopt · material-plants computed",
             value=f"{coverage.eligible_recommendations:,} · {coverage.eligible_material_plants:,}", status=AVAILABLE,
-            detail="Records generated in the period, and distinct material-plants with a computed recommendation.",
+            detail=(
+                "Recommendations of the period with something to change in SAP, one per material-plant (the same number as the SAP adoption "
+                "and approval sections), and distinct material-plants with a computed recommendation."
+            ),
         ),
         CoverageItem(
             key="snapshot", label="Month-end snapshot",
