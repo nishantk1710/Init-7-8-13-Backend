@@ -563,8 +563,34 @@ def test_a_recommendation_with_nothing_to_adopt_is_not_counted_in_adoption(db):
 # --- data coverage ---------------------------------------------------------------------------
 
 
+def test_coverage_counts_what_has_something_to_change_in_sap_once_per_material_plant_like_the_rest_of_the_report(db):
+    db.add_all([
+        rec("A", at(2026, 10), rec_rop=5), rec("A", at(2026, 10, 20), run=2, rec_rop=6),  # one material-plant, two runs: once
+        rec("B", at(2026, 10)),                                                           # computed, but nothing to change: not counted
+    ])
+    db.commit()
+    management = build(db, AFTER_Q4)
+    coverage = management.data_coverage
+    assert coverage.eligible_recommendations == 1 == management.adoption.tracked  # the SAP adoption's own number
+    assert coverage.eligible_material_plants == 2  # both were computed
+    assert [m.recommendations_generated for m in coverage.months] == [1, 0, 0]
+    assert coverage_items(management)["recommendation_counts"].value == "1 · 2"
+
+
+def test_the_approved_card_is_out_of_the_recommendations_with_something_to_change_in_sap(db):
+    db.add_all([
+        rec("A", at(2026, 10), status="APPROVED", rec_rop=5), rec("A", at(2026, 10, 20), run=2, status="APPROVED", rec_rop=6),
+        rec("B", at(2026, 10), status="APPROVED"),  # approved, but nothing to change in SAP: in neither number
+        rec("C", at(2026, 10), rec_rop=5),
+    ])
+    db.commit()
+    approved = card(build(db, AFTER_Q4), "approved")
+    assert approved.value == 1 and approved.denominator == 2  # A (once) of A and C
+    assert approved.denominator_label == "recommendations with something to change in SAP"
+
+
 def test_coverage_names_the_months_the_staged_data_does_not_reach_and_never_calls_them_zero(db):
-    db.add_all([consumed("M1", date(2026, 5, 1)), rec("A", at(2026, 10))])
+    db.add_all([consumed("M1", date(2026, 5, 1)), rec("A", at(2026, 10), rec_rop=5)])  # has something to change in SAP
     db.commit()
     coverage = build(db, AFTER_Q4).data_coverage
     assert coverage.latest_consumption_month == date(2026, 5, 1)
@@ -646,7 +672,7 @@ def test_each_source_gets_a_status_and_a_reason_saved_with_the_report(db, monkey
         kpi_definitions, "stockout_risk_counts",
         lambda session, base, **kw: StockoutRiskCounts(at_risk=4, evaluated=40, insufficient_data=1, as_of=date(2026, 5, 31)),
     )
-    db.add(rec("A", at(2026, 10)))
+    db.add(rec("A", at(2026, 10), rec_rop=5))
     db.commit()
     items = coverage_items(build(db, AFTER_Q4))
     assert items["stockout"].status == "Stale" and "31 May 2026" in items["stockout"].detail
