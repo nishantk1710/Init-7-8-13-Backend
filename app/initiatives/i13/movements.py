@@ -56,10 +56,19 @@ def net_standing_quantity(rows: list[Row], base_types: frozenset[str]) -> Decima
 
     A reservation's issues can hold a 262 whose 261 predates the movement
     history; plain netting would read that as a negative issue.
+
+    On one posting date the base movements go first: SAP posts a reversal
+    after the document it reverses, and a 262 handed over ahead of its
+    same-day 261 would take back nothing and leave the 261 counted
+    (reservation 1975548/7: 261 1, 262 1, 261 1 read as 2 issued, not 1).
     """
     reversal_types = reversal_types_for(base_types)
     total = Decimal("0")
-    for row in sorted(rows, key=lambda r: (movement_date(r) is None, movement_date(r) or date.min)):
+    ordered = sorted(
+        rows,
+        key=lambda r: (movement_date(r) is None, movement_date(r) or date.min, r.get("Bwart") in reversal_types),
+    )
+    for row in ordered:
         bwart = row.get("Bwart")
         qty = row.get("Menge") or Decimal("0")
         if bwart in base_types:
