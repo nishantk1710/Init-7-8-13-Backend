@@ -96,6 +96,7 @@ def _detect(
     requester_by_session=None,
     types=None,
     quantity_decision_records=(),
+    no_plan_eligible=None,
 ):
     repository = repository or FakeExceptionRepository()
     notification_port = notification_port or FakeNotificationPort()
@@ -111,6 +112,7 @@ def _detect(
         requester_by_session=requester_by_session or {},
         types=types,
         quantity_decision_records=list(quantity_decision_records),
+        no_plan_eligible=no_plan_eligible,
     )
     return repository, notification_port, result
 

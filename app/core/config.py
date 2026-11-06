@@ -772,9 +772,12 @@ class Settings(BaseSettings):
     # typed it into SAP and a new extract was loaded". Never on in production:
     # raw_resb itself is never modified either way.
     i13_uat_simulation_enabled: bool = False
-    # Reservations required on or after this ISO date are expected to carry a
-    # session ID (the "reservations with no session" compliance count). Empty =
-    # the day the first assistant session was issued.
+    # The assistant's go-live (ISO date). Reservations required on or after it
+    # are expected to carry a session ID (the "reservations with no session"
+    # compliance count; empty = the day the first assistant session was
+    # issued). Also Non-AI's cutoff: only a reservation made on or after it
+    # (RESB-CRDAT, else its requirement date) can raise a Non-AI exception, and
+    # while it is empty none is raised at all.
     i13_assistant_go_live_date: str = ""
 
     # --- I07 plant scope ----------------------------------------------------
