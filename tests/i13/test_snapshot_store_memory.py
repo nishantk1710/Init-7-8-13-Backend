@@ -466,18 +466,21 @@ ALL = Batch("0", "9999999999")
 # "planvs" re-recorded the same day: SAP rows read on, below or above plan
 # (these tenants hold no captured plan and nothing due after AS_OF, so no
 # awaiting-reservation or not-due rows). Same row counts.
+# "lledger" re-recorded 2026-11-05 in all three: a line no reservation raised
+# stores utilisation NOT_TRACKED in its filter column (ledger_compat.
+# procurement_view, kinds.RECORD_LAYOUT 7). Same rows, same payloads.
 EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
     "mixed": {
         "attrib": (294, "214738b080d76802"), "chain": (286, "636c21f9a8b8679e"),
         "exception": (151, "46ce4895f8e71b5c"), "grni": (80, "cdbe217240794569"),
-        "lledger": (286, "18121a087fdb0045"), "movement": (186, "085dd35e7ee606ce"),
+        "lledger": (286, "8df6d11e71eae704"), "movement": (186, "085dd35e7ee606ce"),
         "oarkey": (87, "cafeb8032728b5cb"), "reclass": (87, "4b90da3bcd2f2450"),
         "rledger": (294, "747cdb56819da766"), "usage": (134, "a4ef4d00cc908924"),
         "watch": (192, "e4800991a50f3707"), "planvs": (125, "b193cf198d5975c7"),
     },
     "giant_procurement": {
         "attrib": (3, "f77f2830ef44df9f"), "chain": (1483, "17e55edc51ed3706"),
-        "exception": (2, "635263fdeb4ddacc"), "lledger": (1483, "a93eeb4dccddc3db"),
+        "exception": (2, "635263fdeb4ddacc"), "lledger": (1483, "11aedebaab7b4af0"),
         "movement": (1, "e888732abb0b5eb0"), "oarkey": (1, "34de90e00df89cf2"),
         "reclass": (1, "796ae91ff3f6fa23"), "rledger": (3, "3e636498cefa3ea8"),
         "usage": (1, "ed89b5283468661c"), "watch": (1, "5ed9bb4c2ae856d7"),
@@ -486,7 +489,7 @@ EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
     "giant_reservations": {
         "attrib": (4481, "172a43e538fb60e0"), "chain": (12, "441a698e4314a2ad"),
         "exception": (4435, "2a46b5743a731d76"), "grni": (6, "9dd86a35f35ae9f6"),
-        "lledger": (12, "ce8c39b941ae9377"),
+        "lledger": (12, "82095c661447c011"),
         "movement": (1, "145d27f46ec8471e"), "oarkey": (1, "702ce6717c803e00"),
         "reclass": (1, "99733b38e83d2030"), "rledger": (4481, "906ccc961d424b9e"),
         "usage": (1, "4db03c5965f3dd07"), "watch": (1, "aff23366b80b2fe5"),

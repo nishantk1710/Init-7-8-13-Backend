@@ -37,7 +37,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from app.initiatives.i13.ledger_compat import LegacyLedgerEntry, delivery_state
+from app.initiatives.i13.ledger_compat import LegacyLedgerEntry, delivery_state, procurement_view
 from app.initiatives.i13.models import (
     ConsumptionAttribution,
     ExceptionQueueItem,
@@ -62,7 +62,9 @@ from app.initiatives.i13.snapshot_store import codec
 #: 5 (2 Nov 2026): planvs, the acquired-vs-plan tab's plan and SAP reservation rows.
 #: 6 (2 Nov 2026): planvs statuses: awaiting reservation, not due yet, on, below
 #: or above plan.
-RECORD_LAYOUT = 6
+#: 7 (5 Nov 2026): lledger's utilisation status is NOT_TRACKED on a line no
+#: reservation raised (ledger_compat.procurement_view).
+RECORD_LAYOUT = 7
 
 WATCH = "watch"
 MOVEMENT = "movement"
@@ -173,7 +175,7 @@ def lledger(e: LegacyLedgerEntry, oar: bool, sort_date: date | None = None) -> R
     date (EBAN-BADAT), else the first goods receipt -- orders it newest first."""
     return Record(
         LLEDGER, e.material, e.plant, oar, _p(e), rec_key=e.ledger_id,
-        f1=e.procurement_status.value, f2=e.utilisation_status.value, f3=delivery_state(e),
+        f1=e.procurement_status.value, f2=procurement_view(e).utilisation_status.value, f3=delivery_state(e),
         d1=sort_date or e.first_gr_date, text1=e.linkage_status.value,
     )
 

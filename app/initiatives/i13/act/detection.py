@@ -4,14 +4,16 @@ deterministic (see ``tests/i13/test_act_detection.py``).
 
 Nothing here recomputes a W6.3 WATCH formula (months of cover, aging, GRNI,
 acquired-vs-plan) or a W6.2 ledger-stitching rule -- both are consumed as
-already-computed evidence (``WatchGrniSnapshot``, ``ReservationLedgerEntry``,
-``ConsumptionPlan``).
+already-computed evidence (``ReservationLedgerEntry``, ``ConsumptionPlan``).
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+from enum import Enum
 
 from app.initiatives.i13.act.domain import (
     NoPlanReason,
@@ -129,10 +131,58 @@ def quantity_override_business_key(record: QuantityDecisionRecord) -> str:
     return f"{record.material}-{record.plant}"
 
 
-def no_plan_grni_applies(no_plan_reason: NoPlanReason | None, grni_flag: bool | None) -> bool:
-    """The 30-day GRNI fallback for no-plan cases: reuses W6.3's
-    ``gr_not_issued_flag`` (see ``domain.WatchGrniSnapshot``) unchanged --
-    never a second GRNI calculation. ``grni_flag is None`` (no WATCH mart row
-    computed yet for this material/plant) is treated as "not applicable",
-    never coerced to ``True`` or ``False``."""
-    return no_plan_reason is not None and grni_flag is True
+class NotIssuedBasis(str, Enum):
+    #: The reservation raised its own PR, and the PO on it was received.
+    RECEIVED = "RECEIVED"
+    #: No receipt of its own: OAR stock was already on the shelf.
+    REQUIRED = "REQUIRED"
+
+
+@dataclass(frozen=True)
+class NotIssuedFinding:
+    basis: NotIssuedBasis
+    #: The goods receipt (RECEIVED) or the requirement date (REQUIRED).
+    since: date
+    days: int
+
+
+def detect_not_issued(
+    entries: Sequence[ReservationLedgerEntry],
+    *,
+    as_of: date,
+    threshold_days: int,
+    final_issued: bool = False,
+) -> NotIssuedFinding | None:
+    """NOT_ISSUED_30_DAYS for one reservation item: nothing issued against it
+    ``threshold_days`` after its goods arrived, or after it was required.
+
+    ``entries`` are the item's ledger entries (one per PO line its PR split
+    over). Every date here is SAP's own and every issue is posted against this
+    reservation (MSEG RSNUM/RSPOS) -- nothing is estimated:
+
+    * **RECEIVED** -- the reservation raised a PR (RESB-BANFN) and a PO on it
+      was first received (EKBE) at least ``threshold_days`` ago. Checked first:
+      goods bought for this reservation are the stronger finding.
+    * **REQUIRED** -- otherwise, its requirement date (RESB-BDTER) is at least
+      ``threshold_days`` ago. OAR is normally issued from stock already on the
+      shelf, so this is the usual case.
+
+    No finding when anything was issued, the item is deleted (RESB-XLOEK) or
+    closed for further issues (RESB-KZEAR): there is nothing left to chase.
+    """
+    if not entries or final_issued:
+        return None
+    if any(entry.reservation_deleted for entry in entries):
+        return None
+    if any(entry.issued_quantity > 0 for entry in entries):
+        return None
+    received = [entry.first_gr_date for entry in entries if entry.po_number and entry.first_gr_date]
+    if received:
+        since = min(received)
+        days = (as_of - since).days
+        return NotIssuedFinding(NotIssuedBasis.RECEIVED, since, days) if days >= threshold_days else None
+    required = entries[0].requirement_date
+    if required is None:
+        return None
+    days = (as_of - required).days
+    return NotIssuedFinding(NotIssuedBasis.REQUIRED, required, days) if days >= threshold_days else None

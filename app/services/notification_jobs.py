@@ -159,7 +159,7 @@ def _detect_everything(settings, *, session_factory, now: datetime) -> str:
         logger.exception("I13 detection failed; nothing from this run was saved")
         raise
     _last_detection_date = now.date()
-    scope = ", ".join(sorted(t.value for t in types)) if types else "all types"
+    scope = "all types" if types is None else ", ".join(sorted(t.value for t in types)) or "no types"
     return f"{result.created} created, {result.reused} kept, {result.resolved} resolved, {result.routed} routed ({scope})"
 
 
