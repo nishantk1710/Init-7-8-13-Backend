@@ -581,6 +581,7 @@ def detect_exceptions(
     types: Collection[ExceptionType] | None = None,
     not_issued_days: int = 30,
     final_issued: Collection[tuple[str, str]] = frozenset(),
+    no_plan_eligible: Collection[tuple[str, str]] | None = None,
 ) -> DetectionRunResult:
     """Run PLAN_BREACH, NO_PLAN, NOT_ISSUED_30_DAYS and QUANTITY_OVERRIDE
     detection for the given already-fetched evidence, and persist/update/resolve
@@ -607,6 +608,12 @@ def detect_exceptions(
     ``not_issued_days`` is NOT_ISSUED_30_DAYS's threshold, and ``final_issued``
     the reservation items SAP has closed for further issues (RESB-KZEAR),
     which it never chases (:func:`detection.detect_not_issued`).
+
+    ``no_plan_eligible`` is the reservation items NO_PLAN may be raised for --
+    those made since the assistant's go-live (``I13_ASSISTANT_GO_LIVE_DATE``,
+    :func:`app.initiatives.i13.act_runner.no_plan_eligible`). Anything older was
+    reserved before the assistant existed and is not a breach; an open NO_PLAN
+    on one is resolved. ``None`` is every reservation item.
     """
 
     def wanted(exception_type: ExceptionType) -> bool:
@@ -692,6 +699,9 @@ def detect_exceptions(
             # RESB.XLOEK: not a live demand. Clearing the reason makes NO_PLAN's
             # condition false, so an exception raised before the deletion is
             # resolved by this run rather than left open.
+            no_plan_reason = None
+        if no_plan_eligible is not None and (entry.reservation_number, entry.reservation_item) not in no_plan_eligible:
+            # Reserved before the assistant's go-live: nobody could have used it.
             no_plan_reason = None
 
         evidence: dict[str, str] = {
