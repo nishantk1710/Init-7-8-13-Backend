@@ -18,7 +18,10 @@ from typing import Any
 
 from app.initiatives.i7.contracts import Criticality
 from app.initiatives.i7.contracts.enums import ScopeDecision
+from app.initiatives.i7.contracts.recommendation import RecommendationFactor
+from app.initiatives.i7.inventory import own_consumption as own_consumption_module
 from app.initiatives.i7.inventory import service_level as service_level_module
+from app.initiatives.i7.inventory.own_consumption import OwnConsumptionOutcome, OwnConsumptionResult
 from app.initiatives.i7.oar import demand_check
 from app.initiatives.i7.recommendations import explanation
 from app.initiatives.i7.recommendations.conversion import evaluate as evaluate_conversion
@@ -362,14 +365,83 @@ def _criticality_tier(raw: str | None) -> Criticality | None:
         return None
 
 
-def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommendation:
+def _consumption_factors(result: OwnConsumptionResult) -> tuple[RecommendationFactor, ...]:
+    """The plain-language drivers of a consumption-based estimate, each from a value the module computed."""
+    factors = [
+        RecommendationFactor(
+            label="Estimated from its own consumption",
+            detail=(
+                "No similar materials could be used for this ordered-on-demand material, so its stock "
+                "levels are worked out from its own recent consumption."
+            ),
+        ),
+        RecommendationFactor(
+            label="Consumption window",
+            detail=(
+                f"{result.window_months} complete months, {result.window_start:%d %b %Y} to "
+                f"{result.window_end:%d %b %Y} ({result.window_days} days): {result.total_consumption:.0f} "
+                f"units used, in {result.active_months} of {result.window_months} months."
+            ),
+        ),
+        RecommendationFactor(
+            label="Safety days",
+            detail=(
+                f"{result.safety_days:.1f} days of cover for a {result.service_level:.0%} service level "
+                f"(demand variability {result.cv:.2f}, lead time {result.lead_time_days:.0f} days)."
+            ),
+        ),
+    ]
+    if result.high_safety_stock:
+        factors.append(
+            RecommendationFactor(
+                label="Review: high safety stock",
+                detail=(
+                    f"{own_consumption_module.HIGH_SAFETY_STOCK_FLAG}. Safety stock {result.safety_stock} "
+                    f"units is {result.safety_days:.0f} days of use. The calculated values are shown as "
+                    "they are; a planner should check them before they are used."
+                ),
+            )
+        )
+    factors.append(
+        RecommendationFactor(
+            label="Confidence",
+            detail=f"{result.confidence.capitalize()}: {result.confidence_basis}.",
+        )
+    )
+    return tuple(factors)
+
+
+def _manual_review_reason(similarity_reason: str | None, own: OwnConsumptionResult | None) -> str:
+    """The reason text for an eligible material that neither method could size."""
+    parts = [own_consumption_module.MANUAL_REVIEW_REASON]
+    detail = []
+    if similarity_reason:
+        detail.append(f"similarity: {similarity_reason}")
+    if own is not None:
+        detail.append(f"own consumption: {own.status.value} ({own.detail})")
+    if detail:
+        parts.append("; ".join(detail))
+    return " | ".join(parts)[:500]
+
+
+def build_oar_recommendation(
+    row: Any, policy: PolicyDocument, own_consumption: OwnConsumptionOutcome | None = None
+) -> BuiltRecommendation:
     """A cold-start material with Phase 6 similarity evidence.
 
     ``row`` is the joined Phase 3/6 record from
     :func:`app.initiatives.i7.recommendations.repository.load_oar_inputs`.
+
+    ``own_consumption`` is present only when the own-consumption fallback is switched on and the material-plant
+    passed the Min-Max conversion eligibility rule. The order is then: the similarity estimate when it
+    succeeded (unchanged, only tagged ``SIMILARITY_BASED``); otherwise the own-consumption estimate when it
+    succeeded; otherwise manual review. ``None`` is exactly the behaviour without the fallback.
     """
     has_neighbours = row.neighbour_count and row.neighbour_count > 0
     estimate_ok = row.estimate_status == "SUCCESS"
+    own_result = own_consumption.result if own_consumption is not None else None
+    use_consumption = (not estimate_ok) and own_result is not None and own_result.succeeded
+    manual_review = own_consumption is not None and not estimate_ok and not use_consumption
 
     # Similarity evidence being available is a different fact from the
     # recommendation being reviewable. A human can see *why* a material is
@@ -404,6 +476,14 @@ def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommend
             else row.status or "NO_ELIGIBLE_NEIGHBORS"
         )
 
+    if use_consumption:
+        # The similarity engine found nothing reliable, and the material-plant's own consumption is enough.
+        status = LifecycleStatus.READY_FOR_REVIEW
+        blocking_reason = None
+    elif manual_review:
+        # Neither method could size an eligible material-plant: say so in the words the planners expect.
+        blocking_reason = _manual_review_reason(blocking_reason, own_result)
+
     trace: list[tuple[str, str]] = [
         ("candidates_considered", str(row.candidates_considered)),
         ("eligible_candidates", str(row.eligible_candidates)),
@@ -430,33 +510,70 @@ def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommend
             ).trace_entries()
         )
 
+    if own_consumption is not None:
+        # Which method produced the numbers, on every eligible material-plant the fallback is switched on for.
+        if estimate_ok:
+            trace.append(("estimation_method", own_consumption_module.SIMILARITY_METHOD))
+        elif use_consumption:
+            trace.extend(own_consumption_module.trace_entries(own_result))
+        else:
+            trace.append(("estimation_method", "NONE"))
+            trace.append(("manual_review", own_consumption_module.MANUAL_REVIEW_REASON))
+            if own_result is not None:
+                trace.append(("own_consumption_status", own_result.status.value))
+                trace.append(("own_consumption_detail", own_result.detail))
+
     # This path is chosen by cold-start history, not by MRP type, so a row here
     # is not necessarily OAR -- conversion_for reads Stage 1's verdict.
     conversion = conversion_for(row, policy)
 
+    # The numbers recommended: the similarity estimate when it succeeded, else the own-consumption estimate
+    # when that did, else none. Never a blend of the two.
+    if estimate_ok:
+        rec_ss, rec_rop, rec_max = row.oar_safety_stock, row.oar_rop, row.oar_max_stock
+    elif use_consumption:
+        rec_ss = Decimal(own_result.safety_stock)
+        rec_rop = Decimal(own_result.rop)
+        rec_max = Decimal(own_result.max_stock)
+    else:
+        rec_ss = rec_rop = rec_max = None
+
     impact = explanation.expected_impact(
         current_ss=row.current_safety_stock,
-        recommended_ss=row.oar_safety_stock if estimate_ok else None,
+        recommended_ss=rec_ss,
         current_rop=row.current_reorder_point,
-        recommended_rop=row.oar_rop if estimate_ok else None,
+        recommended_rop=rec_rop,
         current_max=row.current_maximum_stock,
-        recommended_max=row.oar_max_stock if estimate_ok else None,
+        recommended_max=rec_max,
         unit_price=row.unit_price,
         holding_cost_rate=policy.max_stock.holding_cost_rate,
     )
 
-    factors = explanation.build_factors(
-        demand_class=row.demand_class,
-        baseline_model=None,
-        lead_time_detail=None,
-        service_level_configured=policy.service_level.is_configured,
-        recommended_rop=row.oar_rop if estimate_ok else None,
-        current_rop=row.current_reorder_point,
-        is_oar=True,
-        history_status=row.history_status,
-        oar_neighbour_count=row.neighbour_count,
-        oar_confidence=row.confidence,
-    )
+    if use_consumption:
+        factors = _consumption_factors(own_result)
+    else:
+        factors = explanation.build_factors(
+            demand_class=row.demand_class,
+            baseline_model=None,
+            lead_time_detail=None,
+            service_level_configured=policy.service_level.is_configured,
+            recommended_rop=rec_rop,
+            current_rop=row.current_reorder_point,
+            is_oar=True,
+            history_status=row.history_status,
+            oar_neighbour_count=row.neighbour_count,
+            oar_confidence=row.confidence,
+        )
+        if manual_review:
+            factors = factors + (
+                RecommendationFactor(
+                    label="Manual review required",
+                    detail=(
+                        f"{own_consumption_module.MANUAL_REVIEW_REASON}. No similar material gave a "
+                        "reliable estimate, and its own recent consumption could not size it."
+                    ),
+                ),
+            )
 
     tier_service = service_level_module.resolve(
         policy.service_level, _criticality_tier(row.criticality), None
@@ -473,15 +590,21 @@ def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommend
         current_safety_stock=row.current_safety_stock,
         current_rop=row.current_reorder_point,
         current_max_stock=row.current_maximum_stock,
-        recommended_safety_stock=row.oar_safety_stock if estimate_ok else None,
-        recommended_rop=row.oar_rop if estimate_ok else None,
-        recommended_max_stock=row.oar_max_stock if estimate_ok else None,
+        recommended_safety_stock=rec_ss,
+        recommended_rop=rec_rop,
+        recommended_max_stock=rec_max,
         baseline_model=None,
         forecast_rate=None,
-        lead_time_method=None,
-        safety_stock_method="similarity_weighted" if estimate_ok else None,
-        max_stock_strategy=None,
-        confidence=row.confidence,
+        lead_time_method=own_result.lead_time_method if use_consumption else None,
+        safety_stock_method=(
+            "similarity_weighted"
+            if estimate_ok
+            else own_consumption_module.SAFETY_STOCK_METHOD if use_consumption else None
+        ),
+        max_stock_strategy=own_consumption_module.MAX_STOCK_STRATEGY if use_consumption else None,
+        # Separate from the formulas: the consumption estimate has its own confidence grade, the similarity
+        # one keeps the engine's.
+        confidence=own_result.confidence if use_consumption else row.confidence,
         oar_neighbour_count=row.neighbour_count,
         oar_best_similarity=row.best_similarity,
         # circuit and lead time are Phase 5 outputs; an OAR/cold-start material
@@ -496,7 +619,7 @@ def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommend
         # OAR estimate is similarity-weighted and did not use it.
         circuit=None,
         unit_price=row.unit_price,
-        lead_time_days=None,
+        lead_time_days=own_result.lead_time_days if use_consumption else None,
         lead_time_variance_days=None,
         service_level=tier_service.service_level,
         z_factor=tier_service.z_factor,

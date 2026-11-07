@@ -88,6 +88,8 @@ def build_index(
         identity_evidence_features=tuple(similarity.identity_evidence_features),
         embeddings=embeddings,
         text_weights=(float(similarity.text_embedding_weight), float(similarity.text_fuzzy_weight)),
+        # Which donor tiers each target tier may borrow from (the one-way NORMAL rule in the default policy).
+        donor_tiers=similarity.donor_tier_map(),
         # The oar-similarity-8/9 floor applies only with identity validation off; with it on, the
         # identity stage's own config does (and carries the same baseline floor for other-group donors).
         identity_text_floor=(
