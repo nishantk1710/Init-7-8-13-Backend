@@ -82,6 +82,16 @@ VALUE_CHANGE = case(
     else_=None,
 )
 
+# Where a row sits in the value-change order: decreases (value released) first, then increases (value tied up),
+# then no change, then rows with no figure. Within a group, the biggest amount first (VALUE_CHANGE_SIZE).
+VALUE_CHANGE_GROUP = case(
+    (VALUE_CHANGE > 0, 0),
+    (VALUE_CHANGE < 0, 1),
+    (VALUE_CHANGE == 0, 2),
+    else_=3,
+)
+VALUE_CHANGE_SIZE = case((VALUE_CHANGE < 0, -VALUE_CHANGE), else_=VALUE_CHANGE)
+
 SORT_FIELDS: dict[str, "object"] = {
     "value_change": VALUE_CHANGE,
     "generated_at": Recommendation.generated_at,
@@ -632,7 +642,16 @@ def list_recommendations(
     # descending page and an ascending page never interleave the same tied
     # group differently.
     sort_column = SORT_FIELDS[sort]
-    order = (sort_column.desc(), Recommendation.id.desc()) if sort_desc else (sort_column, Recommendation.id)
+    if sort == "value_change":
+        # Decreases first, biggest first; then increases, biggest first; then no change; then no figure.
+        # ``sort_desc`` is the direction the table asks for; ascending is the exact reverse.
+        order = (
+            (VALUE_CHANGE_GROUP, VALUE_CHANGE_SIZE.desc(), Recommendation.id.desc())
+            if sort_desc
+            else (VALUE_CHANGE_GROUP.desc(), VALUE_CHANGE_SIZE, Recommendation.id)
+        )
+    else:
+        order = (sort_column.desc(), Recommendation.id.desc()) if sort_desc else (sort_column, Recommendation.id)
     page_ids = session.execute(
         base.order_by(*order).offset((page - 1) * page_size).limit(page_size)
     ).scalars().all()
