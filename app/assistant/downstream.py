@@ -97,7 +97,7 @@ def apply_capture(
 
     Returns what happened, for the log and for tests. Commits its own work.
     """
-    from app.initiatives.i13.act_runner import run_detection
+    from app.initiatives.i13.act_runner import detection_types, run_detection
     from app.initiatives.i13.config import get_i13_config
     from app.initiatives.i13.snapshot import refresh_key, serving_snapshot
 
@@ -119,6 +119,9 @@ def apply_capture(
             material=material,
             plant=plant,
             snapshot=serving_snapshot(db),
+            # The same types as the nightly run: a capture must not raise a
+            # type the deployment has switched off.
+            types=detection_types(settings.i13_detection_types),
         )
         db.commit()
         outcome["detection"] = result

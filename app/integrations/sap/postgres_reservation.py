@@ -237,6 +237,51 @@ def _with_uat_overlay(
     return rows
 
 
+def reservation_keys_since(
+    db: Session, since: date, *, material: str | None = None, plant: str | None = None
+) -> frozenset[tuple[str, str]]:
+    """(reservation, item) of every reservation made on or after ``since``.
+
+    Made = RESB-CRDAT, its creation date. Where SAP sends none (no RKPF-RSDAT
+    and no order date, or an extract without the column) the requirement date
+    stands in, as it does for the session-compliance count. In UAT, a
+    simulated reservation is made the day it was simulated.
+    """
+    params: dict[str, str] = {"since": since.isoformat()}
+    extra = ""
+    if material:
+        extra += " AND material = :material"
+        params["material"] = material
+    if plant:
+        extra += " AND plant = :plant"
+        params["plant"] = plant
+    query = text(
+        "SELECT reservation, item_no_stock_transfer_reserv FROM n_resb "
+        f"WHERE material <> '' AND plant <> '' AND {_PLANT_SCOPE}{extra} "
+        "AND (created_on >= :since OR (created_on IS NULL AND requirement_date >= :since))"
+    )
+    keys = {
+        (number, item)
+        for number, item in ((_text_or_none(r[0]), _text_or_none(r[1])) for r in db.execute(query, params).fetchall())
+        if number and item
+    }
+
+    from app.core.config import get_settings
+
+    if get_settings().i13_uat_simulation_enabled:
+        from sqlalchemy import select
+
+        from app.models.i13_session_link import UatReservationSgtxt
+
+        for u in db.execute(select(UatReservationSgtxt).where(UatReservationSgtxt.simulated)).scalars():
+            if (material and u.material != material) or (plant and u.plant != plant):
+                continue
+            made = u.created_at.date() if u.created_at is not None else date.today()
+            if made >= since:
+                keys.add((u.reservation_number, u.reservation_item))
+    return frozenset(keys)
+
+
 # --- W6.2 §9: goods issue -> Reservation, the strong GI link ----------------
 #
 # Measured against this dataset: raw_mseg.reservation is populated on 91.2%

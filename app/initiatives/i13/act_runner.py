@@ -20,7 +20,7 @@ which is what makes it cheap enough to run after every assistant capture.
 from __future__ import annotations
 
 from collections.abc import Collection
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -56,7 +56,7 @@ from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.integrations.notifications.service import SharedNotificationPort
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
-from app.integrations.sap.postgres_reservation import PostgresReservationRepository
+from app.integrations.sap.postgres_reservation import PostgresReservationRepository, reservation_keys_since
 
 
 logger = get_logger(__name__)
@@ -127,6 +127,37 @@ def detection_types(raw: str) -> frozenset[ExceptionType] | None:
     return frozenset(ExceptionType[name] for name in names)
 
 
+def no_plan_cutoff(raw: str) -> date | None:
+    """``I13_ASSISTANT_GO_LIVE_DATE`` as a date: from when a reservation made
+    without the assistant is a Non-AI exception. Empty is ``None`` -- not yet
+    decided, so Non-AI raises nothing. Not the session screen's fallback (the
+    first session's day): on non-prod that is weeks before any real go-live."""
+    raw = (raw or "").strip()
+    return date.fromisoformat(raw) if raw else None
+
+
+def no_plan_eligible(
+    db: Session, types: Collection[ExceptionType] | None, *, material: str | None, plant: str | None
+) -> frozenset[tuple[str, str]] | None:
+    """The reservation items NO_PLAN may be raised for in this run.
+
+    Those made on or after the go-live cutoff (:func:`no_plan_cutoff`); none
+    while it is unset. ``None`` only when the run does not evaluate NO_PLAN at
+    all, so nothing is read for it.
+    """
+    if types is not None and ExceptionType.NO_PLAN not in types:
+        return None
+    from app.core.config import get_settings
+
+    cutoff = no_plan_cutoff(get_settings().i13_assistant_go_live_date)
+    if cutoff is None:
+        logger.info("I13 detection: I13_ASSISTANT_GO_LIVE_DATE is not set, so no Non-AI exception is raised")
+        return frozenset()
+    keys = reservation_keys_since(db, cutoff, material=material, plant=plant)
+    logger.info("I13 detection: %d reservation items made since %s can raise Non-AI", len(keys), cutoff)
+    return keys
+
+
 def run_detection(
     db: Session,
     config: I13Config,
@@ -141,14 +172,18 @@ def run_detection(
     """Gather detection's evidence and run it. The caller commits.
 
     ``types`` limits the run to those exception types -- see
-    :func:`detection_types`; ``None`` (the capture and manual runs) is every type.
+    :func:`detection_types`; ``None`` (the manual run) is every type. Non-AI
+    is raised only for reservations made since the go-live cutoff
+    (:func:`no_plan_eligible`), whoever runs it.
     """
     retired = retire_no_plan_grni(as_of_time=as_of_time, repository=SqlExceptionRepository(db))
     if retired:
         logger.info("I13 detection: resolved %d retired NO_PLAN_GRNI exceptions", retired)
+    eligible = no_plan_eligible(db, types, material=material, plant=plant)
     if isinstance(snapshot, SqlSnapshot):
         return _run_detection_stored(
-            db, config, snapshot, as_of_time=as_of_time, material=material, plant=plant, types=types
+            db, config, snapshot, as_of_time=as_of_time, material=material, plant=plant, types=types,
+            no_plan_eligible=eligible,
         )
     wanted = _in_scope(material, plant)
     reservation_repo = PostgresReservationRepository(db)
@@ -218,6 +253,7 @@ def run_detection(
         types=types,
         not_issued_days=config.watch.gr_not_issued_threshold_days,
         final_issued=_final_issued(reservation_rows),
+        no_plan_eligible=eligible,
     )
 
 
@@ -249,6 +285,7 @@ def _run_detection_stored(
     material: str | None,
     plant: str | None,
     types: Collection[ExceptionType] | None = None,
+    no_plan_eligible: Collection[tuple[str, str]] | None = None,
 ) -> DetectionRunResult:
     """:func:`run_detection` over the SQL store, one slice of materials at a time.
 
@@ -313,6 +350,7 @@ def _run_detection_stored(
             types=types,
             not_issued_days=config.watch.gr_not_issued_threshold_days,
             final_issued=_final_issued(reservation_rows),
+            no_plan_eligible=no_plan_eligible,
         )
         for name in totals:
             totals[name] += getattr(result, name)

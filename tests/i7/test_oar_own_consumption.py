@@ -173,27 +173,49 @@ def test_a_similarity_estimate_is_never_replaced_by_the_consumption_one(window) 
 
 
 def test_thin_consumption_with_neighbours_still_uses_similarity(window) -> None:
-    window({("5000016353", "1300"): monthly(m07=19)})  # one active month: too thin for the fallback
+    window({("5000016353", "1300"): monthly(m07=19)})  # one active month: thin, but similarity still wins
     row = similarity_row()
     built = builder.build_oar_recommendation(row, POLICY, outcomes_for([row])[key(row)])
     assert built.safety_stock_method == "similarity_weighted"
     assert built.recommended_rop == Decimal(20)
 
 
-# --- 4. insufficient consumption, no neighbours: manual review ----------------------------------
+# --- 4. thin consumption (1 or 2 active months), no neighbours: sized, graded LOW ---------------------
 
 
-def test_thin_consumption_and_no_neighbours_is_manual_review(window) -> None:
-    window({("5000050697", "1300"): monthly(m07=120)})
+def test_the_minimum_active_months_rule_is_gone() -> None:
+    assert not hasattr(OwnConsumptionStatus, "INSUFFICIENT_HISTORY")
+    assert not hasattr(OwnConsumptionPolicy(), "minimum_active_months")
+
+
+@pytest.mark.parametrize("values, active", [(monthly(m07=120), 1), (monthly(m05=60, m09=60), 2)])
+def test_one_or_two_active_months_still_get_values_with_low_confidence(window, values, active) -> None:
+    window({("5000050697", "1300"): values})
     row = oar_row(sap_material_number="5000050697")
-    built = builder.build_oar_recommendation(row, POLICY, outcomes_for([row])[key(row)])
+    outcome = outcomes_for([row])[key(row)]
 
-    assert built.status is LifecycleStatus.NOT_EVALUABLE
-    assert built.blocking_reason.startswith(oc.MANUAL_REVIEW_REASON)
-    assert "INSUFFICIENT_HISTORY" in built.blocking_reason
-    assert built.recommended_safety_stock is None and built.recommended_rop is None
-    assert dict(built.calculation_trace)["estimation_method"] == "NONE"
-    assert any(f.label == "Manual review required" for f in built.factors)
+    assert outcome.result.status is OwnConsumptionStatus.SUCCESS
+    assert outcome.result.active_months == active
+    built = builder.build_oar_recommendation(row, POLICY, outcome)
+
+    assert built.status is LifecycleStatus.READY_FOR_REVIEW
+    assert built.blocking_reason is None
+    assert built.recommended_safety_stock is not None and built.recommended_rop is not None
+    assert built.recommended_max_stock is not None
+    assert built.safety_stock_method == "consumption_based"
+    assert built.confidence == "LOW"
+    assert dict(built.calculation_trace)["estimation_method"] == "CONSUMPTION_BASED"
+
+
+def test_history_length_only_grades_confidence_it_never_blocks() -> None:
+    steady4 = monthly(m05=10, m06=11, m07=10, m08=11)
+    steady6 = monthly(m05=10, m06=11, m07=10, m08=11, m09=10, m10=11)
+    rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+    thin, four, six = evaluate(monthly(m07=120)), evaluate(steady4), evaluate(steady6)
+
+    assert thin.status is OwnConsumptionStatus.SUCCESS and thin.confidence == "LOW"
+    assert four.confidence != "LOW"  # 4 active months of steady demand is fair, not weak
+    assert rank[six.confidence] >= rank[four.confidence] > rank[thin.confidence]
 
 
 # --- 5 and 6. zero consumption on CRITICAL and IMPACT -----------------------------------------------
@@ -228,7 +250,7 @@ def test_a_zero_consumption_spare_with_a_similarity_estimate_keeps_it(window, ti
 
 def test_months_with_no_consumption_count_as_zero_in_the_statistics() -> None:
     values = monthly(m05=10, m08=10)  # 10, 0, 0, 10, 0, 0
-    result = evaluate(values, own_policy=OwnConsumptionPolicy(minimum_active_months=2))
+    result = evaluate(values)
 
     assert result.monthly_values == tuple(Decimal(v) for v in (10, 0, 0, 10, 0, 0))
     assert result.total_consumption == 20
@@ -282,7 +304,7 @@ def test_a_zero_mean_is_handled_without_dividing_by_zero() -> None:
 
 def test_safety_days_above_the_limit_are_flagged_and_the_values_are_kept(window) -> None:
     single_burst = monthly(m07=100)  # one active month of six: very erratic
-    own = OwnConsumptionPolicy(minimum_active_months=1)
+    own = OwnConsumptionPolicy()
     result = evaluate(single_burst, days=21, own_policy=own)
 
     assert result.safety_days > 45
@@ -302,7 +324,7 @@ def test_safety_days_above_the_limit_are_flagged_and_the_values_are_kept(window)
 
 
 def test_safety_stock_above_three_times_lead_time_demand_is_flagged_on_its_own() -> None:
-    own = OwnConsumptionPolicy(minimum_active_months=1)
+    own = OwnConsumptionPolicy()
     result = evaluate(monthly(m07=60), days=7, own_policy=own)
     lead_time_demand = result.adc * result.lead_time_days
 
