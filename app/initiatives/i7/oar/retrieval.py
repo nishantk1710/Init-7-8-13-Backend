@@ -80,7 +80,7 @@ import numpy as np
 
 from app.initiatives.i7.oar import text_match, text_similarity
 from app.initiatives.i7.oar.business_similarity import BUSINESS_CATEGORICAL_FEATURES, log_price
-from app.initiatives.i7.oar.eligibility import DonorTiers, allowed_donor_tiers, material_types_conflict
+from app.initiatives.i7.oar.eligibility import material_types_conflict
 from app.initiatives.i7.oar.identity import DescriptionProfile, EMPTY_PROFILE, IdentityConfig
 from app.initiatives.i7.oar.structured_similarity import CATEGORICAL_FEATURES
 from app.initiatives.i7.oar.types import CandidateAttributes, EligibilityRejection
@@ -163,13 +163,9 @@ class PopulationProfile:
     """
 
     def __init__(
-        self,
-        population: Sequence[CandidateAttributes],
-        minimum_history_months: int,
-        donor_tiers: DonorTiers | None = None,
+        self, population: Sequence[CandidateAttributes], minimum_history_months: int
     ) -> None:
         self.minimum_history_months = minimum_history_months
-        self.donor_tiers = donor_tiers
         self.total = len(population)
         self.missing_criticality = 0
         self.by_criticality: dict[str, dict[str | None, Counter]] = {}
@@ -191,7 +187,7 @@ class PopulationProfile:
             return EligibilityRejection.CRITICALITY_MISSING_TARGET.value
         if candidate.criticality is None:
             return EligibilityRejection.CRITICALITY_MISSING_CANDIDATE.value
-        if candidate.criticality not in allowed_donor_tiers(target.criticality, self.donor_tiers):
+        if candidate.criticality != target.criticality:
             return EligibilityRejection.CRITICALITY_MISMATCH.value
         if material_types_conflict(target.material_type, candidate.material_type):
             return EligibilityRejection.MATERIAL_TYPE_MISMATCH.value
@@ -206,11 +202,7 @@ class PopulationProfile:
             counts[EligibilityRejection.CRITICALITY_MISSING_CANDIDATE.value] = (
                 self.missing_criticality
             )
-            # The donors this target may borrow from: its own tier, plus whatever the policy widens it to.
-            same: dict[str | None, Counter] = {}
-            for tier in allowed_donor_tiers(target.criticality, self.donor_tiers):
-                for material_type, counter in self.by_criticality.get(tier, {}).items():
-                    same.setdefault(material_type, Counter()).update(counter)
+            same = self.by_criticality.get(target.criticality, {})
             same_total = sum(sum(counter.values()) for counter in same.values())
             counts[EligibilityRejection.CRITICALITY_MISMATCH.value] = (
                 self.total - self.missing_criticality - same_total
@@ -473,7 +465,6 @@ class DonorIndex:
         identity_text_floor: float | None = None,
         identity: IdentityConfig | None = None,
         text_weights: tuple[float, float] = (1.0, 0.0),
-        donor_tiers: DonorTiers | None = None,
     ) -> None:
         # (embedding, fuzzy): the text dimension is w_e x cosine + w_f x token_set_ratio / 100. (1, 0) is the
         # cosine alone, which is what a caller with no policy gets.
@@ -491,8 +482,7 @@ class DonorIndex:
         self.donor_count = len(unique)
         population = unique
         self.identity = identity
-        self.donor_tiers = donor_tiers
-        self.profile = PopulationProfile(population, minimum_history_months, donor_tiers)
+        self.profile = PopulationProfile(population, minimum_history_months)
         self.price_range = float(price_range) if price_range is not None and price_range > 0 else None
         self.weights = weights
         self.minimum_evidence_features = minimum_evidence_features
@@ -501,28 +491,18 @@ class DonorIndex:
         self.embeddings = embeddings
         self.vocabularies = {feature: _Vocabulary() for feature in _ENCODED}
 
-        # Eligible donors by their OWN tier first; a partition is then built per TARGET tier from the donor
-        # tiers that target may borrow from. With no widening each partition is one tier, as it always was;
-        # with it a NORMAL target's partition also holds the IMPACT, CRITICAL and INSURANCE donors, so a
-        # donor can sit in more than one partition (it is encoded once per partition it belongs to).
-        by_donor_tier: dict[str, list[CandidateAttributes]] = {}
+        grouped: dict[str, list[CandidateAttributes]] = {}
         for candidate in population:
             if candidate.criticality is None:
                 continue
             if _candidate_outcome(candidate, minimum_history_months) != _ELIGIBLE:
                 continue
-            by_donor_tier.setdefault(candidate.criticality, []).append(candidate)
+            grouped.setdefault(candidate.criticality, []).append(candidate)
 
-        target_tiers = sorted(set(by_donor_tier) | set(donor_tiers or ()))
-        self.partitions: dict[str, DonorPartition] = {}
-        for tier in target_tiers:
-            donors = [
-                donor
-                for donor_tier in sorted(allowed_donor_tiers(tier, donor_tiers))
-                for donor in by_donor_tier.get(donor_tier, [])
-            ]
-            if donors:
-                self.partitions[tier] = self._encode(tier, donors)
+        self.partitions: dict[str, DonorPartition] = {
+            criticality: self._encode(criticality, donors)
+            for criticality, donors in sorted(grouped.items())
+        }
 
     def _description_vector(self, description: str | None) -> np.ndarray | None:
         if self.embeddings is None:

@@ -28,12 +28,11 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.initiatives.i7.oar import exclusions as exclusions_module
 from app.initiatives.i7.oar import recalculate as recalculate_module
 from app.initiatives.i7.oar.types import EstimateStatus
 from app.initiatives.i7.policy import PolicyDocument
-from app.initiatives.i7.recommendations import builder, own_consumption_path, rationale, repository
+from app.initiatives.i7.recommendations import builder, rationale, repository
 from app.initiatives.i7.recommendations import service as recommendation_service
 from app.initiatives.i7.recommendations.types import LifecycleStatus
 from app.models.i7_oar import OarDonorExclusion, OarNeighbour, OarRun, OarTargetResult
@@ -187,12 +186,7 @@ def refresh_recommendation(
         raise OarExclusionError(
             409, "OAR_TARGET_MISSING", f"OAR run {row.oar_run_id} holds no result for {key[0]}/{key[1]}."
         )
-    # With the own-consumption fallback switched on, rebuild the way a generation run would, so a recommendation
-    # never changes method just because it was refreshed.
-    outcome = None
-    if get_settings().i7_oar_own_consumption_enabled:
-        outcome = own_consumption_path.evaluate_rows(session, [inputs[0]], policy).get(key)
-    built = builder.build_oar_recommendation(inputs[0], policy, outcome)
+    built = builder.build_oar_recommendation(inputs[0], policy)
     values = recommendation_service._to_row(built, rationale.generate_rationale(built))
 
     newest_snapshot = session.execute(

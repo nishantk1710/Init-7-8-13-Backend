@@ -40,7 +40,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
-from app.initiatives.i7.recommendations import builder, own_consumption_path, rationale, repository
+from app.initiatives.i7.recommendations import builder, rationale, repository
 from app.initiatives.i7.recommendations.builder import BuiltRecommendation
 from app.initiatives.i7.recommendations.types import RECOMMENDATION_FORMULA_VERSION
 from app.initiatives.i7.policy import PolicyDocument
@@ -204,10 +204,6 @@ def generate_recommendations(policy: PolicyDocument | None = None) -> Recommenda
     from app.initiatives.i7.policy.dev_fixtures import default_policy
 
     policy = policy or default_policy()
-    own_consumption_enabled = get_settings().i7_oar_own_consumption_enabled
-    if own_consumption_enabled:
-        # A distinct identity, so a run with the fallback is never reused as one without it (or the reverse).
-        policy = policy.model_copy(update={"policy_id": f"{policy.policy_id}+own-consumption"})
     session_factory = get_sessionmaker()
     result = RecommendationRunResult()
 
@@ -244,18 +240,8 @@ def generate_recommendations(policy: PolicyDocument | None = None) -> Recommenda
                     built.append(builder.build_normal_recommendation(row, policy))
 
             if oar_run_id is not None:
-                oar_rows = list(repository.load_oar_inputs(session, oar_run_id))
-                outcomes = (
-                    own_consumption_path.evaluate_rows(session, oar_rows, policy)
-                    if own_consumption_enabled
-                    else {}
-                )
-                for row in oar_rows:
-                    built.append(
-                        builder.build_oar_recommendation(
-                            row, policy, outcomes.get((row.sap_material_number, row.sap_plant_code))
-                        )
-                    )
+                for row in repository.load_oar_inputs(session, oar_run_id):
+                    built.append(builder.build_oar_recommendation(row, policy))
                 for row in repository.load_uncovered_oar_targets(session, oar_run_id):
                     built.append(builder.deferred_recommendation(row, policy))
 
