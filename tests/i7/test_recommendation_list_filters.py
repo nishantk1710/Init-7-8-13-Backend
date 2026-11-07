@@ -310,7 +310,7 @@ def test_value_change_sort_puts_the_biggest_release_first_then_increases_then_un
     ])
     db.commit()
     order = [item.material for item in by_value_change(db).items]
-    assert order[:4] == ["BIG_RELEASE", "SMALL_RELEASE", "UNCHANGED", "INCREASE"]
+    assert order[:4] == ["BIG_RELEASE", "SMALL_RELEASE", "INCREASE", "UNCHANGED"]
     assert set(order[4:]) == {"BLOCKED", "NO_IMPACT"}  # never read as 0: they come last
 
 
@@ -319,3 +319,17 @@ def test_value_change_sort_spans_every_page(db):
     db.add(priced("RELEASE", 50, 1))
     db.commit()
     assert by_value_change(db).items[0].material == "RELEASE"
+
+
+def test_value_change_sort_lists_every_decrease_first_then_the_increases_biggest_first(db):
+    db.add_all([
+        priced("UP_SMALL", 5, 6),     # -10
+        priced("UP_BIG", 5, 105),     # -1000
+        priced("UP_MID", 5, 25),      # -200
+        priced("DOWN_SMALL", 6, 5),   # +10
+        priced("DOWN_BIG", 105, 5),   # +1000
+        priced("DOWN_MID", 25, 5),    # +200
+    ])
+    db.commit()
+    order = [item.material for item in by_value_change(db).items]
+    assert order == ["DOWN_BIG", "DOWN_MID", "DOWN_SMALL", "UP_BIG", "UP_MID", "UP_SMALL"]
