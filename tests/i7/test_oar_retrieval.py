@@ -272,8 +272,7 @@ def test_the_shortlist_only_ever_contains_eligible_donors() -> None:
         shortlist = index.shortlist(partition, target, index.encode_target(target), None, TIGHT)
         for j in shortlist.indices:
             donor = partition.donors[j]
-            # The index follows the policy's donor-tier table (a NORMAL target also draws on higher tiers).
-            assert eligibility.reject_reason(target, donor, 12, DEV_POLICY.similarity.donor_tier_map()) is None
+            assert eligibility.reject_reason(target, donor, 12) is None
 
 
 def test_a_target_is_never_its_own_neighbour() -> None:

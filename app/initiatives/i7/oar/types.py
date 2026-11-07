@@ -22,15 +22,9 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import NamedTuple
 
-ALGORITHM_VERSION = "oar-similarity-13"
+ALGORITHM_VERSION = "oar-similarity-12"
 """Identifies the similarity implementation behind a stored result. Not a
 semantic version -- nothing here maintains a release contract.
-
-``oar-similarity-13`` against ``-12``: donor criticality is one-way wider for NORMAL targets
-(``SimilarityPolicy.donor_criticality_tiers``). A NORMAL target may borrow from NORMAL, IMPACT, CRITICAL and
-INSURANCE donors; IMPACT, CRITICAL and INSURANCE targets still borrow from their own tier only, and none may
-borrow from a lower one. Scoring, identity, floors and the estimate are unchanged, but a NORMAL target's
-candidate pool and neighbours can differ, so a run stored under ``-12`` is not reused.
 
 ``oar-similarity-12`` against ``-11``: HIGH confidence no longer requires a same-circuit neighbour
 (``ConfidencePolicy.oar_require_same_circuit_for_high``, now False). Circuit is not a data field anywhere, so with
