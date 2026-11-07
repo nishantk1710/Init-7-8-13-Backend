@@ -470,13 +470,17 @@ ALL = Batch("0", "9999999999")
 # stores utilisation NOT_TRACKED in its filter column (ledger_compat.
 # procurement_view, kinds.RECORD_LAYOUT 7). Same rows, same payloads.
 EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
+    # mixed, 7-Nov-2026: usage -12 (a reversal of an issue before the kept
+    # months no longer makes a month); movement/oarkey/reclass/watch: 13
+    # materials whose 262 took back only part of a 261 keep that issue as
+    # their last one (it was dropped whole).
     "mixed": {
         "attrib": (294, "214738b080d76802"), "chain": (286, "636c21f9a8b8679e"),
         "exception": (151, "46ce4895f8e71b5c"), "grni": (80, "cdbe217240794569"),
-        "lledger": (286, "8df6d11e71eae704"), "movement": (186, "085dd35e7ee606ce"),
-        "oarkey": (87, "cafeb8032728b5cb"), "reclass": (87, "4b90da3bcd2f2450"),
-        "rledger": (294, "747cdb56819da766"), "usage": (134, "a4ef4d00cc908924"),
-        "watch": (192, "e4800991a50f3707"), "planvs": (125, "b193cf198d5975c7"),
+        "lledger": (286, "8df6d11e71eae704"), "movement": (186, "455ab3f7e52a194f"),
+        "oarkey": (87, "2bdab53cb4c794cc"), "reclass": (87, "4a01e7d45b270f1e"),
+        "rledger": (294, "747cdb56819da766"), "usage": (122, "83e997f3ff745fac"),
+        "watch": (192, "2b87ac6dda0df2ba"), "planvs": (125, "b193cf198d5975c7"),
     },
     "giant_procurement": {
         "attrib": (3, "f77f2830ef44df9f"), "chain": (1483, "17e55edc51ed3706"),

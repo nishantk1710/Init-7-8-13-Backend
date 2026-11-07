@@ -39,11 +39,10 @@ from app.initiatives.i13.config import AgingThresholds
 from app.initiatives.i13.models import MovementMetrics
 from app.initiatives.i13.movements import (
     ISSUE_TYPES,
-    filter_by_window,
     last_unreversed_date,
     latest_movement_date,
-    net_event_count,
-    net_quantity,
+    movement_date,
+    standing_events,
 )
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
 
@@ -74,10 +73,17 @@ def compute_movement_metrics(
     last_issue_date = last_unreversed_date(movements, ISSUE_TYPES, as_of=as_of)
     days_since_last_issue = (as_of - last_issue_date).days if last_issue_date else None
 
+    # The issues posted in the window, less what their reversals took back --
+    # wherever the reversal was posted. Netting the window's rows instead let a
+    # reversal of an issue from before the window cut into the window's usage.
     window_start = months_before(as_of, window_months)
-    windowed = filter_by_window(movements, start=window_start, end=as_of)
-    consumption_count_12m = net_event_count(windowed, ISSUE_TYPES)
-    consumption_qty_12m = net_quantity(windowed, ISSUE_TYPES)
+    in_window = [
+        standing
+        for row, standing in standing_events(movements, ISSUE_TYPES, as_of=as_of)
+        if movement_date(row) >= window_start and standing > 0
+    ]
+    consumption_count_12m = len(in_window)
+    consumption_qty_12m = sum(in_window, Decimal(0))
 
     # W3.5 §10: classification is explicitly on days-since-last-ISSUE, not
     # days-since-last-movement -- a pure receipt does not reset the clock.

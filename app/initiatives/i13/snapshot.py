@@ -85,7 +85,7 @@ from app.initiatives.i13.models import (
     WatchMetric,
 )
 from app.initiatives.i13.movement_metrics import compute_all_movement_metrics
-from app.initiatives.i13.movements import ISSUE_TYPES, RECEIPT_TYPES, reversal_types_for
+from app.initiatives.i13.movements import ISSUE_TYPES, RECEIPT_TYPES, reversal_types_for, standing_events
 from app.initiatives.i13.plans import (
     ConsumptionPlan,
     load_captured_plans,
@@ -289,29 +289,34 @@ class I13Snapshot:
 
 
 def _monthly_consumption(movements: list[Row]) -> dict[Key, tuple[MonthlyConsumption, ...]]:
-    issue_reversals = reversal_types_for(ISSUE_TYPES)
-    receipt_reversals = reversal_types_for(RECEIPT_TYPES)
+    """Issues and receipts per material, plant and month of posting.
+
+    A reversal is taken off the movement it cancels (``standing_events``), not
+    off the month it was posted in, so no month goes negative and the last
+    month with an issue is the Consumption tab's last issue date (7-Nov-2026:
+    8000004187 showed -1 in five months, and an issue in October 2025 that
+    November's 262 cancelled). A month keeps its row while anything moved in
+    it, a fully reversed issue included, as before.
+    """
     issued: dict[tuple[str, str, str], Decimal] = defaultdict(lambda: Decimal("0"))
     issue_events: dict[tuple[str, str, str], int] = defaultdict(int)
     received: dict[tuple[str, str, str], Decimal] = defaultdict(lambda: Decimal("0"))
 
+    def bucket_of(row: Row) -> tuple[str, str, str]:
+        moved_on = row["BudatMkpf"]
+        return (row["Matnr"], row["Werks"], f"{moved_on.year:04d}-{moved_on.month:02d}")
+
+    by_key: dict[Key, list[Row]] = defaultdict(list)
     for row in movements:
-        moved_on = row.get("BudatMkpf")
-        if moved_on is None:
-            continue
-        bucket = (row["Matnr"], row["Werks"], f"{moved_on.year:04d}-{moved_on.month:02d}")
-        bwart = row.get("Bwart")
-        qty = row.get("Menge") or Decimal("0")
-        if bwart in ISSUE_TYPES:
-            issued[bucket] += qty
-            issue_events[bucket] += 1
-        elif bwart in issue_reversals:
-            issued[bucket] -= qty
-            issue_events[bucket] -= 1
-        elif bwart in RECEIPT_TYPES:
-            received[bucket] += qty
-        elif bwart in receipt_reversals:
-            received[bucket] -= qty
+        if row.get("BudatMkpf") is not None and row.get("Matnr") is not None:
+            by_key[(row["Matnr"], row["Werks"])].append(row)
+    for rows in by_key.values():
+        for row, standing in standing_events(rows, ISSUE_TYPES):
+            bucket = bucket_of(row)
+            issued[bucket] += standing
+            issue_events[bucket] += 1 if standing > 0 else 0
+        for row, standing in standing_events(rows, RECEIPT_TYPES):
+            received[bucket_of(row)] += standing
 
     series: dict[Key, list[MonthlyConsumption]] = defaultdict(list)
     for bucket in sorted(set(issued) | set(issue_events) | set(received)):
@@ -320,8 +325,7 @@ def _monthly_consumption(movements: list[Row]) -> dict[Key, tuple[MonthlyConsump
             MonthlyConsumption(
                 month=month,
                 issued_quantity=issued.get(bucket, Decimal("0")),
-                # Floored at zero per month, as net_event_count floors overall.
-                issue_count=max(issue_events.get(bucket, 0), 0),
+                issue_count=issue_events.get(bucket, 0),
                 received_quantity=received.get(bucket, Decimal("0")),
             )
         )
