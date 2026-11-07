@@ -21,8 +21,11 @@ from typing import NamedTuple
 
 from app.initiatives.i7.contracts.enums import RecommendationStatus
 
-RECOMMENDATION_FORMULA_VERSION = "i07-recommendation-5"
-"""Bumped from ``-4``: OAR -> Min-Max conversion eligibility is now usage > 4
+RECOMMENDATION_FORMULA_VERSION = "i07-recommendation-6"
+"""Bumped to ``-6`` so recommendations are regenerated after the own-consumption fallback stopped
+requiring consumption in 4 different months (rows keyed on ``-5`` are otherwise reused unchanged).
+
+Earlier, bumped from ``-4``: OAR -> Min-Max conversion eligibility is now usage > 4
 OR a CRITICAL / IMPACT / INSURANCE tier (was usage AND CRITICAL/IMPACT), and it
 is evaluated for every Stage 1 OAR material-plant -- standard-path
 recommendations included, not only cold-start ones. A material Stage 1 put
