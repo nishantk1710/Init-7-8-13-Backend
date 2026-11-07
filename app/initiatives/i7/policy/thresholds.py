@@ -439,11 +439,9 @@ class OwnConsumptionPolicy(BaseModel):
     progress is never part of it. Months with no consumption inside it count as zero; months outside the
     verified window are not observed and are never read as zero."""
 
-    confident_active_months: int = Field(default=4, ge=1)
-    """Months of the window with consumption above zero from which the history counts as fair for the
-    confidence grade. Fewer months make the history weak, so the estimate is graded LOW. It is NOT a gate:
-    a material-plant with consumption in even one month of the window is still sized, and a window with no
-    consumption at all is left to manual review (``ZERO_CONSUMPTION``)."""
+    minimum_active_months: int = Field(default=4, ge=1)
+    """Months of the window with consumption above zero. Fewer is an insufficient history: the estimate is
+    not made, and the material goes to manual review when the similarity engine found nothing either."""
 
     high_safety_days: float = Field(default=45.0, gt=0)
     high_safety_stock_lead_time_multiple: float = Field(default=3.0, gt=0)
@@ -459,8 +457,8 @@ class OwnConsumptionPolicy(BaseModel):
 
     @model_validator(mode="after")
     def _consistent(self) -> "OwnConsumptionPolicy":
-        if self.confident_active_months > self.window_months:
-            raise ValueError("confident_active_months cannot exceed window_months")
+        if self.minimum_active_months > self.window_months:
+            raise ValueError("minimum_active_months cannot exceed window_months")
         if self.high_confidence_maximum_cv > self.medium_confidence_maximum_cv:
             raise ValueError("high_confidence_maximum_cv cannot exceed medium_confidence_maximum_cv")
         return self

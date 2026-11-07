@@ -1,7 +1,7 @@
 """Safety stock, reorder point and maximum stock from a material-plant's OWN consumption.
 
 For an eligible OAR material-plant the similarity engine comes first. Only when it found no reliable
-estimate is this module asked, and only when the material-plant consumed something in the window. It is a
+estimate is this module asked, and only when the material-plant has enough recent consumption. It is a
 fallback: it never replaces a similarity result, and it is never applied to a non-OAR material (those are
 forecast, ``inventory.service``).
 
@@ -72,6 +72,9 @@ class OwnConsumptionStatus(StrEnum):
 
     NO_WINDOW = "NO_WINDOW"
     """The feature run recorded no usable demand window, or no consumption was supplied. Nothing is assumed."""
+
+    INSUFFICIENT_HISTORY = "INSUFFICIENT_HISTORY"
+    """Fewer active months than the policy requires, or too few months to measure variability."""
 
     ZERO_CONSUMPTION = "ZERO_CONSUMPTION"
     """Nothing was consumed in the window. The formulas do not apply (CV is undefined at a zero mean)."""
@@ -218,6 +221,13 @@ def evaluate(
             "no demand-based value is created for it",
             **window,
         )
+    if active < policy.minimum_active_months:
+        return OwnConsumptionResult(
+            status=OwnConsumptionStatus.INSUFFICIENT_HISTORY,
+            detail=f"consumption in {active} of the last {len(months)} months; "
+            f"at least {policy.minimum_active_months} are required",
+            **window,
+        )
     if not lead.is_available or lead.lt_avg_days is None or lead.lt_avg_days <= 0:
         return OwnConsumptionResult(
             status=OwnConsumptionStatus.LEAD_TIME_UNAVAILABLE,
@@ -304,21 +314,13 @@ def grade_confidence(
     reasons: list[str] = []
     levels: list[int] = []  # 2 strong, 1 fair, 0 weak
 
-    # History: every month of the window active is strong; enough months (policy.confident_active_months) is
-    # fair; fewer is weak, which grades the estimate LOW. Thin history does not stop an estimate -- it is what
-    # the LOW grade, and the review flag when the safety stock comes out large, are for.
+    # History: every month of the window active is strong; the minimum is fair.
     if active_months >= window_months:
         levels.append(2)
         reasons.append(f"consumption in all {window_months} months (strong)")
-    elif active_months >= policy.confident_active_months:
+    else:
         levels.append(1)
         reasons.append(f"consumption in {active_months} of {window_months} months (fair)")
-    else:
-        levels.append(0)
-        reasons.append(
-            f"consumption in only {active_months} of {window_months} months (weak: "
-            f"fewer than {policy.confident_active_months})"
-        )
 
     # Consistency of demand.
     strict = service_level is not None and service_level >= _STRICT_SERVICE_LEVEL
