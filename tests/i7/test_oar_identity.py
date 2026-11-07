@@ -44,7 +44,17 @@ def policy(**similarity) -> PolicyDocument:
         service_level=load_mock_service_level_policy(),
         max_stock=load_mock_max_stock_policy(),
         similarity=SimilarityPolicy(
-            **{"text_embedding_weight": 1.0, "text_fuzzy_weight": 0.0, **FLOORS, **similarity}
+            **{
+                "text_embedding_weight": 1.0,
+                "text_fuzzy_weight": 0.0,
+                # These tests account for the IDENTITY stage's refusals against a fixed decoy set, in which the
+                # CRITICAL donors are meant to fall to the criticality filter for a NORMAL target. Same-tier
+                # matching is pinned here so they keep testing that; the one-way donor-tier rule has its own
+                # tests (test_oar_cross_criticality.py).
+                "donor_criticality_tiers": (),
+                **FLOORS,
+                **similarity,
+            }
         ),  # injected cosines: the text score is the cosine alone unless a test says otherwise
     )
 

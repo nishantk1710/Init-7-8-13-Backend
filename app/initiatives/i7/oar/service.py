@@ -467,7 +467,10 @@ def evaluate_target(
     """
     candidate_population, duplicates = dedupe_donors(candidate_population)
     eligible, rejections = eligibility.filter_candidates(
-        target, candidate_population, policy.similarity.minimum_neighbour_history_months
+        target,
+        candidate_population,
+        policy.similarity.minimum_neighbour_history_months,
+        policy.similarity.donor_tier_map(),
     )
 
     scored = [

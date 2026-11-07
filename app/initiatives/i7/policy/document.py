@@ -37,6 +37,7 @@ from app.initiatives.i7.policy.thresholds import (
     HistoryGatePolicy,
     LeadTimePolicy,
     ModelAdoptionPolicy,
+    OwnConsumptionPolicy,
     SimilarityPolicy,
     current_conversion_trigger_policy,
 )
@@ -64,6 +65,7 @@ class PolicyDocument(BaseModel):
     similarity: SimilarityPolicy = Field(default_factory=SimilarityPolicy)
     confidence: ConfidencePolicy = Field(default_factory=ConfidencePolicy)
     demand_sanity: DemandSanityPolicy = Field(default_factory=DemandSanityPolicy)
+    own_consumption: OwnConsumptionPolicy = Field(default_factory=OwnConsumptionPolicy)
     lead_time: LeadTimePolicy = Field(default_factory=LeadTimePolicy)
     conversion_triggers: ConversionTriggerPolicy = Field(default_factory=current_conversion_trigger_policy)
     adoption: AdoptionPolicy = Field(default_factory=AdoptionPolicy)

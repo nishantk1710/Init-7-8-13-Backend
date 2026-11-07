@@ -194,6 +194,27 @@ def load_oar_inputs(session: Session, oar_run_id: int, target: tuple[str, str] |
     )
 
 
+_MONTHLY_CONSUMPTION_SQL = """
+    SELECT sap_material_number, sap_plant_code, period, SUM(quantity) AS quantity
+      FROM i7_staged_consumption
+     WHERE period >= :first_month AND period <= :last_month
+     GROUP BY sap_material_number, sap_plant_code, period
+"""
+# One grouped read of the window, not one per material-plant. Staging holds a row only for a month that had
+# movements, so a month with no row is a month with no consumption -- which is only a fact for months the
+# feature run verified complete (see recommendations.own_consumption_path).
+
+
+def load_monthly_consumption(session: Session, first_month, last_month) -> dict:
+    """``{(material, plant): {first-of-month: quantity}}`` for the months from ``first_month`` to ``last_month``."""
+    monthly: dict = {}
+    for row in session.execute(
+        text(_MONTHLY_CONSUMPTION_SQL), {"first_month": first_month, "last_month": last_month}
+    ):
+        monthly.setdefault((row.sap_material_number, row.sap_plant_code), {})[row.period] = row.quantity
+    return monthly
+
+
 def load_uncovered_oar_targets(session: Session, oar_run_id: int):
     """OAR material-plants with no Phase 6 result at all -- the feature
     store and OAR runs can drift apart if OAR has not been re-run since the
