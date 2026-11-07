@@ -40,7 +40,6 @@ from app.initiatives.i7.policy.thresholds import (
     HistoryGatePolicy,
     LeadTimePolicy,
     ModelAdoptionPolicy,
-    OwnConsumptionPolicy,
     SimilarityPolicy,
 )
 from app.initiatives.i7.policy.unresolved import (
@@ -63,7 +62,6 @@ __all__ = [
     "MaxStockStrategy",
     "ModelAdoptionPolicy",
     "OarPolicy",
-    "OwnConsumptionPolicy",
     "PolicyDocument",
     "PolicyVersionRef",
     "PredicateField",

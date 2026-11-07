@@ -200,59 +200,7 @@ class SimilarityPolicy(BaseModel):
     admission."""
 
     require_same_criticality: bool = True
-    """Hard constraint: a neighbour must share the criticality class -- except where
-    ``donor_criticality_tiers`` names a wider set for the target's tier."""
-
-    donor_criticality_tiers: tuple[tuple[str, tuple[str, ...]], ...] = (
-        (
-            CriticalityTier.NORMAL.value,
-            (
-                CriticalityTier.NORMAL.value,
-                CriticalityTier.IMPACT.value,
-                CriticalityTier.CRITICAL.value,
-                CriticalityTier.INSURANCE.value,
-            ),
-        ),
-    )
-    """Which donor tiers a target of a given tier may borrow from, as ``(target tier, allowed donor tiers)``.
-
-    A target tier that is not listed borrows from its own tier only, which is the Solution Design's hard
-    constraint. The default is the business's one-way rule: a NORMAL target may also borrow from IMPACT,
-    CRITICAL and INSURANCE donors -- a donor held to a higher service level, so its stock values err on the
-    side of more cover -- while IMPACT, CRITICAL and INSURANCE targets keep to their own tier and never borrow
-    from a lower one. Lending a NORMAL part's values to a CRITICAL part would understate its cover.
-    An empty tuple restores same-tier matching everywhere. The target's own tier is always allowed."""
-
-    def donor_tiers_for(self, target_tier: str | None) -> frozenset[str]:
-        """The donor tiers a target of ``target_tier`` may borrow from. Empty for an unknown tier."""
-        if target_tier is None:
-            return frozenset()
-        for tier, allowed in self.donor_criticality_tiers:
-            if tier == target_tier:
-                return frozenset(allowed) | {target_tier}
-        return frozenset({target_tier})
-
-    def donor_tier_map(self) -> dict[str, frozenset[str]]:
-        """``donor_criticality_tiers`` as the mapping the retrieval and eligibility code takes."""
-        return {tier: frozenset(allowed) | {tier} for tier, allowed in self.donor_criticality_tiers}
-
-    @field_validator("donor_criticality_tiers")
-    @classmethod
-    def _known_donor_tiers(
-        cls, value: tuple[tuple[str, tuple[str, ...]], ...]
-    ) -> tuple[tuple[str, tuple[str, ...]], ...]:
-        known = {tier.value for tier in CriticalityTier}
-        seen: set[str] = set()
-        for tier, allowed in value:
-            names = (tier, *allowed)
-            unknown = [name for name in names if name not in known]
-            if unknown:
-                # A misspelt tier would silently match nothing, which reads as "no neighbours".
-                raise ValueError(f"unknown criticality tier(s) {unknown}; expected some of {sorted(known)}")
-            if tier in seen:
-                raise ValueError(f"target tier {tier} is listed twice in donor_criticality_tiers")
-            seen.add(tier)
-        return value
+    """Hard constraint: a neighbour must share the criticality class."""
 
     minimum_neighbour_history_months: int = Field(default=12, ge=1)
     """Hard constraint: a neighbour needs at least this much history."""
@@ -421,49 +369,6 @@ class DemandSanityPolicy(BaseModel):
     high_multiple: float = Field(default=2.0, ge=1)
     """A proposed ROP is flagged when it exceeds this multiple of that requirement. A ROP above
     annual consumption is NOT by itself a flag."""
-
-
-class OwnConsumptionPolicy(BaseModel):
-    """The consumption-based estimate for an eligible OAR material-plant (``inventory.own_consumption``).
-
-    Used only after the similarity engine has found no reliable estimate, and only for a material-plant that
-    passed the Min-Max conversion eligibility rule. The service levels are NOT here: they come from the
-    policy's ``service_level`` matrix, so a tier has one service level wherever it is used. Every number
-    below is a first setting that the business has not signed off -- change it here, not in code.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    window_months: int = Field(default=6, ge=2)
-    """Complete calendar months, ending at the latest month the feature run verified complete. The month in
-    progress is never part of it. Months with no consumption inside it count as zero; months outside the
-    verified window are not observed and are never read as zero."""
-
-    confident_active_months: int = Field(default=4, ge=1)
-    """Months of the window with consumption above zero from which the history counts as fair for the
-    confidence grade. Fewer months make the history weak, so the estimate is graded LOW. It is NOT a gate:
-    a material-plant with consumption in even one month of the window is still sized, and a window with no
-    consumption at all is left to manual review (``ZERO_CONSUMPTION``)."""
-
-    high_safety_days: float = Field(default=45.0, gt=0)
-    high_safety_stock_lead_time_multiple: float = Field(default=3.0, gt=0)
-    """A recommendation is flagged for review -- never capped or reduced -- when its safety days exceed
-    ``high_safety_days`` or its safety stock exceeds this multiple of the lead-time demand
-    (``ADC x lead-time days``)."""
-
-    high_confidence_maximum_cv: float = Field(default=1.0, gt=0)
-    medium_confidence_maximum_cv: float = Field(default=2.0, gt=0)
-    """Demand consistency bands for the confidence grade. A tier whose service level is 95% or more must
-    meet the high-confidence band to grade MEDIUM at all: a critical spare is held to a stricter standard,
-    never a looser one."""
-
-    @model_validator(mode="after")
-    def _consistent(self) -> "OwnConsumptionPolicy":
-        if self.confident_active_months > self.window_months:
-            raise ValueError("confident_active_months cannot exceed window_months")
-        if self.high_confidence_maximum_cv > self.medium_confidence_maximum_cv:
-            raise ValueError("high_confidence_maximum_cv cannot exceed medium_confidence_maximum_cv")
-        return self
 
 
 class LeadTimePolicy(BaseModel):

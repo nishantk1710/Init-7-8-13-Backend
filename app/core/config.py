@@ -989,15 +989,6 @@ class Settings(BaseSettings):
     # row of every target in memory at once.
     i7_oar_write_batch_size: int = 2000
 
-    # Own-consumption fallback for an eligible OAR material-plant (I7_OAR_OWN_CONSUMPTION_ENABLED).
-    # Off by default: with it off, nothing about the recommendations changes. On, an eligible OAR
-    # material-plant whose similarity search found no reliable estimate is sized from its own last
-    # six complete months of consumption (inventory/own_consumption.py); with neither, it is marked for
-    # manual review. The similarity result always comes first and is never replaced. Turning it on
-    # gives the recommendations a distinct policy identity (policy_id gains "+own-consumption"), so a
-    # run under it is never mistaken for one without it.
-    i7_oar_own_consumption_enabled: bool = False
-
     # Recommendation explanations requested from the AI model at the same time.
     # Each call waits on the provider (about 4 s on Foundry), so one at a time
     # takes most of a day for a full catalogue. 1 restores one-at-a-time.
