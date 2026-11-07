@@ -123,7 +123,7 @@ the summary's `by_risk` is) and `type` (`oar`/`declining`/`normal`).
 ## Sorting
 
 A whitelist maps an API sort name to a real ORM column
-(`app/api/i7/recommendations.py:SORT_FIELDS`) — `generated_at`, `status`,
+(`app/api/i7/recommendations.py:SORT_FIELDS`) — `generated_at`, `value_change`, `status`,
 `material`, `plant`, `demand_class`, `confidence`. An unlisted value never
 reaches SQL; it returns `400 INVALID_SORT_FIELD` before a query is built.
 

@@ -64,7 +64,26 @@ client that genuinely needs the full 45k+ rows should page through them."""
 # Whitelisted API sort field -> ORM column. Never accept a raw column name
 # from the query string -- that is how a sort parameter becomes a SQL
 # injection vector or an accidental information leak through error messages.
+# The list's Value change column, in SQL, so the list can be ordered by it across every page. The same rule as
+# ``schemas.working_capital_impact``: ``unit_price * (current_rop - recommended_rop)``, positive releases capital
+# (the reorder point goes down), and NULL where it could not be worked out (blocked, impact not AVAILABLE, price or a
+# reorder point missing). Sorted descending, the biggest release comes first, then the rest, and NULLs last.
+VALUE_CHANGE = case(
+    (
+        and_(
+            Recommendation.status != "NOT_EVALUABLE",
+            Recommendation.impact_status == "AVAILABLE",
+            Recommendation.unit_price.is_not(None),
+            Recommendation.current_rop.is_not(None),
+            Recommendation.recommended_rop.is_not(None),
+        ),
+        Recommendation.unit_price * (Recommendation.current_rop - Recommendation.recommended_rop),
+    ),
+    else_=None,
+)
+
 SORT_FIELDS: dict[str, "object"] = {
+    "value_change": VALUE_CHANGE,
     "generated_at": Recommendation.generated_at,
     "status": Recommendation.status,
     "material": Recommendation.sap_material_number,
