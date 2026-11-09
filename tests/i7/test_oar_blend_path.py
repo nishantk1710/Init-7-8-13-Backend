@@ -164,8 +164,9 @@ def test_the_card_text_states_the_split_and_is_not_written_by_a_model(world) -> 
     built = build(row, run([row])[KEY])
     result = rationale.generate_rationale(built)
     assert result.source == rationale.RATIONALE_SOURCE_FALLBACK
-    assert "% from this material's own 6 consumption events" in result.text
-    assert "% from 5 similar materials" in result.text and "Lead time 14 days (from the material master)" in result.text
+    assert result.text.startswith("The recommended reorder level is ")
+    assert "mainly based on this material's own usage" in result.text and "5 similar materials" in result.text
+    assert result.text.endswith("The calculation also uses a lead time of 14 days.")
 
 
 def test_the_impact_is_worked_from_the_blended_numbers(world) -> None:
@@ -214,7 +215,7 @@ def test_a_missing_lead_time_falls_back_to_the_similar_materials(world) -> None:
     built = build(row, blend)
     assert built.lead_time_method == "PEER_WEIGHTED_MEAN"
     assert "average of its similar materials is assumed" in " ".join(f.detail for f in built.factors)
-    assert "assumed, average of the similar materials" in rationale.generate_rationale(built).text
+    assert "(assumed: average of its similar materials)" in rationale.generate_rationale(built).text
 
 
 def test_the_blend_is_reproducible(world) -> None:

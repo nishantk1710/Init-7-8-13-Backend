@@ -22,6 +22,7 @@ from app.initiatives.i7.oar.blend import (
     PeerInput as P,
     estimate,
     explain,
+    explain_split,
     own_estimate,
     resolve_lead_time,
 )
@@ -288,13 +289,67 @@ def test_the_wedge_belt_no_longer_carries_the_peers_scale() -> None:
 # --- the words on the card -------------------------------------------------------------------------------
 
 
-def test_the_explanation_states_the_split_in_numbers() -> None:
+def test_the_explanation_is_plain_words_with_the_split_in_numbers() -> None:
+    lines = explain(run("belts")).split("\n")  # one short paragraph per line; the card shows each as a bullet
+    assert lines[0] == (
+        "The recommended reorder level is 21 units. It is mainly based on this material's own usage (61%), "
+        "with some reference from 5 similar materials (39%)."
+    )
+    assert lines[-1] == "The calculation also uses a lead time of 14 days."  # a lead time kept for the material is not annotated
+    text = " ".join(lines)
+    assert "A safety stock of 4 units is kept to protect against unexpected demand or delays in supply." in text
+    assert "The maximum stock is 30 units, so there is enough stock without overstocking." in text
+    assert "thin" not in text and "kept for this material in SAP" not in text
+
+
+def test_a_guardrail_is_said_in_a_sentence_never_as_its_code() -> None:
+    text = explain(run("light", issue_sizes=LED_ISSUES))
+    assert "The reorder level was raised to 50 so that it covers one normal single issue of this material (about 50 units)." in text
+    for code in ("rop_raised", "flag_max", "max_capped", "issue_size_p90", "guardrail"):
+        assert code not in text
+
+
+def test_the_max_limits_are_each_said_plainly() -> None:
     text = explain(run("belts"))
-    assert "Reorder point" in text and "% from this material's own 6 consumption events" in text
-    assert "% from 5 similar materials" in text and "best match 1.00" in text
-    assert "Lead time 14 days (from the material master)" in text
-    assert "Safety stock" in text and "maximum stock" in text
-    assert "thin" not in text  # the old vague wording
+    assert "It is limited to one year of this material's usage." in text
+    assert "That is more than 6 months of this material's usage, so it is worth a check." in text
+
+
+def test_a_blend_mainly_from_similar_materials_says_so() -> None:
+    mostly_peers = run("element_a", n_events=1)  # one issue: the peers carry most of the weight
+    assert mostly_peers.w_own < 0.5
+    assert "It is mainly based on 2 similar materials" in explain(mostly_peers).split("\n")[0]
+
+
+def test_with_no_usable_similar_material_it_is_based_on_the_material_alone() -> None:
+    alone = run("gasket", peers=[P("x", "1", .62, 1, 1, 1, 0)])
+    assert "It is based on this material's own usage; no similar material could be scaled to its demand." in explain(alone)
+
+
+def test_an_assumed_lead_time_is_said_to_be_assumed() -> None:
+    plant = run("belts", lead_time_days=None, config=OarBlendPolicy(plant_default_lead_time_days=28))
+    assert explain(plant).endswith("a lead time of 28 days (assumed: plant default).")
+
+
+def test_one_unit_is_singular() -> None:
+    from dataclasses import replace
+
+    text = explain(replace(run("belts"), rop=1, ss=1, max_stock=2))
+    assert "reorder level is 1 unit." in text and "A safety stock of 1 unit is kept" in text
+    assert "1 units" not in text and "maximum stock is 2 units" in text
+
+
+def test_no_safety_stock_is_not_called_a_stock_of_zero() -> None:
+    from dataclasses import replace
+
+    text = explain(replace(run("belts"), ss=0))
+    assert "No extra safety stock is kept." in text and "safety stock of 0" not in text
+
+
+def test_the_one_line_split_for_the_list_of_drivers() -> None:
+    assert explain_split(run("belts")) == (
+        "Reorder level 21: 61% from this material's own usage, 39% from 5 similar materials."
+    )
 
 
 def test_an_unsized_result_has_no_explanation() -> None:

@@ -401,7 +401,7 @@ def _blend_factors(
 ) -> tuple[RecommendationFactor, ...]:
     """The drivers of a blended OAR recommendation: the split in numbers, the lead time and its source, any check."""
     factors = [
-        RecommendationFactor(label="Own usage and similar materials", detail=blend_module.explain(blended).split(" Lead time")[0].strip()),
+        RecommendationFactor(label="Own usage and similar materials", detail=blend_module.explain_split(blended)),
     ]
     lead = _lead_time_plain(lead_time_method, None)
     if lead:
