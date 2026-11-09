@@ -489,6 +489,71 @@ def current_conversion_trigger_policy() -> ConversionTriggerPolicy:
     )
 
 
+class PriceBandCap(BaseModel):
+    """From ``min_unit_price`` upwards, the max stock may not exceed ``max_months_cover`` months of the material's own use."""
+
+    model_config = ConfigDict(frozen=True)
+
+    min_unit_price: float = Field(ge=0)
+    max_months_cover: float = Field(gt=0)
+
+
+class OarBlendPolicy(BaseModel):
+    """Credibility-weighted ROP / SS / Max for an OAR material that qualifies for Min-Max.
+
+    Two independent estimates are blended: the material's own consumption (a bootstrap of its monthly
+    buckets over the lead time) and the similar materials' policies, expressed as months of cover and
+    projected onto this material's own demand. The own estimate's weight is ``n / (n + k * q)`` --
+    ``n`` issue transactions in the window, ``q`` the similarity-weighted mean match squared -- so weak
+    similar materials hand weight back to the material's own history (standard credibility / shrinkage).
+
+    Every number here is a starting value to be tuned by a backtest, not a documented business figure.
+    The whole blend is switched by ``I7_OAR_BLEND_ENABLED`` (off by default).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    window_months: int = Field(default=12, ge=2)
+    """Own-consumption buckets: the last complete months, zeros included."""
+
+    similarity_floor: float = Field(default=0.5, ge=0, lt=1)
+    similarity_exponent: float = Field(default=3.0, gt=0)
+    """Similar material j weighs ``max(0, similarity_j - floor) ** exponent``."""
+
+    credibility_k: float = Field(default=4.0, gt=0)
+    """``W_own = n / (n + k * q)``. 4.0 equals the Min-Max usage threshold."""
+
+    service_percentile: float = Field(default=85.0, gt=50, lt=100)
+    """The percentile of lead-time demand taken as the reorder point: the 85% service level (z = 1.04) on the cards."""
+
+    bootstrap_draws: int = Field(default=20000, ge=1000)
+    seed: int = 42
+    """The generator is seeded from this and the material, so a rerun gives the same numbers."""
+
+    lead_time_bucket_mode: Literal["whole_month", "prorated"] = "whole_month"
+    """A lead time is shorter than the monthly buckets. ``whole_month`` samples ``ceil(LT / 30.44)`` buckets at
+    full size -- the cautious reading for lumpy demand. ``prorated`` scales them by ``LT / 30.44 / buckets``."""
+
+    own_estimator: Literal["bootstrap", "croston_sba"] = "bootstrap"
+    """``croston_sba`` replaces the mean demand rate by Croston / Syntetos-Boylan (issue size / inter-arrival time,
+    bias-corrected); the spread above the mean stays the bootstrap's."""
+
+    croston_alpha: float = Field(default=0.1, gt=0, lt=1)
+    """The smoothing constant of the SBA bias correction ``1 - alpha / 2``. ASSUMED: not specified in the brief."""
+
+    max_ratio_floor: float = Field(default=1.2, ge=1)
+    """Max = ROP x max(similar materials' Max/ROP, this) while no EOQ is available."""
+
+    max_cover_flag_months: float = Field(default=6.0, gt=0)
+    """A max above this many months of the material's own use is flagged."""
+
+    plant_default_lead_time_days: int | None = Field(default=None, ge=1)
+    """Second step of the lead-time fallback chain; unset until the business names one."""
+
+    max_cap_by_price: tuple[PriceBandCap, ...] = ()
+    """Tighter max caps as the unit price rises. Empty until the business sets the bands."""
+
+
 class DecliningDemandPolicy(BaseModel):
     """The declining-demand rule (v1): which materials' demand has been falling.
 

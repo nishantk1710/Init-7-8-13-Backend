@@ -28,11 +28,12 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.initiatives.i7.oar import exclusions as exclusions_module
 from app.initiatives.i7.oar import recalculate as recalculate_module
 from app.initiatives.i7.oar.types import EstimateStatus
 from app.initiatives.i7.policy import PolicyDocument
-from app.initiatives.i7.recommendations import builder, rationale, repository
+from app.initiatives.i7.recommendations import blend_path, builder, rationale, repository
 from app.initiatives.i7.recommendations import service as recommendation_service
 from app.initiatives.i7.recommendations.types import LifecycleStatus
 from app.models.i7_oar import OarDonorExclusion, OarNeighbour, OarRun, OarTargetResult
@@ -186,7 +187,11 @@ def refresh_recommendation(
         raise OarExclusionError(
             409, "OAR_TARGET_MISSING", f"OAR run {row.oar_run_id} holds no result for {key[0]}/{key[1]}."
         )
-    built = builder.build_oar_recommendation(inputs[0], policy)
+    blend = None
+    if get_settings().i7_oar_blend_enabled:
+        # Without the blend, removing a similar material would quietly put the similarity-only numbers back.
+        blend = blend_path.evaluate_rows(session, inputs, policy).get(key)
+    built = builder.build_oar_recommendation(inputs[0], policy, blend)
     values = recommendation_service._to_row(built, rationale.generate_rationale(built))
 
     newest_snapshot = session.execute(
@@ -380,11 +385,19 @@ def _in_line_with_target(row: Recommendation, target: OarTargetResult) -> bool:
     confidence must agree too, and a row written before its target's result was last written (both stamped
     by the database clock) is out of date whatever the numbers say.
     """
+    # A blended row's numbers are the blend's, not the target's similarity numbers, so they are not compared; the
+    # neighbour set, the status, the similarity and the timestamp below still tell whether it is out of date.
+    blended = row.safety_stock_method == builder.BLEND_METHOD
     if not (
         row.oar_neighbour_count == target.neighbour_count
-        and row.recommended_rop == target.rop
-        and row.recommended_safety_stock == target.safety_stock
-        and row.recommended_max_stock == target.max_stock
+        and (
+            blended
+            or (
+                row.recommended_rop == target.rop
+                and row.recommended_safety_stock == target.safety_stock
+                and row.recommended_max_stock == target.max_stock
+            )
+        )
         and row.oar_estimate_status == target.estimate_status
         and row.oar_best_similarity == target.best_similarity
         and row.confidence == target.confidence

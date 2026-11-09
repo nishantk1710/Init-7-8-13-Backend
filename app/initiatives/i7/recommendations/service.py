@@ -40,7 +40,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
-from app.initiatives.i7.recommendations import builder, rationale, repository
+from app.initiatives.i7.recommendations import blend_path, builder, rationale, repository
 from app.initiatives.i7.recommendations.builder import BuiltRecommendation
 from app.initiatives.i7.recommendations.types import RECOMMENDATION_FORMULA_VERSION
 from app.initiatives.i7.policy import PolicyDocument
@@ -204,6 +204,10 @@ def generate_recommendations(policy: PolicyDocument | None = None) -> Recommenda
     from app.initiatives.i7.policy.dev_fixtures import default_policy
 
     policy = policy or default_policy()
+    blend_enabled = get_settings().i7_oar_blend_enabled
+    if blend_enabled:
+        # A distinct identity, so a run with the blend is never reused as one without it (or the reverse).
+        policy = policy.model_copy(update={"policy_id": f"{policy.policy_id}+oar-blend"})
     session_factory = get_sessionmaker()
     result = RecommendationRunResult()
 
@@ -240,8 +244,14 @@ def generate_recommendations(policy: PolicyDocument | None = None) -> Recommenda
                     built.append(builder.build_normal_recommendation(row, policy))
 
             if oar_run_id is not None:
-                for row in repository.load_oar_inputs(session, oar_run_id):
-                    built.append(builder.build_oar_recommendation(row, policy))
+                oar_rows = list(repository.load_oar_inputs(session, oar_run_id))
+                blends = blend_path.evaluate_rows(session, oar_rows, policy) if blend_enabled else {}
+                for row in oar_rows:
+                    built.append(
+                        builder.build_oar_recommendation(
+                            row, policy, blends.get((row.sap_material_number, row.sap_plant_code))
+                        )
+                    )
                 for row in repository.load_uncovered_oar_targets(session, oar_run_id):
                     built.append(builder.deferred_recommendation(row, policy))
 
