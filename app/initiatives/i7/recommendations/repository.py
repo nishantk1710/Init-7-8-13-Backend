@@ -194,6 +194,63 @@ def load_oar_inputs(session: Session, oar_run_id: int, target: tuple[str, str] |
     )
 
 
+_MONTHLY_CONSUMPTION_SQL = """
+    SELECT sap_material_number, sap_plant_code, period, SUM(quantity) AS quantity
+      FROM i7_staged_consumption
+     WHERE period >= :first_month AND period <= :last_month
+     GROUP BY sap_material_number, sap_plant_code, period
+"""
+# One grouped read of the window, not one per material-plant. Staging holds a row only for a month that had
+# movements, so a month with no row is a month with no consumption -- a fact only for months the feature run
+# verified complete (see recommendations.blend_path).
+
+
+def load_monthly_consumption(session: Session, first_month, last_month) -> dict:
+    """``{(material, plant): {first-of-month: quantity}}`` for the months from ``first_month`` to ``last_month``."""
+    monthly: dict = {}
+    for row in session.execute(
+        text(_MONTHLY_CONSUMPTION_SQL), {"first_month": first_month, "last_month": last_month}
+    ):
+        monthly.setdefault((row.sap_material_number, row.sap_plant_code), {})[row.period] = row.quantity
+    return monthly
+
+
+_OAR_NEIGHBOURS_SQL = """
+    SELECT n.sap_material_number, n.sap_plant_code, n.neighbour_material, n.neighbour_plant, n.rank,
+           n.combined_similarity, n.safety_stock, n.rop, n.max_stock, n.inventory_eligible
+      FROM i7_oar_neighbour n
+     WHERE n.oar_run_id = :oar_run_id
+"""
+
+
+def load_oar_neighbours(session: Session, oar_run_id: int) -> dict:
+    """``{(material, plant): [neighbour rows by rank]}`` -- every top-K donor the run stored.
+
+    That includes a donor a reviewer later removed: the caller sets those aside (``oar.exclusions``)."""
+    grouped: dict = {}
+    for row in session.execute(text(_OAR_NEIGHBOURS_SQL), {"oar_run_id": oar_run_id}):
+        grouped.setdefault((row.sap_material_number, row.sap_plant_code), []).append(row)
+    for rows in grouped.values():
+        rows.sort(key=lambda r: r.rank)
+    return grouped
+
+
+def load_feature_lead_times(session: Session, feature_run_id: int) -> dict:
+    """``{(material, plant): lead time in days}`` from a feature run -- the resolved lead time, else MARC-PLIFZ."""
+    lead_times: dict = {}
+    for row in session.execute(
+        text(
+            "SELECT sap_material_number, sap_plant_code, lead_time_days, planned_delivery_time_days "
+            "FROM i7_material_feature WHERE feature_run_id = :run"
+        ),
+        {"run": feature_run_id},
+    ):
+        days = row.lead_time_days if row.lead_time_days is not None else row.planned_delivery_time_days
+        if days is not None:
+            lead_times[(row.sap_material_number, row.sap_plant_code)] = days
+    return lead_times
+
+
 def load_uncovered_oar_targets(session: Session, oar_run_id: int):
     """OAR material-plants with no Phase 6 result at all -- the feature
     store and OAR runs can drift apart if OAR has not been re-run since the

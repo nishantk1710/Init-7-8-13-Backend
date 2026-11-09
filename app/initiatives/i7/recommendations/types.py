@@ -21,8 +21,11 @@ from typing import NamedTuple
 
 from app.initiatives.i7.contracts.enums import RecommendationStatus
 
-RECOMMENDATION_FORMULA_VERSION = "i07-recommendation-6"
-"""Bumped to ``-6`` after the own-consumption fallback was reverted: rows saved while it was on carry the
+RECOMMENDATION_FORMULA_VERSION = "i07-recommendation-7"
+"""Bumped to ``-7`` so an OAR recommendation is rewritten with its lead time (the SAP planned delivery time, which the
+feature row carries; the card used to say "Not available"). Rows keyed on ``-6`` would otherwise be reused as they are.
+
+Earlier, bumped to ``-6`` after the own-consumption fallback was reverted: rows saved while it was on carry the
 ``+own-consumption`` policy id and were still the newest per material-plant, so a run keyed on ``-5`` only
 reused older rows. A new version makes the next run write fresh rows under the plain policy id.
 

@@ -981,6 +981,12 @@ class Settings(BaseSettings):
     # Descriptions sent to the embedding model per call.
     i7_oar_embedding_batch_size: int = 64
 
+    # The credibility-weighted ROP / SS / Max for an eligible OAR material (oar.blend): its own consumption blended
+    # with the similar materials' policies, expressed as months of cover and scaled to its own demand. OFF by
+    # default: the recommendation is then the similarity estimate, exactly as before. Switching it changes what a
+    # recommendation run writes, so bump RECOMMENDATION_FORMULA_VERSION when turning it back OFF.
+    i7_oar_blend_enabled: bool = False
+
     # Keep embeddings in i7_oar_embedding so the next run reuses them. Off means
     # every run embeds every description again (same result, more work).
     i7_oar_embedding_cache: bool = True
