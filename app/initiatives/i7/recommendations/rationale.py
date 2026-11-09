@@ -127,6 +127,14 @@ def _oar_context(built: "BuiltRecommendation") -> dict[str, str]:
     }
 
 
+def blend_summary(built: "BuiltRecommendation") -> str:
+    """The credibility-blend split written into the trace (``builder._blend_entries``), or ``""``."""
+    for key, value in built.calculation_trace or ():
+        if key == "blend_summary":
+            return str(value)
+    return ""
+
+
 def generate_rationale(built: "BuiltRecommendation") -> RationaleResult:
     """The rationale for one recommendation, AI-generated when possible.
 
@@ -148,6 +156,12 @@ def generate_rationale(built: "BuiltRecommendation") -> RationaleResult:
         return RationaleResult(
             text=_deterministic_text(factors), source=RATIONALE_SOURCE_FALLBACK
         )
+
+    summary = blend_summary(built)
+    if summary:
+        # The blend states its own split, in numbers. A model asked to explain it would only blur that, so the
+        # words are the deterministic ones (the card labels them "built from the figures", not "written by AI").
+        return RationaleResult(text=summary, source=RATIONALE_SOURCE_FALLBACK)
 
     prompt_id = _OAR_PROMPT_ID if is_oar else _NORMAL_PROMPT_ID
     context_fn = _oar_context if is_oar else _normal_context

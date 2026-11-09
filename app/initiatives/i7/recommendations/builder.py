@@ -18,6 +18,7 @@ from typing import Any
 
 from app.initiatives.i7.contracts import Criticality
 from app.initiatives.i7.contracts.enums import ScopeDecision
+from app.initiatives.i7.contracts.recommendation import RecommendationFactor
 from app.initiatives.i7.inventory import service_level as service_level_module
 from app.initiatives.i7.oar import demand_check
 from app.initiatives.i7.recommendations import explanation
@@ -31,6 +32,7 @@ from app.initiatives.i7.recommendations.types import (
     ImpactStatus,
     LifecycleStatus,
 )
+from app.initiatives.i7.oar import blend as blend_module
 from app.initiatives.i7.policy import PolicyDocument
 
 
@@ -324,6 +326,10 @@ def _lead_time_plain(method: str | None, valid_po_count: int | None) -> str | No
         return None
     if method == "PLANNED_FALLBACK":
         return "Delivery time is the planned delivery time kept for this material in SAP."
+    if method == "PLANT_DEFAULT":
+        return "Delivery time is not kept for this material; the plant default is assumed."
+    if method == "PEER_WEIGHTED_MEAN":
+        return "Delivery time is not kept for this material; the average of its similar materials is assumed."
     if valid_po_count:
         plural = "s" if valid_po_count != 1 else ""
         return f"Delivery time is taken from {valid_po_count} past purchase order{plural}."
@@ -362,7 +368,87 @@ def _criticality_tier(raw: str | None) -> Criticality | None:
         return None
 
 
-def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommendation:
+def _oar_lead_time(row: Any) -> tuple[Decimal | None, str | None]:
+    """The lead time of an OAR material-plant, and how it was obtained.
+
+    The feature row already carries it (``lead_time_days``, resolved from the SAP planned delivery time, MARC-PLIFZ),
+    even though an OAR material never reaches Phase 5 -- the lead time comes from the material master by business
+    decision, not from Phase 5's inventory calculation. ``(None, None)`` when the material has none: nothing is
+    invented for it.
+    """
+    days = getattr(row, "lead_time_days", None)
+    if days is None:
+        planned = getattr(row, "planned_delivery_time_days", None)
+        days = Decimal(planned) if planned is not None else None
+    if days is None:
+        return None, None
+    return Decimal(days), "PLANNED_FALLBACK"
+
+
+BLEND_METHOD = "credibility_blend"
+BLEND_MAX_STRATEGY = "rop_x_peer_max_ratio"
+BLEND_ESTIMATION_METHOD = "CREDIBILITY_BLEND"
+
+_BLEND_LEAD_TIME_METHOD = {
+    "MATERIAL_MASTER": "PLANNED_FALLBACK",
+    "PLANT_DEFAULT": "PLANT_DEFAULT",
+    "PEER_WEIGHTED_MEAN": "PEER_WEIGHTED_MEAN",
+}
+
+
+def _blend_factors(
+    blended: blend_module.BlendResult, lead_time_method: str | None
+) -> tuple[RecommendationFactor, ...]:
+    """The drivers of a blended OAR recommendation: the split in numbers, the lead time and its source, any check."""
+    factors = [
+        RecommendationFactor(label="Own usage and similar materials", detail=blend_module.explain(blended).split(" Lead time")[0].strip()),
+    ]
+    lead = _lead_time_plain(lead_time_method, None)
+    if lead:
+        factors.append(RecommendationFactor(label="Lead time", detail=lead))
+    checks = [g for g in blended.guardrails_applied if g.startswith(("max_", "flag_", "no_usable"))]
+    if checks:
+        factors.append(RecommendationFactor(label="Checks", detail="; ".join(c.replace("_", " ") for c in checks) + "."))
+    return tuple(factors)
+
+
+def _blend_entries(row: Any, blended: blend_module.BlendResult) -> list[tuple[str, str]]:
+    """The blend's own working, for the trace: the split, both estimates, the lead time and what was guarded."""
+
+    def fmt(value: float | None) -> str:
+        return "n/a" if value is None else f"{value:.2f}"
+
+    return [
+        ("estimation_method", BLEND_ESTIMATION_METHOD),
+        ("blend_status", blended.status.value),
+        ("own_estimator", blended.estimator),
+        ("n_issues", str(blended.n_events)),
+        ("annual_consumption", fmt(blended.annual_consumption)),
+        ("rop_own", fmt(blended.rop_own)),
+        ("ss_own", fmt(blended.ss_own)),
+        ("rop_peer", fmt(blended.rop_peer)),
+        ("ss_peer", fmt(blended.ss_peer)),
+        ("peer_quality_q", fmt(blended.peer_quality_q)),
+        ("w_own", fmt(blended.w_own)),
+        ("w_peer", fmt(blended.w_peer)),
+        ("max_to_rop_ratio", fmt(blended.max_ratio)),
+        ("lead_time_days", fmt(blended.lead_time_days)),
+        ("lead_time_source", str(blended.lead_time_source)),
+        ("lead_time_bucket_mode", blended.lead_time_bucket_mode),
+        ("issue_size_floor", "n/a" if blended.issue_size_floor is None else f"{blended.issue_size_floor:.2f}"),
+        ("issue_count", str(blended.issue_count)),
+        ("guardrails_applied", ",".join(blended.guardrails_applied) or "none"),
+        ("guardrails_not_applied", ",".join(g.split(":")[0] for g in blended.guardrails_not_applied)),
+        ("similarity_safety_stock", str(row.oar_safety_stock)),
+        ("similarity_rop", str(row.oar_rop)),
+        ("similarity_max_stock", str(row.oar_max_stock)),
+        ("blend_summary", blend_module.explain(blended)),
+    ]
+
+
+def build_oar_recommendation(
+    row: Any, policy: PolicyDocument, blend: blend_module.BlendResult | None = None
+) -> BuiltRecommendation:
     """A cold-start material with Phase 6 similarity evidence.
 
     ``row`` is the joined Phase 3/6 record from
@@ -370,6 +456,15 @@ def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommend
     """
     has_neighbours = row.neighbour_count and row.neighbour_count > 0
     estimate_ok = row.estimate_status == "SUCCESS"
+
+    # The credibility-weighted blend (oar.blend) replaces the similarity numbers only when it could size the
+    # material; otherwise -- no consumption, no lead time, a similarity estimate that failed -- the similarity
+    # result stands exactly as before.
+    blended = blend if (blend is not None and estimate_ok and blend.sized) else None
+    if blended is not None:
+        rec_ss, rec_rop, rec_max = Decimal(blended.ss), Decimal(blended.rop), Decimal(blended.max_stock)
+    else:
+        rec_ss, rec_rop, rec_max = row.oar_safety_stock, row.oar_rop, row.oar_max_stock
 
     # Similarity evidence being available is a different fact from the
     # recommendation being reviewable. A human can see *why* a material is
@@ -415,18 +510,21 @@ def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommend
     if estimate_ok:
         trace.extend(
             [
-                ("safety_stock", str(row.oar_safety_stock)),
-                ("rop", str(row.oar_rop)),
-                ("max_stock", str(row.oar_max_stock)),
+                ("safety_stock", str(rec_ss)),
+                ("rop", str(rec_rop)),
+                ("max_stock", str(rec_max)),
             ]
         )
-        trace.extend(_max_floor_entries(getattr(row, "estimate_trace", None)))
-        trace.extend(_estimator_entries(getattr(row, "estimate_trace", None)))
+        if blended is not None:
+            trace.extend(_blend_entries(row, blended))
+        else:
+            trace.extend(_max_floor_entries(getattr(row, "estimate_trace", None)))
+            trace.extend(_estimator_entries(getattr(row, "estimate_trace", None)))
         # A diagnostic against the target's own consumption. It flags; it never changes the status or a
         # number, and it is not part of similarity or eligibility.
         trace.extend(
             demand_check.evaluate(
-                demand_check.DemandInputs.from_row(row), row.oar_rop, policy.demand_sanity
+                demand_check.DemandInputs.from_row(row), rec_rop, policy.demand_sanity
             ).trace_entries()
         )
 
@@ -436,27 +534,38 @@ def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommend
 
     impact = explanation.expected_impact(
         current_ss=row.current_safety_stock,
-        recommended_ss=row.oar_safety_stock if estimate_ok else None,
+        recommended_ss=rec_ss if estimate_ok else None,
         current_rop=row.current_reorder_point,
-        recommended_rop=row.oar_rop if estimate_ok else None,
+        recommended_rop=rec_rop if estimate_ok else None,
         current_max=row.current_maximum_stock,
-        recommended_max=row.oar_max_stock if estimate_ok else None,
+        recommended_max=rec_max if estimate_ok else None,
         unit_price=row.unit_price,
         holding_cost_rate=policy.max_stock.holding_cost_rate,
     )
 
+    lead_time_days, lead_time_method = _oar_lead_time(row)
+    if blended is not None and blended.lead_time_days is not None:
+        # the lead time the blend used -- it may be an assumed one, and the card says so
+        lead_time_days = Decimal(str(round(blended.lead_time_days, 2)))
+        lead_time_method = _BLEND_LEAD_TIME_METHOD.get(blended.lead_time_source, lead_time_method)
+
     factors = explanation.build_factors(
         demand_class=row.demand_class,
         baseline_model=None,
-        lead_time_detail=None,
+        lead_time_detail=_lead_time_plain(lead_time_method, None),
         service_level_configured=policy.service_level.is_configured,
-        recommended_rop=row.oar_rop if estimate_ok else None,
+        recommended_rop=rec_rop if estimate_ok else None,
         current_rop=row.current_reorder_point,
         is_oar=True,
         history_status=row.history_status,
         oar_neighbour_count=row.neighbour_count,
         oar_confidence=row.confidence,
     )
+
+    if blended is not None:
+        # The standard OAR wording says the levels cannot be worked out from the material's own usage -- the
+        # opposite of what a blend does. Say what it did.
+        factors = _blend_factors(blended, lead_time_method)
 
     tier_service = service_level_module.resolve(
         policy.service_level, _criticality_tier(row.criticality), None
@@ -473,21 +582,23 @@ def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommend
         current_safety_stock=row.current_safety_stock,
         current_rop=row.current_reorder_point,
         current_max_stock=row.current_maximum_stock,
-        recommended_safety_stock=row.oar_safety_stock if estimate_ok else None,
-        recommended_rop=row.oar_rop if estimate_ok else None,
-        recommended_max_stock=row.oar_max_stock if estimate_ok else None,
+        recommended_safety_stock=rec_ss if estimate_ok else None,
+        recommended_rop=rec_rop if estimate_ok else None,
+        recommended_max_stock=rec_max if estimate_ok else None,
         baseline_model=None,
         forecast_rate=None,
-        lead_time_method=None,
-        safety_stock_method="similarity_weighted" if estimate_ok else None,
-        max_stock_strategy=None,
+        lead_time_method=lead_time_method,
+        safety_stock_method=(
+            BLEND_METHOD if blended is not None else "similarity_weighted" if estimate_ok else None
+        ),
+        max_stock_strategy=BLEND_MAX_STRATEGY if blended is not None else None,
         confidence=row.confidence,
         oar_neighbour_count=row.neighbour_count,
         oar_best_similarity=row.best_similarity,
-        # circuit and lead time are Phase 5 outputs; an OAR/cold-start material
-        # never reaches Phase 5 (see inventory/service.py's DEFERRED_TO_OAR), so
-        # they are genuinely unavailable here. unit_price is a feature-store
-        # (Phase 3) field, available regardless of history status.
+        # circuit is a Phase 5 output; an OAR/cold-start material never reaches Phase 5 (see
+        # inventory/service.py's DEFERRED_TO_OAR), so it is genuinely unavailable here. The lead time is not: it is
+        # the SAP planned delivery time, already on the feature row (see _oar_lead_time). unit_price is a
+        # feature-store (Phase 3) field, available regardless of history status.
         #
         # The service level is different: it depends only on the criticality
         # tier, which an OAR material does have. It is looked up through the same
@@ -496,7 +607,7 @@ def build_oar_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecommend
         # OAR estimate is similarity-weighted and did not use it.
         circuit=None,
         unit_price=row.unit_price,
-        lead_time_days=None,
+        lead_time_days=lead_time_days,
         lead_time_variance_days=None,
         service_level=tier_service.service_level,
         z_factor=tier_service.z_factor,
