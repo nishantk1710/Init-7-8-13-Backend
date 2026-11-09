@@ -116,7 +116,8 @@ def _build_attributes(
         external_material_group=(
             material_row.external_material_group if material_row else None
         ),
-        criticality=_criticality(material_row.criticality) if material_row else None,
+        # This plant's own tier -- criticality is per material-plant.
+        criticality=_criticality(plant_row.criticality),
         # No SAP source. Stays None until VZI supplies plant reference data.
         circuit=None,
         material_group=material_row.material_group if material_row else None,

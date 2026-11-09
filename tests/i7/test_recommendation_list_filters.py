@@ -273,3 +273,63 @@ def test_has_recommended_compiles_for_sql_server():
     )
     sql = str(statement.compile(dialect=mssql.dialect()))
     assert sql.count("IS NOT NULL") == 3 and " OR " in sql
+
+
+# --- Sorting by Value change ---------------------------------------------------
+
+
+def priced(material, current_rop, recommended_rop, *, price="10", status="READY_FOR_REVIEW", impact="AVAILABLE"):
+    from decimal import Decimal
+
+    row = rec(material, status=status)
+    row.impact_status = impact
+    row.unit_price = Decimal(price)
+    row.current_rop = Decimal(current_rop)
+    row.recommended_rop = Decimal(recommended_rop)
+    return row
+
+
+def by_value_change(db, **kwargs):
+    args = dict(
+        status=None, plant=None, material=None, demand_class=None, is_oar=None, confidence=None,
+        criticality=None, generated_from=None, generated_to=None, demand_type=None, search=None,
+        criticality_level=None, status_group=None, risk=None,
+    )
+    args.update(kwargs)
+    return api.list_recommendations(session=db, page=1, page_size=50, sort="value_change", sort_desc=True, **args)
+
+
+def test_value_change_sort_puts_the_biggest_release_first_then_increases_then_unknown(db):
+    db.add_all([
+        priced("INCREASE", 5, 9),            # -40: ties capital up
+        priced("SMALL_RELEASE", 10, 8),      # +20
+        priced("BIG_RELEASE", 100, 40),      # +600
+        priced("UNCHANGED", 7, 7),           # 0
+        priced("BLOCKED", 5, 1, status="NOT_EVALUABLE"),  # no figure
+        priced("NO_IMPACT", 5, 1, impact="UNAVAILABLE"),  # no figure
+    ])
+    db.commit()
+    order = [item.material for item in by_value_change(db).items]
+    assert order[:4] == ["BIG_RELEASE", "SMALL_RELEASE", "INCREASE", "UNCHANGED"]
+    assert set(order[4:]) == {"BLOCKED", "NO_IMPACT"}  # never read as 0: they come last
+
+
+def test_value_change_sort_spans_every_page(db):
+    db.add_all([priced(f"UP{n:03d}", 1, 2) for n in range(60)])  # 60 increases fill the first page
+    db.add(priced("RELEASE", 50, 1))
+    db.commit()
+    assert by_value_change(db).items[0].material == "RELEASE"
+
+
+def test_value_change_sort_lists_every_decrease_first_then_the_increases_biggest_first(db):
+    db.add_all([
+        priced("UP_SMALL", 5, 6),     # -10
+        priced("UP_BIG", 5, 105),     # -1000
+        priced("UP_MID", 5, 25),      # -200
+        priced("DOWN_SMALL", 6, 5),   # +10
+        priced("DOWN_BIG", 105, 5),   # +1000
+        priced("DOWN_MID", 25, 5),    # +200
+    ])
+    db.commit()
+    order = [item.material for item in by_value_change(db).items]
+    assert order == ["DOWN_BIG", "DOWN_MID", "DOWN_SMALL", "UP_BIG", "UP_MID", "UP_SMALL"]

@@ -64,7 +64,36 @@ client that genuinely needs the full 45k+ rows should page through them."""
 # Whitelisted API sort field -> ORM column. Never accept a raw column name
 # from the query string -- that is how a sort parameter becomes a SQL
 # injection vector or an accidental information leak through error messages.
+# The list's Value change column, in SQL, so the list can be ordered by it across every page. The same rule as
+# ``schemas.working_capital_impact``: ``unit_price * (current_rop - recommended_rop)``, positive releases capital
+# (the reorder point goes down), and NULL where it could not be worked out (blocked, impact not AVAILABLE, price or a
+# reorder point missing). Sorted descending, the biggest release comes first, then the rest, and NULLs last.
+VALUE_CHANGE = case(
+    (
+        and_(
+            Recommendation.status != "NOT_EVALUABLE",
+            Recommendation.impact_status == "AVAILABLE",
+            Recommendation.unit_price.is_not(None),
+            Recommendation.current_rop.is_not(None),
+            Recommendation.recommended_rop.is_not(None),
+        ),
+        Recommendation.unit_price * (Recommendation.current_rop - Recommendation.recommended_rop),
+    ),
+    else_=None,
+)
+
+# Where a row sits in the value-change order: decreases (value released) first, then increases (value tied up),
+# then no change, then rows with no figure. Within a group, the biggest amount first (VALUE_CHANGE_SIZE).
+VALUE_CHANGE_GROUP = case(
+    (VALUE_CHANGE > 0, 0),
+    (VALUE_CHANGE < 0, 1),
+    (VALUE_CHANGE == 0, 2),
+    else_=3,
+)
+VALUE_CHANGE_SIZE = case((VALUE_CHANGE < 0, -VALUE_CHANGE), else_=VALUE_CHANGE)
+
 SORT_FIELDS: dict[str, "object"] = {
+    "value_change": VALUE_CHANGE,
     "generated_at": Recommendation.generated_at,
     "status": Recommendation.status,
     "material": Recommendation.sap_material_number,
@@ -225,7 +254,7 @@ def _apply_filters(
             )
         )
     if consumption_above_threshold:
-        # Issued more than the policy's own count in the policy's trailing window (6 months) -- the threshold
+        # Issued more than the policy's own count in the policy's trailing window (12 months) -- the threshold
         # stored on the row, not a literal, so it follows the policy. A row with no count (never
         # evaluated) cannot be shown to pass, so the comparison to NULL leaves it out; zero
         # consumption fails for any non-negative threshold.
@@ -538,7 +567,7 @@ def list_recommendations(
         bool | None,
         Query(
             description="true: only recommendations issued more than the policy's consumption-count "
-            "threshold in the policy's trailing window, 6 months (this also drops zero-consumption materials). A "
+            "threshold in the policy's trailing window, 12 months (this also drops zero-consumption materials). A "
             "recommendation with no count yet is left out."
         ),
     ] = None,
@@ -613,7 +642,16 @@ def list_recommendations(
     # descending page and an ascending page never interleave the same tied
     # group differently.
     sort_column = SORT_FIELDS[sort]
-    order = (sort_column.desc(), Recommendation.id.desc()) if sort_desc else (sort_column, Recommendation.id)
+    if sort == "value_change":
+        # Decreases first, biggest first; then increases, biggest first; then no change; then no figure.
+        # ``sort_desc`` is the direction the table asks for; ascending is the exact reverse.
+        order = (
+            (VALUE_CHANGE_GROUP, VALUE_CHANGE_SIZE.desc(), Recommendation.id.desc())
+            if sort_desc
+            else (VALUE_CHANGE_GROUP.desc(), VALUE_CHANGE_SIZE, Recommendation.id)
+        )
+    else:
+        order = (sort_column.desc(), Recommendation.id.desc()) if sort_desc else (sort_column, Recommendation.id)
     page_ids = session.execute(
         base.order_by(*order).offset((page - 1) * page_size).limit(page_size)
     ).scalars().all()

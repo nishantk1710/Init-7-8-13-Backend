@@ -80,6 +80,32 @@ def test_a_reversal_takes_back_only_what_was_issued_before_it() -> None:
     assert net_standing_quantity(rows, ISSUE_TYPES) == Decimal("1")
 
 
+def _on(bwart, qty, day):
+    return {"Bwart": bwart, "Menge": Decimal(qty), "BudatMkpf": day}
+
+
+def test_a_same_day_reversal_handed_over_first_still_cancels_its_issue() -> None:
+    # Reservation 1975548/7 as raw_mseg holds it (6-Nov-2026): the 262 reverses
+    # the 261 posted the same day; the database may return it first.
+    rows = [
+        _on("262", "1", date(2026, 1, 15)),
+        _on("261", "1", date(2026, 1, 15)),
+        _on("261", "1", date(2026, 5, 18)),
+    ]
+    assert net_standing_quantity(rows, ISSUE_TYPES) == Decimal("1")
+
+
+def test_a_same_day_201_reversal_handed_over_first_still_cancels_it() -> None:
+    # Reservation 1952462/7: 201 100 and 202 100 on 3 Dec, then 201 1 and 201 99.
+    rows = [
+        _on("202", "100", date(2025, 12, 3)),
+        _on("201", "100", date(2025, 12, 3)),
+        _on("201", "1", date(2025, 12, 11)),
+        _on("201", "99", date(2025, 12, 18)),
+    ]
+    assert net_standing_quantity(rows, ISSUE_TYPES) == Decimal("100")
+
+
 def test_reversal_dates_do_not_become_issue_dates() -> None:
     from app.initiatives.i13.movements import event_dates
 

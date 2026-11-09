@@ -21,8 +21,12 @@ from typing import NamedTuple
 
 from app.initiatives.i7.contracts.enums import RecommendationStatus
 
-RECOMMENDATION_FORMULA_VERSION = "i07-recommendation-5"
-"""Bumped from ``-4``: OAR -> Min-Max conversion eligibility is now usage > 4
+RECOMMENDATION_FORMULA_VERSION = "i07-recommendation-6"
+"""Bumped to ``-6`` after the own-consumption fallback was reverted: rows saved while it was on carry the
+``+own-consumption`` policy id and were still the newest per material-plant, so a run keyed on ``-5`` only
+reused older rows. A new version makes the next run write fresh rows under the plain policy id.
+
+Earlier, bumped from ``-4``: OAR -> Min-Max conversion eligibility is now usage > 4
 OR a CRITICAL / IMPACT / INSURANCE tier (was usage AND CRITICAL/IMPACT), and it
 is evaluated for every Stage 1 OAR material-plant -- standard-path
 recommendations included, not only cold-start ones. A material Stage 1 put
@@ -196,7 +200,7 @@ class ConversionTrigger(StrEnum):
     """
 
     CONSUMPTION_FREQUENCY = "CONSUMPTION_FREQUENCY"
-    """Eligible on usage alone: more than the threshold net issues in 6 months."""
+    """Eligible on usage alone: more than the threshold net issues in the policy's window (12 months)."""
 
     PRODUCTION_IMPACT = "PRODUCTION_IMPACT"
     """Eligible on criticality alone: a qualifying tier (CRITICAL / IMPACT / INSURANCE)."""
@@ -236,8 +240,8 @@ class ConversionDecision(NamedTuple):
     detail: str
     consumption_count_months: int | None = None
     """How many months ``consumption_count_12m`` was counted over -- the policy's
-    ``consumption_count_months`` when the decision was made (6 since 2026-10-22, 12
-    before). The count's name is historical; this is what a screen or an explanation
+    ``consumption_count_months`` when the decision was made (12 at present; 6 from 2026-10-22
+    to 2026-11-09). The count's name is historical; this is what a screen or an explanation
     must say, and it travels with the count so a later policy change cannot relabel a
     recommendation already made."""
 

@@ -51,7 +51,14 @@ from app.core.db import get_sessionmaker, statement_timeout
 from app.core.logging import get_logger
 from app.initiatives.i8.acquisitions import NewAcquisition, load_new_acquisitions
 from app.initiatives.i8.attestation import AttestationCoverage, coverage as attestation_coverage
-from app.initiatives.i8.coding_candidates import CodingCandidate, ScreenStats, Verdict, screen
+from app.initiatives.i8.coding_candidates import (
+    CodingCandidate,
+    ScreenStats,
+    Verdict,
+    reapply_stored_verdicts,
+    screen,
+)
+from app.initiatives.i8.coding_store import verdict_stamp as read_verdict_stamp
 from app.initiatives.i8.config import I8Settings, get_i8_settings
 from app.initiatives.i8.declarations import DeclarationRow, build_queue
 from app.initiatives.i8.new_item_price import MissingPrice
@@ -789,6 +796,19 @@ class CodingScreen:
     build still serves verdicts already on record, so read
     :attr:`ScreenStats.verdicts_reused` for that, not this flag."""
 
+    verdict_stamp: tuple[int, datetime | None] | None = None
+    """What the verdict table held when this screen was built -- see
+    :func:`app.initiatives.i8.coding_store.verdict_stamp`.
+
+    The cache above is per PROCESS and the verdicts are shared, so this is how
+    a worker notices that the OTHER one judged something since. ``None`` means
+    the stamp could not be read, and a screen carrying it is never considered
+    stale: it is served as it is.
+
+    Defaulted rather than required so a test can build a screen without one."""
+
+
+ScreenKey = tuple[bool, int | None, tuple[str, ...]]
 
 _screen_lock = threading.Lock()
 #: Keyed by (use_model, limit, sources) so a fast run and a full run do not
@@ -797,7 +817,7 @@ _screen_lock = threading.Lock()
 #: The sources belong in the key for correctness, not convenience: the whole
 #: point of asking for PO,PR,MOVEMENT is to compare it against PO,PR, and a
 #: cache that ignored them would answer both questions with one number.
-_screens: dict[tuple[bool, int | None, tuple[str, ...]], CodingScreen] = {}
+_screens: dict[ScreenKey, CodingScreen] = {}
 
 
 def build_coding_screen(
@@ -828,7 +848,44 @@ def build_coding_screen(
         built_at=datetime.now(timezone.utc),
         build_seconds=round(time.monotonic() - started, 2),
         used_model=use_model,
+        # Read AFTER the run, which may have stored verdicts of its own: the
+        # stamp has to describe the table this screen already reflects, or the
+        # very next request would read it back as stale.
+        verdict_stamp=read_verdict_stamp(db),
     )
+
+
+def _refreshed(db: Session, key: ScreenKey, cached: CodingScreen) -> CodingScreen:
+    """``cached``, with the verdicts the table holds now. The caller holds the lock.
+
+    Dropping the entry and rebuilding would be simpler and much slower: the
+    rebuild re-stages the sources (10-24 s on live data) to recompute facts
+    that cannot have changed. Only the judgement is re-read.
+
+    Without a session there is nothing to compare against, so the cached screen
+    is returned untouched -- the same answer this gave before the check existed.
+    """
+    if db is None:
+        return cached
+
+    stamp = read_verdict_stamp(db)
+    if stamp is None or stamp == cached.verdict_stamp:
+        return cached
+
+    candidates, stats = reapply_stored_verdicts(db, cached.candidates, cached.stats)
+    refreshed = replace(
+        cached, candidates=tuple(candidates), stats=stats, verdict_stamp=stamp
+    )
+    _screens[key] = refreshed
+    logger.info(
+        "I08 coding screen: the verdict table moved (%s -> %s), so the cached "
+        "screen was re-read: %d of %d candidates now carry a verdict",
+        cached.verdict_stamp,
+        stamp,
+        stats.verdicts_reused,
+        len(candidates),
+    )
+    return refreshed
 
 
 def get_coding_screen(
@@ -848,6 +905,14 @@ def get_coding_screen(
     record and would go on reporting them UNSCREENED. That is what made a
     screen look like it had been thrown away on leaving the page: the verdicts
     were in the database and the cache in front of it was older than they were.
+
+    That drop reaches only THIS process, and prod runs more than one worker.
+    The worker that ran the model cleared its own stale screens; the other one
+    went on serving a list built before those verdicts existed, so a refresh
+    showed the new verdicts or the old UNSCREENED rows depending on which
+    worker answered (seen on prod, 6-Nov-2026). A cache hit is therefore
+    checked against the verdict table -- shared by every worker -- and re-read
+    when it has moved. See :func:`_refreshed`.
     """
     cfg = cfg or get_i8_settings()
     # Resolved here rather than left as None, so the key names the sources the
@@ -883,24 +948,36 @@ def get_coding_screen(
                 # next page load asks MBEW again.
                 return built
             _screens[key] = built
-        return _screens[key]
+            return built
+        return _refreshed(db, key, _screens[key])
 
 
-def peek_unscreened_count(cfg: I8Settings | None = None) -> int | None:
+def peek_unscreened_count(
+    cfg: I8Settings | None = None, *, db: Session | None = None
+) -> int | None:
     """How many candidates the cached fast screen holds with no verdict yet --
     the "not screened yet" rows the Repair Candidates page offers to the AI
     screen -- or None when that screen is not cached (4-Nov-2026).
 
     Never builds it: the menu's badge asks on every page. The fast screen the
     page loads is the one keyed (no model, no limit, the default sources).
+
+    ``db`` is checked against the verdict table first, so the badge cannot
+    disagree with the page it points at -- it reads the same cache, and that
+    cache can have been left behind by another worker's model run. Optional
+    because the check is the only thing here that needs a database; without one
+    the cached count is served as it stands.
     """
     cfg = cfg or get_i8_settings()
+    key: ScreenKey = (False, None, cfg.coding_candidate_source_list)
     # Not `with _screen_lock`: a screen being built holds the lock for ~10 s, and
     # this is asked on every page. Busy means "not ready", which is None.
     if not _screen_lock.acquire(blocking=False):
         return None
     try:
-        screen = _screens.get((False, None, cfg.coding_candidate_source_list))
+        screen = _screens.get(key)
+        if screen is not None and db is not None:
+            screen = _refreshed(db, key, screen)
     finally:
         _screen_lock.release()
     if screen is None:

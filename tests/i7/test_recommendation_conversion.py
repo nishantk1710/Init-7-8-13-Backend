@@ -221,14 +221,14 @@ def test_the_decision_has_no_hod_field():
 
 def test_the_eligible_reason_names_what_qualified():
     assert decide(7, NORMAL).detail == (
-        "It was used 7 times in the last 6 months, more than the 4 needed to qualify "
+        "It was used 7 times in the last 12 months, more than the 4 needed to qualify "
         "for Min-Max ordering."
     )
     assert decide(1, INSURANCE).detail == (
         "Its criticality is Insurance, which qualifies it for Min-Max ordering."
     )
     assert decide(7, CRITICAL).detail == (
-        "It was used 7 times in the last 6 months, more than the 4 needed to qualify "
+        "It was used 7 times in the last 12 months, more than the 4 needed to qualify "
         "for Min-Max ordering. Its criticality is Critical, which qualifies it for "
         "Min-Max ordering."
     )
@@ -236,7 +236,7 @@ def test_the_eligible_reason_names_what_qualified():
 
 def test_the_not_eligible_reason_names_both_failed_triggers():
     assert decide(2, NORMAL).detail == (
-        "It was used 2 times in the last 6 months, which does not exceed the 4 needed "
+        "It was used 2 times in the last 12 months, which does not exceed the 4 needed "
         "to qualify for Min-Max ordering. Its criticality is Normal, which is not one of "
         "the levels that qualify (Critical, Impact, Insurance)."
     )
@@ -263,16 +263,16 @@ def test_evaluate_has_no_demand_class_parameter():
 def test_the_decision_records_the_months_its_count_covers():
     decision = decide(5, NORMAL)
 
-    assert decision.consumption_count_months == POLICY.consumption_count_months == 6
+    assert decision.consumption_count_months == POLICY.consumption_count_months == 12
 
 
 def test_the_months_follow_the_policy_not_a_literal():
-    twelve = POLICY.model_copy(update={"consumption_count_months": 12})
+    six = POLICY.model_copy(update={"consumption_count_months": 6})
 
-    assert decide(5, NORMAL, policy=twelve).consumption_count_months == 12
-    assert "in the last 12 months" in decide(5, NORMAL, policy=twelve).detail
+    assert decide(5, NORMAL, policy=six).consumption_count_months == 6
+    assert "in the last 6 months" in decide(5, NORMAL, policy=six).detail
 
 
 def test_the_months_are_recorded_on_every_outcome():
     for count, tier, scope in ((5, NORMAL, IN_SCOPE), (1, NORMAL, IN_SCOPE), (None, None, IN_SCOPE), (9, NORMAL, "OUT_OF_SCOPE")):
-        assert decide(count, tier, scope=scope).consumption_count_months == 6
+        assert decide(count, tier, scope=scope).consumption_count_months == 12

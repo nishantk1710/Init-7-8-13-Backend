@@ -26,8 +26,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable, Mapping, Sequence
 
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
@@ -112,6 +112,41 @@ def load_verdicts(
             screened_at=row.screened_at,
         )
     return found
+
+
+def verdict_stamp(db: Session) -> tuple[int, datetime | None] | None:
+    """What this table holds right now: ``(rows, newest screened_at)``.
+
+    The cheap thing a cached screen can be compared against. Verdicts are
+    shared -- every worker writes them here -- but the screen built around them
+    is cached in each worker's own memory, so a verdict one worker stores is
+    invisible to the other until something tells it to look again. This is that
+    something: one indexed aggregate, asked on a cache hit, where a rebuild
+    would cost the 10-24 s of staging the sources again.
+
+    Both halves earn their place. The count alone misses a re-screen that
+    replaced a verdict in place (:func:`save_verdict` updates rather than
+    appends, so the row count does not move), and the newest ``screened_at``
+    alone misses a :func:`forget_verdicts` that deleted one.
+
+    ``None`` means the question could not be asked -- the migration has not run,
+    or the database is resuming. The caller then serves the screen it already
+    has: this is called where nothing needed the database before, and a verdict
+    a few minutes old is a better answer than a failed page.
+    """
+    try:
+        rows, newest = db.execute(
+            select(func.count(CodingVerdict.id), func.max(CodingVerdict.screened_at))
+        ).one()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.info(
+            "I08 coding verdicts: the table could not be stamped (%s); serving "
+            "the cached screen unchanged",
+            exc.__class__.__name__,
+        )
+        return None
+    return int(rows or 0), newest
 
 
 def save_verdict(

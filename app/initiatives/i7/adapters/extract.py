@@ -58,6 +58,7 @@ from typing import Any, Iterable, Iterator
 from sqlalchemy import bindparam, inspect, select, text, update
 from sqlalchemy.orm import Session
 
+from app.core.criticality import CriticalityTier
 from app.core.db import get_sessionmaker
 from app.core.upsert import safe_batch_size, upsert
 from app.initiatives.i7.adapters.field_map import (
@@ -293,21 +294,8 @@ def _batched(iterator: Iterator[dict[str, Any]], size: int) -> Iterator[list[dic
 # Afrikaans and German); joining it straight would multiply MARA rows and put
 # the same key into one upsert batch twice. English first, else any.
 #
-# Criticality is joined from ``criticality_current`` -- what the monthly ZMM065
-# reports add up to (``app.integrations.criticality.reports``) -- with material
-# numbers in the same stripped form the normalise views give n_mara.material.
-# It is per material-plant there, and this staging table holds one value per
-# material, so a material whose plants disagree takes its MOST SEVERE tier
-# (``SEVERITY_ORDER``): the stock policy errs towards protecting a part that is
-# critical anywhere. This replaces a plain MAX() over the text, which ranked the
-# tiers alphabetically -- CRITICAL < IMPACT < INSURANCE < NORMAL < OBSOLETE --
-# and so staged a part that is CRITICAL at one plant and NORMAL at the other as
-# NORMAL, and anything OBSOLETE anywhere as OBSOLETE.
-#
-# Criticality may not be loaded at all (no report imported yet, or the
-# migration has not run): __CRITICALITY__ is the real table, or an empty
-# stand-in, so criticality is NULL rather than the staging failing -- see
-# _material_sql.
+# Criticality is NOT staged here: it is per material-plant, so it is staged on
+# i7_staged_material_plant (see :func:`_criticality_by_material_plant`).
 _MATERIAL_SQL = """
     SELECT a.material,
            a.material_group,
@@ -317,8 +305,7 @@ _MATERIAL_SQL = """
            a.ext_material_group,
            a.manufacturer,
            a.df_at_client_level,
-           COALESCE(t.material_description, a.material_description) AS material_description,
-           z.criticality
+           COALESCE(t.material_description, a.material_description) AS material_description
       FROM n_mara a
       LEFT JOIN (
             SELECT material,
@@ -327,37 +314,27 @@ _MATERIAL_SQL = """
               FROM n_makt
              GROUP BY material
       ) t ON t.material = a.material
-      LEFT JOIN (
-            SELECT material,
-                   CASE MIN(CASE criticality __RANK__ END) __UNRANK__ END AS criticality
-              FROM (__CRITICALITY__) u
-             WHERE NULLIF(criticality, '') IS NOT NULL
-             GROUP BY material
-      ) z ON z.material = a.material
 """
 
 
-def _material_sql(session: Session) -> str:
-    """_MATERIAL_SQL over ``criticality_current``, or an empty stand-in when it
-    does not exist yet."""
-    from app.core.criticality import SEVERITY_ORDER
-    from app.models.criticality_report import CriticalityCurrent
-    from app.shared.optional_tables import existing
+def _criticality_by_material_plant(
+    keys: Iterable[tuple[str, str]],
+) -> "dict[tuple[str, str], CriticalityTier | None]":
+    """``(material, plant) -> tier`` from the shared criticality port, in one batch.
 
-    table = CriticalityCurrent.__tablename__
-    if existing(session, (table,)):
-        source = f"SELECT material, criticality FROM {table}"
-    else:
-        logger.info("No criticality report is loaded; materials stage with no criticality")
-        source = "SELECT CAST(NULL AS NVARCHAR(200)) AS material, CAST(NULL AS NVARCHAR(200)) AS criticality WHERE 1 = 0"
-    # Tier names come from the enum, never from input.
-    rank = " ".join(f"WHEN '{tier.value}' THEN {n}" for n, tier in enumerate(SEVERITY_ORDER, start=1))
-    unrank = " ".join(f"WHEN {n} THEN '{tier.value}'" for n, tier in enumerate(SEVERITY_ORDER, start=1))
-    return (
-        _MATERIAL_SQL.replace("__CRITICALITY__", source)
-        .replace("__RANK__", rank)
-        .replace("__UNRANK__", unrank)
-    )
+    Criticality is per material-plant: the same material can be CRITICAL at one
+    plant and NORMAL at another, and each plant is staged with its own tier --
+    nothing is merged across plants. A key the source does not know, or a source
+    that is not loaded, answers ``None`` (never NORMAL), so the material-plant
+    stages with no criticality rather than the staging failing.
+    """
+    from app.shared import get_criticality_source
+
+    wanted = list(dict.fromkeys(keys))
+    if not wanted:
+        return {}
+    results = get_criticality_source().get_many(wanted)
+    return {key: results[key].tier for key in wanted}
 
 
 # The unit price is a PLANT's price, read from that plant's own valuation rows -- see
@@ -550,7 +527,7 @@ def _stage_materials(
     in_scope_materials = _materials_in_plant_scope(session, policy.plant_scope)
 
     def rows() -> Iterator[dict[str, Any]]:
-        for row in _read(session, _material_sql(session)):
+        for row in _read(session, _MATERIAL_SQL):
             material = clean(row.material)
             if material is None:
                 rejections.add("n_mara", None, RejectionReason.MISSING_MATERIAL)
@@ -582,7 +559,10 @@ def _stage_materials(
                 # odata_flag_to_canonical() conversion this file's MARC path
                 # now applies.
                 "deletion_flag": parse_flag(row.df_at_client_level),
-                "criticality": clean(row.criticality),
+                # RETIRED here, like unit_price: criticality is per material-plant and is
+                # staged on i7_staged_material_plant. Written NULL, explicitly, so a row
+                # staged before the change cannot keep serving a cross-plant tier.
+                "criticality": None,
                 # A price belongs to a plant, not to a material: it is staged on
                 # i7_staged_material_plant (see _stage_material_plants). These two
                 # columns are retired and written NULL, explicitly, so a row staged
@@ -740,8 +720,18 @@ def _stage_material_plants(
             rejections.add("n_mbew", f"{material}/{plant}", choice.missing.value, choice.detail or "")
         return choice
 
+    # Read whole first, so the criticality lookup (its own session) never runs
+    # while a result is open on this connection. Only in-scope material-plants
+    # are asked about.
+    marc_rows = _read(session, _MATERIAL_PLANT_SQL)
+    tiers = _criticality_by_material_plant(
+        (m, p)
+        for m, p in ((clean(r.material), clean(r.plant)) for r in marc_rows)
+        if m is not None and p is not None and not _out_of_scope(p, scope)
+    )
+
     def rows() -> Iterator[dict[str, Any]]:
-        for row in _read(session, _MATERIAL_PLANT_SQL):
+        for row in marc_rows:
             material = clean(row.material)
             plant = clean(row.plant)
             if material is None:
@@ -792,6 +782,10 @@ def _stage_material_plants(
                 "current_reorder_point": parse_decimal(values["reorder_point"]),
                 "current_maximum_stock": parse_decimal(values["maximum_stock_level"]),
                 "deletion_flag": deletion_flag,
+                # THIS plant's own tier. Unknown stays NULL -- never defaulted to NORMAL.
+                "criticality": (
+                    tiers[(material, plant)].value if tiers.get((material, plant)) is not None else None
+                ),
                 # This plant's own replacement price, or NULL with the reason beside it
                 # (price_missing_reason). Never another plant's, never the highest found.
                 "unit_price": price.price,

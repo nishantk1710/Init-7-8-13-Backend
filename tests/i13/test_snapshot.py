@@ -182,9 +182,51 @@ class TestMonthlyConsumption:
         ]
         series = _monthly_consumption(rows)[("M", "P")]
         assert [(m.month, m.issued_quantity, m.issue_count, m.received_quantity) for m in series] == [
-            ("2026-01", Decimal("3"), 0, Decimal("0")),
+            # 2 of the 5 taken back: the issue still happened, once.
+            ("2026-01", Decimal("3"), 1, Decimal("0")),
             ("2026-02", Decimal("0"), 0, Decimal("7")),
         ]
+
+    def test_a_reversal_is_taken_off_the_month_of_the_issue_it_cancels(self) -> None:
+        """8000004187 (7-Nov-2026): each issue reversed the month after. The
+        Usage tab showed +1 then -1 and a last issue in October 2025; the
+        Consumption tab, correctly, April 2024."""
+        from app.initiatives.i13.snapshot import _monthly_consumption
+
+        def mv(bwart, day):
+            return {"Matnr": "M", "Werks": "P", "Bwart": bwart, "Menge": Decimal("1"), "BudatMkpf": day}
+
+        rows = [
+            mv("261", date(2024, 4, 18)),
+            mv("261", date(2025, 1, 10)), mv("262", date(2025, 3, 5)),
+            mv("261", date(2025, 10, 2)), mv("262", date(2025, 11, 4)),
+        ]
+        series = _monthly_consumption(rows)[("M", "P")]
+        assert all(m.issued_quantity >= 0 for m in series)
+        assert [(m.month, m.issued_quantity, m.issue_count) for m in series] == [
+            ("2024-04", Decimal("1"), 1),
+            ("2025-01", Decimal("0"), 0),
+            ("2025-10", Decimal("0"), 0),
+        ]
+        assert max(m.month for m in series if m.issue_count) == "2024-04"
+
+    def test_a_reversal_of_an_older_issue_does_not_cancel_this_months(self) -> None:
+        """8000005907 (7-Nov-2026): April 2026 held an issue and a 262 for an
+        earlier one. Netted by month it read as no issue at all."""
+        from app.initiatives.i13.snapshot import _monthly_consumption
+
+        def mv(bwart, day):
+            return {"Matnr": "M", "Werks": "P", "Bwart": bwart, "Menge": Decimal("1"), "BudatMkpf": day}
+
+        rows = [mv("261", date(2025, 12, 1)), mv("262", date(2026, 4, 2)), mv("261", date(2026, 4, 13))]
+        series = {m.month: (m.issued_quantity, m.issue_count) for m in _monthly_consumption(rows)[("M", "P")]}
+        assert series == {"2025-12": (Decimal("0"), 0), "2026-04": (Decimal("1"), 1)}
+
+    def test_a_reversal_of_an_issue_before_the_history_is_ignored(self) -> None:
+        from app.initiatives.i13.snapshot import _monthly_consumption
+
+        rows = [{"Matnr": "M", "Werks": "P", "Bwart": "262", "Menge": Decimal("2"), "BudatMkpf": date(2026, 3, 1)}]
+        assert _monthly_consumption(rows) == {}
 
 
 class TestSnapshotUnavailable:

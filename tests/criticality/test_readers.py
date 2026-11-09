@@ -105,50 +105,53 @@ def test_get_many_answers_exactly_as_get_does(session, source) -> None:
 
 
 @pytest.fixture
-def i07_session(session, monkeypatch):
-    """The staging query's other inputs: n_mara and n_makt, as plain tables."""
-    session.execute(text(
-        "CREATE TABLE n_mara (material TEXT, material_group TEXT, material_type TEXT, base_unit_of_measure TEXT, "
-        "x_plant_matl_status TEXT, ext_material_group TEXT, manufacturer TEXT, df_at_client_level TEXT, "
-        "material_description TEXT)"
-    ))
-    session.execute(text("CREATE TABLE n_makt (material TEXT, language_key TEXT, material_description TEXT)"))
-    for material in ("1", "2", "3", "4"):
-        session.execute(text("INSERT INTO n_mara (material) VALUES (:m)"), {"m": material})
-    session.commit()
-    monkeypatch.setattr("app.shared.optional_tables.existing", lambda _s, names: tuple(names))
+def i07_session(session, source, monkeypatch):
+    """I07 staging asks the shared port, so point the port at the test database."""
+    monkeypatch.setattr("app.shared.get_criticality_source", lambda: source)
     return session
 
 
-def _i07_tiers(session) -> dict[str, str | None]:
-    from app.initiatives.i7.adapters.extract import _material_sql
+def _i07_tiers(plants=("1300", "1500"), materials=("1", "2", "3", "4")) -> dict[tuple[str, str], str | None]:
+    from app.initiatives.i7.adapters.extract import _criticality_by_material_plant
 
-    return {row.material: row.criticality for row in session.execute(text(_material_sql(session)))}
+    tiers = _criticality_by_material_plant([(m, p) for m in materials for p in plants])
+    return {key: tier.value if tier else None for key, tier in tiers.items()}
 
 
-def test_i07_takes_the_most_severe_tier_across_plants(i07_session) -> None:
-    """Alphabetical MAX would give NORMAL for 1 (CRITICAL at 1300) and OBSOLETE for 2."""
+def test_i07_keeps_each_plants_own_tier(i07_session) -> None:
+    """No cross-plant merge: CRITICAL at 1300 and NORMAL at 1500 stages as exactly that."""
     _store(i07_session, [("1", "CRITICAL"), ("2", "NORMAL"), ("3", "INSURANCE")], JUL, plant="1300")
     _store(i07_session, [("1", "NORMAL"), ("2", "OBSOLETE"), ("3", "IMPACT")], JUL, plant="1500")
-    assert _i07_tiers(i07_session) == {"1": "CRITICAL", "2": "NORMAL", "3": "IMPACT", "4": None}
+    tiers = _i07_tiers()
+    assert tiers[("1", "1300")] == "CRITICAL" and tiers[("1", "1500")] == "NORMAL"
+    assert tiers[("2", "1300")] == "NORMAL" and tiers[("2", "1500")] == "OBSOLETE"
+    assert tiers[("3", "1300")] == "INSURANCE" and tiers[("3", "1500")] == "IMPACT"
+    assert tiers[("4", "1300")] is None and tiers[("4", "1500")] is None
 
 
 def test_i07_reads_the_current_values_not_the_history(i07_session) -> None:
     _store(i07_session, [("1", "CRITICAL")], JUL)
     _store(i07_session, [("1", "OBSOLETE")], AUG)
-    assert _i07_tiers(i07_session)["1"] == "OBSOLETE"
+    assert _i07_tiers()[("1", "1300")] == "OBSOLETE"
 
 
-def test_i07_stages_with_no_criticality_when_the_table_does_not_exist(session, monkeypatch) -> None:
-    session.execute(text(
-        "CREATE TABLE n_mara (material TEXT, material_group TEXT, material_type TEXT, base_unit_of_measure TEXT, "
-        "x_plant_matl_status TEXT, ext_material_group TEXT, manufacturer TEXT, df_at_client_level TEXT, "
-        "material_description TEXT)"
-    ))
-    session.execute(text("CREATE TABLE n_makt (material TEXT, language_key TEXT, material_description TEXT)"))
-    session.execute(text("INSERT INTO n_mara (material) VALUES ('1')"))
-    monkeypatch.setattr("app.shared.optional_tables.existing", lambda _s, _n: ())
-    assert _i07_tiers(session) == {"1": None}
+def test_i07_stages_with_no_criticality_when_nothing_is_loaded(i07_session) -> None:
+    assert set(_i07_tiers().values()) == {None}
+
+
+def test_i07_a_plant_without_a_tier_stays_unknown_not_normal(i07_session) -> None:
+    """Only 1500 lists the material: 1300 is None, never defaulted to NORMAL."""
+    _store(i07_session, [("2", "IMPACT")], JUL, plant="1500")
+    tiers = _i07_tiers()
+    assert tiers[("2", "1500")] == "IMPACT" and tiers[("2", "1300")] is None
+
+
+def test_i07_staged_plant_row_carries_its_own_tier(i07_session) -> None:
+    """The column the feature store and the repository read."""
+    from app.models.i7_staging import StagedMaterialPlant
+
+    columns = {c.name for c in StagedMaterialPlant.__table__.columns}
+    assert "criticality" in columns
 
 
 # --- the July delivery ----------------------------------------------------
@@ -234,6 +237,6 @@ def test_an_upload_moves_the_i07_source_fingerprint(session) -> None:
     before = source_fingerprint(session)
     _store(session, [("1", "NORMAL")], JUL)
     after = source_fingerprint(session)
-    assert before == "" and after.startswith("criticality_current:")
+    assert before == "" and after.startswith("sha256:")
     _store(session, [("1", "NORMAL")], AUG)
     assert source_fingerprint(session) != after

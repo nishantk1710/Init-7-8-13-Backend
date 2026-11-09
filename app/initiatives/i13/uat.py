@@ -98,7 +98,7 @@ def _latest_plan(db: Session, session_id: str):
 
 def _apply(db: Session, material: str, plant: str) -> None:
     """What a new extract plus a detection run would do, for one material."""
-    from app.initiatives.i13.act_runner import run_detection
+    from app.initiatives.i13.act_runner import detection_types, run_detection
     from app.initiatives.i13.config import get_i13_config
     from app.initiatives.i13.session_link import sync_links
     from app.initiatives.i13.snapshot import refresh_material, serving_snapshot
@@ -119,6 +119,8 @@ def _apply(db: Session, material: str, plant: str) -> None:
         material=material,
         plant=plant,
         snapshot=snapshot,
+        # The same types as the nightly run, so UAT sees what production will.
+        types=detection_types(settings.i13_detection_types),
     )
 
 

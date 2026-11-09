@@ -217,6 +217,11 @@ TABLES: dict[str, tuple[Col, ...]] = {
         _c("batch", "CHARG"),
         _c("special_stock", "SOBKZ"),
         _c("requirement_date", "BDTER", kind="date"),
+        # Created on: RKPF-RSDAT for a manual reservation, the order's creation
+        # date for an order component (SAP's October transport). NULL where SAP
+        # has neither, or an extract without the column. Read by Non-AI
+        # detection's go-live cutoff (app.initiatives.i13.act_runner).
+        _c("created_on", "CRDAT", kind="date"),
         _c("requirement_quantity", "BDMNG", kind="num"),
         _c("base_unit_of_measure", "MEINS"),
         _c("debit_credit_ind", "SHKZG"),
