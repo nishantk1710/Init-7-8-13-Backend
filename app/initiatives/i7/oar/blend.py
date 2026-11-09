@@ -84,11 +84,11 @@ class LeadTimeSource(StrEnum):
     PEER_WEIGHTED_MEAN = "PEER_WEIGHTED_MEAN"
 
 
-_LEAD_TIME_WORDS = {
-    LeadTimeSource.MATERIAL_MASTER.value: "from the material master",
-    LeadTimeSource.PLANT_DEFAULT.value: "assumed, plant default",
-    LeadTimeSource.PEER_WEIGHTED_MEAN.value: "assumed, average of the similar materials",
+_LEAD_TIME_ASSUMED_WORDS = {
+    LeadTimeSource.PLANT_DEFAULT.value: "assumed: plant default",
+    LeadTimeSource.PEER_WEIGHTED_MEAN.value: "assumed: average of its similar materials",
 }
+"""A lead time kept for the material itself needs no note. One that was assumed is said to be."""
 
 
 class PeerInput(NamedTuple):
@@ -430,30 +430,83 @@ def estimate(inputs: BlendInput, config: OarBlendPolicy, seed: int) -> BlendResu
 # words
 
 
-def explain(result: BlendResult) -> str:
-    """The split, in numbers, for the card -- in place of a vague "confidence may be thin"."""
+def _units(value: float | int) -> str:
+    whole = int(value)
+    return f"{whole} unit" if whole == 1 else f"{whole} units"
+
+
+def _applied(result: BlendResult, prefix: str) -> str | None:
+    return next((g for g in result.guardrails_applied if g.startswith(prefix)), None)
+
+
+def explain_split(result: BlendResult) -> str:
+    """One line: where the reorder level comes from, in percentages. For the list of drivers."""
     if not result.sized:
         return ""
-    lead = (
-        f"Lead time {result.lead_time_days:.0f} days ({_LEAD_TIME_WORDS.get(result.lead_time_source, 'source unknown')})."
-        if result.lead_time_days is not None
-        else ""
-    )
     own_pct = round(100 * (result.w_own or 0.0))
-    events = f"{result.n_events} consumption event{'s' if result.n_events != 1 else ''}"
+    if result.status is BlendStatus.BLENDED:
+        peers = f"{result.used_peer_count} similar material{'s' if result.used_peer_count != 1 else ''}"
+        return f"Reorder level {result.rop}: {own_pct}% from this material's own usage, {100 - own_pct}% from {peers}."
+    return f"Reorder level {result.rop}: from this material's own usage; no similar material could be scaled to its demand."
+
+
+def explain(result: BlendResult) -> str:
+    """The recommendation in plain words, one short paragraph per line. Built from the figures, not written by a model.
+
+    Replaces the vague "confidence may be thin": it says how much came from the material's own usage and how much
+    from similar materials, what was done to the numbers afterwards, and the lead time used. A guardrail is said
+    in a sentence, never as its code.
+    """
+    if not result.sized:
+        return ""
+    own_pct = round(100 * (result.w_own or 0.0))
+    lines: list[str] = []
+
     if result.status is BlendStatus.BLENDED:
         peer_pct = 100 - own_pct
         peers = f"{result.used_peer_count} similar material{'s' if result.used_peer_count != 1 else ''}"
-        text = (
-            f"Reorder point {result.rop} = {own_pct}% from this material's own {events} (estimate {math.ceil(result.rop_own - 1e-9)}) "
-            f"+ {peer_pct}% from {peers} (estimate {math.ceil(result.rop_peer - 1e-9)}, best match {result.best_similarity:.2f})."
-        )
+        if own_pct >= peer_pct:
+            basis = f"It is mainly based on this material's own usage ({own_pct}%), with some reference from {peers} ({peer_pct}%)."
+        else:
+            basis = f"It is mainly based on {peers} ({peer_pct}%), with some reference from this material's own usage ({own_pct}%)."
     else:
-        text = (
-            f"Reorder point {result.rop} = 100% from this material's own {events} (estimate {math.ceil(result.rop_own - 1e-9)}); "
-            "no similar material could be scaled to its demand."
+        basis = "It is based on this material's own usage; no similar material could be scaled to its demand."
+    lines.append(f"The recommended reorder level is {_units(result.rop)}. {basis}")
+
+    if _applied(result, "rop_raised_to_issue_size") and result.issue_size_floor is not None:
+        lines.append(
+            f"The reorder level was raised to {result.rop} so that it covers one normal single issue of this material "
+            f"(about {_units(round(result.issue_size_floor))})."
         )
-    tail = f" Safety stock {result.ss}, maximum stock {result.max_stock} (maximum = reorder point x {result.max_ratio:.2f})."
-    flags = [g for g in result.guardrails_applied if g.startswith(("max_", "flag_", "rop_"))]
-    caution = f" Check: {'; '.join(flags)}." if flags else ""
-    return f"{text} {lead}{tail}{caution}".replace("  ", " ").strip()
+    ignored = _applied(result, "issue_outliers_ignored")
+    if ignored:
+        count = int(ignored.split(":")[1])
+        lines.append(
+            f"{count} unusually large single issue{'s were' if count != 1 else ' was'} left out when working out what a normal issue is."
+        )
+
+    stock = (
+        "No extra safety stock is kept."
+        if result.ss == 0
+        else f"A safety stock of {_units(result.ss)} is kept to protect against unexpected demand or delays in supply."
+    )
+    maximum = f"The maximum stock is {_units(result.max_stock)}, so there is enough stock without overstocking."
+    notes = []
+    if _applied(result, "max_capped_at_annual_consumption"):
+        notes.append("It is limited to one year of this material's usage.")
+    if _applied(result, "max_capped_by_price_band"):
+        notes.append("It is limited because of this material's high unit price.")
+    if _applied(result, "max_raised_to_rop"):
+        notes.append("It was raised to match the reorder level.")
+    cover = _applied(result, "flag_max_above_")
+    if cover:
+        months = cover.removeprefix("flag_max_above_").split("_months")[0]
+        notes.append(f"That is more than {months} months of this material's usage, so it is worth a check.")
+    lines.append(" ".join([stock, maximum, *notes]))
+
+    if result.lead_time_days is not None:
+        assumed = _LEAD_TIME_ASSUMED_WORDS.get(result.lead_time_source)
+        lines.append(
+            f"The calculation also uses a lead time of {result.lead_time_days:.0f} days" + (f" ({assumed})." if assumed else ".")
+        )
+    return "\n".join(lines)
