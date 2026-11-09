@@ -14,12 +14,15 @@ Entirely switched by ``I7_OAR_BLEND_ENABLED``. Callers pass nothing when it is o
 
 from __future__ import annotations
 
+import calendar
 import zlib
 from datetime import date
 from typing import Any, Iterable
 
 from sqlalchemy.orm import Session
 
+from app.initiatives.i7.adapters.ingestion_policy import ExtractIngestionPolicy
+from app.initiatives.i7.adapters.validation import parse_date, parse_decimal
 from app.initiatives.i7.features.consumption_window import WindowStatus, latest_run_window
 from app.initiatives.i7.oar import blend as blend_module
 from app.initiatives.i7.oar import exclusions as exclusions_module
@@ -64,6 +67,32 @@ def _float(value: Any) -> float | None:
     return None if value is None else float(value)
 
 
+def _issue_sizes(session: Session, keys: list[Key], months: list[date]) -> dict[Key, list[float]]:
+    """The size of each single issue per material-plant inside the window, reversals netted."""
+    movement = ExtractIngestionPolicy().consumption
+    issue_types, reversal_types = frozenset(movement.issue_movement_types), frozenset(movement.reversal_movement_types)
+    first = months[0]
+    last = date(months[-1].year, months[-1].month, calendar.monthrange(months[-1].year, months[-1].month)[1])
+    wanted = set(keys)
+    lines = repository.load_issue_lines(session, {m for m, _ in keys}, movement.all_movement_types)
+    sizes: dict[Key, list[float]] = {}
+    for key, rows in lines.items():
+        if key not in wanted:
+            continue
+        in_window = []
+        for row in rows:
+            posted = parse_date(row.posting_date)
+            quantity = parse_decimal(row.quantity)
+            if posted is None or quantity is None or not (first <= posted <= last):
+                continue
+            reservation = str(row.reservation).strip() if row.reservation is not None else None
+            in_window.append(
+                blend_module.IssueLine(str(row.movement_type).strip(), float(quantity), reservation or None, posted)
+            )
+        sizes[key] = blend_module.net_issue_sizes(in_window, issue_types, reversal_types)
+    return sizes
+
+
 def evaluate_rows(
     session: Session, rows: Iterable[Any], policy: PolicyDocument
 ) -> dict[Key, blend_module.BlendResult]:
@@ -89,6 +118,11 @@ def evaluate_rows(
     monthly_by_key = (
         repository.load_monthly_consumption(session, months[0], months[-1]) if months else {}
     )
+
+    # Single issues in the same window, from the same movement lines the monthly consumption is staged from.
+    issue_sizes: dict[Key, list[float]] = {}
+    if months and settings.issue_size_floor_percentile is not None:
+        issue_sizes = _issue_sizes(session, [(r.sap_material_number, r.sap_plant_code) for r in wanted], months)
 
     similarity = policy.similarity
     neighbours_by_run: dict[int, dict] = {}
@@ -141,6 +175,7 @@ def evaluate_rows(
                 lead_time_days=_float(master_days),
                 peers=peers,
                 unit_price=_float(getattr(row, "unit_price", None)),
+                issue_sizes=issue_sizes.get(key),
             ),
             settings,
             seed_for(settings.seed, key),

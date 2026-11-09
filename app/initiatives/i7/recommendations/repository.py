@@ -215,6 +215,36 @@ def load_monthly_consumption(session: Session, first_month, last_month) -> dict:
     return monthly
 
 
+_ISSUE_LINES_SQL = """
+    SELECT material, plant, posting_date, quantity, movement_type, reservation
+      FROM n_mseg
+     WHERE movement_type IN :movement_types
+       AND material IN :materials
+"""
+
+
+def load_issue_lines(session: Session, materials, movement_types) -> dict:
+    """``{(material, plant): [movement lines]}`` for the given materials -- single issues and their reversals.
+
+    The same source and movement types the monthly consumption is staged from (``n_mseg``), read per line so a
+    single issue's size is known. Filtered to the materials asked for in SQL; the dates are the caller's, because the
+    posting date is raw text.
+    """
+    from sqlalchemy import bindparam
+
+    keys = sorted({m for m in materials})
+    grouped: dict = {}
+    statement = text(_ISSUE_LINES_SQL).bindparams(
+        bindparam("movement_types", expanding=True), bindparam("materials", expanding=True)
+    )
+    for start in range(0, len(keys), 500):
+        for row in session.execute(
+            statement, {"movement_types": list(movement_types), "materials": keys[start : start + 500]}
+        ):
+            grouped.setdefault((str(row.material).strip(), str(row.plant).strip()), []).append(row)
+    return grouped
+
+
 _OAR_NEIGHBOURS_SQL = """
     SELECT n.sap_material_number, n.sap_plant_code, n.neighbour_material, n.neighbour_plant, n.rank,
            n.combined_similarity, n.safety_stock, n.rop, n.max_stock, n.inventory_eligible
