@@ -21,8 +21,9 @@ from typing import NamedTuple
 
 from app.initiatives.i7.contracts.enums import RecommendationStatus
 
-RECOMMENDATION_FORMULA_VERSION = "i07-recommendation-7"
-"""Bumped to ``-7`` so an OAR recommendation is rewritten with its lead time (the SAP planned delivery time, which the
+RECOMMENDATION_FORMULA_VERSION = "i07-recommendation-8"
+"""Bumped to ``-8`` so an OAR recommendation is rewritten with the plain-words Reason (how much came from the material's own
+usage and how much from similar materials); rows keyed on ``-7`` would otherwise be reused with the old text. ``-7``: so an OAR recommendation is rewritten with its lead time (the SAP planned delivery time, which the
 feature row carries; the card used to say "Not available"). Rows keyed on ``-6`` would otherwise be reused as they are.
 
 Earlier, bumped to ``-6`` after the own-consumption fallback was reverted: rows saved while it was on carry the
