@@ -200,7 +200,7 @@ class ConversionTrigger(StrEnum):
     """
 
     CONSUMPTION_FREQUENCY = "CONSUMPTION_FREQUENCY"
-    """Eligible on usage alone: more than the threshold net issues in 6 months."""
+    """Eligible on usage alone: more than the threshold net issues in the policy's window (12 months)."""
 
     PRODUCTION_IMPACT = "PRODUCTION_IMPACT"
     """Eligible on criticality alone: a qualifying tier (CRITICAL / IMPACT / INSURANCE)."""
@@ -240,8 +240,8 @@ class ConversionDecision(NamedTuple):
     detail: str
     consumption_count_months: int | None = None
     """How many months ``consumption_count_12m`` was counted over -- the policy's
-    ``consumption_count_months`` when the decision was made (6 since 2026-10-22, 12
-    before). The count's name is historical; this is what a screen or an explanation
+    ``consumption_count_months`` when the decision was made (12 at present; 6 from 2026-10-22
+    to 2026-11-09). The count's name is historical; this is what a screen or an explanation
     must say, and it travels with the count so a later policy change cannot relabel a
     recommendation already made."""
 

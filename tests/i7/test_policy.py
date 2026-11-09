@@ -74,8 +74,8 @@ def test_confidence_thresholds_kept_despite_data_not_reaching_them():
 def test_conversion_consumption_trigger_matches_the_documents():
     policy = ConversionTriggerPolicy()
     assert policy.consumption_count_threshold == 4
-    assert policy.consumption_count_months == 6
-    assert current_conversion_trigger_policy().consumption_count_months == 6
+    assert policy.consumption_count_months == 12
+    assert current_conversion_trigger_policy().consumption_count_months == 12
 
 
 # --- Invalid configuration is rejected --------------------------------
