@@ -435,6 +435,8 @@ def _blend_entries(row: Any, blended: blend_module.BlendResult) -> list[tuple[st
         ("lead_time_days", fmt(blended.lead_time_days)),
         ("lead_time_source", str(blended.lead_time_source)),
         ("lead_time_bucket_mode", blended.lead_time_bucket_mode),
+        ("issue_size_floor", "n/a" if blended.issue_size_floor is None else f"{blended.issue_size_floor:.2f}"),
+        ("issue_count", str(blended.issue_count)),
         ("guardrails_applied", ",".join(blended.guardrails_applied) or "none"),
         ("guardrails_not_applied", ",".join(g.split(":")[0] for g in blended.guardrails_not_applied)),
         ("similarity_safety_stock", str(row.oar_safety_stock)),

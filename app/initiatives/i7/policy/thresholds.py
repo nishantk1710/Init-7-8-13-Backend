@@ -547,6 +547,15 @@ class OarBlendPolicy(BaseModel):
     max_cover_flag_months: float = Field(default=6.0, gt=0)
     """A max above this many months of the material's own use is flagged."""
 
+    issue_size_floor_percentile: float | None = Field(default=90.0, gt=0, le=100)
+    """The reorder point is never below this percentile of the material's SINGLE issues in the window (MSEG lines,
+    reversals netted), so one normal issue cannot empty the stock. ``None`` switches the floor off."""
+
+    issue_outlier_multiple: float | None = Field(default=None, gt=1)
+    """Optional, OFF by default and an ASSUMPTION: a single issue larger than this multiple of the median issue is
+    ignored when the floor is worked out. The movement data has no project / WBS field and the order number carries
+    no order type, so a one-off draw cannot be recognised by what it was booked to."""
+
     plant_default_lead_time_days: int | None = Field(default=None, ge=1)
     """Second step of the lead-time fallback chain; unset until the business names one."""
 

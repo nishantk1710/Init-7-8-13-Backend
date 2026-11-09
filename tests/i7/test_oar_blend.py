@@ -11,8 +11,12 @@ import math
 
 import pytest
 
+from datetime import date
+
 from app.initiatives.i7.oar.blend import (
     BlendInput,
+    IssueLine,
+    net_issue_sizes,
     BlendStatus,
     LeadTimeSource,
     PeerInput as P,
@@ -295,3 +299,88 @@ def test_the_explanation_states_the_split_in_numbers() -> None:
 
 def test_an_unsized_result_has_no_explanation() -> None:
     assert explain(run("belts", lead_time_days=None)) == ""
+
+
+# --- the issue-size floor: ROP is never below a normal single issue ------------------------------------
+
+LED_ISSUES = [30, 40, 30, 50, 50, 10]  # the LED light's single issue lines, Nov 2025 - Oct 2026 (two of 50 on 14 Sep)
+ISSUE_TYPES, REVERSAL_TYPES = frozenset({"201", "261"}), frozenset({"202", "262"})
+
+
+def line(movement, qty, reservation="R1", day=1):
+    return IssueLine(movement, float(qty), reservation, date(2026, 5, day))
+
+
+def test_a_reversal_cancels_the_earlier_issue_of_the_same_size_and_reservation() -> None:
+    lines = [line("201", 50, "R1", 1), line("201", 30, "R2", 2), line("202", 50, "R1", 3)]
+    assert net_issue_sizes(lines, ISSUE_TYPES, REVERSAL_TYPES) == [30.0]
+
+
+def test_a_reversal_with_nothing_to_cancel_is_ignored() -> None:
+    lines = [line("201", 30, "R2", 2), line("202", 50, "R9", 3)]  # its issue predates the window
+    assert net_issue_sizes(lines, ISSUE_TYPES, REVERSAL_TYPES) == [30.0]
+
+
+def test_two_issues_of_the_same_size_are_two_issues_and_one_reversal_cancels_one() -> None:
+    lines = [line("201", 50, "R1", 1), line("201", 50, "R1", 2), line("202", 50, "R1", 3)]
+    assert net_issue_sizes(lines, ISSUE_TYPES, REVERSAL_TYPES) == [50.0]
+
+
+def test_order_issues_261_count_like_cost_centre_issues_201() -> None:
+    assert net_issue_sizes([line("261", 7), line("201", 3)], ISSUE_TYPES, REVERSAL_TYPES) == [7.0, 3.0] or sorted(
+        net_issue_sizes([line("261", 7), line("201", 3)], ISSUE_TYPES, REVERSAL_TYPES)
+    ) == [3.0, 7.0]
+
+
+def test_the_rop_is_raised_to_the_90th_percentile_of_single_issues() -> None:
+    plain = run("light")
+    floored = run("light", issue_sizes=LED_ISSUES)
+    assert floored.issue_size_floor == pytest.approx(50.0)  # 90th percentile of 10, 30, 30, 40, 50, 50
+    assert plain.rop < 50 <= floored.rop
+    assert "rop_raised_to_issue_size_p90" in floored.guardrails_applied
+    assert floored.max_stock >= floored.rop  # Max follows the raised reorder point
+    assert floored.issue_count == 6
+
+
+def test_max_is_derived_from_the_raised_rop() -> None:
+    plain, floored = run("light"), run("light", issue_sizes=LED_ISSUES)
+    assert floored.max_stock > plain.max_stock or floored.max_stock == floored.rop
+
+
+def test_a_rop_already_above_the_floor_is_left_alone() -> None:
+    plain = run("belts")  # ROP 21; its issues are 4 to 10
+    floored = run("belts", issue_sizes=[6, 4, 4, 6, 10])
+    assert floored.rop == plain.rop and floored.issue_size_floor == pytest.approx(8.4)
+    assert not any(g.startswith("rop_raised") for g in floored.guardrails_applied)
+
+
+def test_without_single_issue_lines_the_floor_is_not_applied_and_says_so() -> None:
+    result = run("light")
+    assert result.issue_size_floor is None
+    assert any(n.startswith("issue_size_floor") for n in result.guardrails_not_applied)
+
+
+def test_once_the_floor_is_worked_out_it_leaves_the_not_applied_list() -> None:
+    result = run("light", issue_sizes=LED_ISSUES)
+    text = " ".join(result.guardrails_not_applied)
+    assert "issue_size_floor" not in text
+    assert "project_or_order_exclusion" in text and "pack_rounding" in text  # these are still not applied
+
+
+def test_the_floor_can_be_switched_off() -> None:
+    off = OarBlendPolicy(issue_size_floor_percentile=None)
+    assert run("light", config=off, issue_sizes=LED_ISSUES).issue_size_floor is None
+
+
+def test_a_percentile_other_than_90_is_honoured() -> None:
+    assert run("light", config=OarBlendPolicy(issue_size_floor_percentile=50), issue_sizes=LED_ISSUES).issue_size_floor == pytest.approx(35.0)
+
+
+def test_the_outlier_rule_is_off_by_default_and_sets_aside_a_huge_single_issue_when_on() -> None:
+    sizes = [10, 10, 11, 12, 400]
+    off = run("belts", issue_sizes=sizes)
+    on = run("belts", config=OarBlendPolicy(issue_outlier_multiple=5), issue_sizes=sizes)
+    assert off.issue_size_floor > 100  # one huge issue sets the floor
+    assert on.issue_size_floor < 15
+    assert any(g.startswith("issue_outliers_ignored") for g in on.guardrails_applied)
+    assert not any(g.startswith("issue_outliers_ignored") for g in off.guardrails_applied)

@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import date
 from enum import StrEnum
 from typing import NamedTuple, Sequence
 
@@ -48,11 +49,20 @@ from app.initiatives.i7.policy.thresholds import OarBlendPolicy
 
 DAYS_PER_MONTH = 30.44
 
-NOT_APPLIED = (
-    "issue_size_floor: needs MSEG line items (not staged)",
-    "project_or_order_exclusion: needs MSEG project / order fields (not staged)",
-    "pack_rounding: no order-multiple source",
+_PROJECT_EXCLUSION_NOT_APPLIED = (
+    "project_or_order_exclusion: the movement data has no project / WBS field and the order number carries no "
+    "order type, so a campaign draw cannot be told from routine maintenance"
 )
+_PACK_ROUNDING_NOT_APPLIED = "pack_rounding: no order-multiple source"
+
+NOT_APPLIED = (
+    "issue_size_floor: no single-issue lines were available for this material",
+    _PROJECT_EXCLUSION_NOT_APPLIED,
+    _PACK_ROUNDING_NOT_APPLIED,
+)
+"""Stated in every result. The issue-size floor leaves this list when it was worked out (see ``NOT_APPLIED_WITH_FLOOR``)."""
+
+NOT_APPLIED_WITH_FLOOR = (_PROJECT_EXCLUSION_NOT_APPLIED, _PACK_ROUNDING_NOT_APPLIED)
 
 
 class BlendStatus(StrEnum):
@@ -94,6 +104,34 @@ class PeerInput(NamedTuple):
     lead_time_days: float | None = None
 
 
+class IssueLine(NamedTuple):
+    """One movement line for a material-plant: an issue (201 / 261) or its reversal (202 / 262)."""
+
+    movement_type: str
+    quantity: float
+    reservation: str | None
+    posted: date
+
+
+def net_issue_sizes(
+    lines: Sequence[IssueLine], issue_types: frozenset[str], reversal_types: frozenset[str]
+) -> list[float]:
+    """The size of each SINGLE issue, with cancelled ones removed.
+
+    A reversal cancels the earliest not-yet-cancelled issue of the same quantity on the same reservation (a blank
+    reservation matches a blank one). That matching rule is an assumption -- the line data carries no direct link
+    between an issue and its reversal. A reversal with nothing to cancel (its issue predates the window) is ignored.
+    """
+    issues = sorted((ln for ln in lines if ln.movement_type in issue_types), key=lambda ln: ln.posted)
+    cancelled = [False] * len(issues)
+    for rev in sorted((ln for ln in lines if ln.movement_type in reversal_types), key=lambda ln: ln.posted):
+        for i, issue in enumerate(issues):
+            if not cancelled[i] and issue.quantity == rev.quantity and (issue.reservation or "") == (rev.reservation or ""):
+                cancelled[i] = True
+                break
+    return [issue.quantity for i, issue in enumerate(issues) if not cancelled[i] and issue.quantity > 0]
+
+
 @dataclass(frozen=True)
 class PeerDetail:
     material: str
@@ -115,6 +153,9 @@ class BlendInput:
     lead_time_days: float | None
     peers: Sequence[PeerInput]
     unit_price: float | None = None
+    issue_sizes: Sequence[float] | None = None
+    """The sizes of the material's single issues in the window (:func:`net_issue_sizes`); ``None`` when no lines
+    were read. Drives the issue-size floor."""
     eoq: float | None = None
     """No EOQ source exists yet; when one does, Max uses ``max(EOQ, ratio step)``."""
 
@@ -144,6 +185,9 @@ class BlendResult:
     peers: tuple[PeerDetail, ...] = ()
     best_similarity: float | None = None
     used_peer_count: int = 0
+    issue_size_floor: float | None = None
+    """The percentile of single-issue sizes the reorder point may not fall below, when it was worked out."""
+    issue_count: int = 0
 
     @property
     def sized(self) -> bool:
@@ -252,6 +296,18 @@ def _peer_details(peers: Sequence[PeerInput], config: OarBlendPolicy) -> list[Pe
     return details
 
 
+def _without_outliers(sizes: list[float], multiple: float | None, guardrails: list[str]) -> list[float]:
+    """Optionally set aside a single issue far larger than the typical one (OFF unless configured)."""
+    if multiple is None or len(sizes) < 3:
+        return sizes
+    median = float(np.median(sizes))
+    kept = [v for v in sizes if v <= multiple * median]
+    if kept and len(kept) < len(sizes):
+        guardrails.append(f"issue_outliers_ignored: {len(sizes) - len(kept)}")
+        return kept
+    return sizes
+
+
 # ---------------------------------------------------------------------------------------------------------
 # the blend
 
@@ -307,6 +363,17 @@ def estimate(inputs: BlendInput, config: OarBlendPolicy, seed: int) -> BlendResu
         status = BlendStatus.OWN_ONLY
         guardrails.append("no_usable_similar_material: own estimate only")
 
+    # The reorder point may not be smaller than a normal single issue. Applied before Max is derived, so the
+    # policy stays coherent (Max follows the raised ROP). SS is left as it was: it stays below the ROP.
+    sizes = [float(v) for v in (inputs.issue_sizes or ()) if v and float(v) > 0]
+    floor_value: float | None = None
+    if sizes and config.issue_size_floor_percentile is not None:
+        counted = _without_outliers(sizes, config.issue_outlier_multiple, guardrails)
+        floor_value = float(np.percentile(counted, config.issue_size_floor_percentile))
+        if rop < floor_value:
+            guardrails.append(f"rop_raised_to_issue_size_p{config.issue_size_floor_percentile:g}")
+            rop = floor_value
+
     step = max(inputs.eoq or 0.0, rop * (ratio - 1.0))
     max_stock = rop + step
 
@@ -351,8 +418,11 @@ def estimate(inputs: BlendInput, config: OarBlendPolicy, seed: int) -> BlendResu
         lead_time_bucket_mode=config.lead_time_bucket_mode,
         guardrails_applied=tuple(guardrails),
         peers=tuple(details),
+        guardrails_not_applied=NOT_APPLIED_WITH_FLOOR if floor_value is not None else NOT_APPLIED,
         best_similarity=max((d.similarity for d in used), default=None),
         used_peer_count=len(used),
+        issue_size_floor=floor_value,
+        issue_count=len(sizes),
     )
 
 
@@ -384,6 +454,6 @@ def explain(result: BlendResult) -> str:
             "no similar material could be scaled to its demand."
         )
     tail = f" Safety stock {result.ss}, maximum stock {result.max_stock} (maximum = reorder point x {result.max_ratio:.2f})."
-    flags = [g for g in result.guardrails_applied if g.startswith(("max_", "flag_"))]
+    flags = [g for g in result.guardrails_applied if g.startswith(("max_", "flag_", "rop_"))]
     caution = f" Check: {'; '.join(flags)}." if flags else ""
     return f"{text} {lead}{tail}{caution}".replace("  ", " ").strip()
