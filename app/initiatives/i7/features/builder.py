@@ -767,7 +767,7 @@ def _build_one(
     statistics = demand_statistics(series)
     event_rows = consumption_events.get((material, plant))
     reference_date = window[1] if window is not None else None
-    # The window is the policy's (ConversionTriggerPolicy.consumption_count_months: 6 since 2026-10-22), not a
+    # The window is the policy's (ConversionTriggerPolicy.consumption_count_months: 12 at present), not a
     # literal. The stored column is still called consumption_count_12m -- a historical name; it holds this count.
     count_12m = consumption_count(event_rows, reference_date, policy.conversion_triggers.consumption_count_months)
     history = assess_history(statistics, policy.history_gate, policy.confidence)
