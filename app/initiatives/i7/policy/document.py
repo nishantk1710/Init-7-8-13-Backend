@@ -32,6 +32,7 @@ from app.initiatives.i7.policy.thresholds import (
     ConfidencePolicy,
     ConsumptionWindowPolicy,
     ConversionTriggerPolicy,
+    OarBlendPolicy,
     DecliningDemandPolicy,
     DemandSanityPolicy,
     HistoryGatePolicy,
@@ -66,6 +67,7 @@ class PolicyDocument(BaseModel):
     demand_sanity: DemandSanityPolicy = Field(default_factory=DemandSanityPolicy)
     lead_time: LeadTimePolicy = Field(default_factory=LeadTimePolicy)
     conversion_triggers: ConversionTriggerPolicy = Field(default_factory=current_conversion_trigger_policy)
+    oar_blend: OarBlendPolicy = Field(default_factory=OarBlendPolicy)
     adoption: AdoptionPolicy = Field(default_factory=AdoptionPolicy)
     declining_demand: DecliningDemandPolicy = Field(default_factory=DecliningDemandPolicy)
     approval_routing: ApprovalRoutingPolicy = Field(default_factory=ApprovalRoutingPolicy)

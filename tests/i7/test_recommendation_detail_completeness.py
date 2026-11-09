@@ -143,9 +143,24 @@ def test_oar_recommendation_has_no_circuit():
 def test_oar_recommendation_has_no_lead_time_or_service_level():
     result = builder.build_oar_recommendation(oar_row(), POLICY)
     assert result.lead_time_days is None
+    assert result.lead_time_method is None
     assert result.lead_time_variance_days is None
     assert result.service_level is None
     assert result.z_factor is None
+
+
+def test_oar_recommendation_carries_the_planned_delivery_time_from_the_feature_row():
+    """The SAP planned delivery time is on the feature row, so the card shows it (it said 'Not available')."""
+    result = builder.build_oar_recommendation(oar_row(lead_time_days=Decimal("14")), POLICY)
+    assert result.lead_time_days == Decimal("14")
+    assert result.lead_time_method == "PLANNED_FALLBACK"
+    assert result.lead_time_variance_days is None  # a master-data figure has no variance
+
+
+def test_oar_recommendation_falls_back_to_the_staged_planned_delivery_time():
+    result = builder.build_oar_recommendation(oar_row(planned_delivery_time_days=21), POLICY)
+    assert result.lead_time_days == Decimal("21")
+    assert result.lead_time_method == "PLANNED_FALLBACK"
 
 
 def _signed_policy() -> PolicyDocument:
@@ -168,7 +183,7 @@ def test_oar_recommendation_takes_the_tier_service_level_and_z_from_the_signed_m
     )
     assert result.service_level == Decimal("0.85")
     assert abs(float(result.z_factor) - 1.036) < 0.001
-    # Lead time stays unavailable: that one really is a Phase 5 output.
+    # No lead time on this row, so none is invented for it.
     assert result.lead_time_days is None
 
 
