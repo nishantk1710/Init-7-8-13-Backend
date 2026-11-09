@@ -19,11 +19,11 @@ authenticated caller (``get_i7_actor``: the Entra object id from the token, or t
 ``X-Actor-Id`` header while sign-in is off). The ``actor_id`` field some clients still send in the
 body is ignored.
 
-**Known gap, unchanged here:** ``actor_role`` in the body is still the caller's own claim. These
-routes do not yet check it against the roles in the token (there is no ``require_roles`` on them;
-see ``tests/test_write_roles.py`` PENDING), so any signed-in user can act as any approval role.
-Closing that is an authorisation change to the approval workflow and is deliberately not part of
-the notification work.
+``POST .../actions`` checks ``actor_role`` against the roles in the token: the caller must hold an
+approval-stage role, and the one they claim in the body (403 ``ROLE_NOT_HELD`` otherwise).
+
+**Still open:** ``/submit`` and ``/reject`` declare no roles yet (``tests/test_write_roles.py`` PENDING);
+which roles may submit or decline before the chain is a business decision.
 """
 
 from typing import Annotated
@@ -33,7 +33,8 @@ from sqlalchemy.orm import Session
 
 from app.api.i7.actor import Actor, get_i7_actor
 from app.api.i7.deps import get_session, load_latest_recommendation
-from app.initiatives.i7.notifications import notify_transition
+from app.core.security import APPROVAL_STAGE_ROLES, CurrentUser, require_roles
+from app.initiatives.i7.notifications import APPROVAL_ROLE_TO_ENTRA, notify_transition
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations import ledger, routing, workflow
 from app.initiatives.i7.recommendations.types import WorkflowError
@@ -44,7 +45,7 @@ from app.schemas.i7.approvals import (
     SubmitRequest,
     WorkflowStateResponse,
 )
-from app.schemas.i7.errors import conflict
+from app.schemas.i7.errors import conflict, forbidden
 
 router = APIRouter(tags=["i7-approvals"])
 
@@ -165,7 +166,17 @@ def apply_action(
     body: ApprovalActionRequest,
     session: Annotated[Session, Depends(get_session)],
     actor: Annotated[Actor, Depends(get_i7_actor)],
+    user: Annotated[CurrentUser, Depends(require_roles(*sorted(APPROVAL_STAGE_ROLES)))],
 ) -> WorkflowStateResponse:
+    # The claimed role must be one the signed-in caller really holds (from the token), not just any
+    # approval role. With sign-in off, `user` holds every role, so this never blocks.
+    claimed = APPROVAL_ROLE_TO_ENTRA.get(body.actor_role)
+    if claimed is None or not user.has_any(claimed):
+        raise forbidden(
+            "ROLE_NOT_HELD",
+            f"You do not hold the {body.actor_role} approval role.",
+            actor_role=str(body.actor_role),
+        )
     row = load_latest_recommendation(session, recommendation_id)
     policy = PolicyDocument()
     try:
