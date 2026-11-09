@@ -23,8 +23,8 @@ whatever else is missing. Otherwise one trigger that definitely holds is
 enough; only when no trigger holds and one of them could not be determined is
 the verdict UNKNOWN -- missing data is never read as "does not qualify".
 
-**What is counted.** ``ConsumptionCount`` (trailing ``consumption_count_months``: 6 since 2026-10-22, 12 before) is a transaction-level count --
-MSEG issue movements (201/261) minus reversal movements (202/262), trailing 6
+**What is counted.** ``ConsumptionCount`` (trailing ``consumption_count_months``: 12 at present; 6 from 2026-10-22 to 2026-11-09) is a transaction-level count --
+MSEG issue movements (201/261) minus reversal movements (202/262), trailing 12
 months ending at the extract's own last staged month -- computed and stored on
 ``MaterialFeature.consumption_count_12m`` by Phase 3 (see
 ``features/builder.py::consumption_count_12m``). It is NOT ``non_zero_periods``
@@ -87,7 +87,7 @@ def _not_excluded_condition(
 def _consumption_condition(
     consumption_count_12m: int | None, policy: ConversionTriggerPolicy
 ) -> tuple[bool | None, str]:
-    """More than the threshold net issue transactions in the policy's window (6 months)? ``(met, detail)``.
+    """More than the threshold net issue transactions in the policy's window (12 months)? ``(met, detail)``.
 
     ``consumption_count_12m`` is the MSEG issue-transaction count (reversals
     netted), NOT ``non_zero_periods`` -- see the module docstring.
