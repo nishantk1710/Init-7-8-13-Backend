@@ -64,7 +64,7 @@ PEER_USE = {("5000034258", "1500"): 53, ("5000074749", "1500"): 96, ("5000074750
 def world(monkeypatch):
     """Supply the verified window, the consumption, the stored neighbours, lead times and removals the path reads."""
 
-    def apply(*, own=BELT_MONTHS, neighbours=NEIGHBOURS, removed=None, window=True, lead_times=None):
+    def apply(*, own=BELT_MONTHS, neighbours=NEIGHBOURS, removed=None, window=True, lead_times=None, issue_lines=None):
         monkeypatch.setattr(
             blend_path, "latest_run_window",
             lambda session: RunWindow(WindowStatus.USABLE.value, date(2024, 11, 1), OCT) if window else None,
@@ -76,6 +76,7 @@ def world(monkeypatch):
         monkeypatch.setattr(blend_path.repository, "load_oar_neighbours", lambda s, run: {KEY: list(neighbours)})
         monkeypatch.setattr(blend_path.repository, "load_feature_lead_times", lambda s, run: lead_times or {})
         monkeypatch.setattr(blend_path.exclusions_module, "load_active", lambda s: {KEY: frozenset(removed or ())})
+        monkeypatch.setattr(blend_path.repository, "load_issue_lines", lambda s, materials, types: {KEY: list(issue_lines or [])} if issue_lines else {})
 
     return apply
 
@@ -163,8 +164,9 @@ def test_the_card_text_states_the_split_and_is_not_written_by_a_model(world) -> 
     built = build(row, run([row])[KEY])
     result = rationale.generate_rationale(built)
     assert result.source == rationale.RATIONALE_SOURCE_FALLBACK
-    assert "% from this material's own 6 consumption events" in result.text
-    assert "% from 5 similar materials" in result.text and "Lead time 14 days (from the material master)" in result.text
+    assert result.text.startswith("The recommended reorder level is ")
+    assert "mainly based on this material's own usage" in result.text and "5 similar materials" in result.text
+    assert result.text.endswith("The calculation also uses a lead time of 14 days.")
 
 
 def test_the_impact_is_worked_from_the_blended_numbers(world) -> None:
@@ -213,9 +215,48 @@ def test_a_missing_lead_time_falls_back_to_the_similar_materials(world) -> None:
     built = build(row, blend)
     assert built.lead_time_method == "PEER_WEIGHTED_MEAN"
     assert "average of its similar materials is assumed" in " ".join(f.detail for f in built.factors)
-    assert "assumed, average of the similar materials" in rationale.generate_rationale(built).text
+    assert "(assumed: average of its similar materials)" in rationale.generate_rationale(built).text
 
 
 def test_the_blend_is_reproducible(world) -> None:
     world()
     assert run([oar_row()]) == run([oar_row()])
+
+
+# --- the issue-size floor through the path ----------------------------------------------------------------
+
+
+def mvt(date_text, qty, movement="201", reservation="R1"):
+    return SimpleNamespace(material=KEY[0], plant=KEY[1], posting_date=date_text, quantity=str(qty), movement_type=movement, reservation=reservation)
+
+
+BELT_LINES = [mvt("2025-12-10", 6, reservation="A"), mvt("2026-01-12", 4, reservation="B"), mvt("2026-03-03", 4, reservation="C"),
+              mvt("2026-04-09", 6, reservation="D"), mvt("2026-08-20", 10, reservation="E"), mvt("2026-09-01", 40, reservation="F")]
+
+
+def test_the_floor_is_worked_from_the_single_issue_lines_in_the_window(world) -> None:
+    world(issue_lines=BELT_LINES)
+    result = run([oar_row()])[KEY]
+    assert result.issue_count == 6 and result.issue_size_floor == pytest.approx(25.0)  # 90th percentile of 4, 4, 6, 6, 10, 40
+    assert result.rop == 25  # the blend gave 21, below one normal issue
+    assert "rop_raised_to_issue_size_p90" in result.guardrails_applied
+
+
+def test_lines_outside_the_window_and_cancelled_issues_do_not_count(world) -> None:
+    lines = BELT_LINES + [mvt("2021-06-01", 500), mvt("2026-09-02", 40, movement="202", reservation="F")]  # old line; the 40 reversed
+    world(issue_lines=lines)
+    result = run([oar_row()])[KEY]
+    assert result.issue_count == 5 and result.issue_size_floor == pytest.approx(8.4)
+
+
+def test_the_floor_shows_in_the_trace(world) -> None:
+    world(issue_lines=BELT_LINES)
+    row = oar_row()
+    trace = dict(build(row, run([row])[KEY]).calculation_trace)
+    assert trace["issue_size_floor"] == "25.00" and trace["issue_count"] == "6"
+
+
+def test_without_lines_the_blend_still_works_and_the_floor_is_not_applied(world) -> None:
+    world()
+    result = run([oar_row()])[KEY]
+    assert result.sized and result.issue_size_floor is None

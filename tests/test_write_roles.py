@@ -36,7 +36,6 @@ PENDING: dict[tuple[str, str], str] = {
     # --- I07: inventory planning (Khushi) ---
     ("/api/v1/i7/recommendations/{recommendation_id}/submit", "POST"): "I07",
     ("/api/v1/i7/recommendations/{recommendation_id}/reject", "POST"): "I07",
-    ("/api/v1/i7/recommendations/{recommendation_id}/actions", "POST"): "I07",
     ("/api/v1/i7/recommendations/{recommendation_id}/similar-materials/exclusions", "POST"): "I07",
     ("/api/v1/i7/recommendations/{recommendation_id}/similar-materials/exclusions/restore", "POST"): "I07",
     ("/api/v1/i7/reports/quarterly/generate", "POST"): "I07",
