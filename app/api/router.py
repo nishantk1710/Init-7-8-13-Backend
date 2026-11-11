@@ -21,7 +21,7 @@ through, exactly as before.
 
 from fastapi import APIRouter, Depends
 
-from app.api import health, me, ready
+from app.api import health, me, ready, users
 from app.api.assistant.router import justifications_router
 from app.api.assistant.router import router as assistant_router
 from app.api.assistant.requests_router import router as assistant_requests_router
@@ -40,6 +40,7 @@ api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(ready.router)
 api_router.include_router(me.router)  # -> /api/me
+api_router.include_router(users.router, dependencies=SIGNED_IN)  # -> /api/users/names
 api_router.include_router(pr.router, dependencies=[Depends(require_sap_events)])
 api_router.include_router(i7_router, dependencies=SIGNED_IN)  # -> /api/v1/i7/*
 api_router.include_router(i13_router, dependencies=SIGNED_IN)  # -> /api/i13/*
