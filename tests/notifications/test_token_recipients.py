@@ -187,6 +187,7 @@ def test_a_failed_sync_is_tried_again_on_the_next_request(monkeypatch):
     token_recipients.forget_all()
     monkeypatch.setattr(token_recipients, "get_settings", _settings())
     monkeypatch.setattr(token_recipients, "_writer", _RunNow())
+    monkeypatch.setattr(token_recipients, "_default_lock", lambda name: None)
     attempts: list[int] = []
 
     def no_database():
@@ -199,3 +200,58 @@ def test_a_failed_sync_is_tried_again_on_the_next_request(monkeypatch):
     token_recipients.remember(user)
     token_recipients.remember(user)
     assert len(attempts) == 2  # the failure was forgotten, so the second request tried again
+
+
+class _HeldElsewhere:
+    """A lock another worker already holds."""
+
+    released = False
+
+    def acquire(self) -> bool:
+        return False
+
+    def release(self) -> None:
+        self.released = True
+
+
+def test_when_another_worker_holds_the_lock_the_sync_is_skipped_and_looked_at_again_next_time(monkeypatch):
+    import app.core.db as core_db
+
+    token_recipients.forget_all()
+    monkeypatch.setattr(token_recipients, "get_settings", _settings())
+    monkeypatch.setattr(token_recipients, "_writer", _RunNow())
+    lock = _HeldElsewhere()
+    monkeypatch.setattr(token_recipients, "_default_lock", lambda name: lock)
+    opened: list[int] = []
+    monkeypatch.setattr(core_db, "get_sessionmaker", lambda: opened.append(1))
+
+    user = User(oid=OID, roles=frozenset({Roles.PLANT_HEAD}))
+    token_recipients.remember(user)
+    assert opened == [] and lock.released is False  # nothing written, nothing released that was not held
+    assert OID not in token_recipients._seen  # so the next request checks again
+
+
+def test_the_lock_is_released_after_a_sync(monkeypatch, db):
+    import app.core.db as core_db
+
+    token_recipients.forget_all()
+    monkeypatch.setattr(token_recipients, "get_settings", _settings())
+    monkeypatch.setattr(token_recipients, "_writer", _RunNow())
+
+    class Held:
+        acquired = released = False
+
+        def acquire(self) -> bool:
+            self.acquired = True
+            return True
+
+        def release(self) -> None:
+            self.released = True
+
+    lock = Held()
+    monkeypatch.setattr(token_recipients, "_default_lock", lambda name: lock)
+    monkeypatch.setattr(core_db, "get_sessionmaker", lambda: (lambda: db))
+
+    token_recipients.remember(User(oid=OID, roles=frozenset({Roles.PLANT_HEAD})))
+    assert lock.acquired and lock.released
+    assert [(r.role, r.active) for r in rows(db)] == [(Roles.PLANT_HEAD, True)]
