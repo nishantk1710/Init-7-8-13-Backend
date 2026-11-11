@@ -32,6 +32,7 @@ add them by hand. Every change writes a ``notification_config_audit`` row with
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 from collections.abc import Iterable
@@ -140,8 +141,35 @@ def sync_roles(db: Session, oid: str, roles: Iterable[str]) -> SyncResult:
 _FIELDS = ("plant", "role", "user_oid", "email", "active")
 
 
+def _default_lock(name: str):
+    """The SQL Server application lock the schedulers use, or ``None`` where there is nothing to serialise.
+
+    A person's first page load after a deploy fans out over both gunicorn workers, and each has its
+    own memory of who was synced; without the lock both would read "no row yet" and both would add
+    one. Development runs one process on another database, so the lock is skipped there.
+    """
+    from app.core.db import get_engine
+
+    if get_engine().dialect.name != "mssql":
+        return None
+    from app.ingest.scheduler import _Lock
+
+    return _Lock(name)
+
+
 def _sync_in_background(oid: str, roles: frozenset[str]) -> None:
+    lock = None
+    acquired = False
     try:
+        lock = _default_lock(f"spares_ai_token_recipients:{oid}")
+        if lock is not None:
+            acquired = lock.acquire()
+            if not acquired:
+                # Another worker is syncing this person right now. Forget them here, so the next
+                # request on this worker looks again and finds the rows already in place.
+                with _seen_lock:
+                    _seen.pop(oid, None)
+                return
         from app.core.db import get_sessionmaker
 
         with get_sessionmaker()() as db:
@@ -150,6 +178,10 @@ def _sync_in_background(oid: str, roles: frozenset[str]) -> None:
         logger.warning("token recipients: could not sync %s", oid, exc_info=True)
         with _seen_lock:
             _seen.pop(oid, None)  # try again on the next request
+    finally:
+        if lock is not None and acquired:
+            with contextlib.suppress(Exception):
+                lock.release()
 
 
 def remember(user: CurrentUser) -> None:
