@@ -28,6 +28,12 @@ os.environ.setdefault(
 # turn every route into a 401. setdefault again: an exported value still wins.
 os.environ.setdefault("AUTH_ENABLED", "false")
 os.environ.setdefault("SAP_EVENTS_AUTH", "off")
+# A validated sign-in keeps notification_recipients in step with the token's roles on a
+# background thread (app.integrations.notifications.token_recipients). Off for the suite, so
+# the sign-in tests never write rows for the test user into whatever database the run has
+# (CI's SQL Server) and no DB-backed test sees a recipient appear mid-run. The module's own
+# tests patch its settings and exercise it directly.
+os.environ.setdefault("NOTIFICATION_RECIPIENTS_FROM_TOKEN", "false")
 
 # Test tokens and the fixtures that make the API trust them; see the module.
 from tests.auth_helpers import auth_enabled, sap_events_entra  # noqa: E402,F401
