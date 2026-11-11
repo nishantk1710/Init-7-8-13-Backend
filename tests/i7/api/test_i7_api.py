@@ -910,6 +910,8 @@ def test_approval_history_returns_ledger_entries(ready_recommendation):
     assert response.status_code == 200
     items = response.json()["items"]
     assert [i["action"] for i in items] == ["SUBMIT", "APPROVE"]
+    # The display name rides along with the object id (None until that person has signed in).
+    assert all(i["actor_name"] is None or isinstance(i["actor_name"], str) for i in items)
 
 
 # --- J: adoption ------------------------------------------------------------------------------

@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.i7.deps import get_session
+from app.core.user_directory import names_for
 from app.models.i7_recommendation import ApprovalLedgerEntry
 from app.schemas.i7.approvals import ApprovalHistoryEntry, ApprovalHistoryResponse
 
@@ -34,7 +35,13 @@ def get_approval_history(
         .order_by(ApprovalLedgerEntry.timestamp, ApprovalLedgerEntry.id)
     ).scalars().all()
 
+    # The ledger holds the actor's Entra object id; the name comes from app_user (written on sign-in).
+    # Unknown ids (never signed in, or recorded before sign-in existed) get no name and the id is shown.
+    names = names_for(session, {row.actor_id for row in rows})
     return ApprovalHistoryResponse(
         recommendation_id=recommendation_id,
-        items=[ApprovalHistoryEntry.from_model(row) for row in rows],
+        items=[
+            ApprovalHistoryEntry.from_model(row, actor_name=names.get(row.actor_id, ("", ""))[0] or None)
+            for row in rows
+        ],
     )

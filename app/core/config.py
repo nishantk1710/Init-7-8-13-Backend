@@ -1203,6 +1203,12 @@ class Settings(BaseSettings):
     # plant. Empty means it is recorded as failed instead.
     notification_fallback_email: str = ""
 
+    # On every validated sign-in, bring notification_recipients in step with the
+    # Spares.* roles in the token: a held role gets an all-plant row, a role that
+    # left the token switches that person's rows off. See
+    # app/integrations/notifications/token_recipients.py.
+    notification_recipients_from_token: bool = True
+
     # The Entra role of whoever executes an approved change in SAP. No default:
     # when empty, the final-approval notice goes to the submitter only.
     notification_sap_execution_role: str = ""
