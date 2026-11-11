@@ -344,6 +344,15 @@ class TestActor:
         client.get("/api/me", headers=auth_headers(roles=[Roles.SAP_EVENTS_WRITE], application=True))
         assert seen == []
 
+    def test_sign_in_keeps_the_recipient_rows_in_step_with_the_token_roles(self, auth_enabled, monkeypatch):
+        from app.integrations.notifications import token_recipients
+
+        seen = []
+        monkeypatch.setattr(token_recipients, "remember", lambda user: seen.append(user))
+        client.get("/api/me", headers=auth_headers(roles=[Roles.PLANT_HEAD, Roles.VIEWER]))
+        client.get("/api/me", headers=auth_headers(roles=[Roles.SAP_EVENTS_WRITE], application=True))
+        assert [(u.oid, set(u.roles)) for u in seen] == [(TEST_USER_OID, {Roles.PLANT_HEAD, Roles.VIEWER})]
+
 
 def test_role_catalogue_matches_the_app_registration():
     """The 16 values on spares-ai-api-<env> (Downloads/spares-ai-api-roles.json)."""

@@ -35,6 +35,12 @@ recipient resolution, reminders, escalation, the audit trail -- works without it
   a name, a placeholder such as `end-user` -- is refused as an *invalid identity* and recorded as a failed
   notification; it is never turned into an address to send to. Emails come only from `app_user`, the
   administrator-maintained `notification_recipients` row, or `NOTIFICATION_FALLBACK_EMAIL`.
+- **Recipient rows follow the token.** On every validated sign-in the backend brings `notification_recipients` in
+  step with the `Spares.*` roles in that person's token (`app/integrations/notifications/token_recipients.py`): a held
+  role with no active row gets one all-plant row (`created_by = entra-token`), a role that has left the token has
+  every active row for that person switched off (`updated_by = entra-token`), and a row an administrator retired
+  stays off. Each change is audited like an admin change. Plant is not in the token, so plant-specific rows are still
+  added by hand; so is anyone who has not signed in yet. Off with `NOTIFICATION_RECIPIENTS_FROM_TOKEN=false`.
 - Consequence for **I13**: the requester and the HOD (`I13_HOD_RECIPIENTS`, `PLANT:identity`) must be Entra object ids
   to be notified. A SAP user name (e.g. from RESB `Wempf`) or an email address is recorded as a failed notification
   with the reason. Moving the HOD into `notification_recipients` is still to do.
@@ -125,6 +131,8 @@ When SAP posts a requisition to `/api/events/pr`, the inbox is told once SAP has
 - [ ] **Recipients** -- add one `notification_recipients` row per approval role per plant (1300 Black Mountain and
   1500 Gamsberg). Use the Entra **app role value** in `role` and the person's Entra object id in `user_oid`.
   Email comes from `app_user` once they have signed in; the row's `email` is only a fallback for someone who has not.
+  Anyone who signs in with an approval role gets an all-plant row automatically (see "Recipient rows follow the
+  token" above); rows by hand are for plant-specific routing and for people who have not signed in yet.
   ```
   POST /api/notifications/admin/recipients          (Spares.Admin only)
   { "role": "Spares.EngineeringHead", "plant": "1300", "user_oid": "<object id>" }
