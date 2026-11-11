@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.models.app_user import AppUser
 from app.models.base import Base
-from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation
+from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation, RecommendationVersion
 from app.models.notification import (
     NotificationConfigAudit,
     NotificationRecipient,
@@ -33,6 +33,7 @@ NOTIFICATION_TABLES = [
         AppUser,
         Recommendation,
         ApprovalLedgerEntry,
+        RecommendationVersion,
     )
 ]
 

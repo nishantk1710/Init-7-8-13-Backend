@@ -14,6 +14,10 @@ are routed by criticality tier through ``PolicyDocument.approval_routing``
 enforce whatever it returns through the same state machine.
 """
 
+from dataclasses import dataclass
+from decimal import Decimal
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.initiatives.i7.policy import PolicyDocument
@@ -24,7 +28,7 @@ from app.initiatives.i7.recommendations.types import (
     LifecycleStatus,
     WorkflowError,
 )
-from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation
+from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation, RecommendationVersion
 
 
 NOT_ELIGIBLE = "NOT_ELIGIBLE"
@@ -33,6 +37,90 @@ NOT_ELIGIBLE = "NOT_ELIGIBLE"
 SUBMIT = "SUBMIT"
 RESUBMIT = "RESUBMIT"
 """The ledger actions for entering the chain, and for entering it again after a rejection."""
+
+
+LEDGER_COMMENT_MAX = 1000
+"""The ``i7_approval_ledger.comment`` column length; an adjustment's summary is added to the comment."""
+
+
+@dataclass(frozen=True)
+class AdjustedValues:
+    """What an ADJUST puts in place of the recommended values."""
+
+    rop: int
+    safety_stock: int
+    max_stock: int
+
+
+def _whole(value: Decimal | None) -> str:
+    """A quantity for the summary: ``27`` for 27.000, ``-`` when there was none."""
+    if value is None:
+        return "-"
+    return str(int(value)) if value == value.to_integral_value() else format(value, "f")
+
+
+def _validate_adjustment(recommendation: Recommendation, values: AdjustedValues | None) -> AdjustedValues:
+    if values is None:
+        raise WorkflowError("ADJUST needs the new reorder point, safety stock and maximum stock")
+    if min(values.rop, values.safety_stock, values.max_stock) < 0:
+        raise WorkflowError("adjusted values cannot be negative")
+    if not values.safety_stock <= values.rop <= values.max_stock:
+        raise WorkflowError("adjusted values must satisfy safety stock <= reorder point <= maximum stock")
+    current = (
+        recommendation.recommended_rop,
+        recommendation.recommended_safety_stock,
+        recommendation.recommended_max_stock,
+    )
+    if all(c is not None and c == v for c, v in zip(current, (values.rop, values.safety_stock, values.max_stock))):
+        raise WorkflowError("the adjusted values are the same as the current ones; change at least one")
+    return values
+
+
+def _adjustment_summary(recommendation: Recommendation, values: AdjustedValues) -> str:
+    return (
+        f"[ROP {_whole(recommendation.recommended_rop)} → {values.rop}, "
+        f"Safety stock {_whole(recommendation.recommended_safety_stock)} → {values.safety_stock}, "
+        f"Max {_whole(recommendation.recommended_max_stock)} → {values.max_stock}]"
+    )
+
+
+def _apply_adjustment(
+    session: Session, recommendation: Recommendation, values: AdjustedValues, actor_id: str, comment: str
+) -> None:
+    """Keep the values being replaced as an immutable snapshot, then put the new ones in place.
+
+    ``current_version`` moves on. The deltas are the new values against what SAP holds now, as they were
+    for the generated ones. Adoption reads ``recommended_*``, so it checks SAP against the adjusted values.
+    """
+    newest_snapshot = session.execute(
+        select(func.max(RecommendationVersion.version)).where(
+            RecommendationVersion.recommendation_id == recommendation.recommendation_id
+        )
+    ).scalar()
+    # recommendation_id is a label shared by regenerated rows, so a snapshot of an earlier row may already
+    # hold this version number; take the next free one rather than collide.
+    snapshot_version = max(recommendation.current_version, (newest_snapshot or 0) + 1)
+    session.add(
+        RecommendationVersion(
+            recommendation_id=recommendation.recommendation_id,
+            version=snapshot_version,
+            recommended_safety_stock=recommendation.recommended_safety_stock,
+            recommended_rop=recommendation.recommended_rop,
+            recommended_max_stock=recommendation.recommended_max_stock,
+            reason=comment[:500],
+            changed_by=actor_id[:64],
+        )
+    )
+    recommendation.recommended_rop = Decimal(values.rop)
+    recommendation.recommended_safety_stock = Decimal(values.safety_stock)
+    recommendation.recommended_max_stock = Decimal(values.max_stock)
+    for delta, new, current in (
+        ("rop_delta", values.rop, recommendation.current_rop),
+        ("safety_stock_delta", values.safety_stock, recommendation.current_safety_stock),
+        ("max_stock_delta", values.max_stock, recommendation.current_max_stock),
+    ):
+        setattr(recommendation, delta, None if current is None else Decimal(new) - current)
+    recommendation.current_version = snapshot_version + 1
 
 
 def is_manual_conversion(recommendation: Recommendation) -> bool:
@@ -154,11 +242,16 @@ def apply_approval_action(
     action: ApprovalAction,
     comment: str | None,
     policy: PolicyDocument | None = None,
+    adjusted: AdjustedValues | None = None,
 ) -> None:
     """Validate and apply one approval action, writing the ledger entry.
 
     Raises :class:`WorkflowError` before touching the database if the action is
     invalid -- an invalid action must never produce a partial write.
+
+    ``adjusted`` is required for ADJUST (and ignored otherwise): the new values replace the recommended
+    ones, the old ones are kept as a ``RecommendationVersion``, and the ledger comment carries the
+    old -> new summary so the history and the notifications show what changed.
     """
     policy = policy or PolicyDocument()
     route = routing.route_for(recommendation.is_oar, recommendation.criticality, policy)
@@ -169,6 +262,14 @@ def apply_approval_action(
         route=route,
     )
     new_state = workflow.apply_action(state, action, actor_role, comment)
+
+    if action is ApprovalAction.ADJUST:
+        adjusted = _validate_adjustment(recommendation, adjusted)
+        comment = f"{(comment or '').strip()} {_adjustment_summary(recommendation, adjusted)}"
+        if len(comment) > LEDGER_COMMENT_MAX:
+            raise WorkflowError(
+                f"the comment is too long: with the adjustment summary it must fit {LEDGER_COMMENT_MAX} characters"
+            )
 
     session.add(
         ApprovalLedgerEntry(
@@ -184,8 +285,8 @@ def apply_approval_action(
         )
     )
 
+    if action is ApprovalAction.ADJUST:
+        _apply_adjustment(session, recommendation, adjusted, actor_id, comment)
     recommendation.status = new_state.status.value
     recommendation.chain_index = new_state.chain_index
     recommendation.adjustment_count = new_state.adjustment_count
-    if action is ApprovalAction.ADJUST:
-        recommendation.current_version += 1

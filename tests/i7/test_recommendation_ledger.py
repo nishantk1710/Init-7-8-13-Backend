@@ -126,17 +126,60 @@ def test_rejection_requires_a_reason_and_is_recorded(session):
 
 @needs_db
 def test_adjustment_creates_a_history_record(session):
-    from app.initiatives.i7.recommendations.types import WorkflowError
+    from sqlalchemy import select
+
+    from app.initiatives.i7.recommendations.ledger import AdjustedValues
+    from app.models.i7_recommendation import RecommendationVersion
 
     rec = make_recommendation(recommendation_id="REC-LEDGER-5")
+    rec.recommended_rop, rec.recommended_safety_stock, rec.recommended_max_stock = 27, 14, 32
     session.add(rec)
     session.flush()
     submit_for_approval(session, rec, "U1")
     apply_approval_action(
-        session, rec, "U2", ApprovalRole.END_USER, ApprovalAction.ADJUST, "corrected value"
+        session, rec, "U2", ApprovalRole.END_USER, ApprovalAction.ADJUST, "corrected value",
+        adjusted=AdjustedValues(rop=30, safety_stock=15, max_stock=36),
     )
     assert rec.current_version == 2
     assert rec.adjustment_count == 1
+    assert (rec.recommended_rop, rec.recommended_safety_stock, rec.recommended_max_stock) == (30, 15, 36)
+    assert rec.chain_index == 1  # moved on to the next role
+
+    snapshot = session.execute(
+        select(RecommendationVersion).where(RecommendationVersion.recommendation_id == "REC-LEDGER-5")
+    ).scalar_one()
+    assert (snapshot.recommended_rop, snapshot.recommended_safety_stock, snapshot.recommended_max_stock) == (27, 14, 32)
+
+    entry = session.execute(
+        select(ApprovalLedgerEntry).where(
+            ApprovalLedgerEntry.recommendation_id == "REC-LEDGER-5", ApprovalLedgerEntry.action == "ADJUST"
+        )
+    ).scalar_one()
+    assert "ROP 27 → 30" in entry.comment and "Safety stock 14 → 15" in entry.comment and "Max 32 → 36" in entry.comment
+
+
+@needs_db
+def test_an_adjustment_needs_valid_new_values_and_writes_nothing_when_refused(session):
+    from app.initiatives.i7.recommendations.ledger import AdjustedValues
+    from app.initiatives.i7.recommendations.types import WorkflowError
+
+    rec = make_recommendation(recommendation_id="REC-LEDGER-6")
+    rec.recommended_rop, rec.recommended_safety_stock, rec.recommended_max_stock = 27, 14, 32
+    session.add(rec)
+    session.flush()
+    submit_for_approval(session, rec, "U1")
+
+    for bad in (
+        None,
+        AdjustedValues(rop=10, safety_stock=15, max_stock=36),  # safety stock above the reorder point
+        AdjustedValues(rop=30, safety_stock=15, max_stock=20),  # maximum below the reorder point
+        AdjustedValues(rop=27, safety_stock=14, max_stock=32),  # nothing changed
+    ):
+        with pytest.raises(WorkflowError):
+            apply_approval_action(
+                session, rec, "U2", ApprovalRole.END_USER, ApprovalAction.ADJUST, "x", adjusted=bad
+            )
+    assert (rec.recommended_rop, rec.current_version, rec.adjustment_count, rec.chain_index) == (27, 1, 0, 0)
 
 
 # --- Execution evidence ------------------------------------------------------
