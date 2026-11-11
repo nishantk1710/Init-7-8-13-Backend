@@ -72,6 +72,8 @@ class ApprovalHistoryEntry(BaseModel):
     recommendation_id: str
     recommendation_version: int
     actor_id: str
+    actor_name: str | None = None
+    """The actor's display name from ``app_user``; ``None`` when they have never signed in."""
     actor_role: str
     action: str
     previous_status: str
@@ -80,11 +82,12 @@ class ApprovalHistoryEntry(BaseModel):
     timestamp: datetime
 
     @classmethod
-    def from_model(cls, row: ApprovalLedgerEntry) -> "ApprovalHistoryEntry":
+    def from_model(cls, row: ApprovalLedgerEntry, actor_name: str | None = None) -> "ApprovalHistoryEntry":
         return cls(
             recommendation_id=row.recommendation_id,
             recommendation_version=row.recommendation_version,
             actor_id=row.actor_id,
+            actor_name=actor_name,
             actor_role=row.actor_role,
             action=row.action,
             previous_status=row.previous_status,

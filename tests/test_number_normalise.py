@@ -12,7 +12,7 @@ import pytest
 
 from app.core.config import Settings, get_settings
 from app.ingest import csv_load
-from app.ingest.csv_tables import CSV_TABLES, enabled_tables
+from app.ingest.csv_tables import CSV_TABLES, csv_table, enabled_tables
 from app.ingest.manifest import spec_for, specs
 
 
@@ -106,6 +106,62 @@ class TestNumberColumns:
     def test_plain_rows_with_nothing_to_do_passes_rows_through(self) -> None:
         rows = [("a", "1,5"), ("b", "2,5")]
         assert list(csv_load.plain_rows(iter(rows), [], "german")) == rows
+
+
+# --- keys as SAP stores them --------------------------------------------------
+
+
+class TestKeyShape:
+    """The merge matches on raw key text; OData sends SAP's stored form. The
+    loader writes that form, exactly as the CSV increment already did."""
+
+    def test_pad_key_is_the_increments_rule(self) -> None:
+        assert csv_load.pad_key("1", 4) == "0001"
+        assert csv_load.pad_key("0001", 4) == "0001"
+        assert csv_load.pad_key("12345", 4) == "12345", "never truncated"
+        assert csv_load.pad_key("A1", 4) == "A1", "not a number: kept"
+        assert csv_load.pad_key("1", None) == "1", "no declared width: kept"
+
+    def test_the_increment_shares_the_one_definition(self) -> None:
+        from app.ingest import csv_delta
+
+        assert csv_delta.pad_key is csv_load.pad_key
+
+    def test_ekbe_keys_get_their_declared_widths(self) -> None:
+        header = ["EBELN", "EBELP", "ZEKKN", "VGABE", "GJAHR", "BELNR", "BUZEI", "MENGE"]
+        shape = csv_load.key_shape(csv_table("EKBE"), header)
+        assert {header[i]: w for i, w in shape.items()} == {
+            "EBELN": 10, "EBELP": 5, "ZEKKN": 2, "VGABE": 1, "GJAHR": 4, "BELNR": 10, "BUZEI": 4,
+        }
+
+    def test_material_numbers_are_left_in_the_external_form(self) -> None:
+        # raw_merge strips OData's zeros to match the raw tables; padding
+        # here would undo that and put twins back.
+        header = ["MATNR", "WERKS", "LGORT", "LABST"]
+        shape = csv_load.key_shape(csv_table("MARD"), header)
+        assert {header[i] for i in shape} == {"WERKS", "LGORT"}
+
+    def test_vendor_and_requisition_numbers_are_padded_to_ten(self) -> None:
+        assert csv_load.key_shape(csv_table("LFA1"), ["LIFNR", "NAME1"]) == {0: 10}
+        assert csv_load.key_shape(csv_table("EBAN"), ["BANFN", "BNFPO", "MATNR"]) == {0: 10, 1: 5}
+
+    def test_a_language_key_becomes_saps_letter(self) -> None:
+        assert csv_load.shaped_key("EN", "SPRAS", 2) == "E"
+        assert csv_load.shaped_key("E", "SPRAS", 2) == "E"
+        assert csv_load.shaped_key("DE", "SPRAS", 2) == "DE", "only the delivered language is mapped"
+
+    def test_a_missing_key_column_contributes_nothing(self) -> None:
+        assert csv_load.key_shape(csv_table("LFA1"), ["NAME1", "LAND1"]) == {}
+
+    def test_shaped_rows_pads_keys_and_plains_numbers_in_one_pass(self) -> None:
+        columns = ["LIFNR", "NAME1", "MENGE"]
+        rows = [("100000", "Acme", "1.393,100"), ("0000100001", "Bolt Co", "")]
+        out = list(csv_load.shaped_rows(iter(rows), [2], "german", {0: 10}, columns))
+        assert out == [("0000100000", "Acme", "1393.100"), ("0000100001", "Bolt Co", "")]
+
+    def test_shaped_rows_with_nothing_to_do_passes_rows_through(self) -> None:
+        rows = [("a", "b")]
+        assert list(csv_load.shaped_rows(iter(rows), [], "", {}, ["X", "Y"])) == rows
 
 
 # --- number_settings_problem --------------------------------------------------

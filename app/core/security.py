@@ -362,8 +362,10 @@ def authenticate(request: Request) -> CurrentUser:
         raise _unauthorized(request, str(exc)) from exc
     if not user.is_application:
         from app.core import user_directory
+        from app.integrations.notifications import token_recipients
 
         user_directory.remember(user)
+        token_recipients.remember(user)
     request.state.spares_token_user = user
     return user
 

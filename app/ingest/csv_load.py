@@ -272,13 +272,91 @@ def number_columns(table: str, columns: list[str]) -> list[int]:
 
 def plain_rows(rows, positions: list[int], load_format: str):
     """``rows`` with the number columns at ``positions`` made plain."""
-    if not positions:
+    yield from shaped_rows(rows, positions, load_format, {}, [])
+
+
+# --- Keys as SAP stores them ----------------------------------------------
+#
+# The OData merge (raw_merge) matches a row on its key as raw text, and the
+# OData services send every key the way SAP stores it: a NUMC or ALPHA field
+# zero-filled to its width (EKBE.BUZEI '0001', CDHDR.CHANGENR '0016051539',
+# LFA1.LIFNR '0000100000'), a language as SAP's one letter ('E'). The CSV job
+# writes the external form instead ('001', '16051539', '100000', 'EN'). A row
+# loaded in one shape and updated in the other is not matched -- it is
+# inserted beside itself, and the view then serves the material twice.
+# Measured on PRD 6 Nov 2026 (every row of EKBE, CDHDR and CDPOS, all vendors,
+# all descriptions), and on QA on 13 Oct 2026 before that, both repaired by
+# hand. So the loader writes every identity key as SAP stores it, exactly as
+# the CSV increment already does (``pad_key``); nothing downstream notices,
+# because the n_<table> views strip leading zeros from every key column.
+#
+# Material numbers are the one exception, in the other direction: the raw
+# tables hold the external form and the merge strips OData's zeros to match
+# (``raw_merge.external_material_number``, 23 Oct 2026). They are left as
+# they come.
+MATERIAL_KEYS = frozenset({"MATNR"})
+
+# A language key as the CSV job writes it (ISO) -> as SAP stores it. Only the
+# one the extract delivers; MAKT is English only (csv_tables).
+LANGUAGE_KEYS: dict[str, dict[str, str]] = {"SPRAS": {"EN": "E"}}
+
+
+def pad_key(value: str, width: int | None) -> str:
+    """``'1'`` -> ``'0001'`` for a NUMC the CSV job stripped. Digits only, and
+    only when shorter: anything else is kept as it came."""
+    text_value = (value or "").strip()
+    if width and text_value.isdigit() and len(text_value) < width:
+        return text_value.zfill(width)
+    return text_value
+
+
+def key_shape(spec: CsvTable, columns: list[str]) -> dict[int, int | None]:
+    """Positions in ``columns`` of the set's identity keys -> declared width.
+
+    The width is the contract's ``MaxLength`` for the property, or None when
+    it states none (then only the language mapping applies). Material numbers
+    are left out (``MATERIAL_KEYS``); a set the contract does not know, or a
+    table whose file lacks a key column, contributes nothing.
+    """
+    from app.ingest.manifest import spec_for
+    from app.ingest.raw_merge import sap_field
+
+    try:
+        odata = spec_for(spec.entity_set)
+    except KeyError:
+        return {}
+    lengths = {sap_field(p.name): p.max_length for p in odata.entity_set.properties if p.max_length}
+    by_upper = {c.upper(): i for i, c in enumerate(columns)}
+    shape: dict[int, int | None] = {}
+    for prop in odata.identity_keys:
+        name = sap_field(prop)
+        if name in MATERIAL_KEYS or name not in by_upper:
+            continue
+        shape[by_upper[name]] = lengths.get(name)
+    return shape
+
+
+def shaped_key(value: str | None, column: str, width: int | None) -> str:
+    """One key value as SAP stores it: zero-filled, or the SAP language letter."""
+    text_value = (value or "").strip()
+    mapping = LANGUAGE_KEYS.get(column.upper())
+    if mapping is not None:
+        return mapping.get(text_value.upper(), text_value)
+    return pad_key(text_value, width)
+
+
+def shaped_rows(rows, numeric: list[int], load_format: str, keys: dict[int, int | None], columns: list[str]):
+    """``rows`` with number columns made plain and key columns as SAP stores them."""
+    if not numeric and not keys:
         yield from rows
         return
+    key_names = {i: columns[i] for i in keys}
     for row in rows:
         row = list(row)
-        for i in positions:
+        for i in numeric:
             row[i] = plain_number(row[i], load_format)
+        for i, width in keys.items():
+            row[i] = shaped_key(row[i], key_names[i], width)
         yield tuple(row)
 
 
@@ -404,12 +482,20 @@ def load_table(
                 columns = _safe_columns(header)
                 watermark_index = _watermark_index(spec, columns)
                 numeric = number_columns(spec.table, columns) if load_format else []
+                keys = key_shape(spec, columns)
+                if numeric or keys:
+                    rows = shaped_rows(rows, numeric, load_format, keys, columns)
                 if numeric:
-                    rows = plain_rows(rows, numeric, load_format)
                     logger.info(
                         "%s: %d number column(s) written plain, from %s (%s)",
                         spec.sap_table, len(numeric), load_format,
                         ", ".join(columns[i] for i in numeric),
+                    )
+                if keys:
+                    logger.info(
+                        "%s: %d key column(s) written as SAP stores them (%s)",
+                        spec.sap_table, len(keys),
+                        ", ".join(f"{columns[i]}:{w or '-'}" for i, w in keys.items()),
                     )
                 key_index = key_index_columns(spec, columns) if with_key_index else []
                 writer = RawTableWriter(
