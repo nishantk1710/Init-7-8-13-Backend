@@ -95,6 +95,7 @@ def auth_headers(roles: Iterable[str] = (), **kwargs: Any) -> dict[str, str]:
 def _configure(monkeypatch: pytest.MonkeyPatch, **env: str) -> None:
     from app.core import security, user_directory
     from app.core.config import get_settings
+    from app.integrations.notifications import token_recipients
 
     for name, value in env.items():
         monkeypatch.setenv(name, value)
@@ -102,6 +103,7 @@ def _configure(monkeypatch: pytest.MonkeyPatch, **env: str) -> None:
     monkeypatch.setenv("ENTRA_API_CLIENT_ID", TEST_CLIENT_ID)
     monkeypatch.setattr(security, "_signing_key", lambda token: PUBLIC_KEY)
     user_directory.forget_all()
+    token_recipients.forget_all()
     get_settings.cache_clear()
 
 

@@ -210,13 +210,10 @@ def _key_columns(spec: CsvTable) -> tuple[list[str], dict[str, int]]:
     return keys, {k: lengths[k] for k in keys if k in lengths}
 
 
-def pad_key(value: str, width: int | None) -> str:
-    """``'1'`` -> ``'0001'`` for a NUMC the CSV job stripped. Digits only, and
-    only when shorter: anything else is kept as it came."""
-    text_value = (value or "").strip()
-    if width and text_value.isdigit() and len(text_value) < width:
-        return text_value.zfill(width)
-    return text_value
+# The whole-table loader writes keys the same way (csv_load.pad_key, KEYS AS
+# SAP STORES THEM); one definition, imported here so the two routes cannot
+# drift apart.
+pad_key = csv_load.pad_key
 
 
 def merge_increment(
