@@ -80,9 +80,9 @@ def _validate_adjustment(recommendation: Recommendation, values: AdjustedValues 
 
 def _adjustment_summary(recommendation: Recommendation, values: AdjustedValues) -> str:
     return (
-        f"[ROP {_whole(recommendation.recommended_rop)} → {values.rop}, "
-        f"Safety stock {_whole(recommendation.recommended_safety_stock)} → {values.safety_stock}, "
-        f"Max {_whole(recommendation.recommended_max_stock)} → {values.max_stock}]"
+        f"[ROP {_whole(recommendation.recommended_rop)} -> {values.rop}, "
+        f"Safety stock {_whole(recommendation.recommended_safety_stock)} -> {values.safety_stock}, "
+        f"Max {_whole(recommendation.recommended_max_stock)} -> {values.max_stock}]"
     )
 
 

@@ -156,7 +156,7 @@ def test_adjustment_creates_a_history_record(session):
             ApprovalLedgerEntry.recommendation_id == "REC-LEDGER-5", ApprovalLedgerEntry.action == "ADJUST"
         )
     ).scalar_one()
-    assert "ROP 27 → 30" in entry.comment and "Safety stock 14 → 15" in entry.comment and "Max 32 → 36" in entry.comment
+    assert "ROP 27 -> 30" in entry.comment and "Safety stock 14 -> 15" in entry.comment and "Max 32 -> 36" in entry.comment
 
 
 @needs_db
