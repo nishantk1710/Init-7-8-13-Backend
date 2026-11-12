@@ -56,7 +56,9 @@ def _whole(value: Decimal | None) -> str:
     """A quantity for the summary: ``27`` for 27.000, ``-`` when there was none."""
     if value is None:
         return "-"
-    return str(int(value)) if value == value.to_integral_value() else format(value, "f")
+    # A quantity read from the database is a Decimal; one just assigned in this session may still be an int.
+    number = value if isinstance(value, Decimal) else Decimal(str(value))
+    return str(int(number)) if number == number.to_integral_value() else format(number, "f")
 
 
 def _validate_adjustment(recommendation: Recommendation, values: AdjustedValues | None) -> AdjustedValues:
