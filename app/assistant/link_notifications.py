@@ -1,17 +1,21 @@
-"""Telling a requester about their request's SAP reservation: linked, or still not.
+"""Telling the people on a request about its SAP reservation: raised, linked, or still not.
 
-Run on a timer by the notification scheduler. Two notices, both in-app and both
-to the request's requester only:
+Run on a timer by the notification scheduler, in-app only. Two people are on a request. The one who **raised** it
+(the signed-in user) creates the reservation in SAP and links it. The one **named in its Requester box** is who the
+parts are for; the free-text name is never identity on its own, so they are only notified when the name is listed in
+``I13_REQUESTER_RECIPIENTS`` (an unlisted name is not notified, nobody is guessed). Someone who is both is only the
+raiser, so they hear each thing once.
 
-* **Linked** -- one or more of the request's lines were linked to an SAP
-  reservation since the last notice for that request. Lines linked in the same
-  pass are one notice, not one each. Whatever made the link (the hourly
-  snapshot rebuild, the "Link reservation" button, UAT) is not this module's
-  concern: it reads ``session_reservation_link`` afterwards, so no linking code
-  has to know about notifications.
-* **Reminder** -- once, when a request is ``ASSISTANT_LINK_REMINDER_HOURS`` old
-  and a line that needs a reservation (``proceed`` / ``proceed_new``) has none.
-  A line marked not needed, or that uses the existing unit, is never reminded.
+* **Raised** -- once, soon after the request, while a line that needs a reservation (``proceed`` / ``proceed_new``)
+  has none linked. The raiser is told to create the reservation in SAP and link it; the named person is told who
+  raised it for them and that it is waiting for linking.
+* **Linked** -- one or more of the request's lines were linked to an SAP reservation since the last notice for that
+  request, to **both**. Lines linked in the same pass are one notice, not one each. Whatever made the link (the
+  hourly snapshot rebuild, the "Link reservation" button, UAT) is not this module's concern: it reads
+  ``session_reservation_link`` afterwards, so no linking code has to know about notifications.
+* **Reminder** -- once, when a request is ``ASSISTANT_LINK_REMINDER_HOURS`` old and such a line still has none, to
+  **both**: the raiser to act, the named person to know it is still waiting. A line marked not needed, or that uses
+  the existing unit, is never mentioned.
 
 No state table. What was already said is read from the ``notification`` rows
 themselves: a link is new when it was first seen after the request's latest
@@ -24,6 +28,7 @@ anybody about last month's requests.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -36,7 +41,8 @@ from app.assistant.models import AssistantRequest, AssistantSession
 from app.core.config import get_settings
 from app.integrations.notifications import templates
 from app.integrations.notifications.models import Channel, NotificationEvent
-from app.integrations.notifications.resolver import resolve_user
+from app.core.user_directory import names_for
+from app.integrations.notifications.resolver import is_entra_object_id, resolve_user
 from app.integrations.notifications.service import enqueue
 from app.models.i13_session_link import SessionReservationLink
 from app.models.notification import NotificationRow
@@ -55,6 +61,7 @@ _IN_APP = (Channel.IN_APP,)
 class LinkNoticeResult:
     linked: int = 0
     reminders: int = 0
+    raised: int = 0
 
 
 def _aware(value: datetime) -> datetime:
@@ -65,7 +72,52 @@ def request_path(request_id: str) -> str:
     return f"/assistant/requests/{request_id}"
 
 
-def _send(db: Session, request: AssistantRequest, event_type: str, trigger_id: str, context: dict[str, str]) -> int:
+def named_person(request: AssistantRequest, aliases: Mapping[str, str] | None) -> str | None:
+    """The Entra object id of the person named in the Requester box, or ``None``.
+
+    ``requested_for`` is free text, never identity, so it only counts when an administrator listed the name in
+    ``I13_REQUESTER_RECIPIENTS`` (the same list the exception notices use), matched ignoring case and spaces. A name
+    that is not listed is not notified: nobody is guessed.
+    """
+    name = (request.requested_for or "").strip()
+    return aliases.get(name.lower()) if name and aliases else None
+
+
+def _audiences(db: Session, request: AssistantRequest, aliases: Mapping[str, str] | None):
+    """``(the person who raised the request, the person named in its Requester box)``, each a list of recipients.
+
+    The raiser is the one who creates the reservation in SAP and links it. The named person is who the parts are for.
+    When they are the same person that person is only the raiser, so nobody hears the same thing twice.
+    """
+    raiser = list(resolve_user(db, request.requester, plant=request.plant))
+    named_id = named_person(request, aliases)
+    named = list(resolve_user(db, named_id, plant=request.plant)) if named_id else []
+    taken = {r.user_oid for r in raiser if r.user_oid}
+    return raiser, [r for r in named if not (r.user_oid and r.user_oid in taken)]
+
+
+def _raised_by(db: Session, request: AssistantRequest) -> str:
+    """The raiser's name as a person reads it: from the user directory, else what was recorded (a typed name)."""
+    who = (request.requester or "").strip()
+    if is_entra_object_id(who):
+        known = names_for(db, [who]).get(who)
+        return known[0] if known and known[0] else "the person who raised it"
+    return who or "the person who raised it"
+
+
+def _context(db: Session, request: AssistantRequest, **extra: str) -> dict[str, str]:
+    return {
+        "requested_for": (request.requested_for or "").strip() or "yourself",
+        "raised_by": _raised_by(db, request),
+        **extra,
+    }
+
+
+def _send(
+    db: Session, request: AssistantRequest, event_type: str, trigger_id: str, context: dict[str, str], recipients
+) -> int:
+    if not recipients:
+        return 0
     event = NotificationEvent(
         module=MODULE,
         event_type=event_type,
@@ -76,8 +128,42 @@ def _send(db: Session, request: AssistantRequest, event_type: str, trigger_id: s
         plant=request.plant,
         context={"request": request.id, **context},
     )
-    created = enqueue(db, event, resolve_user(db, request.requester, plant=request.plant), channels=_IN_APP)
+    created = enqueue(db, event, recipients, channels=_IN_APP)
     return sum(1 for row in created if row.channel == Channel.IN_APP.value and row.recipient_user_id)
+
+
+def _already_told(db: Session, event_type: str, request_ids: list[str]) -> set[str]:
+    """The requests that already have a row of this type, failed ones included, so a failure is not repeated."""
+    return set(
+        db.scalars(
+            select(NotificationRow.entity_id)
+            .where(NotificationRow.event_type == event_type, NotificationRow.entity_id.in_(request_ids))
+            .distinct()
+        )
+    )
+
+
+def _waiting_lines(db: Session, request: AssistantRequest):
+    """The request's lines that need an SAP reservation and have none linked yet."""
+    sessions = request_service.lines_of(db, request.id)
+    if not sessions:
+        return []
+    linked = set(
+        db.scalars(
+            select(SessionReservationLink.session_id)
+            .where(SessionReservationLink.session_id.in_([s.id for s in sessions]))
+            .distinct()
+        )
+    )
+    return [
+        record
+        for record in request_service.line_records(db, [s for s in sessions if s.id not in linked])
+        if record.decision in NEEDS_RESERVATION
+    ]
+
+
+def _line_text(waiting) -> str:
+    return "\n".join(f"Line {record.session.line_no or '-'} – Material {record.session.material_id}" for record in waiting)
 
 
 # --- linked -------------------------------------------------------------------------
@@ -98,7 +184,7 @@ def _last_linked_notice(db: Session, request_ids: list[str]) -> dict[str, dateti
     }
 
 
-def notify_new_links(db: Session, now: datetime, lookback: timedelta) -> int:
+def notify_new_links(db: Session, now: datetime, lookback: timedelta, aliases: Mapping[str, str] | None = None) -> int:
     """One "linked" notice per request with links first seen since its last notice."""
     rows = db.execute(
         select(SessionReservationLink, AssistantSession.request_id, AssistantSession.line_no)
@@ -134,35 +220,66 @@ def notify_new_links(db: Session, now: datetime, lookback: timedelta) -> int:
             for link, line_no in new
         )
         try:
+            raiser, named = _audiences(db, request, aliases)
             sent += _send(
                 db,
                 request,
                 templates.RESERVATION_LINKED,
                 f"link-{max(link.id for link, _ in new)}",
                 {"lines": lines, "linked": str(len(linked_sessions)), "total": str(len(sessions))},
+                raiser + named,
             )
         except Exception:  # noqa: BLE001 -- one request must not stop the others
             logger.exception("Request link notice: could not notify for %s", request_id)
     return sent
 
 
+# --- raised -------------------------------------------------------------------------
+
+
+def notify_raised(db: Session, now: datetime, lookback: timedelta, aliases: Mapping[str, str] | None = None) -> int:
+    """Once per request, soon after it is raised, while a line that needs a reservation has none linked.
+
+    The person who raised it is told to create the reservation in SAP and link it. The person named in its Requester
+    box -- when that name is in the alias list -- is told who raised it for them and that it is waiting for linking.
+    A request that needs no reservation, or was linked at once, says nothing.
+    """
+    candidates = list(
+        db.scalars(
+            select(AssistantRequest).where(AssistantRequest.issued_at > now - lookback).order_by(AssistantRequest.issued_at)
+        )
+    )
+    if not candidates:
+        return 0
+    ids = [r.id for r in candidates]
+    told_raiser = _already_told(db, templates.RESERVATION_LINK_REQUIRED, ids)
+    told_named = _already_told(db, templates.RESERVATION_REQUESTED, ids)
+    sent = 0
+    for request in candidates:
+        wants_named = named_person(request, aliases) is not None and request.id not in told_named
+        if request.id in told_raiser and not wants_named:
+            continue
+        try:
+            waiting = _waiting_lines(db, request)
+            if not waiting:
+                continue
+            raiser, named = _audiences(db, request, aliases)
+            context = _context(db, request, lines=_line_text(waiting))
+            if request.id not in told_raiser:
+                sent += _send(db, request, templates.RESERVATION_LINK_REQUIRED, "raised", context, raiser)
+            if wants_named:
+                sent += _send(db, request, templates.RESERVATION_REQUESTED, "raised", context, named)
+        except Exception:  # noqa: BLE001 -- one request must not stop the others
+            logger.exception("Request raised notice: could not notify for %s", request.id)
+    return sent
+
+
 # --- reminder -----------------------------------------------------------------------
 
 
-def _already_reminded(db: Session, request_ids: list[str]) -> set[str]:
-    return set(
-        db.scalars(
-            select(NotificationRow.entity_id)
-            .where(
-                NotificationRow.event_type == templates.RESERVATION_LINK_REMINDER,
-                NotificationRow.entity_id.in_(request_ids),
-            )
-            .distinct()
-        )
-    )
-
-
-def remind_unlinked(db: Session, now: datetime, after: timedelta, lookback: timedelta) -> int:
+def remind_unlinked(
+    db: Session, now: datetime, after: timedelta, lookback: timedelta, aliases: Mapping[str, str] | None = None
+) -> int:
     """One reminder per request that is ``after`` old and still has a line waiting for its reservation."""
     due = list(
         db.scalars(
@@ -173,33 +290,24 @@ def remind_unlinked(db: Session, now: datetime, after: timedelta, lookback: time
     )
     if not due:
         return 0
-    reminded = _already_reminded(db, [r.id for r in due])
+    ids = [r.id for r in due]
+    reminded_raiser = _already_told(db, templates.RESERVATION_LINK_REMINDER, ids)
+    reminded_named = _already_told(db, templates.RESERVATION_LINK_PENDING, ids)
     sent = 0
     for request in due:
-        if request.id in reminded:
+        wants_named = named_person(request, aliases) is not None and request.id not in reminded_named
+        if request.id in reminded_raiser and not wants_named:
             continue
         try:
-            sessions = request_service.lines_of(db, request.id)
-            linked = set(
-                db.scalars(
-                    select(SessionReservationLink.session_id)
-                    .where(SessionReservationLink.session_id.in_([s.id for s in sessions]))
-                    .distinct()
-                )
-            ) if sessions else set()
-            if all(s.id in linked for s in sessions):
-                continue
-            waiting = [
-                record
-                for record in request_service.line_records(db, [s for s in sessions if s.id not in linked])
-                if record.decision in NEEDS_RESERVATION
-            ]
+            waiting = _waiting_lines(db, request)
             if not waiting:
                 continue
-            lines = "\n".join(
-                f"Line {record.session.line_no or '-'} – Material {record.session.material_id}" for record in waiting
-            )
-            sent += _send(db, request, templates.RESERVATION_LINK_REMINDER, "reminder-1", {"lines": lines})
+            raiser, named = _audiences(db, request, aliases)
+            context = _context(db, request, lines=_line_text(waiting))
+            if request.id not in reminded_raiser:
+                sent += _send(db, request, templates.RESERVATION_LINK_REMINDER, "reminder-1", context, raiser)
+            if wants_named:
+                sent += _send(db, request, templates.RESERVATION_LINK_PENDING, "reminder-1", context, named)
         except Exception:  # noqa: BLE001 -- one request must not stop the others
             logger.exception("Request link reminder: could not check %s", request.id)
     return sent
@@ -215,11 +323,18 @@ def run_link_notices(db: Session, now: datetime | None = None, settings=None) ->
         return LinkNoticeResult()
     now = _aware(now or datetime.now(timezone.utc))
     lookback = timedelta(hours=max(settings.assistant_link_notice_lookback_hours, 1))
-    linked = notify_new_links(db, now, lookback)
+    # Imported here: the parser is a pure helper, but its package pulls in a good deal.
+    from app.initiatives.i13.act_requester_directory import parse_requester_recipients
+
+    aliases = parse_requester_recipients(settings.i13_requester_recipients)
+    raised = notify_raised(db, now, lookback, aliases)
+    linked = notify_new_links(db, now, lookback, aliases)
     reminders = 0
     if settings.assistant_link_reminder_hours > 0:
-        reminders = remind_unlinked(db, now, timedelta(hours=settings.assistant_link_reminder_hours), lookback)
-    return LinkNoticeResult(linked=linked, reminders=reminders)
+        reminders = remind_unlinked(
+            db, now, timedelta(hours=settings.assistant_link_reminder_hours), lookback, aliases
+        )
+    return LinkNoticeResult(linked=linked, reminders=reminders, raised=raised)
 
 
 def run_job(settings=None, *, session_factory=None, now: datetime | None = None) -> str:
@@ -233,4 +348,4 @@ def run_job(settings=None, *, session_factory=None, now: datetime | None = None)
     with session_factory() as db:
         result = run_link_notices(db, now, settings)
         db.commit()
-    return f"{result.linked} linked notice(s), {result.reminders} reminder(s)"
+    return f"{result.raised} raised notice(s), {result.linked} linked notice(s), {result.reminders} reminder(s)"
