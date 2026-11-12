@@ -37,7 +37,7 @@ from app.core.security import APPROVAL_STAGE_ROLES, CurrentUser, require_roles
 from app.initiatives.i7.notifications import APPROVAL_ROLE_TO_ENTRA, notify_transition
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations import ledger, routing, workflow
-from app.initiatives.i7.recommendations.types import WorkflowError
+from app.initiatives.i7.recommendations.types import ApprovalAction, WorkflowError
 from app.models.i7_recommendation import Recommendation
 from app.schemas.i7.approvals import (
     ApprovalActionRequest,
@@ -156,7 +156,10 @@ def reject_recommendation(
     "comment. HOLD freezes the recommendation at its current step -- it "
     "does not advance or reverse -- until the same pending role calls "
     "RELEASE_HOLD; this is distinct from SEND_BACK, which returns one step "
-    "for correction/rework. Final APPROVE at the route's last role moves "
+    "for correction/rework. ADJUST carries the new reorder point, safety stock "
+    "and maximum stock (new_rop / new_safety_stock / new_max_stock), replaces the "
+    "recommended values with them and moves the recommendation to the next role; "
+    "the last role in a route cannot adjust. Final APPROVE at the route's last role moves "
     "the recommendation to SAP_EXECUTION_PENDING and calls no SAP API. "
     "Every action writes one immutable approval-ledger entry.",
     responses={404: {"description": "Recommendation not found"}, 409: {"description": "Invalid action for the current role/stage, or missing required comment"}},
@@ -180,9 +183,16 @@ def apply_action(
     row = load_latest_recommendation(session, recommendation_id)
     policy = PolicyDocument()
     try:
+        adjusted = None
+        if body.action is ApprovalAction.ADJUST and None not in (
+            body.new_rop, body.new_safety_stock, body.new_max_stock
+        ):
+            adjusted = ledger.AdjustedValues(
+                rop=body.new_rop, safety_stock=body.new_safety_stock, max_stock=body.new_max_stock
+            )
         ledger.apply_approval_action(
             session, row, actor.id, body.actor_role, body.action, body.comment,
-            policy=policy,
+            policy=policy, adjusted=adjusted,
         )
     except WorkflowError as exc:
         raise conflict("INVALID_WORKFLOW_ACTION", str(exc)) from exc

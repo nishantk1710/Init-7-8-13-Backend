@@ -130,13 +130,33 @@ def test_adjust_requires_a_reason():
         apply_action(state, ApprovalAction.ADJUST, ApprovalRole.END_USER, None)
 
 
-def test_adjust_records_the_adjustment_and_reenters_the_chain():
+def test_adjust_records_the_adjustment_and_moves_to_the_next_role():
     state = submit(start())
     new_state = apply_action(
         state, ApprovalAction.ADJUST, ApprovalRole.END_USER, "corrected quantity"
     )
     assert new_state.adjustment_count == 1
     assert new_state.status is LifecycleStatus.PENDING_APPROVAL
+    assert new_state.chain_index == 1
+    assert new_state.pending_role is ApprovalRole.ENGINEERING_MANAGER
+
+
+def test_adjust_by_a_middle_role_moves_on_one_step_only():
+    state = submit(start())
+    state = apply_action(state, ApprovalAction.APPROVE, ApprovalRole.END_USER, None)
+    new_state = apply_action(
+        state, ApprovalAction.ADJUST, ApprovalRole.ENGINEERING_MANAGER, "corrected quantity"
+    )
+    assert new_state.chain_index == 2
+    assert new_state.pending_role is ApprovalRole.COMMERCIAL_MANAGER
+
+
+def test_the_last_role_cannot_adjust():
+    state = submit(start())
+    for role in APPROVAL_CHAIN[:-1]:
+        state = apply_action(state, ApprovalAction.APPROVE, role, None)
+    with pytest.raises(WorkflowError, match="last role"):
+        apply_action(state, ApprovalAction.ADJUST, APPROVAL_CHAIN[-1], "too late to change")
 
 
 def test_adjust_never_silently_changes_status_to_approved():

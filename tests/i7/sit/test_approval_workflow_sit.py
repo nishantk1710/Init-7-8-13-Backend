@@ -224,7 +224,7 @@ def test_adjust_requires_comment_and_increments_version(fixture_recommendation):
         before_version = row.current_version
         ledger.apply_approval_action(
             session, row, "sit-user", ApprovalRole.END_USER, ApprovalAction.ADJUST,
-            "corrected quantity",
+            "corrected quantity", adjusted=ledger.AdjustedValues(rop=30, safety_stock=15, max_stock=36),
         )
         session.commit()
         row = _load(session, rid)

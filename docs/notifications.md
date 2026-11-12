@@ -99,7 +99,7 @@ Read from the recommendation's own route and position, never hard-coded.
 | Reject | The submitter and every earlier approver |
 | Hold | The submitter |
 | Release hold | The submitter and the pending approver |
-| Adjust | The pending approver's role holders |
+| Adjust | The next approver's role holders (asked to review the changed values); the submitter and earlier approvers are told for information only |
 
 The person who just acted is not told about their own action (except that an approver asked to act always is).
 

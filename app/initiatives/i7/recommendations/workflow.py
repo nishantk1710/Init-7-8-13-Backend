@@ -18,10 +18,10 @@ machine enforces both without a second implementation.
 ``SAP_EXECUTION_PENDING`` and stops there -- there is no code path from any
 action to a SAP write, because no such path exists to remove.
 
-**ADJUST never mutates in place.** It records what changed and why, then
-re-enters the chain at the point the adjustment was made from -- silently
-editing an approved number is exactly the failure mode an audit trail exists to
-catch.
+**ADJUST never mutates in place.** It records what changed and why (the replaced values are kept
+as a ``RecommendationVersion`` snapshot and in the ledger entry), then moves the recommendation to the
+next role -- silently editing an approved number is exactly the failure mode an audit trail exists to
+catch. The last role in a route cannot adjust.
 
 **HOLD freezes; it never advances or reverses.** A HELD recommendation keeps
 its exact ``chain_index`` -- the same pending role must RELEASE_HOLD it before
@@ -197,12 +197,19 @@ def apply_action(
             # forward or back on its own.
             return replace(state, status=LifecycleStatus.PENDING_APPROVAL)
         case ApprovalAction.ADJUST:
-            # Re-enters the chain from the role that made the adjustment,
-            # since a later role must see the changed value before it proceeds
-            # further -- adjustment count records that this happened at all.
+            # "Approve with changes": the adjuster's new values replace the recommended ones and the
+            # recommendation moves on to the next role, who must see the changed values before it goes
+            # further. The last role cannot adjust -- nobody after them would ever see the new numbers --
+            # so they approve, send back or reject instead. The adjustment count records that it happened.
+            if state.chain_index >= len(state.route) - 1:
+                raise WorkflowError(
+                    f"{actor_role.value} is the last role in the route and cannot adjust: "
+                    "nobody after them would review the changed values; approve, send back or reject instead"
+                )
             return replace(
                 state,
                 status=LifecycleStatus.PENDING_APPROVAL,
+                chain_index=state.chain_index + 1,
                 adjustment_count=state.adjustment_count + 1,
             )
         case _:

@@ -269,9 +269,13 @@ Implemented as pure functions over an explicit `WorkflowState`
 (`workflow.py`), so every rule is checked without a database: the correct
 role can act, the wrong one cannot, stages cannot be skipped. `REJECT`,
 `SEND_BACK` and `ADJUST` require a non-empty comment; `APPROVE` alone may
-proceed silently. `ADJUST` never mutates a value in place — it increments an
-adjustment counter and writes a `RecommendationVersion` snapshot, then
-re-enters the chain. `SEND_BACK` returns to the immediately preceding role,
+proceed silently. `ADJUST` carries the new reorder point, safety stock and
+maximum (`new_rop` / `new_safety_stock` / `new_max_stock`; whole numbers,
+safety stock <= ROP <= max, at least one changed). It keeps the replaced values
+as a `RecommendationVersion` snapshot, puts the new ones in `recommended_*`
+(so SAP adoption is checked against them), puts old -> new in the ledger
+comment, increments the adjustment counter and moves the recommendation to the
+next role. The last role in a route cannot adjust. `SEND_BACK` returns to the immediately preceding role,
 not to the start.
 
 **Final `APPROVE` at Warehouse Supervisor produces `SAP_EXECUTION_PENDING`

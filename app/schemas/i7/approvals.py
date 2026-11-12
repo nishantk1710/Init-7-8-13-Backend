@@ -29,6 +29,12 @@ class ApprovalActionRequest(BaseModel):
     actor_role: ApprovalRole
     action: ApprovalAction
     comment: str | None = None
+    new_rop: int | None = Field(default=None, ge=0)
+    new_safety_stock: int | None = Field(default=None, ge=0)
+    new_max_stock: int | None = Field(default=None, ge=0)
+    """The values an ``ADJUST`` puts in place of the recommended ones -- all three, required for ADJUST
+    and ignored by every other action. Whole numbers, zero or more, with safety stock <= ROP <= max
+    (checked in ``ledger.apply_approval_action``)."""
 
 
 class SubmitRequest(BaseModel):
