@@ -182,16 +182,76 @@ def test_hold_tells_the_submitter_and_release_tells_the_submitter_and_the_pendin
     assert recipients_of(db, "APPROVAL_HOLD_RELEASED") == {SUBMITTER}
 
 
-def test_adjust_tells_the_pending_role_holder_but_not_the_adjuster(db, api):
+ADJUSTED = {"new_rop": 30, "new_safety_stock": 15, "new_max_stock": 36}
+
+
+def adjust(api, rec_id, role, comment="Lower the maximum", **values):
+    response = api.post(
+        f"{BASE}/{rec_id}/actions",
+        json={"actor_role": role.value, "action": "ADJUST", "comment": comment, **(values or ADJUSTED)},
+        headers={"X-Actor-Id": person(role)},
+    )
+    return response
+
+
+def test_adjust_asks_the_next_role_to_review_and_tells_the_submitter_for_information_only(db, api):
     configure(db)
-    colleague = "66666666-0000-0000-0000-000000000000"
+    colleague = "66666666-0000-0000-0000-000000000000"  # a second holder of the adjuster's own role
     db.add(NotificationRecipient(role=APPROVAL_ROLE_TO_ENTRA[ApprovalRole.END_USER], plant="1300", user_oid=colleague, active=True))
     db.commit()
     rec = recommendation(db)
     submit(api, rec)
-    act(api, rec, ApprovalRole.END_USER, "ADJUST", comment="Lower the maximum")
 
-    assert recipients_of(db, "APPROVAL_ADJUSTED") == {colleague}
+    response = adjust(api, rec, ApprovalRole.END_USER)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["pending_role"] == ApprovalRole.ENGINEERING_MANAGER.value
+    # the role that must now decide is asked to review; the adjuster and their colleague are not
+    assert recipients_of(db, "APPROVAL_ADJUSTED") == {person(ApprovalRole.ENGINEERING_MANAGER)}
+    assert recipients_of(db, "APPROVAL_ADJUSTED_FYI") == {SUBMITTER}
+    [asked] = notes(db, "APPROVAL_ADJUSTED")
+    assert "End User" in asked.description and "ROP" in asked.description and "30" in asked.description
+
+
+def test_adjust_also_tells_earlier_approvers_for_information_only(db, api):
+    configure(db)
+    rec = recommendation(db)
+    submit(api, rec)
+    assert act(api, rec, ApprovalRole.END_USER, "APPROVE").status_code == 200
+
+    assert adjust(api, rec, ApprovalRole.ENGINEERING_MANAGER).status_code == 200
+
+    assert recipients_of(db, "APPROVAL_ADJUSTED") == {person(ApprovalRole.COMMERCIAL_MANAGER)}
+    assert recipients_of(db, "APPROVAL_ADJUSTED_FYI") == {SUBMITTER, person(ApprovalRole.END_USER)}
+
+
+def test_the_last_role_cannot_adjust_and_nothing_is_sent(db, api):
+    configure(db)
+    rec = recommendation(db)
+    submit(api, rec)
+    for role in APPROVAL_CHAIN[:-1]:
+        assert act(api, rec, role, "APPROVE").status_code == 200
+    before = len(notes(db))
+
+    response = adjust(api, rec, APPROVAL_CHAIN[-1])
+
+    assert response.status_code == 409
+    assert "last role" in response.text
+    assert len(notes(db)) == before
+
+
+def test_adjust_without_values_is_refused(db, api):
+    configure(db)
+    rec = recommendation(db)
+    submit(api, rec)
+
+    response = api.post(
+        f"{BASE}/{rec}/actions",
+        json={"actor_role": ApprovalRole.END_USER.value, "action": "ADJUST", "comment": "no numbers"},
+        headers={"X-Actor-Id": person(ApprovalRole.END_USER)},
+    )
+
+    assert response.status_code == 409
 
 
 def test_a_rejected_step_sends_nothing(db, api):

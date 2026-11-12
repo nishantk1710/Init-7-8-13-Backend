@@ -688,10 +688,12 @@ def test_adjust_requires_a_reason_and_bumps_version(ready_recommendation):
         json={
             "actor_id": "U2", "actor_role": "End User", "action": "ADJUST",
             "comment": "corrected quantity",
+            "new_rop": 30, "new_safety_stock": 15, "new_max_stock": 36,
         },
     )
     assert present.status_code == 200
     assert present.json()["current_version"] == 2
+    assert present.json()["pending_role"] == "Engineering Manager"
 
 
 @needs_db

@@ -175,8 +175,36 @@ def _queue(db: Session, row: Recommendation, policy: PolicyDocument) -> None:
         event_type = templates.APPROVAL_HOLD_RELEASED
         recipients = submitter_recipients + (role_holders(db, waiting, row.sap_plant_code) if waiting else [])
     elif action == "ADJUST":
+        # The recommendation has moved on to the next role, who is asked to review the changed values.
         event_type = templates.APPROVAL_ADJUSTED
         recipients = role_holders(db, waiting, row.sap_plant_code) if waiting else []
+        # Whoever already saw the earlier values -- the submitter and the approvers so far -- is told, for
+        # information only, that they changed.
+        informed = list(submitter_recipients) + [
+            r for approver in earlier_approvers for r in resolve_user(db, approver, fallback_email=fallback)
+        ]
+        informed = _without(informed, entry.actor_id)
+        informed = [r for r in informed if r.error or r.user_oid not in {x.user_oid for x in recipients if not x.error}]
+        if informed:
+            enqueue(
+                db,
+                NotificationEvent(
+                    module=MODULE,
+                    event_type=templates.APPROVAL_ADJUSTED_FYI,
+                    entity_type="RECOMMENDATION",
+                    entity_id=row.recommendation_id,
+                    trigger_id=str(entry.id),
+                    action_path=review_path(row.recommendation_id, decide=False),
+                    plant=row.sap_plant_code,
+                    context={
+                        "material": row.sap_material_number,
+                        "comment": entry.comment or "",
+                        "adjusted_by": entry.actor_role,
+                        "pending_role": waiting.value if waiting else "",
+                    },
+                ),
+                informed,
+            )
     else:
         return
 
@@ -199,6 +227,7 @@ def _queue(db: Session, row: Recommendation, policy: PolicyDocument) -> None:
                 "material": row.sap_material_number,
                 "comment": entry.comment or "",
                 "pending_role": waiting.value if waiting else "",
+                "adjusted_by": entry.actor_role,
             },
         ),
         recipients,

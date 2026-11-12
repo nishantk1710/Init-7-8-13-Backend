@@ -21,6 +21,7 @@ APPROVAL_REJECTED = "APPROVAL_REJECTED"
 APPROVAL_ON_HOLD = "APPROVAL_ON_HOLD"
 APPROVAL_HOLD_RELEASED = "APPROVAL_HOLD_RELEASED"
 APPROVAL_ADJUSTED = "APPROVAL_ADJUSTED"
+APPROVAL_ADJUSTED_FYI = "APPROVAL_ADJUSTED_FYI"
 APPROVAL_COMPLETED = "APPROVAL_COMPLETED"
 APPROVAL_REMINDER = "APPROVAL_REMINDER"
 APPROVAL_ESCALATED = "APPROVAL_ESCALATED"
@@ -98,10 +99,18 @@ _TEMPLATES: dict[str, _Template] = {
     ),
     APPROVAL_ADJUSTED: _Template(
         "Recommendation Adjusted – Approval Required",
-        "A recommendation for Plant {plant} was adjusted and is waiting for your approval.\n"
+        "A recommendation for Plant {plant} was adjusted by the {adjusted_by} and is waiting for your approval.\n"
         "Material: {material}\n"
-        "Comment: {comment}\n"
+        "Change and comment: {comment}\n"
         "Action required: Review the adjusted values.",
+        _REVIEW,
+    ),
+    APPROVAL_ADJUSTED_FYI: _Template(
+        "Recommendation Adjusted – Material {material}",
+        "A recommendation for Plant {plant} was adjusted by the {adjusted_by}. It has moved on to the {pending_role}.\n"
+        "Material: {material}\n"
+        "Change and comment: {comment}\n"
+        "For your information: nothing is needed from you.",
         _REVIEW,
     ),
     APPROVAL_COMPLETED: _Template(
