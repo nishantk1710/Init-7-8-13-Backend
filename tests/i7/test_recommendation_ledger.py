@@ -144,6 +144,7 @@ def test_adjustment_creates_a_history_record(session):
     assert rec.adjustment_count == 1
     assert (rec.recommended_rop, rec.recommended_safety_stock, rec.recommended_max_stock) == (30, 15, 36)
     assert rec.chain_index == 1  # moved on to the next role
+    session.flush()  # this session does not flush by itself before a query
 
     snapshot = session.execute(
         select(RecommendationVersion).where(RecommendationVersion.recommendation_id == "REC-LEDGER-5")
