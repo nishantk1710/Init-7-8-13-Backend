@@ -224,6 +224,27 @@ POST /api/notifications/admin/sla/{id}/update          -- change, or switch off 
 `approval_route` is `OAR`, `ROP_MAX` or `ALL`; add `role` (an Entra role value) for a timing that applies to one approval
 step only. The most specific row wins. The business-approved values are **not** set anywhere in code.
 
+### Reservation notices (assistant requests)
+
+Two people are on a request: the person who **raised** it (the signed-in user, who creates the SAP reservation and links
+it) and the person named in its **Requester** box (who the parts are for). For a request raised in the assistant
+(`ASSISTANT_LINK_NOTIFICATIONS_ENABLED`, on by default), in-app only:
+
+| When | The person who raised it | The person named in the Requester box |
+|---|---|---|
+| Soon after the request is raised, while a line that needs a reservation has none linked | **Action Required: Link the Reservation** -- create it in SAP with the request number in its header text, then press Link reservation | **Reservation Requested for You** -- who raised it for them, and that it is waiting for linking |
+| `ASSISTANT_LINK_REMINDER_HOURS` (24) later, if such a line is still unlinked | **Reminder: Reservation Not Linked** (once) | **Reminder: Reservation Not Linked Yet** (once) |
+| When a line is linked to an SAP reservation (lines linked together are one notice) | **Reservation Linked** | **Reservation Linked** |
+
+The Requester box is free text, so it is never trusted as identity: the name only counts when it is listed in
+`I13_REQUESTER_RECIPIENTS` (`Name:Entra-object-id,...`, matched ignoring case and spaces) -- the same list the I13
+exception notices use. A name that is not listed is not notified and nobody is guessed (the raiser still is); a
+listing that is not an Entra object id is recorded as a failed notification. Someone who is both is only the raiser, so
+hears each thing once. The raiser's name in the other person's message comes from the user directory (the name they
+signed in with), else what was recorded. Lines marked not needed, or that use the existing unit, are never mentioned.
+There is no escalation in this flow. Only requests from the last `ASSISTANT_LINK_NOTICE_LOOKBACK_HOURS` (48) are
+considered, so switching it on does not notify anyone about old requests.
+
 ### Email through Microsoft Graph (when ready)
 
 Delivery is off until all of these are done. `NOTIFICATION_EMAIL_PROVIDER` stays `logging` until then.
