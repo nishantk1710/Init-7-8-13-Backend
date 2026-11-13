@@ -2,9 +2,10 @@
 
 Run on a timer by the notification scheduler, in-app only. Two people are on a request. The one who **raised** it
 (the signed-in user) creates the reservation in SAP and links it. The one **named in its Requester box** is who the
-parts are for; the free-text name is never identity on its own, so they are only notified when the name is listed in
-``I13_REQUESTER_RECIPIENTS`` (an unlisted name is not notified, nobody is guessed). Someone who is both is only the
-raiser, so they hear each thing once.
+parts are for. The box is free text, so it is not identity on its own: it stands for a person when it is listed in
+``I13_REQUESTER_RECIPIENTS`` (the override), or matches exactly one person who has signed in to the app: their whole name
+or e-mail, or two or more words of their name (see ``named_person``). Anything else is not notified, nobody is guessed. Someone who
+is both is only the raiser, so they hear each thing once.
 
 * **Raised** -- once, soon after the request, while a line that needs a reservation (``proceed`` / ``proceed_new``)
   has none linked. The raiser is told to create the reservation in SAP and link it; the named person is told who
@@ -41,7 +42,7 @@ from app.assistant.models import AssistantRequest, AssistantSession
 from app.core.config import get_settings
 from app.integrations.notifications import templates
 from app.integrations.notifications.models import Channel, NotificationEvent
-from app.core.user_directory import names_for
+from app.core.user_directory import names_for, oid_for_name
 from app.integrations.notifications.resolver import is_entra_object_id, resolve_user
 from app.integrations.notifications.service import enqueue
 from app.models.i13_session_link import SessionReservationLink
@@ -72,15 +73,24 @@ def request_path(request_id: str) -> str:
     return f"/assistant/requests/{request_id}"
 
 
-def named_person(request: AssistantRequest, aliases: Mapping[str, str] | None) -> str | None:
+def named_person(db: Session, request: AssistantRequest, aliases: Mapping[str, str] | None) -> str | None:
     """The Entra object id of the person named in the Requester box, or ``None``.
 
-    ``requested_for`` is free text, never identity, so it only counts when an administrator listed the name in
-    ``I13_REQUESTER_RECIPIENTS`` (the same list the exception notices use), matched ignoring case and spaces. A name
-    that is not listed is not notified: nobody is guessed.
+    ``requested_for`` is free text, never identity on its own. It stands for a person in two ways, in this order:
+
+    1. An administrator listed the name in ``I13_REQUESTER_RECIPIENTS`` (the list the exception notices use) -- the
+       override, and the only way to reach a name that is not the one the person signs in with.
+    2. It matches exactly one person who has signed in to the app (``user_directory.oid_for_name``): the whole name or
+       e-mail address they signed in with, or at least two typed words that are all whole words of their name, in
+       any order -- "Asha Rao" finds "Asha Meera Rao". Case and spaces never matter.
+
+    Anything else -- no match, or two people with that name -- is not notified: nobody is guessed. Only people who
+    have signed in are known, so a person who never has has no object id here to notify.
     """
     name = (request.requested_for or "").strip()
-    return aliases.get(name.lower()) if name and aliases else None
+    if not name:
+        return None
+    return (aliases or {}).get(name.lower()) or oid_for_name(db, name)
 
 
 def _audiences(db: Session, request: AssistantRequest, aliases: Mapping[str, str] | None):
@@ -90,7 +100,7 @@ def _audiences(db: Session, request: AssistantRequest, aliases: Mapping[str, str
     When they are the same person that person is only the raiser, so nobody hears the same thing twice.
     """
     raiser = list(resolve_user(db, request.requester, plant=request.plant))
-    named_id = named_person(request, aliases)
+    named_id = named_person(db, request, aliases)
     named = list(resolve_user(db, named_id, plant=request.plant)) if named_id else []
     taken = {r.user_oid for r in raiser if r.user_oid}
     return raiser, [r for r in named if not (r.user_oid and r.user_oid in taken)]
@@ -256,7 +266,7 @@ def notify_raised(db: Session, now: datetime, lookback: timedelta, aliases: Mapp
     told_named = _already_told(db, templates.RESERVATION_REQUESTED, ids)
     sent = 0
     for request in candidates:
-        wants_named = named_person(request, aliases) is not None and request.id not in told_named
+        wants_named = request.id not in told_named and named_person(db, request, aliases) is not None
         if request.id in told_raiser and not wants_named:
             continue
         try:
@@ -295,7 +305,7 @@ def remind_unlinked(
     reminded_named = _already_told(db, templates.RESERVATION_LINK_PENDING, ids)
     sent = 0
     for request in due:
-        wants_named = named_person(request, aliases) is not None and request.id not in reminded_named
+        wants_named = request.id not in reminded_named and named_person(db, request, aliases) is not None
         if request.id in reminded_raiser and not wants_named:
             continue
         try:
