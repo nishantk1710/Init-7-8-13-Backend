@@ -14,6 +14,7 @@ who did something: an author column holds the object ID, and these turn it into
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections.abc import Iterable
@@ -34,6 +35,9 @@ logger = get_logger(__name__)
 
 #: How long a user, once recorded, is not checked again by this process.
 RECHECK_SECONDS = 6 * 3600
+
+#: A word of a name: letters and digits, so "O'Brien" is two words and "Patil," is one.
+_WORD = re.compile(r"\w+")
 
 _seen: dict[str, tuple[str, str, float]] = {}
 _seen_lock = threading.Lock()
@@ -97,6 +101,46 @@ def names_for(db: Session, oids: Iterable[str]) -> dict[str, tuple[str, str]]:
         rows = db.execute(select(AppUser.oid, AppUser.name, AppUser.email).join(latest, AppUser.id == latest.c.id))
         result.update({r.oid: (r.name, r.email) for r in rows})
     return result
+
+
+def oid_for_name(db: Session, typed: str | None) -> str | None:
+    """The one signed-in user a typed name (or e-mail address) stands for, or ``None``.
+
+    For free text such as the assistant's Requester box, which is never identity on its own: it is only an identity
+    when it matches exactly one person this directory knows. Case and surrounding spaces never matter. In order:
+
+    1. The whole name a person signed in with (their latest), or their e-mail address, equals what was typed. If one
+       person does, that is the answer; if several share that exact name, nobody is.
+    2. Otherwise, at least two words were typed and every one is a whole word in exactly one person's name, in any
+       order -- so "Asha Rao" finds "Asha Meera Rao". One word ("Asha"), part of a word ("Ash Rao") or a word
+       the name does not have ("Asha Stone") finds nobody.
+
+    Nothing is guessed: no match, or more than one person, is ``None``. Only people who have signed in are known --
+    anybody else has no object ID here to notify.
+    """
+    wanted = " ".join((typed or "").split()).casefold()
+    if not wanted:
+        return None
+    latest = select(AppUser.oid, func.max(AppUser.id).label("id")).group_by(AppUser.oid).subquery()
+    known = select(AppUser.oid, AppUser.name).join(latest, AppUser.id == latest.c.id)
+
+    exact = {
+        row.oid
+        for row in db.execute(
+            known.where((func.lower(func.trim(AppUser.name)) == wanted) | (func.lower(func.trim(AppUser.email)) == wanted))
+        )
+    }
+    if exact:
+        return next(iter(exact)) if len(exact) == 1 else None
+
+    words = set(_WORD.findall(wanted))
+    if "@" in wanted or len(words) < 2:
+        return None
+    narrowed = known
+    for word in words:  # let the database drop the people who cannot match; whole words are checked below
+        narrowed = narrowed.where(func.lower(AppUser.name).contains(word, autoescape=True))
+    found = {row.oid for row in db.execute(narrowed) if words <= set(_WORD.findall((row.name or "").casefold()))}
+    return next(iter(found)) if len(found) == 1 else None
 
 
 def display_name(db: Session, oid: str) -> str:

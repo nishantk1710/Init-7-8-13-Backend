@@ -236,14 +236,25 @@ it) and the person named in its **Requester** box (who the parts are for). For a
 | `ASSISTANT_LINK_REMINDER_HOURS` (24) later, if such a line is still unlinked | **Reminder: Reservation Not Linked** (once) | **Reminder: Reservation Not Linked Yet** (once) |
 | When a line is linked to an SAP reservation (lines linked together are one notice) | **Reservation Linked** | **Reservation Linked** |
 
-The Requester box is free text, so it is never trusted as identity: the name only counts when it is listed in
-`I13_REQUESTER_RECIPIENTS` (`Name:Entra-object-id,...`, matched ignoring case and spaces) -- the same list the I13
-exception notices use. A name that is not listed is not notified and nobody is guessed (the raiser still is); a
-listing that is not an Entra object id is recorded as a failed notification. Someone who is both is only the raiser, so
-hears each thing once. The raiser's name in the other person's message comes from the user directory (the name they
-signed in with), else what was recorded. Lines marked not needed, or that use the existing unit, are never mentioned.
-There is no escalation in this flow. Only requests from the last `ASSISTANT_LINK_NOTICE_LOOKBACK_HOURS` (48) are
-considered, so switching it on does not notify anyone about old requests.
+The Requester box is free text, so it is not identity on its own. It stands for a person in two ways, in this order:
+
+1. **The override list** -- the name is in `I13_REQUESTER_RECIPIENTS` (`Name:Entra-object-id,...`, matched ignoring case
+   and spaces), the list the I13 exception notices use. This is the only way to reach a name that is not the one the
+   person signs in with.
+2. **Anyone who has signed in** -- exactly **one** person the app has seen sign in matches, ignoring case and spaces:
+   either what was typed is the whole name or the e-mail address they signed in with, or **at least two typed words are
+   all whole words of their name, in any order**. Directory names carry middle names, so "Asha Rao" finds
+   "Asha Meera Rao". No setup needed. If two people share the whole name, or both have the typed words,
+   nobody is chosen (the whole name or e-mail address still picks one out).
+
+Anything else is not notified and nobody is guessed: a name nobody signed in with (so the app has no object id for
+them), a single word ("Asha"), part of a word ("Ash Rao"), a word the person's name does not have, a
+different spelling, or a name two people share. The person who raised the
+request is always notified. A list entry that is not an Entra object id is recorded as a failed notification. Someone
+who is both is only the raiser, so hears each thing once. The raiser's name in the other person's message comes from
+the user directory (the name they signed in with), else what was recorded. Lines marked not needed, or that use the
+existing unit, are never mentioned. There is no escalation in this flow. Only requests from the last
+`ASSISTANT_LINK_NOTICE_LOOKBACK_HOURS` (48) are considered, so switching it on does not notify anyone about old requests.
 
 ### Email through Microsoft Graph (when ready)
 
