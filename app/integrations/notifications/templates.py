@@ -38,9 +38,15 @@ EXCEPTION_ESCALATED = "EXCEPTION_ESCALATED"
 # signed-in user and names nothing about the requisition; the details are for administrators.
 PR_RECEIVED = "PR_RECEIVED"
 PR_RECEIVED_DETAILS = "PR_RECEIVED_DETAILS"
-# A request's lines were linked to an SAP reservation, and the reminder when a day passes with lines still unlinked.
+# A request's reservation, from the two people it concerns. The person who raised the request is the one who creates
+# the reservation in SAP and links it: told when the request is raised (LINK_REQUIRED) and reminded a day later if
+# a line is still unlinked (LINK_REMINDER). The person named in its Requester box is told who raised it and that it is
+# waiting for linking (REQUESTED), and reminded when it still is (LINK_PENDING). Both are told when it is linked.
+RESERVATION_LINK_REQUIRED = "RESERVATION_LINK_REQUIRED"
+RESERVATION_REQUESTED = "RESERVATION_REQUESTED"
 RESERVATION_LINKED = "RESERVATION_LINKED"
 RESERVATION_LINK_REMINDER = "RESERVATION_LINK_REMINDER"
+RESERVATION_LINK_PENDING = "RESERVATION_LINK_PENDING"
 GENERAL = "GENERAL"
 
 
@@ -211,6 +217,23 @@ _TEMPLATES: dict[str, _Template] = {
         "SAP message: {message}",
         "Open",
     ),
+    RESERVATION_LINK_REQUIRED: _Template(
+        "Action Required: Link the Reservation – Request {request}",
+        "You raised request {request} at Plant {plant} for {requested_for}. No SAP reservation is linked to these "
+        "lines yet:\n"
+        "{lines}\n"
+        "Action required: create the reservation in SAP with {request} in its header text, "
+        "then press Link reservation on the request.",
+        _REQUEST,
+    ),
+    RESERVATION_REQUESTED: _Template(
+        "Reservation Requested for You – Request {request}",
+        "{raised_by} raised request {request} at Plant {plant} for you. It is waiting for its SAP reservation to be "
+        "linked:\n"
+        "{lines}\n"
+        "{raised_by} creates the reservation in SAP and links it. You will be told when it is linked.",
+        _REQUEST,
+    ),
     RESERVATION_LINKED: _Template(
         "Reservation Linked – Request {request}",
         "Your SAP reservation is now linked to request {request} at Plant {plant}.\n"
@@ -224,6 +247,14 @@ _TEMPLATES: dict[str, _Template] = {
         "{lines}\n"
         "Action required: create the reservation in SAP with {request} in its header text, "
         "then press Link reservation on the request.",
+        _REQUEST,
+    ),
+    RESERVATION_LINK_PENDING: _Template(
+        "Reminder: Reservation Not Linked Yet – Request {request}",
+        "Request {request}, raised for you by {raised_by} at Plant {plant}, still has no SAP reservation linked to "
+        "these lines:\n"
+        "{lines}\n"
+        "{raised_by} needs to create the reservation in SAP and link it. You will be told when it is linked.",
         _REQUEST,
     ),
     GENERAL: _Template("Notification", "{summary}", "Open"),
