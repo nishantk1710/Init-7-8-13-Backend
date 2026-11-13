@@ -214,15 +214,15 @@ NAMED = "99999999-8888-7777-6666-555555555555"
 
 
 class TestRaiserAndPersonNamedInTheRequesterBox:
-    """Khushi raises a request and types "J Miller" in the Requester box. J Miller is in I13_REQUESTER_RECIPIENTS."""
+    """Ben raises a request and types "J Miller" in the Requester box. J Miller is in I13_REQUESTER_RECIPIENTS."""
 
     @pytest.fixture
     def listed(self, settings):
         return settings.model_copy(update={"i13_requester_recipients": f"j miller:{NAMED}"})
 
     @pytest.fixture(autouse=True)
-    def khushi(self, db):
-        db.add(AppUser(oid=REQUESTER, name="Khushi Patil", email="khushi@example.com"))
+    def raiser_in_directory(self, db):
+        db.add(AppUser(oid=REQUESTER, name="Ben Carter", email="ben@example.com"))
         db.commit()
 
     def to(self, db, event_type: str) -> dict[str, NotificationRow]:
@@ -245,7 +245,7 @@ class TestRaiserAndPersonNamedInTheRequesterBox:
         [waiting] = notices(db, templates.RESERVATION_REQUESTED)
         assert waiting.recipient_user_id == NAMED
         assert waiting.title == f"Reservation Requested for You – Request {request_id}"
-        assert f"Khushi Patil raised request {request_id}" in waiting.description
+        assert f"Ben Carter raised request {request_id}" in waiting.description
         assert "waiting for its SAP reservation to be linked" in waiting.description
         assert OAR_NORMAL in waiting.description
         assert waiting.action_path == f"/assistant/requests/{request_id}"
@@ -274,7 +274,7 @@ class TestRaiserAndPersonNamedInTheRequesterBox:
         assert "Action required: create the reservation in SAP" in to_raiser.description
         [to_named] = notices(db, templates.RESERVATION_LINK_PENDING)
         assert to_named.recipient_user_id == NAMED
-        assert "raised for you by Khushi Patil" in to_named.description and "Action required" not in to_named.description
+        assert "raised for you by Ben Carter" in to_named.description and "Action required" not in to_named.description
 
         run(db, listed, NOW + timedelta(hours=5))
         assert len(notices(db, templates.RESERVATION_LINK_REMINDER)) == len(notices(db, templates.RESERVATION_LINK_PENDING)) == 1
@@ -379,9 +379,169 @@ class TestRaiserAndPersonNamedInTheRequesterBox:
         assert any(r.status == "FAILED" and r.recipient_user_id is None for r in rows)
 
     def test_the_new_wording_has_the_button(self) -> None:
-        context = {"request": "R1", "plant": "1300", "lines": "Line 1", "requested_for": "J Miller", "raised_by": "Khushi"}
+        context = {"request": "R1", "plant": "1300", "lines": "Line 1", "requested_for": "J Miller", "raised_by": "Ben"}
         for event in (
             templates.RESERVATION_LINK_REQUIRED, templates.RESERVATION_REQUESTED, templates.RESERVATION_LINK_PENDING
         ):
             assert event in templates.known_event_types()
             assert templates.render(event, context).button_label == "Open Request"
+
+
+OTHER = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+def typed(db, request_id: str, name: str) -> None:
+    """Set what was typed in the Requester box (``make_request`` types "J Miller")."""
+    db.execute(update(AssistantRequest).where(AssistantRequest.id == request_id).values(requested_for=name))
+    db.commit()
+
+
+class TestNamedByTheNameTheySignedInWith:
+    """No list at all: the Requester box is free text, but a name that is exactly one signed-in person is that person."""
+
+    @pytest.fixture(autouse=True)
+    def users(self, db):
+        db.add(AppUser(oid=REQUESTER, name="Ben Carter", email="ben@example.com"))
+        db.add(AppUser(oid=NAMED, name="J Miller", email="j.miller@example.com"))
+        db.commit()
+
+    def told(self, db, event_type: str) -> set[str | None]:
+        return {n.recipient_user_id for n in notices(db, event_type)}
+
+    def test_a_signed_in_person_typed_in_the_box_is_told_with_no_list_configured(self, db, settings) -> None:
+        make_request(db, settings)
+
+        run(db, settings)
+
+        assert self.told(db, templates.RESERVATION_LINK_REQUIRED) == {REQUESTER}
+        assert self.told(db, templates.RESERVATION_REQUESTED) == {NAMED}
+        [waiting] = notices(db, templates.RESERVATION_REQUESTED)
+        assert "Ben Carter raised request" in waiting.description
+
+    def test_and_is_told_when_it_is_linked_and_when_it_is_still_waiting(self, db, settings) -> None:
+        request_id = make_request(db, settings, age=timedelta(hours=25))
+        link(db, request_id, OAR_NORMAL)
+
+        run(db, settings)
+
+        assert self.told(db, templates.RESERVATION_LINKED) == {REQUESTER, NAMED}
+        assert self.told(db, templates.RESERVATION_LINK_PENDING) == {NAMED}
+        assert self.told(db, templates.RESERVATION_LINK_REMINDER) == {REQUESTER}
+
+    def test_case_and_surrounding_spaces_do_not_matter(self, db, settings) -> None:
+        request_id = make_request(db, settings)
+        typed(db, request_id, "  j MILLER ")
+
+        run(db, settings)
+
+        assert self.told(db, templates.RESERVATION_REQUESTED) == {NAMED}
+
+    def test_their_email_address_works_too(self, db, settings) -> None:
+        request_id = make_request(db, settings)
+        typed(db, request_id, "J.Miller@Example.com")
+
+        run(db, settings)
+
+        assert self.told(db, templates.RESERVATION_REQUESTED) == {NAMED}
+
+    def test_someone_who_has_not_signed_in_has_no_id_so_nobody_is_guessed(self, db, settings) -> None:
+        request_id = make_request(db, settings)
+        typed(db, request_id, "A Stranger")
+
+        run(db, settings)
+
+        assert notices(db, templates.RESERVATION_REQUESTED) == []
+        assert self.told(db, templates.RESERVATION_LINK_REQUIRED) == {REQUESTER}  # the raiser is still told
+
+    def test_a_partial_or_different_name_is_not_a_match(self, db, settings) -> None:
+        request_id = make_request(db, settings)
+        typed(db, request_id, "Miller")
+
+        run(db, settings)
+
+        assert notices(db, templates.RESERVATION_REQUESTED) == []
+
+    def test_two_people_with_the_same_name_means_nobody_is_told(self, db, settings) -> None:
+        db.add(AppUser(oid=OTHER, name="J Miller", email="other.miller@example.com"))
+        db.commit()
+        make_request(db, settings)
+
+        run(db, settings)
+
+        assert notices(db, templates.RESERVATION_REQUESTED) == []
+        assert self.told(db, templates.RESERVATION_LINK_REQUIRED) == {REQUESTER}
+
+    def test_a_person_who_changed_their_name_is_known_by_the_latest_one_only(self, db, settings) -> None:
+        db.add(AppUser(oid=NAMED, name="Jane Miller", email="j.miller@example.com"))  # a later row, same person
+        db.commit()
+        request_id = make_request(db, settings)
+
+        run(db, settings)
+        assert notices(db, templates.RESERVATION_REQUESTED) == []  # "J Miller" is no longer who they are
+
+        typed(db, request_id, "Jane Miller")
+        run(db, settings, NOW + timedelta(minutes=1))
+        assert self.told(db, templates.RESERVATION_REQUESTED) == {NAMED}
+
+    def test_the_list_overrides_the_directory(self, db, settings) -> None:
+        listed = settings.model_copy(update={"i13_requester_recipients": f"j miller:{OTHER}"})
+        make_request(db, listed)
+
+        run(db, listed)
+
+        assert self.told(db, templates.RESERVATION_REQUESTED) == {OTHER}
+
+    def test_the_raiser_typing_their_own_name_is_only_the_raiser(self, db, settings) -> None:
+        request_id = make_request(db, settings)
+        typed(db, request_id, "Ben Carter")
+
+        run(db, settings)
+
+        assert notices(db, templates.RESERVATION_REQUESTED) == []
+        assert self.told(db, templates.RESERVATION_LINK_REQUIRED) == {REQUESTER}
+
+    def test_a_person_who_signs_in_after_the_request_is_told_from_then_on(self, db, settings) -> None:
+        request_id = make_request(db, settings)
+        typed(db, request_id, "Late Joiner")
+        run(db, settings)
+        assert notices(db, templates.RESERVATION_REQUESTED) == []
+
+        db.add(AppUser(oid=OTHER, name="Late Joiner", email="late@example.com"))
+        db.commit()
+        run(db, settings, NOW + timedelta(minutes=1))
+
+        assert self.told(db, templates.RESERVATION_REQUESTED) == {OTHER}
+        assert len(notices(db, templates.RESERVATION_LINK_REQUIRED)) == 1  # the raiser is not told again
+
+
+class TestNamesWithMiddleNames:
+    """Directory names carry middle names; people type first and last."""
+
+    ASHA = "00000000-0000-0000-0000-0000000000a1"
+
+    @pytest.fixture(autouse=True)
+    def users(self, db):
+        db.add(AppUser(oid=REQUESTER, name="Ben Alan Carter", email="ben.carter@example.com"))
+        db.add(AppUser(oid=self.ASHA, name="Asha Meera Rao", email="asha.rao@example.com"))
+        db.commit()
+
+    def test_first_and_last_name_finds_the_person_with_a_middle_name(self, db, settings) -> None:
+        request_id = make_request(db, settings)
+        typed(db, request_id, "Asha Rao")
+        link(db, request_id, OAR_NORMAL)
+
+        run(db, settings)
+
+        [waiting] = notices(db, templates.RESERVATION_REQUESTED)
+        assert waiting.recipient_user_id == self.ASHA
+        assert "Ben Alan Carter raised request" in waiting.description
+        assert {n.recipient_user_id for n in notices(db, templates.RESERVATION_LINKED)} == {REQUESTER, self.ASHA}
+
+    def test_a_first_name_alone_is_not_enough(self, db, settings) -> None:
+        request_id = make_request(db, settings)
+        typed(db, request_id, "Asha")
+
+        run(db, settings)
+
+        assert notices(db, templates.RESERVATION_REQUESTED) == []
+        assert {n.recipient_user_id for n in notices(db, templates.RESERVATION_LINK_REQUIRED)} == {REQUESTER}
