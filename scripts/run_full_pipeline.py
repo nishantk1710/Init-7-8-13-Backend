@@ -325,6 +325,7 @@ def run_phases(skip: set[str], force: bool) -> dict:
                 ("status", result.status),
                 ("written", result.recommendations_written),
                 ("reused existing", result.reused_existing),
+                ("held back (in approval)", result.held_in_approval),
             ],
         )
         counts_table("Lifecycle status", result.status_counts)

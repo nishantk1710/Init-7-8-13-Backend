@@ -110,6 +110,27 @@ class LifecycleStatus(StrEnum):
     NOT_ADOPTED = "NOT_ADOPTED"
 
 
+PROTECTED_STATUSES: frozenset[LifecycleStatus] = frozenset(
+    {
+        LifecycleStatus.PENDING_APPROVAL,
+        LifecycleStatus.HELD,
+        LifecycleStatus.ADJUSTED,
+        LifecycleStatus.SENT_BACK,
+        LifecycleStatus.APPROVED,
+        LifecycleStatus.SAP_EXECUTION_PENDING,
+    }
+)
+"""A material-plant whose newest recommendation is in one of these states is in the approval chain, or approved
+and waiting for SAP. A pipeline rerun must leave it alone: writing a fresh row would put a new READY_FOR_REVIEW
+proposal on top of it (the pages and the notifications read the newest row per material-plant), so approvers would
+lose sight of numbers they were deciding on, and the values would change under them.
+
+It is released by leaving the set, not by a timer: once the change is executed in SAP and adopted
+(SAP_EXECUTED, ADOPTED, PARTIALLY_ADOPTED, NOT_ADOPTED) the next run writes a new recommendation as usual. REJECTED is
+not protected either -- a rejected proposal is final until someone asks for it again, and fresh data should
+reach the next proposal."""
+
+
 _TO_RECOMMENDATION_STATUS: dict[LifecycleStatus, RecommendationStatus] = {
     LifecycleStatus.NOT_EVALUABLE: RecommendationStatus.PENDING_REVIEW,
     LifecycleStatus.READY_FOR_REVIEW: RecommendationStatus.PENDING_REVIEW,

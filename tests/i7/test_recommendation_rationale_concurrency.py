@@ -121,6 +121,7 @@ def test_no_database_session_is_open_while_explanations_are_written(monkeypatch)
     monkeypatch.setattr(service, "get_sessionmaker", lambda: FakeSession)
     monkeypatch.setattr(service.repository, "latest_inventory_run", lambda s: None)
     monkeypatch.setattr(service.repository, "latest_oar_run", lambda s: 7)
+    monkeypatch.setattr(service.repository, "load_protected_material_plants", lambda s, statuses: set())
     monkeypatch.setattr(service.repository, "load_oar_inputs", lambda s, run: [])
     monkeypatch.setattr(service.repository, "load_uncovered_oar_targets", lambda s, run: [target])
 
