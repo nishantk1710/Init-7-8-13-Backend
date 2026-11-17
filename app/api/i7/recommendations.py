@@ -6,11 +6,14 @@ recalculated here. Filtering and pagination happen in SQL; the full table is
 never loaded into Python to be filtered or sliced in memory.
 """
 
+import csv
+import io
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response
 from sqlalchemy import Select, and_, case, exists, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -687,6 +690,139 @@ def list_recommendations(
         total=total,
         page=page,
         page_size=page_size,
+    )
+
+
+EXPORT_CHUNK_SIZE = 500
+EXPORT_COLUMNS = (
+    "Material Number",
+    "Material Description",
+    "Plant",
+    "Recommendation Type",
+    "Criticality",
+    "Status",
+    "Current ROP (SAP)",
+    "Current Safety Stock (SAP)",
+    "Current Max Stock (SAP)",
+    "Recommended ROP",
+    "Recommended Safety Stock",
+    "Recommended Max Stock",
+    "Reason",
+)
+_CRITICALITY_LEVELS = {tier: level for level, tier in CRITICALITY_TIERS.items()}
+
+
+def _csv_text(value: str | None) -> str:
+    """Free text for a CSV cell. A cell Excel would read as a formula (=, +, -, @) is prefixed with a
+    quote so a description or reason can never run as one."""
+    if not value:
+        return ""
+    return "'" + value if value[0] in "=+-@\t\r" else value
+
+
+def _csv_number(value: Decimal | None) -> str:
+    """A quantity as plain digits (no exponent); empty when SAP/the pipeline has no value -- never 0."""
+    return "" if value is None else format(value.normalize(), "f")
+
+
+@router.get(
+    "/recommendations/export",
+    summary="Export the recommendations the list would show, as CSV",
+    description="Takes the same filters as the list endpoint and returns every matching recommendation "
+    "(no paging), newest first, one row per material-plant: material, SAP's current reorder point / "
+    "safety stock / max stock, the recommended three, the criticality and the reason. With no filters it "
+    "is every recommendation that has at least one recommended value. Registered before "
+    "/{recommendation_id} so 'export' is never read as an id.",
+    response_class=Response,
+)
+def export_recommendations(
+    session: Annotated[Session, Depends(get_session)],
+    status: str | None = None,
+    plant: str | None = None,
+    material: str | None = None,
+    demand_class: str | None = None,
+    is_oar: bool | None = None,
+    confidence: str | None = None,
+    criticality: str | None = None,
+    generated_from: datetime | None = None,
+    generated_to: datetime | None = None,
+    search: str | None = None,
+    criticality_level: Literal["Critical", "High", "Medium", "Low"] | None = None,
+    status_group: Literal["Pending Review", "In Approval", "Returned", "Approved", "Rejected", "Implemented"] | None = None,
+    risk: Literal["critical", "high", "medium", "low"] | None = None,
+    demand_type: Annotated[Literal["oar", "declining", "normal", "stock_item"] | None, Query(alias="type")] = None,
+    conversion_eligibility: Literal["ELIGIBLE", "NOT_ELIGIBLE", "UNKNOWN"] | None = None,
+    consumption_above_threshold: bool | None = None,
+    actionable: bool | None = None,
+    has_recommended: bool | None = None,
+    adopted_in_sap: bool | None = None,
+) -> Response:
+    # The same narrowing as the list, so the file is exactly the rows the table's filters select
+    # (all pages of them), in the table's default order: newest first.
+    base = _latest_only(
+        _apply_filters(
+            select(Recommendation.id),
+            status=status,
+            plant=plant,
+            material=material,
+            demand_class=demand_class,
+            is_oar=is_oar,
+            confidence=confidence,
+            criticality=criticality,
+            generated_from=generated_from,
+            generated_to=generated_to,
+            demand_type=demand_type,
+            search=search,
+            criticality_level=criticality_level,
+            status_group=status_group,
+            risk=risk,
+            conversion_eligibility=conversion_eligibility,
+            consumption_above_threshold=consumption_above_threshold,
+            actionable=actionable,
+            has_recommended=has_recommended,
+            adopted_in_sap=adopted_in_sap,
+        ).where(_not_smooth())
+    )
+    ids = session.execute(base.order_by(Recommendation.generated_at.desc(), Recommendation.id.desc())).scalars().all()
+
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(EXPORT_COLUMNS)
+    # Rows carry long text (the reason), so they are loaded a chunk at a time, never all at once.
+    for start in range(0, len(ids), EXPORT_CHUNK_SIZE):
+        chunk_ids = ids[start : start + EXPORT_CHUNK_SIZE]
+        loaded = {
+            row.id: row
+            for row in session.execute(select(Recommendation).where(Recommendation.id.in_(chunk_ids))).scalars()
+        }
+        descriptions = _display_fields_for(session, {row.sap_material_number for row in loaded.values()})
+        for row_id in chunk_ids:
+            row = loaded.get(row_id)
+            if row is None:
+                continue
+            writer.writerow(
+                [
+                    row.sap_material_number,
+                    _csv_text(descriptions.get(row.sap_material_number, (None, None))[0]),
+                    row.sap_plant_code,
+                    "OAR" if row.is_oar else "Stock item",
+                    _CRITICALITY_LEVELS.get(row.criticality or "", "Low"),
+                    row.status,
+                    _csv_number(row.current_rop),
+                    _csv_number(row.current_safety_stock),
+                    _csv_number(row.current_max_stock),
+                    _csv_number(row.recommended_rop),
+                    _csv_number(row.recommended_safety_stock),
+                    _csv_number(row.recommended_max_stock),
+                    _csv_text(row.rationale_text),
+                ]
+            )
+
+    # UTF-8 with a BOM so Excel reads accented characters correctly.
+    return Response(
+        content=out.getvalue().encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="i7-recommendations-{date.today().isoformat()}.csv"'},
     )
 
 
