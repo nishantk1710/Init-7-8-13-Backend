@@ -42,7 +42,7 @@ from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.initiatives.i7.recommendations import blend_path, builder, rationale, repository
 from app.initiatives.i7.recommendations.builder import BuiltRecommendation
-from app.initiatives.i7.recommendations.types import RECOMMENDATION_FORMULA_VERSION
+from app.initiatives.i7.recommendations.types import PROTECTED_STATUSES, RECOMMENDATION_FORMULA_VERSION
 from app.initiatives.i7.policy import PolicyDocument
 from app.models.i7_recommendation import Recommendation
 
@@ -57,6 +57,9 @@ class RecommendationRunResult:
     status: str = STATUS_SUCCEEDED
     recommendations_written: int = 0
     reused_existing: int = 0
+    held_in_approval: int = 0
+    """Material-plants left untouched because their newest recommendation is in the approval chain or approved and
+    waiting for SAP (``PROTECTED_STATUSES``). No row is built, explained or written for them."""
     status_counts: dict[str, int] = field(default_factory=dict)
     error: str | None = None
 
@@ -237,14 +240,34 @@ def generate_recommendations(policy: PolicyDocument | None = None) -> Recommenda
 
             built: list[BuiltRecommendation] = []
 
+            # A material-plant whose newest recommendation is in the approval chain, or approved and waiting for
+            # SAP, keeps that row: it is neither built nor explained nor written again, so approvers keep the
+            # numbers they are deciding on and the adoption notices keep reading the same row. It is released
+            # when the change is executed and adopted in SAP (see PROTECTED_STATUSES).
+            protected = repository.load_protected_material_plants(session, PROTECTED_STATUSES)
+            held: set[tuple[str, str]] = set()
+
+            def is_held(row) -> bool:
+                key = (row.sap_material_number, row.sap_plant_code)
+                if key in protected:
+                    held.add(key)
+                    return True
+                return False
+
             if inventory_run_id is not None:
                 for row in repository.load_normal_inputs(
                     session, inventory_run_id, forecast_run_id
                 ):
+                    if is_held(row):
+                        continue
                     built.append(builder.build_normal_recommendation(row, policy))
 
             if oar_run_id is not None:
-                oar_rows = list(repository.load_oar_inputs(session, oar_run_id))
+                oar_rows = [
+                    row
+                    for row in repository.load_oar_inputs(session, oar_run_id)
+                    if not is_held(row)
+                ]
                 blends = blend_path.evaluate_rows(session, oar_rows, policy) if blend_enabled else {}
                 for row in oar_rows:
                     built.append(
@@ -253,7 +276,17 @@ def generate_recommendations(policy: PolicyDocument | None = None) -> Recommenda
                         )
                     )
                 for row in repository.load_uncovered_oar_targets(session, oar_run_id):
+                    if is_held(row):
+                        continue
                     built.append(builder.deferred_recommendation(row, policy))
+
+            result.held_in_approval = len(held)
+            if held:
+                logger.info(
+                    "recommendation generation: %d material-plant(s) held back, already in the approval chain "
+                    "or approved and waiting for SAP",
+                    len(held),
+                )
 
         workers = get_settings().i7_rationale_concurrency
         logger.info(
@@ -299,9 +332,10 @@ def generate_recommendations(policy: PolicyDocument | None = None) -> Recommenda
             session.commit()
 
         logger.info(
-            "recommendation generation: %d written, %d reused, statuses %s",
+            "recommendation generation: %d written, %d reused, %d held back in approval, statuses %s",
             result.recommendations_written,
             result.reused_existing,
+            result.held_in_approval,
             result.status_counts,
         )
         return result

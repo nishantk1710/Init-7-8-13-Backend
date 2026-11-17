@@ -5,7 +5,9 @@ session itself, and everything it needs arrives as plain rows already joined
 against the latest successful run of each upstream phase.
 """
 
-from sqlalchemy import text
+from collections.abc import Iterable
+
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
@@ -162,6 +164,35 @@ def latest_oar_run(session: Session) -> int | None:
     return session.execute(
         text("select max(id) from i7_oar_run where status = 'succeeded'")
     ).scalar()
+
+
+_PROTECTED_SQL = text(
+    """
+    SELECT r.sap_material_number, r.sap_plant_code
+    FROM i7_recommendation r
+    JOIN (
+        SELECT MAX(id) AS id
+        FROM i7_recommendation
+        GROUP BY sap_material_number, sap_plant_code
+    ) newest ON newest.id = r.id
+    WHERE r.status IN :statuses
+    """
+).bindparams(bindparam("statuses", expanding=True))
+
+
+def load_protected_material_plants(
+    session: Session, statuses: Iterable[str]
+) -> set[tuple[str, str]]:
+    """``(material, plant)`` whose NEWEST recommendation row is in one of ``statuses``.
+
+    The newest row is the highest id, the same rule the pages and the notifications use (``_latest_only`` in
+    app/api/i7/recommendations.py). One grouped query, never one per material.
+    """
+    wanted = [str(status) for status in statuses]
+    if not wanted:
+        return set()
+    rows = session.execute(_PROTECTED_SQL, {"statuses": wanted}).all()
+    return {(row[0], row[1]) for row in rows}
 
 
 def load_normal_inputs(session: Session, inventory_run_id: int, forecast_run_id: int | None):
