@@ -938,6 +938,84 @@ def test_the_mark_comes_from_the_own_window_and_never_moves_back(storage, no_wat
     assert fetch([dict(created, Ersda="20261005")]).watermark == "2026-10-06"
 
 
+# --- Look-back: a base date set in the past ----------------------------------
+
+
+def test_reservations_reach_back_fourteen_days_and_nothing_else_does() -> None:
+    """RESB's Crdat is a base date an interface can set days in the past
+    (PRD, 18 Nov: 19 reservations dated 8-10 Nov, created later, never read)."""
+    assert spec_for("ReservationItemSet").delta.lookback_days == 14
+    others = [s.name for s in specs() if s.delta is not None and s.delta.lookback_days and s.name != "ReservationItemSet"]
+    assert others == []
+
+
+def test_a_lookback_needs_a_window_and_whole_days() -> None:
+    with pytest.raises(ValueError, match="whole number"):
+        Delta(field="Crdat", literal="dats", lookback_days=-1)
+    with pytest.raises(ValueError, match="field="):
+        Delta(via=("GoodsMovementItemSet",), via_key="Rsnum", lookback_days=3)
+
+
+def test_window_start_reaches_back_but_never_forward() -> None:
+    resb = spec_for("ReservationItemSet")
+    today = date(2026, 11, 18)
+
+    assert fetch_mod.window_start(resb, "2026-11-18", today=today) == "2026-11-04"
+    # A mark already behind the look-back is left where it is.
+    assert fetch_mod.window_start(resb, "2026-10-01", today=today) == "2026-10-01"
+    # No mark is still no mark: a look-back widens a window, it does not invent one.
+    assert fetch_mod.window_start(resb, None, today=today) is None
+
+
+def test_a_set_without_a_lookback_gets_its_mark_back_untouched() -> None:
+    history = spec_for("POHistorySet")
+    assert fetch_mod.window_start(history, "2026-11-18T00:00:00", today=date(2026, 11, 18)) == "2026-11-18T00:00:00"
+
+
+def test_the_sweep_window_for_reservations_reaches_back(monkeypatch) -> None:
+    monkeypatch.setattr(fetch_mod, "get_watermark", lambda *a, **k: "2026-11-18")
+    monkeypatch.setattr(fetch_mod, "datetime", type("D", (), {"now": staticmethod(lambda tz=None: datetime(2026, 11, 18, 12, tzinfo=timezone.utc))}))
+
+    windows = fetch_mod.resolve_windows([spec_for("ReservationItemSet")])
+
+    assert windows["ReservationItemSet"] == "2026-11-04"
+    # Its parent, MSEG, has no look-back: its window is its mark.
+    assert windows["GoodsMovementItemSet"] == "2026-11-18"
+    # An explicit --since is taken as given, look-back or not.
+    assert fetch_mod.resolve_windows([spec_for("ReservationItemSet")], since="2026-10-01")["ReservationItemSet"] == "2026-10-01"
+
+
+def test_a_reservation_window_starts_fourteen_days_back(storage, no_watermark_io, monkeypatch) -> None:
+    monkeypatch.setattr(fetch_mod, "get_watermark", lambda *a, **k: "2026-09-21")
+    client = StubClient(StubExtract([]))
+
+    fetch_mod.fetch_set(
+        spec_for("ReservationItemSet"), root="odata", client=client, storage=storage,
+        run_date=RUN_DATE, mode="delta", parent_keys=[], advance_watermark=False,
+    )
+
+    assert client.filters == ["Crdat ge '20260907'"]
+
+
+def test_a_lookback_never_moves_the_mark_back(storage, no_watermark_io, monkeypatch) -> None:
+    """Two quiet weeks must not drag the stored mark back to the look-back day."""
+    monkeypatch.setattr(fetch_mod, "get_watermark", lambda *a, **k: "2026-09-21")
+    resb = spec_for("ReservationItemSet")
+
+    def fetch(rows):
+        return fetch_mod.fetch_set(
+            resb, root="odata", client=StubClient(StubExtract(rows)), storage=storage,
+            run_date=RUN_DATE, mode="delta", parent_keys=[], advance_watermark=False,
+        )
+
+    older = {"Rsnum": "0002067451", "Rspos": "0001", "Crdat": "20260915"}
+    newer = {"Rsnum": "0002067999", "Rspos": "0001", "Crdat": "20260922"}
+    # Only rows from inside the look-back: the mark stays at its stored day.
+    assert fetch([older]).watermark == "2026-09-21"
+    # A row past the mark moves it forward, as always.
+    assert fetch([older, newer]).watermark == "2026-09-22"
+
+
 def test_a_window_that_lost_rows_is_refused(storage, no_watermark_io) -> None:
     """M1 and M2: a delta read 19 rows of the 20 its own $count promised used
     to land as ok. The check compared rows against a flag, not the count."""

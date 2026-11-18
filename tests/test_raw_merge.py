@@ -596,6 +596,83 @@ class TestBlankValuationType:
         assert (result.rows_without_key, result.inserted) == (1, 1)
 
 
+EINE = spec_for("InfoRecordOrgSet")
+S032 = spec_for("StockMovementStatisticSet")
+
+
+def csv_shaped_eine(engine, rows):
+    """raw_eine as the 5 Nov CSV load left it: no ERDAT, WERKS '' on the
+    purchasing-org rows that hold for every plant."""
+    with engine.begin() as c:
+        c.execute(text("CREATE TABLE raw_eine (INFNR TEXT, EKORG TEXT, ESOKZ TEXT, WERKS TEXT, LOEKZ TEXT, "
+                       "WAERS TEXT, APLFZ TEXT, NETPR TEXT, PEINH TEXT, EFFPR TEXT)"))
+        for r in rows:
+            c.execute(text("INSERT INTO raw_eine (INFNR, EKORG, ESOKZ, WERKS, NETPR, PEINH, WAERS) "
+                           "VALUES (:i, '1000', '0', :w, :n, '1', 'ZAR')"), r)
+
+
+def eine_row(infnr, werks, netpr):
+    return {"Infnr": infnr, "Ekorg": "1000", "Esokz": "0", "Werks": werks, "Netpr": netpr,
+            "Peinh": "1", "Waers": "ZAR", "Erdat": "20261110"}
+
+
+def csv_shaped_s032(engine, rows):
+    """raw_s032 with a plant-level row: LGORT '' holds the plant's total."""
+    with engine.begin() as c:
+        c.execute(text("CREATE TABLE raw_s032 (WERKS TEXT, LGORT TEXT, MATNR TEXT, MBWBEST TEXT, LETZTBEW TEXT)"))
+        for r in rows:
+            c.execute(text("INSERT INTO raw_s032 (WERKS, LGORT, MATNR, MBWBEST, LETZTBEW) "
+                           "VALUES ('1300', :l, :m, :q, '01.11.2026')"), r)
+
+
+def s032_row(lgort, matnr, mbwbest):
+    return {"Werks": "1300", "Lgort": lgort, "Matnr": matnr, "Mbwbest": mbwbest, "Letztbew": "20261112"}
+
+
+class TestBlankPlantAndStorageLocation:
+    """PRD, 18 Nov 2026: 93,399 EINE rows have no plant and 75,033 S032 rows no
+    storage location in SAP itself. Until then the merge skipped each one as
+    'without key' -- 70 new info records and 40 S032 rows never arrived."""
+
+    def test_the_specs_say_which_key_may_be_blank(self) -> None:
+        assert EINE.blank_allowed_keys == frozenset({"Werks"})
+        assert S032.blank_allowed_keys == frozenset({"Lgort"})
+
+    def test_info_records_without_a_plant_are_merged_not_skipped(self, engine) -> None:
+        csv_shaped_eine(engine, [{"i": "5300000001", "w": "", "n": "10.00"}])
+
+        result = raw_merge.merge(EINE, [eine_row("5300000001", "", "12.00"), eine_row("5300000002", "", "5.00")],
+                                 engine=engine)
+
+        assert (result.rows_without_key, result.matched, result.updated, result.inserted) == (0, 1, 1, 1)
+        assert fetch(engine, "SELECT INFNR, WERKS, NETPR FROM raw_eine ORDER BY INFNR") == [
+            ("5300000001", "", "12.00"), ("5300000002", "", "5.00")]
+
+    def test_a_plant_row_and_the_org_row_stay_two_records(self, engine) -> None:
+        csv_shaped_eine(engine, [{"i": "5300000001", "w": "", "n": "10.00"}])
+
+        result = raw_merge.merge(EINE, [eine_row("5300000001", "1300", "11.00")], engine=engine)
+
+        assert (result.keys_repaired, result.inserted) == (0, 1)
+        assert fetch(engine, "SELECT WERKS, NETPR FROM raw_eine ORDER BY WERKS") == [("", "10.00"), ("1300", "11.00")]
+
+    def test_the_plant_level_s032_row_is_updated_in_place(self, engine) -> None:
+        csv_shaped_s032(engine, [{"l": "", "m": "M1", "q": "1,000"}, {"l": "0001", "m": "M1", "q": "1,000"}])
+
+        result = raw_merge.merge(S032, [s032_row("", "M1", "2.000"), s032_row("", "M2", "7.000")], engine=engine)
+
+        assert (result.rows_without_key, result.updated, result.inserted) == (0, 1, 1)
+        assert fetch(engine, "SELECT LGORT, MATNR, MBWBEST FROM raw_s032 ORDER BY MATNR, LGORT") == [
+            ("", "M1", "2.000"), ("0001", "M1", "1,000"), ("", "M2", "7.000")]
+
+    def test_a_blank_in_any_other_key_field_still_skips_the_row(self, engine) -> None:
+        csv_shaped_s032(engine, [])
+
+        result = raw_merge.merge(S032, [s032_row("", "", "1.000"), s032_row("", "M1", "1.000")], engine=engine)
+
+        assert (result.rows_without_key, result.inserted) == (1, 1)
+
+
 # --- Material numbers: OData pads them, the raw tables do not -------------------------
 
 
