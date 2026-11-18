@@ -6,8 +6,6 @@ recalculated here. Filtering and pagination happen in SQL; the full table is
 never loaded into Python to be filtered or sliced in memory.
 """
 
-import csv
-import io
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
@@ -28,6 +26,7 @@ from app.initiatives.i7.recommendations import oar_exclusions, routing
 from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
 from app.initiatives.i7.stockout_risk.counts import stockout_risk_counts
 from app.initiatives.i7.recommendations.consumption_history import monthly_consumption_history
+from app.initiatives.i7.reporting.recommendations_export import build_recommendations_workbook
 from app.models.i7_features import DecliningDemandEvaluation
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun
 from app.models.i7_oar import OarDonorExclusion, OarNeighbour
@@ -694,44 +693,17 @@ def list_recommendations(
 
 
 EXPORT_CHUNK_SIZE = 500
-EXPORT_COLUMNS = (
-    "Material Number",
-    "Material Description",
-    "Plant",
-    "Recommendation Type",
-    "Criticality",
-    "Status",
-    "Current ROP (SAP)",
-    "Current Safety Stock (SAP)",
-    "Current Max Stock (SAP)",
-    "Recommended ROP",
-    "Recommended Safety Stock",
-    "Recommended Max Stock",
-    "Reason",
-)
 _CRITICALITY_LEVELS = {tier: level for level, tier in CRITICALITY_TIERS.items()}
-
-
-def _csv_text(value: str | None) -> str:
-    """Free text for a CSV cell. A cell Excel would read as a formula (=, +, -, @) is prefixed with a
-    quote so a description or reason can never run as one."""
-    if not value:
-        return ""
-    return "'" + value if value[0] in "=+-@\t\r" else value
-
-
-def _csv_number(value: Decimal | None) -> str:
-    """A quantity as plain digits (no exponent); empty when SAP/the pipeline has no value -- never 0."""
-    return "" if value is None else format(value.normalize(), "f")
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 @router.get(
     "/recommendations/export",
-    summary="Export the recommendations the list would show, as CSV",
+    summary="Export the recommendations the list would show, as an Excel workbook",
     description="Takes the same filters as the list endpoint and returns every matching recommendation "
-    "(no paging), newest first, one row per material-plant: material, SAP's current reorder point / "
-    "safety stock / max stock, the recommended three, the criticality and the reason. With no filters it "
-    "is every recommendation that has at least one recommended value. Registered before "
+    "(no paging) as an .xlsx workbook, newest first, one row per material-plant: material, SAP's current "
+    "reorder point / safety stock / max stock, the recommended three, the criticality and the reason. With "
+    "no filters it is every recommendation that has at least one recommended value. Registered before "
     "/{recommendation_id} so 'export' is never read as an id.",
     response_class=Response,
 )
@@ -785,44 +757,41 @@ def export_recommendations(
     )
     ids = session.execute(base.order_by(Recommendation.generated_at.desc(), Recommendation.id.desc())).scalars().all()
 
-    out = io.StringIO()
-    writer = csv.writer(out)
-    writer.writerow(EXPORT_COLUMNS)
-    # Rows carry long text (the reason), so they are loaded a chunk at a time, never all at once.
-    for start in range(0, len(ids), EXPORT_CHUNK_SIZE):
-        chunk_ids = ids[start : start + EXPORT_CHUNK_SIZE]
-        loaded = {
-            row.id: row
-            for row in session.execute(select(Recommendation).where(Recommendation.id.in_(chunk_ids))).scalars()
-        }
-        descriptions = _display_fields_for(session, {row.sap_material_number for row in loaded.values()})
-        for row_id in chunk_ids:
-            row = loaded.get(row_id)
-            if row is None:
-                continue
-            writer.writerow(
-                [
+    def export_rows():
+        # Rows carry long text (the reason), so they are loaded a chunk at a time, never all at once.
+        for start in range(0, len(ids), EXPORT_CHUNK_SIZE):
+            chunk_ids = ids[start : start + EXPORT_CHUNK_SIZE]
+            loaded = {
+                row.id: row
+                for row in session.execute(select(Recommendation).where(Recommendation.id.in_(chunk_ids))).scalars()
+            }
+            descriptions = _display_fields_for(session, {row.sap_material_number for row in loaded.values()})
+            for row_id in chunk_ids:
+                row = loaded.get(row_id)
+                if row is None:
+                    continue
+                # One value per column of recommendations_export.COLUMNS; a quantity with no value stays None.
+                yield [
                     row.sap_material_number,
-                    _csv_text(descriptions.get(row.sap_material_number, (None, None))[0]),
+                    descriptions.get(row.sap_material_number, (None, None))[0],
                     row.sap_plant_code,
                     "OAR" if row.is_oar else "Stock item",
                     _CRITICALITY_LEVELS.get(row.criticality or "", "Low"),
                     row.status,
-                    _csv_number(row.current_rop),
-                    _csv_number(row.current_safety_stock),
-                    _csv_number(row.current_max_stock),
-                    _csv_number(row.recommended_rop),
-                    _csv_number(row.recommended_safety_stock),
-                    _csv_number(row.recommended_max_stock),
-                    _csv_text(row.rationale_text),
+                    row.current_rop,
+                    row.current_safety_stock,
+                    row.current_max_stock,
+                    row.recommended_rop,
+                    row.recommended_safety_stock,
+                    row.recommended_max_stock,
+                    row.rationale_text,
                 ]
-            )
 
-    # UTF-8 with a BOM so Excel reads accented characters correctly.
+    workbook = build_recommendations_workbook(export_rows())
     return Response(
-        content=out.getvalue().encode("utf-8-sig"),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="i7-recommendations-{date.today().isoformat()}.csv"'},
+        content=workbook.getvalue(),
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="i7-recommendations-{date.today().isoformat()}.xlsx"'},
     )
 
 
