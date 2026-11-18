@@ -628,6 +628,7 @@ def adoption_counts(
     demand_type: str | None = None,
     demand_class: str | None = None,
     criticality_level: str | None = None,
+    value_change: Literal["released", "tied_up"] | None = None,
 ) -> AdoptionCounts:
     def tracked(*columns):
         """The newest recommendation per material-plant that has something to adopt -- the same
@@ -646,6 +647,7 @@ def adoption_counts(
                 generated_to=None,
                 demand_type=demand_type,
                 criticality_level=criticality_level,
+                value_change=value_change,
                 actionable=True,
             )
         )
@@ -694,6 +696,13 @@ def get_adoption_summary(
         Literal["Critical", "High", "Medium", "Low"] | None,
         Query(description="The display level: CRITICAL / IMPACT / INSURANCE; Low is NORMAL, OBSOLETE or no tier."),
     ] = None,
+    value_change: Annotated[
+        Literal["released", "tied_up"] | None,
+        Query(
+            description="released / tied_up: count only recommendations whose Value change releases working capital "
+            "(ROP goes down) or ties more up (ROP goes up)."
+        ),
+    ] = None,
 ) -> AdoptionSummary:
     counts = adoption_counts(
         session,
@@ -701,6 +710,7 @@ def get_adoption_summary(
         demand_type=demand_type,
         demand_class=demand_class,
         criticality_level=criticality_level,
+        value_change=value_change,
     )
     adopted, partially_adopted, not_adopted = counts.adopted, counts.partially_adopted, counts.not_adopted
     pending = counts.pending
