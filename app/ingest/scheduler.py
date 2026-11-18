@@ -87,11 +87,16 @@ FULL_REFRESH_LOCK_NAME = "spares_ai_full_refresh"
 
 
 class _Lock:
-    """SQL Server application lock, held for the life of one run."""
+    """SQL Server application lock, held for the life of one run.
 
-    def __init__(self, name: str = LOCK_NAME) -> None:
+    ``timeout_ms`` is how long to wait for it: zero (the default) gives up at
+    once, which is right for a tick another worker is already running.
+    """
+
+    def __init__(self, name: str = LOCK_NAME, timeout_ms: int = LOCK_TIMEOUT_MS) -> None:
         self._connection = None
         self._name = name
+        self._timeout_ms = timeout_ms
 
     def acquire(self) -> bool:
         connection = get_engine().raw_connection()
@@ -101,7 +106,7 @@ class _Lock:
             "EXEC @r = sp_getapplock @Resource = ?, @LockMode = 'Exclusive', "
             "@LockOwner = 'Session', @LockTimeout = ?; SELECT @r;",
             self._name,
-            LOCK_TIMEOUT_MS,
+            self._timeout_ms,
         )
         # 0 granted, 1 granted after waiting; negatives are refusals.
         granted = (cursor.fetchone() or [-1])[0] >= 0
@@ -592,6 +597,11 @@ def run_odata_full_pull_cycle(names: list[str] | None = None) -> dict:
     return summary
 
 
+# How long the weekly pull waits for a running delta cycle before giving up
+# for the week. A heavy cycle takes about five minutes on PRD.
+FULL_PULL_DELTA_WAIT_MS = 20 * 60 * 1000
+
+
 async def _odata_full_pull_tick() -> None:
     lock = _Lock(ODATA_FULL_PULL_LOCK_NAME)
     try:
@@ -600,6 +610,28 @@ async def _odata_full_pull_tick() -> None:
             return
     except Exception as exc:
         logger.warning("OData full pull skipped: could not reach the lock (%s)", exc)
+        return
+
+    # A set pulled whole may also have an hourly delta (MaterialPlantSet,
+    # StorageLocationStockSet), and both merge into the same raw table through
+    # the same staging table. Both fire on the hour, so the pull waits for any
+    # running delta cycle and holds the delta's own lock while it merges; a
+    # delta tick that finds it held skips that hour, as it does for another
+    # worker. Waited for in a thread: sp_getapplock blocks, and the event loop
+    # serves the API.
+    delta_lock = _Lock(LOCK_NAME, timeout_ms=FULL_PULL_DELTA_WAIT_MS)
+    try:
+        got_delta_lock = await asyncio.to_thread(delta_lock.acquire)
+    except Exception as exc:
+        logger.warning("OData full pull skipped: could not reach the delta lock (%s)", exc)
+        lock.release()
+        return
+    if not got_delta_lock:
+        logger.warning(
+            "OData full pull skipped: a delta cycle held the ingest lock for over %d minutes",
+            FULL_PULL_DELTA_WAIT_MS // 60000,
+        )
+        lock.release()
         return
 
     started = datetime.now(timezone.utc)
@@ -616,6 +648,7 @@ async def _odata_full_pull_tick() -> None:
     except Exception:
         logger.exception("OData full pull raised")
     finally:
+        delta_lock.release()
         lock.release()
 
 
