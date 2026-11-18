@@ -327,6 +327,8 @@ class TestSnapshotMatchesLive:
         first, last = response.headers["x-i13-history-months"].split("..")
         assert body[0]["months"][0]["month"] == first
         assert body[0]["months"][-1]["month"] == last
+        # The Usage Pattern tab carries WATCH's turns and days since movement (no Metrics tab).
+        assert "inventory_turns" in body[0] and "days_since_last_movement" in body[0]
 
 
 class TestValidationIndexes:
