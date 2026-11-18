@@ -838,6 +838,13 @@ def get_recommendation_summary(
         Literal["Low", "Medium", "High", "Critical"] | None,
         Query(description="The page's display level; Low is every material that is not CRITICAL, IMPACT or INSURANCE."),
     ] = None,
+    value_change: Annotated[
+        Literal["released", "tied_up"] | None,
+        Query(
+            description="released / tied_up: only recommendations whose Value change releases working capital "
+            "(ROP goes down) or ties more up (ROP goes up) -- the same filter the list takes."
+        ),
+    ] = None,
 ) -> RecommendationSummaryStats:
     # Performance (2026-09-22): _latest_only(base) wraps a row_number() OVER
     # (...) window function computed across the WHOLE table. Reusing the
@@ -877,6 +884,7 @@ def get_recommendation_summary(
             confidence=confidence,
             criticality=criticality,
             criticality_level=criticality_level,
+            value_change=value_change,
             generated_from=None,
             generated_to=None,
         ).where(_not_smooth())
