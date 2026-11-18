@@ -23,7 +23,7 @@ from app.initiatives.i13.models import (
     ReservationLedgerEntry,
     ReservationPrLinkStatus,
 )
-from app.initiatives.i13.session_link import session_references
+from app.initiatives.i13.session_link import session_references, session_requesters
 from app.models.base import Base
 from app.shared.material_scope import MaterialScope
 
@@ -39,14 +39,18 @@ def db():
             insert(AssistantSession.__table__),
             [
                 _session("SLINE00003", material="4000002301", request_id="R1AVPNWMDW", line_no=3),
-                _session("SSINGLE001", material="5000041463"),
+                _session("SSINGLE001", material="5000041463", requested_for="  Tanya Milford "),
             ],
         )
         yield session
 
 
-def _session(sid: str, *, material: str, request_id: str | None = None, line_no: int | None = None) -> dict:
+def _session(
+    sid: str, *, material: str, request_id: str | None = None, line_no: int | None = None,
+    requested_for: str | None = None,
+) -> dict:
     return dict(
+        requested_for=requested_for,
         id=sid, flow="i13", material_id=material, plant="1300", eighty_series=False, material_scope="OAR",
         routing_reason="test", requester="tester", origin="WEB", expires_at=NOW, assessment="{}",
         request_id=request_id, line_no=line_no,
@@ -86,3 +90,20 @@ def test_a_ledger_row_carries_the_reference_of_its_own_linked_session():
     assert reference_of("2039999", "1") == "SSINGLE001"
     assert reference_of("2040000", "1") == "SGONE00001"  # a link whose session is not found keeps its ID
     assert reference_of("2041111", "1") is None  # not linked
+
+
+def test_the_requester_is_the_name_in_the_assistants_requester_box(db):
+    assert session_requesters(db, {"SLINE00003", "SSINGLE001", "SUNKNOWN01"}) == {"SSINGLE001": "Tanya Milford"}
+    assert session_requesters(db, set()) == {}
+
+
+def test_only_a_reservation_made_through_the_assistant_carries_a_requester():
+    sessions = {("2039999", "1"): "SSINGLE001", ("2039763", "7"): "SLINE00003"}
+    requesters = {"SSINGLE001": "Tanya Milford"}
+
+    def requester_of(number, item):
+        return _to_response(_entry(number, item), sessions, requesters=requesters).requester_name
+
+    assert requester_of("2039999", "1") == "Tanya Milford"
+    assert requester_of("2039763", "7") is None  # assistant, but no name typed
+    assert requester_of("2041111", "1") is None  # raised directly in SAP (Non-AI)

@@ -167,6 +167,9 @@ class ReservationLedgerEntryResponse(BaseModel):
     #: That session as the requester knows it: ``R.../n`` for a request line,
     #: the session ID for a single-material session. ``None`` when unlinked.
     session_reference: str | None = None
+    #: The name in the assistant's Requester box, for a reservation linked to a
+    #: session. None for a reservation raised directly in SAP (Non-AI).
+    requester_name: str | None = None
     #: RESB.SGTXT as loaded (or as the UAT overlay says).
     sgtxt: str | None = None
     #: A reservation that exists only in the UAT overlay (simulated).

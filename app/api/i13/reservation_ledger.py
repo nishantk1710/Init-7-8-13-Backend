@@ -18,7 +18,7 @@ from app.initiatives.i13.ordering import newest_requirement_first
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
 from collections.abc import Mapping
 
-from app.initiatives.i13.session_link import session_by_reservation, session_references
+from app.initiatives.i13.session_link import session_by_reservation, session_references, session_requesters
 from app.initiatives.i13.snapshot import I13Snapshot
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.initiatives.i13.uat import SIMULATED_RANGE_START
@@ -62,12 +62,14 @@ def issued_before_history(entry: ReservationLedgerEntry, history_start: date | N
     )
 
 
-def _session_links(db: Session) -> tuple[dict[tuple[str, str], str], dict[str, str]]:
+def _session_links(db: Session) -> tuple[dict[tuple[str, str], str], dict[str, str], dict[str, str]]:
     """Reservation -> linked session (by SGTXT), and how each linked session is
-    quoted on screen. The link table is small (one row per linked reservation
-    item), so both are read whole, once per request."""
+    quoted on screen, plus the name in each session's Requester box. The link
+    table is small (one row per linked reservation item), so all are read
+    whole, once per request."""
     sessions = session_by_reservation(db)
-    return sessions, session_references(db, set(sessions.values()))
+    ids = set(sessions.values())
+    return sessions, session_references(db, ids), session_requesters(db, ids)
 
 
 def _to_response(
@@ -76,6 +78,7 @@ def _to_response(
     sgtxt: Mapping[tuple[str, str], str] | None = None,
     history_start: date | None = None,
     references: Mapping[str, str] | None = None,
+    requesters: Mapping[str, str] | None = None,
 ) -> ReservationLedgerEntryResponse:
     attribution = attribute_consumption(entry)
     response = ReservationLedgerEntryResponse.model_validate(entry)
@@ -87,6 +90,9 @@ def _to_response(
             "attribution_evidence": attribution.evidence,
             "session_id": session_id,
             "session_reference": (references or {}).get(session_id, session_id) if session_id else None,
+            # Only a reservation made through the assistant has one: SAP carries
+            # no requester (RESB-WEMPF is the goods recipient, not who asked).
+            "requester_name": (requesters or {}).get(session_id) if session_id else None,
             "sgtxt": (sgtxt or {}).get(key),
             "uat_simulated": int(entry.reservation_number) >= SIMULATED_RANGE_START
             if entry.reservation_number.isdigit()
@@ -116,7 +122,7 @@ def list_reservation_ledger(
     db: Session = Depends(get_db),
     snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
 ) -> list[ReservationLedgerEntryResponse]:
-    sessions, references = _session_links(db)
+    sessions, references, requesters = _session_links(db)
     sgtxt: Mapping[tuple[str, str], str] | None = None
     wanted_statuses = lifecycle_filter(lifecycle_status)
     if isinstance(snapshot, SqlSnapshot):
@@ -132,7 +138,7 @@ def list_reservation_ledger(
         response.headers["X-Total-Count"] = str(total)
         texts = {(e.reservation_number, e.reservation_item): s for e, s in rows if s}
         return [
-            _to_response(entry, sessions, texts, snapshot.recorded_history_start, references) for entry, _ in rows
+            _to_response(entry, sessions, texts, snapshot.recorded_history_start, references, requesters) for entry, _ in rows
         ]
     if snapshot is not None:
         sgtxt = snapshot.sgtxt_by_reservation
@@ -176,7 +182,7 @@ def list_reservation_ledger(
     # The in-memory snapshot holds the same history start; the live path does not know it.
     history_start = snapshot.movement_history_start if snapshot is not None else None
     return [
-        _to_response(entry, sessions, sgtxt, history_start, references)
+        _to_response(entry, sessions, sgtxt, history_start, references, requesters)
         for entry in page(entries, response, limit=limit, offset=offset)
     ]
 
@@ -198,9 +204,9 @@ def get_reservation_ledger_entry(
             raise HTTPException(status_code=404, detail="Reservation ledger entry not found")
         entry, text = found[0]
         key = (entry.reservation_number, entry.reservation_item)
-        sessions, references = _session_links(db)
+        sessions, references, requesters = _session_links(db)
         return _to_response(
-            entry, sessions, {key: text} if text else {}, snapshot.recorded_history_start, references
+            entry, sessions, {key: text} if text else {}, snapshot.recorded_history_start, references, requesters
         )
     if snapshot is not None:
         matching = [
@@ -229,7 +235,7 @@ def get_reservation_ledger_entry(
         if snapshot is not None
         else _sgtxt_of(PostgresReservationRepository(db).get_reservations(reservation_number=reservation_number))
     )
-    sessions, references = _session_links(db)
+    sessions, references, requesters = _session_links(db)
     return _to_response(
-        matching[0], sessions, sgtxt, snapshot.movement_history_start if snapshot is not None else None, references
+        matching[0], sessions, sgtxt, snapshot.movement_history_start if snapshot is not None else None, references, requesters
     )

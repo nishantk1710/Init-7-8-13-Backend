@@ -31,7 +31,9 @@ from app.initiatives.i13.act.service import (
     DetectionRunResult,
     EscalationRunResult,
     detect_exceptions,
+    ReminderRunResult,
     process_escalations,
+    send_requester_reminders,
     retire_no_plan_grni,
 )
 from app.initiatives.i13.act_exception_store import SqlExceptionRepository
@@ -91,6 +93,17 @@ def run_escalations(
         notification_port=_notification_port(db, config),
         limit=limit,
         plants=plants,
+    )
+
+
+def run_reminders(db: Session, config: I13Config, *, as_of_time: datetime) -> ReminderRunResult:
+    """Remind requesters of every Planned Consumption Overdue still waiting for
+    them (``service.send_requester_reminders``). The caller commits."""
+    return send_requester_reminders(
+        as_of_time,
+        repository=SqlExceptionRepository(db),
+        notification_port=_notification_port(db, config),
+        every_days=config.exceptions.plan_breach_reminder_every_days,
     )
 
 
