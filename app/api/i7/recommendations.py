@@ -211,6 +211,7 @@ def _apply_filters(
     actionable: bool | None = None,
     has_recommended: bool | None = None,
     adopted_in_sap: bool | None = None,
+    value_change: Literal["released", "tied_up"] | None = None,
 ) -> Select:
     """Every filter here maps to a real, persisted column or a keyed lookup.
     Nothing that would require loading rows into Python to evaluate.
@@ -255,6 +256,12 @@ def _apply_filters(
                 Recommendation.recommended_max_stock.is_not(None),
             )
         )
+    if value_change == "released":
+        # The Value change column's own figure (VALUE_CHANGE): positive = the reorder point goes down and capital is
+        # released. A row with no figure (NULL) matches neither direction.
+        statement = statement.where(VALUE_CHANGE > 0)
+    elif value_change == "tied_up":
+        statement = statement.where(VALUE_CHANGE < 0)
     if consumption_above_threshold:
         # Issued more than the policy's own count in the policy's trailing window (12 months) -- the threshold
         # stored on the row, not a literal, so it follows the policy. A row with no count (never
@@ -596,6 +603,15 @@ def list_recommendations(
             "converted to Min-Max ordering. One with no SAP change evidence yet is left out."
         ),
     ] = None,
+    value_change: Annotated[
+        Literal["released", "tied_up"] | None,
+        Query(
+            description="released: only recommendations whose Value change releases working capital (unit price x "
+            "(current ROP - recommended ROP) > 0). tied_up: only those that tie more up (< 0). One with no figure "
+            "matches neither. Applied in SQL, so it covers every page. Pair with sort=value_change&sort_desc=true "
+            "for the largest amount first."
+        ),
+    ] = None,
 ) -> RecommendationListResponse:
     if sort not in SORT_FIELDS:
         raise bad_request(
@@ -630,6 +646,7 @@ def list_recommendations(
             actionable=actionable,
             has_recommended=has_recommended,
             adopted_in_sap=adopted_in_sap,
+            value_change=value_change,
         ).where(_not_smooth())
     )
 
@@ -728,6 +745,7 @@ def export_recommendations(
     actionable: bool | None = None,
     has_recommended: bool | None = None,
     adopted_in_sap: bool | None = None,
+    value_change: Literal["released", "tied_up"] | None = None,
 ) -> Response:
     # The same narrowing as the list, so the file is exactly the rows the table's filters select
     # (all pages of them), in the table's default order: newest first.
@@ -753,6 +771,7 @@ def export_recommendations(
             actionable=actionable,
             has_recommended=has_recommended,
             adopted_in_sap=adopted_in_sap,
+            value_change=value_change,
         ).where(_not_smooth())
     )
     ids = session.execute(base.order_by(Recommendation.generated_at.desc(), Recommendation.id.desc())).scalars().all()
