@@ -431,9 +431,11 @@ class SqlSnapshot:
     def _plan_vs_where(
         self, *, source=None, status=None, material=None, plant=None, reservation=None, overdue=False
     ) -> list:
-        """``overdue`` keeps below-plan rows whose due date is before the
-        version's reference date (``plan_vs_issued.is_overdue``)."""
-        extra = [R.f2 == "BELOW_PLAN", R.d1 < self.reference_date] if overdue else []
+        """``overdue`` keeps captured plans with nothing issued whose window
+        ended before the version's reference date (``plan_vs_issued.is_overdue``)."""
+        extra = (
+            [R.f1 == "ASSISTANT", R.f2 == "NOT_ISSUED", R.d1 < self.reference_date] if overdue else []
+        )
         return self._where(
             kinds.PLAN_VS, material=material, plant=plant,
             f1=source.upper() if source else None, f2=status.upper() if status else None,

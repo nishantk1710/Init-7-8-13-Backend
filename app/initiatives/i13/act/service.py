@@ -101,7 +101,11 @@ from app.initiatives.i13.act.ports import (
     NotificationPort,
 )
 from app.initiatives.i13.act.state_machine import validate_transition
-from app.integrations.notifications.templates import EXCEPTION_ESCALATED, EXCEPTION_RESPONSE_REQUIRED
+from app.integrations.notifications.templates import (
+    EXCEPTION_ESCALATED,
+    EXCEPTION_REMINDER,
+    EXCEPTION_RESPONSE_REQUIRED,
+)
 from app.initiatives.i13.models import ReservationLedgerEntry
 from app.initiatives.i13.plans import ConsumptionPlan, PlanMatcher, PlanSource
 from app.shared.material_scope import MaterialScope
@@ -228,6 +232,7 @@ def _notify(
     body: str,
     as_of_time: datetime,
     event_type: str | None = None,
+    extra_metadata: Mapping[str, str] | None = None,
 ) -> None:
     """Notification delivery never corrupts the exception's already-persisted
     state transition: the transition happens (and is committed to the
@@ -271,7 +276,10 @@ def _notify(
             actor_id=None,
             actor_type="SYSTEM",
             timestamp=as_of_time,
-            metadata={"channel": channel.value, "recipient": recipient or "", "outcome": result.outcome.value, "detail": result.detail},
+            metadata={
+                "channel": channel.value, "recipient": recipient or "", "outcome": result.outcome.value,
+                "detail": result.detail, **(extra_metadata or {}),
+            },
         )
     )
 
@@ -619,7 +627,11 @@ def detect_exceptions(
     def wanted(exception_type: ExceptionType) -> bool:
         return types is None or exception_type in types
 
-    grace_period = timedelta(days=plan_breach_grace_days)
+    # Planned Consumption Overdue is raised the day after the plan's window
+    # ends (18-Nov-2026). The grace period is no longer a wait before raising
+    # it: it is how long the requester has to answer -- reminded every few days
+    # (:func:`send_requester_reminders`) -- before it goes to the HOD.
+    breach_response_period = timedelta(days=plan_breach_grace_days)
     response_period = timedelta(days=requester_response_days)
     created = reused = resolved = routed = 0
 
@@ -648,7 +660,9 @@ def detect_exceptions(
 
     for plan in plans if wanted(ExceptionType.PLAN_BREACH) else ():
         entries = matcher.entries_for(plan)
-        breached = detect_plan_breach(plan, entries, as_of_time=as_of_time, grace_period=grace_period)
+        # The window's last day counts in full: raised from the next day on, as the
+        # dashboard's Overdue marker and the snapshot's queue count it.
+        breached = detect_plan_breach(plan, entries, as_of_time=as_of_time, grace_period=timedelta(days=1))
         c, r, res, rt = _apply_detection(
             exception_id=build_exception_id("PLAN_BREACH", plan.plan_id),
             condition_holds=breached,
@@ -669,12 +683,12 @@ def detect_exceptions(
                 or owner_for(plan, plan.reservation_number, plan.reservation_item)
             ),
             reason=(
-                f"Consumption plan {plan.plan_id} planned use {plan.breach_reference_date} plus "
-                f"{plan_breach_grace_days}-day grace has expired with no goods issue evidence"
+                f"Planned consumption overdue: consumption plan {plan.plan_id}'s window ended "
+                f"{plan.breach_reference_date} with no goods issue evidence"
             ),
             evidence={"plan_id": plan.plan_id, "planned_use_date": str(plan.breach_reference_date)},
             as_of_time=as_of_time,
-            response_period=response_period,
+            response_period=breach_response_period,
             repository=repository,
             notification_port=notification_port,
         )
@@ -811,6 +825,71 @@ def detect_exceptions(
             )
 
     return DetectionRunResult(as_of_time=as_of_time, created=created, reused=reused, resolved=resolved, routed=routed)
+
+
+#: Which exception types are reminded. Only Planned Consumption Overdue: the
+#: others keep the response period they always had, with no reminder.
+REMINDED_TYPES = frozenset({ExceptionType.PLAN_BREACH})
+
+
+@dataclass(frozen=True)
+class ReminderRunResult:
+    as_of_time: datetime
+    reminded: int
+
+
+def send_requester_reminders(
+    as_of_time: datetime,
+    *,
+    repository: ExceptionRepository,
+    notification_port: NotificationPort,
+    every_days: int,
+) -> ReminderRunResult:
+    """Remind the requester of every Planned Consumption Overdue still waiting
+    for them, every ``every_days`` after it was sent to them, until it is
+    answered, clears (the material is issued -- detection resolves it) or its
+    ``requester_due_at`` passes and :func:`process_escalations` takes it to the
+    HOD. With 14 days and every 3, that is reminders on days 3, 6, 9 and 12.
+
+    Idempotent: reminder ``n`` is recorded on the notification events
+    (``metadata["reminder"]``) and never sent twice, so running this every
+    scheduler tick, or twice in a day, sends nothing extra. A run that missed
+    days sends one reminder (the latest due), not a burst.
+    """
+    reminded = 0
+    if every_days <= 0:
+        return ReminderRunResult(as_of_time=as_of_time, reminded=0)
+    for exception_type in sorted(REMINDED_TYPES, key=lambda t: t.value):
+        for exception in repository.list(exception_type=exception_type, status=ExceptionStatus.AWAITING_REQUESTER):
+            recipient = exception.current_assignee_id or exception.owner_requester_id
+            if not recipient or exception.requester_due_at is None or as_of_time >= exception.requester_due_at:
+                continue
+            events = repository.list_events(exception.exception_id)
+            routed_at = max(
+                (e.timestamp for e in events if e.event_type is EventType.ROUTED_TO_REQUESTER), default=None
+            )
+            if routed_at is None:
+                continue
+            number = (as_of_time - routed_at).days // every_days
+            if number < 1:
+                continue
+            already = {e.metadata.get("reminder") for e in events if e.metadata}
+            if str(number) in already:
+                continue
+            body = "\n".join([
+                *_details(exception),
+                f"Reminder {number}: nobody has answered this yet. "
+                f"It goes to your HOD on {exception.requester_due_at:%d %b %Y}.",
+                REQUESTER_QUESTION,
+            ])
+            for channel in (NotificationChannel.PLATFORM_QUEUE, NotificationChannel.EMAIL):
+                _notify(
+                    repository, notification_port, exception, channel, recipient,
+                    subject="Reminder: Confirm Exception", body=body, as_of_time=as_of_time,
+                    event_type=EXCEPTION_REMINDER, extra_metadata={"reminder": str(number)},
+                )
+            reminded += 1
+    return ReminderRunResult(as_of_time=as_of_time, reminded=reminded)
 
 
 def process_escalations(

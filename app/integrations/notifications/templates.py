@@ -34,6 +34,8 @@ APPROVAL_SAP_UPDATE_RESULT = "APPROVAL_SAP_UPDATE_RESULT"
 EXCEPTION_ACTION_REQUIRED = "EXCEPTION_ACTION_REQUIRED"
 EXCEPTION_RESPONSE_REQUIRED = "EXCEPTION_RESPONSE_REQUIRED"
 EXCEPTION_ESCALATED = "EXCEPTION_ESCALATED"
+# The requester has not answered yet: sent every few days until they do, or it goes to the HOD.
+EXCEPTION_REMINDER = "EXCEPTION_REMINDER"
 # A purchase requisition SAP posted to /api/events/pr. The plain notice goes to every
 # signed-in user and names nothing about the requisition; the details are for administrators.
 PR_RECEIVED = "PR_RECEIVED"
@@ -195,6 +197,12 @@ _TEMPLATES: dict[str, _Template] = {
         "Action Required – Inventory Exception",
         "{summary}\n"
         "Action required: Please confirm or explain.",
+        _EXCEPTION,
+    ),
+    EXCEPTION_REMINDER: _Template(
+        "Reminder: Action Required – Inventory Exception",
+        "{summary}\n"
+        "Action required: Please confirm or explain before it goes to your HOD.",
         _EXCEPTION,
     ),
     EXCEPTION_ESCALATED: _Template(

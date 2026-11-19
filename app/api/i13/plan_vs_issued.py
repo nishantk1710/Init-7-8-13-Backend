@@ -39,9 +39,9 @@ from app.schemas.i13 import PlanVsIssuedCountsResponse, PlanVsIssuedRowResponse
 router = APIRouter()
 
 _SOURCE = Query(None, description="ASSISTANT (captured plans) or SAP (reservations raised directly).")
-_STATUS = Query(None, description="NO_RESERVATION, NOT_DUE, ON_PLAN, BELOW_PLAN or ABOVE_PLAN.")
+_STATUS = Query(None, description="NO_RESERVATION, NOT_ISSUED, PARTIALLY_ISSUED or FULLY_ISSUED.")
 _RESERVATION = Query(None, description="One reservation number (exact match).")
-_OVERDUE = Query(False, description="Only below-plan rows whose due date has passed.")
+_OVERDUE = Query(False, description="Only captured plans with nothing issued whose window has ended (Planned Consumption Overdue).")
 
 
 def _as_of(snapshot: I13Snapshot | SqlSnapshot | None) -> date:

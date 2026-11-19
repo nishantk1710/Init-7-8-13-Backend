@@ -67,8 +67,8 @@ def _plan_breach_exceptions(
                 due_at=datetime.combine(due_date, datetime.min.time(), tzinfo=timezone.utc),
                 days_overdue=days_overdue,
                 reason=(
-                    f"Consumption plan {plan.plan_id} planned use {breach_from.isoformat()} "
-                    f"plus {grace_days}-day grace has expired with no goods issue evidence"
+                    f"Planned consumption overdue: consumption plan {plan.plan_id}'s window ended "
+                    f"{breach_from.isoformat()} with no goods issue evidence"
                 ),
                 evidence=(
                     f"Rsnum {plan.reservation_number}/{plan.reservation_item}, purpose: {plan.purpose}"
@@ -238,7 +238,7 @@ def build_exception_queue(
     matcher = PlanMatcher(plans, ledger_entries)
     exceptions: list[ExceptionQueueItem] = []
     exceptions.extend(
-        _plan_breach_exceptions(plans, matcher, grace_days=config.exceptions.plan_breach_grace_days, as_of=as_of)
+        _plan_breach_exceptions(plans, matcher, grace_days=0, as_of=as_of)
     )
     exceptions.extend(_no_plan_exceptions(ledger_entries, matcher))
     exceptions.extend(
@@ -277,7 +277,7 @@ def exception_queue_from(
     matcher = PlanMatcher(plans, ledger_entries)
     exceptions: list[ExceptionQueueItem] = []
     exceptions.extend(
-        _plan_breach_exceptions(plans, matcher, grace_days=config.exceptions.plan_breach_grace_days, as_of=as_of)
+        _plan_breach_exceptions(plans, matcher, grace_days=0, as_of=as_of)
     )
     exceptions.extend(_no_plan_exceptions(ledger_entries, matcher))
     exceptions.extend(_grni_items(watch_metrics, config))

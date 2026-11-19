@@ -167,6 +167,9 @@ class ReservationLedgerEntryResponse(BaseModel):
     #: That session as the requester knows it: ``R.../n`` for a request line,
     #: the session ID for a single-material session. ``None`` when unlinked.
     session_reference: str | None = None
+    #: The name in the assistant's Requester box, for a reservation linked to a
+    #: session. None for a reservation raised directly in SAP (Non-AI).
+    requester_name: str | None = None
     #: RESB.SGTXT as loaded (or as the UAT overlay says).
     sgtxt: str | None = None
     #: A reservation that exists only in the UAT overlay (simulated).
@@ -574,6 +577,10 @@ class UsagePatternResponse(BaseModel):
     stock_on_hand: Decimal | None
     average_monthly_consumption: Decimal | None
     months_of_cover: Decimal | None
+    #: WATCH's turns and days since the last movement, so the Usage Pattern tab
+    #: carries every FR-6 figure now that the Metrics tab is gone (18-Nov-2026).
+    inventory_turns: Decimal | None = None
+    days_since_last_movement: int | None = None
     issued_quantity_total: Decimal
     issue_count_total: int
     active_months: int

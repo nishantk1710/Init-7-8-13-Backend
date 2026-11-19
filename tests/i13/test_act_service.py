@@ -18,7 +18,12 @@ from app.initiatives.i13.act.domain import (
     NotificationOutcome,
     RoutingStatus,
 )
-from app.initiatives.i13.act.service import detect_exceptions, process_escalations, submit_confirmation
+from app.initiatives.i13.act.service import (
+    detect_exceptions,
+    process_escalations,
+    send_requester_reminders,
+    submit_confirmation,
+)
 from app.initiatives.i13.act.state_machine import InvalidTransitionError
 from app.initiatives.i13.models import (
     GiLinkStatus,
@@ -166,7 +171,8 @@ def test_plan_breach_detected_and_routed_to_requester() -> None:
     exception = exceptions[0]
     assert exception.status is ExceptionStatus.AWAITING_REQUESTER
     assert exception.owner_requester_id == "REQ1"
-    assert exception.requester_due_at == as_of_time + timedelta(days=5)
+    # A plan breach waits the grace period (7 here) for its requester, not the 5 days of the others.
+    assert exception.requester_due_at == as_of_time + timedelta(days=7)
     # Platform queue + email, both attempted.
     assert len(notification_port.sent) == 2
 
@@ -412,10 +418,10 @@ def test_escalation_after_due_date_with_resolved_hod() -> None:
     as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
     repository, notification_port, _ = _detect(as_of_time, plans=[_plan()])
     exception_id = "ACT-PLAN_BREACH-PLAN-1"
-    assert repository.get(exception_id).requester_due_at == as_of_time + timedelta(days=5)
+    assert repository.get(exception_id).requester_due_at == as_of_time + timedelta(days=7)
 
     escalation_provider = FakeEscalationRecipientProvider({"1000": "HOD1"})
-    later = as_of_time + timedelta(days=5, minutes=1)
+    later = as_of_time + timedelta(days=7, minutes=1)
     result = process_escalations(
         later, repository=repository, escalation_recipient_provider=escalation_provider, notification_port=notification_port
     )
@@ -465,7 +471,7 @@ def test_escalation_routing_failure_does_not_fabricate_a_recipient() -> None:
     exception_id = "ACT-PLAN_BREACH-PLAN-1"
 
     escalation_provider = FakeEscalationRecipientProvider({})  # no HOD mapped for plant 1000
-    later = as_of_time + timedelta(days=5, minutes=1)
+    later = as_of_time + timedelta(days=7, minutes=1)
     result = process_escalations(
         later, repository=repository, escalation_recipient_provider=escalation_provider, notification_port=notification_port
     )
@@ -479,6 +485,68 @@ def test_escalation_routing_failure_does_not_fabricate_a_recipient() -> None:
 
     events = repository.list_events(exception_id)
     assert any(event.event_type is EventType.ROUTING_FAILED for event in events)
+
+
+# --- reminders (Planned Consumption Overdue) ---
+
+
+def test_a_plan_breach_is_raised_the_day_after_its_window_ends() -> None:
+    """planned_use_date 10 Sep: nothing on the 10th, raised on the 11th."""
+    repository, _, _ = _detect(datetime(2026, 9, 10, 12, tzinfo=UTC), plans=[_plan()])
+    assert not repository.list(exception_type=ExceptionType.PLAN_BREACH)
+    repository, _, _ = _detect(datetime(2026, 9, 11, 1, tzinfo=UTC), plans=[_plan()])
+    assert repository.list(exception_type=ExceptionType.PLAN_BREACH)
+
+
+def _remind(repository, notification_port, when):
+    return send_requester_reminders(
+        when, repository=repository, notification_port=notification_port, every_days=3
+    ).reminded
+
+
+def test_reminders_every_three_days_until_it_escalates() -> None:
+    start = datetime(2026, 9, 18, tzinfo=UTC)
+    repository, port, _ = _detect(start, plans=[_plan()])  # 7 days to answer here
+    first = len(port.sent)
+    assert _remind(repository, port, start + timedelta(days=2)) == 0
+    assert _remind(repository, port, start + timedelta(days=3)) == 1
+    assert _remind(repository, port, start + timedelta(days=3, hours=5)) == 0  # never twice
+    assert _remind(repository, port, start + timedelta(days=6)) == 1
+    assert _remind(repository, port, start + timedelta(days=7)) == 0  # escalation's turn
+    reminders = [i for i in port.sent[first:]]
+    assert len(reminders) == 4  # 2 reminders x (queue + email)
+    assert all(i.subject == "Reminder: Confirm Exception" and i.recipient == "REQ1" for i in reminders)
+    numbers = {
+        e.metadata.get("reminder") for e in repository.list_events("ACT-PLAN_BREACH-PLAN-1") if e.metadata
+    } - {None}
+    assert numbers == {"1", "2"}
+
+
+def test_missed_days_send_one_reminder_not_a_burst() -> None:
+    start = datetime(2026, 9, 18, tzinfo=UTC)
+    repository, port, _ = _detect(start, plans=[_plan()])
+    assert _remind(repository, port, start + timedelta(days=6, hours=1)) == 1
+    assert _remind(repository, port, start + timedelta(days=6, hours=2)) == 0
+
+
+def test_an_answered_exception_is_not_reminded() -> None:
+    start = datetime(2026, 9, 18, tzinfo=UTC)
+    repository, port, _ = _detect(start, plans=[_plan()])
+    submit_confirmation(
+        exception_id="ACT-PLAN_BREACH-PLAN-1", reason_category="STOCK_DELAYED", free_text="used elsewhere",
+        actor_id="REQ1", as_of_time=start + timedelta(days=1), repository=repository,
+    )
+    assert _remind(repository, port, start + timedelta(days=3)) == 0
+
+
+def test_other_exception_types_are_not_reminded() -> None:
+    start = datetime(2026, 9, 18, tzinfo=UTC)
+    repository, port, _ = _detect(
+        start, ledger_entries=[_ledger_entry()], types={ExceptionType.NO_PLAN},
+        requester_by_reservation={("1000000000", "0001"): "REQ1"},
+    )
+    assert repository.list(exception_type=ExceptionType.NO_PLAN, status=ExceptionStatus.AWAITING_REQUESTER)
+    assert _remind(repository, port, start + timedelta(days=3)) == 0
 
 
 # --- notifications / audit ---

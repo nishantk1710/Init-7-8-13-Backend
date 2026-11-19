@@ -469,6 +469,8 @@ ALL = Batch("0", "9999999999")
 # "lledger" re-recorded 2026-11-05 in all three: a line no reservation raised
 # stores utilisation NOT_TRACKED in its filter column (ledger_compat.
 # procurement_view, kinds.RECORD_LAYOUT 7). Same rows, same payloads.
+# "planvs" re-recorded 2026-11-18 in all three: statuses by issue -- not,
+# partially or fully issued (kinds.RECORD_LAYOUT 8). Same row counts.
 EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
     # mixed, 7-Nov-2026: usage -12 (a reversal of an issue before the kept
     # months no longer makes a month); movement/oarkey/reclass/watch: 13
@@ -480,7 +482,7 @@ EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
         "lledger": (286, "8df6d11e71eae704"), "movement": (186, "455ab3f7e52a194f"),
         "oarkey": (87, "2bdab53cb4c794cc"), "reclass": (87, "4a01e7d45b270f1e"),
         "rledger": (294, "747cdb56819da766"), "usage": (122, "83e997f3ff745fac"),
-        "watch": (192, "2b87ac6dda0df2ba"), "planvs": (125, "b193cf198d5975c7"),
+        "watch": (192, "2b87ac6dda0df2ba"), "planvs": (125, "cfa93fedea00d007"),
     },
     "giant_procurement": {
         "attrib": (3, "f77f2830ef44df9f"), "chain": (1483, "17e55edc51ed3706"),
@@ -488,7 +490,7 @@ EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
         "movement": (1, "e888732abb0b5eb0"), "oarkey": (1, "34de90e00df89cf2"),
         "reclass": (1, "796ae91ff3f6fa23"), "rledger": (3, "3e636498cefa3ea8"),
         "usage": (1, "ed89b5283468661c"), "watch": (1, "5ed9bb4c2ae856d7"),
-        "planvs": (2, "c6bee61d9210d1ea"),
+        "planvs": (2, "4c09732999600622"),
     },
     "giant_reservations": {
         "attrib": (4481, "172a43e538fb60e0"), "chain": (12, "441a698e4314a2ad"),
@@ -497,7 +499,7 @@ EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
         "movement": (1, "145d27f46ec8471e"), "oarkey": (1, "702ce6717c803e00"),
         "reclass": (1, "99733b38e83d2030"), "rledger": (4481, "906ccc961d424b9e"),
         "usage": (1, "4db03c5965f3dd07"), "watch": (1, "aff23366b80b2fe5"),
-        "planvs": (4480, "0c9dedd3a08b9e3b"),
+        "planvs": (4480, "9999314cdf33caea"),
     },
 }
 
