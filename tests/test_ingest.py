@@ -910,6 +910,44 @@ def test_own_window_and_parent_keys_are_read_and_unioned(storage, no_watermark_i
     assert result.watermark == "2026-09-15"
 
 
+def test_extra_keys_are_read_by_the_named_property_and_unioned_with_the_window(storage, no_watermark_io) -> None:
+    """The refresh: the last year of requisitions by Badat, plus the open ones
+    older than that by their own key. A requisition in both is one row."""
+    requisitions = spec_for("PurchaseRequisitionSet")
+    recent = {"Banfn": "1000000001", "Bnfpo": "00010", "Badat": "20260301", "Ebeln": ""}
+    old_open = {"Banfn": "1000000002", "Bnfpo": "00010", "Badat": "20240101", "Ebeln": "4500000009"}
+
+    def answer(name, kwargs):
+        if kwargs["filter"].startswith("Badat"):
+            return StubExtract([recent], order_by=("Banfn", "Bnfpo"))
+        return StubExtract([dict(recent), old_open], order_by=("Banfn", "Bnfpo"))
+
+    client = StubClient(answer=answer)
+    result = fetch_mod.fetch_set(
+        requisitions, root="odata/refresh", client=client, storage=storage, run_date=RUN_DATE,
+        mode="delta", since="2025-11-20", parent_keys=[], advance_watermark=False,
+        extra_keys=("Banfn", ["1000000001", "1000000002"]),
+    )
+
+    assert client.filters == [
+        "Badat ge '20251120'",
+        "Banfn eq '1000000001' or Banfn eq '1000000002'",
+    ]
+    assert result.ok and result.rows == 2 and result.duplicate_keys == 0
+    # The mark candidate still comes from the window alone, and is only logged.
+    assert result.watermark == "2026-03-01"
+
+
+def test_extra_keys_with_no_values_read_nothing_extra(storage, no_watermark_io) -> None:
+    requisitions = spec_for("PurchaseRequisitionSet")
+    client = StubClient(answer=lambda name, kwargs: StubExtract([], order_by=("Banfn", "Bnfpo")))
+    fetch_mod.fetch_set(
+        requisitions, root="odata/refresh", client=client, storage=storage, run_date=RUN_DATE,
+        mode="delta", since="2025-11-20", parent_keys=[], advance_watermark=False, extra_keys=("Banfn", []),
+    )
+    assert client.filters == ["Badat ge '20251120'"]
+
+
 def test_the_mark_comes_from_the_own_window_and_never_moves_back(storage, no_watermark_io) -> None:
     """MARD, 2026-10-16: its own window held nothing, and the two rows MSEG's
     keys brought in were materials created on 15 September -- a month before

@@ -256,6 +256,39 @@ class Settings(BaseSettings):
     odata_full_pull_weekday: int = 6
     odata_full_pull_hour_utc: int = 2
 
+    # --- Daily OData refresh ------------------------------------------------
+    #
+    # Sets re-read over OData once a day and merged into raw_<table> by key,
+    # for the changes the hourly delta cannot see. A set whose delta date is
+    # a CREATION date -- EBAN's Badat, RESB's Crdat, MARA's and MARC's Ersda --
+    # never shows a later change to an existing row: a requisition released,
+    # deleted or turned into a purchase order; a reservation's quantity
+    # edited; a material flagged for deletion (measured on PRD, 20 Nov 2026:
+    # 32 of the 51 requisitions converted since the 4 Nov load still showed
+    # no purchase order). Each set is read whole, or by a window over its own
+    # delta date ("the last 12 months"), and merged like a delta: changed rows
+    # updated, new rows inserted, nothing deleted, no watermark moved. See
+    # app/ingest/refresh.py. Off by default, like the other timers.
+    odata_refresh_enabled: bool = False
+
+    # Comma-separated. NAME reads the set whole; NAME:12m reads the rows whose
+    # delta date falls in the last 12 months (units: d, w, m, y). A window
+    # needs a set with a date of its own (manifest.DELTAS, field=...) that is
+    # measured HONOURED on this system; a set without one is read whole.
+    odata_refresh_sets: str = (
+        "PurchaseRequisitionSet:12m,ReservationItemSet:12m,MaterialSet,MaterialPlantSet"
+    )
+
+    # Hour of day, UTC. 23:00 UTC is 01:00 in South Africa, ahead of the
+    # nightly I13 build.
+    odata_refresh_hour_utc: int = 23
+
+    # With a windowed set, also re-read by key the rows still OPEN in the
+    # table but older than the window (refresh.OPEN_ROWS: requisitions with
+    # no purchase order, reservations not final-issued), so a late deletion
+    # or release on an old open row still arrives.
+    odata_refresh_open_rows: bool = True
+
     # --- Delta marks for tables loaded another way --------------------------
     #
     # A set whose raw_<table> holds rows but has no watermark and no
