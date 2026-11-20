@@ -670,6 +670,72 @@ async def _odata_full_pull_loop(weekday: int, hour_utc: int) -> None:
         await asyncio.sleep(120)
 
 
+# --- The daily OData refresh ------------------------------------------------
+#
+# Sets re-read over OData each day -- whole, or the last N months by their
+# own delta date -- and merged by key, for the changes a creation-date delta
+# never sees (app/ingest/refresh.py). The same shape as the weekly pull: its
+# own mutex, then the delta's lock for the run, because the two merge through
+# the same staging tables; a delta tick that finds the lock held skips that
+# hour and catches up on the next, its marks untouched.
+
+ODATA_REFRESH_LOCK_NAME = "spares_ai_odata_refresh"
+
+
+async def _odata_refresh_tick() -> None:
+    from app.ingest import refresh
+
+    lock = _Lock(ODATA_REFRESH_LOCK_NAME)
+    try:
+        if not lock.acquire():
+            logger.debug("OData refresh skipped: another worker holds the lock")
+            return
+    except Exception as exc:
+        logger.warning("OData refresh skipped: could not reach the lock (%s)", exc)
+        return
+
+    delta_lock = _Lock(LOCK_NAME, timeout_ms=FULL_PULL_DELTA_WAIT_MS)
+    try:
+        got_delta_lock = await asyncio.to_thread(delta_lock.acquire)
+    except Exception as exc:
+        logger.warning("OData refresh skipped: could not reach the delta lock (%s)", exc)
+        lock.release()
+        return
+    if not got_delta_lock:
+        logger.warning(
+            "OData refresh skipped: a delta cycle held the ingest lock for over %d minutes",
+            FULL_PULL_DELTA_WAIT_MS // 60000,
+        )
+        lock.release()
+        return
+
+    started = datetime.now(timezone.utc)
+    logger.info("OData refresh starting")
+    try:
+        summary = await asyncio.to_thread(refresh.run_odata_refresh_cycle)
+        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        logger.info(
+            "OData refresh finished in %.0fs: %d set(s) merged, %d failed",
+            elapsed, summary["pulled"], summary["failed"],
+        )
+        for error in summary["errors"][:10]:
+            logger.error("  %s", error)
+    except Exception:
+        logger.exception("OData refresh raised")
+    finally:
+        delta_lock.release()
+        lock.release()
+
+
+async def _odata_refresh_loop(hour_utc: int) -> None:
+    while True:
+        await asyncio.sleep(seconds_until(hour_utc, datetime.now(timezone.utc)))
+        await _odata_refresh_tick()
+        # Past the top of the hour before recomputing, so a fast tick cannot
+        # fire twice in the same minute.
+        await asyncio.sleep(120)
+
+
 async def _full_refresh_tick() -> None:
     lock = _Lock(FULL_REFRESH_LOCK_NAME)
     try:
@@ -774,6 +840,21 @@ def start(app) -> asyncio.Task | None:
             "weekly OData full pull is off (ODATA_FULL_PULL_ENABLED is not 'true'); run it with: "
             "python -m app.ingest --fetch --load --full --set MaterialValuationSet "
             "(and --set DepartmentCodeSet)"
+        )
+
+    if settings.odata_refresh_enabled:
+        loops.append(lambda: _odata_refresh_loop(settings.odata_refresh_hour_utc))
+        logger.info(
+            "daily OData refresh on: %02d:00 UTC (%s; merged by key into raw_<table>, "
+            "open rows older than a window re-read: %s)",
+            settings.odata_refresh_hour_utc % 24,
+            settings.odata_refresh_sets or "no sets configured",
+            "yes" if settings.odata_refresh_open_rows else "no",
+        )
+    else:
+        logger.info(
+            "daily OData refresh is off (ODATA_REFRESH_ENABLED is not 'true'); run it with: "
+            "python -m app.ingest --odata-refresh"
         )
 
     if not loops:
