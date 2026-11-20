@@ -311,10 +311,17 @@ def _read_direct(client: SapClient, spec: IngestSpec, since: str) -> _Read:
     return read
 
 
-def _read_keys(client: SapClient, spec: IngestSpec, keys: list[str]) -> _Read:
-    """Every row of this set belonging to one of ``keys``, fifty at a time."""
+def _read_keys(
+    client: SapClient, spec: IngestSpec, keys: list[str], *, key_property: str | None = None
+) -> _Read:
+    """Every row of this set belonging to one of ``keys``, fifty at a time.
+
+    By the delta's ``via_key`` -- the property a parent hands keys over on --
+    unless the caller names ``key_property`` itself: the refresh re-reads a
+    set's open rows by the set's own key (``refresh.OPEN_ROWS``).
+    """
     delta = spec.delta
-    via_key = (delta.via_key if delta else None) or ""
+    via_key = key_property or (delta.via_key if delta else None) or ""
     edm = _edm_type(spec, via_key)
     read = _Read()
     for start in range(0, len(keys), KEY_BATCH):
@@ -642,6 +649,7 @@ def fetch_set(
     parent_keys: list[str] | None = None,
     advance_watermark: bool = True,
     window_reads: WindowReads | None = None,
+    extra_keys: tuple[str, list[str]] | None = None,
 ) -> FetchResult:
     """Pull one entity set and land it. Never raises -- failures are returned.
 
@@ -655,6 +663,11 @@ def fetch_set(
     resolved here from the watermark table. ``window_reads`` is the sweep's
     window cache: this set's own window read lands there, where the children
     that read keys through this set find it instead of reading it again.
+    ``extra_keys`` is ``(property, values)``: rows of this set whose
+    ``property`` is one of ``values``, read fifty at a time and unioned with
+    the window -- how the refresh (``app.ingest.refresh``) brings back rows
+    older than its window that are still open in the table. Delta mode only;
+    a whole read has them already.
     """
     client = client or SapClient()
     storage = storage or get_storage()
@@ -740,6 +753,13 @@ def fetch_set(
                         "to re-read through them.",
                         spec.name, ", ".join(delta.via), delta.via_key,
                     )
+            if extra_keys is not None and extra_keys[1]:
+                key_property, values = extra_keys
+                logger.info(
+                    "%s: re-reading %d row(s) by %s outside the window",
+                    spec.name, len(values), key_property,
+                )
+                reads.append(_read_keys(client, spec, list(values), key_property=key_property))
     except Exception as exc:
         result.error = f"{type(exc).__name__}: {exc}"
         result.seconds = time.monotonic() - started

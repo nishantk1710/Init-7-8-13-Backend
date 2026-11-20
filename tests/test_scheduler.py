@@ -409,3 +409,20 @@ class TestStart:
                 pass
 
         asyncio.run(run())
+
+    def test_the_daily_odata_refresh_alone_starts_a_task(self, monkeypatch) -> None:
+        import asyncio
+
+        settings = self._settings(monkeypatch, odata_refresh_enabled=True)
+        assert settings.odata_refresh_hour_utc == 23 and settings.odata_refresh_open_rows is True
+
+        async def run():
+            task = scheduler.start(None)
+            assert task is not None
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        asyncio.run(run())
