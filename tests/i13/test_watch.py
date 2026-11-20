@@ -17,7 +17,7 @@ PLAN_HEADER = [
     "planned_quantity", "planned_use_date", "status",
 ]
 
-SCOPE_INDEX = {("MAT1", "1000"): "OAR"}
+SCOPE_INDEX = {("MAT1", "1000"): "ND"}
 
 
 def _days_ago(days: int) -> str:

@@ -143,9 +143,9 @@ class FakeReservationRepository:
         return rows
 
 
-def oar_scope_index(*keys, dispo: str = "OAR") -> dict:
-    """(material, plant) -> an OAR-classifying DISPO value for every key given."""
-    return {key: dispo for key in keys}
+def oar_scope_index(*keys, mrp_type: str = "ND") -> dict:
+    """(material, plant) -> an OAR-classifying DISMM value for every key given."""
+    return {key: mrp_type for key in keys}
 
 
 class FakeCriticalitySource:

@@ -53,7 +53,7 @@ def db():
 def test_deleted_pairs_are_left_out_and_reported(db):
     deleted: set[tuple[str, str]] = set()
     index = fetch_material_scope_index(db, deleted=deleted)
-    assert index == {("1000000001", "1300"): "OAR", ("1000000002", "1500"): "OAR"}
+    assert index == {("1000000001", "1300"): "ND", ("1000000002", "1500"): "PD"}
     assert deleted == {
         ("1000000002", "1300"),
         ("1000000003", "1300"),
@@ -62,15 +62,17 @@ def test_deleted_pairs_are_left_out_and_reported(db):
     }
 
 
-def test_only_an_undeleted_oar_controller_is_oar(db):
-    """The full I13 rule: DISPO = OAR and not flagged for deletion. A live row
-    with another controller is in the index (MARC holds it) but is not OAR."""
-    db.execute(text("INSERT INTO n_marc VALUES ('1000000005', '1300', 'PD', 'POD', '')"))
-    db.execute(text("INSERT INTO n_marc VALUES ('1000000006', '1300', 'PD', '', '')"))
+def test_only_an_undeleted_nd_or_pd_is_oar(db):
+    """The full I13 rule (21 Nov 2026): DISMM in ND/PD and not flagged for
+    deletion. DISPO is not read. A live row with another (or blank) MRP type is
+    in the index (MARC holds it) but is not OAR."""
+    db.execute(text("INSERT INTO n_marc VALUES ('1000000005', '1300', 'VB', 'OAR', '')"))
+    db.execute(text("INSERT INTO n_marc VALUES ('1000000006', '1300', '', 'OAR', '')"))
+    db.execute(text("INSERT INTO n_marc VALUES ('1000000007', '1300', 'PD', 'POD', '')"))
     index = fetch_material_scope_index(db)
     oar = {key for key, code in index.items() if classify_material_scope(code) is MaterialScope.OAR}
-    assert oar == {("1000000001", "1300"), ("1000000002", "1500")}
-    assert index[("1000000005", "1300")] == "POD"
+    assert oar == {("1000000001", "1300"), ("1000000002", "1500"), ("1000000007", "1300")}
+    assert index[("1000000005", "1300")] == "VB"
     assert index[("1000000006", "1300")] == ""
 
 

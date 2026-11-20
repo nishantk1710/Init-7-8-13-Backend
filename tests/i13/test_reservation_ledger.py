@@ -94,8 +94,8 @@ class _FakeProcurementRepository:
 
 
 def _oar_scope_index(*keys):
-    """(material, plant) -> "OAR" (the OAR MRP controller) for every key given."""
-    return {key: "OAR" for key in keys}
+    """(material, plant) -> "ND" (an OAR MRP type) for every key given."""
+    return {key: "ND" for key in keys}
 
 
 def _build(reservations=(), gi_rows=(), prs=(), po_items=(), gr_rows=(), scope_index=None, **kwargs):
@@ -302,7 +302,7 @@ def test_include_out_of_scope_returns_non_oar_materials() -> None:
 def test_oar_material_included_by_default() -> None:
     entries = _build(
         reservations=[_reservation("50052", "1", "MAT-OAR", "1300", "5")],
-        scope_index={("MAT-OAR", "1300"): "OAR"},
+        scope_index={("MAT-OAR", "1300"): "ND"},
     )
     assert len(entries) == 1
     assert entries[0].material_scope is MaterialScope.OAR

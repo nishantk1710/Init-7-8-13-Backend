@@ -129,8 +129,9 @@ class RoutingModel(AssistantModel):
     eighty_series: bool
     material_scope: str
     mrp_type: str | None = None
+    """MARC's DISMM -- the I13 OAR rule since 21 Nov 2026: ``ND`` or ``PD`` is OAR."""
     mrp_controller: str | None = None
-    """MARC's DISPO -- the OAR rule: ``OAR`` is OAR."""
+    """MARC's DISPO -- shown only, no longer part of the OAR rule."""
     also_matched: str | None = None
     reason: str
 
@@ -143,8 +144,8 @@ class MaterialMatchModel(AssistantModel):
     plant: str
     plant_name: str | None = None
     flow_hint: Literal["i08", "i13", "none"]
-    mrp_controller: str | None = None
-    """MARC's DISPO, which the I13 half of ``flow_hint`` was read from."""
+    mrp_type: str | None = None
+    """MARC's DISMM, which the I13 half of ``flow_hint`` was read from."""
 
 
 class MaterialSearchResponse(AssistantModel):
