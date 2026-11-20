@@ -8,11 +8,15 @@ by hand (``POST /assistant/requests/preview``). Quantity, window and
 justification are still answered on screen.
 
 The format is fixed by the template -- a ``Materials`` sheet whose first row
-names the columns ``Material``, ``Plant`` and ``Department``. One request is
-one plant and one department, so a file naming more than one of either is
-refused as a whole, never trimmed; more materials than the request's cap is
-refused too, never cut off. Every problem is reported at once, so the file can
-be fixed in one go.
+names the columns ``Material`` and ``Plant``. One request is one plant, so a
+file naming more than one is refused as a whole, never trimmed; more materials
+than the request's cap is refused too, never cut off. Every problem is reported
+at once, so the file can be fixed in one go.
+
+The department is not in the file (TL, 20 Nov): it is picked once on the
+request itself, so the column was asking for the same answer twice. A
+``Department`` column left over in an older copy of the template is simply
+ignored, like any other column the requester keeps for themselves.
 """
 
 from __future__ import annotations
@@ -27,7 +31,6 @@ from typing import Any
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 
-from app.assistant import departments
 from app.shared.plant_scope import IN_SCOPE_PLANTS
 
 #: Far larger than any honest list of 50 materials; a guard against the wrong file.
@@ -35,24 +38,23 @@ MAX_UPLOAD_BYTES = 1024 * 1024
 
 SHEET = "Materials"
 HELP_SHEET = "How to fill"
-HEADERS = ("Material", "Plant", "Department")
+HEADERS = ("Material", "Plant")
 """The columns read. Any other column is the requester's own and is ignored."""
 
 #: The template's columns as headed, each saying whether it must be filled
-#: (UAT, 2 Nov): the three read, plus a name for the requester's own reference
+#: (UAT, 2 Nov): the two read, plus a name for the requester's own reference
 #: -- never read, the screen shows SAP's description. The reader ignores the
 #: bracketed part, so a plain "Material" header is just as good.
 TEMPLATE_COLUMNS = (
     "Material (required)",
     "Material name (optional)",
     "Plant (required)",
-    "Department (required)",
 )
 _OPTIONAL_COLUMNS = {"Material name (optional)"}
 TEMPLATE_FILE_NAME = "material-request-template.xlsx"
 
 #: Header text as written, lower-cased with spaces removed -> column.
-_HEADER_KEYS = {"material": "material", "plant": "plant", "department": "department"}
+_HEADER_KEYS = {"material": "material", "plant": "plant"}
 
 #: What a material number may look like; the preview says whether it exists.
 _MATERIAL = re.compile(r"[A-Za-z0-9-]{1,40}")
@@ -72,8 +74,6 @@ class UploadError(ValueError):
 @dataclass(frozen=True)
 class ExtractedFile:
     plant: str
-    department: str
-    department_name: str | None
     materials: list[str]
     """In file order, duplicates removed."""
     row_count: int
@@ -96,7 +96,7 @@ def build_template(max_lines: int) -> bytes:
         cell.font = Font(bold=not optional, italic=optional, color="595959" if optional else "000000")
         cell.fill = PatternFill("solid", fgColor="F2F2F2" if optional else "DDEBF7")
     sheet.freeze_panes = "A2"
-    for letter, width in zip("ABCD", (22, 45, 18, 22), strict=True):
+    for letter, width in zip("ABC", (22, 45, 18), strict=True):
         sheet.column_dimensions[letter].width = width
     # Text format on the rows a requester will fill, so 000000000010001234
     # stays as typed instead of becoming a number.
@@ -110,7 +110,7 @@ def build_template(max_lines: int) -> bytes:
         "Material (required): the SAP material number. Leading zeros are optional.",
         "Material name (optional): for your own reference; may be left blank. It is not read: the screen shows SAP's description.",
         f"Plant (required): the same plant on every row ({' or '.join(IN_SCOPE_PLANTS)}).",
-        "Department (required): the same 5-digit department code on every row.",
+        "The department is not in the file: pick it once on the request, above the materials.",
         f"Up to {max_lines} materials per file.",
         "After upload each material is checked; quantities and reasons are answered on screen.",
     ):
@@ -138,11 +138,6 @@ def _text(value: Any) -> str:
     if isinstance(value, date):
         return value.isoformat()
     return str(value).strip()
-
-
-def _department(raw: str) -> str:
-    """Codes are five digits; a cell typed as a number loses a leading zero."""
-    return raw.zfill(5) if raw.isdigit() and len(raw) < 5 else raw
 
 
 def _rows(numbers: list[int]) -> str:
@@ -177,14 +172,8 @@ def _read_sheet(content: bytes) -> list[list[str]]:
         workbook.close()
 
 
-def extract(
-    content: bytes, *, max_lines: int, file_name: str = "", check_department: bool = True
-) -> ExtractedFile:
-    """The materials in an uploaded template, or :class:`UploadError` listing every problem.
-
-    ``check_department``: the department is held to the list as submit holds
-    it (``ASSISTANT_DEPARTMENT_CHECK_ENABLED``) -- a file is never refused for
-    a department the request itself would accept."""
+def extract(content: bytes, *, max_lines: int, file_name: str = "") -> ExtractedFile:
+    """The materials in an uploaded template, or :class:`UploadError` listing every problem."""
     if file_name and not file_name.lower().endswith(".xlsx"):
         hint = (
             "Old .xls files cannot be read: in Excel, Save As → Excel Workbook (.xlsx)."
@@ -216,17 +205,15 @@ def extract(
     empty: dict[str, list[int]] = {title: [] for title in HEADERS}
     not_material: list[int] = []
     plants: dict[str, None] = {}
-    codes: dict[str, None] = {}
     found: list[str] = []
     row_count = 0
     for offset, row in enumerate(rows[header_at + 1 :]):
         number = header_at + offset + 2
         material, plant = cell(row, "material"), cell(row, "plant")
-        department = _department(cell(row, "department"))
-        if not (material or plant or department):
+        if not (material or plant):
             continue
         row_count += 1
-        for title, value in zip(HEADERS, (material, plant, department), strict=True):
+        for title, value in zip(HEADERS, (material, plant), strict=True):
             if not value:
                 empty[title].append(number)
         if material and not _MATERIAL.fullmatch(material):
@@ -235,8 +222,6 @@ def extract(
             found.append(material)
         if plant:
             plants.setdefault(plant)
-        if department:
-            codes.setdefault(department)
 
     if row_count == 0:
         raise UploadError(["The file has the headers but no materials."])
@@ -253,18 +238,6 @@ def extract(
         )
     elif plant and plant not in IN_SCOPE_PLANTS:
         errors.append(f"Plant {plant} is not {' or '.join(IN_SCOPE_PLANTS)}.")
-
-    department = next(iter(codes), "")
-    if len(codes) > 1:
-        errors.append(
-            f"The file has more than one department ({', '.join(codes)}). "
-            "One request covers one department: upload a file per department."
-        )
-    elif department:
-        try:
-            departments.check(department, from_sap=False, enabled=check_department)
-        except departments.DepartmentError as error:
-            errors.append(str(error))
 
     seen: set[str] = set()
     materials: list[str] = []
@@ -286,8 +259,6 @@ def extract(
         raise UploadError(errors)
     return ExtractedFile(
         plant=plant,
-        department=department,
-        department_name=departments.name_for(department),
         materials=materials,
         row_count=row_count,
         duplicates=duplicates,
