@@ -265,10 +265,7 @@ def upload(
     content = file.file.read(request_upload.MAX_UPLOAD_BYTES + 1)
     try:
         extracted = request_upload.extract(
-            content,
-            max_lines=max_lines,
-            file_name=file.filename or "",
-            check_department=settings.assistant_department_check_enabled,
+            content, max_lines=max_lines, file_name=file.filename or ""
         )
     except request_upload.UploadError as error:
         raise HTTPException(
@@ -277,8 +274,6 @@ def upload(
         ) from None
     return UploadResponse(
         plant=extracted.plant,
-        department=extracted.department,
-        department_name=extracted.department_name,
         materials=extracted.materials,
         row_count=extracted.row_count,
         duplicates=extracted.duplicates,
