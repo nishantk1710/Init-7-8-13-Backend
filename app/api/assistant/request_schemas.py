@@ -251,11 +251,10 @@ class RequestListResponse(AssistantModel):
 
 class UploadResponse(AssistantModel):
     """An uploaded template, read and checked. Nothing is stored: each material
-    is then previewed as one added by hand."""
+    is then previewed as one added by hand. The department is not in the file
+    (TL, 20 Nov): it is picked on the request itself."""
 
     plant: str
-    department: str
-    department_name: str | None
     materials: list[str]
     """In file order, duplicates removed."""
     row_count: int
