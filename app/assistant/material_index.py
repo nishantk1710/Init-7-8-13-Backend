@@ -105,7 +105,7 @@ class MaterialIndex:
     makt: dict[str, tuple[MaktText, ...]] = field(default_factory=dict)
     report: list[ReportRow] = field(default_factory=list)
     marc: dict[str, tuple[tuple[str, str], ...]] = field(default_factory=dict)
-    """``{material: ((plant, MRP controller), ...)}``; a blank DISPO stays ``""``."""
+    """``{material: ((plant, MRP type), ...)}``; a blank DISMM stays ``""``."""
     mard: dict[str, tuple[str, ...]] = field(default_factory=dict)
     """``{material: (plant, ...)}``."""
     held: list[str] = field(default_factory=list)
@@ -183,9 +183,9 @@ def load_all(db: Session) -> tuple[MaterialIndex, bool]:
 
     rows = read(
         "n_marc",
-        # Deleted (LVORM) rows give no MRP controller, so the search never hints
+        # Deleted (LVORM) rows give no MRP type, so the search never hints
         # OAR for them; the plant still comes from MARD below.
-        f"SELECT material, plant, mrp_controller FROM n_marc mc WHERE plant <> '' AND {sql_predicate('plant')} "
+        f"SELECT material, plant, mrp_type FROM n_marc mc WHERE plant <> '' AND {sql_predicate('plant')} "
         f"{not_deleted_predicate('mc')}",
     )
     marc: dict[str, dict[str, str]] = {}
@@ -193,7 +193,7 @@ def load_all(db: Session) -> tuple[MaterialIndex, bool]:
         material = number(row.material)
         plant = (row.plant or "").strip()
         if material and plant:
-            marc.setdefault(material, {})[_shared(plant)] = _shared((row.mrp_controller or "").strip())
+            marc.setdefault(material, {})[_shared(plant)] = _shared((row.mrp_type or "").strip())
     index.marc = {material: tuple(plants.items()) for material, plants in marc.items()}
 
     rows = read(

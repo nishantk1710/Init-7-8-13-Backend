@@ -182,8 +182,8 @@ DISMM_VALUE_DOMAIN: dict[str, int] = {
 }
 
 # The MRP types the 08-Sep VZI ruling treated as OAR. Still the serving/I7 view.
-# I13 and the assistant no longer read it: since 20 Oct 2026 they identify OAR
-# by MRP controller (MARC.DISPO = OAR, Settings.i13_oar_mrp_controllers, via
+# I13 and the assistant no longer read it: since 21 Nov 2026 they identify OAR
+# by MRP type (MARC.DISMM in ND/PD, Settings.i13_oar_mrp_types, via
 # app/shared/material_scope).
 OAR_MRP_TYPES = frozenset({"ND", "PD"})
 

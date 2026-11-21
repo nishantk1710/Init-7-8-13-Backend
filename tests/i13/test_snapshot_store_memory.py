@@ -54,7 +54,7 @@ WORK = WorkTables(0)
 class Marc(NamedTuple):
     material: str
     plant: str
-    mrp_controller: str | None
+    mrp_type: str | None
 
 
 class Mov(NamedTuple):
@@ -181,7 +181,7 @@ def giant_procurement(scale: float = 1.0) -> dict[str, Table]:
             yield _resb(f"9{i:09d}", m, p, i)
 
     return {
-        "marc": lambda: iter([Marc(m, p, "OAR")]),
+        "marc": lambda: iter([Marc(m, p, "ND")]),
         "mov": mov,
         "stock": lambda: iter([Stock(m, p, "120.000")]),
         "pr": lambda: iter(()),
@@ -223,7 +223,7 @@ def giant_reservations(scale: float = 1.0) -> dict[str, Table]:
             yield Gr(_s(f"46{i % pos:08d}"), _s("10"), _s("101"), _s("25.000"), _day(i * 5), _s(m))
 
     return {
-        "marc": lambda: iter([Marc(m, p, "OAR")]),
+        "marc": lambda: iter([Marc(m, p, "ND")]),
         "mov": mov,
         "stock": lambda: iter([Stock(m, p, "3400.000")]),
         "pr": pr,
@@ -257,7 +257,7 @@ def mixed_tenant(seed: int = 13, materials: int = 120) -> dict[str, Table]:
         for p in ("1300", "1500"):
             if rng.random() < 0.3 and p == "1500":
                 continue
-            marc.append(Marc(m, p, rng.choice(["OAR", "OAR", "POD", "101", None])))
+            marc.append(Marc(m, p, rng.choice(["ND", "PD", "VB", "", None])))
             if rng.random() < 0.7:
                 stock.append(Stock(m, p, f"{rng.randint(0, 40)}.000"))
             for k in range(rng.randint(0, 3)):
