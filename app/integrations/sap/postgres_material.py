@@ -1,8 +1,8 @@
-"""MRP controller (DISPO) from the database, for the OAR material-scope filter.
+"""MRP type (DISMM) from the database, for the OAR material-scope filter.
 
 Reads ``n_marc`` (MARC-equivalent) -- key (material, plant) is 100% unique
 in this dataset (45,409 rows, measured). This module supplies only the raw
-DISPO string per (material, plant); classifying it OAR/Excluded is
+DISMM string per (material, plant); classifying it OAR/Excluded is
 ``app.shared.material_scope.policy.classify_material_scope`` -- reused
 unchanged, never reimplemented here.
 """
@@ -41,18 +41,18 @@ def fetch_material_scope_index(
     material: str | None = None,
     plant: str | None = None,
     deleted: set[tuple[str, str]] | None = None,
-    mrp_types: dict[tuple[str, str], str] | None = None,
+    mrp_controllers: dict[tuple[str, str], str] | None = None,
 ) -> dict[tuple[str, str], str | None]:
-    """(material, plant) -> raw DISPO (MRP controller) string, for
+    """(material, plant) -> raw DISMM (MRP type) string, for
     ``classify_material_scope`` to classify. Not itself a scope decision.
 
-    A MARC row with no MRP controller maps to ``""``, never ``None``: both
-    classify as not OAR, but ``""`` says MARC has the row, which the assistant's
-    reason needs to tell apart from a data gap.
+    A MARC row with no MRP type maps to ``""``, never ``None``: both classify
+    as not OAR, but ``""`` says MARC has the row, which the assistant's reason
+    needs to tell apart from a data gap.
 
-    ``mrp_types``, when passed, is filled with each returned pair's MRP type
-    (DISMM) -- no longer the rule, but still what the assistant records and
-    shows.
+    ``mrp_controllers``, when passed, is filled with each returned pair's MRP
+    controller (DISPO) -- no longer the I13 rule (21 Nov 2026), but still what
+    the assistant shows.
 
     A pair flagged for deletion in SAP (MARC/MARA-LVORM, see
     ``app.shared.material_scope.deletion``) is left out -- so it classifies
@@ -84,7 +84,7 @@ def fetch_material_scope_index(
             if deleted is not None:
                 deleted.add(key)
             continue
-        index[key] = (r.mrp_controller or "").strip()
-        if mrp_types is not None:
-            mrp_types[key] = (r.mrp_type or "").strip()
+        index[key] = (r.mrp_type or "").strip()
+        if mrp_controllers is not None:
+            mrp_controllers[key] = (r.mrp_controller or "").strip()
     return index

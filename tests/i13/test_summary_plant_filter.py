@@ -16,11 +16,11 @@ from app.initiatives.i13.summary import summary_from_snapshot
 
 # DISPO per material-plant: OAR is OAR, any other controller (POD) is not.
 SCOPE = {
-    ("M1", "1300"): "OAR",
-    ("M2", "1300"): "OAR",
+    ("M1", "1300"): "ND",
+    ("M2", "1300"): "ND",
     ("M3", "1300"): "POD",
-    ("M1", "1500"): "OAR",
-    ("M4", "1500"): "OAR",
+    ("M1", "1500"): "ND",
+    ("M4", "1500"): "ND",
 }
 # M4/1500 has no movement history, so it is NON_MOVING by definition.
 METRICS = (

@@ -134,7 +134,7 @@ def test_oar_scope_excludes_real_non_oar_reservations() -> None:
         non_oar_material = session.execute(
             text(
                 "SELECT TOP 1 material, plant FROM n_marc "
-                f"WHERE COALESCE(mrp_controller, '') NOT IN ('', 'OAR') AND {sql_predicate('plant')}"
+                f"WHERE COALESCE(mrp_type, '') NOT IN ('', 'ND', 'PD') AND {sql_predicate('plant')}"
             )
         ).first()
         assert non_oar_material is not None
@@ -173,10 +173,10 @@ def test_material_scope_index_matches_classify_material_scope() -> None:
         # pairs are left out of the index, so they are left out here too.
         row = session.execute(
             text(
-                "SELECT TOP 1 material, plant, mrp_controller FROM n_marc mc "
-                f"WHERE mrp_controller <> '' AND {sql_predicate('plant')} {not_deleted_predicate('mc')}"
+                "SELECT TOP 1 material, plant, mrp_type FROM n_marc mc "
+                f"WHERE mrp_type <> '' AND {sql_predicate('plant')} {not_deleted_predicate('mc')}"
             )
         ).first()
         assert row is not None, "no in-scope MARC row carries an MRP controller"
         index = fetch_material_scope_index(session, material=row.material, plant=row.plant)
-    assert classify_material_scope(index[(row.material, row.plant)]) == classify_material_scope(row.mrp_controller)
+    assert classify_material_scope(index[(row.material, row.plant)]) == classify_material_scope(row.mrp_type)

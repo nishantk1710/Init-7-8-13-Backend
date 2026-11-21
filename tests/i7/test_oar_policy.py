@@ -111,11 +111,11 @@ def test_both_predicates_must_hold():
     assert policy.evaluate(attributes(mrp_type="ND", mrp_controller="X99")) is ScopeDecision.OUT_OF_SCOPE
 
 
-def test_the_controller_codes_come_from_the_setting_i13_also_reads():
-    """One list for both modules: retuning ``i13_oar_mrp_controllers`` moves I07
-    and I13 together, so they cannot disagree about the same material."""
+def test_the_controller_codes_come_from_the_setting():
+    """I07's DISPO list is ``i13_oar_mrp_controllers``. Since 21 Nov 2026 I13
+    no longer reads it -- I13 classifies by MRP type (DISMM ND/PD) alone -- so
+    this pins only I07's side."""
     from app.core.config import get_settings
-    from app.shared.material_scope import MaterialScope, classify_material_scope
 
     configured = {
         value
@@ -124,8 +124,6 @@ def test_the_controller_codes_come_from_the_setting_i13_also_reads():
         for value in p.values
     }
     assert configured == set(get_settings().i13_oar_mrp_controller_set)
-    for code in configured:
-        assert classify_material_scope(code) is MaterialScope.OAR
 
 
 def test_a_predicate_cannot_treat_blank_as_both_in_and_out_of_scope():

@@ -1071,11 +1071,16 @@ class Settings(BaseSettings):
             raise ValueError("I7_OAR_EXHAUSTIVE_BELOW must not be negative")
         return value
 
-    # Current VZI OAR material-scope ruling (20 Oct 2026): the MRP controller,
-    # MARC.DISPO, comma-separated. Replaces the earlier MRP type (DISMM) rule.
-    # A blank DISPO, and every code not listed, is not OAR. See
-    # app/shared/material_scope/policy.py -- shared platform config, read by
-    # I13 and the assistant's routing.
+    # I13 OAR material-scope ruling (21 Nov 2026): the MRP type, MARC.DISMM,
+    # comma-separated. Replaces the MRP controller (DISPO = OAR) rule of 20 Oct
+    # for I13 and the assistant's routing; DISPO plays no part in it. A blank
+    # DISMM, and every code not listed, is not OAR. Materials flagged for
+    # deletion (LVORM) are left out as before. See
+    # app/shared/material_scope/policy.py. Part of the I13 snapshot fingerprint.
+    i13_oar_mrp_types: str = "ND,PD"
+    # MARC.DISPO codes for I07's OAR policy only (app/initiatives/i7/policy/
+    # oar.py), which still ANDs DISPO = OAR with its own DISMM rule. I13 no
+    # longer reads this (21 Nov 2026).
     i13_oar_mrp_controllers: str = "OAR"
     # A material flagged for deletion in SAP -- MARC-LVORM (at the plant) or
     # MARA-LVORM (client level) = X -- is never OAR, whatever its MRP controller
@@ -1481,8 +1486,13 @@ class Settings(BaseSettings):
         return tuple(code.strip() for code in self.i7_plants.split(",") if code.strip())
 
     @property
+    def i13_oar_mrp_type_set(self) -> frozenset[str]:
+        """Normalised MRP type (DISMM) codes that make a material-plant OAR in I13."""
+        return frozenset(code.strip().upper() for code in self.i13_oar_mrp_types.split(",") if code.strip())
+
+    @property
     def i13_oar_mrp_controller_set(self) -> frozenset[str]:
-        """Normalised MRP controller (DISPO) codes that count as OAR materials."""
+        """Normalised MRP controller (DISPO) codes I07's OAR policy requires."""
         return frozenset(code.strip().upper() for code in self.i13_oar_mrp_controllers.split(",") if code.strip())
 
     @property

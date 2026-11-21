@@ -235,7 +235,7 @@ def search_materials(
                 plant=m.plant,
                 plant_name=m.plant_name,
                 flow_hint=m.flow_hint.value,
-                mrp_controller=m.mrp_controller,
+                mrp_type=m.mrp_type,
             )
             for m in matches
         ],
