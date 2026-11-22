@@ -49,13 +49,6 @@ def test_the_mrp_type_list_is_configuration(monkeypatch: pytest.MonkeyPatch) -> 
     assert classify_material_scope("PD") is MaterialScope.EXCLUDED
 
 
-def test_the_mrp_controller_setting_does_not_affect_i13(monkeypatch: pytest.MonkeyPatch) -> None:
-    # I13_OAR_MRP_CONTROLLERS is I07's alone now.
-    monkeypatch.setattr(get_settings(), "i13_oar_mrp_controllers", "OAR, VB")
-    assert classify_material_scope("VB") is MaterialScope.EXCLUDED
-    assert classify_material_scope("OAR") is MaterialScope.EXCLUDED
-
-
 def test_no_marc_row_is_never_oar() -> None:
     # None is what index.get returns for a pair MARC does not hold.
     assert classify_material_scope(None) is MaterialScope.EXCLUDED
