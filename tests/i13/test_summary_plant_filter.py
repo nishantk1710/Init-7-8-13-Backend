@@ -14,7 +14,7 @@ from app.initiatives.i13 import summary as summary_module
 from app.initiatives.i13.models import AgingBand, ExceptionType
 from app.initiatives.i13.summary import summary_from_snapshot
 
-# DISPO per material-plant: OAR is OAR, any other controller (POD) is not.
+# DISMM per material-plant: ND/PD is OAR, any other code (POD here) is not.
 SCOPE = {
     ("M1", "1300"): "ND",
     ("M2", "1300"): "ND",
@@ -99,3 +99,33 @@ def test_an_out_of_scope_plant_is_all_zeros() -> None:
     summary = summary_from_snapshot(_snapshot(), plans=[], plant="4000")
 
     assert _counts(summary) == (0,) * 8
+
+
+# --- unique OAR materials ---------------------------------------------------
+#
+# M1 is OAR at both plants: two positions, one material. The card shows both.
+
+
+def test_unfiltered_a_material_oar_at_both_plants_counts_once() -> None:
+    summary = summary_from_snapshot(_snapshot(), plans=[])
+
+    assert summary.total_oar_positions == 4  # M1/1300, M2/1300, M1/1500, M4/1500
+    assert summary.unique_oar_materials == 3  # M1, M2, M4
+
+
+def test_with_a_plant_filter_positions_and_materials_are_equal() -> None:
+    for plant in ("1300", "1500"):
+        summary = summary_from_snapshot(_snapshot(), plans=[], plant=plant)
+        assert summary.unique_oar_materials == summary.total_oar_positions == 2
+
+
+def test_a_material_filter_is_one_material_over_its_plants() -> None:
+    summary = summary_from_snapshot(_snapshot(), plans=[], material="M1")
+
+    assert (summary.total_oar_positions, summary.unique_oar_materials) == (2, 1)
+
+
+def test_a_material_that_is_not_oar_is_no_material() -> None:
+    summary = summary_from_snapshot(_snapshot(), plans=[], material="M3")
+
+    assert (summary.total_oar_positions, summary.unique_oar_materials) == (0, 0)
