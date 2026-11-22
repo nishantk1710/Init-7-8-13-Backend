@@ -1,60 +1,35 @@
 """OAR identification policy.
 
-**Two conditions, ANDed (20 Oct 2026).** A material-plant is OAR when its MRP
-controller (``MARC.DISPO``) is ``OAR`` *and* its MRP type passes the DISMM rule
-below. The controller condition is the VZI ruling I13 already applies
-(``app.shared.material_scope.policy``) and I07 now matches it, reading the same
-shared setting (``Settings.i13_oar_mrp_controllers``) so the two modules cannot
-drift apart. A blank or missing controller is **not** OAR
-(``blank_means_out_of_scope``) -- unlike DISMM, where blank counts as OAR.
+**One condition (21 Nov 2026).** A material-plant is OAR when its MRP type
+(``MARC.DISMM``) is in the configured list -- ``ND`` and ``PD`` by default. The
+MRP controller (``MARC.DISPO``) plays no part in the rule any more, and a blank
+or missing MRP type is **not** OAR (``blank_means_out_of_scope``), like any code
+not in the list.
+
+The codes are configuration, not a hard-coded rule: they come from
+``Settings.i7_oar_mrp_types``, I07's own setting, so the business can retune
+I07's ruling without a code change and without touching I13's.
 
 The plant scope (1300 and 1500, ``I7_PLANTS``) and the deletion exclusion
 (LVORM = X at plant or client level) are not predicates here: they are applied
 earlier, at ingestion and in the feature-store build, so a pair never reaches
-this rule unless it is in scope and not deleted. The deletion exclusion is the
-same one I13 applies.
+this rule unless it is in scope and not deleted.
 
-The DISMM part of the rule, as it stood before the controller condition::
-
-    MRP_TYPE in {ND, PD}  (blank also counts as OAR -- see below)
-
-MRP Type ``VB`` is normal Min-Max managed; ``ND`` and ``PD`` are OAR.
+MRP Type ``VB`` is normal Min-Max managed; ``ND`` and ``PD`` are OAR. The six
+undocumented codes (V1, M0, RP, VI, VH, V2) are not OAR either.
 
 Two documents previously disagreed with this (FRS v1.3: ``MARA.EXTWG = 100``;
 an earlier checked-in rule: ``DISMM in {ND, PD} AND MSTAE != '01'``). The
-MSTAE/material-status exclusion has been removed from the active rule -- it
-was carried over from that earlier draft, and no explicit requirement for
-that additional exclusion was ever confirmed; the clarified rule names only
-MRP type. ``material_status`` stays on the contract and feature store as
-provenance (it is genuine SAP data, useful elsewhere), it is simply no longer
-part of *this* predicate.
+MSTAE/material-status exclusion has been removed from the active rule, and
+``material_status`` stays on the contract and feature store as provenance only.
 
 **EXTWG is retired.** It stays on the canonical contract for source fidelity,
 but a predicate may not name it -- :meth:`OarPolicy.validate` refuses -- so the
 retirement is enforced rather than merely documented.
 
-**Blank DISMM now counts as OAR too -- business-confirmed.** Until this
-change, a blank/unmaintained MRP type evaluated to UNKNOWN, on the reasoning
-that "not maintained" is not the same claim as "not OAR": 47% of rows in the
-live scan had no value at all, and folding them into OUT_OF_SCOPE would have
-silently dropped half the catalogue out of the OAR population. The business
-has now confirmed the opposite treatment for OAR specifically: an unmaintained
-MRP type is itself evidence of OAR (a Min-Max-managed material is expected to
-carry an explicit VB, so blank is closer to "never set up for Min-Max" than to
-"genuinely unknown"). The active rule below therefore includes the empty
-string in ``values``, not in ``unknown_values`` -- blank now matches
-IN_SCOPE, the same as ND/PD, rather than yielding UNKNOWN. This roughly
-doubles OAR-scope coverage relative to the ND/PD-only rule. An unrecognised
-(non-blank, non-VB, non-ND/PD) MRP type -- e.g. the six undocumented codes
-V1/M0/RP/VI/VH/V2 -- still evaluates OUT_OF_SCOPE, not IN_SCOPE and not
-UNKNOWN; only blank changed.
-
 **Still not confirmed on roll-up.** ``confirmed`` defaults to ``False`` and
-the roll-up policy defaults to unset. The live scan found ND+PD = 46.4% of the
-catalogue against a plan that wanted under 40%, plus six undocumented MRP
-codes (which remain OUT_OF_SCOPE -- see
-``test_undocumented_mrp_codes_are_out_of_scope_not_unknown``). Roll-up across a
-material's plants is a team-lead call this module still does not make.
+the roll-up policy defaults to unset. Roll-up across a material's plants is a
+team-lead call this module still does not make.
 """
 
 from enum import StrEnum
@@ -224,47 +199,33 @@ class OarPolicy(BaseModel):
 
 
 def current_oar_policy() -> OarPolicy:
-    """The rule in force: ``MRP_CONTROLLER in {OAR}`` AND ``MRP_TYPE in {ND, PD}``
-    (blank MRP type also counts as OAR).
+    """The rule in force: ``MRP_TYPE in Settings.i7_oar_mrp_types`` (``ND``, ``PD``).
 
-    The controller codes are read from ``Settings.i13_oar_mrp_controllers`` --
-    the same setting I13 classifies by -- so a retuned list moves both modules.
-    ``blank_means_out_of_scope=True`` makes a missing controller not OAR, where
-    the MRP-type predicate below makes a missing type OAR.
+    The codes are read from I07's own setting, so a retuned list moves I07 only.
+    ``blank_means_out_of_scope=True`` makes a blank or missing MRP type not OAR:
+    the staging adapter's ``clean()`` collapses an empty DISMM cell to Python
+    ``None``, so a real blank material-plant reaches the predicate as
+    ``raw is None``.
 
-    ``blank_means_in_scope=True`` is what actually implements the blank
-    exception: the staging adapter's ``clean()`` collapses an empty DISMM
-    cell to Python ``None`` (see ``ScopePredicate.unknown_values``'s
-    docstring), so a real blank material-plant reaches this predicate as
-    ``raw is None`` -- ``values=("ND", "PD")`` alone would never see it.
-
-    Ships unconfirmed on roll-up only. Changing the rule means editing this
-    function or supplying a different policy -- no business logic elsewhere
-    names an MRP type.
+    Ships unconfirmed on roll-up only. Changing the rule means changing the
+    setting or supplying a different policy -- no business logic elsewhere names
+    an MRP type.
     """
     return OarPolicy(
         predicates=(
             ScopePredicate(
-                field=PredicateField.MRP_CONTROLLER,
-                operator=PredicateOperator.IN,
-                values=tuple(sorted(get_settings().i13_oar_mrp_controller_set)),
-                blank_means_out_of_scope=True,
-            ),
-            ScopePredicate(
                 field=PredicateField.MRP_TYPE,
                 operator=PredicateOperator.IN,
-                values=("ND", "PD"),
-                blank_means_in_scope=True,
+                values=tuple(sorted(get_settings().i7_oar_mrp_type_set)),
+                blank_means_out_of_scope=True,
             ),
         ),
         rollup=None,
         confirmed=False,
         notes=(
-            "MRP controller (DISPO) must be OAR -- the I13 ruling of 2026-10-20, "
-            "same setting. MRP-type value set: ND, PD and blank all count as OAR "
-            "(business-confirmed). Roll-up policy still pending team-lead "
-            "confirmation. Live scan: ND+PD = 46.4% of catalogue, 47% of rows "
-            "have no DISMM (now also IN_SCOPE), six undocumented MRP codes "
-            "(V1, M0, RP, VI, VH, V2, still OUT_OF_SCOPE)."
+            "MRP type (DISMM) in the configured list (ND, PD) is OAR -- the I13 "
+            "ruling of 2026-11-21, applied to I07 through its own setting. A blank "
+            "MRP type is not OAR; DISPO is not read. Roll-up policy still pending "
+            "team-lead confirmation."
         ),
     )

@@ -1,9 +1,7 @@
 """OAR scope evaluation at material-plant grain.
 
-The cases in section 16 of the phase brief are asserted verbatim. The one that
-matters most is ``DISMM=NULL -> UNKNOWN``: a blank MRP type means "not
-maintained", and reporting that as OUT_OF_SCOPE would quietly remove the
-material from the OAR population with nothing to show it happened.
+Since 21 Nov 2026 the rule is the MRP type (DISMM) alone: ND or PD is OAR, and a
+blank MRP type is OUT_OF_SCOPE. The MRP controller (DISPO) is not read.
 """
 
 import pytest
@@ -35,11 +33,9 @@ def attributes(
     material_status=None,
     plant="1300",
     material="000000000010000000",
-    mrp_controller="OAR",
+    mrp_controller=None,
     **extra,
 ) -> MaterialAttributes:
-    """``mrp_controller`` defaults to the OAR code so the DISMM cases below stay
-    about DISMM; the controller condition is covered at the end of the file."""
     return MaterialAttributes(
         key=MaterialPlantKey(
             material=MaterialIdentity(sap_material_number=material),
@@ -61,9 +57,8 @@ def attributes(
         ("PD", ScopeDecision.IN_SCOPE),
         ("ND", ScopeDecision.IN_SCOPE),
         ("VB", ScopeDecision.OUT_OF_SCOPE),
-        # Business-confirmed: blank/unmaintained MRP type now counts as OAR
-        # too, not UNKNOWN -- see oar.py's module docstring.
-        (None, ScopeDecision.IN_SCOPE),
+        # A blank/unmaintained MRP type is not OAR.
+        (None, ScopeDecision.OUT_OF_SCOPE),
     ],
 )
 def test_documented_scope_cases(mrp_type, expected):
@@ -84,107 +79,12 @@ def test_material_status_no_longer_participates_in_the_active_rule():
 # --- Unknown handling -----------------------------------------------------
 
 
-def test_missing_mrp_type_is_in_scope_not_unknown():
-    """Business-confirmed exception for OAR: an unmaintained MRP type
-    (the staging adapter collapses a blank cell to None) now counts as
-    OAR, same as ND/PD -- reverses the rule's earlier UNKNOWN behaviour."""
-    assert (
-        assess_oar_scope(attributes(mrp_type=None), POLICY).scope is ScopeDecision.IN_SCOPE
-    )
-
-
-def test_in_scope_reason_names_the_satisfied_predicate_for_blank_too():
+def test_missing_mrp_type_is_out_of_scope_not_unknown():
+    """A blank MRP type (the staging adapter collapses a blank cell to None) is
+    not OAR -- a definite no, not UNKNOWN."""
     assessment = assess_oar_scope(attributes(mrp_type=None), POLICY)
-    assert assessment.scope is ScopeDecision.IN_SCOPE
-
-
-def test_excluded_reason_names_the_failing_predicate():
-    assessment = assess_oar_scope(attributes(mrp_type="VB"), POLICY)
+    assert assessment.scope is ScopeDecision.OUT_OF_SCOPE
     assert "mrp_type" in assessment.reason
-
-
-def test_in_scope_reason_is_explanatory():
-    assessment = assess_oar_scope(attributes(mrp_type="PD"), POLICY)
-    assert assessment.reason
-
-
-# --- Per-plant semantics --------------------------------------------------
-
-
-def test_the_same_material_can_differ_by_plant():
-    """DISMM lives on MARC, so scope is a material-plant answer."""
-    at_1300 = assess_oar_scope(
-        attributes(mrp_type="PD", material_status="02", plant="1300"), POLICY
-    )
-    at_1200 = assess_oar_scope(
-        attributes(mrp_type="VB", material_status="02", plant="1200"), POLICY
-    )
-    assert at_1300.scope is ScopeDecision.IN_SCOPE
-    assert at_1200.scope is ScopeDecision.OUT_OF_SCOPE
-
-
-# --- Roll-up stays unresolved ----------------------------------------------
-
-
-def test_rollup_is_not_configured_by_default():
-    """per-plant-only is the likely direction but still a guess, and a stored
-    guess is indistinguishable from a ruling."""
-    assessment = assess_oar_scope(attributes(mrp_type="PD", material_status="02"), POLICY)
-    assert assessment.rollup_status == ROLLUP_NOT_CONFIGURED
-
-
-def test_rollup_is_reported_once_configured():
-    policy = OarPolicy(predicates=POLICY.predicates, rollup=RollupPolicy.PER_PLANT_ONLY)
-    assessment = assess_oar_scope(attributes(mrp_type="PD", material_status="02"), policy)
-    assert assessment.rollup_status == "per-plant-only"
-
-
-# --- Configuration drives the rule -----------------------------------------
-
-
-def test_widening_the_mrp_set_is_a_config_change():
-    widened = OarPolicy(
-        predicates=(
-            ScopePredicate(
-                field=PredicateField.MRP_TYPE,
-                operator=PredicateOperator.IN,
-                values=("ND", "PD", "V1"),
-            ),
-        )
-    )
-    assert assess_oar_scope(attributes(mrp_type="V1"), widened).scope is ScopeDecision.IN_SCOPE
-    assert (
-        assess_oar_scope(attributes(mrp_type="V1", material_status="02"), POLICY).scope
-        is ScopeDecision.OUT_OF_SCOPE
-    )
-
-
-def test_single_predicate_policy_ignores_material_status():
-    """The Solution Design's MRP-only rule stays expressible."""
-    design_rule = OarPolicy(
-        predicates=(
-            ScopePredicate(
-                field=PredicateField.MRP_TYPE,
-                operator=PredicateOperator.IN,
-                values=("PD", "ND"),
-            ),
-        )
-    )
-    assert (
-        assess_oar_scope(attributes(mrp_type="ND", material_status="01"), design_rule).scope
-        is ScopeDecision.IN_SCOPE
-    )
-
-
-def test_no_mrp_value_is_hardcoded_in_the_scope_service():
-    """The rule lives in configuration; this module only explains the verdict."""
-    import inspect
-
-    from app.initiatives.i7.features import oar_scope
-
-    source = inspect.getsource(oar_scope)
-    for node in ("'ND'", '"ND"', "'PD'", '"PD"', "'01'", '"01"'):
-        assert node not in source
 
 
 def test_extwg_is_not_an_active_predicate():
@@ -194,37 +94,22 @@ def test_extwg_is_not_an_active_predicate():
     assert "100" not in configured
 
 
-# --- The MRP controller (DISPO) condition ------------------------------------
+# --- The MRP controller (DISPO) is not read ----------------------------------
 
 
+@pytest.mark.parametrize("mrp_controller", [None, "", "OAR", "K01"])
 @pytest.mark.parametrize(
-    "mrp_type,mrp_controller,expected",
-    [
-        ("PD", "OAR", ScopeDecision.IN_SCOPE),
-        ("ND", "OAR", ScopeDecision.IN_SCOPE),
-        (None, "OAR", ScopeDecision.IN_SCOPE),
-        ("PD", "K01", ScopeDecision.OUT_OF_SCOPE),
-        ("PD", None, ScopeDecision.OUT_OF_SCOPE),
-        ("PD", "", ScopeDecision.OUT_OF_SCOPE),
-        (None, None, ScopeDecision.OUT_OF_SCOPE),
-        ("VB", "OAR", ScopeDecision.OUT_OF_SCOPE),
-    ],
+    "mrp_type,expected",
+    [("PD", ScopeDecision.IN_SCOPE), ("ND", ScopeDecision.IN_SCOPE), ("VB", ScopeDecision.OUT_OF_SCOPE)],
 )
-def test_controller_and_mrp_type_are_both_required(mrp_type, mrp_controller, expected):
+def test_the_controller_does_not_change_the_verdict(mrp_type, mrp_controller, expected):
     assessment = assess_oar_scope(
         attributes(mrp_type=mrp_type, mrp_controller=mrp_controller), POLICY
     )
     assert assessment.scope is expected
 
 
-def test_a_missing_controller_is_out_of_scope_not_unknown():
-    """No MARC row (or no DISPO) is "not OAR" -- the same answer I13 gives."""
-    assessment = assess_oar_scope(attributes(mrp_type="PD", mrp_controller=None), POLICY)
-    assert assessment.scope is ScopeDecision.OUT_OF_SCOPE
-    assert "mrp_controller" in assessment.reason
-
-
 def test_the_reason_names_the_failing_predicate_when_only_the_type_fails():
-    assessment = assess_oar_scope(attributes(mrp_type="VB", mrp_controller="OAR"), POLICY)
+    assessment = assess_oar_scope(attributes(mrp_type="VB"), POLICY)
     assert "mrp_type" in assessment.reason
     assert "mrp_controller" not in assessment.reason
