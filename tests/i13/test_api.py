@@ -54,6 +54,8 @@ def test_summary_counts_are_internally_consistent() -> None:
         body["fast_moving_count"] + body["slow_moving_count"] + body["non_moving_count"]
         == body["total_oar_positions"]
     )
+    # A material OAR at both plants is two positions but one material.
+    assert 0 < body["unique_oar_materials"] <= body["total_oar_positions"]
 
 
 def test_summary_reports_no_reference_plans_while_the_switch_is_off() -> None:

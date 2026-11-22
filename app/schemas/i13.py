@@ -494,6 +494,9 @@ class I13SummaryResponse(BaseModel):
     #: Generated reference plans behind the plan-based counts; 0 unless
     #: I13_REFERENCE_PLANS_ENABLED is on. See I13Summary.reference_plan_count.
     reference_plan_count: int
+    #: Distinct materials among ``total_oar_positions`` -- a material OAR at
+    #: both plants counts once. Same filters. See I13Summary.unique_oar_materials.
+    unique_oar_materials: int = 0
 
 
 class SnapshotStatusResponse(BaseModel):
