@@ -3,8 +3,7 @@
 Three properties matter most, and each has burned somebody:
 
 * the rule is *configuration* -- changing it needs no code edit;
-* UNKNOWN is not OUT_OF_SCOPE -- 47% of live rows have no MRP type, and folding
-  them into "not OAR" drops half the catalogue silently;
+* a blank MRP type is not OAR (21 Nov 2026) -- it is OUT_OF_SCOPE, never UNKNOWN;
 * EXTWG is retired -- and enforced, not merely documented.
 """
 
@@ -33,11 +32,9 @@ def attributes(
     mrp_type: str | None = None,
     material_status: str | None = None,
     plant: str = "1300",
-    mrp_controller: str | None = "OAR",
+    mrp_controller: str | None = None,
     **extra,
 ) -> MaterialAttributes:
-    """``mrp_controller`` defaults to the OAR code so the MRP-type cases below
-    isolate the DISMM predicate; the controller rule has its own tests."""
     return MaterialAttributes(
         key=MaterialPlantKey(
             material=MaterialIdentity(sap_material_number="000000000010000000"),
@@ -72,87 +69,70 @@ def test_mrp_type_alone_determines_oar_regardless_of_material_status():
     assert decision is ScopeDecision.IN_SCOPE
 
 
-def test_the_active_rule_is_the_controller_and_the_mrp_type_predicates():
+def test_the_active_rule_is_the_mrp_type_predicate_only():
     policy = current_oar_policy()
-    assert [p.field for p in policy.predicates] == [
-        PredicateField.MRP_CONTROLLER,
-        PredicateField.MRP_TYPE,
-    ]
+    assert [p.field for p in policy.predicates] == [PredicateField.MRP_TYPE]
 
 
-# --- The MRP controller (DISPO) condition -----------------------------
+# --- The MRP controller (DISPO) plays no part -------------------------
 
 
-def test_oar_requires_the_oar_controller():
-    """The 2026-10-20 ruling, shared with I13: DISPO = OAR."""
+@pytest.mark.parametrize("controller", [None, "", "OAR", "K01"])
+def test_the_mrp_controller_does_not_affect_the_verdict(controller):
     policy = current_oar_policy()
-    assert policy.evaluate(attributes(mrp_type="PD", mrp_controller="OAR")) is ScopeDecision.IN_SCOPE
-    assert policy.evaluate(attributes(mrp_type="PD", mrp_controller="K01")) is ScopeDecision.OUT_OF_SCOPE
+    assert policy.evaluate(attributes(mrp_type="PD", mrp_controller=controller)) is ScopeDecision.IN_SCOPE
+    assert policy.evaluate(attributes(mrp_type="VB", mrp_controller=controller)) is ScopeDecision.OUT_OF_SCOPE
 
 
-@pytest.mark.parametrize("controller", [None, "", "   "])
-def test_a_blank_controller_is_not_oar_even_with_an_oar_mrp_type(controller):
-    """Unlike DISMM, where blank counts as OAR: a controller is positive
-    evidence, so no controller is no evidence -- OUT_OF_SCOPE, never UNKNOWN."""
-    for mrp_type in ("ND", "PD", None):
-        decision = current_oar_policy().evaluate(
-            attributes(mrp_type=mrp_type, mrp_controller=controller)
-        )
-        assert decision is ScopeDecision.OUT_OF_SCOPE
-
-
-def test_a_blank_mrp_type_is_still_oar_when_the_controller_is_oar():
-    assert current_oar_policy().evaluate(attributes(mrp_type=None)) is ScopeDecision.IN_SCOPE
-
-
-def test_both_predicates_must_hold():
-    policy = current_oar_policy()
-    assert policy.evaluate(attributes(mrp_type="VB", mrp_controller="OAR")) is ScopeDecision.OUT_OF_SCOPE
-    assert policy.evaluate(attributes(mrp_type="ND", mrp_controller="X99")) is ScopeDecision.OUT_OF_SCOPE
-
-
-def test_the_controller_codes_come_from_the_setting():
-    """I07's DISPO list is ``i13_oar_mrp_controllers``. Since 21 Nov 2026 I13
-    no longer reads it -- I13 classifies by MRP type (DISMM ND/PD) alone -- so
-    this pins only I07's side."""
+def test_the_mrp_types_come_from_the_setting(monkeypatch):
+    """I07's DISMM list is ``i7_oar_mrp_types`` -- its own setting, not I13's."""
     from app.core.config import get_settings
 
-    configured = {
-        value
-        for p in current_oar_policy().predicates
-        if p.field is PredicateField.MRP_CONTROLLER
-        for value in p.values
-    }
-    assert configured == set(get_settings().i13_oar_mrp_controller_set)
+    configured = {value for p in current_oar_policy().predicates for value in p.values}
+    assert configured == set(get_settings().i7_oar_mrp_type_set) == {"ND", "PD"}
+
+    monkeypatch.setattr(get_settings(), "i7_oar_mrp_types", "ND")
+    narrowed = current_oar_policy()
+    assert narrowed.evaluate(attributes(mrp_type="ND")) is ScopeDecision.IN_SCOPE
+    assert narrowed.evaluate(attributes(mrp_type="PD")) is ScopeDecision.OUT_OF_SCOPE
+
+
+def test_i13_setting_does_not_move_i7(monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "i13_oar_mrp_types", "VB")
+    assert current_oar_policy().evaluate(attributes(mrp_type="PD")) is ScopeDecision.IN_SCOPE
+    assert current_oar_policy().evaluate(attributes(mrp_type="VB")) is ScopeDecision.OUT_OF_SCOPE
 
 
 def test_a_predicate_cannot_treat_blank_as_both_in_and_out_of_scope():
     with pytest.raises(PydanticValidationError):
         ScopePredicate(
-            field=PredicateField.MRP_CONTROLLER,
+            field=PredicateField.MRP_TYPE,
             operator=PredicateOperator.IN,
-            values=("OAR",),
+            values=("ND",),
             blank_means_in_scope=True,
             blank_means_out_of_scope=True,
         )
 
 
-# --- Unknown handling -------------------------------------------------
+# --- Blank handling ---------------------------------------------------
 
 
-def test_missing_mrp_type_is_in_scope_not_unknown():
-    """Business-confirmed exception for OAR specifically: a genuinely
-    unmaintained MRP type (the staging adapter collapses a blank cell to
-    None -- see ScopePredicate.unknown_values's docstring) now counts as
-    OAR, the same as ND/PD. This reverses the rule's earlier behaviour
-    (blank -> UNKNOWN); see oar.py's module docstring for why."""
-    decision = current_oar_policy().evaluate(attributes(mrp_type=None))
-    assert decision is ScopeDecision.IN_SCOPE
+@pytest.mark.parametrize("mrp_type", [None, "", "   "])
+def test_a_blank_mrp_type_is_not_oar(mrp_type):
+    """21 Nov 2026: a blank DISMM is not OAR -- OUT_OF_SCOPE, never UNKNOWN."""
+    assert current_oar_policy().evaluate(attributes(mrp_type=mrp_type)) is ScopeDecision.OUT_OF_SCOPE
+
+
+def test_mrp_type_matching_is_exact_on_the_staged_value():
+    """The staging adapter trims and upper-cases, so the policy compares as given."""
+    assert current_oar_policy().evaluate(attributes(mrp_type="ND")) is ScopeDecision.IN_SCOPE
 
 
 def test_undocumented_mrp_codes_are_out_of_scope_not_unknown():
     """V1/M0/RP/VI/VH/V2 are present and unmentioned by any ruling. A real value
-    that fails the rule is a definite no; only absence is unknown."""
+    that fails the rule is a definite no."""
     for code in ("V1", "M0", "RP", "VI", "VH", "V2"):
         assert current_oar_policy().evaluate(
             attributes(mrp_type=code)

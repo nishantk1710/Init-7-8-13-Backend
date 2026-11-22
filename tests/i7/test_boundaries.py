@@ -136,17 +136,15 @@ def test_mrp_type_values_do_not_leak_outside_the_oar_policy():
 
 
 def test_the_oar_rule_lives_in_exactly_one_module():
-    """MRP_CONTROLLER in {OAR} AND MRP_TYPE in {ND, PD} -- material_status does
-    not participate in the active predicates. The controller codes are the
-    shared setting I13 also reads, so they are read from it, not restated."""
+    """MRP_TYPE in {ND, PD} only -- neither the controller nor material_status
+    participates. The codes are I07's own setting, so they are read from it, not
+    restated."""
     from app.core.config import get_settings
     from app.initiatives.i7.policy.oar import PredicateField, current_oar_policy
 
     by_field = {p.field: set(p.values) for p in current_oar_policy().predicates}
-    assert by_field == {
-        PredicateField.MRP_CONTROLLER: set(get_settings().i13_oar_mrp_controller_set),
-        PredicateField.MRP_TYPE: {"ND", "PD"},
-    }
+    assert by_field == {PredicateField.MRP_TYPE: set(get_settings().i7_oar_mrp_type_set)}
+    assert by_field[PredicateField.MRP_TYPE] == {"ND", "PD"}
 
 
 # --- Service levels are never guessed ---------------------------------

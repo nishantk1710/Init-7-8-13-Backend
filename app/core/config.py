@@ -1078,10 +1078,10 @@ class Settings(BaseSettings):
     # deletion (LVORM) are left out as before. See
     # app/shared/material_scope/policy.py. Part of the I13 snapshot fingerprint.
     i13_oar_mrp_types: str = "ND,PD"
-    # MARC.DISPO codes for I07's OAR policy only (app/initiatives/i7/policy/
-    # oar.py), which still ANDs DISPO = OAR with its own DISMM rule. I13 no
-    # longer reads this (21 Nov 2026).
-    i13_oar_mrp_controllers: str = "OAR"
+    # I07's OAR rule (21 Nov 2026): the MRP type, MARC.DISMM, comma-separated.
+    # Its own setting, so I07 can be retuned without touching I13. A blank DISMM,
+    # and every code not listed, is not OAR. See app/initiatives/i7/policy/oar.py.
+    i7_oar_mrp_types: str = "ND,PD"
     # A material flagged for deletion in SAP -- MARC-LVORM (at the plant) or
     # MARA-LVORM (client level) = X -- is never OAR, whatever its MRP controller
     # (UAT, 19 Oct 2026). See app/shared/material_scope/deletion.py.
@@ -1491,9 +1491,9 @@ class Settings(BaseSettings):
         return frozenset(code.strip().upper() for code in self.i13_oar_mrp_types.split(",") if code.strip())
 
     @property
-    def i13_oar_mrp_controller_set(self) -> frozenset[str]:
-        """Normalised MRP controller (DISPO) codes I07's OAR policy requires."""
-        return frozenset(code.strip().upper() for code in self.i13_oar_mrp_controllers.split(",") if code.strip())
+    def i7_oar_mrp_type_set(self) -> frozenset[str]:
+        """Normalised MRP type (DISMM) codes that make a material-plant OAR in I07."""
+        return frozenset(code.strip().upper() for code in self.i7_oar_mrp_types.split(",") if code.strip())
 
     @property
     def i13_non_order_doc_type_set(self) -> frozenset[str]:

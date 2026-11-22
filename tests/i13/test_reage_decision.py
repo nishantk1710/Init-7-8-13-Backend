@@ -120,8 +120,6 @@ def test_changing_which_materials_are_oar_rebuilds(monkeypatch):
     assert base != _fingerprint(monkeypatch, "sql", day, i13_exclude_deleted_materials=False)
     # Same codes, different spelling: the same population, so no rebuild.
     assert base == _fingerprint(monkeypatch, "sql", day, i13_oar_mrp_types=" pd , nd ")
-    # I07's DISPO list is not the I13 rule (21 Nov 2026), so it never rebuilds I13.
-    assert base == _fingerprint(monkeypatch, "sql", day, i13_oar_mrp_controllers="OAR,POD")
 
 
 def test_a_new_record_layout_rebuilds_the_sql_store(monkeypatch):
