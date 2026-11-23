@@ -282,12 +282,14 @@ def _peer_details(peers: Sequence[PeerInput], config: OarBlendPolicy) -> list[Pe
             and peer.annual_consumption > 0
             and peer.rop is not None
             and peer.rop > 0
-            and peer.safety_stock is not None
             and peer.max_stock is not None
         )
+        # A peer's safety stock is NOT a condition for using it (safety stock is deactivated, and a donor no longer
+        # needs one): ROP and max stock decide. Without one it simply adds nothing to the safety stock figure.
         if usable:
             monthly_use = peer.annual_consumption / 12.0
-            r_rop, r_ss, r_max = peer.rop / monthly_use, peer.safety_stock / monthly_use, peer.max_stock / peer.rop
+            r_rop, r_max = peer.rop / monthly_use, peer.max_stock / peer.rop
+            r_ss = peer.safety_stock / monthly_use if peer.safety_stock is not None else None
         else:
             r_rop = r_ss = r_max = None
         details.append(
@@ -345,13 +347,15 @@ def estimate(inputs: BlendInput, config: OarBlendPolicy, seed: int) -> BlendResu
     if used:
         weight_sum = sum(d.weight for d in used)
         r_rop = sum(d.weight * d.r_rop for d in used) / weight_sum
-        r_ss = sum(d.weight * d.r_ss for d in used) / weight_sum
+        with_ss = [d for d in used if d.r_ss is not None]
+        r_ss = sum(d.weight * d.r_ss for d in with_ss) / sum(d.weight for d in with_ss) if with_ss else None
         r_max = sum(d.weight * d.r_max for d in used) / weight_sum
         quality = (sum(d.weight * d.similarity for d in used) / weight_sum) ** 2
-        rop_peer, ss_peer = r_rop * monthly_use, r_ss * monthly_use
+        rop_peer = r_rop * monthly_use
+        ss_peer = r_ss * monthly_use if r_ss is not None else None
         w_own = inputs.n_events / (inputs.n_events + config.credibility_k * quality) if inputs.n_events > 0 else 0.0
         rop = w_own * rop_own + (1.0 - w_own) * rop_peer
-        ss = w_own * ss_own + (1.0 - w_own) * ss_peer
+        ss = w_own * ss_own + (1.0 - w_own) * ss_peer if ss_peer is not None else ss_own
         ratio = max(r_max, config.max_ratio_floor)
         status = BlendStatus.BLENDED
     else:
@@ -450,8 +454,12 @@ def explain_split(result: BlendResult) -> str:
     return f"Reorder level {result.rop}: from this material's own usage; no similar material could be scaled to its demand."
 
 
-def explain(result: BlendResult) -> str:
+def explain(result: BlendResult, include_safety_stock: bool = True) -> str:
     """The recommendation in plain words, one short paragraph per line. Built from the figures, not written by a model.
+
+    ``include_safety_stock=False`` (safety stock deactivated, ``PolicyDocument.safety_stock.oar_enabled``) leaves
+    out the sentence about a safety stock being kept: none is recommended, so none is described. The blend's own
+    arithmetic is not touched.
 
     Replaces the vague "confidence may be thin": it says how much came from the material's own usage and how much
     from similar materials, what was done to the numbers afterwards, and the lead time used. A guardrail is said
@@ -486,7 +494,9 @@ def explain(result: BlendResult) -> str:
         )
 
     stock = (
-        "No extra safety stock is kept."
+        ""
+        if not include_safety_stock
+        else "No extra safety stock is kept."
         if result.ss == 0
         else f"A safety stock of {_units(result.ss)} is kept to protect against unexpected demand or delays in supply."
     )
@@ -502,7 +512,7 @@ def explain(result: BlendResult) -> str:
     if cover:
         months = cover.removeprefix("flag_max_above_").split("_months")[0]
         notes.append(f"That is more than {months} months of this material's usage, so it is worth a check.")
-    lines.append(" ".join([stock, maximum, *notes]))
+    lines.append(" ".join(part for part in (stock, maximum, *notes) if part))
 
     if result.lead_time_days is not None:
         assumed = _LEAD_TIME_ASSUMED_WORDS.get(result.lead_time_source)

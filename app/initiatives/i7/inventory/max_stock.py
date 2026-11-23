@@ -40,6 +40,10 @@ class MaxStockContext(NamedTuple):
     ordering_cost: Decimal | None
     holding_cost_rate: Decimal | None
     review_period_months: Decimal | None
+    raw_rop: Decimal | None = None
+    """The reorder point before rounding (``forecast_rate x LT`` when safety stock is not used). The review-period
+    strategy adds the review-period demand to this when it is given, so ``Max = ceil(rate x (LT + T))`` exactly;
+    without it the rounded ``rop`` is used, as before."""
 
 
 class MaxStockStrategy(Protocol):
@@ -182,7 +186,10 @@ class ReviewPeriodMaxStockStrategy:
             )
 
         coverage = context.forecast_rate * context.review_period_months
-        raw = Decimal(context.rop) + coverage
+        # The unrounded reorder point when the caller has one, so the one ceil() at the end is the only rounding:
+        # ceil(rate x LT + rate x T), not ceil(ceil(rate x LT) + rate x T).
+        base = context.raw_rop if context.raw_rop is not None else Decimal(context.rop)
+        raw = base + coverage
 
         return MaxStockResult(
             status=CalculationStatus.SUCCESS,
@@ -192,6 +199,7 @@ class ReviewPeriodMaxStockStrategy:
             trace=(
                 ("strategy", self.name),
                 ("rop", str(context.rop)),
+                *((("raw_rop", str(context.raw_rop)),) if context.raw_rop is not None else ()),
                 ("forecast_rate", str(context.forecast_rate)),
                 ("review_period_months", str(context.review_period_months)),
                 ("review_period_coverage", str(coverage)),

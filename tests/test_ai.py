@@ -59,9 +59,7 @@ _I07_FIELDS: dict[str, str] = {
     "annual_consumption": "14 units",
     "lead_time_days": "112",
     "current_rop": "4",
-    "current_safety_stock": "2",
     "recommended_rop": "9",
-    "recommended_safety_stock": "5",
 }
 
 client = TestClient(app)
@@ -705,7 +703,12 @@ class TestPromptedCompletion:
 
     def test_a_pinned_version_is_honoured(self, provider: _RecordingProvider) -> None:
         result = complete_with_prompt(
-            "i07_recommendation_rationale", version=1, **_I07_FIELDS
+            # v1 still asks for safety stock; the latest version no longer does.
+            "i07_recommendation_rationale",
+            version=1,
+            current_safety_stock="2",
+            recommended_safety_stock="5",
+            **_I07_FIELDS,
         )
         assert result.prompt_version == 1
 
@@ -954,9 +957,7 @@ class TestLiveProvider:
             annual_consumption="14",
             lead_time_days="45",
             current_rop="4",
-            current_safety_stock="2",
             recommended_rop="9",
-            recommended_safety_stock="6",
         )
         result = get_llm().complete([Message("user", rendered)], max_tokens=300)
 

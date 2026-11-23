@@ -257,7 +257,9 @@ def test_empty_file_raises(tmp_path):
 # --- default_policy(): the one place the mock reaches a real pipeline run ---
 
 
-def test_default_policy_leaves_max_stock_unchosen_when_flag_is_unset(monkeypatch):
+def test_default_policy_uses_the_review_period_with_one_month_when_the_flag_is_unset(monkeypatch):
+    """T = 1 month for every tier is the default, with no dev flag. (A bare PolicyDocument() is still unconfigured:
+    see test_default_policy_document_still_has_no_max_stock_strategy.)"""
     monkeypatch.delenv("I7_DEV_MOCK_MAX_STOCK", raising=False)
     from app.core.config import get_settings
 
@@ -266,10 +268,20 @@ def test_default_policy_leaves_max_stock_unchosen_when_flag_is_unset(monkeypatch
         from app.initiatives.i7.policy.dev_fixtures import default_policy
 
         policy = default_policy()
-        assert not policy.max_stock.is_configured
-        assert isinstance(strategy_for(policy.max_stock), NotConfiguredMaxStockStrategy)
+        assert policy.max_stock.is_configured and policy.max_stock.strategy == "review_period"
+        assert isinstance(strategy_for(policy.max_stock), ReviewPeriodMaxStockStrategy)
+        assert dict(policy.max_stock.review_period_months) == {
+            Criticality.CRITICAL: 1.0, Criticality.IMPACT: 1.0, Criticality.INSURANCE: 1.0, Criticality.NORMAL: 1.0,
+        }
+        assert policy.status is PolicyStatus.DRAFT  # still not a signed policy
     finally:
         get_settings.cache_clear()
+
+
+def test_the_default_and_the_dev_mock_give_the_same_periods(monkeypatch):
+    from app.initiatives.i7.policy.dev_fixtures import default_max_stock_policy
+
+    assert dict(default_max_stock_policy().review_period_months) == dict(load_mock_max_stock_policy().review_period_months)
 
 
 def test_default_policy_loads_the_mock_when_flag_is_true(monkeypatch):
@@ -291,7 +303,7 @@ def test_the_two_dev_flags_are_independent(monkeypatch):
     """Setting the Max Stock flag must not quietly configure a service level,
     and vice versa -- each answers its own unresolved policy."""
     from app.core.config import get_settings
-    from app.initiatives.i7.policy.dev_fixtures import default_policy
+    from app.initiatives.i7.policy.dev_fixtures import default_max_stock_policy, default_policy
 
     monkeypatch.delenv("I7_DEV_MOCK_SERVICE_LEVEL", raising=False)
     monkeypatch.setenv("I7_DEV_MOCK_MAX_STOCK", "true")
@@ -309,7 +321,8 @@ def test_the_two_dev_flags_are_independent(monkeypatch):
     try:
         policy = default_policy()
         assert policy.service_level.is_configured
-        assert not policy.max_stock.is_configured
+        # the service-level flag alone does not touch Max Stock: it stays the default (review period, 1 month)
+        assert policy.max_stock == default_max_stock_policy()
     finally:
         get_settings.cache_clear()
 

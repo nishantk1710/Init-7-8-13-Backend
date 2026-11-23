@@ -207,7 +207,7 @@ def build_factors(
                     "Demand for this material has been falling: it was used in far fewer "
                     "months recently than before, and not at all in the latest months. The "
                     "forecast therefore lowers while demand stays away, which lowers the "
-                    "reorder point and safety stock."
+                    "reorder point."
                 ),
             )
         )

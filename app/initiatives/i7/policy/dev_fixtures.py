@@ -176,6 +176,28 @@ def load_mock_max_stock_policy(path: Path | str | None = None) -> MaxStockStrate
     )
 
 
+DEFAULT_REVIEW_PERIOD_MONTHS = 1.0
+"""The review period T, in months, the default policy uses for every tier: stock is reviewed monthly. Kept at 1 by
+decision of the requester (2026-11-23). It is a code constant on purpose: ``T`` is part of what a stored Max was
+calculated from, and a value that could be edited without a code change would not re-key a run."""
+
+_REVIEW_PERIOD_TIERS = (Criticality.CRITICAL, Criticality.IMPACT, Criticality.INSURANCE, Criticality.NORMAL)
+"""Every tier but OBSOLETE, which ``inventory/service.py`` short-circuits before Max Stock is reached."""
+
+
+def default_max_stock_policy() -> MaxStockStrategy:
+    """The Max Stock strategy every pipeline run uses unless the dev mock replaces it:
+    the review-period strategy with ``T = DEFAULT_REVIEW_PERIOD_MONTHS`` (1 month) for every tier.
+
+    ``Max = ceil(forecast_rate x (LT + T))`` while stock-item safety stock is deactivated. Used by
+    :func:`default_policy` only: a bare ``PolicyDocument()`` still has no strategy, so nothing that builds one
+    by hand changes."""
+    return MaxStockStrategy(
+        strategy="review_period",
+        review_period_months=tuple((tier, DEFAULT_REVIEW_PERIOD_MONTHS) for tier in _REVIEW_PERIOD_TIERS),
+    )
+
+
 def default_policy():
     """The policy ``run_forecasting`` / ``run_inventory_calculations`` /
     ``run_oar_similarity`` / ``generate_recommendations`` fall back to when no
@@ -220,13 +242,24 @@ def default_policy():
     from app.core.config import get_settings
     from app.initiatives.i7.policy.document import PolicyDocument
 
+    from app.initiatives.i7.policy.thresholds import SafetyStockPolicy
+
     settings = get_settings()
-    overrides = {}
+    # Safety stock is deactivated unless a flag turns it back on. Not part of policy_id: each stage keys its own
+    # run identity on these flags (formula_version_for / algorithm_version_for), so flipping one flag does not
+    # re-key the stages it does not touch.
+    overrides = {
+        "safety_stock": SafetyStockPolicy(
+            stock_item_enabled=settings.i7_stock_item_safety_stock_enabled,
+            oar_enabled=settings.i7_oar_safety_stock_enabled,
+        )
+    }
     if settings.i7_dev_mock_service_level:
         overrides["service_level"] = load_mock_service_level_policy()
         overrides["policy_id"] = "i07-default-dev-mock"
-    if settings.i7_dev_mock_max_stock:
-        overrides["max_stock"] = load_mock_max_stock_policy()
-    if not overrides:
-        return PolicyDocument()
+    # Review-period Max Stock with T = 1 month is the default. The dev mock (same values, read from its YAML) still
+    # takes over when its flag is set, so a developer can change the periods without touching code.
+    overrides["max_stock"] = (
+        load_mock_max_stock_policy() if settings.i7_dev_mock_max_stock else default_max_stock_policy()
+    )
     return PolicyDocument(**overrides)

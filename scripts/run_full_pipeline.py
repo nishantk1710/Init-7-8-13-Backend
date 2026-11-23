@@ -159,6 +159,8 @@ def report_policy() -> object:
             ("I7_DEV_MOCK_MAX_STOCK", os.environ.get("I7_DEV_MOCK_MAX_STOCK", "(unset)")),
             ("policy", f"{policy.policy_id} v{policy.policy_version}"),
             ("policy status", policy.status.value),
+            ("stock-item safety stock", "ON" if policy.safety_stock.stock_item_enabled else "off (deactivated)"),
+            ("OAR safety stock", "ON" if policy.safety_stock.oar_enabled else "off (deactivated)"),
             ("service level configured", policy.service_level.is_configured),
             ("max stock strategy", policy.max_stock.strategy or "(not configured)"),
             ("min similarity", policy.similarity.minimum_similarity),

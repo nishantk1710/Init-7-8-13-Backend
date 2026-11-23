@@ -85,6 +85,18 @@ stored result is never compared with one built under different rules:
   shortlist is unchanged.
 """
 
+NO_SAFETY_STOCK_SUFFIX = "+no-ss"
+"""Appended to ``ALGORITHM_VERSION`` for a run made with the OAR safety stock estimate deactivated
+(``PolicyDocument.safety_stock.oar_enabled`` false): no SS estimate and a Max floor of ROP. The run key and the
+stored run both use it, so a run made under one setting is never reused under the other, and both can exist for the
+same inputs. ``ALGORITHM_VERSION`` itself is unchanged, so re-enabling safety stock restores the previous identity."""
+
+
+def algorithm_version_for(policy) -> str:
+    """The OAR run identity for ``policy``'s safety stock setting."""
+    return ALGORITHM_VERSION if policy.safety_stock.oar_enabled else ALGORITHM_VERSION + NO_SAFETY_STOCK_SUFFIX
+
+
 FEATURE_NAMES = (
     "material_group",
     "equipment_type",

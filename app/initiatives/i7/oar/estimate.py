@@ -81,16 +81,42 @@ _AUDIT_PLACES = Decimal("0.0001")
 MAX_FLOOR_REASON = "MAX_RAISED_TO_ROP_PLUS_SAFETY_STOCK"
 """The trace reason recorded when the floor raised the Max."""
 
+MAX_FLOOR_ROP_ONLY_REASON = "MAX_RAISED_TO_ROP"
+"""The trace reason when safety stock is deactivated and the floor (the ROP alone) raised the Max."""
+
 
 def apply_max_floor(
-    rop: int | None, safety_stock: int | None, weighted_max: int | None
+    rop: int | None,
+    safety_stock: int | None,
+    weighted_max: int | None,
+    include_safety_stock: bool = True,
 ) -> tuple[int | None, tuple[tuple[str, str], ...]]:
     """``(final_max, trace_entries)`` -- Max raised to ROP + safety stock if it is below.
 
     Only when all three are present (zero is a present value). Otherwise the
     weighted Max is returned as it was -- ``None`` stays ``None`` -- and the
     trace says the floor was not evaluated, rather than inventing a value.
+
+    ``include_safety_stock=False`` (safety stock deactivated, see ``PolicyDocument.safety_stock``): the floor is
+    the ROP alone, ``Max = max(weighted Max, ROP)``, and ``safety_stock`` is not looked at. This keeps
+    ``ROP <= Max`` without a safety stock term. The default is the previous behaviour.
     """
+    if not include_safety_stock:
+        if rop is None or weighted_max is None:
+            return weighted_max, (
+                ("max_stock_weighted", "none" if weighted_max is None else str(weighted_max)),
+                ("max_stock_floor_applied", "false"),
+                ("max_stock_floor_reason", "NOT_EVALUATED_MISSING_INPUT"),
+            )
+        raised = weighted_max < rop
+        final = rop if raised else weighted_max
+        return final, (
+            ("max_stock_weighted", str(weighted_max)),
+            ("max_stock_floor", str(rop)),
+            ("max_stock_final", str(final)),
+            ("max_stock_floor_applied", "true" if raised else "false"),
+            ("max_stock_floor_reason", MAX_FLOOR_ROP_ONLY_REASON if raised else "NOT_NEEDED"),
+        )
     if rop is None or safety_stock is None or weighted_max is None:
         return weighted_max, (
             ("max_stock_weighted", "none" if weighted_max is None else str(weighted_max)),
@@ -173,8 +199,14 @@ def calculate(
     minimum_similarity: Decimal | None = None,
     strategy: str = STRATEGY_MEDIAN,
     material_difference_ratio: Decimal = DEFAULT_MATERIAL_DIFFERENCE_RATIO,
+    include_safety_stock: bool = True,
 ) -> OarEstimate:
     """Weighted SS, ROP and Max from the neighbours that have them.
+
+    ``include_safety_stock=False`` (``PolicyDocument.safety_stock.oar_enabled`` false): no safety stock is
+    estimated -- the donors' safety stock is not aggregated and the estimate carries ``None`` for it -- and the
+    Max floor is the ROP alone. Donor selection, weights, the weighted median and ROP / Max are unchanged. The
+    default is the previous behaviour, so the safety stock estimate stays available for reactivation.
 
     ``strategy`` is ``weighted_median`` (default) or ``weighted_mean``; both are always computed and
     recorded, the strategy only names which one becomes the estimate.
@@ -254,7 +286,12 @@ def calculate(
     comparison: list[tuple[str, str]] = [("estimator", strategy)]
     audit: list[FieldAudit] = []
 
-    for attribute in ("safety_stock", "rop", "max_stock"):
+    attributes = ("safety_stock", "rop", "max_stock") if include_safety_stock else ("rop", "max_stock")
+    if not include_safety_stock:
+        results["safety_stock"] = None
+        detail.append(("safety_stock_status", "not_recommended"))
+
+    for attribute in attributes:
         pairs = _pairs(eligible, attribute)
         mean = weighted_mean(pairs)
         median = weighted_median(pairs)
@@ -296,7 +333,7 @@ def calculate(
         )
 
     results["max_stock"], floor_trace = apply_max_floor(
-        results["rop"], results["safety_stock"], results["max_stock"]
+        results["rop"], results["safety_stock"], results["max_stock"], include_safety_stock
     )
     # The floor's record goes ahead of everything else, then the estimator audit, then the per-field
     # arithmetic: the stored trace is cut at a fixed length, and the entries an approver reads must

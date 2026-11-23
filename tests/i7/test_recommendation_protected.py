@@ -83,7 +83,7 @@ def test_a_protected_material_plant_is_not_built_explained_or_written(monkeypatc
         explained.extend(item.sap_material_number for item in built)
         return [RationaleResult(text="why", source="DETERMINISTIC_FALLBACK") for _ in built]
 
-    def to_row(item, outcome):
+    def to_row(item, outcome, policy=None):
         return {
             "sap_material_number": item.sap_material_number,
             "sap_plant_code": item.sap_plant_code,

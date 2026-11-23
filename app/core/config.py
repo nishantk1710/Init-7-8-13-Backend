@@ -644,6 +644,17 @@ class Settings(BaseSettings):
     # blocked by an unsigned service level.
     i7_dev_mock_max_stock: bool = False
 
+    # --- Safety stock recommendation (I07) -- DEACTIVATED by default, not removed. ---
+    # The safety stock calculation code and the SAP source data are kept. These two switches turn the old
+    # behaviour back on per category; they are read once per run, through PolicyDocument.safety_stock, and each
+    # stage keys its run identity on them so a run made under one setting is never reused under another.
+    #   stock item: ON restores ROP = E[LTD] + SS and Max = SS + EOQ / ROP + rate x T; OFF (default) gives
+    #               ROP = ceil(rate x LT) and Max = ceil(rate x (LT + T)) with no SS recommendation.
+    #   OAR:        ON restores the weighted-median SS and the ROP + SS Max floor; OFF (default) gives no SS
+    #               estimate and a Max floor of ROP.
+    i7_stock_item_safety_stock_enabled: bool = False
+    i7_oar_safety_stock_enabled: bool = False
+
     # --- Sign-in: Microsoft Entra ID access tokens (app/core/security.py). ---
     # Off by default, and off locally and in tests: with it off every request is
     # served as today -- the author comes from the X-Actor-Id header and no role
