@@ -52,6 +52,7 @@ from app.initiatives.i7.oar.text_similarity import (
 )
 from app.initiatives.i7.oar.types import (
     ALGORITHM_VERSION,
+    algorithm_version_for,
     CandidateAttributes,
     CombinedScore,
     DimensionScore,
@@ -288,6 +289,9 @@ def summarise_neighbours(
         minimum_similarity=minimum_similarity,
         strategy=policy.similarity.estimator,
         material_difference_ratio=Decimal(str(policy.similarity.estimator_material_difference_ratio)),
+        # Safety stock deactivated: no SS estimate and a Max floor of ROP. This is the one place a run and a
+        # recalculation (a similar material removed or restored) both get their estimate, so both follow it.
+        include_safety_stock=policy.safety_stock.oar_enabled,
     )
     best = max(
         (n.score.combined for n in neighbours if n.score.combined is not None),
@@ -677,7 +681,7 @@ def run_oar_similarity(
                 OarRun.inventory_run_id == inventory_run_id,
                 OarRun.policy_id == policy.policy_id,
                 OarRun.policy_version == policy.policy_version,
-                OarRun.algorithm_version == ALGORITHM_VERSION,
+                OarRun.algorithm_version == algorithm_version_for(policy),
                 OarRun.embedding_model_version == embedding_version,
                 OarRun.retrieval_config == config.describe(),
                 OarRun.status == STATUS_SUCCEEDED,
@@ -707,7 +711,7 @@ def run_oar_similarity(
             inventory_run_id=inventory_run_id,
             policy_id=policy.policy_id,
             policy_version=policy.policy_version,
-            algorithm_version=ALGORITHM_VERSION,
+            algorithm_version=algorithm_version_for(policy),
             embedding_model=provider.model_name if provider.is_available else None,
             embedding_model_version=embedding_version,
             structured_weight=Decimal(str(policy.similarity.structural_weight)),

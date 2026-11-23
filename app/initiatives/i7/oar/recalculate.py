@@ -125,6 +125,9 @@ def recalculate(
 def check_policy_matches_run(run: OarRun, policy: PolicyDocument) -> None:
     """The estimate depends on the policy (minimum neighbours, estimator, service level), so a recalculation
     under a different one than the run's would not be the run's own answer with a donor removed."""
+    # The safety stock setting is deliberately NOT compared. Removing a similar material from a recommendation made
+    # by a run that still holds safety stock figures must keep working: the recalculation uses the run's stored
+    # neighbours and the CURRENT setting, so with the estimate off it gives ROP and Max (and no safety stock).
     if run.policy_id != policy.policy_id or run.policy_version != policy.policy_version:
         raise PolicyChangedError(
             f"OAR run {run.id} was made under policy {run.policy_id} v{run.policy_version}, not "

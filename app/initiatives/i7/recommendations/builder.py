@@ -20,6 +20,7 @@ from app.initiatives.i7.contracts import Criticality
 from app.initiatives.i7.contracts.enums import ScopeDecision
 from app.initiatives.i7.contracts.recommendation import RecommendationFactor
 from app.initiatives.i7.inventory import service_level as service_level_module
+from app.initiatives.i7.inventory.types import CalculationStatus
 from app.initiatives.i7.oar import demand_check
 from app.initiatives.i7.recommendations import explanation
 from app.initiatives.i7.recommendations.conversion import evaluate as evaluate_conversion
@@ -207,6 +208,12 @@ def build_normal_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecomm
     safety_stock_ok = row.safety_stock_status in _OK_STATUSES
     rop_ok = row.rop_status in _OK_STATUSES
     max_ok = row.max_stock_status in _OK_STATUSES
+    # Safety stock deactivated for stock items: the inventory stage recorded it as not applicable (never a zero),
+    # so it is neither required for READY_FOR_REVIEW nor a reason to block. Read from the row's own status, not
+    # from a setting, so a row calculated under the other setting is still judged by the rule it was made under.
+    safety_stock_disabled = (
+        row.safety_stock_status == CalculationStatus.NOT_APPLICABLE_SAFETY_STOCK_DISABLED.value
+    )
 
     # A month of the demand window is missing or incomplete in the SAP extract
     # (features.consumption_window). Whatever the inventory stage produced, it
@@ -221,10 +228,17 @@ def build_normal_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecomm
         status = LifecycleStatus.NOT_EVALUABLE
         blocking_reason = MISSING_DATA_REASON
         trace = [("blocked_status", MISSING_DATA_WINDOW), ("reason", blocking_reason)]
-    elif safety_stock_ok and rop_ok:
+    elif rop_ok and (safety_stock_ok or safety_stock_disabled):
         status = LifecycleStatus.READY_FOR_REVIEW
         blocking_reason = None
         trace = _trace_from_row(row, _NORMAL_TRACE_FIELDS)
+    elif safety_stock_disabled:
+        status = LifecycleStatus.NOT_EVALUABLE
+        blocking_reason = row.detail or f"rop status={row.rop_status}"
+        trace = [
+            ("blocked_status", row.rop_status),
+            ("reason", blocking_reason),
+        ]
     else:
         status = LifecycleStatus.NOT_EVALUABLE
         blocking_reason = (
@@ -268,7 +282,9 @@ def build_normal_recommendation(row: Any, policy: PolicyDocument) -> BuiltRecomm
         # service level for this material," immune to whatever policy is
         # active when a later caller re-runs generation (e.g. DEV mock
         # toggled off, or a reused/idempotent recommendation).
-        service_level_configured=row.service_level is not None,
+        # With safety stock deactivated no service level is needed, so its absence is not a reason to say
+        # "Blocked" (which the Value change column also reads as "not computed").
+        service_level_configured=safety_stock_disabled or row.service_level is not None,
         recommended_rop=row.rop if rop_ok else None,
         current_rop=row.current_reorder_point,
         is_oar=False,
@@ -412,7 +428,9 @@ def _blend_factors(
     return tuple(factors)
 
 
-def _blend_entries(row: Any, blended: blend_module.BlendResult) -> list[tuple[str, str]]:
+def _blend_entries(
+    row: Any, blended: blend_module.BlendResult, include_safety_stock: bool = True
+) -> list[tuple[str, str]]:
     """The blend's own working, for the trace: the split, both estimates, the lead time and what was guarded."""
 
     def fmt(value: float | None) -> str:
@@ -439,10 +457,10 @@ def _blend_entries(row: Any, blended: blend_module.BlendResult) -> list[tuple[st
         ("issue_count", str(blended.issue_count)),
         ("guardrails_applied", ",".join(blended.guardrails_applied) or "none"),
         ("guardrails_not_applied", ",".join(g.split(":")[0] for g in blended.guardrails_not_applied)),
-        ("similarity_safety_stock", str(row.oar_safety_stock)),
+        *((("similarity_safety_stock", str(row.oar_safety_stock)),) if row.oar_safety_stock is not None else ()),
         ("similarity_rop", str(row.oar_rop)),
         ("similarity_max_stock", str(row.oar_max_stock)),
-        ("blend_summary", blend_module.explain(blended)),
+        ("blend_summary", blend_module.explain(blended, include_safety_stock)),
     ]
 
 
@@ -465,6 +483,11 @@ def build_oar_recommendation(
         rec_ss, rec_rop, rec_max = Decimal(blended.ss), Decimal(blended.rop), Decimal(blended.max_stock)
     else:
         rec_ss, rec_rop, rec_max = row.oar_safety_stock, row.oar_rop, row.oar_max_stock
+    if not policy.safety_stock.oar_enabled:
+        # Safety stock is deactivated: no new SS recommendation, whatever the stored OAR run holds (a run made
+        # before the switch may still carry one) and whether or not the blend sized the material. ``None``, never
+        # 0. ROP and Max are untouched; the blend's own Max does not use safety stock.
+        rec_ss = None
 
     # Similarity evidence being available is a different fact from the
     # recommendation being reviewable. A human can see *why* a material is
@@ -510,13 +533,13 @@ def build_oar_recommendation(
     if estimate_ok:
         trace.extend(
             [
-                ("safety_stock", str(rec_ss)),
+                *((("safety_stock", str(rec_ss)),) if rec_ss is not None else ()),
                 ("rop", str(rec_rop)),
                 ("max_stock", str(rec_max)),
             ]
         )
         if blended is not None:
-            trace.extend(_blend_entries(row, blended))
+            trace.extend(_blend_entries(row, blended, policy.safety_stock.oar_enabled))
         else:
             trace.extend(_max_floor_entries(getattr(row, "estimate_trace", None)))
             trace.extend(_estimator_entries(getattr(row, "estimate_trace", None)))
@@ -589,7 +612,9 @@ def build_oar_recommendation(
         forecast_rate=None,
         lead_time_method=lead_time_method,
         safety_stock_method=(
-            BLEND_METHOD if blended is not None else "similarity_weighted" if estimate_ok else None
+            BLEND_METHOD
+            if blended is not None
+            else "similarity_weighted" if (estimate_ok and rec_ss is not None) else None
         ),
         max_stock_strategy=BLEND_MAX_STRATEGY if blended is not None else None,
         confidence=row.confidence,

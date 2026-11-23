@@ -32,9 +32,10 @@ class ApprovalActionRequest(BaseModel):
     new_rop: int | None = Field(default=None, ge=0)
     new_safety_stock: int | None = Field(default=None, ge=0)
     new_max_stock: int | None = Field(default=None, ge=0)
-    """The values an ``ADJUST`` puts in place of the recommended ones -- all three, required for ADJUST
-    and ignored by every other action. Whole numbers, zero or more, with safety stock <= ROP <= max
-    (checked in ``ledger.apply_approval_action``)."""
+    """The values an ``ADJUST`` puts in place of the recommended ones: ``new_rop`` and ``new_max_stock`` are
+    required for ADJUST (ignored by every other action), ``new_safety_stock`` is optional. Whole numbers, zero or
+    more, with ROP <= max, and safety stock <= ROP when a safety stock is given (checked in
+    ``ledger.apply_approval_action``). Left out, the recommended safety stock is not touched -- never set to 0."""
 
 
 class SubmitRequest(BaseModel):

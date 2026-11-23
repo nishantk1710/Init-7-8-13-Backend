@@ -96,9 +96,7 @@ def _normal_context(built: "BuiltRecommendation") -> dict[str, str]:
         "annual_consumption": _fmt(built.forecast_rate),
         "lead_time_days": _fmt(built.lead_time_days),
         "current_rop": _fmt(built.current_rop),
-        "current_safety_stock": _fmt(built.current_safety_stock),
         "recommended_rop": _fmt(built.recommended_rop),
-        "recommended_safety_stock": _fmt(built.recommended_safety_stock),
     }
 
 
@@ -121,9 +119,7 @@ def _oar_context(built: "BuiltRecommendation") -> dict[str, str]:
         "neighbour_count": _fmt(built.oar_neighbour_count),
         "best_similarity": _fmt(built.oar_best_similarity),
         "current_rop": _fmt(built.current_rop),
-        "current_safety_stock": _fmt(built.current_safety_stock),
         "recommended_rop": _fmt(built.recommended_rop),
-        "recommended_safety_stock": _fmt(built.recommended_safety_stock),
     }
 
 

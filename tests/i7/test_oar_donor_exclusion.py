@@ -40,7 +40,7 @@ from app.initiatives.i7.policy.dev_fixtures import (
     load_mock_max_stock_policy,
     load_mock_service_level_policy,
 )
-from app.initiatives.i7.policy.thresholds import SimilarityPolicy
+from app.initiatives.i7.policy.thresholds import SafetyStockPolicy, SimilarityPolicy
 from app.initiatives.i7.recommendations import builder, oar_exclusions, rationale
 from app.initiatives.i7.recommendations import repository as recommendation_repository
 from app.initiatives.i7.recommendations import service as recommendation_service
@@ -857,3 +857,37 @@ def test_the_api_reports_409_and_can_edit_false_for_a_submitted_recommendation(w
     response = client.post(f"{url}/exclusions", json={"donor_material": donor, "donor_plant": "1300"})
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "RECOMMENDATION_NOT_EDITABLE"
+
+
+SAFETY_STOCK_OFF = POLICY.model_copy(
+    update={"safety_stock": SafetyStockPolicy(stock_item_enabled=False, oar_enabled=False)}
+)
+
+
+def test_a_donor_can_be_removed_from_a_run_that_still_holds_safety_stock(world):
+    """The run was made before safety stock was switched off, so it stores one. Removing a similar material from
+    its recommendation must still work: nothing is refused, the figures are recalculated from the stored
+    neighbours under the current setting, and the recommendation carries no safety stock."""
+    factory = world[0]
+    first = _run()  # POLICY: safety stock on, like every run made before the switch
+    target = _pick_target(factory, first.run_id)
+    assert _target_row(factory, first.run_id, target)[2] is not None  # the run holds a safety stock
+    recommendation_id = _seed_recommendation(factory, first.run_id, target)
+    assert _recommendation(factory, recommendation_id).recommended_safety_stock is not None
+    donor = _neighbours(factory, first.run_id, target)[0][0]
+
+    with factory() as session:
+        row = session.execute(
+            select(Recommendation).where(Recommendation.recommendation_id == recommendation_id)
+        ).scalar_one()
+        oar_exclusions.exclude_donor(session, row, donor, "1300", actor_id="tester", policy=SAFETY_STOCK_OFF)
+
+    count, status, safety_stock, rop, max_stock, *_ = _target_row(factory, first.run_id, target)
+    assert count == TOP_K - 1 and status == "SUCCESS"
+    assert safety_stock is None  # not estimated
+    assert max_stock >= rop  # the floor is the ROP
+    refreshed = _recommendation(factory, recommendation_id)
+    assert refreshed.recommended_safety_stock is None  # never 0
+    assert (refreshed.recommended_rop, refreshed.recommended_max_stock) == (rop, max_stock)
+    assert refreshed.status == "READY_FOR_REVIEW"
+

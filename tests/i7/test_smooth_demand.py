@@ -171,15 +171,32 @@ def test_a_calculation_alone_does_not_make_a_donor(db):
     [
         (Decimal(7), Decimal(12), None),
         (None, None, None),
-        (Decimal(0), Decimal(12), Decimal(30)),
+        (None, Decimal(12), None),
         (Decimal(7), Decimal(0), Decimal(30)),
         (Decimal(7), Decimal(12), Decimal(0)),
+        (Decimal(7), None, Decimal(30)),
     ],
 )
-def test_a_neighbour_needs_all_three_values_above_zero(db, sap):
+def test_a_neighbour_needs_its_rop_and_max_above_zero(db, sap):
+    """The ROP and max stock conditions are unchanged: either one missing or zero, and it is not a donor."""
     db.add_all([feature("X", "LUMPY", sap=sap)])
     db.commit()
     assert oar_repository.load_inventory_values(db) == {}
+
+
+@pytest.mark.parametrize("safety_stock", [None, Decimal(0), Decimal(5)])
+def test_a_neighbours_safety_stock_is_not_a_condition(db, safety_stock):
+    """Safety stock is deactivated, so a donor is judged on its ROP and max stock alone: with none, or 0, it is
+    still a donor. It lends None (never a made-up 0) when SAP has none, and its own figure otherwise."""
+    db.add_all([feature("N", "LUMPY", sap=(safety_stock, Decimal(12), Decimal(30)))])
+    db.commit()
+    lent = oar_repository.load_inventory_values(db)
+    assert set(lent) == {("N", "1300")}
+    expected = None if safety_stock is None else int(safety_stock)
+    assert lent[("N", "1300")] == {"safety_stock": expected, "rop": 12, "max_stock": 30}
+    assert {(c.sap_material_number, c.sap_plant_code) for c in oar_repository.load_candidate_population(db)} == {
+        ("N", "1300")
+    }
 
 
 def test_a_fractional_value_is_rounded_up_never_down_to_zero(db):
@@ -202,14 +219,15 @@ def test_the_candidate_population_is_exactly_the_materials_with_values(db):
     db.add_all(
         [
             feature("YES", "LUMPY", sap=(Decimal(1), Decimal(2), Decimal(3))),
-            feature("ZERO", "LUMPY", sap=(Decimal(0), Decimal(2), Decimal(3))),
+            feature("NO_SS", "LUMPY", sap=(Decimal(0), Decimal(2), Decimal(3))),
+            feature("ZERO_ROP", "LUMPY", sap=(Decimal(1), Decimal(0), Decimal(3))),
             feature("BLANK", "ERRATIC"),
             feature("COLD", "SMOOTH", history="COLD_START", sap=(Decimal(1), Decimal(2), Decimal(3))),
         ]
     )
     db.commit()
     candidates = {(c.sap_material_number, c.sap_plant_code) for c in oar_repository.load_candidate_population(db)}
-    assert candidates == {("YES", "1300")}
+    assert candidates == {("YES", "1300"), ("NO_SS", "1300")}  # no safety stock is not a reason to be left out
     assert candidates == set(oar_repository.load_inventory_values(db))
 
 

@@ -684,3 +684,28 @@ class AdoptionPolicy(BaseModel):
 
     tracked_fields: tuple[str, ...] = ("DISMM", "EISBE", "MINBE", "MABST")
     """The MARC fields FR-9 watches in CDPOS."""
+
+
+class SafetyStockPolicy(BaseModel):
+    """Whether I07 calculates and recommends safety stock (SS), per category.
+
+    Safety stock is DEACTIVATED, not removed: the calculation code, its formulas and the SAP source data are
+    all still here, and setting a flag back to ``True`` restores the previous behaviour for that category.
+
+    * ``stock_item_enabled`` -- stock items (non-OAR). ``True``: ``ROP = E[LTD] + SS`` and
+      ``Max = SS + EOQ`` (or ``ROP + rate x T``), as before. ``False``: ``ROP = ceil(rate x LT)``,
+      ``Max = ceil(rate x (LT + T))``, no SS recommendation.
+    * ``oar_enabled`` -- OAR materials. ``True``: SS is the similarity-weighted median of the donors' SS and the
+      Max floor is ``ROP + SS``. ``False``: no SS estimate, and the Max floor is ``ROP``.
+
+    **The model default is ``True`` (the previous behaviour) on purpose**, so a bare ``PolicyDocument()`` and every
+    existing direct caller behave exactly as before. The deployed default is ``False`` and comes from
+    ``Settings`` through ``policy.dev_fixtures.default_policy()``, which every pipeline entry point uses.
+    Each stage derives its run identity from these flags, so a run made under one setting is never reused under
+    another (see ``inventory.types.formula_version_for`` and ``oar.types.algorithm_version_for``).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    stock_item_enabled: bool = True
+    oar_enabled: bool = True

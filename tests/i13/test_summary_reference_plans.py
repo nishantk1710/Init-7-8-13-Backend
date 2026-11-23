@@ -17,6 +17,7 @@ from app.initiatives.i13.summary import summary_from_snapshot
 def _snapshot(reference_plans: tuple) -> SimpleNamespace:
     return SimpleNamespace(
         oar_position_count=0,
+        material_scope_index={},
         band_counts={band.value: 0 for band in AgingBand},
         reclassification=(),
         reference_plans=reference_plans,

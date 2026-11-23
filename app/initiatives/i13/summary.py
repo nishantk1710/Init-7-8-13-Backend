@@ -42,6 +42,15 @@ class I13Summary:
     #: can say how much of acquired-versus-plan rests on fabricated input
     #: instead of hard-coding a number that is only true in one environment.
     reference_plan_count: int
+    #: Distinct materials among the OAR positions above. A material that is OAR
+    #: at both plants is two positions but one material; with a plant filter
+    #: the two counts are equal. Same scope and filters as the positions.
+    unique_oar_materials: int = 0
+
+
+def _unique_materials(keys) -> int:
+    """Distinct materials among (material, plant) OAR keys."""
+    return len({material for material, _plant in keys})
 
 
 def with_queue_exception_counts(
@@ -155,6 +164,7 @@ def build_summary(
         reclassification_candidate_count=candidate_count,
         valuation_is_mocked=True,
         reference_plan_count=sum(1 for p in load_reference_plans(data_dir) if in_scope(p.material, p.plant)),
+        unique_oar_materials=_unique_materials(oar_keys),
     )
 
 
@@ -198,6 +208,10 @@ def summary_from_snapshot(
         reclassification_candidate_count=sum(1 for c in snapshot.reclassification if c.candidate_flag),
         valuation_is_mocked=True,
         reference_plan_count=len(snapshot.reference_plans),
+        unique_oar_materials=_unique_materials(
+            key for key, code in snapshot.material_scope_index.items()
+            if classify_material_scope(code) is MaterialScope.OAR
+        ),
     )
 
 
@@ -241,4 +255,5 @@ def _scoped_summary(
         ),
         valuation_is_mocked=True,
         reference_plan_count=sum(1 for p in snapshot.reference_plans if in_scope(p.material, p.plant)),
+        unique_oar_materials=_unique_materials(oar_keys),
     )

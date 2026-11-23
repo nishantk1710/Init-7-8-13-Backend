@@ -20,9 +20,13 @@ from app.initiatives.i7.inventory.types import CalculationStatus, RopResult
 
 
 def calculate(
-    forecast_rate: Decimal, lt_avg_months: Decimal, safety_stock: int
+    forecast_rate: Decimal, lt_avg_months: Decimal, safety_stock: int | None
 ) -> RopResult:
-    """``ROP = forecast_rate * LT_avg + SS``."""
+    """``ROP = forecast_rate * LT_avg + SS``.
+
+    ``safety_stock=None`` means safety stock is not part of the formula (deactivated, see
+    ``PolicyDocument.safety_stock``): ``ROP = ceil(forecast_rate * LT_avg)``. ``0`` is a real zero and gives the
+    same number, but ``None`` is the honest way to say "not used"."""
     if forecast_rate < 0:
         return RopResult(
             status=CalculationStatus.NOT_EVALUABLE_INVALID_FORECAST,
@@ -33,14 +37,14 @@ def calculate(
             status=CalculationStatus.NOT_EVALUABLE_LEAD_TIME,
             detail=f"negative lead time {lt_avg_months}",
         )
-    if safety_stock < 0:
+    if safety_stock is not None and safety_stock < 0:
         return RopResult(
             status=CalculationStatus.CALCULATION_ERROR,
             detail=f"negative safety stock {safety_stock}",
         )
 
     expected = forecast_rate * lt_avg_months
-    raw = expected + Decimal(safety_stock)
+    raw = expected if safety_stock is None else expected + Decimal(safety_stock)
 
     return RopResult(
         status=CalculationStatus.SUCCESS,
@@ -51,7 +55,7 @@ def calculate(
             ("forecast_rate", str(forecast_rate)),
             ("lt_avg_months", str(lt_avg_months)),
             ("expected_lead_time_demand", str(expected)),
-            ("safety_stock", str(safety_stock)),
+            ("safety_stock", "not_used" if safety_stock is None else str(safety_stock)),
             ("raw_rop", str(raw)),
             ("rounding_method", "CEILING"),
         ),

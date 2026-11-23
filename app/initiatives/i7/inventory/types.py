@@ -31,6 +31,19 @@ maintains a release contract -- but a stored result must be attributable to the
 arithmetic that produced it.
 """
 
+STOCK_NO_SAFETY_STOCK_FORMULA_VERSION = "i07-formula-3"
+"""The run identity of a stock-item calculation made with safety stock DEACTIVATED
+(``PolicyDocument.safety_stock.stock_item_enabled`` is false): ``ROP = ceil(rate x LT)`` and
+``Max = ceil(rate x (LT + T))``. ``FORMULA_VERSION`` stays as the identity of the safety-stock-enabled formulas, so
+both can be stored for the same inputs and a run is never reused under the other setting. The Monte Carlo seed is
+still derived from ``FORMULA_VERSION`` (not from this), so re-enabling safety stock reproduces the same draws."""
+
+
+def formula_version_for(policy) -> str:
+    """The inventory run identity for ``policy``'s safety stock setting."""
+    return FORMULA_VERSION if policy.safety_stock.stock_item_enabled else STOCK_NO_SAFETY_STOCK_FORMULA_VERSION
+
+
 DAYS_PER_MONTH = Decimal("30.44")
 """Formula Reference, Stage 3B. Fixed at the documented value: 30 or 31 would
 shift every lead time and therefore every safety stock."""
@@ -85,6 +98,11 @@ class CalculationStatus(StrEnum):
     NOT_APPLICABLE_OBSOLETE = "NOT_APPLICABLE_OBSOLETE"
     """An obsolete material gets no safety-stock recommendation. Represented
     explicitly rather than as a zero, which would read as a real target."""
+
+    NOT_APPLICABLE_SAFETY_STOCK_DISABLED = "NOT_APPLICABLE_SAFETY_STOCK_DISABLED"
+    """Safety stock is not part of the current workflow (``PolicyDocument.safety_stock``), so none was calculated.
+    Represented explicitly, like ``NOT_APPLICABLE_OBSOLETE``, and never as a zero. The calculation code is intact:
+    setting the flag back restores it."""
 
     NOT_CONFIGURED = "NOT_CONFIGURED"
     """A business policy has not been signed -- the Max Stock strategy."""

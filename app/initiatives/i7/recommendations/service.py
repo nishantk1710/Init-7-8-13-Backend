@@ -42,7 +42,11 @@ from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.initiatives.i7.recommendations import blend_path, builder, rationale, repository
 from app.initiatives.i7.recommendations.builder import BuiltRecommendation
-from app.initiatives.i7.recommendations.types import PROTECTED_STATUSES, RECOMMENDATION_FORMULA_VERSION
+from app.initiatives.i7.recommendations.types import (
+    PROTECTED_STATUSES,
+    RECOMMENDATION_FORMULA_VERSION,
+    recommendation_formula_version_for,
+)
 from app.initiatives.i7.policy import PolicyDocument
 from app.models.i7_recommendation import Recommendation
 
@@ -118,7 +122,7 @@ def _generate_rationales(
 
 
 def _to_row(
-    built: BuiltRecommendation, rationale_result: rationale.RationaleResult
+    built: BuiltRecommendation, rationale_result: rationale.RationaleResult, policy: Any = None
 ) -> dict[str, Any]:
     conversion = built.conversion
     impact = built.impact
@@ -135,7 +139,13 @@ def _to_row(
         "oar_run_id": built.oar_run_id,
         "policy_id": built.policy_id,
         "policy_version": built.policy_version,
-        "formula_version": RECOMMENDATION_FORMULA_VERSION,
+        # Per category and per safety stock setting (see recommendation_formula_version_for). Without a policy
+        # (a direct caller) it is the plain version, as before.
+        "formula_version": (
+            RECOMMENDATION_FORMULA_VERSION
+            if policy is None
+            else recommendation_formula_version_for(built.is_oar, policy)
+        ),
         "is_oar": built.is_oar,
         "demand_class": built.demand_class,
         "history_status": built.history_status,
@@ -296,7 +306,7 @@ def generate_recommendations(policy: PolicyDocument | None = None) -> Recommenda
         )
         rationales = _generate_rationales(built, workers)
 
-        rows = [_to_row(item, outcome) for item, outcome in zip(built, rationales)]
+        rows = [_to_row(item, outcome, policy) for item, outcome in zip(built, rationales)]
         for row in rows:
             result.status_counts[row["status"]] = (
                 result.status_counts.get(row["status"], 0) + 1
