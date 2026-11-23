@@ -60,8 +60,20 @@ NO_COUNT: frozenset[str] = frozenset()
 # never "repairs" the blank from another row -- contrast EKBE's GJAHR, which
 # the CSV leaves blank by mistake (raw_merge._repair_blank_keys). Without
 # this, the weekly full pull skipped every unsplit material as "without key".
+#
+# EINE's plant (WERKS) and S032's storage location (LGORT) are the same kind of
+# blank, measured on PRD 2026-11-18 against SAP's own $count: 93,399 info record
+# purchasing-org rows carry no plant (the org-level conditions, valid for every
+# plant) and 75,033 S032 rows no storage location (the plant-level totals). The
+# CSV extract delivered every one of them with the same blank, so they are
+# records, not unfilled keys. Before this, the merge skipped each of them as
+# "without key": not one new EINE row had reached raw_eine since the 5 Nov CSV
+# load (70 missing), 40 new S032 rows were missing, and the 75k plant-level
+# S032 rows were never updated by the delta.
 BLANK_ALLOWED_KEYS: dict[str, frozenset[str]] = {
     "MaterialValuationSet": frozenset({"Bwtar"}),
+    "InfoRecordOrgSet": frozenset({"Werks"}),
+    "StockMovementStatisticSet": frozenset({"Lgort"}),
 }
 
 # Sets SAP refuses to serve without a predicate. A bare read returns HTTP 400 --
@@ -153,6 +165,16 @@ class Delta:
     # to look.
     verified: str | None = None
 
+    # Days the set's own window always reaches back, whatever its mark says.
+    # For a date a person or an interface can set in the past: a row created
+    # today but dated three days ago is behind a mark that has already moved
+    # past it, and a window that starts at the mark never sees it. With a
+    # look-back the window starts at the earlier of the mark and today less
+    # this many days; the overlap is absorbed by the merge, which matches on
+    # the key and writes only what changed. Zero (the default) is the mark
+    # alone. An explicit --since is taken as given, look-back or not.
+    lookback_days: int = 0
+
     def __post_init__(self) -> None:
         if isinstance(self.via, str):
             # One parent, written the short way.
@@ -163,6 +185,10 @@ class Delta:
             raise ValueError("A Delta needs a field of its own, parents to read through, or both.")
         if self.literal not in LITERALS:
             raise ValueError(f"Unknown literal shape {self.literal!r}; one of {sorted(LITERALS)}.")
+        if not isinstance(self.lookback_days, int) or self.lookback_days < 0:
+            raise ValueError(f"lookback_days must be a whole number of days, 0 or more; got {self.lookback_days!r}.")
+        if self.lookback_days and self.field is None:
+            raise ValueError("lookback_days widens a set's own window, so it needs a field= to window on.")
 
     @property
     def direct(self) -> bool:
@@ -303,8 +329,18 @@ DELTAS: dict[str, Delta] = {
     # quantity and final-issue flag but not Crdat; the issue is an MSEG line
     # naming the reservation, so every reservation MSEG's window touched is
     # re-read as well. '0000000000' -- no reservation -- is not a key (fetch).
+    #
+    # Crdat is a BASE date, and it can be set in the past. Measured on PRD
+    # 2026-11-18: 19 manual reservations at plant 1300 (one material, created
+    # by an interface) carry Crdat 8-10 Nov, yet the 8 Nov delta saw no row
+    # dated 8 Nov all day -- they were created days later, behind a mark that
+    # had moved on, and closed without a goods movement, so the MSEG route
+    # never named them either. Their neighbours with a goods issue arrived;
+    # they did not. Fourteen days of look-back re-reads every reservation
+    # dated in the last two weeks each cycle (about 1,400 rows on PRD).
     "ReservationItemSet": Delta(
-        field="Crdat", literal=LITERAL_DATS, via=("GoodsMovementItemSet",), via_key="Rsnum"
+        field="Crdat", literal=LITERAL_DATS, via=("GoodsMovementItemSet",), via_key="Rsnum",
+        lookback_days=14,
     ),
     # Gate pass (ZMM_KPI02_GP_SRV, back in scope 2026-10-16). ZzdeltaDate is
     # SAP's "delta date" on all three: the header's last-changed date when it

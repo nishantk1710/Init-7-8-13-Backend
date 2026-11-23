@@ -405,7 +405,7 @@ def compute_fingerprint(db: Session, *, settings: Settings | None = None, config
     parts += [f"config:{config!r}", f"plans:{plans_stamp}"]
     # Both change which materials are OAR at all, so changing either must rebuild.
     parts.append(f"exclude_deleted:{settings.i13_exclude_deleted_materials}")
-    parts.append(f"oar_controllers:{','.join(sorted(settings.i13_oar_mrp_controller_set))}")
+    parts.append(f"oar_mrp_types:{','.join(sorted(settings.i13_oar_mrp_type_set))}")
     # Both change which PO lines are open: every material's open-PO quantity
     # (WATCH, the assistant's facts) and the ledger's procurement status.
     parts.append(f"open_po_respect_closed:{settings.i13_open_po_respect_closed}")

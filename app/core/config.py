@@ -256,6 +256,39 @@ class Settings(BaseSettings):
     odata_full_pull_weekday: int = 6
     odata_full_pull_hour_utc: int = 2
 
+    # --- Daily OData refresh ------------------------------------------------
+    #
+    # Sets re-read over OData once a day and merged into raw_<table> by key,
+    # for the changes the hourly delta cannot see. A set whose delta date is
+    # a CREATION date -- EBAN's Badat, RESB's Crdat, MARA's and MARC's Ersda --
+    # never shows a later change to an existing row: a requisition released,
+    # deleted or turned into a purchase order; a reservation's quantity
+    # edited; a material flagged for deletion (measured on PRD, 20 Nov 2026:
+    # 32 of the 51 requisitions converted since the 4 Nov load still showed
+    # no purchase order). Each set is read whole, or by a window over its own
+    # delta date ("the last 12 months"), and merged like a delta: changed rows
+    # updated, new rows inserted, nothing deleted, no watermark moved. See
+    # app/ingest/refresh.py. Off by default, like the other timers.
+    odata_refresh_enabled: bool = False
+
+    # Comma-separated. NAME reads the set whole; NAME:12m reads the rows whose
+    # delta date falls in the last 12 months (units: d, w, m, y). A window
+    # needs a set with a date of its own (manifest.DELTAS, field=...) that is
+    # measured HONOURED on this system; a set without one is read whole.
+    odata_refresh_sets: str = (
+        "PurchaseRequisitionSet:12m,ReservationItemSet:12m,MaterialSet,MaterialPlantSet"
+    )
+
+    # Hour of day, UTC. 23:00 UTC is 01:00 in South Africa, ahead of the
+    # nightly I13 build.
+    odata_refresh_hour_utc: int = 23
+
+    # With a windowed set, also re-read by key the rows still OPEN in the
+    # table but older than the window (refresh.OPEN_ROWS: requisitions with
+    # no purchase order, reservations not final-issued), so a late deletion
+    # or release on an old open row still arrives.
+    odata_refresh_open_rows: bool = True
+
     # --- Delta marks for tables loaded another way --------------------------
     #
     # A set whose raw_<table> holds rows but has no watermark and no
@@ -1038,12 +1071,17 @@ class Settings(BaseSettings):
             raise ValueError("I7_OAR_EXHAUSTIVE_BELOW must not be negative")
         return value
 
-    # Current VZI OAR material-scope ruling (20 Oct 2026): the MRP controller,
-    # MARC.DISPO, comma-separated. Replaces the earlier MRP type (DISMM) rule.
-    # A blank DISPO, and every code not listed, is not OAR. See
-    # app/shared/material_scope/policy.py -- shared platform config, read by
-    # I13 and the assistant's routing.
-    i13_oar_mrp_controllers: str = "OAR"
+    # I13 OAR material-scope ruling (21 Nov 2026): the MRP type, MARC.DISMM,
+    # comma-separated. Replaces the MRP controller (DISPO = OAR) rule of 20 Oct
+    # for I13 and the assistant's routing; DISPO plays no part in it. A blank
+    # DISMM, and every code not listed, is not OAR. Materials flagged for
+    # deletion (LVORM) are left out as before. See
+    # app/shared/material_scope/policy.py. Part of the I13 snapshot fingerprint.
+    i13_oar_mrp_types: str = "ND,PD"
+    # I07's OAR rule (21 Nov 2026): the MRP type, MARC.DISMM, comma-separated.
+    # Its own setting, so I07 can be retuned without touching I13. A blank DISMM,
+    # and every code not listed, is not OAR. See app/initiatives/i7/policy/oar.py.
+    i7_oar_mrp_types: str = "ND,PD"
     # A material flagged for deletion in SAP -- MARC-LVORM (at the plant) or
     # MARA-LVORM (client level) = X -- is never OAR, whatever its MRP controller
     # (UAT, 19 Oct 2026). See app/shared/material_scope/deletion.py.
@@ -1456,9 +1494,14 @@ class Settings(BaseSettings):
         return tuple(code.strip() for code in self.i7_plants.split(",") if code.strip())
 
     @property
-    def i13_oar_mrp_controller_set(self) -> frozenset[str]:
-        """Normalised MRP controller (DISPO) codes that count as OAR materials."""
-        return frozenset(code.strip().upper() for code in self.i13_oar_mrp_controllers.split(",") if code.strip())
+    def i13_oar_mrp_type_set(self) -> frozenset[str]:
+        """Normalised MRP type (DISMM) codes that make a material-plant OAR in I13."""
+        return frozenset(code.strip().upper() for code in self.i13_oar_mrp_types.split(",") if code.strip())
+
+    @property
+    def i7_oar_mrp_type_set(self) -> frozenset[str]:
+        """Normalised MRP type (DISMM) codes that make a material-plant OAR in I07."""
+        return frozenset(code.strip().upper() for code in self.i7_oar_mrp_types.split(",") if code.strip())
 
     @property
     def i13_non_order_doc_type_set(self) -> frozenset[str]:

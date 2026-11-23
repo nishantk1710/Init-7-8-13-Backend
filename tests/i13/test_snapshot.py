@@ -125,7 +125,7 @@ class TestExceptionQueueFromComponents:
                 }
             ]
         )
-        scope = {("M1", "1300"): "OAR"}
+        scope = {("M1", "1300"): "ND"}
         return movements, procurement, reservations, scope
 
     def test_same_queue_as_the_repository_build(self, i13_config, data_dir) -> None:

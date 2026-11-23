@@ -39,7 +39,7 @@ import json
 import threading
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -311,10 +311,17 @@ def _read_direct(client: SapClient, spec: IngestSpec, since: str) -> _Read:
     return read
 
 
-def _read_keys(client: SapClient, spec: IngestSpec, keys: list[str]) -> _Read:
-    """Every row of this set belonging to one of ``keys``, fifty at a time."""
+def _read_keys(
+    client: SapClient, spec: IngestSpec, keys: list[str], *, key_property: str | None = None
+) -> _Read:
+    """Every row of this set belonging to one of ``keys``, fifty at a time.
+
+    By the delta's ``via_key`` -- the property a parent hands keys over on --
+    unless the caller names ``key_property`` itself: the refresh re-reads a
+    set's open rows by the set's own key (``refresh.OPEN_ROWS``).
+    """
     delta = spec.delta
-    via_key = (delta.via_key if delta else None) or ""
+    via_key = key_property or (delta.via_key if delta else None) or ""
     edm = _edm_type(spec, via_key)
     read = _Read()
     for start in range(0, len(keys), KEY_BATCH):
@@ -547,6 +554,32 @@ def fetch_order(chosen) -> list[IngestSpec]:
     return sorted(chosen, key=lambda s: (s.name not in parents, s.name))
 
 
+def window_start(spec: IngestSpec, mark: Any, *, today: date | None = None) -> Any:
+    """Where a set's own window starts, given its stored mark.
+
+    The mark itself, unless the set declares a look-back (``Delta.lookback_days``):
+    then the earlier of the mark and today less that many days, as an ISO day.
+    A set without a look-back gets its mark back untouched, in whatever shape
+    it came, so nothing changes for it. No mark stays no mark -- a look-back
+    widens a window, it does not invent one.
+    """
+    delta = spec.delta
+    lookback = delta.lookback_days if delta is not None else 0
+    if not lookback or mark is None:
+        return mark
+    day = as_day(mark)
+    if day is None:
+        return mark
+    floor = (today or datetime.now(timezone.utc).date()) - timedelta(days=lookback)
+    if floor < day:
+        logger.info(
+            "%s: window reaches back %d day(s), to %s, behind its mark %s",
+            spec.name, lookback, floor.isoformat(), day.isoformat(),
+        )
+        day = floor
+    return day.isoformat()
+
+
 def resolve_windows(chosen, *, since: str | None = None) -> dict[str, str | None]:
     """The lower bound of every window this sweep will read, taken once.
 
@@ -572,7 +605,9 @@ def resolve_windows(chosen, *, since: str | None = None) -> dict[str, str | None
 
     windows: dict[str, str | None] = {}
     for name, owner in owners.items():
-        mark = since or get_watermark(name, owner.delta.field or "")  # type: ignore[union-attr]
+        # An explicit --since is taken as given; a stored mark is reached
+        # back by the set's look-back, if it has one.
+        mark = since or window_start(owner, get_watermark(name, owner.delta.field or ""))  # type: ignore[union-attr]
         day = as_day(mark)
         windows[name] = day.isoformat() if day else None
     return windows
@@ -614,6 +649,7 @@ def fetch_set(
     parent_keys: list[str] | None = None,
     advance_watermark: bool = True,
     window_reads: WindowReads | None = None,
+    extra_keys: tuple[str, list[str]] | None = None,
 ) -> FetchResult:
     """Pull one entity set and land it. Never raises -- failures are returned.
 
@@ -627,6 +663,11 @@ def fetch_set(
     resolved here from the watermark table. ``window_reads`` is the sweep's
     window cache: this set's own window read lands there, where the children
     that read keys through this set find it instead of reading it again.
+    ``extra_keys`` is ``(property, values)``: rows of this set whose
+    ``property`` is one of ``values``, read fifty at a time and unioned with
+    the window -- how the refresh (``app.ingest.refresh``) brings back rows
+    older than its window that are still open in the table. Delta mode only;
+    a whole read has them already.
     """
     client = client or SapClient()
     storage = storage or get_storage()
@@ -658,7 +699,7 @@ def fetch_set(
 
     try:
         if delta is not None and delta.direct:
-            result.since = since or get_watermark(spec.name, delta.field or "")
+            result.since = since or window_start(spec, get_watermark(spec.name, delta.field or ""), today=run_date)
             if result.since is None:
                 go_full("no watermark yet")
         elif delta is not None:
@@ -712,6 +753,13 @@ def fetch_set(
                         "to re-read through them.",
                         spec.name, ", ".join(delta.via), delta.via_key,
                     )
+            if extra_keys is not None and extra_keys[1]:
+                key_property, values = extra_keys
+                logger.info(
+                    "%s: re-reading %d row(s) by %s outside the window",
+                    spec.name, len(values), key_property,
+                )
+                reads.append(_read_keys(client, spec, list(values), key_property=key_property))
     except Exception as exc:
         result.error = f"{type(exc).__name__}: {exc}"
         result.seconds = time.monotonic() - started
@@ -773,6 +821,12 @@ def fetch_set(
         own = reads[0].rows if (delta is not None and delta.direct) else rows
         candidate = highest(own, mark_field) if own else None
         floor = as_day(result.since)
+        # A look-back (or a hand-given --since) starts the window behind the
+        # stored mark on purpose; the mark itself still only moves forward.
+        if spec.delta is not None and spec.delta.lookback_days:
+            stored = as_day(get_watermark(spec.name, mark_field))
+            if stored is not None and (floor is None or stored > floor):
+                floor = stored
         if candidate is not None and floor is not None and date.fromisoformat(candidate) < floor:
             candidate = floor.isoformat()
         result.watermark = candidate

@@ -91,6 +91,35 @@ def _parser() -> argparse.ArgumentParser:
         metavar="NAME",
         help="one SAP table for the CSV verbs, e.g. EKPO. Omit with --all.",
     )
+
+    # --- The daily OData refresh ------------------------------------------
+    parser.add_argument(
+        "--odata-refresh",
+        action="store_true",
+        help=(
+            "re-read the sets in ODATA_REFRESH_SETS over OData -- whole, or the "
+            "last N months by their own delta date -- and merge them into "
+            "raw_<table> by key: changed rows updated, new rows inserted, nothing "
+            "deleted, no watermark moved. With --set NAME, that one set (whole, "
+            "or --window N{d|w|m|y})."
+        ),
+    )
+    parser.add_argument(
+        "--window",
+        metavar="N{d|w|m|y}",
+        help=(
+            "with --odata-refresh --set NAME: read the last N days, weeks, months "
+            "or years of the set's own delta date instead of the whole set, e.g. 12m"
+        ),
+    )
+    parser.add_argument(
+        "--no-open-rows",
+        action="store_true",
+        help=(
+            "with --odata-refresh: skip the by-key re-read of rows still open in "
+            "the table but older than the window (ODATA_REFRESH_OPEN_ROWS)"
+        ),
+    )
     parser.add_argument(
         "--max-rows",
         metavar="N",
@@ -363,6 +392,33 @@ def _csv_delta(args) -> int:
         if r.error:
             print(f"  {r.sap_table}: {r.error}")
     return 1 if any(r.status == csv_delta.FAILED for r in results) else 0
+
+
+def _odata_refresh(args) -> int:
+    """The daily OData refresh, by hand: the configured list, or one set."""
+    from app.ingest import refresh
+
+    if args.window and not args.set:
+        print("--window names one set: use it with --set NAME.")
+        return 2
+    if args.set:
+        entries = [refresh.parse_entry(f"{args.set}:{args.window}" if args.window else args.set)]
+    else:
+        entries = refresh.parse_sets(get_settings().odata_refresh_sets)
+    if not entries:
+        print("Nothing to refresh: ODATA_REFRESH_SETS is empty and no --set was given.")
+        return 2
+    print("OData refresh: " + "; ".join(e.describe() for e in entries) + "\n")
+
+    summary = refresh.run_odata_refresh_cycle(entries, open_rows=False if args.no_open_rows else None)
+    print(f"{'SET':<30} {'STATUS':<7} {'WINDOW':<34} {'ROWS':>8} {'OPEN KEYS':>9} {'SECONDS':>8}  MERGE")
+    for s in summary["sets"]:
+        status = "ok" if s["error"] is None else "FAILED"
+        print(f"{s['name']:<30} {status:<7} {s['window']:<34} {s['rows']:>8,} {s['open_keys']:>9,} "
+              f"{s['seconds']:>8.1f}  {s['raw'] or '-'}")
+    for error in summary["errors"]:
+        print(f"  {error}")
+    return 1 if summary["failed"] else 0
 
 
 def _csv(args) -> int:
@@ -720,6 +776,8 @@ def main(argv: list[str] | None = None) -> int:
         return _csv_status()
     if args.csv_delta:
         return _csv_delta(args)
+    if args.odata_refresh:
+        return _odata_refresh(args)
     if args.csv_pull or args.csv_load or args.csv_verify or args.csv_download:
         return _csv(args)
 

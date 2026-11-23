@@ -5,19 +5,15 @@ Thin by design. The rule itself lives in the Phase 1
 AND -- and this module adds only what the feature store needs on top: a reason
 string explaining *which* predicate decided, and the unresolved roll-up state.
 
-No MRP type, MRP controller or material status value appears here. Configuration
-owns those, and a leakage test fails the build if one leaks out. The rule is two
-predicates ANDed -- MRP controller (DISPO) = OAR, then the MRP type (DISMM) rule;
-a missing controller is OUT_OF_SCOPE, not UNKNOWN.
+No MRP type or material status value appears here. Configuration owns those,
+and a leakage test fails the build if one leaks out. The rule is a single
+predicate -- the MRP type (DISMM) must be in the configured list; a blank or
+missing MRP type is OUT_OF_SCOPE, not UNKNOWN.
 
 Three states are still possible in general (OUT_OF_SCOPE / UNKNOWN / IN_SCOPE),
-but for the current OAR rule specifically, UNKNOWN no longer arises from a
-blank/unmaintained MRP type: that case is now business-confirmed as IN_SCOPE
-(see ``policy.oar``'s module docstring and ``current_oar_policy``'s
-``blank_means_in_scope=True``). 47% of rows in the live scan had no DISMM
-value at all; all of them are now OAR-in-scope by this rule, not UNKNOWN.
-UNKNOWN can still occur for a *different* predicate that has not opted into
-that exception.
+but UNKNOWN cannot arise from the current OAR rule: its one predicate treats a
+blank MRP type as OUT_OF_SCOPE. UNKNOWN can still occur for a different
+predicate that has not opted into that exception.
 """
 
 from typing import NamedTuple

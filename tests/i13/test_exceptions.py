@@ -43,7 +43,7 @@ def _build(*, reservations=(), prs=(), po_items=(), gr_rows=(), gi_rows=(), scop
     movement_repo = FakeMovementRepository()
     procurement_repo = FakeProcurementRepository(prs=list(prs), po_items=list(po_items), gr_rows=list(gr_rows))
     reservation_repo = FakeReservationRepository(reservations=list(reservations), gi_rows=list(gi_rows))
-    scope_index = scope_index if scope_index is not None else {("MAT1", "1000"): "OAR"}
+    scope_index = scope_index if scope_index is not None else {("MAT1", "1000"): "ND"}
     return build_exception_queue(movement_repo, procurement_repo, reservation_repo, scope_index, i13_config, data_dir, as_of=AS_OF)
 
 
@@ -87,7 +87,7 @@ def test_plan_breach_skipped_when_issuance_evidence_exists(data_dir: Path, i13_c
 def test_no_plan_for_oar_reservation_without_a_plan(data_dir: Path, i13_config) -> None:
     exceptions = _build(
         reservations=[_reservation()], prs=[_pr()], plan_rows=[],
-        scope_index={("MAT1", "1000"): "OAR"}, data_dir=data_dir, i13_config=i13_config,
+        scope_index={("MAT1", "1000"): "ND"}, data_dir=data_dir, i13_config=i13_config,
     )
     no_plan = [e for e in exceptions if e.type is ExceptionType.NO_PLAN]
     assert len(no_plan) == 1

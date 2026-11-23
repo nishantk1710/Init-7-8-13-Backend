@@ -910,6 +910,44 @@ def test_own_window_and_parent_keys_are_read_and_unioned(storage, no_watermark_i
     assert result.watermark == "2026-09-15"
 
 
+def test_extra_keys_are_read_by_the_named_property_and_unioned_with_the_window(storage, no_watermark_io) -> None:
+    """The refresh: the last year of requisitions by Badat, plus the open ones
+    older than that by their own key. A requisition in both is one row."""
+    requisitions = spec_for("PurchaseRequisitionSet")
+    recent = {"Banfn": "1000000001", "Bnfpo": "00010", "Badat": "20260301", "Ebeln": ""}
+    old_open = {"Banfn": "1000000002", "Bnfpo": "00010", "Badat": "20240101", "Ebeln": "4500000009"}
+
+    def answer(name, kwargs):
+        if kwargs["filter"].startswith("Badat"):
+            return StubExtract([recent], order_by=("Banfn", "Bnfpo"))
+        return StubExtract([dict(recent), old_open], order_by=("Banfn", "Bnfpo"))
+
+    client = StubClient(answer=answer)
+    result = fetch_mod.fetch_set(
+        requisitions, root="odata/refresh", client=client, storage=storage, run_date=RUN_DATE,
+        mode="delta", since="2025-11-20", parent_keys=[], advance_watermark=False,
+        extra_keys=("Banfn", ["1000000001", "1000000002"]),
+    )
+
+    assert client.filters == [
+        "Badat ge '20251120'",
+        "Banfn eq '1000000001' or Banfn eq '1000000002'",
+    ]
+    assert result.ok and result.rows == 2 and result.duplicate_keys == 0
+    # The mark candidate still comes from the window alone, and is only logged.
+    assert result.watermark == "2026-03-01"
+
+
+def test_extra_keys_with_no_values_read_nothing_extra(storage, no_watermark_io) -> None:
+    requisitions = spec_for("PurchaseRequisitionSet")
+    client = StubClient(answer=lambda name, kwargs: StubExtract([], order_by=("Banfn", "Bnfpo")))
+    fetch_mod.fetch_set(
+        requisitions, root="odata/refresh", client=client, storage=storage, run_date=RUN_DATE,
+        mode="delta", since="2025-11-20", parent_keys=[], advance_watermark=False, extra_keys=("Banfn", []),
+    )
+    assert client.filters == ["Badat ge '20251120'"]
+
+
 def test_the_mark_comes_from_the_own_window_and_never_moves_back(storage, no_watermark_io) -> None:
     """MARD, 2026-10-16: its own window held nothing, and the two rows MSEG's
     keys brought in were materials created on 15 September -- a month before
@@ -936,6 +974,84 @@ def test_the_mark_comes_from_the_own_window_and_never_moves_back(storage, no_wat
     assert fetch([created]).watermark == "2026-10-12"
     # Own rows no later than the window (day rounding): the window itself.
     assert fetch([dict(created, Ersda="20261005")]).watermark == "2026-10-06"
+
+
+# --- Look-back: a base date set in the past ----------------------------------
+
+
+def test_reservations_reach_back_fourteen_days_and_nothing_else_does() -> None:
+    """RESB's Crdat is a base date an interface can set days in the past
+    (PRD, 18 Nov: 19 reservations dated 8-10 Nov, created later, never read)."""
+    assert spec_for("ReservationItemSet").delta.lookback_days == 14
+    others = [s.name for s in specs() if s.delta is not None and s.delta.lookback_days and s.name != "ReservationItemSet"]
+    assert others == []
+
+
+def test_a_lookback_needs_a_window_and_whole_days() -> None:
+    with pytest.raises(ValueError, match="whole number"):
+        Delta(field="Crdat", literal="dats", lookback_days=-1)
+    with pytest.raises(ValueError, match="field="):
+        Delta(via=("GoodsMovementItemSet",), via_key="Rsnum", lookback_days=3)
+
+
+def test_window_start_reaches_back_but_never_forward() -> None:
+    resb = spec_for("ReservationItemSet")
+    today = date(2026, 11, 18)
+
+    assert fetch_mod.window_start(resb, "2026-11-18", today=today) == "2026-11-04"
+    # A mark already behind the look-back is left where it is.
+    assert fetch_mod.window_start(resb, "2026-10-01", today=today) == "2026-10-01"
+    # No mark is still no mark: a look-back widens a window, it does not invent one.
+    assert fetch_mod.window_start(resb, None, today=today) is None
+
+
+def test_a_set_without_a_lookback_gets_its_mark_back_untouched() -> None:
+    history = spec_for("POHistorySet")
+    assert fetch_mod.window_start(history, "2026-11-18T00:00:00", today=date(2026, 11, 18)) == "2026-11-18T00:00:00"
+
+
+def test_the_sweep_window_for_reservations_reaches_back(monkeypatch) -> None:
+    monkeypatch.setattr(fetch_mod, "get_watermark", lambda *a, **k: "2026-11-18")
+    monkeypatch.setattr(fetch_mod, "datetime", type("D", (), {"now": staticmethod(lambda tz=None: datetime(2026, 11, 18, 12, tzinfo=timezone.utc))}))
+
+    windows = fetch_mod.resolve_windows([spec_for("ReservationItemSet")])
+
+    assert windows["ReservationItemSet"] == "2026-11-04"
+    # Its parent, MSEG, has no look-back: its window is its mark.
+    assert windows["GoodsMovementItemSet"] == "2026-11-18"
+    # An explicit --since is taken as given, look-back or not.
+    assert fetch_mod.resolve_windows([spec_for("ReservationItemSet")], since="2026-10-01")["ReservationItemSet"] == "2026-10-01"
+
+
+def test_a_reservation_window_starts_fourteen_days_back(storage, no_watermark_io, monkeypatch) -> None:
+    monkeypatch.setattr(fetch_mod, "get_watermark", lambda *a, **k: "2026-09-21")
+    client = StubClient(StubExtract([]))
+
+    fetch_mod.fetch_set(
+        spec_for("ReservationItemSet"), root="odata", client=client, storage=storage,
+        run_date=RUN_DATE, mode="delta", parent_keys=[], advance_watermark=False,
+    )
+
+    assert client.filters == ["Crdat ge '20260907'"]
+
+
+def test_a_lookback_never_moves_the_mark_back(storage, no_watermark_io, monkeypatch) -> None:
+    """Two quiet weeks must not drag the stored mark back to the look-back day."""
+    monkeypatch.setattr(fetch_mod, "get_watermark", lambda *a, **k: "2026-09-21")
+    resb = spec_for("ReservationItemSet")
+
+    def fetch(rows):
+        return fetch_mod.fetch_set(
+            resb, root="odata", client=StubClient(StubExtract(rows)), storage=storage,
+            run_date=RUN_DATE, mode="delta", parent_keys=[], advance_watermark=False,
+        )
+
+    older = {"Rsnum": "0002067451", "Rspos": "0001", "Crdat": "20260915"}
+    newer = {"Rsnum": "0002067999", "Rspos": "0001", "Crdat": "20260922"}
+    # Only rows from inside the look-back: the mark stays at its stored day.
+    assert fetch([older]).watermark == "2026-09-21"
+    # A row past the mark moves it forward, as always.
+    assert fetch([older, newer]).watermark == "2026-09-22"
 
 
 def test_a_window_that_lost_rows_is_refused(storage, no_watermark_io) -> None:

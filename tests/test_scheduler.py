@@ -253,6 +253,53 @@ class TestTheWeeklyOdataFullPull:
         assert fake.log == [] and summary["failed"] == 1 and "refused" in summary["errors"][0]
 
 
+class TestTheWeeklyPullWaitsForTheDelta:
+    """MaterialPlantSet and StorageLocationStockSet are pulled whole AND have an
+    hourly delta; both fire on the hour and merge through the same staging
+    table, so the weekly tick holds the delta's lock while it merges."""
+
+    @staticmethod
+    def _locks(monkeypatch, *, delta_granted: bool = True):
+        made: list[dict] = []
+
+        class _Lock:
+            def __init__(self, name: str = scheduler.LOCK_NAME, timeout_ms: int = 0) -> None:
+                self.entry = {"name": name, "timeout_ms": timeout_ms, "released": False}
+                made.append(self.entry)
+
+            def acquire(self) -> bool:
+                return delta_granted if self.entry["name"] == scheduler.LOCK_NAME else True
+
+            def release(self) -> None:
+                self.entry["released"] = True
+
+        ran: list[bool] = []
+        monkeypatch.setattr(scheduler, "_Lock", _Lock)
+        monkeypatch.setattr(scheduler, "run_odata_full_pull_cycle",
+                            lambda: ran.append(True) or {"pulled": 1, "failed": 0, "errors": []})
+        return made, ran
+
+    def test_it_waits_for_the_delta_lock_and_releases_both(self, monkeypatch) -> None:
+        made, ran = self._locks(monkeypatch)
+
+        asyncio.run(scheduler._odata_full_pull_tick())
+
+        assert ran == [True]
+        assert [(m["name"], m["timeout_ms"]) for m in made] == [
+            (scheduler.ODATA_FULL_PULL_LOCK_NAME, 0),
+            (scheduler.LOCK_NAME, scheduler.FULL_PULL_DELTA_WAIT_MS),
+        ]
+        assert all(m["released"] for m in made)
+
+    def test_a_delta_that_never_lets_go_skips_the_pull_and_frees_its_own_lock(self, monkeypatch) -> None:
+        made, ran = self._locks(monkeypatch, delta_granted=False)
+
+        asyncio.run(scheduler._odata_full_pull_tick())
+
+        assert ran == []
+        assert made[0]["name"] == scheduler.ODATA_FULL_PULL_LOCK_NAME and made[0]["released"]
+
+
 class TestSecondsUntilWeekday:
     def test_later_this_week(self) -> None:
         now = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)  # a Thursday
@@ -351,6 +398,23 @@ class TestStart:
         import asyncio
 
         self._settings(monkeypatch, odata_full_pull_enabled=True)
+
+        async def run():
+            task = scheduler.start(None)
+            assert task is not None
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        asyncio.run(run())
+
+    def test_the_daily_odata_refresh_alone_starts_a_task(self, monkeypatch) -> None:
+        import asyncio
+
+        settings = self._settings(monkeypatch, odata_refresh_enabled=True)
+        assert settings.odata_refresh_hour_utc == 23 and settings.odata_refresh_open_rows is True
 
         async def run():
             task = scheduler.start(None)

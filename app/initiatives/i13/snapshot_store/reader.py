@@ -631,6 +631,12 @@ class SqlSnapshot:
                 .group_by(R.f1)
             ).all()
         )
+        # Same rows as the positions above, each material counted once.
+        unique_materials = self.db.execute(
+            select(func.count(func.distinct(R.material))).where(
+                *self._where(kinds.OAR_KEY, plant=plant, material=material)
+            )
+        ).scalar_one()
         exceptions = self.exception_counts(plans, plant=plant, material=material)
         candidates = self.db.execute(
             select(func.count()).select_from(R).where(*self._where(kinds.RECLASS, plant=plant, material=material, f1="Y"))
@@ -650,6 +656,7 @@ class SqlSnapshot:
             reclassification_candidate_count=candidates,
             valuation_is_mocked=True,
             reference_plan_count=reference,
+            unique_oar_materials=unique_materials,
         )
 
     # --- FR-6 validation inputs, read for the rows a report names -----------
