@@ -29,6 +29,7 @@ from app.api.criticality.router import router as criticality_router
 from app.api.events import csv_upload, pr
 from app.api.i7.router import router as i7_router
 from app.api.i13.routes import router as i13_router
+from app.api.materials.router import router as materials_router
 from app.api.notifications.router import router as notifications_router
 from app.core.security import require_sap_events, require_signed_in
 
@@ -60,6 +61,9 @@ api_router.include_router(csv_upload.router, dependencies=[Depends(require_sap_e
 # The monthly criticality reports feed I07, I08 and I13 alike, so like the
 # assistant they sit outside every initiative prefix.
 api_router.include_router(criticality_router, dependencies=SIGNED_IN)  # -> /api/criticality/*
+
+# More -> Materials: every material type, so outside the initiative prefixes too.
+api_router.include_router(materials_router, dependencies=SIGNED_IN)  # -> /api/materials/*
 
 # --- Extension points: one Spares AI backend, three business modules. ---
 from app.api.i8.router import router as i8_router
