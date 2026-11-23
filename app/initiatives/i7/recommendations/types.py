@@ -62,6 +62,30 @@ silently masked by an unchanged-inputs reuse."""
 ``FORMULA_VERSION`` constants -- a recommendation can change shape (a new
 explanation rule, a new workflow) without any upstream calculation changing."""
 
+STOCK_NO_SAFETY_STOCK_SUFFIX = "+stock-no-ss"
+OAR_NO_SAFETY_STOCK_SUFFIX = "+oar-no-ss"
+
+
+def recommendation_formula_version_for(is_oar: bool | None, policy) -> str:
+    """The ``formula_version`` stored on (and keying the reuse of) a recommendation row.
+
+    Per category, so switching safety stock off or on for one category re-keys only that category's rows. A global
+    bump of ``RECOMMENDATION_FORMULA_VERSION`` would rewrite -- and re-explain through the AI -- the other
+    category's unchanged recommendations too. With safety stock enabled for the category this is exactly
+    ``RECOMMENDATION_FORMULA_VERSION``; deactivated, it carries a suffix, so a row made under one setting is never
+    reused under the other and old rows keep the label they were written with."""
+    if is_oar:
+        return (
+            RECOMMENDATION_FORMULA_VERSION
+            if policy.safety_stock.oar_enabled
+            else RECOMMENDATION_FORMULA_VERSION + OAR_NO_SAFETY_STOCK_SUFFIX
+        )
+    return (
+        RECOMMENDATION_FORMULA_VERSION
+        if policy.safety_stock.stock_item_enabled
+        else RECOMMENDATION_FORMULA_VERSION + STOCK_NO_SAFETY_STOCK_SUFFIX
+    )
+
 
 class LifecycleStatus(StrEnum):
     """The backend's own recommendation state machine."""

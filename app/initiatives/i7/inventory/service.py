@@ -39,6 +39,7 @@ from app.initiatives.i7.inventory.lead_time import PurchaseOrderInput
 from app.initiatives.i7.inventory.max_stock import MaxStockContext
 from app.initiatives.i7.inventory.types import (
     FORMULA_VERSION,
+    formula_version_for,
     CalculationStatus,
     DemandVariabilityResult,
     LeadTimeResult,
@@ -69,6 +70,7 @@ class InventoryRunResult:
     rop_status_counts: dict[str, int] = field(default_factory=dict)
     max_stock_status_counts: dict[str, int] = field(default_factory=dict)
     lead_time_method_counts: dict[str, int] = field(default_factory=dict)
+    rop_above_max_count: int = 0
     error: str | None = None
 
 
@@ -271,10 +273,37 @@ def calculate_one(
         )
 
     # --- Safety stock ------------------------------------------------------
-    ss = _safety_stock(row, demand_class, lead, variability, service, demand_values, material, plant)
+    # Deactivated, not removed: with ``PolicyDocument.safety_stock.stock_item_enabled`` false no safety stock is
+    # calculated or recommended and ROP / Max do not use one. The calculation (``_safety_stock`` and the
+    # safety_stock / service_level / monte_carlo modules) is untouched and runs exactly as before when it is true.
+    safety_stock_enabled = policy.safety_stock.stock_item_enabled
+    if safety_stock_enabled:
+        ss = _safety_stock(row, demand_class, lead, variability, service, demand_values, material, plant)
+    else:
+        ss = SafetyStockResult(
+            status=CalculationStatus.NOT_APPLICABLE_SAFETY_STOCK_DISABLED,
+            detail="safety stock is not part of the current stock-item workflow",
+        )
 
     # --- Reorder point ------------------------------------------------------
-    if ss.status is not CalculationStatus.SUCCESS or ss.safety_stock is None:
+    if not safety_stock_enabled:
+        # ROP = ceil(forecast_rate x LT). The lead-time and forecast checks that used to be reached through the
+        # safety stock step (it returned NOT_EVALUABLE_LEAD_TIME) are made here, so they still block.
+        if not lead.is_available:
+            rop_result = RopResult(
+                status=CalculationStatus.NOT_EVALUABLE_LEAD_TIME,
+                detail=lead.detail or "no usable lead time",
+            )
+        elif row.forecast_rate is None:
+            rop_result = RopResult(
+                status=CalculationStatus.NOT_EVALUABLE_INVALID_FORECAST,
+                detail="no selected demand forecast",
+            )
+        else:
+            rop_result = rop_module.calculate(
+                Decimal(str(row.forecast_rate)), lead.lt_avg_months, None
+            )
+    elif ss.status is not CalculationStatus.SUCCESS or ss.safety_stock is None:
         rop_result = RopResult(status=ss.status, detail="blocked by safety stock")
     elif row.forecast_rate is None:
         rop_result = RopResult(
@@ -299,12 +328,16 @@ def calculate_one(
             ordering_cost=policy.max_stock.ordering_cost,
             holding_cost_rate=policy.max_stock.holding_cost_rate,
             review_period_months=review_period,
+            # Max = ceil(rate x (LT + T)) needs the reorder point before it was rounded. Only when safety stock
+            # is deactivated, so the enabled path passes exactly what it always did.
+            raw_rop=None if safety_stock_enabled else rop_result.raw_rop,
         )
     )
 
     ss, rop_result, max_result = _apply_current_sap_baseline(
-        demand_class, row, ss, rop_result, max_result
+        demand_class, row, ss, rop_result, max_result, override_safety_stock=safety_stock_enabled
     )
+    max_result = _flag_rop_above_max(rop_result, max_result)
 
     return _row(
         material, plant, demand_class, row, lead, variability, service, ss, rop_result, max_result
@@ -317,6 +350,8 @@ def _apply_current_sap_baseline(
     ss: SafetyStockResult,
     rop_result: RopResult,
     max_result: MaxStockResult,
+    *,
+    override_safety_stock: bool = True,
 ) -> tuple[SafetyStockResult, RopResult, MaxStockResult]:
     """Smooth/erratic only: I11's current MARC value wins over I07's own
     calculation, per field, when a current value exists.
@@ -356,7 +391,10 @@ def _apply_current_sap_baseline(
     current_reorder_point = getattr(row, "current_reorder_point", None)
     current_maximum_stock = getattr(row, "current_maximum_stock", None)
 
-    if current_safety_stock is not None:
+    # With safety stock deactivated nothing is recommended for it, so the SAP value is not copied across (it stays
+    # on the material as ``current_safety_stock``; nothing is written to SAP either way). ROP and Max below are
+    # overridden exactly as before.
+    if override_safety_stock and current_safety_stock is not None:
         ss = SafetyStockResult(
             status=CalculationStatus.SUCCESS_FROM_CURRENT_SAP_VALUE,
             method="current_sap_value",
@@ -409,6 +447,20 @@ def _review_period(policy: PolicyDocument, criticality: Criticality | None) -> D
         if tier is criticality:
             return Decimal(str(months))
     return None
+
+
+def _flag_rop_above_max(rop_result: RopResult, max_result: MaxStockResult) -> MaxStockResult:
+    """Record, without changing any figure or status, that the reorder point ended up above the maximum.
+
+    The formulas cannot do this (``ceil(x) <= ceil(x + y)``), but a per-field SAP override can: a SAP reorder
+    point kept next to a calculated maximum. Whether such a row should be published, blocked or have its maximum
+    set aside is a business rule that has not been decided; until it is, the row is marked in its trace so it is
+    never silently treated as a clean one (and counted in the run's log line)."""
+    if rop_result.rop is None or max_result.max_stock is None or rop_result.rop <= max_result.max_stock:
+        return max_result
+    return max_result._replace(
+        trace=(*max_result.trace, ("rop_exceeds_max", f"{rop_result.rop} > {max_result.max_stock}"))
+    )
 
 
 def _safety_stock(
@@ -559,7 +611,13 @@ def _row(
         "raw_max_stock": max_result.raw_max_stock,
         "max_stock": max_result.max_stock,
         "max_stock_trace": _trace_text(max_result.trace),
-        "detail": (ss.detail or lead.detail or service.detail or None),
+        "detail": (
+            # Safety stock is deactivated: its "not part of the workflow" note and the service level (which
+            # nothing needs) must not become the reason a row is blocked. What blocked it is the ROP's own.
+            (rop_result.detail or lead.detail or None)
+            if ss.status is CalculationStatus.NOT_APPLICABLE_SAFETY_STOCK_DISABLED
+            else (ss.detail or lead.detail or service.detail or None)
+        ),
     }
 
 
@@ -598,7 +656,7 @@ def run_inventory_calculations(
                 InventoryRun.forecast_run_id == forecast_run_id,
                 InventoryRun.policy_id == policy.policy_id,
                 InventoryRun.policy_version == policy.policy_version,
-                InventoryRun.formula_version == FORMULA_VERSION,
+                InventoryRun.formula_version == formula_version_for(policy),
                 InventoryRun.status == STATUS_SUCCEEDED,
             )
         ).scalar_one_or_none()
@@ -615,13 +673,19 @@ def run_inventory_calculations(
             )
 
         strategy = max_stock_module.strategy_for(policy.max_stock)
+        if not policy.safety_stock.stock_item_enabled:
+            logger.info(
+                "inventory run: stock-item safety stock is DEACTIVATED (formula %s): ROP = ceil(rate x LT), "
+                "Max = ceil(rate x (LT + T)), no safety stock recommended",
+                formula_version_for(policy),
+            )
         run = InventoryRun(
             status="running",
             feature_run_id=feature_run_id,
             forecast_run_id=forecast_run_id,
             policy_id=policy.policy_id,
             policy_version=policy.policy_version,
-            formula_version=FORMULA_VERSION,
+            formula_version=formula_version_for(policy),
             service_level_configured=policy.service_level.is_configured,
             max_stock_strategy=policy.max_stock.strategy,
         )
@@ -662,6 +726,12 @@ def run_inventory_calculations(
                 )
                 calculation["inventory_run_id"] = run_id
                 rows.append(calculation)
+                if (
+                    calculation["rop"] is not None
+                    and calculation["max_stock"] is not None
+                    and calculation["rop"] > calculation["max_stock"]
+                ):
+                    result.rop_above_max_count += 1
 
                 for counter, value in (
                     (result.safety_stock_status_counts, calculation["safety_stock_status"]),
@@ -691,6 +761,13 @@ def run_inventory_calculations(
             result.calculations,
             result.safety_stock_status_counts,
         )
+        if result.rop_above_max_count:
+            logger.warning(
+                "inventory run %d: %d material-plant(s) have a reorder point above the maximum (a SAP reorder "
+                "point kept beside a calculated maximum); marked 'rop_exceeds_max' in their max_stock_trace",
+                run_id,
+                result.rop_above_max_count,
+            )
         return result
 
     except Exception as exc:

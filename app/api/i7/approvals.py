@@ -156,9 +156,9 @@ def reject_recommendation(
     "comment. HOLD freezes the recommendation at its current step -- it "
     "does not advance or reverse -- until the same pending role calls "
     "RELEASE_HOLD; this is distinct from SEND_BACK, which returns one step "
-    "for correction/rework. ADJUST carries the new reorder point, safety stock "
-    "and maximum stock (new_rop / new_safety_stock / new_max_stock), replaces the "
-    "recommended values with them and moves the recommendation to the next role; "
+    "for correction/rework. ADJUST carries the new reorder point and maximum stock "
+    "(new_rop / new_max_stock; new_safety_stock is optional and only checked when given), "
+    "replaces the recommended values with them and moves the recommendation to the next role; "
     "the last role in a route cannot adjust. Final APPROVE at the route's last role moves "
     "the recommendation to SAP_EXECUTION_PENDING and calls no SAP API. "
     "Every action writes one immutable approval-ledger entry.",
@@ -184,9 +184,9 @@ def apply_action(
     policy = PolicyDocument()
     try:
         adjusted = None
-        if body.action is ApprovalAction.ADJUST and None not in (
-            body.new_rop, body.new_safety_stock, body.new_max_stock
-        ):
+        # Safety stock is optional: deactivated, so an adjustment gives a reorder point and a maximum, and the
+        # recommended safety stock is left as it is. Given, it is validated as before (SS <= ROP <= Max).
+        if body.action is ApprovalAction.ADJUST and None not in (body.new_rop, body.new_max_stock):
             adjusted = ledger.AdjustedValues(
                 rop=body.new_rop, safety_stock=body.new_safety_stock, max_stock=body.new_max_stock
             )

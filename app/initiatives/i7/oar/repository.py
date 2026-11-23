@@ -12,8 +12,9 @@ material-plants are cold-start targets, not donors, and querying against them
 would be work spent on rows that can never pass eligibility.
 
 **And only those with something to lend.** A donor must also have its current
-SAP ROP, safety stock and max stock all above zero, and those SAP values are
-what it lends -- not I07's own Phase 5 calculation.
+SAP ROP and max stock above zero, and those SAP values are what it lends -- not
+I07's own Phase 5 calculation. Its safety stock is NOT a condition: safety stock is
+deactivated (``PolicyDocument.safety_stock``), so nothing needs it to be there.
 """
 
 from decimal import ROUND_CEILING, Decimal
@@ -39,14 +40,19 @@ _TARGET_SQL = """
 
 _DONOR_WHERE = """
      WHERE f.history_status = 'SUFFICIENT'
-       AND f.current_safety_stock > 0
        AND f.current_reorder_point > 0
        AND f.current_maximum_stock > 0
 """
-# A neighbour must have all three current SAP values (MARC EISBE / MINBE / MABST) set and above
+# A neighbour must have its current SAP ROP and max stock (MARC MINBE / MABST) set and above
 # zero: they are what it lends. A 0 in SAP usually means "never set up", and averaging it in would
 # drag every estimate down. The candidate population and the values it lends share this one
 # condition, so no candidate can exist that has nothing to lend.
+#
+# The donor's safety stock (EISBE) used to be a third condition (``AND f.current_safety_stock > 0``).
+# It was removed, with nothing replacing it, when safety stock was deactivated: a donor is judged on
+# the two values the estimate uses. To bring safety stock back as a recommendation, put that line back
+# here AND switch ``PolicyDocument.safety_stock.oar_enabled`` on -- otherwise donors with no safety stock
+# would pull its weighted median down.
 
 _CANDIDATE_SQL = (
     """
@@ -106,7 +112,7 @@ def load_targets(session: Session) -> list[CandidateAttributes]:
 
 def load_candidate_population(session: Session) -> list[CandidateAttributes]:
     """Every classified material-plant (Phase 3's SUFFICIENT history status)
-    whose current SAP ROP, safety stock and max stock are all above zero -- the
+    whose current SAP ROP and max stock are above zero -- the
     only population eligible to be a neighbour. Similarity, history, criticality
     and active-status gates are applied later, per target."""
     return [_to_attributes(row) for row in session.execute(text(_CANDIDATE_SQL))]
@@ -150,11 +156,14 @@ def load_inventory_values(session: Session) -> dict[tuple[str, str], dict]:
     Always the neighbour's **current SAP values** (MARC), whatever its demand
     class -- never I07's own Phase 5 calculation, even where one succeeded.
     Covers exactly the candidate population (same condition), so every
-    neighbour has something to lend.
+    neighbour has something to lend. A donor may have no SAP safety stock (it is not a condition); it then
+    lends ``None`` for it -- never a made-up 0 -- and nothing uses it.
     """
     return {
         (row.sap_material_number, row.sap_plant_code): {
-            "safety_stock": _whole_units(row.current_safety_stock),
+            "safety_stock": (
+                _whole_units(row.current_safety_stock) if row.current_safety_stock is not None else None
+            ),
             "rop": _whole_units(row.current_reorder_point),
             "max_stock": _whole_units(row.current_maximum_stock),
         }

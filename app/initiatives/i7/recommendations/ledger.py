@@ -45,10 +45,15 @@ LEDGER_COMMENT_MAX = 1000
 
 @dataclass(frozen=True)
 class AdjustedValues:
-    """What an ADJUST puts in place of the recommended values."""
+    """What an ADJUST puts in place of the recommended values.
+
+    ``safety_stock`` is ``None`` when the approver supplied none, which is the normal case while safety stock is
+    deactivated (``PolicyDocument.safety_stock``): the recommended safety stock is then left exactly as it is --
+    never set to 0 -- and only ``rop <= max_stock`` is checked. When a safety stock is supplied the previous rule
+    ``safety_stock <= rop <= max_stock`` applies."""
 
     rop: int
-    safety_stock: int
+    safety_stock: int | None
     max_stock: int
 
 
@@ -63,25 +68,36 @@ def _whole(value: Decimal | None) -> str:
 
 def _validate_adjustment(recommendation: Recommendation, values: AdjustedValues | None) -> AdjustedValues:
     if values is None:
-        raise WorkflowError("ADJUST needs the new reorder point, safety stock and maximum stock")
-    if min(values.rop, values.safety_stock, values.max_stock) < 0:
+        raise WorkflowError("ADJUST needs the new reorder point and maximum stock")
+    supplied = [values.rop, values.max_stock] + ([values.safety_stock] if values.safety_stock is not None else [])
+    if min(supplied) < 0:
         raise WorkflowError("adjusted values cannot be negative")
-    if not values.safety_stock <= values.rop <= values.max_stock:
-        raise WorkflowError("adjusted values must satisfy safety stock <= reorder point <= maximum stock")
-    current = (
-        recommendation.recommended_rop,
-        recommendation.recommended_safety_stock,
-        recommendation.recommended_max_stock,
-    )
-    if all(c is not None and c == v for c, v in zip(current, (values.rop, values.safety_stock, values.max_stock))):
+    if values.safety_stock is not None:
+        if not values.safety_stock <= values.rop <= values.max_stock:
+            raise WorkflowError("adjusted values must satisfy safety stock <= reorder point <= maximum stock")
+    elif not values.rop <= values.max_stock:
+        raise WorkflowError("adjusted values must satisfy reorder point <= maximum stock")
+    # Only the values the approver supplied are compared: a safety stock they did not give is not "unchanged".
+    pairs = [
+        (recommendation.recommended_rop, values.rop),
+        (recommendation.recommended_max_stock, values.max_stock),
+    ]
+    if values.safety_stock is not None:
+        pairs.append((recommendation.recommended_safety_stock, values.safety_stock))
+    if all(c is not None and c == v for c, v in pairs):
         raise WorkflowError("the adjusted values are the same as the current ones; change at least one")
     return values
 
 
 def _adjustment_summary(recommendation: Recommendation, values: AdjustedValues) -> str:
+    safety = (
+        f"Safety stock {_whole(recommendation.recommended_safety_stock)} -> {values.safety_stock}, "
+        if values.safety_stock is not None
+        else ""
+    )
     return (
         f"[ROP {_whole(recommendation.recommended_rop)} -> {values.rop}, "
-        f"Safety stock {_whole(recommendation.recommended_safety_stock)} -> {values.safety_stock}, "
+        f"{safety}"
         f"Max {_whole(recommendation.recommended_max_stock)} -> {values.max_stock}]"
     )
 
@@ -114,13 +130,17 @@ def _apply_adjustment(
         )
     )
     recommendation.recommended_rop = Decimal(values.rop)
-    recommendation.recommended_safety_stock = Decimal(values.safety_stock)
     recommendation.recommended_max_stock = Decimal(values.max_stock)
-    for delta, new, current in (
+    changes = [
         ("rop_delta", values.rop, recommendation.current_rop),
-        ("safety_stock_delta", values.safety_stock, recommendation.current_safety_stock),
         ("max_stock_delta", values.max_stock, recommendation.current_max_stock),
-    ):
+    ]
+    if values.safety_stock is not None:
+        # Only when the approver gave one. Otherwise the recommended safety stock (a stored historical value, or
+        # none) and its delta stay as they were; nothing is written for it and SAP's value is not touched.
+        recommendation.recommended_safety_stock = Decimal(values.safety_stock)
+        changes.append(("safety_stock_delta", values.safety_stock, recommendation.current_safety_stock))
+    for delta, new, current in changes:
         setattr(recommendation, delta, None if current is None else Decimal(new) - current)
     recommendation.current_version = snapshot_version + 1
 
@@ -136,9 +156,10 @@ def is_manual_conversion(recommendation: Recommendation) -> bool:
 
 
 def _has_recommended_values(recommendation: Recommendation) -> bool:
+    """The reorder point and maximum stock -- what the approver reviews. Safety stock is not required: it is
+    deactivated (``PolicyDocument.safety_stock``), so a recommendation made now has none."""
     return None not in (
         recommendation.recommended_rop,
-        recommendation.recommended_safety_stock,
         recommendation.recommended_max_stock,
     )
 
@@ -153,7 +174,7 @@ def submit_for_approval(
     rejected, REJECTED (a new request).
 
     A NOT_ELIGIBLE material is a *manual conversion request*: ``manually_converted`` is set with who asked
-    and when, and the rule's verdict is left as it was. It needs all three recommended values, because the
+    and when, and the rule's verdict is left as it was. It needs the recommended reorder point and maximum stock, because the
     approver has to see them. After a rejection it may be asked for again: the chain restarts at the first
     role, the earlier pass stays in the ledger, and a new entry (``RESUBMIT``) records the new request.
     Every other recommendation keeps REJECTED as final.
@@ -171,7 +192,7 @@ def submit_for_approval(
     new_state = workflow.resubmit(state) if reopening else workflow.submit(state)
     if manual and not _has_recommended_values(recommendation):
         raise WorkflowError(
-            "cannot request a Min-Max conversion without recommended reorder point, safety stock and "
+            "cannot request a Min-Max conversion without recommended reorder point and "
             "maximum stock for the approver to review"
         )
 
