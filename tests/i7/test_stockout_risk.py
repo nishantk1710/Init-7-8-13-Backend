@@ -610,9 +610,9 @@ def test_no_aggregate_in_the_counts_query_contains_a_subquery(db):
 # --- the setting --------------------------------------------------------------------
 
 
-def test_the_anchor_defaults_to_the_last_month_with_normal_volume(monkeypatch):
+def test_the_anchor_is_unpinned_by_default_so_it_is_the_date_of_the_run(monkeypatch):
     monkeypatch.delenv("I7_STOCKOUT_RISK_AS_OF", raising=False)
-    assert Settings(_env_file=None).i7_stockout_risk_as_of == date(2026, 5, 31)
+    assert Settings(_env_file=None).i7_stockout_risk_as_of is None
 
 
 def test_the_anchor_can_be_changed(monkeypatch):
@@ -620,6 +620,16 @@ def test_the_anchor_can_be_changed(monkeypatch):
     assert Settings(_env_file=None).i7_stockout_risk_as_of == date(2026, 6, 30)
 
 
-def test_a_blank_anchor_means_use_the_newest_issue_date(monkeypatch):
+def test_a_blank_anchor_is_the_same_as_unset(monkeypatch):
     monkeypatch.setenv("I7_STOCKOUT_RISK_AS_OF", "")
     assert Settings(_env_file=None).i7_stockout_risk_as_of is None
+
+
+def test_the_anchor_is_the_pinned_date_or_else_the_date_of_the_rebuild():
+    from app.initiatives.i7.stockout_risk.history import resolve_anchor
+
+    assert resolve_anchor(date(2026, 5, 31), run_date=date(2026, 11, 24)) == date(2026, 5, 31)  # pinned stays
+    assert resolve_anchor(None, run_date=date(2026, 11, 24)) == date(2026, 11, 24)  # unpinned: the run's date
+    from datetime import datetime, timezone
+
+    assert resolve_anchor(None) == datetime.now(timezone.utc).date()  # the date of the call when none is given

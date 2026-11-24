@@ -859,19 +859,18 @@ class Settings(BaseSettings):
     # The card counts a material-plant at risk when its stock on hand is below
     # (average daily consumption over the 90 days ending on this date) x (lead
     # time), and takes its Fast / Slow / Non-moving band from the days between
-    # this date and the last issue. The date is fixed rather than "today" because the movement
-    # history is not current: 2026-05 has ~2,400 issue lines, 2026-06 has 358 and
-    # July has 10, so a 90-day window ending today (or on the stray newest line,
-    # 2026-09-08) is nearly empty and would read as "nothing is at risk".
-    # 2026-05-31 is the last month with normal volume. The card shows this date
-    # as "As of ...".
+    # this date and the last issue. The card shows this date as "As of ...".
     #
-    # Change it here (I7_STOCKOUT_RISK_AS_OF=YYYY-MM-DD), then rebuild the table
-    # it reads: python -m app.initiatives.i7.stockout_risk. Set it BLANK to use
-    # the newest issue date in the movement data instead. The card always shows
-    # the date the table was last built with, so a changed setting that has not
-    # been rebuilt yet never mislabels the figures.
-    i7_stockout_risk_as_of: date | None = date(2026, 5, 31)
+    # BLANK (the default): the date of the rebuild. The pipeline rebuilds the table the card reads as
+    # its last stage, so the card is recalculated on every run and its date is the date of that run.
+    # A date (I7_STOCKOUT_RISK_AS_OF=YYYY-MM-DD) pins the card to that date instead. That used to be
+    # needed: the movement history was not current (2026-05 had ~2,400 issue lines, 2026-06 had 358 and
+    # July 10), so a window ending on the run date was nearly empty and read as "nothing is at risk".
+    # If the movement data falls behind again, pin a date. To apply a changed setting before the next
+    # run, rebuild by hand: python -m app.initiatives.i7.stockout_risk. The card always shows the date
+    # the table was last built with, so a changed setting that has not been rebuilt yet never
+    # mislabels the figures.
+    i7_stockout_risk_as_of: date | None = None
 
     # --- I07 pipeline watcher -----------------------------------------------
     #
