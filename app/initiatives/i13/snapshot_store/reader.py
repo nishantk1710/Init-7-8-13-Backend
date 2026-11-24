@@ -31,7 +31,12 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.initiatives.i13.config import get_i13_config
 from app.initiatives.i13.exceptions import exception_queue_from
-from app.initiatives.i13.ledger_compat import LegacyLedgerEntry
+from app.initiatives.i13.ledger_compat import (
+    LegacyLedgerEntry,
+    document_numbers,
+    legacy_ledger_id,
+    matches_document,
+)
 from app.initiatives.i13.ordering import newest_requirement_first
 from app.initiatives.i13.plan_vs_issued import PlanVsIssuedRow, from_payload
 from app.initiatives.i13.models import (
@@ -266,41 +271,94 @@ class SqlSnapshot:
     def _legacy_where(
         self, *, plant=None, material=None, oar_only=True,
         procurement_status=None, utilisation_status=None, delivery_status=None,
+        has_reservation: bool | None = None, document_keys: set[str] | None = None,
     ) -> list:
+        extra = []
+        # A line no reservation raised is NOT_TRACKED (ledger_compat.procurement_view).
+        if has_reservation is True:
+            extra.append(R.f2 != "NOT_TRACKED")
+        elif has_reservation is False:
+            extra.append(R.f2 == "NOT_TRACKED")
+        if document_keys is not None:
+            extra.append(R.rec_key.in_(sorted(document_keys)))
         return self._where(
             kinds.LLEDGER, plant=plant, material=material, oar_only=oar_only,
             f1=procurement_status.upper() if procurement_status else None,
             f2=utilisation_status.upper() if utilisation_status else None,
             f3=delivery_status.upper() if delivery_status else None,
+            extra=extra,
         )
+
+    def _document_keys(self, numbers: frozenset[str]) -> set[str]:
+        """The ledger ids of the procurement lines whose PR or PO number is one
+        of ``numbers``, found through the chain's indexed PR (f2) and PO (f3)."""
+        rows = self.db.execute(
+            select(R.payload).where(
+                R.version == self.version, R.kind == kinds.CHAIN,
+                or_(R.f2.in_(sorted(numbers)), R.f3.in_(sorted(numbers))),
+            )
+        ).scalars()
+        return {legacy_ledger_id(e) for e in _items(PartialLedgerEntry, rows)}
+
+    def _legacy_document_lines(self, numbers: frozenset[str], **filters) -> list[LegacyLedgerEntry]:
+        """Every line a PR / PO search matches, newest first. Few enough to
+        filter in Python: the ids narrow to that PR's or PO's lines, and the
+        PO check drops another PO line of a PR item ordered across several."""
+        keys = self._document_keys(numbers)
+        if not keys:
+            return []
+        rows = self.db.execute(
+            select(R.payload)
+            .where(*self._legacy_where(document_keys=keys, **filters))
+            .order_by(*self._newest_first(R.d1), R.seq)
+        ).scalars()
+        return [e for e in _items(LegacyLedgerEntry, rows) if matches_document(e, numbers)]
 
     def legacy_ledger(
         self, *, plant=None, material=None, oar_only=True,
         procurement_status=None, utilisation_status=None, delivery_status=None,
+        has_reservation: bool | None = None, document: str | None = None,
         limit=None, offset=0,
     ):
         """Newest first: by PR date, else first goods receipt (kinds.lledger's
-        ``d1``); lines with neither go last, in build order."""
+        ``d1``); lines with neither go last, in build order. ``document`` is a
+        PR or PO number (:func:`document_numbers`)."""
+        filters = dict(
+            plant=plant, material=material, oar_only=oar_only, procurement_status=procurement_status,
+            utilisation_status=utilisation_status, delivery_status=delivery_status,
+            has_reservation=has_reservation,
+        )
+        numbers = document_numbers(document)
+        if numbers:
+            lines = self._legacy_document_lines(numbers, **filters)
+            end = None if limit is None else offset + limit
+            return lines[offset:end], len(lines)
         rows, total = self._page(
-            self._legacy_where(
-                plant=plant, material=material, oar_only=oar_only, procurement_status=procurement_status,
-                utilisation_status=utilisation_status, delivery_status=delivery_status,
-            ),
-            [*self._newest_first(R.d1), R.seq], limit, offset,
+            self._legacy_where(**filters), [*self._newest_first(R.d1), R.seq], limit, offset,
         )
         return _items(LegacyLedgerEntry, (r.payload for r in rows)), total
 
     def legacy_ledger_counts(
         self, *, plant=None, material=None, oar_only=True,
         procurement_status=None, utilisation_status=None, delivery_status=None,
+        has_reservation: bool | None = None, document: str | None = None,
     ) -> dict[str, Any]:
         """The procurement view's header: lines in total and by linkage status.
         The total is counted on its own, so a version built before linkage was
         stored beside the payload still reports it (with no breakdown)."""
-        clauses = self._legacy_where(
+        filters = dict(
             plant=plant, material=material, oar_only=oar_only, procurement_status=procurement_status,
             utilisation_status=utilisation_status, delivery_status=delivery_status,
+            has_reservation=has_reservation,
         )
+        numbers = document_numbers(document)
+        if numbers:
+            lines = self._legacy_document_lines(numbers, **filters)
+            return {
+                "total": len(lines),
+                "by_linkage_status": dict(Counter(e.linkage_status.value for e in lines)),
+            }
+        clauses = self._legacy_where(**filters)
         total = self.db.execute(select(func.count()).select_from(R).where(*clauses)).scalar_one()
         return {"total": int(total), "by_linkage_status": self._counts(clauses, R.text1)}
 
@@ -431,9 +489,11 @@ class SqlSnapshot:
     def _plan_vs_where(
         self, *, source=None, status=None, material=None, plant=None, reservation=None, overdue=False
     ) -> list:
-        """``overdue`` keeps below-plan rows whose due date is before the
-        version's reference date (``plan_vs_issued.is_overdue``)."""
-        extra = [R.f2 == "BELOW_PLAN", R.d1 < self.reference_date] if overdue else []
+        """``overdue`` keeps captured plans with nothing issued whose window
+        ended before the version's reference date (``plan_vs_issued.is_overdue``)."""
+        extra = (
+            [R.f1 == "ASSISTANT", R.f2 == "NOT_ISSUED", R.d1 < self.reference_date] if overdue else []
+        )
         return self._where(
             kinds.PLAN_VS, material=material, plant=plant,
             f1=source.upper() if source else None, f2=status.upper() if status else None,

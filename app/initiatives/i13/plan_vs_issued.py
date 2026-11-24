@@ -17,22 +17,24 @@ the shelf. A reservation a plan owns appears on that plan's row only, so no
 issue is counted twice. A deleted reservation item with nothing issued is not
 a live demand and is left out, as ``plan_outcomes`` leaves it out.
 
-Both sources are read the same way: "planned" is what was asked for (a plan's
-planned quantity, a reservation's reserved quantity) and "issued" is what was
-used, whichever the source. Five statuses:
+Both sources are read the same way: "required" is what was asked for (a
+plan's planned quantity, a reservation's reserved quantity) and "issued" is
+what was used, whichever the source. Four statuses, by issue alone:
 
 * **Awaiting reservation** -- a captured plan no reservation stands for yet:
   there is nothing it could have been issued on.
-* **Not due yet** -- nothing issued, and the date it is wanted by is still
-  ahead: not a shortfall yet.
-* otherwise **on / below / above plan** -- issued equal to, less than or more
-  than planned.
+* **Not issued** -- nothing issued yet.
+* **Partially issued** -- something issued, less than required.
+* **Fully issued** -- issued equal to or more than required (the excess is
+  in the variance).
 
-**Overdue** is not a fourth status but a marker on a below-plan row whose
-due date (a plan's window end, a reservation's requirement date) has passed:
-it is short, and it should not be any more. It is worked out when the row is
-read (:func:`is_overdue`), against the served version's reference date, so it
-needs nothing stored beyond the status and the due date already filtered on.
+**Overdue** is not a status but a marker, and only on a captured plan: the
+consumption plan is "Planned Consumption Overdue" -- its window has ended and
+nothing was issued, the same rule that raises the PLAN_BREACH exception
+(``act.detection.detect_plan_breach``). A reservation raised directly in SAP has
+no consumption plan, so it is never overdue: those are covered by the no-plan
+and 30-day exceptions instead. It is worked out when the row is read
+(:func:`is_overdue`), against the served version's reference date.
 """
 
 from __future__ import annotations
@@ -61,10 +63,23 @@ class RowSource(str, Enum):
 class RowStatus(str, Enum):
     NO_RESERVATION = "NO_RESERVATION"
     """Awaiting reservation -- a captured plan only."""
-    NOT_DUE = "NOT_DUE"
-    ON_PLAN = "ON_PLAN"
-    BELOW_PLAN = "BELOW_PLAN"
-    ABOVE_PLAN = "ABOVE_PLAN"
+    NOT_ISSUED = "NOT_ISSUED"
+    PARTIALLY_ISSUED = "PARTIALLY_ISSUED"
+    FULLY_ISSUED = "FULLY_ISSUED"
+
+
+#: The statuses before layout 8 (2 Nov - 18 Nov 2026), read from a version
+#: stored before the rebuild. Below plan splits on the issued quantity.
+_LEGACY_STATUS = {"NOT_DUE", "ON_PLAN", "BELOW_PLAN", "ABOVE_PLAN"}
+
+
+def issue_status(required: Decimal, issued: Decimal) -> RowStatus:
+    """Not, partially or fully issued against what was required."""
+    if issued <= 0:
+        return RowStatus.NOT_ISSUED
+    if issued < required:
+        return RowStatus.PARTIALLY_ISSUED
+    return RowStatus.FULLY_ISSUED
 
 
 @dataclass(frozen=True)
@@ -85,7 +100,7 @@ class PlanVsIssuedRow:
     issued_quantity: Decimal
     status: RowStatus
     variance_quantity: Decimal | None
-    """None while awaiting a reservation or not due yet: nothing to vary yet."""
+    """None while awaiting a reservation: nothing to vary yet."""
     variance_percentage: Decimal | None
     """Also None when nothing was planned (no percentage of zero)."""
     due_date: date | None
@@ -95,26 +110,25 @@ class PlanVsIssuedRow:
 
 
 def compare(
-    planned: Decimal, issued: Decimal, *, due: date | None, as_of: date, has_reservation: bool = True
+    planned: Decimal, issued: Decimal, *, has_reservation: bool = True
 ) -> tuple[RowStatus, Decimal | None, Decimal | None]:
-    """Status, variance (issued - planned) and its percentage of planned. Exact:
-    no tolerance band is configured anywhere."""
+    """Status, variance (issued - required) and its percentage of required.
+    Exact: no tolerance band is configured anywhere."""
     if not has_reservation:
         return RowStatus.NO_RESERVATION, None, None
-    if issued == 0 and due is not None and due > as_of:
-        return RowStatus.NOT_DUE, None, None
-    status = (
-        RowStatus.BELOW_PLAN if issued < planned
-        else RowStatus.ABOVE_PLAN if issued > planned
-        else RowStatus.ON_PLAN
-    )
     variance = issued - planned
-    return status, variance, (variance / planned * Decimal("100")) if planned > 0 else None
+    return issue_status(planned, issued), variance, (variance / planned * Decimal("100")) if planned > 0 else None
 
 
 def is_overdue(row: PlanVsIssuedRow, as_of: date) -> bool:
-    """Below plan, and the date it was wanted by has passed."""
-    return row.status is RowStatus.BELOW_PLAN and row.due_date is not None and row.due_date < as_of
+    """Planned Consumption Overdue: a captured plan, nothing issued on its
+    reservations, and its window ended before ``as_of``. Never a SAP row."""
+    return (
+        row.source is RowSource.ASSISTANT
+        and row.status is RowStatus.NOT_ISSUED
+        and row.due_date is not None
+        and row.due_date < as_of
+    )
 
 
 def plan_row(
@@ -122,9 +136,7 @@ def plan_row(
 ) -> PlanVsIssuedRow:
     planned = plan.planned_quantity
     due = plan.window_end or plan.planned_use_date
-    status, variance, percentage = compare(
-        planned, issued, due=due, as_of=as_of, has_reservation=bool(reservations)
-    )
+    status, variance, percentage = compare(planned, issued, has_reservation=bool(reservations))
     return PlanVsIssuedRow(
         row_id=f"PLAN-{plan.plan_id}",
         source=RowSource.ASSISTANT,
@@ -149,7 +161,7 @@ def reservation_row(entry, *, as_of: date) -> PlanVsIssuedRow | None:
     reserved, issued = entry.reservation_quantity, entry.issued_quantity
     if reserved <= 0 and issued <= 0:
         return None
-    status, variance, percentage = compare(reserved, issued, due=entry.requirement_date, as_of=as_of)
+    status, variance, percentage = compare(reserved, issued)
     return PlanVsIssuedRow(
         row_id=f"RES-{entry.reservation_number}-{entry.reservation_item}",
         source=RowSource.SAP,
@@ -232,10 +244,13 @@ def from_payload(d: dict[str, Any]) -> PlanVsIssuedRow:
     def day(v):
         return None if v is None else date.fromisoformat(v)
 
+    status = d["st"]
+    if status in _LEGACY_STATUS:
+        status = issue_status(Decimal(d["pq"]), Decimal(d["iq"])).value
     return PlanVsIssuedRow(
         row_id=d["id"], source=RowSource(d["src"]), material=d["m"], plant=d["p"], oar=d["oar"],
         reservations=tuple(d["res"]), session_id=d["sid"], plan_id=d["pid"],
-        planned_quantity=Decimal(d["pq"]), issued_quantity=Decimal(d["iq"]), status=RowStatus(d["st"]),
+        planned_quantity=Decimal(d["pq"]), issued_quantity=Decimal(d["iq"]), status=RowStatus(status),
         variance_quantity=num(d["vq"]), variance_percentage=num(d["vp"]),
         due_date=day(d["due"]), window_start=day(d["ws"]),
     )

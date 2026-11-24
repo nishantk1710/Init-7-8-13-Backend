@@ -48,6 +48,8 @@ class WatchConfig:
 @dataclass(frozen=True)
 class ExceptionConfig:
     plan_breach_grace_days: int
+    """Days a Planned Consumption Overdue waits for the requester before the HOD."""
+    plan_breach_reminder_every_days: int = 3
 
 
 @dataclass(frozen=True)
@@ -148,7 +150,10 @@ def build_i13_config(settings: Settings) -> I13Config:
             consumption_window_months=settings.i13_consumption_window_months,
             gr_not_issued_threshold_days=settings.i13_gr_not_issued_threshold_days,
         ),
-        exceptions=ExceptionConfig(plan_breach_grace_days=settings.i13_plan_breach_grace_days),
+        exceptions=ExceptionConfig(
+            plan_breach_grace_days=settings.i13_plan_breach_grace_days,
+            plan_breach_reminder_every_days=settings.i13_plan_breach_reminder_every_days,
+        ),
         reclassification=ReclassificationConfig(
             min_consumption_count=settings.i13_reclass_min_consumption_count,
             critical_tiers=settings.i13_reclass_critical_tier_set,

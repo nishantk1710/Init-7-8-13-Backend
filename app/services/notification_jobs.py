@@ -78,6 +78,34 @@ def run_requester_escalations(settings=None, *, session_factory=None, now=None) 
     return f"{processed} processed ({result.escalated} escalated, {result.routing_pending} with no HOD found), batch limit {limit}"
 
 
+def run_requester_reminders(settings=None, *, session_factory=None, now=None) -> str:
+    """Remind requesters of Planned Consumption Overdue exceptions they have not answered.
+
+    Does nothing unless ``NOTIFICATION_I13_REMINDERS_ENABLED`` is true. Safe on every
+    tick: each reminder is recorded and never sent twice (``send_requester_reminders``).
+    """
+    from app.core.config import get_settings
+    from app.initiatives.i13.config import build_i13_config
+
+    settings = settings or get_settings()
+    if not settings.notification_i13_reminders_enabled:
+        return "disabled (NOTIFICATION_I13_REMINDERS_ENABLED is false)"
+    if session_factory is None:
+        from app.core.db import get_sessionmaker
+
+        session_factory = get_sessionmaker()
+    from app.initiatives.i13.act_runner import run_reminders
+
+    try:
+        with session_factory() as db:
+            result = run_reminders(db, build_i13_config(settings), as_of_time=now or datetime.now(timezone.utc))
+            db.commit()
+    except Exception:
+        logger.exception("I13 reminders failed; nothing from this run was saved")
+        raise
+    return f"{result.reminded} reminded"
+
+
 #: The UTC date of this process's last completed detection run. In memory on purpose:
 #: detection only creates what is missing, keeps what exists and resolves what cleared,
 #: so a second run on the same day (after a restart, or on a second instance) changes
@@ -167,6 +195,10 @@ def _exception_detection() -> str:
     return run_exception_detection()
 
 
+def _requester_reminders() -> str:
+    return run_requester_reminders()
+
+
 def _requester_escalations() -> str:
     return run_requester_escalations()
 
@@ -192,6 +224,8 @@ def build_jobs() -> list[Job]:
         Job("sap_adoption_notices", _sap_adoption_notices),
         # Before escalations, so an exception raised or resolved tonight is seen by them.
         Job("exception_detection", _exception_detection),
+        # Before escalations: one whose time is up is escalated, never reminded.
+        Job("requester_reminders", _requester_reminders),
         Job("requester_escalations", _requester_escalations),
         Job("request_link_notices", _request_link_notices),
         Job("deliver_pending", _deliver_pending),

@@ -26,6 +26,8 @@ from app.initiatives.i13.ledger_compat import (
     LinkageStatus,
     ProcurementStatus,
     delivery_state,
+    document_numbers,
+    legacy_ledger_id,
 )
 from app.initiatives.i13.models import (
     AcquiredVsPlanStatus,
@@ -33,6 +35,8 @@ from app.initiatives.i13.models import (
     GiLinkStatus,
     GrLinkStatus,
     LifecycleStatus,
+    PartialLedgerEntry,
+    PrPoLinkStatus,
     ReservationLedgerEntry,
     ReservationPrLinkStatus,
 )
@@ -153,6 +157,111 @@ def test_ledger_counts_are_over_the_whole_ledger(stored):
         "by_linkage_status": {"PR_ONLY": 2, "FULL_CHAIN": 2, "UNMATCHED": 1},
     }
     assert stored.legacy_ledger_counts(plant="1500") == {"total": 1, "by_linkage_status": {"FULL_CHAIN": 1}}
+
+
+# --- PR / PO search and "Reservation created" (24 Nov 2026) ---------------------------
+
+
+def _chain(ledger_id: str, pr: str | None, po: str | None) -> PartialLedgerEntry:
+    return PartialLedgerEntry(
+        ledger_id=ledger_id, material="M1", plant="1300", pr_number=pr, pr_item="10" if pr else None,
+        po_number=po, po_item="10" if po else None, pr_quantity=None, ordered_quantity=None,
+        received_quantity=Decimal("0"), issued_quantity=None, first_gr_date=None, last_gr_date=None,
+        first_issue_date=None, last_issue_date=None, lifecycle_status=LifecycleStatus.RESERVED,
+        pr_po_link_status=PrPoLinkStatus.LINKED, gr_link_status=GrLinkStatus.NOT_APPLICABLE,
+        gi_link_status=GiLinkStatus.NOT_APPLICABLE, gi_link_reason=None,
+    )
+
+
+# One PR item ordered on two POs (multi-sourcing: both lines share the PR
+# item's ledger id), the first raised by a reservation; and a PO with no PR.
+CHAINS = [
+    _chain("C1", "0010000001", "4500000001"),
+    _chain("C2", "0010000001", "4500000002"),
+    _chain("C3", None, "4500000003"),
+]
+DOCUMENT_LINES = [
+    _legacy(legacy_ledger_id(CHAINS[0]), pr_number="0010000001", po_number="4500000001",
+            reservation_number="R1", reservation_item="1", linkage_status=LinkageStatus.RESERVATION_LINKED),
+    _legacy(legacy_ledger_id(CHAINS[1]), pr_number="0010000001", po_number="4500000002"),
+    _legacy(legacy_ledger_id(CHAINS[2]), pr_number=None, pr_item=None, po_number="4500000003"),
+]
+
+
+@pytest.fixture
+def documents() -> SqlSnapshot:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    I13SnapshotRecord.__table__.create(engine)
+    records = [kinds.chain(c, True) for c in CHAINS] + [kinds.lledger(e, True) for e in DOCUMENT_LINES]
+    session = Session(engine)
+    for seq, r in enumerate(records, start=1):
+        session.add(
+            I13SnapshotRecord(
+                id=seq, version=1, kind=r.kind, seq=seq, material=r.material, plant=r.plant,
+                rec_key=r.rec_key, oar=r.oar, f1=r.f1, f2=r.f2, f3=r.f3, n1=r.n1, d1=r.d1, text1=r.text1,
+                payload=r.payload,
+            )
+        )
+    session.commit()
+    yield SqlSnapshot(session, SimpleNamespace(version=1))
+    session.close()
+
+
+def _pos(result) -> list[str | None]:
+    rows, total = result
+    assert total == len(rows)
+    return [r.po_number for r in rows]
+
+
+def test_a_po_search_finds_only_that_po_line_even_when_its_pr_item_was_split(documents):
+    assert _pos(documents.legacy_ledger(document="4500000002")) == ["4500000002"]
+    assert _pos(documents.legacy_ledger(document=" 4500000003 ")) == ["4500000003"]
+
+
+def test_a_pr_search_finds_every_line_of_the_pr_with_or_without_leading_zeros(documents):
+    assert set(_pos(documents.legacy_ledger(document="0010000001"))) == {"4500000001", "4500000002"}
+    assert set(_pos(documents.legacy_ledger(document="10000001"))) == {"4500000001", "4500000002"}
+
+
+def test_a_search_matches_whole_numbers_only(documents):
+    assert documents.legacy_ledger(document="4500") == ([], 0)
+    assert documents.legacy_ledger_counts(document="4500") == {"total": 0, "by_linkage_status": {}}
+
+
+def test_reservation_created_filter(documents):
+    assert _pos(documents.legacy_ledger(has_reservation=True)) == ["4500000001"]
+    assert set(_pos(documents.legacy_ledger(has_reservation=False))) == {"4500000002", "4500000003"}
+    assert _pos(documents.legacy_ledger(document="0010000001", has_reservation=False)) == ["4500000002"]
+
+
+def test_search_counts_and_pages_like_the_unsearched_list(documents):
+    assert documents.legacy_ledger_counts(document="10000001") == {
+        "total": 2,
+        "by_linkage_status": {"RESERVATION_LINKED": 1, "PR_ONLY": 1},
+    }
+    assert documents.legacy_ledger_counts(has_reservation=True) == {
+        "total": 1,
+        "by_linkage_status": {"RESERVATION_LINKED": 1},
+    }
+    rows, total = documents.legacy_ledger(document="10000001", limit=1, offset=1)
+    assert total == 2 and len(rows) == 1
+
+
+def test_document_numbers():
+    assert document_numbers(None) == frozenset()
+    assert document_numbers("  ") == frozenset()
+    assert document_numbers("4500012345") == {"4500012345"}
+    assert document_numbers("10000001") == {"10000001", "0010000001"}
+    assert document_numbers("0010000001") == {"0010000001", "10000001"}
+
+
+def test_the_unstored_paths_apply_the_same_filters():
+    from app.api.i13.ledger import _matching
+
+    common = dict(plant=None, material=None, procurement_status=None, utilisation_status=None, delivery_status=None)
+    assert [e.po_number for e in _matching(DOCUMENT_LINES, document="4500000002", **common)] == ["4500000002"]
+    assert [e.po_number for e in _matching(DOCUMENT_LINES, has_reservation=True, **common)] == ["4500000001"]
+    assert len(_matching(DOCUMENT_LINES, document="10000001", has_reservation=False, **common)) == 1
 
 
 # --- reservation ledger -------------------------------------------------------------

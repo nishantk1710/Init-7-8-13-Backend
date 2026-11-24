@@ -34,6 +34,8 @@ from app.initiatives.i13.ledger_compat import (
     LegacyLedgerEntry,
     build_legacy_ledger,
     delivery_state,
+    document_numbers,
+    matches_document,
     procurement_view,
 )
 from app.initiatives.i13.snapshot import I13Snapshot
@@ -59,6 +61,14 @@ _STATUS_FILTERS = dict(
         ),
     ),
     delivery_status=Query(None, description="DELIVERED, PARTIAL, NOT_DELIVERED, CLOSED, NOT_AN_ORDER or NO_PO."),
+    has_reservation=Query(
+        None,
+        description="true: lines a reservation raised (RESB-BANFN). false: the rest -- stock refills.",
+    ),
+    document=Query(
+        None,
+        description="A PR or PO number: that PR's or PO's lines. Exact number, leading zeros optional.",
+    ),
 )
 
 
@@ -70,12 +80,15 @@ def _matching(
     procurement_status: str | None,
     utilisation_status: str | None,
     delivery_status: str | None,
+    has_reservation: bool | None = None,
+    document: str | None = None,
 ) -> list[LegacyLedgerEntry]:
     """The in-memory and live paths' version of the stored filters, over each
     line as the screen shows it (:func:`procurement_view`)."""
     wanted_p = procurement_status.upper() if procurement_status else None
     wanted_u = utilisation_status.upper() if utilisation_status else None
     wanted_d = delivery_status.upper() if delivery_status else None
+    numbers = document_numbers(document)
     return [
         e
         for e in map(procurement_view, entries)
@@ -84,6 +97,8 @@ def _matching(
         and (wanted_p is None or e.procurement_status.value == wanted_p)
         and (wanted_u is None or e.utilisation_status.value == wanted_u)
         and (wanted_d is None or delivery_state(e) == wanted_d)
+        and (has_reservation is None or (e.reservation_number is not None) == has_reservation)
+        and (not numbers or matches_document(e, numbers))
     ]
 
 
@@ -135,6 +150,8 @@ def list_ledger_entries(
     procurement_status: str | None = _STATUS_FILTERS["procurement_status"],
     utilisation_status: str | None = _STATUS_FILTERS["utilisation_status"],
     delivery_status: str | None = _STATUS_FILTERS["delivery_status"],
+    has_reservation: bool | None = _STATUS_FILTERS["has_reservation"],
+    document: str | None = _STATUS_FILTERS["document"],
     include_out_of_scope: bool = Query(
         False, description="Include non-OAR (Min-Max/Excluded) materials. Debug/inspection only."
     ),
@@ -148,7 +165,7 @@ def list_ledger_entries(
     receipt); the in-memory and live paths keep build order."""
     filters = dict(
         procurement_status=procurement_status, utilisation_status=utilisation_status,
-        delivery_status=delivery_status,
+        delivery_status=delivery_status, has_reservation=has_reservation, document=document,
     )
     if isinstance(snapshot, SqlSnapshot):
         rows, total = snapshot.legacy_ledger(
@@ -179,6 +196,8 @@ def count_ledger_entries(
     procurement_status: str | None = _STATUS_FILTERS["procurement_status"],
     utilisation_status: str | None = _STATUS_FILTERS["utilisation_status"],
     delivery_status: str | None = _STATUS_FILTERS["delivery_status"],
+    has_reservation: bool | None = _STATUS_FILTERS["has_reservation"],
+    document: str | None = _STATUS_FILTERS["document"],
     include_out_of_scope: bool = Query(False, description="See /ledger."),
     db: Session = Depends(get_db),
     snapshot: I13Snapshot | SqlSnapshot | None = Depends(snapshot_or_live),
@@ -187,7 +206,7 @@ def count_ledger_entries(
     ``/ledger`` -- the header's numbers, without loading the lines."""
     filters = dict(
         procurement_status=procurement_status, utilisation_status=utilisation_status,
-        delivery_status=delivery_status,
+        delivery_status=delivery_status, has_reservation=has_reservation, document=document,
     )
     if isinstance(snapshot, SqlSnapshot):
         return LedgerCountsResponse(

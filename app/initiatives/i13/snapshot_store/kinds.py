@@ -64,7 +64,9 @@ from app.initiatives.i13.snapshot_store import codec
 #: or above plan.
 #: 7 (5 Nov 2026): lledger's utilisation status is NOT_TRACKED on a line no
 #: reservation raised (ledger_compat.procurement_view).
-RECORD_LAYOUT = 7
+#: 8 (18 Nov 2026): planvs statuses by issue: awaiting reservation, not,
+#: partially or fully issued. Overdue is a captured plan's only.
+RECORD_LAYOUT = 8
 
 WATCH = "watch"
 MOVEMENT = "movement"
