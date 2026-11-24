@@ -128,6 +128,32 @@ DELIVERY_STATES = ("DELIVERED", "PARTIAL", "NOT_DELIVERED", "CLOSED", "NOT_AN_OR
 SQL over every line rather than over the lines a page happened to load."""
 
 
+def document_numbers(text: str | None) -> frozenset[str]:
+    """What a PR / PO search for ``text`` matches: the number as typed, and --
+    SAP keeps them 10 digits -- with or without its leading zeros. Exact
+    numbers only, so "4500" does not list every PO that starts with it.
+    Empty for no search."""
+    typed = (text or "").strip().upper()
+    if not typed:
+        return frozenset()
+    numbers = {typed}
+    if typed.isdigit():
+        numbers.add(typed.zfill(10))
+        numbers.add(typed.lstrip("0") or "0")
+    return frozenset(numbers)
+
+
+def matches_document(entry: LegacyLedgerEntry, numbers: frozenset[str]) -> bool:
+    """Whether a line's PR or PO number is one of ``numbers``."""
+    return entry.pr_number in numbers or entry.po_number in numbers
+
+
+def legacy_ledger_id(entry) -> str:
+    """A procurement line's ledger id from its chain entry: the PR item, else
+    the chain's own id. Several PO lines of one PR item share it."""
+    return f"LEDG-{entry.pr_number}-{entry.pr_item}" if entry.pr_number else entry.ledger_id
+
+
 def procurement_view(entry: LegacyLedgerEntry) -> LegacyLedgerEntry:
     """A line as the procurement lines screen shows it: only what SAP recorded.
 
@@ -234,7 +260,7 @@ def _to_legacy_entry(
         linkage_status = LinkageStatus.UNMATCHED
 
     legacy = LegacyLedgerEntry(
-        ledger_id=f"LEDG-{entry.pr_number}-{entry.pr_item}" if entry.pr_number else entry.ledger_id,
+        ledger_id=legacy_ledger_id(entry),
         material=entry.material,
         plant=entry.plant,
         reservation_number=reservation_number,
