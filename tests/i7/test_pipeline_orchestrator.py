@@ -158,7 +158,34 @@ class TestStageOrder:
             "inventory",
             "oar",
             "recommendations",
+            "stockout_risk",
         )
+        from scripts.run_full_pipeline import PHASES
+
+        assert tuple(PHASES) == STAGES  # the manual script runs exactly the stages the pipeline does
+
+    def test_the_high_stockout_risk_rebuild_is_the_last_stage_so_the_card_follows_every_run(
+        self, session_factory, stages
+    ) -> None:
+        fake = stages(FakeStages())
+
+        result = run_pipeline(lock=FakeLock())
+
+        assert STAGES[-1] == "stockout_risk" and fake.calls[-1] == "stockout_risk"
+        assert result.stages["stockout_risk"] == STATUS_SUCCEEDED
+        with session_factory() as session:
+            assert "stockout_risk=succeeded" in session.get(PipelineRun, result.run_id).stage_statuses
+
+    def test_a_failing_stockout_rebuild_fails_the_run_without_undoing_the_stages_before_it(
+        self, session_factory, stages
+    ) -> None:
+        stages(FakeStages(failing="stockout_risk"))
+
+        result = run_pipeline(lock=FakeLock())
+
+        assert result.status == STATUS_FAILED and result.failed_stage == "stockout_risk"
+        assert result.stages["recommendations"] == STATUS_SUCCEEDED
+        assert result.recommendations_written == 7
 
     def test_stage_run_ids_are_recorded_against_the_pipeline(
         self, session_factory, stages

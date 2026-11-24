@@ -15,19 +15,17 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Iterable
 
-from sqlalchemy import bindparam, delete, text
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.initiatives.i7.adapters.extract import (
     _consumption_statement,
     _out_of_scope,
-    _plant_scope_clause,
-    _scoped,
     _stream,
 )
 from app.initiatives.i7.adapters.field_map import CREDIT_INDICATOR
@@ -126,22 +124,15 @@ def aggregate_issue_history(
     return HistoryResult(facts=facts, skipped=skipped)
 
 
-def resolve_anchor(session: Session, policy: ExtractIngestionPolicy, configured: date | None) -> date | None:
-    """The date to read the history as of: the setting, or -- when it is blank --
-    the newest issue date in the movement data. ``None`` when there is none."""
+def resolve_anchor(configured: date | None, run_date: date | None = None) -> date:
+    """The date to read the history as of: the date the setting pins, or -- when it is blank -- the date of this
+    rebuild (``run_date``, today in UTC when omitted).
+
+    Blank is the default, so the card's "As of" date is the date the pipeline last rebuilt it and always matches the
+    rest of the run. A pinned date keeps the card on that date whatever the run date is."""
     if configured is not None:
         return configured
-    scope = policy.plant_scope
-    statement = text(
-        "SELECT MAX(posting_date) AS newest FROM n_mseg "
-        "WHERE movement_type IN :issue_types AND posting_date <> ''"
-        + _plant_scope_clause("plant", scope, "material")
-    ).bindparams(bindparam("issue_types", expanding=True))
-    params: dict[str, Any] = {"issue_types": list(policy.consumption.issue_movement_types)}
-    if scope:
-        params["plant_scope"] = sorted(scope)
-    newest = session.execute(_scoped(statement, scope), params).scalar()
-    return parse_date(newest)
+    return run_date if run_date is not None else datetime.now(timezone.utc).date()
 
 
 def build_stockout_risk_input(
@@ -156,8 +147,8 @@ def build_stockout_risk_input(
     ``window_days`` is the usage window; omitted, it is the window of the KPI formulas in force (90 unless
     a saved version changed it), so the CLI and the page rebuild to the same definition.
 
-    Returns ``(anchor used, rows written)``. With no anchor and no issue movements at
-    all the table is left empty and the anchor is ``None``.
+    Returns ``(anchor used, rows written)``. The anchor is the pinned date, or the date of this rebuild when none
+    is pinned. With no issue movements on or before it the table is left empty (zero rows).
 
     The caller owns the transaction: nothing is committed here.
     """
@@ -165,10 +156,7 @@ def build_stockout_risk_input(
         window_days = load_active(session).window_days
     policy = policy or ExtractIngestionPolicy(plants=get_settings().i7_plant_list)
     configured = as_of if as_of is not None else get_settings().i7_stockout_risk_as_of
-    anchor = resolve_anchor(session, policy, configured)
-    if anchor is None:
-        session.execute(delete(StockoutRiskInput))
-        return None, 0
+    anchor = resolve_anchor(configured)
 
     params: dict[str, Any] = {"movement_types": list(policy.consumption.all_movement_types)}
     if policy.plant_scope:
