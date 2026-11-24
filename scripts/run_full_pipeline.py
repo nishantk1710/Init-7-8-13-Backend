@@ -50,7 +50,7 @@ from app.models.i7_inventory import InventoryCalculation
 from app.models.i7_oar import OarNeighbour, OarTargetResult
 from app.models.i7_recommendation import Recommendation
 
-PHASES = ("staging", "features", "forecasting", "inventory", "oar", "recommendations")
+PHASES = ("staging", "features", "forecasting", "inventory", "oar", "recommendations", "stockout_risk")
 
 
 # --- terminal tables --------------------------------------------------------
@@ -331,6 +331,23 @@ def run_phases(skip: set[str], force: bool) -> dict:
             ],
         )
         counts_table("Lifecycle status", result.status_counts)
+        if result.error:
+            print(f"\n  ERROR: {result.error}")
+
+    if "stockout_risk" not in skip:
+        heading("PHASE 8 - HIGH STOCKOUT RISK USAGE")
+        from app.initiatives.i7.stockout_risk.stage import rebuild_stockout_risk_input
+
+        result = rebuild_stockout_risk_input()
+        results["stockout_risk"] = result
+        table(
+            ["metric", "value"],
+            [
+                ("status", result.status),
+                ("material-plants", result.rows_written),
+                ("as of", result.as_of),
+            ],
+        )
         if result.error:
             print(f"\n  ERROR: {result.error}")
 

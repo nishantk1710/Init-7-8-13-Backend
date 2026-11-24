@@ -76,6 +76,10 @@ STAGES: tuple[str, ...] = (
     "inventory",
     "oar",
     "recommendations",
+    # Last, and independent of the others: it rebuilds the usage table the High Stockout Risk card reads, so that
+    # card is recalculated on every run like the rest. Last so that its failure cannot hold back a stage the
+    # recommendations depend on.
+    "stockout_risk",
 )
 
 
@@ -153,7 +157,7 @@ def _abandon_stale(session: Session, *, lock_held: bool) -> int:
 
 
 def _stage_callables() -> dict[str, Callable[[], object]]:
-    """The six stage entry points, imported lazily.
+    """The seven stage entry points, imported lazily.
 
     Lazy because forecasting pulls in statsmodels and LightGBM: importing this
     module must stay cheap enough for the API process, which imports it to
@@ -165,6 +169,7 @@ def _stage_callables() -> dict[str, Callable[[], object]]:
     from app.initiatives.i7.inventory.service import run_inventory_calculations
     from app.initiatives.i7.oar.service import run_oar_similarity
     from app.initiatives.i7.recommendations.service import generate_recommendations
+    from app.initiatives.i7.stockout_risk.stage import rebuild_stockout_risk_input
 
     return {
         "staging": stage_extract,
@@ -173,6 +178,7 @@ def _stage_callables() -> dict[str, Callable[[], object]]:
         "inventory": run_inventory_calculations,
         "oar": run_oar_similarity,
         "recommendations": generate_recommendations,
+        "stockout_risk": rebuild_stockout_risk_input,
     }
 
 
