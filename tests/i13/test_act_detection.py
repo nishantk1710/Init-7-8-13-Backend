@@ -85,7 +85,17 @@ def _ledger_entry(*, issued_quantity: Decimal = Decimal("0"), **overrides) -> Re
 def test_plan_breach_raised_after_grace_period_with_no_matching_issue() -> None:
     plan = _plan(planned_use_date=date(2026, 9, 10))
     as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
-    assert detect_plan_breach(plan, [], as_of_time=as_of_time, grace_period=timedelta(days=7)) is True
+    entries = [_ledger_entry(issued_quantity=Decimal("0"))]
+    assert detect_plan_breach(plan, entries, as_of_time=as_of_time, grace_period=timedelta(days=7)) is True
+
+
+def test_no_reservation_is_not_a_plan_breach() -> None:
+    """24-Nov-2026: no reservation means nothing to check, not "nothing issued"."""
+    plan = _plan(planned_use_date=date(2026, 9, 10))
+    as_of_time = datetime(2026, 9, 18, tzinfo=UTC)
+    assert detect_plan_breach(plan, [], as_of_time=as_of_time, grace_period=timedelta(days=7)) is False
+    deleted = [_ledger_entry(issued_quantity=Decimal("0"), reservation_deleted=True)]
+    assert detect_plan_breach(plan, deleted, as_of_time=as_of_time, grace_period=timedelta(days=7)) is False
 
 
 def test_plan_breach_not_raised_when_matching_issue_exists() -> None:

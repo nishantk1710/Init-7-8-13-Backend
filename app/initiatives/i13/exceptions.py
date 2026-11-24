@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.initiatives.i13.config import I13Config
 from app.initiatives.i13.models import ExceptionQueueItem, ExceptionStatus, ExceptionType, ReservationLedgerEntry
-from app.initiatives.i13.plans import ConsumptionPlan, PlanMatcher, load_consumption_plans
+from app.initiatives.i13.plans import ConsumptionPlan, PlanMatcher, load_consumption_plans, stands_for_demand
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
 from app.initiatives.i13.watch import compute_watch_metrics
 from app.integrations.sap.postgres_movements import PostgresMovementRepository
@@ -46,8 +46,11 @@ def _plan_breach_exceptions(
         if as_of <= due_date:
             continue
 
-        matching_entries = matcher.entries_for(plan)
-        if _has_issuance_evidence(matching_entries):
+        # Overdue needs a reservation to have issued nothing on: a plan no live
+        # reservation stands for is "Awaiting reservation", not overdue
+        # (act.detection.detect_plan_breach, 24-Nov-2026).
+        matching_entries = [e for e in matcher.entries_for(plan) if stands_for_demand(e)]
+        if not matching_entries or _has_issuance_evidence(matching_entries):
             continue
 
         days_overdue = (as_of - due_date).days

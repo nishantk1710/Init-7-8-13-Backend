@@ -94,7 +94,7 @@ def _detect(
     as_of_time,
     *,
     plans=(),
-    ledger_entries=(),
+    ledger_entries=None,
     repository=None,
     notification_port=None,
     requester_by_reservation=None,
@@ -105,6 +105,18 @@ def _detect(
 ):
     repository = repository or FakeExceptionRepository()
     notification_port = notification_port or FakeNotificationPort()
+    if ledger_entries is None:
+        # Unless a test says otherwise, each plan's own reservation is in SAP
+        # with nothing issued yet: Planned Consumption Overdue needs a
+        # reservation to measure (24-Nov-2026).
+        ledger_entries = [
+            _ledger_entry(
+                ledger_id=f"LEDGER-{p.plan_id}", reservation_number=p.reservation_number,
+                reservation_item=p.reservation_item, material=p.material, plant=p.plant,
+            )
+            for p in plans
+            if p.reservation_number
+        ]
     result = detect_exceptions(
         as_of_time,
         ledger_entries=list(ledger_entries),
@@ -133,10 +145,12 @@ def _unlinked_capture(**overrides) -> ConsumptionPlan:
     )
 
 
-def test_an_unlinked_plan_breaches_although_another_reservation_in_its_window_was_issued() -> None:
-    """Someone else's reservation for the same part, required inside the
-    window and issued, is not the plan's: its issue cannot keep the plan from
-    going overdue, and the plan does not clear that reservation's NO_PLAN."""
+def test_an_unlinked_plan_is_awaiting_reservation_not_overdue() -> None:
+    """24-Nov-2026: a plan no reservation's item text carries the ID of has no
+    reservation to have issued nothing on, so it is not overdue however late
+    its window -- it is "Awaiting reservation". Someone else's reservation for
+    the same part is still not the plan's: the plan does not clear that
+    reservation's NO_PLAN."""
     others = _ledger_entry(requirement_date=date(2026, 9, 5), issued_quantity=Decimal("10"))
     repository, _, _ = _detect(
         datetime(2026, 9, 18, tzinfo=UTC),
@@ -144,8 +158,38 @@ def test_an_unlinked_plan_breaches_although_another_reservation_in_its_window_wa
         ledger_entries=[others],
         types={ExceptionType.PLAN_BREACH, ExceptionType.NO_PLAN},
     )
-    assert repository.get("ACT-PLAN_BREACH-PLAN-1") is not None
+    assert repository.get("ACT-PLAN_BREACH-PLAN-1") is None
     assert repository.get("ACT-NO_PLAN-1000000000-0001") is not None
+
+
+def test_a_linked_plan_with_nothing_issued_is_overdue() -> None:
+    own = _ledger_entry(requirement_date=date(2026, 9, 5))
+    repository, _, _ = _detect(
+        datetime(2026, 9, 18, tzinfo=UTC),
+        plans=[_unlinked_capture(linked_reservations=(("1000000000", "0001"),))],
+        ledger_entries=[own],
+        types={ExceptionType.PLAN_BREACH},
+    )
+    assert repository.get("ACT-PLAN_BREACH-PLAN-1") is not None
+
+
+def test_a_plan_whose_only_reservation_was_deleted_unissued_is_not_overdue() -> None:
+    deleted = _ledger_entry(reservation_deleted=True)
+    repository, _, _ = _detect(
+        datetime(2026, 9, 18, tzinfo=UTC), plans=[_plan()], ledger_entries=[deleted],
+        types={ExceptionType.PLAN_BREACH},
+    )
+    assert repository.get("ACT-PLAN_BREACH-PLAN-1") is None
+
+
+def test_an_overdue_raised_before_the_reservation_rule_resolves_on_the_next_run() -> None:
+    """The exceptions raised on plans with no reservation before 24-Nov-2026
+    close themselves at the next detection run."""
+    plan = _plan()
+    repository, _, _ = _detect(datetime(2026, 9, 18, tzinfo=UTC), plans=[plan])
+    assert repository.get("ACT-PLAN_BREACH-PLAN-1") is not None
+    _detect(datetime(2026, 9, 19, tzinfo=UTC), plans=[plan], ledger_entries=[], repository=repository)
+    assert repository.get("ACT-PLAN_BREACH-PLAN-1").status is ExceptionStatus.RESOLVED
 
 
 def test_a_linked_plan_is_satisfied_by_its_own_reservations_issue() -> None:
