@@ -8,10 +8,12 @@ Lists and reads the existing run tables (``i7_feature_run``,
 never by a GET request.
 """
 
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.i7.deps import get_session
@@ -19,8 +21,10 @@ from app.models.i7_features import FeatureBuildRun
 from app.models.i7_forecast import ForecastRun
 from app.models.i7_inventory import InventoryRun
 from app.models.i7_oar import OarRun
+from app.models.i7_pipeline import STATUS_SUCCEEDED, PipelineRun
+from app.models.i7_recommendation import Recommendation
 from app.schemas.i7.errors import not_found
-from app.schemas.i7.runs import RunDetail, RunListResponse, RunSummary, RunType
+from app.schemas.i7.runs import LastRebuiltResponse, RunDetail, RunListResponse, RunSummary, RunType
 
 router = APIRouter(tags=["i7-runs"])
 
@@ -74,6 +78,48 @@ def _to_detail(run_type: RunType, row) -> RunDetail:
         started_at=row.started_at,
         finished_at=row.finished_at,
     )
+
+
+def _as_utc(moment: datetime | None) -> datetime | None:
+    """A timestamp the database returned, as an aware UTC datetime (a naive one is taken to be UTC)."""
+    if moment is None:
+        return None
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+
+
+def last_rebuilt_at(session: Session) -> datetime | None:
+    """When the results the app shows were last rebuilt: the newest recommendation written, or the newest
+    successful pipeline run's finish when that is later. Read-only, and cheap (two aggregates).
+
+    A rebuild is only finished once the recommendations are written -- every card and chart reads them -- so that,
+    not the earlier inventory or OAR stage, is the moment. A rebuild started by hand writes no pipeline-run row, so
+    the recommendations decide; the pipeline's own run (which also rebuilds the High Stockout Risk table after the
+    recommendations) counts when it ran later. Never raises for a missing pipeline-run table."""
+    newest_recommendation = _as_utc(session.execute(select(func.max(Recommendation.generated_at))).scalar())
+    try:
+        newest_pipeline_run = _as_utc(
+            session.execute(
+                select(func.max(PipelineRun.finished_at)).where(PipelineRun.status == STATUS_SUCCEEDED)
+            ).scalar()
+        )
+    except SQLAlchemyError:
+        # The migration for the pipeline-run table has not been applied to this database. That is "no run recorded",
+        # not a reason to lose the date the recommendations carry.
+        session.rollback()
+        newest_pipeline_run = None
+    moments = [moment for moment in (newest_recommendation, newest_pipeline_run) if moment is not None]
+    return max(moments) if moments else None
+
+
+@router.get(
+    "/last-rebuilt",
+    response_model=LastRebuiltResponse,
+    summary="When the I07 results were last rebuilt",
+    description="The date and time (UTC) the recommendations the app shows were last rebuilt, for the Inventory "
+    "Planning page. Read-only; null when nothing has been built yet.",
+)
+def get_last_rebuilt(session: Annotated[Session, Depends(get_session)]) -> LastRebuiltResponse:
+    return LastRebuiltResponse(rebuilt_at=last_rebuilt_at(session))
 
 
 @router.get(

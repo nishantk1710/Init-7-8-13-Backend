@@ -65,3 +65,13 @@ class RunDetail(BaseModel):
     error: str | None = None
     started_at: datetime
     finished_at: datetime | None
+
+
+class LastRebuiltResponse(BaseModel):
+    """When the I07 results on screen were last rebuilt."""
+
+    model_config = ConfigDict(frozen=True)
+
+    rebuilt_at: datetime | None
+    """The moment the newest recommendation was written, or the newest successful pipeline run finished if that
+    is later (UTC). ``None`` when nothing has been built yet."""
