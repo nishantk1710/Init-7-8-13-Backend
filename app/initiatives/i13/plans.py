@@ -290,6 +290,15 @@ class PlanOutcome:
     issued_quantity: Decimal
 
 
+def stands_for_demand(entry) -> bool:
+    """Whether a reservation-ledger entry is a reservation a plan is measured
+    on: any live item, and a deleted one (RESB.XLOEK) only if something was
+    issued against it. One rule for the Acquired vs required tab
+    (:func:`plan_outcomes`) and for Planned Consumption Overdue
+    (``act.detection.detect_plan_breach``), so the two never disagree."""
+    return not entry.reservation_deleted or entry.issued_quantity > 0
+
+
 def plan_outcomes(plans: list[ConsumptionPlan], ledger_entries) -> list[PlanOutcome]:
     """Every plan, with the reservation items it stands for and what was issued.
 
@@ -314,7 +323,7 @@ def plan_outcomes(plans: list[ConsumptionPlan], ledger_entries) -> list[PlanOutc
         if key in seen:
             continue
         seen.add(key)
-        if entry.reservation_deleted and entry.issued_quantity <= 0:
+        if not stands_for_demand(entry):
             continue
         plan = matcher.plan_for(entry)
         if plan is not None:

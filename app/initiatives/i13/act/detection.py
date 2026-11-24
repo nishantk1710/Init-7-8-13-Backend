@@ -21,7 +21,7 @@ from app.initiatives.i13.act.domain import (
     QuantityOverrideEvaluation,
 )
 from app.initiatives.i13.models import ReservationLedgerEntry
-from app.initiatives.i13.plans import ConsumptionPlan
+from app.initiatives.i13.plans import ConsumptionPlan, stands_for_demand
 
 
 def build_exception_id(exception_type: str, *key_parts: str) -> str:
@@ -48,13 +48,22 @@ def detect_plan_breach(
     grace_period: timedelta,
 ) -> bool:
     """breach_due_at = planned_window_end + grace_period; plan_breach =
-    as_of_time > breach_due_at AND no matching issue exists.
+    as_of_time > breach_due_at AND the plan has a reservation AND nothing was
+    issued on it.
 
     ``plan.breach_reference_date`` is the planned consumption window end: a
     captured plan's ``window_end`` when it has one, else the single
     ``planned_use_date`` the reference CSV carries (see ``plans.py``). A plan with no ``planned_use_date`` or that is not
     ``OPEN`` cannot breach: there is no window to measure against, and a
     closed/cancelled plan is not an active commitment.
+
+    "Nothing issued" is read off a reservation: the goods issues SAP posted
+    against it (MSEG 261/201 less 262/202 by RSNUM/RSPOS). A plan no live
+    reservation stands for (no item text carries its ID, or only a deleted
+    item with nothing issued -- :func:`plans.stands_for_demand`) has nothing
+    to check, so it is not overdue: it is "Awaiting reservation" (24-Nov-2026).
+    Before, an empty list read as "no issue found" and every such plan went
+    overdue.
     """
     breach_from = plan.breach_reference_date
     if breach_from is None or plan.status != "OPEN":
@@ -62,7 +71,10 @@ def detect_plan_breach(
     breach_due_at = datetime.combine(breach_from, datetime.min.time(), tzinfo=as_of_time.tzinfo) + grace_period
     if as_of_time <= breach_due_at:
         return False
-    return not has_matching_issue(ledger_entries)
+    live = [entry for entry in ledger_entries if stands_for_demand(entry)]
+    if not live:
+        return False
+    return not has_matching_issue(live)
 
 
 def classify_no_plan_reason(plan: ConsumptionPlan | None) -> NoPlanReason | None:

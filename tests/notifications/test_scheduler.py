@@ -122,6 +122,14 @@ def test_it_starts_a_daemon_thread_that_stops_with_the_event():
     assert not thread.is_alive()
 
 
+def test_i13_reminders_do_nothing_until_switched_on():
+    from types import SimpleNamespace
+
+    from app.services.notification_jobs import run_requester_reminders
+
+    assert run_requester_reminders(SimpleNamespace(notification_i13_reminders_enabled=False)).startswith("disabled")
+
+
 def test_the_real_job_list_is_reminders_then_sap_adoption_then_detection_then_escalations_then_link_notices_then_delivery():
     from app.services.notification_jobs import build_jobs
 
@@ -129,6 +137,7 @@ def test_the_real_job_list_is_reminders_then_sap_adoption_then_detection_then_es
         "approval_reminders",
         "sap_adoption_notices",
         "exception_detection",
+        "requester_reminders",
         "requester_escalations",
         "request_link_notices",
         "deliver_pending",

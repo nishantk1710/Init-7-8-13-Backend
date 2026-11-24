@@ -70,6 +70,17 @@ def test_ledger_counts_route_is_not_taken_for_a_ledger_id(client):
     assert response.json() == {"total": 1, "by_linkage_status": {"UNMATCHED": 1}}
 
 
+def test_ledger_takes_reservation_created_and_pr_po_search(client):
+    # No line here was raised by a reservation, and no chain holds this PO.
+    response = client.get(f"{API}/ledger", params={"has_reservation": "false", "limit": 2})
+    assert response.status_code == 200, response.text
+    assert response.headers["X-Total-Count"] == "5"
+    assert client.get(f"{API}/ledger/counts", params={"has_reservation": "true"}).json()["total"] == 0
+    searched = client.get(f"{API}/ledger/counts", params={"document": "4500000001"})
+    assert searched.status_code == 200, searched.text
+    assert searched.json() == {"total": 0, "by_linkage_status": {}}
+
+
 def test_utilisation_defaults_to_most_recent_activity(client):
     response = client.get(f"{API}/act/utilisation", params={"limit": 2})
     assert response.status_code == 200, response.text
@@ -94,6 +105,20 @@ def test_exception_counts_cover_the_whole_queue(client):
         "by_status": {"OPEN": 2, "AWAITING_REQUESTER": 1, "RESOLVED": 1},
         "with_requester": 2,
     }
+
+
+def test_open_only_leaves_closed_exceptions_out(client):
+    """24-Nov-2026: the Exceptions screen opens on the open queue; closed ones
+    are a choice in the Status filter."""
+    response = client.get(f"{API}/act/exceptions", params={"open_only": "true"})
+    assert response.status_code == 200, response.text
+    assert response.headers["X-Total-Count"] == "3"
+    assert {r["status"] for r in response.json()} == {"OPEN", "AWAITING_REQUESTER"}
+    counts = client.get(f"{API}/act/exceptions/counts", params={"open_only": "true"}).json()
+    assert counts == {"total": 3, "by_status": {"OPEN": 2, "AWAITING_REQUESTER": 1}, "with_requester": 2}
+    # A status picked in the filter wins: Closed still lists the closed ones.
+    closed = client.get(f"{API}/act/exceptions", params={"open_only": "true", "status": "RESOLVED"})
+    assert closed.headers["X-Total-Count"] == "1"
 
 
 def _work_po(stored, rows):  # noqa: F811

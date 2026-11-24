@@ -1123,9 +1123,12 @@ class Settings(BaseSettings):
     # 30-day goods-received-not-issued exception threshold.
     i13_gr_not_issued_threshold_days: int = 30
 
-    # Grace period after a consumption plan's planned-use window before it
-    # becomes a PLAN_BREACH exception.
+    # Planned Consumption Overdue (PLAN_BREACH) is raised the day after a
+    # consumption plan's window ends. This is then how many days the requester
+    # has to answer -- reminded every i13_plan_breach_reminder_every_days --
+    # before it goes to the HOD (18-Nov-2026; it used to be a wait before raising).
     i13_plan_breach_grace_days: int = 14
+    i13_plan_breach_reminder_every_days: int = 3
 
     # SOP indicator for OAR -> Min-Max reclassification review.
     i13_reclass_min_consumption_count: int = 4
@@ -1204,6 +1207,11 @@ class Settings(BaseSettings):
     # exceptions, oldest overdue first, so a backlog is worked through in steps.
     notification_i13_escalation_enabled: bool = False
     notification_i13_escalation_batch_size: int = 100
+
+    # I13 reminders: a Planned Consumption Overdue the requester has not answered is
+    # reminded every I13_PLAN_BREACH_REMINDER_EVERY_DAYS until it escalates. OFF by
+    # default, like escalation: turning it on emails requesters.
+    notification_i13_reminders_enabled: bool = False
 
     # I13 nightly exception detection. Detection otherwise runs only after an assistant
     # session (for that one material and plant) or by hand, so the Exceptions screen fell

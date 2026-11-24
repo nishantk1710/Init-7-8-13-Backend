@@ -265,6 +265,24 @@ def session_references(db: Session, session_ids: Iterable[str]) -> dict[str, str
     }
 
 
+def session_requesters(db: Session, session_ids: Iterable[str]) -> dict[str, str]:
+    """The name typed in the assistant's Requester box, by session ID
+    (``AssistantSession.requested_for``) -- who the part was for. Typed, not
+    identity, so it is shown, never routed on. A session with none is left out."""
+    from app.assistant.models import AssistantSession
+
+    wanted = list(session_ids)
+    if not wanted:
+        return {}
+    return {
+        sid: named.strip()
+        for sid, named in db.execute(
+            select(AssistantSession.id, AssistantSession.requested_for).where(AssistantSession.id.in_(wanted))
+        ).all()
+        if named and named.strip()
+    }
+
+
 def _links_wanted(
     rows: Iterable[Row],
     sessions: Mapping[str, SessionInfo],
