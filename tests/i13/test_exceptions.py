@@ -69,10 +69,20 @@ def test_plan_breach_once_the_window_has_ended(data_dir: Path, i13_config) -> No
 def test_plan_breach_boundary_is_the_day_after_the_window(data_dir: Path, i13_config) -> None:
     not_yet_due = _plan(AS_OF, Rsnum="1", plan_id="PLAN-A")
     just_expired = _plan(AS_OF - timedelta(days=1), Rsnum="2", plan_id="PLAN-B")
-    exceptions = _build(plan_rows=[not_yet_due, just_expired], data_dir=data_dir, i13_config=i13_config)
+    # Each plan's reservation is in SAP with nothing issued.
+    exceptions = _build(
+        reservations=[_reservation("1"), _reservation("2")], plan_rows=[not_yet_due, just_expired],
+        data_dir=data_dir, i13_config=i13_config,
+    )
     breach_plan_ids = {e.id for e in exceptions if e.type is ExceptionType.PLAN_BREACH}
     assert "EXC-PLAN_BREACH-PLAN-A" not in breach_plan_ids
     assert "EXC-PLAN_BREACH-PLAN-B" in breach_plan_ids
+
+
+def test_a_plan_with_no_reservation_in_sap_is_not_overdue(data_dir: Path, i13_config) -> None:
+    """24-Nov-2026: nothing to have issued on, so "Awaiting reservation"."""
+    exceptions = _build(plan_rows=[_plan(AS_OF - timedelta(days=20))], data_dir=data_dir, i13_config=i13_config)
+    assert not [e for e in exceptions if e.type is ExceptionType.PLAN_BREACH]
 
 
 def test_plan_breach_skipped_when_issuance_evidence_exists(data_dir: Path, i13_config) -> None:
