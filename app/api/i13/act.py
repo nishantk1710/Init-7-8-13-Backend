@@ -211,6 +211,7 @@ def list_act_exceptions(
     exception_type: str | None = Query(None, alias="type"),
     exception_status: str | None = Query(None, alias="status"),
     owner_requester_id: str | None = Query(None),
+    open_only: bool = Query(False, description="Leave out closed (RESOLVED) exceptions. Ignored with a status."),
     limit: int = Query(1000, ge=1, le=5000, description="See the note on pagination below."),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -230,6 +231,7 @@ def list_act_exceptions(
         exception_type=_parse_enum(ExceptionType, exception_type, "type"),
         status=_parse_enum(ExceptionStatus, exception_status, "status"),
         owner_requester_id=owner_requester_id,
+        open_only=open_only and not exception_status,
     )
     # Paged in SQL: this used to read every matching row (42,649 unfiltered)
     # and slice in Python. The total travels in X-Total-Count.
@@ -243,13 +245,15 @@ def count_act_exceptions(
     plant: str | None = Query(None),
     material: str | None = Query(None),
     exception_type: str | None = Query(None, alias="type"),
+    open_only: bool = Query(False, description="Leave out closed (RESOLVED) exceptions."),
     db: Session = Depends(get_db),
 ) -> ActExceptionCountsResponse:
     """The whole queue by status, and how many have a requester to route to --
     the dashboard's exception-status bar, without loading the queue."""
     return ActExceptionCountsResponse(
         **_repository(db).counts(
-            material=material, plant=plant, exception_type=_parse_enum(ExceptionType, exception_type, "type")
+            material=material, plant=plant, exception_type=_parse_enum(ExceptionType, exception_type, "type"),
+            open_only=open_only,
         )
     )
 
