@@ -125,7 +125,11 @@ class SqlExceptionRepository:
         exception_type: ExceptionType | None,
         status: ExceptionStatus | None,
         owner_requester_id: str | None,
+        open_only: bool = False,
     ):
+        if open_only:
+            # Open = not yet resolved (Closed on the screen); 24-Nov-2026.
+            stmt = stmt.where(ActExceptionRecord.status != ExceptionStatus.RESOLVED.value)
         if material:
             stmt = stmt.where(ActExceptionRecord.material == material)
         if plant:
@@ -148,6 +152,7 @@ class SqlExceptionRepository:
         owner_requester_id: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        open_only: bool = False,
     ) -> list[ActException]:
         """``limit``/``offset`` page in SQL. Omitted, every matching row is
         returned, as before -- detection and the service layer rely on that."""
@@ -158,6 +163,7 @@ class SqlExceptionRepository:
             exception_type=exception_type,
             status=status,
             owner_requester_id=owner_requester_id,
+            open_only=open_only,
         ).order_by(ActExceptionRecord.detected_at.desc(), ActExceptionRecord.exception_id)
         if offset:
             stmt = stmt.offset(offset)
@@ -191,6 +197,7 @@ class SqlExceptionRepository:
         exception_type: ExceptionType | None = None,
         status: ExceptionStatus | None = None,
         owner_requester_id: str | None = None,
+        open_only: bool = False,
     ) -> int:
         stmt = self._filtered(
             select(func.count()).select_from(ActExceptionRecord),
@@ -199,6 +206,7 @@ class SqlExceptionRepository:
             exception_type=exception_type,
             status=status,
             owner_requester_id=owner_requester_id,
+            open_only=open_only,
         )
         return int(self._session.execute(stmt).scalar_one())
 
@@ -208,13 +216,14 @@ class SqlExceptionRepository:
         material: str | None = None,
         plant: str | None = None,
         exception_type: ExceptionType | None = None,
+        open_only: bool = False,
     ) -> dict:
         """Matching exceptions by status, and how many have a requester -- two
         grouped queries over the table, never the rows themselves."""
         def filtered(stmt):
             return self._filtered(
                 stmt, material=material, plant=plant, exception_type=exception_type, status=None,
-                owner_requester_id=None,
+                owner_requester_id=None, open_only=open_only,
             )
 
         by_status = {

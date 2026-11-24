@@ -107,6 +107,20 @@ def test_exception_counts_cover_the_whole_queue(client):
     }
 
 
+def test_open_only_leaves_closed_exceptions_out(client):
+    """24-Nov-2026: the Exceptions screen opens on the open queue; closed ones
+    are a choice in the Status filter."""
+    response = client.get(f"{API}/act/exceptions", params={"open_only": "true"})
+    assert response.status_code == 200, response.text
+    assert response.headers["X-Total-Count"] == "3"
+    assert {r["status"] for r in response.json()} == {"OPEN", "AWAITING_REQUESTER"}
+    counts = client.get(f"{API}/act/exceptions/counts", params={"open_only": "true"}).json()
+    assert counts == {"total": 3, "by_status": {"OPEN": 2, "AWAITING_REQUESTER": 1}, "with_requester": 2}
+    # A status picked in the filter wins: Closed still lists the closed ones.
+    closed = client.get(f"{API}/act/exceptions", params={"open_only": "true", "status": "RESOLVED"})
+    assert closed.headers["X-Total-Count"] == "1"
+
+
 def _work_po(stored, rows):  # noqa: F811
     from sqlalchemy import text
 
