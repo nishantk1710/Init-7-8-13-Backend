@@ -120,6 +120,38 @@ def _parser() -> argparse.ArgumentParser:
             "the table but older than the window (ODATA_REFRESH_OPEN_ROWS)"
         ),
     )
+
+    # --- Open documents and the sync audit ----------------------------------
+    parser.add_argument(
+        "--open-docs",
+        action="store_true",
+        help=(
+            "re-read by key the documents still open in raw_<table> (OPEN_DOCS_SETS: "
+            "open requisitions, reservations and purchase orders, whatever their "
+            "age) and merge them; report rows SAP no longer returns. With --set "
+            "NAME, that one set."
+        ),
+    )
+    parser.add_argument(
+        "--sync-audit",
+        action="store_true",
+        help=(
+            "measure drift: sample documents per set (SYNC_AUDIT_SETS), read them "
+            "from SAP by key and compare with raw_<table> field by field. "
+            "Read-only unless --repair. With --set NAME, that one set."
+        ),
+    )
+    parser.add_argument(
+        "--sample",
+        metavar="N",
+        type=int,
+        help="with --sync-audit: documents per set (SYNC_AUDIT_SAMPLE when omitted)",
+    )
+    parser.add_argument(
+        "--repair",
+        action="store_true",
+        help="with --sync-audit: also merge the sampled rows into raw_<table>",
+    )
     parser.add_argument(
         "--max-rows",
         metavar="N",
@@ -416,6 +448,55 @@ def _odata_refresh(args) -> int:
         status = "ok" if s["error"] is None else "FAILED"
         print(f"{s['name']:<30} {status:<7} {s['window']:<34} {s['rows']:>8,} {s['open_keys']:>9,} "
               f"{s['seconds']:>8.1f}  {s['raw'] or '-'}")
+    for error in summary["errors"]:
+        print(f"  {error}")
+    return 1 if summary["failed"] else 0
+
+
+def _open_docs(args) -> int:
+    """The open-documents re-read, by hand: the configured list, or one set."""
+    from app.ingest import open_docs
+
+    names = [args.set] if args.set else get_settings().open_docs_set_list
+    if not names:
+        print("Nothing to re-read: OPEN_DOCS_SETS is empty and no --set was given.")
+        return 2
+    print("Open documents re-read: " + ", ".join(names) + "\n")
+
+    summary = open_docs.run_open_docs_cycle(names)
+    print(f"{'SET':<26} {'STATUS':<7} {'KEYS':>7} {'ROWS':>8} {'REQ':>5} {'GONE IN SAP':>11} {'SECONDS':>8}  MERGE")
+    for s in summary["sets"]:
+        status = "ok" if s["error"] is None else "FAILED"
+        print(f"{s['name']:<26} {status:<7} {s['keys']:>7,} {s['rows']:>8,} {s['requests']:>5,} "
+              f"{s['missing_in_sap']:>11,} {s['seconds']:>8.1f}  {s['raw'] or '-'}")
+        if s["missing_sample"]:
+            print(f"    no longer in SAP, e.g. {', '.join(s['missing_sample'])}")
+    for error in summary["errors"]:
+        print(f"  {error}")
+    return 1 if summary["failed"] else 0
+
+
+def _sync_audit(args) -> int:
+    """The sync audit, by hand: the configured list, or one set."""
+    from app.ingest import sync_audit
+
+    names = [args.set] if args.set else get_settings().sync_audit_set_list
+    if not names:
+        print("Nothing to audit: SYNC_AUDIT_SETS is empty and no --set was given.")
+        return 2
+    print("Sync audit: " + ", ".join(names) + ("  (with repair)" if args.repair else "  (read-only)") + "\n")
+
+    summary = sync_audit.run_sync_audit_cycle(names, sample=args.sample, repair=True if args.repair else None)
+    print(f"{'SET':<26} {'STATUS':<7} {'DOCS':>5} {'SAP':>6} {'OURS':>6} {'SAME':>6} {'DIFFER':>6} "
+          f"{'DRIFT':>6} {'NOTATN':>6} {'NOT HERE':>8} {'NOT IN SAP':>10}  FIELDS")
+    for s in summary["sets"]:
+        status = "ok" if s["error"] is None else "FAILED"
+        fields = ", ".join(f"{k}x{v}" for k, v in list(s["fields"].items())[:5]) or "-"
+        print(f"{s['name']:<26} {status:<7} {s['documents']:>5} {s['sap_rows']:>6} {s['our_rows']:>6} "
+              f"{s['same']:>6} {s['differ']:>6} {s['drift_rate'] * 100:>5.1f}% {s['notation']:>6} "
+              f"{s['missing_here']:>8} {s['missing_in_sap']:>10}  {fields}")
+        for example in s["examples"]:
+            print(f"    {example}")
     for error in summary["errors"]:
         print(f"  {error}")
     return 1 if summary["failed"] else 0
@@ -778,6 +859,10 @@ def main(argv: list[str] | None = None) -> int:
         return _csv_delta(args)
     if args.odata_refresh:
         return _odata_refresh(args)
+    if args.open_docs:
+        return _open_docs(args)
+    if args.sync_audit:
+        return _sync_audit(args)
     if args.csv_pull or args.csv_load or args.csv_verify or args.csv_download:
         return _csv(args)
 
