@@ -637,6 +637,78 @@ def _union(spec: IngestSpec, *reads: _Read) -> list[dict]:
 # --- The fetch ---------------------------------------------------------------
 
 
+def _fetch_keys_only(
+    spec: IngestSpec,
+    *,
+    client: SapClient,
+    storage: Storage,
+    run_date: date,
+    prefix: str,
+    started: float,
+    extra_keys: tuple[str, list[str]] | None,
+) -> FetchResult:
+    """``fetch_set(..., keys_only=True)``: the rows of ``extra_keys`` and
+    nothing else, landed as an increment. Never raises; never touches a mark.
+
+    The same evidence as any other read: duplicates across the key batches
+    mark the file unusable, and the loader then refuses it.
+    """
+    result = FetchResult(entity_set=spec.name, prefix=prefix, mode=MODE_DELTA)
+    key_property, values = extra_keys if extra_keys is not None else ("", [])
+    try:
+        if not key_property:
+            raise ValueError("a by-key read needs the property to read by")
+        if values:
+            read = _read_keys(client, spec, list(values), key_property=key_property)
+        else:
+            read = _Read(expected=0)
+            logger.info("%s: no %s value(s) to re-read", spec.name, key_property)
+    except Exception as exc:
+        result.error = f"{type(exc).__name__}: {exc}"
+        result.seconds = time.monotonic() - started
+        logger.error("%s: fetch failed -- %s", spec.name, result.error)
+        return result
+
+    rows = read.rows
+    result.rows = len(rows)
+    result.requests = read.requests
+    result.counted = read.expected
+    result.order_by = read.order_by
+    result.order_by_degraded = read.order_by_degraded
+    result.unknown_properties = list(read.unknown_properties)
+    result.columns = columns_of(spec, rows)
+    result.duplicate_keys = read.duplicate_keys
+    result.stable = result.duplicate_keys == 0
+    shortfall = read.shortfall()
+    if shortfall:
+        result.stable = False
+        result.error = shortfall
+
+    try:
+        result.bytes_written = _write_jsonl(storage, result.data_key, rows)
+        _write_manifest(storage, prefix, spec, result, run_date)
+    except Exception as exc:
+        result.error = f"{type(exc).__name__}: {exc}"
+        logger.error("%s: fetched %d rows but could not land them -- %s", spec.name, result.rows, result.error)
+        return result
+    finally:
+        result.seconds = time.monotonic() - started
+
+    if not result.stable:
+        logger.error(
+            "%s: %d row(s), %d duplicate key(s)%s -- the by-key read lost rows. "
+            "Landed at %s and marked unstable; it must not be loaded.",
+            spec.name, result.rows, result.duplicate_keys,
+            f"; {result.error}" if result.error else "", prefix,
+        )
+    logger.info(
+        "%s: %d rows for %d %s value(s), %d bytes -> %s (%.1fs, by key)",
+        spec.name, result.rows, len(values), key_property, result.bytes_written,
+        result.data_key, result.seconds,
+    )
+    return result
+
+
 def fetch_set(
     spec: IngestSpec,
     *,
@@ -650,6 +722,7 @@ def fetch_set(
     advance_watermark: bool = True,
     window_reads: WindowReads | None = None,
     extra_keys: tuple[str, list[str]] | None = None,
+    keys_only: bool = False,
 ) -> FetchResult:
     """Pull one entity set and land it. Never raises -- failures are returned.
 
@@ -668,12 +741,25 @@ def fetch_set(
     the window -- how the refresh (``app.ingest.refresh``) brings back rows
     older than its window that are still open in the table. Delta mode only;
     a whole read has them already.
+
+    ``keys_only`` reads ``extra_keys`` and nothing else: no window of its own,
+    no parents, no watermark looked at or moved. Landed as an increment, so
+    the load merges it. How the open-documents re-read
+    (``app.ingest.open_docs``) and the sync audit (``app.ingest.sync_audit``)
+    read rows by key, whatever their date. Off by default: every other caller
+    reads exactly as before.
     """
     client = client or SapClient()
     storage = storage or get_storage()
     run_date = run_date or datetime.now(timezone.utc).date()
     prefix = prefix_for(spec, run_date=run_date, root=root)
     started = time.monotonic()
+
+    if keys_only:
+        return _fetch_keys_only(
+            spec, client=client, storage=storage, run_date=run_date, prefix=prefix,
+            started=started, extra_keys=extra_keys,
+        )
 
     delta = spec.delta if mode == MODE_DELTA else None
     if mode == MODE_DELTA and delta is None:

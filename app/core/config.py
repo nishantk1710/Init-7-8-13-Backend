@@ -289,6 +289,78 @@ class Settings(BaseSettings):
     # or release on an old open row still arrives.
     odata_refresh_open_rows: bool = True
 
+    # Minutes to wait before re-running the sets that failed in the night's
+    # refresh, once. 0 (the default) never retries. A short CPI outage (HTTP
+    # 404 for 20 seconds at 23:03 UTC on 23 Nov 2026) otherwise cost those
+    # sets a whole day. The retry waits WITHOUT holding the delta's lock, so
+    # the hourly delta is never held up by it.
+    odata_refresh_retry_minutes: int = 0
+
+    # --- Open documents, re-read by key several times a day -----------------
+    #
+    # The hourly delta reads by a date; for several sets that date is a
+    # CREATION date, so an edit to an existing row never shows (a PR released,
+    # a reservation's quantity changed, a schedule line's delivery date moved).
+    # The nightly refresh catches those once a day. This job narrows the gap
+    # for the rows the app acts on -- the documents still OPEN in our tables --
+    # by re-reading them by their key a few times a day, whatever their age
+    # (app/ingest/open_docs.py). It also reports rows our table still holds
+    # that SAP no longer returns (deleted in SAP), without deleting anything.
+    # Off by default, like the other timers.
+    open_docs_enabled: bool = False
+
+    # Hours of the day, UTC, comma-separated. The default -- 05, 11 and 17
+    # UTC (10:30, 16:30 and 22:30 IST) -- with the 23:00 UTC refresh makes
+    # four passes a day, and stays clear of the I13 build (00:00-01:00 UTC)
+    # and the Sunday 02:00 UTC full pull.
+    open_docs_hours_utc: str = "5,11,17"
+
+    # Minute past those hours. Off the hour, so the hourly delta (on the
+    # hour, usually under five minutes) has finished; the job then holds the
+    # delta's lock for its few minutes, and the next delta is not affected.
+    open_docs_minute: int = 20
+
+    # Comma-separated. Each needs a rule in open_docs.OPEN_DOCS.
+    open_docs_sets: str = (
+        "PurchaseRequisitionSet,ReservationItemSet,PurchaseOrderSet,PurchaseOrderItemSet,POScheduleLineSet"
+    )
+
+    # A purchase order counts as open while it has a schedule line not fully
+    # received, on an item neither deleted nor delivery-completed, due no
+    # earlier than this many months ago. Measured on PRD (24 Nov 2026): 49,331
+    # POs have an "open" item by the flags alone -- most from 2013-2016, never
+    # closed in SAP -- and 1,117 have such a line due in the last 12 months.
+    open_docs_due_months: int = 12
+
+    # --- Sync audit: how far raw_<table> has drifted from SAP ---------------
+    #
+    # Once a day, a random sample of documents per set is read from SAP by
+    # key and compared, field by field, with our table: rows whose values
+    # differ (beyond number and date notation), rows SAP has that we lack,
+    # and rows we hold that SAP no longer returns. Logged per set, so drift
+    # is measured rather than guessed (app/ingest/sync_audit.py). Read-only
+    # unless SYNC_AUDIT_REPAIR is on. Off by default.
+    sync_audit_enabled: bool = False
+
+    # 21:20 UTC (02:50 IST): before the 23:00 refresh, so it sees the day's
+    # drift before the refresh repairs it.
+    sync_audit_hour_utc: int = 21
+    sync_audit_minute: int = 20
+
+    # Comma-separated. Each needs a rule in sync_audit.AUDIT_RULES.
+    sync_audit_sets: str = (
+        "PurchaseRequisitionSet,ReservationItemSet,PurchaseOrderSet,PurchaseOrderItemSet,POScheduleLineSet,"
+        "MaterialSet,MaterialPlantSet,MaterialDescriptionSet,StorageLocationStockSet,BatchStockSet,"
+        "MaterialValuationSet,VendorSet,InfoRecordSet,InfoRecordOrgSet"
+    )
+
+    # Documents sampled per set and run: one SAP request per 50.
+    sync_audit_sample: int = 50
+
+    # Also merge the sampled rows into raw_<table> (changed rows updated, new
+    # rows inserted, nothing deleted) -- the same merge every delta uses.
+    sync_audit_repair: bool = False
+
     # --- Delta marks for tables loaded another way --------------------------
     #
     # A set whose raw_<table> holds rows but has no watermark and no
@@ -1458,6 +1530,25 @@ class Settings(BaseSettings):
     @property
     def odata_full_pull_set_list(self) -> list[str]:
         return [name.strip() for name in self.odata_full_pull_sets.split(",") if name.strip()]
+
+    @property
+    def open_docs_set_list(self) -> list[str]:
+        return [name.strip() for name in self.open_docs_sets.split(",") if name.strip()]
+
+    @property
+    def open_docs_hour_list(self) -> list[int]:
+        """The configured UTC hours, distinct and sorted; anything that is not
+        an hour of the day (0-23) is left out rather than guessed."""
+        hours: set[int] = set()
+        for part in self.open_docs_hours_utc.split(","):
+            part = part.strip()
+            if part.isdigit() and 0 <= int(part) <= 23:
+                hours.add(int(part))
+        return sorted(hours)
+
+    @property
+    def sync_audit_set_list(self) -> list[str]:
+        return [name.strip() for name in self.sync_audit_sets.split(",") if name.strip()]
 
     @property
     def ingest_disabled_set_list(self) -> frozenset[str]:
