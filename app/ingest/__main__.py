@@ -488,13 +488,15 @@ def _sync_audit(args) -> int:
 
     summary = sync_audit.run_sync_audit_cycle(names, sample=args.sample, repair=True if args.repair else None)
     print(f"{'SET':<26} {'STATUS':<7} {'DOCS':>5} {'SAP':>6} {'OURS':>6} {'SAME':>6} {'DIFFER':>6} "
-          f"{'DRIFT':>6} {'NOTATN':>6} {'NOT HERE':>8} {'NOT IN SAP':>10}  FIELDS")
+          f"{'DRIFT':>6} {'NOTATN':>6} {'EMPTY':>6} {'NOT HERE':>8} {'NOT IN SAP':>10}  FIELDS")
     for s in summary["sets"]:
         status = "ok" if s["error"] is None else "FAILED"
         fields = ", ".join(f"{k}x{v}" for k, v in list(s["fields"].items())[:5]) or "-"
+        empty = ", ".join(f"{k}x{v}" for k, v in list(s["empty_fields"].items())[:5])
         print(f"{s['name']:<26} {status:<7} {s['documents']:>5} {s['sap_rows']:>6} {s['our_rows']:>6} "
               f"{s['same']:>6} {s['differ']:>6} {s['drift_rate'] * 100:>5.1f}% {s['notation']:>6} "
-              f"{s['missing_here']:>8} {s['missing_in_sap']:>10}  {fields}")
+              f"{s['empty_here']:>6} {s['missing_here']:>8} {s['missing_in_sap']:>10}  {fields}"
+              + (f"  | empty here: {empty}" if empty else ""))
         for example in s["examples"]:
             print(f"    {example}")
     for error in summary["errors"]:

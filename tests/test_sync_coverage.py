@@ -362,15 +362,42 @@ class TestCompare:
         ("2026-11-24", "24.11.2026", False, "us", "notation"),
         ("24.11.2026", "28.11.2026", False, "us", "value"),
         ("00000000", None, False, "us", "notation"),
-        ("", "24.11.2026", False, "us", "value"),
+        ("", "24.11.2026", False, "us", "empty_here"),
         ("00010", "10", False, "us", "notation"),
         (None, "", False, "us", "same"),
-        ("", "X", False, "us", "value"),
+        ("", "X", False, "us", "empty_here"),
+        ("X", "", False, "us", "value"),
         ("LAMP", "LAMP ", False, "us", "same"),
         ("LAMP", "BULB", False, "us", "value"),
     ])
     def test_values_compare_as_the_pages_read_them(self, ours, theirs, numeric, fmt, verdict) -> None:
         assert sync_audit.compare(ours, theirs, numeric=numeric, number_format=fmt) == verdict
+
+    # Measured on PRD 25 Nov 2026: EBAN PREIS and BSMNG -- columns no view reads as a number --
+    # kept the CSV extract's German notation, and the first audit called 29 of 54 PR rows changed.
+    @pytest.mark.parametrize("ours, theirs, verdict", [
+        ("158,83", "158.83", "notation"),
+        ("12.640,68", "12640.68", "notation"),
+        ("1,000", "     1.000", "notation"),       # BSMNG: German one; OData pads it
+        ("0,000", "0.000", "notation"),
+        ("5,000-", "-5.000", "notation"),
+        ("2,490.00", "2490.00", "notation"),       # a US-notation extract reads too
+        ("", "0.000", "notation"),                 # a blank quantity is a zero
+        ("0,000", "", "notation"),
+        ("158,83", "160.00", "value"),             # a price that really changed still shows
+        ("", "5.000", "empty_here"),
+        ("GRINDING; 50MM", "GRINDING, 50MM", "value"),
+    ])
+    def test_a_column_the_views_do_not_read_as_a_number_matches_in_any_notation(self, ours, theirs, verdict) -> None:
+        assert sync_audit.compare(ours, theirs, numeric=False, number_format="us") == verdict
+
+    @pytest.mark.parametrize("ours, theirs, verdict", [
+        ("1,000", "1.000", "value"),    # the us view rule reads '1,000' as a thousand: the page is wrong
+        ("", "5.000", "empty_here"),
+        ("5.000", "", "value"),
+    ])
+    def test_a_column_the_views_read_as_a_number_keeps_the_view_rule(self, ours, theirs, verdict) -> None:
+        assert sync_audit.compare(ours, theirs, numeric=True, number_format="us") == verdict
 
 
 class TestAuditRows:
@@ -396,6 +423,35 @@ class TestAuditRows:
         assert outcome.fields == {"Eindt": 1}
         assert outcome.examples and "Eindt" in outcome.examples[0]
         assert outcome.drift_rate == pytest.approx(0.5)
+
+    def test_unconverted_numbers_are_notation_and_blanks_sap_fills_are_counted_apart(self) -> None:
+        shape = _shape(table="raw_eban",
+                       columns={"Banfn": "BANFN", "Bnfpo": "BNFPO", "Menge": "MENGE", "Preis": "PREIS",
+                                "Bsmng": "BSMNG", "Bednr": "BEDNR", "Meins": "MEINS"},
+                       numeric={"Menge": True}, edm={},
+                       identity_props=["Banfn", "Bnfpo"], identity_columns=["BANFN", "BNFPO"])
+        sap = [
+            {"Banfn": "1000326001", "Bnfpo": "00010", "Menge": "60000.000", "Preis": "12640.68",
+             "Bsmng": "     1.000", "Bednr": "", "Meins": "KG"},          # notation only
+            {"Banfn": "1000326001", "Bnfpo": "00020", "Menge": "1.000", "Preis": "158.83",
+             "Bsmng": "0.000", "Bednr": "SHUTDOWN", "Meins": "EA"},       # empty here, set in SAP
+            {"Banfn": "1000326001", "Bnfpo": "00030", "Menge": "2.000", "Preis": "160.00",
+             "Bsmng": "0.000", "Bednr": "SHUTDOWN", "Meins": "EA"},       # price changed too
+        ]
+        ours = [
+            {"BANFN": "1000326001", "BNFPO": "00010", "MENGE": "60000.000", "PREIS": "12.640,68",
+             "BSMNG": "1,000", "BEDNR": "", "MEINS": "KG"},
+            {"BANFN": "1000326001", "BNFPO": "00020", "MENGE": "1.000", "PREIS": "158,83",
+             "BSMNG": "0,000", "BEDNR": "", "MEINS": "EA"},
+            {"BANFN": "1000326001", "BNFPO": "00030", "MENGE": "2.000", "PREIS": "158,83",
+             "BSMNG": "0,000", "BEDNR": None, "MEINS": "EA"},
+        ]
+        outcome = sync_audit.AuditOutcome(name="PurchaseRequisitionSet")
+        sync_audit.audit_rows(spec_for("PurchaseRequisitionSet"), shape, sap, ours, outcome, number_format="us")
+        assert (outcome.same, outcome.notation, outcome.empty_here, outcome.differ) == (0, 1, 1, 1)
+        assert outcome.fields == {"Preis": 1} and outcome.empty_fields == {"Bednr": 2}
+        assert len(outcome.examples) == 1 and "Preis" in outcome.examples[0]
+        assert outcome.drift_rate == pytest.approx(1 / 3)
 
 
 class TestSampleKeys:
@@ -446,6 +502,21 @@ class TestAuditCycle:
         s = summary["sets"][0]
         assert summary["audited"] == 1 and loads == []
         assert s["differ"] == 1 and s["fields"] == {"Menge": 1} and s["drift_rate"] == 1.0
+        assert s["empty_here"] == 0 and s["empty_fields"] == {}
+
+    def test_the_cli_table_shows_what_is_empty_here(self, monkeypatch, capsys) -> None:
+        from types import SimpleNamespace
+
+        from app.ingest import __main__ as cli
+
+        outcome = sync_audit.AuditOutcome(name="ReservationItemSet", documents=2, sap_rows=3, our_rows=3,
+                                          same=1, empty_here=2, empty_fields={"Shkzg": 2, "Bednr": 1})
+        monkeypatch.setattr(sync_audit, "run_sync_audit_cycle", lambda names, **kw: {
+            "audited": 1, "failed": 0, "errors": [],
+            "sets": [{**sync_audit.asdict(outcome), "drift_rate": outcome.drift_rate}]})
+        assert cli._sync_audit(SimpleNamespace(set="ReservationItemSet", sample=None, repair=False)) == 0
+        out = capsys.readouterr().out
+        assert "EMPTY" in out and "empty here: Shkzgx2, Bednrx1" in out
 
     def test_repair_merges_the_sample(self, monkeypatch) -> None:
         loads = self._stub(monkeypatch)
