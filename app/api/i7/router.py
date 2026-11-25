@@ -20,6 +20,7 @@ from app.api.i7 import (
     pipeline_runs,
     recommendations,
     reports,
+    reverse_conversion,
     runs,
 )
 
@@ -56,3 +57,6 @@ router.include_router(pipeline_runs.router)
 router.include_router(reports.router)
 # /kpi-formulas is its own prefix; nothing else under /v1/i7 can read it as an id.
 router.include_router(kpi_formulas.router)
+# /reverse-conversion (Min-Max -> OAR recommendations) is its own prefix and shares no code with the
+# OAR -> Min-Max conversion, so registration order against recommendations.router does not matter.
+router.include_router(reverse_conversion.router)
