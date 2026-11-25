@@ -1065,6 +1065,26 @@ class Settings(BaseSettings):
     # extract is the other way out of MISSING_DATA.
     i7_demand_validated_months: str = ""
 
+    # --- I07 Min-Max -> OAR recommendations: the calculation anchor -----------
+    #
+    # The anchor is the latest COMPLETE month; every consumption window of the Min-Max -> OAR
+    # recommendation (app/initiatives/i7/reverse_conversion) is measured to it, and a month after it
+    # (a partial one) is ignored. Nothing here touches the OAR -> Min-Max conversion or the demand
+    # window above.
+    #
+    # I7_REVERSE_ANCHOR_MONTH=YYYY-MM pins the anchor. It is refused if that month had not ended when
+    # the data was loaded (when the load time is known) or has no staged consumption. Empty (the
+    # default) means "derive it".
+    #
+    # I7_REVERSE_ANCHOR_SOURCE says where a load time for deriving it comes from:
+    #   configured   (the default) -- nowhere. With no pinned anchor the endpoint answers "anchor not
+    #                available" instead of guessing from the server's clock. Safe until a load-time
+    #                source has been checked against the real database.
+    #   csv_extract  -- the time the latest completed MSEG extract was requested from SAP
+    #                (csv_extract_request.fired_at). A month is complete if it ended before that day.
+    i7_reverse_anchor_month: str | None = None
+    i7_reverse_anchor_source: Literal["configured", "csv_extract"] = "configured"
+
     # --- I07 OAR donor similarity: retrieval -------------------------------
     #
     # Operational knobs for app/initiatives/i7/oar/retrieval.py. They decide how
