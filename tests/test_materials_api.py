@@ -1,8 +1,9 @@
 """More -> Materials: every active material + plant with its stock on hand.
 
-The real reads (MARC scope index, MARD current stock, MARA unit) run against
-in-memory SQLite tables shaped like ``n_marc`` / ``n_mard`` / ``n_mara``; the
-material-name list is pinned, since it loads in the background.
+The real reads (MARC, MARA, MARD current stock) run against in-memory SQLite
+tables shaped like ``n_marc`` / ``n_mara`` / ``n_mard``; the material-name list
+is pinned, since it loads in the background. The list's background read runs
+inline here unless a test says otherwise.
 """
 
 from __future__ import annotations
@@ -16,7 +17,6 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.core.db import get_db
 from app.main import app
 from app.shared import materials_list
 
@@ -56,7 +56,7 @@ NAMES = {
 
 
 @pytest.fixture
-def client(monkeypatch):
+def engine():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     with engine.begin() as c:
         c.execute(
@@ -72,19 +72,31 @@ def client(monkeypatch):
         )
         c.execute(text("INSERT INTO n_mara VALUES (:m, :d, :u)"), [dict(zip("mdu", r)) for r in MARA])
         c.execute(text("INSERT INTO n_mard VALUES (:m, :p, :l, :q)"), [dict(zip("mplq", r)) for r in MARD])
+    return engine
 
-    def db():
-        with Session(engine) as session:
-            yield session
 
+@pytest.fixture
+def started(monkeypatch, engine):
+    """Reads started by requests; run inline unless a test swaps ``_start``."""
+    threads: list = []
+
+    def start(thread):
+        threads.append(thread)
+        thread.run()
+
+    monkeypatch.setattr(materials_list, "_session", lambda: Session(engine))
+    monkeypatch.setattr(materials_list, "_start", start)
     monkeypatch.setattr(
         materials_list, "material_names", lambda materials: {m: NAMES[m] for m in materials if m in NAMES}
     )
     materials_list.clear_cache()
-    app.dependency_overrides[get_db] = db
-    yield TestClient(app)
-    app.dependency_overrides.pop(get_db, None)
+    yield threads
     materials_list.clear_cache()
+
+
+@pytest.fixture
+def client(started):
+    return TestClient(app)
 
 
 def keys(body) -> list[tuple[str, str]]:
@@ -172,3 +184,68 @@ def test_excel_holds_the_whole_filtered_list(client):
         ["1000000002", "GREASE, LITHIUM EP2", "1300", "Black Mountain Mining", "Non-OAR", 3, "KG"],
         ["1000000003", "BOLT, HEX M12", "1300", "Black Mountain Mining", "Non-OAR", 0, None],
     ]
+
+
+def test_list_is_read_once_and_then_served_from_memory(client, started):
+    client.get("/api/materials")
+    client.get("/api/materials/counts")
+    client.get("/api/materials/export.xlsx")
+    assert len(started) == 1
+
+
+def test_503_while_the_first_read_runs(client, monkeypatch):
+    monkeypatch.setattr(materials_list, "_start", lambda thread: None)
+    for path in ("/api/materials", "/api/materials/counts", "/api/materials/export.xlsx"):
+        response = client.get(path)
+        assert response.status_code == 503
+        assert response.headers["Retry-After"] == "30"
+        assert "still loading" in response.json()["detail"]
+
+
+def test_503_says_so_when_the_read_failed_and_retries_later(client, monkeypatch):
+    def broken(db):
+        raise RuntimeError("SAP view unreadable")
+
+    monkeypatch.setattr(materials_list, "build", broken)
+    first = client.get("/api/materials")
+    assert first.status_code == 503
+    assert "could not be read" in first.json()["detail"]
+
+    monkeypatch.setattr(materials_list, "_start", lambda thread: pytest.fail("retried before RETRY_SECONDS"))
+    assert client.get("/api/materials").status_code == 503
+
+
+def test_previous_list_is_served_while_a_refresh_reads(client, monkeypatch):
+    assert client.get("/api/materials/counts").json()["total"] == 4
+    waiting: list = []
+    monkeypatch.setattr(materials_list, "_start", waiting.append)
+    materials_list._next_read_at = 0.0  # the 10 minutes are up (clear_cache resets it)
+
+    response = client.get("/api/materials/counts")
+    assert response.status_code == 200
+    assert response.json()["total"] == 4
+    assert len(waiting) == 1  # a refresh started ...
+    client.get("/api/materials/counts")
+    assert len(waiting) == 1  # ... and only one
+
+
+def test_deleted_materials_stay_when_the_exclusion_is_off(client, monkeypatch):
+    monkeypatch.setattr(materials_list, "exclude_deleted", lambda: False)
+    assert keys(client.get("/api/materials", params={"limit": 100}).json()) == [
+        ("1000000001", "1300"),
+        ("1000000001", "1500"),
+        ("1000000002", "1300"),
+        ("1000000003", "1300"),
+        ("1000000004", "1300"),
+        ("1000000005", "1300"),
+        ("1000000005", "1500"),
+    ]
+
+
+def test_one_flagged_mara_row_deletes_the_material_and_the_unit_is_the_first_given(client, engine):
+    with engine.begin() as c:
+        c.execute(text("INSERT INTO n_mara VALUES ('1000000002', ' x ', 'PC')"))
+        c.execute(text("INSERT INTO n_mara VALUES ('1000000003', '', 'M')"))
+    rows = {(r["material"], r["plant"]): r for r in client.get("/api/materials", params={"limit": 100}).json()}
+    assert ("1000000002", "1300") not in rows
+    assert rows[("1000000003", "1300")]["unit"] == "M"
