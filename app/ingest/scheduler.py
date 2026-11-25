@@ -711,6 +711,7 @@ async def _odata_refresh_tick() -> None:
 
     started = datetime.now(timezone.utc)
     logger.info("OData refresh starting")
+    summary: dict | None = None
     try:
         summary = await asyncio.to_thread(refresh.run_odata_refresh_cycle)
         elapsed = (datetime.now(timezone.utc) - started).total_seconds()
@@ -725,6 +726,183 @@ async def _odata_refresh_tick() -> None:
     finally:
         delta_lock.release()
         lock.release()
+
+    # Both locks are free again here: the wait below holds neither, so the
+    # hourly delta runs on time while a retry is pending.
+    await _odata_refresh_retry(summary)
+
+
+async def _odata_refresh_retry(summary: dict | None) -> None:
+    """Re-run, once, the sets that failed in the night's refresh, after
+    ODATA_REFRESH_RETRY_MINUTES. Nothing happens when that is 0 (the default)
+    or nothing failed. A set the setting spelt wrongly is never retried: it
+    would fail the same way."""
+    from app.ingest import refresh
+
+    minutes = get_settings().odata_refresh_retry_minutes
+    if minutes <= 0 or not summary or not summary.get("failed"):
+        return
+    failed = {s.get("name") for s in summary.get("sets", []) if s.get("error")}
+    entries = [e for e in refresh.parse_sets(get_settings().odata_refresh_sets) if e.name in failed and not e.error]
+    if not entries:
+        return
+    logger.warning(
+        "OData refresh: retrying %d failed set(s) in %d minute(s): %s",
+        len(entries), minutes, ", ".join(e.name for e in entries),
+    )
+    await asyncio.sleep(minutes * 60)
+
+    held = await _acquire_with_delta(ODATA_REFRESH_LOCK_NAME, "OData refresh retry")
+    if held is None:
+        return
+    lock, delta_lock = held
+    started = datetime.now(timezone.utc)
+    try:
+        retried = await asyncio.to_thread(refresh.run_odata_refresh_cycle, entries)
+        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        logger.info(
+            "OData refresh retry finished in %.0fs: %d set(s) merged, %d failed",
+            elapsed, retried["pulled"], retried["failed"],
+        )
+        for error in retried["errors"][:10]:
+            logger.error("  %s", error)
+    except Exception:
+        logger.exception("OData refresh retry raised")
+    finally:
+        delta_lock.release()
+        lock.release()
+
+
+async def _acquire_with_delta(name: str, label: str) -> tuple[_Lock, _Lock] | None:
+    """A job's own mutex, then the delta's lock -- the shape the weekly pull and
+    the refresh use, for a job that merges through the same staging tables.
+    Returns both locks, held, or None (and releases what it took) when either
+    cannot be had."""
+    lock = _Lock(name)
+    try:
+        if not lock.acquire():
+            logger.debug("%s skipped: another worker holds the lock", label)
+            return None
+    except Exception as exc:
+        logger.warning("%s skipped: could not reach the lock (%s)", label, exc)
+        return None
+
+    delta_lock = _Lock(LOCK_NAME, timeout_ms=FULL_PULL_DELTA_WAIT_MS)
+    try:
+        got_delta_lock = await asyncio.to_thread(delta_lock.acquire)
+    except Exception as exc:
+        logger.warning("%s skipped: could not reach the delta lock (%s)", label, exc)
+        lock.release()
+        return None
+    if not got_delta_lock:
+        logger.warning(
+            "%s skipped: a delta cycle held the ingest lock for over %d minutes",
+            label, FULL_PULL_DELTA_WAIT_MS // 60000,
+        )
+        lock.release()
+        return None
+    return lock, delta_lock
+
+
+# --- Open documents, re-read by key a few times a day ---------------------------
+#
+# The documents still open in our tables -- requisitions not yet ordered,
+# reservations not yet issued, purchase orders still due -- re-read by key at
+# OPEN_DOCS_HOURS_UTC, whatever their age (app/ingest/open_docs.py). The same
+# shape as the refresh: its own mutex, then the delta's lock for the run.
+
+OPEN_DOCS_LOCK_NAME = "spares_ai_open_docs"
+
+
+def seconds_until_any(hours_utc: list[int], minute: int, now: datetime) -> float:
+    """Seconds from ``now`` to the next of ``hours_utc`` at ``minute`` past, UTC."""
+    minute = min(max(minute, 0), 59)
+    best: datetime | None = None
+    for hour in hours_utc or [0]:
+        target = now.replace(hour=hour % 24, minute=minute, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        if best is None or target < best:
+            best = target
+    assert best is not None
+    return (best - now).total_seconds()
+
+
+async def _open_docs_tick() -> None:
+    from app.ingest import open_docs
+
+    held = await _acquire_with_delta(OPEN_DOCS_LOCK_NAME, "open documents re-read")
+    if held is None:
+        return
+    lock, delta_lock = held
+    started = datetime.now(timezone.utc)
+    logger.info("open documents re-read starting")
+    try:
+        summary = await asyncio.to_thread(open_docs.run_open_docs_cycle)
+        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        logger.info(
+            "open documents re-read finished in %.0fs: %d set(s) merged, %d failed, "
+            "%d row(s) SAP no longer returns",
+            elapsed, summary["pulled"], summary["failed"], summary.get("missing_in_sap", 0),
+        )
+        for error in summary["errors"][:10]:
+            logger.error("  %s", error)
+    except Exception:
+        logger.exception("open documents re-read raised")
+    finally:
+        delta_lock.release()
+        lock.release()
+
+
+async def _open_docs_loop(hours_utc: list[int], minute: int) -> None:
+    while True:
+        await asyncio.sleep(seconds_until_any(hours_utc, minute, datetime.now(timezone.utc)))
+        await _open_docs_tick()
+        # Past the minute before recomputing, so a fast tick cannot fire twice.
+        await asyncio.sleep(120)
+
+
+# --- The sync audit, once a day -------------------------------------------------
+#
+# A sample of documents per set read from SAP by key and compared with
+# raw_<table>, field by field (app/ingest/sync_audit.py). Read-only unless
+# SYNC_AUDIT_REPAIR is on; holds the delta's lock either way, so what it
+# compares does not move under it.
+
+SYNC_AUDIT_LOCK_NAME = "spares_ai_sync_audit"
+
+
+async def _sync_audit_tick() -> None:
+    from app.ingest import sync_audit
+
+    held = await _acquire_with_delta(SYNC_AUDIT_LOCK_NAME, "sync audit")
+    if held is None:
+        return
+    lock, delta_lock = held
+    started = datetime.now(timezone.utc)
+    logger.info("sync audit starting")
+    try:
+        summary = await asyncio.to_thread(sync_audit.run_sync_audit_cycle)
+        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        drifted = sum(1 for s in summary["sets"] if s.get("differ") or s.get("missing_here") or s.get("missing_in_sap"))
+        logger.info(
+            "sync audit finished in %.0fs: %d set(s) audited, %d with drift, %d failed",
+            elapsed, summary["audited"], drifted, summary["failed"],
+        )
+        for error in summary["errors"][:10]:
+            logger.error("  %s", error)
+    except Exception:
+        logger.exception("sync audit raised")
+    finally:
+        delta_lock.release()
+        lock.release()
+
+
+async def _sync_audit_loop(hour_utc: int, minute: int) -> None:
+    while True:
+        await asyncio.sleep(seconds_until_any([hour_utc % 24], minute, datetime.now(timezone.utc)))
+        await _sync_audit_tick()
+        await asyncio.sleep(120)
 
 
 async def _odata_refresh_loop(hour_utc: int) -> None:
@@ -855,6 +1033,45 @@ def start(app) -> asyncio.Task | None:
         logger.info(
             "daily OData refresh is off (ODATA_REFRESH_ENABLED is not 'true'); run it with: "
             "python -m app.ingest --odata-refresh"
+        )
+
+    if settings.odata_refresh_enabled and settings.odata_refresh_retry_minutes > 0:
+        logger.info(
+            "daily OData refresh retry on: sets that fail are re-run once, %d minute(s) later",
+            settings.odata_refresh_retry_minutes,
+        )
+
+    if settings.open_docs_enabled and settings.open_docs_hour_list:
+        loops.append(lambda: _open_docs_loop(settings.open_docs_hour_list, settings.open_docs_minute))
+        logger.info(
+            "open documents re-read on: %s UTC (%s; open rows re-read by key and merged, "
+            "rows SAP no longer returns reported)",
+            ", ".join(f"{h:02d}:{min(max(settings.open_docs_minute, 0), 59):02d}" for h in settings.open_docs_hour_list),
+            ", ".join(settings.open_docs_set_list) or "no sets configured",
+        )
+    elif settings.open_docs_enabled:
+        logger.warning(
+            "open documents re-read NOT started: OPEN_DOCS_HOURS_UTC=%r names no hour of the day (0-23)",
+            settings.open_docs_hours_utc,
+        )
+    else:
+        logger.info(
+            "open documents re-read is off (OPEN_DOCS_ENABLED is not 'true'); run it with: "
+            "python -m app.ingest --open-docs"
+        )
+
+    if settings.sync_audit_enabled:
+        loops.append(lambda: _sync_audit_loop(settings.sync_audit_hour_utc, settings.sync_audit_minute))
+        logger.info(
+            "sync audit on: daily at %02d:%02d UTC (%d document(s) per set; %s; repair: %s)",
+            settings.sync_audit_hour_utc % 24, min(max(settings.sync_audit_minute, 0), 59),
+            settings.sync_audit_sample, ", ".join(settings.sync_audit_set_list) or "no sets configured",
+            "yes" if settings.sync_audit_repair else "no",
+        )
+    else:
+        logger.info(
+            "sync audit is off (SYNC_AUDIT_ENABLED is not 'true'); run it with: "
+            "python -m app.ingest --sync-audit"
         )
 
     if not loops:
