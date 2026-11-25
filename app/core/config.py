@@ -309,10 +309,11 @@ class Settings(BaseSettings):
     # Off by default, like the other timers.
     open_docs_enabled: bool = False
 
-    # Hours of the day, UTC, comma-separated. The default -- 05, 11 and 17
-    # UTC (10:30, 16:30 and 22:30 IST) -- with the 23:00 UTC refresh makes
-    # four passes a day, and stays clear of the I13 build (00:00-01:00 UTC)
-    # and the Sunday 02:00 UTC full pull.
+    # Hours of the day, UTC, comma-separated; each run starts at
+    # OPEN_DOCS_MINUTE past. The default -- 05:20, 11:20 and 17:20 UTC
+    # (10:50, 16:50 and 22:50 IST) -- with the 23:00 UTC refresh makes four
+    # passes a day, and stays clear of the I13 build (00:00-01:00 UTC) and the
+    # Sunday 02:00 UTC full pull.
     open_docs_hours_utc: str = "5,11,17"
 
     # Minute past those hours. Off the hour, so the hourly delta (on the
@@ -1064,6 +1065,26 @@ class Settings(BaseSettings):
     # default) validates nothing: only the volume rule decides. Reloading the
     # extract is the other way out of MISSING_DATA.
     i7_demand_validated_months: str = ""
+
+    # --- I07 Min-Max -> OAR recommendations: the calculation anchor -----------
+    #
+    # The anchor is the latest COMPLETE month; every consumption window of the Min-Max -> OAR
+    # recommendation (app/initiatives/i7/reverse_conversion) is measured to it, and a month after it
+    # (a partial one) is ignored. Nothing here touches the OAR -> Min-Max conversion or the demand
+    # window above.
+    #
+    # I7_REVERSE_ANCHOR_MONTH=YYYY-MM pins the anchor. It is refused if that month had not ended when
+    # the data was loaded (when the load time is known) or has no staged consumption. Empty (the
+    # default) means "derive it".
+    #
+    # I7_REVERSE_ANCHOR_SOURCE says where a load time for deriving it comes from:
+    #   configured   (the default) -- nowhere. With no pinned anchor the endpoint answers "anchor not
+    #                available" instead of guessing from the server's clock. Safe until a load-time
+    #                source has been checked against the real database.
+    #   csv_extract  -- the time the latest completed MSEG extract was requested from SAP
+    #                (csv_extract_request.fired_at). A month is complete if it ended before that day.
+    i7_reverse_anchor_month: str | None = None
+    i7_reverse_anchor_source: Literal["configured", "csv_extract"] = "configured"
 
     # --- I07 OAR donor similarity: retrieval -------------------------------
     #
