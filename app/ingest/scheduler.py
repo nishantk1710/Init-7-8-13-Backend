@@ -884,7 +884,8 @@ async def _sync_audit_tick() -> None:
     try:
         summary = await asyncio.to_thread(sync_audit.run_sync_audit_cycle)
         elapsed = (datetime.now(timezone.utc) - started).total_seconds()
-        drifted = sum(1 for s in summary["sets"] if s.get("differ") or s.get("missing_here") or s.get("missing_in_sap"))
+        drifted = sum(1 for s in summary["sets"] if s.get("differ") or s.get("empty_here")
+                      or s.get("missing_here") or s.get("missing_in_sap"))
         logger.info(
             "sync audit finished in %.0fs: %d set(s) audited, %d with drift, %d failed",
             elapsed, summary["audited"], drifted, summary["failed"],

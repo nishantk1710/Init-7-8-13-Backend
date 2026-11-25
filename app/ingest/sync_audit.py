@@ -17,9 +17,15 @@ key, and held against our rows field by field:
 
 * ``differ`` -- a matched row with a field whose VALUE differs (a quantity, a
   date, a flag), as the ``n_<table>`` views would read it;
+* ``empty_here`` -- a matched row whose only real differences are fields empty
+  in our table that SAP fills. Mostly columns the CSV extract left blank, which
+  the merge fills the next time it reads the row; but a flag SAP set later (a
+  deletion flag) lands here too, so the fields are listed;
 * ``notation`` -- a matched row that differs only in how a number or date is
   written (a CSV-loaded '1.234,5' against OData's '1234.5'): invisible to the
-  pages, though the merge would rewrite it;
+  pages, though the merge would rewrite it. In a column the views do not read
+  as a number (EBAN PREIS, BSMNG), the CSV loaders never converted the
+  extract's notation, so any notation that gives SAP's number counts;
 * ``missing_here`` -- a row SAP returns for a sampled document that our table
   lacks;
 * ``missing_in_sap`` -- a row we hold for a sampled document that SAP no
@@ -117,19 +123,50 @@ def _as_number(text: str, fmt: str | None) -> Decimal | None:
         return None
 
 
-def compare(ours: Any, theirs: Any, *, numeric: bool, number_format: str) -> str:
-    """``same``, ``notation`` or ``value``: how our stored value stands against
-    SAP's (``theirs``, shaped as the merge would write it).
+# A number as either route writes one: digits with dots and commas, and SAP's
+# trailing minus. Dates are told apart before this is asked.
+_NUMBER = re.compile(r"^-?\d[\d.,]*-?$")
 
-    A number is compared as a number: ours in the CSV extract's notation
-    (``number_format``) when it carries a comma -- a CSV-loaded value never
-    touched by OData -- and plain otherwise; SAP's is always plain. A date is
-    compared as a day, whichever of SAP's spellings each side holds.
+
+def _same_number(a: str, b: str) -> bool:
+    """Whether ours (``a``) is SAP's number (``b``) in some notation, for a
+    column the views do not read as a number.
+
+    The CSV loaders convert only the columns the views read as numbers
+    (CSV_LOAD_NUMBER_FORMAT); every other column keeps the extract's own
+    notation -- on PRD German: '12.640,68' where OData sends '12640.68' (EBAN
+    PREIS and BSMNG, measured 25 Nov 2026). No view says which notation such a
+    column holds, so any of the three that gives SAP's number counts. A blank
+    side is a zero, as for a quantity.
+    """
+    if (a and not _NUMBER.match(a)) or (b and not _NUMBER.match(b)):
+        return False
+    theirs = _as_number(b or "0", None)
+    return theirs is not None and theirs in {_as_number(a or "0", fmt) for fmt in (None, "german", "us")}
+
+
+def compare(ours: Any, theirs: Any, *, numeric: bool, number_format: str) -> str:
+    """``same``, ``notation``, ``empty_here`` or ``value``: how our stored value
+    stands against SAP's (``theirs``, shaped as the merge would write it).
+
+    A number is compared as a number. In a column the views read as one: ours
+    in the CSV extract's notation (``number_format``) when it carries a comma
+    -- a CSV-loaded value never touched by OData -- and plain otherwise, as the
+    views read it. In any other column: in whichever notation matches
+    (``_same_number``). SAP's is always plain. A date is compared as a day,
+    whichever of SAP's spellings each side holds. A real difference where ours
+    is empty is ``empty_here``, kept apart from a changed value.
     """
     a = "" if ours is None else str(ours).strip()
     b = "" if theirs is None else str(theirs).strip()
     if a == b:
         return "same"
+    verdict = _differs_by(a, b, numeric=numeric, number_format=number_format)
+    return "empty_here" if verdict == "value" and not a else verdict
+
+
+def _differs_by(a: str, b: str, *, numeric: bool, number_format: str) -> str:
+    """``notation`` or ``value``, for two stripped texts that differ."""
     if numeric:
         na = _as_number(a or "0", number_format if "," in a else None)
         nb = _as_number(b or "0", None)
@@ -142,6 +179,8 @@ def compare(ours: Any, theirs: Any, *, numeric: bool, number_format: str) -> str
         return "notation" if int(a) == int(b) else "value"
     # A flag: the merge writes SAP's false as '' (raw_merge.shape).
     if {a.lower(), b.lower()} <= {"", "false"}:
+        return "notation"
+    if not numeric and _same_number(a, b):
         return "notation"
     return "value"
 
@@ -206,9 +245,11 @@ class AuditOutcome:
     same: int = 0
     differ: int = 0
     notation: int = 0
+    empty_here: int = 0
     missing_here: int = 0
     missing_in_sap: int = 0
     fields: dict[str, int] = field(default_factory=dict)
+    empty_fields: dict[str, int] = field(default_factory=dict)
     examples: list[str] = field(default_factory=list)
     repaired: str | None = None
     seconds: float = 0.0
@@ -220,7 +261,8 @@ class AuditOutcome:
 
     @property
     def drift_rate(self) -> float:
-        matched = self.same + self.differ + self.notation
+        """Changed values only; rows that are just empty here are counted apart."""
+        matched = self.same + self.differ + self.notation + self.empty_here
         return (self.differ / matched) if matched else 0.0
 
 
@@ -236,6 +278,7 @@ def audit_rows(spec: IngestSpec, shape, sap_rows: list[dict], our_rows: list[dic
         ours_by_id.setdefault(sync_rows.identity_of_db_row(row, shape), row)
     compared = [p for p in shape.columns if p not in shape.identity_props]
     fields: Counter = Counter()
+    empty_fields: Counter = Counter()
     returned: set[tuple[str, ...]] = set()
 
     for sap in sap_rows:
@@ -261,8 +304,12 @@ def audit_rows(spec: IngestSpec, shape, sap_rows: list[dict], our_rows: list[dic
                     outcome.examples.append(
                         f"{'/'.join(identity)} {prop}: ours={ours.get(column)!r} sap={theirs!r}"
                     )
+            elif verdict == "empty_here":
+                empty_fields[prop] += 1
         if "value" in verdicts:
             outcome.differ += 1
+        elif "empty_here" in verdicts:
+            outcome.empty_here += 1
         elif "notation" in verdicts:
             outcome.notation += 1
         else:
@@ -270,6 +317,7 @@ def audit_rows(spec: IngestSpec, shape, sap_rows: list[dict], our_rows: list[dic
 
     outcome.missing_in_sap = sum(1 for identity in ours_by_id if identity not in returned)
     outcome.fields = dict(fields.most_common())
+    outcome.empty_fields = dict(empty_fields.most_common())
 
 
 def _audit_one(name: str, root: str, today: date, outcome: AuditOutcome, *, sample: int, repair: bool) -> None:
@@ -350,13 +398,17 @@ def run_sync_audit_cycle(names: list[str] | None = None, *, today: date | None =
         if outcome.ok:
             summary["audited"] += 1
             top = ", ".join(f"{k}x{v}" for k, v in list(outcome.fields.items())[:6]) or "none"
-            log = logger.warning if (outcome.differ or outcome.missing_here or outcome.missing_in_sap) else logger.info
+            empty = ", ".join(f"{k}x{v}" for k, v in list(outcome.empty_fields.items())[:6])
+            log = logger.warning if (outcome.differ or outcome.empty_here or outcome.missing_here
+                                     or outcome.missing_in_sap) else logger.info
             log(
                 "%s: sync audit -- %d document(s), %d SAP row(s), %d ours: %d same, %d differ (%.1f%%), "
-                "%d notation only, %d missing here, %d missing in SAP; fields: %s%s%s (%.0fs)",
+                "%d notation only, %d empty here but set in SAP, %d missing here, %d missing in SAP; "
+                "fields: %s%s%s%s (%.0fs)",
                 outcome.name, outcome.documents, outcome.sap_rows, outcome.our_rows, outcome.same,
-                outcome.differ, outcome.drift_rate * 100, outcome.notation, outcome.missing_here,
-                outcome.missing_in_sap, top,
+                outcome.differ, outcome.drift_rate * 100, outcome.notation, outcome.empty_here,
+                outcome.missing_here, outcome.missing_in_sap, top,
+                f"; empty here: {empty}" if empty else "",
                 f"; e.g. {' | '.join(outcome.examples)}" if outcome.examples else "",
                 f"; repaired: {outcome.repaired}" if outcome.repaired else "",
                 outcome.seconds,

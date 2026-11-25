@@ -309,10 +309,11 @@ class Settings(BaseSettings):
     # Off by default, like the other timers.
     open_docs_enabled: bool = False
 
-    # Hours of the day, UTC, comma-separated. The default -- 05, 11 and 17
-    # UTC (10:30, 16:30 and 22:30 IST) -- with the 23:00 UTC refresh makes
-    # four passes a day, and stays clear of the I13 build (00:00-01:00 UTC)
-    # and the Sunday 02:00 UTC full pull.
+    # Hours of the day, UTC, comma-separated; each run starts at
+    # OPEN_DOCS_MINUTE past. The default -- 05:20, 11:20 and 17:20 UTC
+    # (10:50, 16:50 and 22:50 IST) -- with the 23:00 UTC refresh makes four
+    # passes a day, and stays clear of the I13 build (00:00-01:00 UTC) and the
+    # Sunday 02:00 UTC full pull.
     open_docs_hours_utc: str = "5,11,17"
 
     # Minute past those hours. Off the hour, so the hourly delta (on the
