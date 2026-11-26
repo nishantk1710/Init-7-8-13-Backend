@@ -171,6 +171,30 @@ def test_stock_plus_oar_counts_every_material_once_so_it_is_never_more_than_the_
     assert once.amount < twice.amount
 
 
+# --- Release Value (Stock item to OAR only): just the eligible materials, at their OAR release ----------
+
+
+def test_oar_only_population_is_the_eligible_materials_that_would_release_and_nothing_else(mix):
+    # A and C are eligible and have a reorder point to release; E is eligible but has none; B and D are not eligible.
+    assert members(mix, "released_oar_only") == ["A", "C"]
+
+
+def test_oar_only_values_each_at_its_oar_release_and_never_counts_a_stock_release(mix):
+    scoped = select(Recommendation).where(Recommendation.sap_material_number.in_(members(mix, "released_oar_only")))
+    result = working_capital_impact(mix, scoped, load_active(mix), stock_to_oar="replace")
+    assert result.amount == Decimal("500") + Decimal("200")  # A and C at OAR release; B's 150 is not in it
+    assert (result.included_count, result.excluded_count, result.overlap_count) == (2, 0, 0)
+
+
+def test_oar_only_leaves_out_a_rejected_conversion(db):
+    stock(db, "R", price="10", current="3", recommended="1")
+    latest = run(db)
+    verdict(db, latest, "R", confidence="High")
+    assert members(db, "released_oar_only") == ["R"]
+    request(db, "R", status="REJECTED")
+    assert members(db, "released_oar_only") == []
+
+
 # --- Release Up (Overlap): the stock release and the OAR release, a material in both counted twice ------
 
 
@@ -313,7 +337,7 @@ def test_every_endpoint_that_takes_the_value_change_filter_takes_the_two_new_val
                 if parameter["name"] == "value_change":
                     seen += 1
                     options = {v for branch in parameter["schema"].get("anyOf", [parameter["schema"]]) for v in branch.get("enum", [])}
-                    assert options == {"released", "tied_up", "released_stock_oar", "released_overlap"}, path
+                    assert options == {"released", "tied_up", "released_stock_oar", "released_overlap", "released_oar_only"}, path
     assert seen >= 4  # the list, the summary, the export and the adoption summary
 
 

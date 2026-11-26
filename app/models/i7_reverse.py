@@ -88,6 +88,9 @@ class ReverseRecommendation(Base):
     detail: Mapped[str] = mapped_column(String(1000))
     decision_rule: Mapped[int] = mapped_column(Integer)
     confidence: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    points_source: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    """``AI_GENERATED`` when a model wrote ``points``, ``DETERMINISTIC_FALLBACK`` when it is the standard wording; None on
+    a row stored before this was recorded."""
     points: Mapped[str | None] = mapped_column(Text, nullable=True)
     """The reason as three labelled lines, as JSON ``[[label, text], ...]``; None on a row stored before they existed."""
 

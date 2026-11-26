@@ -167,6 +167,9 @@ class ReverseRecommendation(BaseModel):
     explanation: str
     explanation_points: list[ReverseExplanationPoint]
     """The same reason as three short labelled lines, for a person to scan. ``explanation`` is it as one paragraph."""
+    explanation_source: str = "DETERMINISTIC_FALLBACK"
+    """``AI_GENERATED`` when a model wrote ``explanation_points``; ``DETERMINISTIC_FALLBACK`` when it is the standard
+    wording built from the figures. The page labels each accordingly."""
     decision_rule: int
 
     issues_latest_12m: int
@@ -219,6 +222,7 @@ class ReverseRecommendation(BaseModel):
             confidence_label=row.confidence.value if row.confidence else None,
             explanation=row.detail,
             explanation_points=[ReverseExplanationPoint(label=label, text=text) for label, text in row.points],
+            explanation_source=row.points_source,
             decision_rule=row.rule,
             issues_latest_12m=m.issues_latest_window,
             months_with_consumption_12m=m.months_with_use_latest_window,

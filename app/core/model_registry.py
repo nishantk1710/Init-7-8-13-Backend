@@ -49,6 +49,11 @@ ROUTES: dict[str, ModelRoute] = {
         tier="fast",
         why="Short, formulaic, high volume. The reader checks the numbers, not the prose.",
     ),
+    "i07_reverse_conversion_rationale": ModelRoute(
+        task="i07_reverse_conversion_rationale",
+        tier="fast",
+        why="Three short lines explaining a decision already made, over a couple of thousand rows. The numbers are given, not worked out.",
+    ),
     "i08_coding_candidate": ModelRoute(
         task="i08_coding_candidate",
         tier="capable",
