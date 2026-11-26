@@ -109,6 +109,7 @@ def test_summary_returns_200_with_expected_shape():
         "working_capital_currency",
         "working_capital_included_count",
         "working_capital_excluded_count",
+        "working_capital_overlap_count",
         "critical_stockout_risk_count",
         "stockout_risk_evaluated_count",
         "stockout_risk_insufficient_data_count",
