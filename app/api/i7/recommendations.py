@@ -60,19 +60,21 @@ from app.schemas.i7.recommendations import (
 
 router = APIRouter(tags=["i7-recommendations"])
 
-ValueChange = Literal["released", "tied_up", "released_stock_oar", "released_overlap"]
+ValueChange = Literal["released", "tied_up", "released_stock_oar", "released_overlap", "released_oar_only"]
 """The Overview's Value Change filter (Stock item only).
 
 * ``released`` / ``tied_up`` -- the stock recommendation's own value change releases / ties up capital. Unchanged.
 * ``released_stock_oar`` -- Release Value (Stock + Stock item to OAR): each stock item counted once. An eligible-to-convert
   one at its release if converted to OAR, every other at its Stock item release.
+* ``released_oar_only`` -- Release Value (Stock item to OAR only): only the stock items eligible to convert to OAR, each at
+  the release its conversion would give (reorder point to 0).
 * ``released_overlap`` -- Release Up (Overlap): the Stock item release PLUS the release if converted to OAR for those
   eligible, so a material in both counts twice (the card says how many).
 
-The two new ones need the Min-Max -> OAR run to say which materials are eligible; see ``kpi_formulas.stock_to_oar``."""
+The three new ones need the Min-Max -> OAR run to say which materials are eligible; see ``kpi_formulas.stock_to_oar``."""
 
-#: How each of the two new views values its population in the Working Capital figure (see working_capital_impact).
-STOCK_TO_OAR_MODE: dict[str, Literal["replace", "add"]] = {"released_stock_oar": "replace", "released_overlap": "add"}
+#: How each of the new views values its population in the Working Capital figure (see working_capital_impact).
+STOCK_TO_OAR_MODE: dict[str, Literal["replace", "add"]] = {"released_stock_oar": "replace", "released_overlap": "add", "released_oar_only": "replace"}
 
 MAX_PAGE_SIZE = 200
 """A safe upper bound: the frontend renders a table, not a bulk export. A
@@ -282,7 +284,10 @@ def _apply_filters(
         # confidence) and its newest conversion request was not rejected. The same population every card of the Overview
         # then reads, so the working capital, excess, stockout, plant cards and adoption counts speak about the same materials.
         eligible = eligible_for_oar()
-        if value_change == "released_stock_oar":
+        if value_change == "released_oar_only":
+            # Only the eligible ones whose conversion would release capital; their own Stock item release is not in it.
+            wanted = and_(eligible, oar_release_positive())
+        elif value_change == "released_stock_oar":
             # Each material once: an eligible one if converting it would release capital, any other if its own change releases.
             wanted = or_(and_(eligible, oar_release_positive()), and_(not_(eligible), VALUE_CHANGE > 0))
         else:

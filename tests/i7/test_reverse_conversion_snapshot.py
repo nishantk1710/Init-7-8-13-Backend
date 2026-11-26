@@ -46,7 +46,7 @@ def pinned(monkeypatch):
 
     def pin(month="2026-10"):
         monkeypatch.setattr(
-            snapshot, "get_settings", lambda: SimpleNamespace(i7_reverse_anchor_month=month, i7_reverse_anchor_source="configured")
+            snapshot, "get_settings", lambda: SimpleNamespace(i7_reverse_anchor_month=month, i7_reverse_anchor_source="configured", i7_rationale_concurrency=2)
         )
 
     pin()
@@ -188,3 +188,37 @@ def test_the_newest_request_of_each_material_plant_is_found_in_plain_sql(factory
         session.commit()
         briefs = latest_request_briefs(session, [("M1", "1300"), ("M2", "1300")])
     assert briefs == {("M1", "1300"): (2, "PENDING_APPROVAL", "Inventory Controller")}
+
+
+# --- Who wrote each reason is stored with it ---------------------------------------------------------
+
+
+def test_a_reason_written_by_the_model_is_stored_and_read_back_as_ai_and_the_rest_as_standard_wording(factory, pinned, monkeypatch):
+    from app.core.ai import Completion
+    from app.initiatives.i7.reverse_conversion import rationale
+
+    monkeypatch.setattr(
+        rationale,
+        "complete_with_prompt",
+        lambda prompt_id, **values: Completion(
+            text="What we saw: Used rarely.\nWhat it means: Ordering when needed fits.\nWhat to do: Convert it.",
+            model="gpt-fake",
+            provider="foundry",
+        ),
+    )
+    stage(factory)
+    with factory() as session:
+        report = load_latest_report(session)
+    recommended = [r for r in report.rows if r.category is Cat.RECOMMENDED_FOR_OAR]
+    others = [r for r in report.rows if r.category is not Cat.RECOMMENDED_FOR_OAR]
+    assert recommended and others
+    assert {r.points_source for r in recommended} == {"AI_GENERATED"}
+    assert all(dict(r.points)["What we saw"] == "Used rarely." for r in recommended)
+    assert {r.points_source for r in others} == {"DETERMINISTIC_FALLBACK"}
+
+
+def test_with_no_model_every_reason_is_stored_as_the_standard_wording(factory, pinned):
+    stage(factory)
+    with factory() as session:
+        report = load_latest_report(session)
+    assert {r.points_source for r in report.rows} == {"DETERMINISTIC_FALLBACK"}
