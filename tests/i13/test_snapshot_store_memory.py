@@ -472,6 +472,9 @@ ALL = Batch("0", "9999999999")
 # "planvs" re-recorded 2026-11-18 in all three: statuses by issue -- not,
 # partially or fully issued (kinds.RECORD_LAYOUT 8). Same row counts.
 EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
+    # mixed, 25-Nov-2026: usage +39, a row for each OAR position with no
+    # movement in the kept months (87 OAR rows = the 87 OAR positions;
+    # kinds.RECORD_LAYOUT 9). The giant tenants' one OAR position moved.
     # mixed, 7-Nov-2026: usage -12 (a reversal of an issue before the kept
     # months no longer makes a month); movement/oarkey/reclass/watch: 13
     # materials whose 262 took back only part of a 261 keep that issue as
@@ -481,7 +484,7 @@ EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
         "exception": (151, "46ce4895f8e71b5c"), "grni": (80, "cdbe217240794569"),
         "lledger": (286, "8df6d11e71eae704"), "movement": (186, "455ab3f7e52a194f"),
         "oarkey": (87, "2bdab53cb4c794cc"), "reclass": (87, "4a01e7d45b270f1e"),
-        "rledger": (294, "747cdb56819da766"), "usage": (122, "83e997f3ff745fac"),
+        "rledger": (294, "747cdb56819da766"), "usage": (161, "c074e22ce42640d3"),
         "watch": (192, "2b87ac6dda0df2ba"), "planvs": (125, "cfa93fedea00d007"),
     },
     "giant_procurement": {

@@ -18,13 +18,18 @@ from app.initiatives.i13.ordering import newest_requirement_first
 from app.initiatives.i13.reservation_ledger import build_reservation_ledger
 from collections.abc import Mapping
 
-from app.initiatives.i13.session_link import session_by_reservation, session_references, session_requesters
+from app.initiatives.i13.session_link import (
+    session_by_reservation,
+    session_plan_windows,
+    session_references,
+    session_requesters,
+)
 from app.initiatives.i13.snapshot import I13Snapshot
 from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.initiatives.i13.uat import SIMULATED_RANGE_START
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
-from app.integrations.sap.postgres_reservation import PostgresReservationRepository
+from app.integrations.sap.postgres_reservation import PostgresReservationRepository, reservation_created_dates
 from app.schemas.i13 import ReservationLedgerEntryResponse
 from app.shared.material_scope import MaterialScope
 
@@ -72,6 +77,30 @@ def _session_links(db: Session) -> tuple[dict[tuple[str, str], str], dict[str, s
     return sessions, session_references(db, ids), session_requesters(db, ids)
 
 
+class _Dates:
+    """When each reservation on a page was made (RESB-CRDAT), and the planned
+    window of the assistant session it is linked to -- read for that page only.
+
+    SAP's requirement date (RESB-BDTER) was the day the reservation was made on
+    every assistant reservation on prod (25-Nov-2026), and on about half of all
+    2026 reservations, so the screen shows both, and the plan's window as the
+    date an assistant reservation is required by."""
+
+    def __init__(self, db: Session, entries, sessions: Mapping[tuple[str, str], str]):
+        keys = [(e.reservation_number, e.reservation_item) for e in entries]
+        self.created = reservation_created_dates(db, keys)
+        self.windows = session_plan_windows(db, {sessions[k] for k in keys if k in sessions})
+
+    def fields(self, key: tuple[str, str], session_id: str | None) -> dict:
+        window = self.windows.get(session_id) if session_id else None
+        return {
+            "created_date": self.created.get(key),
+            "plan_recorded": window is not None,
+            "planned_start": window[0] if window else None,
+            "planned_end": window[1] if window else None,
+        }
+
+
 def _to_response(
     entry: ReservationLedgerEntry,
     sessions: dict[tuple[str, str], str] | None = None,
@@ -79,6 +108,7 @@ def _to_response(
     history_start: date | None = None,
     references: Mapping[str, str] | None = None,
     requesters: Mapping[str, str] | None = None,
+    dates: _Dates | None = None,
 ) -> ReservationLedgerEntryResponse:
     attribution = attribute_consumption(entry)
     response = ReservationLedgerEntryResponse.model_validate(entry)
@@ -99,6 +129,7 @@ def _to_response(
             else False,
             "issued_before_history": issued_before_history(entry, history_start),
             "movement_history_start": history_start,
+            **(dates.fields(key, session_id) if dates is not None else {}),
         }
     )
 
@@ -137,8 +168,10 @@ def list_reservation_ledger(
         )
         response.headers["X-Total-Count"] = str(total)
         texts = {(e.reservation_number, e.reservation_item): s for e, s in rows if s}
+        dates = _Dates(db, [entry for entry, _ in rows], sessions)
         return [
-            _to_response(entry, sessions, texts, snapshot.recorded_history_start, references, requesters) for entry, _ in rows
+            _to_response(entry, sessions, texts, snapshot.recorded_history_start, references, requesters, dates)
+            for entry, _ in rows
         ]
     if snapshot is not None:
         sgtxt = snapshot.sgtxt_by_reservation
@@ -181,10 +214,9 @@ def list_reservation_ledger(
     entries = newest_requirement_first(entries)
     # The in-memory snapshot holds the same history start; the live path does not know it.
     history_start = snapshot.movement_history_start if snapshot is not None else None
-    return [
-        _to_response(entry, sessions, sgtxt, history_start, references, requesters)
-        for entry in page(entries, response, limit=limit, offset=offset)
-    ]
+    shown = page(entries, response, limit=limit, offset=offset)
+    dates = _Dates(db, shown, sessions)
+    return [_to_response(entry, sessions, sgtxt, history_start, references, requesters, dates) for entry in shown]
 
 
 @router.get("/utilisation-ledger/{reservation_number}/{reservation_item}", response_model=ReservationLedgerEntryResponse)
@@ -206,7 +238,8 @@ def get_reservation_ledger_entry(
         key = (entry.reservation_number, entry.reservation_item)
         sessions, references, requesters = _session_links(db)
         return _to_response(
-            entry, sessions, {key: text} if text else {}, snapshot.recorded_history_start, references, requesters
+            entry, sessions, {key: text} if text else {}, snapshot.recorded_history_start, references, requesters,
+            _Dates(db, [entry], sessions),
         )
     if snapshot is not None:
         matching = [
@@ -237,5 +270,6 @@ def get_reservation_ledger_entry(
     )
     sessions, references, requesters = _session_links(db)
     return _to_response(
-        matching[0], sessions, sgtxt, snapshot.movement_history_start if snapshot is not None else None, references, requesters
+        matching[0], sessions, sgtxt, snapshot.movement_history_start if snapshot is not None else None, references, requesters,
+        _Dates(db, [matching[0]], sessions),
     )

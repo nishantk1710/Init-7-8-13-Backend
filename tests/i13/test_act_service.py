@@ -11,6 +11,8 @@ designed to be tested (see that package's ``__init__.py``).
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
+import pytest
+
 from app.initiatives.i13.act.domain import (
     EventType,
     ExceptionStatus,
@@ -139,10 +141,25 @@ def _detect(
 
 def _unlinked_capture(**overrides) -> ConsumptionPlan:
     """A captured plan no reservation's item text carries the ID of yet."""
-    return _plan(
-        reservation_number="", reservation_item="", source=PlanSource.CAPTURED,
-        planned_use_date=date(2026, 9, 1), window_end=date(2026, 9, 10), **overrides,
+    fields = dict(planned_use_date=date(2026, 9, 1), window_end=date(2026, 9, 10))
+    fields.update(overrides)
+    return _plan(reservation_number="", reservation_item="", source=PlanSource.CAPTURED, **fields)
+
+
+def test_a_line_with_no_reservation_does_not_crash_detection() -> None:
+    """22-25 Nov 2026: a ledger line with no reservation number reached the
+    Non-AI rule, build_exception_id joined a None, and the whole nightly run
+    failed and saved nothing. Such a line is skipped; the rest still raise."""
+    no_reservation = _ledger_entry(ledger_id="LEDGER-PR", reservation_number=None, reservation_item=None)
+    no_item = _ledger_entry(ledger_id="LEDGER-NOITEM", reservation_number="1000000009", reservation_item=None)
+    real = _ledger_entry(ledger_id="LEDGER-REAL", reservation_number="1000000002", reservation_item="0001")
+    repository, _, _ = _detect(
+        datetime(2026, 9, 18, tzinfo=UTC),
+        ledger_entries=[no_reservation, no_item, real],
+        types={ExceptionType.NO_PLAN, ExceptionType.NOT_ISSUED_30_DAYS},
     )
+    ids = {e.exception_id for e in repository.list()}
+    assert ids == {"ACT-NO_PLAN-1000000002-0001"}
 
 
 def test_an_unlinked_plan_is_awaiting_reservation_not_overdue() -> None:
@@ -708,12 +725,15 @@ def test_no_types_given_is_every_type():
 def _override(**overrides):
     from app.initiatives.i13.act.domain import QuantityDecisionRecord
 
+    # As the assistant builds it once SAP links reservation 1000000009/0001 to
+    # the request line (quantity_suggestion_store.build_assistant_quantity_decision_records).
     fields = dict(
         material="MAT1",
         plant="1000",
-        reservation_number=None,
-        reservation_item=None,
+        reservation_number="1000000009",
+        reservation_item="0001",
         session_id="SLINE1",
+        exception_key="SESSION-SLINE1",
         requester_id="REQ1",
         requested_quantity=Decimal("12"),
         suggested_quantity=Decimal("8"),
@@ -808,6 +828,86 @@ def test_an_override_is_never_escalated_to_the_hod():
     assert notification_port.sent == []
 
 
+def test_an_override_with_no_reservation_in_sap_is_not_an_exception_yet():
+    """25-Nov-2026: an override counts only once SAP has its reservation."""
+    unlinked = _override(reservation_number=None, reservation_item=None)
+    repository, notification_port, result = _detect(
+        datetime(2026, 11, 25, tzinfo=UTC), quantity_decision_records=[unlinked]
+    )
+
+    assert repository.get(QO_ID) is None
+    assert result.created == 0
+    assert notification_port.sent == []
+
+
+def test_the_override_is_raised_with_its_reason_once_the_reservation_links():
+    as_of_time = datetime(2026, 11, 25, tzinfo=UTC)
+    unlinked = _override(reservation_number=None, reservation_item=None)
+    repository, notification_port, _ = _detect(as_of_time, quantity_decision_records=[unlinked])
+    assert repository.get(QO_ID) is None
+
+    _detect(
+        as_of_time + timedelta(days=1),
+        quantity_decision_records=[_override()],
+        repository=repository,
+        notification_port=notification_port,
+    )
+
+    exception = repository.get(QO_ID)  # the same ID: keyed on the request line, not the reservation
+    assert exception.status is ExceptionStatus.CONFIRMED
+    assert (exception.reservation_number, exception.reservation_item) == ("1000000009", "0001")
+    assert repository.get_confirmation(QO_ID).reason_category == "SHUTDOWN"
+    assert notification_port.sent == []
+
+
+def test_an_existing_override_is_left_alone_while_its_reservation_is_missing():
+    """Not closed either: a closed exception never reopens, so it would never
+    come back when the reservation links."""
+    as_of_time = datetime(2026, 11, 25, tzinfo=UTC)
+    repository, notification_port, _ = _detect(as_of_time, quantity_decision_records=[_override()])
+    before = repository.get(QO_ID)
+
+    _detect(
+        as_of_time + timedelta(days=1),
+        quantity_decision_records=[_override(reservation_number=None, reservation_item=None)],
+        repository=repository,
+        notification_port=notification_port,
+    )
+
+    assert repository.get(QO_ID) == before
+
+
+def test_an_override_raised_before_the_link_gets_its_reservation_filled_in():
+    """Raised at submit before 25-Nov-2026, with no reservation; kept as it is
+    (reason and all), with the reservation shown once SAP links it."""
+    import dataclasses
+
+    as_of_time = datetime(2026, 11, 25, tzinfo=UTC)
+    repository, notification_port, _ = _detect(as_of_time, quantity_decision_records=[_override()])
+    repository.upsert(dataclasses.replace(repository.get(QO_ID), reservation_number=None, reservation_item=None))
+
+    _detect(
+        as_of_time + timedelta(days=1),
+        quantity_decision_records=[_override()],
+        repository=repository,
+        notification_port=notification_port,
+    )
+
+    exception = repository.get(QO_ID)
+    assert (exception.reservation_number, exception.reservation_item) == ("1000000009", "0001")
+    assert exception.status is ExceptionStatus.CONFIRMED
+    assert exception.detected_at == as_of_time
+
+
+@pytest.mark.parametrize("kept", [Decimal("8"), Decimal("5")])
+def test_a_linked_request_at_or_below_the_suggestion_is_not_an_override(kept):
+    repository, _, result = _detect(
+        datetime(2026, 11, 25, tzinfo=UTC), quantity_decision_records=[_override(requested_quantity=kept)]
+    )
+    assert repository.get(QO_ID) is None
+    assert result.created == 0
+
+
 def test_a_plan_breach_is_still_sent_to_the_requester():
     """Only the override changed: every other type is routed as before."""
     repository, notification_port, _ = _detect(
@@ -828,7 +928,9 @@ def _request_line(**overrides) -> ConsumptionPlan:
     return _unlinked_capture(linked_reservations=(("1000000000", "0001"),), **overrides)
 
 
-def _detect_not_issued(entries, *, plans=None, as_of=NOV_5, final_issued=frozenset(), repository=None):
+def _detect_not_issued(
+    entries, *, plans=None, as_of=NOV_5, final_issued=frozenset(), repository=None, created=None
+):
     repository = repository or FakeExceptionRepository()
     notification_port = FakeNotificationPort()
     detect_exceptions(
@@ -842,12 +944,17 @@ def _detect_not_issued(entries, *, plans=None, as_of=NOV_5, final_issued=frozens
         types={ExceptionType.NOT_ISSUED_30_DAYS},
         not_issued_days=30,
         final_issued=final_issued,
+        created_by_reservation=created or {},
     )
     return repository, notification_port
 
 
 def test_a_request_line_not_issued_30_days_after_it_was_required_is_raised_and_routed() -> None:
-    repository, notification_port = _detect_not_issued([_ledger_entry(requirement_date=date(2026, 10, 6))])
+    # A plan with no window: SAP's requirement date is all there is.
+    repository, notification_port = _detect_not_issued(
+        [_ledger_entry(requirement_date=date(2026, 10, 6))],
+        plans=[_request_line(planned_use_date=None, window_end=None)],
+    )
     exception = repository.get(NOT_ISSUED_ID)
     assert exception is not None
     assert exception.status is ExceptionStatus.AWAITING_REQUESTER
@@ -855,6 +962,54 @@ def test_a_request_line_not_issued_30_days_after_it_was_required_is_raised_and_r
     assert exception.evidence["basis"] == "REQUIRED" and exception.evidence["since"] == "2026-10-06"
     assert exception.reason.startswith("Required by 2026-10-06")
     assert len(notification_port.sent) == 2
+
+
+# 25-Nov-2026: SAP's requirement date is the day an assistant reservation was
+# made (all 15 linked on prod), so a plan's window is measured instead.
+KEY = ("1000000000", "0001")
+
+
+def test_a_plan_s_window_start_is_measured_not_sap_s_requirement_date() -> None:
+    # Reserved (and "required" in SAP) 1 Oct; planned use only from 20 Oct.
+    entry = _ledger_entry(requirement_date=date(2026, 10, 1))
+    plan = _request_line(planned_use_date=date(2026, 10, 20), window_end=date(2027, 10, 20))
+
+    repository, _ = _detect_not_issued([entry], plans=[plan], created={KEY: date(2026, 10, 1)})
+    assert repository.get(NOT_ISSUED_ID) is None  # 16 days into the window, not 35 since it was made
+
+    repository, _ = _detect_not_issued(
+        [entry], plans=[plan], created={KEY: date(2026, 10, 1)}, as_of=datetime(2026, 11, 19, tzinfo=UTC)
+    )
+    exception = repository.get(NOT_ISSUED_ID)
+    assert exception.evidence["basis"] == "PLANNED" and exception.evidence["since"] == "2026-10-20"
+    assert exception.reason.startswith("Planned use from 2026-10-20")
+
+
+def test_a_requirement_date_typed_in_sap_comes_before_the_plan_s_window() -> None:
+    # Reserved 1 Oct with 15 Oct typed as the requirement date; the plan says 20 Oct.
+    entry = _ledger_entry(requirement_date=date(2026, 10, 15))
+    plan = _request_line(planned_use_date=date(2026, 10, 20), window_end=date(2027, 10, 20))
+    repository, _ = _detect_not_issued(
+        [entry], plans=[plan], created={KEY: date(2026, 10, 1)}, as_of=datetime(2026, 11, 14, tzinfo=UTC)
+    )
+    exception = repository.get(NOT_ISSUED_ID)
+    assert exception.evidence["basis"] == "REQUIRED" and exception.evidence["since"] == "2026-10-15"
+
+
+def test_a_window_that_started_before_the_reservation_counts_from_the_reservation() -> None:
+    # The plan said 26 Oct; the reservation was only made on 3 Nov.
+    entry = _ledger_entry(requirement_date=date(2026, 11, 3))
+    plan = _request_line(planned_use_date=date(2026, 10, 26), window_end=date(2026, 10, 30))
+
+    repository, _ = _detect_not_issued(
+        [entry], plans=[plan], created={KEY: date(2026, 11, 3)}, as_of=datetime(2026, 11, 28, tzinfo=UTC)
+    )
+    assert repository.get(NOT_ISSUED_ID) is None  # 25 days since it was made, though 33 since 26 Oct
+
+    repository, _ = _detect_not_issued(
+        [entry], plans=[plan], created={KEY: date(2026, 11, 3)}, as_of=datetime(2026, 12, 3, tzinfo=UTC)
+    )
+    assert repository.get(NOT_ISSUED_ID).evidence["since"] == "2026-11-03"
 
 
 def test_its_own_receipt_is_the_basis_when_the_reservation_raised_the_pr() -> None:

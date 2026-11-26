@@ -58,7 +58,11 @@ from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.integrations.notifications.service import SharedNotificationPort
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
-from app.integrations.sap.postgres_reservation import PostgresReservationRepository, reservation_keys_since
+from app.integrations.sap.postgres_reservation import (
+    PostgresReservationRepository,
+    reservation_created_dates,
+    reservation_keys_since,
+)
 
 
 logger = get_logger(__name__)
@@ -267,7 +271,15 @@ def run_detection(
         not_issued_days=config.watch.gr_not_issued_threshold_days,
         final_issued=_final_issued(reservation_rows),
         no_plan_eligible=eligible,
+        created_by_reservation=_linked_created_dates(db),
     )
+
+
+def _linked_created_dates(db: Session) -> dict[tuple[str, str], date]:
+    """The day SAP made each reservation linked to the assistant (RESB-CRDAT):
+    NOT_ISSUED_30_DAYS measures a planned window from no earlier than this.
+    Only linked ones -- no other reservation is measured from a plan."""
+    return reservation_created_dates(db, session_by_reservation(db))
 
 
 def _no_plan_reasons(db: Session, ledger_entries, snapshot: I13Snapshot | None) -> dict[tuple[str, str], NoPlanReason]:
@@ -331,6 +343,7 @@ def _run_detection_stored(
     )
     linked = session_by_reservation(db)
     sessions = load_sessions(db, set(linked.values()))
+    created_by_reservation = reservation_created_dates(db, linked)
     work = WorkTables(snapshot.version)
     attributor = ConsumptionAttributionService(cost_centre_enabled=config.attribution.cost_centre_enabled)
 
@@ -364,6 +377,7 @@ def _run_detection_stored(
             not_issued_days=config.watch.gr_not_issued_threshold_days,
             final_issued=_final_issued(reservation_rows),
             no_plan_eligible=no_plan_eligible,
+            created_by_reservation=created_by_reservation,
         )
         for name in totals:
             totals[name] += getattr(result, name)

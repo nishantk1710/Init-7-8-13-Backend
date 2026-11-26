@@ -254,11 +254,18 @@ def test_usage_within_the_kept_months(both, settings) -> None:
         for key, series in memory.monthly_consumption.items()
     }
     expected = {k: v for k, v in expected.items() if v}
+    # Every OAR position has a row too, a never-issued one with no months (25-Nov-2026).
+    from app.shared.material_scope import MaterialScope
+
+    oar = {key for key in memory.material_scope_index if memory.scope_of(*key) is MaterialScope.OAR}
+    expected.update({key: () for key in oar if key not in expected})
     rows, total = stored.usage(oar_only=False)
     assert total == len(expected) > 0
     assert {key: series for key, series, _, _ in rows} == expected
-    # The 2023 issue is older than 36 months, so M2@1500 has no usage row.
-    assert (M2.lstrip("0"), "1500") not in {key for key, *_ in rows}
+    # The 2023 issue is older than 36 months, so M2@1500 has no months in it.
+    assert dict((key, series) for key, series, *_ in rows).get((M2.lstrip("0"), "1500"), ()) == ()
+    _, oar_total = stored.usage()
+    assert oar_total == memory.oar_position_count
 
 
 def test_exceptions_and_summary(both, db) -> None:

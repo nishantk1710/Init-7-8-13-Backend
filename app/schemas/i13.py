@@ -180,6 +180,19 @@ class ReservationLedgerEntryResponse(BaseModel):
     issued_before_history: bool = False
     #: The earliest goods movement held; null when the snapshot did not record it.
     movement_history_start: date | None = None
+    #: SAP's reservation date (RESB-CRDAT): the reservation's base date
+    #: (RKPF-RSDAT) -- today by default when keyed in, but changeable -- or the
+    #: maintenance order's creation date for an order component. Null where SAP
+    #: sends none. ``requirement_date`` (RESB-BDTER) is copied from the base
+    #: date unless somebody types another (26-Nov-2026).
+    created_date: date | None = None
+    #: For a reservation linked to the assistant: whether its session recorded a
+    #: consumption plan, and that plan's window -- when the part is needed, as
+    #: the requester said. SAP's requirement date is the day the reservation was
+    #: made on every assistant reservation (prod, 25-Nov-2026).
+    plan_recorded: bool = False
+    planned_start: date | None = None
+    planned_end: date | None = None
 
 
 class UtilisationLedgerEntryResponse(BaseModel):
