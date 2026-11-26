@@ -15,6 +15,7 @@ column names, not SAP field codes (see ``app.seed.loader``'s table comment).
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -280,6 +281,56 @@ def reservation_keys_since(
             if made >= since:
                 keys.add((u.reservation_number, u.reservation_item))
     return frozenset(keys)
+
+
+def reservation_created_dates(
+    db: Session, keys: Iterable[tuple[str, str]]
+) -> dict[tuple[str, str], date]:
+    """(reservation, item) -> its reservation date (RESB-CRDAT, ``created_on``):
+    the base date (RKPF-RSDAT) of a manual reservation -- today by default when
+    keyed in, but changeable -- or the order's creation date for an order
+    component.
+
+    Read for the keys asked about only -- a page of the ledger, or the
+    reservations linked to the assistant -- so nothing is rebuilt for it. A key
+    SAP sends no date for is left out. A simulated UAT reservation was made the
+    day it was simulated.
+
+    Why it matters (checked on prod, 25-Nov-2026): SAP's requirement date
+    (RESB-BDTER) is the day the reservation was made on every one linked to the
+    assistant, so it says nothing about when the part is needed.
+    """
+    wanted = {(str(n), str(i)) for n, i in keys if n and i}
+    if not wanted:
+        return {}
+    numbers = sorted({n for n, _ in wanted})
+    found: dict[tuple[str, str], date] = {}
+    # Chunked: SQL Server takes at most 2,100 parameters per statement.
+    for start in range(0, len(numbers), 500):
+        chunk = numbers[start : start + 500]
+        names = [f"r{n}" for n in range(len(chunk))]
+        query = text(
+            "SELECT reservation, item_no_stock_transfer_reserv, created_on FROM n_resb "
+            f"WHERE reservation IN ({', '.join(':' + name for name in names)})"
+        )
+        for number, item, created in db.execute(query, dict(zip(names, chunk))).fetchall():
+            key = (_text_or_none(number), _text_or_none(item))
+            made = created if isinstance(created, date) else _date(_text_or_none(created))
+            if key in wanted and made is not None:
+                found[key] = made
+
+    from app.core.config import get_settings
+
+    if get_settings().i13_uat_simulation_enabled:
+        from sqlalchemy import select
+
+        from app.models.i13_session_link import UatReservationSgtxt
+
+        for u in db.execute(select(UatReservationSgtxt).where(UatReservationSgtxt.simulated)).scalars():
+            key = (u.reservation_number, u.reservation_item)
+            if key in wanted and key not in found and u.created_at is not None:
+                found[key] = u.created_at.date()
+    return found
 
 
 # --- W6.2 §9: goods issue -> Reservation, the strong GI link ----------------

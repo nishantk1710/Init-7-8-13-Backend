@@ -339,7 +339,7 @@ def _build_batch(
     stats.oar_positions += len(oar_keys)
     writer.write(kinds.movement(m, is_oar(m.material, m.plant)) for m in movement_metrics)
     writer.write(kinds.oar_key(k[0], k[1], band_by_key.get(k, AgingBand.NON_MOVING.value)) for k in sorted(oar_keys))
-    del movement_metrics, band_by_key, oar_keys
+    del movement_metrics, band_by_key
 
     writer.write(
         kinds.reclass(c, is_oar(c.material, c.plant))
@@ -358,22 +358,25 @@ def _build_batch(
     monthly = _monthly(movement_repo.get_movement_history(), settings.i13_usage_history_months, as_of)
     stock_by_key = movement_repo.get_current_stock()
 
-    def usage_records(monthly, stock_by_key, watch_by_key):
-        for key in sorted(monthly):
-            series = monthly[key]
-            if not series:
-                continue
+    def usage_records(monthly, stock_by_key, watch_by_key, oar_keys):
+        # Every OAR position, issued or not (25-Nov-2026): the Usage pattern
+        # tab lists all of them, so its count is the dashboard's OAR count. One
+        # with no movement in the history is a row of zero months, listed last
+        # (most issued first). Non-OAR keys only where they moved, as before.
+        with_history = {key for key, series in monthly.items() if series}
+        for key in sorted(with_history | set(oar_keys)):
+            series = monthly.get(key) or ()
             stats.months.update(m.month for m in series)
             w = watch_by_key.get(key)
             yield kinds.usage(
                 key[0], key[1], classify_material_scope(index.get(key)).value, series,
                 w.stock_on_hand if w else stock_by_key.get(key),
-                w.aging_band.value if w else None,
+                w.aging_band.value if w else (None if series else AgingBand.NON_MOVING.value),
             )
 
-    writer.write(usage_records(monthly, stock_by_key, watch_by_key))
+    writer.write(usage_records(monthly, stock_by_key, watch_by_key, oar_keys))
     # Nothing reads the movement history after this: release the largest list.
-    del monthly, stock_by_key, watch_by_key
+    del monthly, stock_by_key, watch_by_key, oar_keys
     del movement_repo
     movements.drop_history()
 

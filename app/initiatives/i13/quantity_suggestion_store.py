@@ -419,7 +419,14 @@ def build_assistant_quantity_decision_records(
     nothing to have overridden (the same exclusion as the W7.4 store's
     ``NO_SUGGESTION``). ``requested_quantity`` is what was **kept** -- the
     accepted quantity -- so ``requested != suggested`` means an override.
-    Business key: the session ID (the reservation does not exist yet, FR-8).
+    Business key: the session ID, one exception per request line, whether or
+    not a reservation is linked yet (``exception_key``).
+
+    The reservation is the one SAP links to the session through its item text
+    (SGTXT carrying the R-ID or session ID; ``session_reservation_link``), the
+    first by number and item when there are several. Empty until that link
+    exists, and detection raises nothing for the record until then
+    (25-Nov-2026): a request that never became a reservation reserved no stock.
 
     The record's requester is the person the part is for when ``requested_for`` names someone in
     ``requester_aliases`` (see :func:`owner_for_assistant_decision`), otherwise the person who operated
@@ -452,13 +459,16 @@ def build_assistant_quantity_decision_records(
     for justification in session.execute(justification_stmt).scalars().all():
         reasons[justification.session_id] = justification
 
+    linked = _first_linked_reservation(session, session_ids)
+
     return [
         QuantityDecisionRecord(
             material=row.material,
             plant=row.plant,
-            reservation_number=None,
-            reservation_item=None,
+            reservation_number=reservation[0] if reservation else None,
+            reservation_item=reservation[1] if reservation else None,
             session_id=row.session_id,
+            exception_key=f"SESSION-{row.session_id}",
             requester_id=owner_for_assistant_decision(requester, requested_for, requester_aliases),
             requested_quantity=row.accepted_quantity,
             suggested_quantity=row.suggested_quantity,
@@ -471,4 +481,25 @@ def build_assistant_quantity_decision_records(
         )
         for row, requester, requested_for in rows
         for reason in (reasons.get(row.session_id),)
+        for reservation in (linked.get(row.session_id),)
     ]
+
+
+def _first_linked_reservation(session: Session, session_ids: list[str]) -> dict[str, tuple[str, str]]:
+    """Session ID -> the (reservation number, item) SAP links to it, the first
+    by number and item. A session with no link is left out."""
+    from app.models.i13_session_link import SessionReservationLink
+
+    first: dict[str, tuple[str, str]] = {}
+    stmt = (
+        select(
+            SessionReservationLink.session_id,
+            SessionReservationLink.reservation_number,
+            SessionReservationLink.reservation_item,
+        )
+        .where(SessionReservationLink.session_id.in_(set(session_ids)))
+        .order_by(SessionReservationLink.reservation_number, SessionReservationLink.reservation_item)
+    )
+    for session_id, number, item in session.execute(stmt).all():
+        first.setdefault(session_id, (number, item))
+    return first

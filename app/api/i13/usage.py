@@ -164,7 +164,8 @@ def list_usage_patterns(
     material: str | None = Query(None),
     aging_band: str | None = Query(None),
     include_out_of_scope: bool = Query(False, description="Include non-OAR (Min-Max/Excluded) materials."),
-    limit: int = Query(50, ge=1, le=500),
+    # Up to 2,000 a page so an export of every OAR position (about 14,000) takes a few requests.
+    limit: int = Query(50, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     snapshot: I13Snapshot | SqlSnapshot = Depends(_require_snapshot),
 ) -> list[UsagePatternResponse]:

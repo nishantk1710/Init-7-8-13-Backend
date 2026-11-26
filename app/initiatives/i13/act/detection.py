@@ -135,7 +135,10 @@ def quantity_override_business_key(record: QuantityDecisionRecord) -> str:
     material+plant as a last resort (so two decisions for the same
     material/plant with no reservation/session reference don't silently
     collide into different exceptions -- they collide into the same one,
-    which is the conservative choice when identity is otherwise unknown)."""
+    which is the conservative choice when identity is otherwise unknown).
+    A key the record's source fixed (``exception_key``) comes first."""
+    if record.exception_key:
+        return record.exception_key
     if record.reservation_number and record.reservation_item:
         return f"{record.reservation_number}-{record.reservation_item}"
     if record.session_id:
@@ -148,6 +151,10 @@ class NotIssuedBasis(str, Enum):
     RECEIVED = "RECEIVED"
     #: No receipt of its own: OAR stock was already on the shelf.
     REQUIRED = "REQUIRED"
+    #: As REQUIRED, measured from the planned use the requester gave in the
+    #: assistant (25-Nov-2026): SAP's requirement date is only the day the
+    #: reservation was made.
+    PLANNED = "PLANNED"
 
 
 @dataclass(frozen=True)
@@ -164,6 +171,8 @@ def detect_not_issued(
     as_of: date,
     threshold_days: int,
     final_issued: bool = False,
+    planned_start: date | None = None,
+    created_on: date | None = None,
 ) -> NotIssuedFinding | None:
     """NOT_ISSUED_30_DAYS for one reservation item: nothing issued against it
     ``threshold_days`` after its goods arrived, or after it was required.
@@ -178,6 +187,15 @@ def detect_not_issued(
     * **REQUIRED** -- otherwise, its requirement date (RESB-BDTER) is at least
       ``threshold_days`` ago. OAR is normally issued from stock already on the
       shelf, so this is the usual case.
+    * **PLANNED** -- the same, where the assistant's plan gives a window
+      (``planned_start``): measured from the window start, but never before the
+      reservation was made (``created_on``, RESB-CRDAT) -- nothing could be
+      issued on it before it existed. SAP's requirement date is used instead
+      only when somebody typed one (it differs from ``created_on``): SAP
+      pre-fills it with the created date, which is all it held on every
+      assistant reservation (checked on prod, 25-Nov-2026), and a plan running
+      for a year must not be chased 30 days after it was reserved. The same
+      order as the Ledger's Required by (26-Nov-2026).
 
     No finding when anything was issued, the item is deleted (RESB-XLOEK) or
     closed for further issues (RESB-KZEAR): there is nothing left to chase.
@@ -194,6 +212,13 @@ def detect_not_issued(
         days = (as_of - since).days
         return NotIssuedFinding(NotIssuedBasis.RECEIVED, since, days) if days >= threshold_days else None
     required = entries[0].requirement_date
+    # A requirement date somebody typed in SAP (one not just pre-filled from the
+    # created date) comes first, as on the Ledger's Required by (26-Nov-2026).
+    typed = required is not None and created_on is not None and required != created_on
+    if planned_start is not None and not typed:
+        since = max(planned_start, created_on) if created_on is not None else planned_start
+        days = (as_of - since).days
+        return NotIssuedFinding(NotIssuedBasis.PLANNED, since, days) if days >= threshold_days else None
     if required is None:
         return None
     days = (as_of - required).days
