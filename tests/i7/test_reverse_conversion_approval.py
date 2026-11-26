@@ -34,7 +34,7 @@ TABLES = [ReverseRun.__table__, ReverseRecommendation.__table__, ReverseConversi
 @pytest.fixture
 def session(monkeypatch):
     monkeypatch.setattr(
-        snapshot, "get_settings", lambda: SimpleNamespace(i7_reverse_anchor_month="2026-10", i7_reverse_anchor_source="configured")
+        snapshot, "get_settings", lambda: SimpleNamespace(i7_reverse_anchor_month="2026-10", i7_reverse_anchor_source="configured", i7_rationale_concurrency=2)
     )
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine, tables=TABLES)

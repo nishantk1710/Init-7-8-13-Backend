@@ -17,7 +17,7 @@ Read-only toward SAP, and it writes nothing outside the ``i7_reverse_*`` tables.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 
 from sqlalchemy import delete, select
@@ -29,7 +29,7 @@ from app.initiatives.i7.policy.reverse_conversion import (
     ReverseConversionPolicy,
     current_reverse_conversion_policy,
 )
-from app.initiatives.i7.reverse_conversion import cooldown
+from app.initiatives.i7.reverse_conversion import cooldown, rationale
 from app.initiatives.i7.reverse_conversion.errors import AnchorError
 from app.initiatives.i7.reverse_conversion.service import (
     CONFIDENCE_CODES,
@@ -103,6 +103,7 @@ def _row_model(run_id: int, order: int, row: RecommendationRow) -> ReverseRecomm
         decision_rule=row.rule,
         confidence=row.confidence.value if row.confidence else None,
         points=json.dumps(row.points),
+        points_source=row.points_source,
         issues_latest_12m=m.issues_latest_window,
         months_with_use_12m=m.months_with_use_latest_window,
         issues_prior_12m=m.issues_prior_window,
@@ -192,6 +193,17 @@ def _record_groups(session_factory, policy: ReverseConversionPolicy, today: date
         logger.exception("reverse conversion: could not record planning groups; the cooldown uses the last ones seen")
 
 
+def _with_written_reasons(report: ReverseReport, workers: int) -> ReverseReport:
+    """``report`` with each Convert to OAR reason written by the model where possible (see ``rationale``).
+
+    Wording only -- no category, confidence or figure changes -- and any failure keeps the standard wording."""
+    try:
+        return replace(report, rows=tuple(rationale.explain_rows(list(report.rows), workers)))
+    except Exception:  # noqa: BLE001 -- the reasons are optional; the calculation must still be stored
+        logger.exception("reverse conversion reasons failed; the standard wording is kept")
+        return report
+
+
 def run_reverse_conversion(
     *,
     pipeline_run_id: int | None = None,
@@ -224,6 +236,7 @@ def run_reverse_conversion(
                 logger.warning("reverse conversion skipped: %s", exc)
                 return StageOutcome(status=_PIPELINE_SUCCEEDED, run_id=run_id)
             report = build_report(source, policy, anchor, as_of=today)
+            report = _with_written_reasons(report, settings.i7_rationale_concurrency)
             run = write_report(session, report, pipeline_run_id=pipeline_run_id)
             session.commit()
             logger.info(
@@ -317,6 +330,7 @@ def _to_row(stored: ReverseRecommendation, anchor_month) -> RecommendationRow:
         rule=stored.decision_rule,
         confidence=ReverseConfidence(stored.confidence) if stored.confidence else None,
         points=_load_points(stored.points, stored.detail),
+        points_source=stored.points_source or "DETERMINISTIC_FALLBACK",
         metrics=metrics,
         lead_time_days=stored.lead_time_days,
         lead_time_bucket=stored.lead_time_bucket,

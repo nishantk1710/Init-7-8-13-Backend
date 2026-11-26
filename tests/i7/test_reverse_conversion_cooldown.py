@@ -204,7 +204,7 @@ def factory(monkeypatch):
     monkeypatch.setattr(
         snapshot,
         "get_settings",
-        lambda: SimpleNamespace(i7_reverse_anchor_month="2026-10", i7_reverse_anchor_source="configured", i7_oar_mrp_type_set=OARS),
+        lambda: SimpleNamespace(i7_reverse_anchor_month="2026-10", i7_reverse_anchor_source="configured", i7_rationale_concurrency=2, i7_oar_mrp_type_set=OARS),
     )
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine, tables=TABLES)
@@ -289,7 +289,7 @@ def test_a_change_is_noticed_even_when_the_rest_of_the_stage_is_skipped(factory,
     monkeypatch.setattr(
         snapshot,
         "get_settings",
-        lambda: SimpleNamespace(i7_reverse_anchor_month=None, i7_reverse_anchor_source="configured", i7_oar_mrp_type_set=OARS),
+        lambda: SimpleNamespace(i7_reverse_anchor_month=None, i7_reverse_anchor_source="configured", i7_rationale_concurrency=2, i7_oar_mrp_type_set=OARS),
     )
     assert stage(factory, date(2026, 6, 10)).status == "succeeded"  # skipped for want of a month, never failed
     assert (observation(factory, "REC1", "1300").planning_group, observation(factory, "REC1", "1300").changed_on) == (OAR, date(2026, 6, 10))

@@ -236,6 +236,9 @@ class RecommendationRow:
     stock_value: Decimal | None
     minbe: Decimal | None
     mabst: Decimal | None
+    points_source: str = "DETERMINISTIC_FALLBACK"
+    """Who wrote ``points``: ``AI_GENERATED`` when a model did, else ``DETERMINISTIC_FALLBACK`` (the standard wording
+    built from the figures). Set by ``rationale.explain_rows`` after the decision; never part of it."""
 
 
 @dataclass(frozen=True)
