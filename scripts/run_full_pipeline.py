@@ -50,7 +50,7 @@ from app.models.i7_inventory import InventoryCalculation
 from app.models.i7_oar import OarNeighbour, OarTargetResult
 from app.models.i7_recommendation import Recommendation
 
-PHASES = ("staging", "features", "forecasting", "inventory", "oar", "recommendations", "stockout_risk")
+PHASES = ("staging", "features", "forecasting", "inventory", "oar", "reverse_conversion", "recommendations", "stockout_risk")
 
 
 # --- terminal tables --------------------------------------------------------
@@ -304,6 +304,18 @@ def run_phases(skip: set[str], force: bool) -> dict:
         if result.error:
             print(f"\n  ERROR: {result.error}")
             return results
+
+    if "reverse_conversion" not in skip:
+        heading("PHASE 6b - MIN-MAX TO OAR (CONVERT TO OAR)")
+        from app.initiatives.i7.reverse_conversion.snapshot import run_reverse_conversion
+
+        result = run_reverse_conversion()
+        results["reverse_conversion"] = result
+        table(
+            ["metric", "value"],
+            [("run_id", result.run_id), ("status", result.status), ("material-plants stored", result.recommendations_written)],
+        )
+        # This stage never stops the run: a skipped or failed one is read from i7_reverse_run.
 
     if "recommendations" not in skip:
         heading("PHASE 7 - RECOMMENDATIONS")

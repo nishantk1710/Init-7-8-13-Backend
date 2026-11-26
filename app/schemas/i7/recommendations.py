@@ -718,6 +718,9 @@ class RecommendationSummaryStats(BaseModel):
     (``working_capital_excluded_count``)."""
 
     working_capital_currency: str | None = None
+    working_capital_overlap_count: int = 0
+    """Only on the Overview's Release Up (Overlap) view: material-plants counted twice in the amount, once for their Stock
+    item release and once for their release if converted to OAR. 0 on every other view."""
     working_capital_included_count: int = 0
     """Material-plants the figure above is over."""
     working_capital_excluded_count: int = 0

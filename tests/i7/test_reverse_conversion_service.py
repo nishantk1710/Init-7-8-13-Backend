@@ -20,6 +20,7 @@ from app.initiatives.i7.reverse_conversion.service import (
     parse_anchor_month,
     resolve_report_anchor,
     stock_value,
+    value_currency,
 )
 from app.initiatives.i7.reverse_conversion.types import FINAL_CATEGORIES, ReverseCategory as Cat, ReverseConfidence as Conf, ReverseReason as Why
 
@@ -130,10 +131,10 @@ def test_zero_stock_and_missing_price_are_kept_in_the_recommended_group():
 
 
 def test_stock_value_is_stock_times_price_or_none():
-    assert stock_value(Decimal(100), Decimal(10)) == Decimal(1000)
-    assert stock_value(Decimal(0), Decimal(10)) == Decimal(0)
-    assert stock_value(Decimal(5), None) is None
-    assert stock_value(None, Decimal(10)) is None
+    assert stock_value(Decimal(100), Decimal(10), "ZAR") == Decimal(1000)
+    assert stock_value(Decimal(0), Decimal(10), "ZAR") == Decimal(0)
+    assert stock_value(Decimal(5), None, "ZAR") is None
+    assert stock_value(None, Decimal(10), "ZAR") is None
 
 
 def test_category_totals_state_stock_figures_without_a_currency():
@@ -357,3 +358,38 @@ def test_confidence_levels_are_counted_and_add_up_to_convert_to_oar():
 def test_convert_to_oar_is_listed_high_then_medium_then_low():
     order = [row.confidence for row in report_for().rows if row.category is Cat.RECOMMENDED_FOR_OAR]
     assert order == sorted(order, key=list(Conf).index)
+
+
+# --- Money is counted in ZAR by the rule the OAR and Stock item figures use ----------------------------
+
+
+def test_a_zar_price_is_counted_as_it_is_and_a_nad_price_at_one_to_one():
+    assert stock_value(Decimal(10), Decimal("5.50"), "ZAR") == Decimal("55.00")
+    assert stock_value(Decimal(10), Decimal("5.50"), "NAD") == Decimal("55.00")  # NAD is pegged to the rand
+    assert value_currency(Decimal("5.50"), "ZAR") == "ZAR"
+    assert value_currency(Decimal("5.50"), "NAD") == "ZAR"  # stated in rand terms
+
+
+@pytest.mark.parametrize("currency", ["USD", "EUR", "", None])
+def test_any_other_currency_or_none_is_left_out_never_converted(currency):
+    assert stock_value(Decimal(10), Decimal("5.50"), currency) is None
+    assert value_currency(Decimal("5.50"), currency) is None
+
+
+@pytest.mark.parametrize("price", [Decimal("1.00"), Decimal("0.50"), Decimal(0)])
+def test_a_placeholder_price_is_not_a_price(price):
+    # At or below the placeholder ceiling (1.00), as the OAR and Stock item figures read it.
+    assert stock_value(Decimal(10), price, "ZAR") is None
+
+
+def test_a_row_priced_in_usd_is_left_out_of_the_report_and_counted_as_excluded():
+    source = FakeSource(
+        [attr("USDROW", stock=10, price=5, currency="USD"), attr("NADROW", stock=10, price=5, currency="NAD"), attr("ZARROW", stock=10, price=5)],
+        {("USDROW", "1300"): sparse(month(2026, 5)), ("NADROW", "1300"): sparse(month(2026, 5)), ("ZARROW", "1300"): sparse(month(2026, 5))},
+    )
+    report = report_for(source)
+    rows = by_material(report)
+    assert "USDROW" not in rows  # a price in USD is not considered
+    assert report.reconciliation.excluded == 1 and report.reconciliation.reconciled
+    assert (rows["NADROW"].stock_value, rows["NADROW"].value_currency, rows["NADROW"].price_currency) == (Decimal(50), "ZAR", "NAD")
+    assert (rows["ZARROW"].stock_value, rows["ZARROW"].value_currency) == (Decimal(50), "ZAR")

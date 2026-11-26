@@ -8,7 +8,9 @@ carriage return) as a formula. A material description is free text from SAP, so 
 starts with one of those characters gets a leading apostrophe, which a spreadsheet shows as plain text.
 Numbers are written as numbers and are never altered.
 
-CURRENCY. The source states none, so the ``currency`` column is left empty; nothing is assumed.
+CURRENCY. ``stock_value`` is in ZAR by the rule the OAR and Stock item figures use (a price in ZAR as it is, in
+NAD at 1:1; any other or no currency is left out, so the value is empty). ``currency`` says ``ZAR`` when a price is
+counted, and ``price_currency`` is what SAP stated.
 """
 
 import csv
@@ -51,6 +53,7 @@ COLUMNS = (
     "unit_price",
     "stock_value",
     "currency",
+    "price_currency",
     "anchor_month",
     "policy_version",
 )
@@ -105,7 +108,8 @@ def _row(row: RecommendationRow, anchor: AnchorResolution, policy: ReverseConver
         _number(row.mabst),
         _number(row.unit_price),
         _number(row.stock_value),
-        "",
+        row.value_currency or "",
+        row.price_currency or "",
         _month(anchor.month),
         policy.policy_version,
     ]

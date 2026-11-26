@@ -35,7 +35,7 @@ class ReverseConversionPolicy(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    policy_version: str = "reverse-conversion-v1"
+    policy_version: str = "reverse-conversion-v2"
     """Changes whenever any value below changes."""
 
     # --- Scope -----------------------------------------------------------------
@@ -54,6 +54,11 @@ class ReverseConversionPolicy(BaseModel):
 
     obsolete_criticality_tier: str = CriticalityTier.OBSOLETE.value
     """Converts to OAR at Medium confidence, with the reason Obsolete (a planner decides keep or dispose)."""
+
+    # --- Cooldown --------------------------------------------------------------
+    cooldown_months: int = Field(default=12, ge=0)
+    """Months after a material changes between Min-Max and OAR during which it is not recommended for conversion
+    back. 0 turns it off. Comes from ``Settings.i7_conversion_cooldown_months``, not from a literal here."""
 
     # --- Windows ---------------------------------------------------------------
     window_months: int = Field(default=12, ge=1)
@@ -130,4 +135,6 @@ def current_reverse_conversion_policy() -> ReverseConversionPolicy:
     than 4 months; lead time over 90 days or unknown goes to Manual Review; a new material needs at
     least 3 lifetime months with use to be Recommended.
     """
-    return ReverseConversionPolicy()
+    from app.core.config import get_settings
+
+    return ReverseConversionPolicy(cooldown_months=get_settings().i7_conversion_cooldown_months)

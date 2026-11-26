@@ -27,8 +27,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Literal
 
-from sqlalchemy import Select, and_, case, false, func, or_, select, true
+from sqlalchemy import Select, and_, case, false, func, literal, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.initiatives.i7.kpi_formulas.currency import REPORTING_CURRENCY, TO_ZAR
@@ -62,6 +63,9 @@ class WorkingCapitalImpact:
     excluded_count: int
     """Material-plants of the population left out: another or missing currency, no valid price, no reorder point,
     or an OAR material that is not eligible (and has no live conversion request) or was rejected."""
+    overlap_count: int = 0
+    """Only for ``stock_to_oar="add"``: material-plants counted twice in ``amount`` -- once for their Stock item
+    release and once for their release if converted to OAR. 0 everywhere else."""
 
     @property
     def population(self) -> int:
@@ -95,13 +99,31 @@ def _price_currency():
     )
 
 
+StockToOar = Literal["replace", "add"]
+"""How the Overview's Stock item to OAR views value a population (see :func:`working_capital_impact`)."""
+
+
 def working_capital_impact(
-    session: Session, base: Select, formulas: Formulas, segment: str | None = None, *, adopted_only: bool = False
+    session: Session,
+    base: Select,
+    formulas: Formulas,
+    segment: str | None = None,
+    *,
+    adopted_only: bool = False,
+    stock_to_oar: StockToOar | None = None,
 ) -> WorkingCapitalImpact:
     """The Working Capital Impact over ``base`` (a ``select(Recommendation)`` population), in ZAR.
 
     ``segment`` narrows the population: ``"oar"`` for OAR material-plants, ``"stock"`` for stock items (everything not OAR);
-    ``None`` is both. The two segments add up to the whole: a row is in exactly one of them."""
+    ``None`` is both. The two segments add up to the whole: a row is in exactly one of them.
+
+    ``stock_to_oar`` is for the Overview's two Stock item to OAR release views, over a population already narrowed to
+    them. A stock-item material that is eligible to convert to OAR has a second release: the capital held at its
+    current reorder point, which goes to zero (the saved formula with the recommended reorder point as 0, reorder point
+    only). ``"replace"`` counts each material once: an eligible one at that OAR release instead of its Stock item
+    release, every other at its Stock item release. ``"add"`` counts a material's Stock item release AND, if it is
+    eligible, its OAR release, so a material in both is counted twice (``overlap_count`` says how many). ``None`` is the
+    existing calculation, unchanged."""
     if adopted_only:
         # Only what SAP now holds: the reconciliation's ADOPTED result (the same evidence as "converted to Min-Max"). Approval alone
         # is not adoption. With nothing adopted the figure is 0 (measured: nothing has taken effect), not "not available".
@@ -117,22 +139,48 @@ def working_capital_impact(
     rate = case(*[(currency == code, factor) for code, factor in TO_ZAR.items()], else_=None)
     value = working_capital_sql(formulas)
     included = and_(rate.is_not(None), Recommendation.unit_price > DEFAULT_TOKEN_MAX, value.is_not(None), oar_rule())
+    overlap = literal(0)
+
+    if stock_to_oar is not None:
+        from app.initiatives.i7.kpi_formulas.stock_to_oar import eligible_for_oar, oar_release_value
+
+        eligible, oar_value = eligible_for_oar(), oar_release_value(formulas)
+        priced = and_(rate.is_not(None), Recommendation.unit_price > DEFAULT_TOKEN_MAX, oar_rule())
+        if stock_to_oar == "replace":
+            used = case((eligible, oar_value), else_=value)
+            included = and_(priced, used.is_not(None))
+            amount_expression = used * rate
+        else:
+            # The Stock item release counts where it releases (the population's own rule), and the OAR release is
+            # added on top for an eligible one: an overlapping material appears in both.
+            stock_part = case((value > 0, value), else_=0)
+            oar_part = case((and_(eligible, oar_value > 0), oar_value), else_=0)
+            included = and_(priced, or_(value.is_not(None), oar_value.is_not(None)))
+            amount_expression = (stock_part + oar_part) * rate
+            overlap = case((and_(included, value > 0, eligible, oar_value > 0), 1), else_=0)
+    else:
+        amount_expression = value * rate
 
     # Each row's own figures first, then the sums over them. SQL Server refuses an aggregate over an expression
     # that holds a subquery (the currency lookup), so the subquery stays in the per-row select and the outer
     # query only sums columns.
     per_row = base.with_only_columns(
         case((included, 1), else_=0).label("is_included"),
-        case((included, value * rate), else_=None).label("amount_zar"),
+        case((included, amount_expression), else_=None).label("amount_zar"),
+        overlap.label("is_overlap"),
     ).subquery()
-    total, included_count, amount = session.execute(
-        select(func.count(), func.coalesce(func.sum(per_row.c.is_included), 0), func.sum(per_row.c.amount_zar)).select_from(
-            per_row
-        )
+    total, included_count, amount, overlap_count = session.execute(
+        select(
+            func.count(),
+            func.coalesce(func.sum(per_row.c.is_included), 0),
+            func.sum(per_row.c.amount_zar),
+            func.coalesce(func.sum(per_row.c.is_overlap), 0),
+        ).select_from(per_row)
     ).one()
     return WorkingCapitalImpact(
         amount=Decimal(str(amount)) if amount is not None else (Decimal(0) if adopted_only else None),
         currency=REPORTING_CURRENCY,
         included_count=int(included_count),
         excluded_count=int(total) - int(included_count),
+        overlap_count=int(overlap_count),
     )
