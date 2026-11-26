@@ -67,6 +67,7 @@ def inputs(
     m=None,
     stock=None,
     price=None,
+    currency="ZAR",
 ) -> MaterialPlantInputs:
     return MaterialPlantInputs(
         material="1000123",
@@ -78,6 +79,7 @@ def inputs(
         metrics=m if m is not None else metrics(),
         current_stock=stock,
         unit_price=price,
+        price_currency=currency,
     )
 
 
@@ -388,7 +390,7 @@ def test_every_in_scope_material_plant_gets_exactly_one_of_the_four_categories()
         d = evaluate(inputs(criticality=crit, lead_time=lead, m=m), POLICY)
         count += 1
         assert d.category in FINAL_CATEGORIES, (crit, issues, months, d)
-        assert d.reason and d.detail and 2 <= d.rule <= 13
+        assert d.reason and d.detail and 2 <= d.rule <= 14
         assert (d.confidence is not None) == (d.category is Cat.RECOMMENDED_FOR_OAR), (crit, issues, months, d)
         # The defensive reason is unreachable: every active material matches one of the three real reasons.
         assert d.reason is not Why.UNCLASSIFIED_ACTIVE, (crit, issues, months, lifetime, since, age)
@@ -411,7 +413,7 @@ def test_there_is_no_obsolescence_review_any_more_obsolete_is_a_convert_to_oar_r
     d = decide(criticality="OBSOLETE")
     assert (d.category, d.reason, d.confidence) == (Cat.RECOMMENDED_FOR_OAR, Why.OBSOLETE_CRITICALITY, Conf.MEDIUM)
     assert d.reason.value == "Obsolete"
-    assert "Obsolete" in d.detail and "kept" in d.detail and "disposed of" in d.detail
+    assert "Obsolete" in d.detail and "keep or dispose" in d.detail
     assert decide(m=never_moved()).category is Cat.RECOMMENDED_FOR_OAR
     assert decide(m=metrics(issues=0, months=0, prior_issues=0, prior_months=0, lifetime=3)).category is Cat.RECOMMENDED_FOR_OAR
 
@@ -421,8 +423,8 @@ def test_the_two_zero_issue_reasons_read_as_the_planner_asked():
     before = decide(m=metrics(issues=0, months=0, prior_issues=0, prior_months=0, lifetime=3))
     assert never.reason.value == "Zero issues in 24 months and never moved"
     assert before.reason.value == "Zero issues in 24 months but moved before"
-    assert never.detail == "Zero issues in 24 months and never moved."
-    assert before.detail == "Zero issues in 24 months but moved before."
+    assert never.detail == "Zero issues between Nov 2024 and Oct 2026, and it has never moved."
+    assert before.detail == "Zero issues between Nov 2024 and Oct 2026. It last moved in Aug 2026."
     assert (never.confidence, before.confidence) == (Conf.MEDIUM, Conf.MEDIUM)
 
 
@@ -449,3 +451,142 @@ def test_only_convert_to_oar_rows_carry_a_confidence():
     assert decide(criticality="CRITICAL").confidence is None
     assert decide(m=metrics(issues=9, months=9)).confidence is None
     assert decide(m=metrics(first=date(2026, 6, 1), last=date(2026, 8, 1))).confidence is None
+
+
+# --- The explanation reads correctly for a count of one ----------------------------------------------
+
+
+def test_a_count_of_one_is_not_pluralised_in_the_explanation():
+    d = decide(m=metrics(issues=1, months=1, last=date(2026, 4, 1), since=6))
+    assert d.rule == 12
+    assert d.detail.startswith("Issued 1 time in 1 month between Nov 2025 and Oct 2026, last in Apr 2026.")
+    assert "1 times" not in d.detail and "1 months" not in d.detail
+
+
+def test_counts_other_than_one_stay_plural():
+    d = decide(m=metrics(issues=2, months=2))
+    assert d.detail.startswith("Issued 2 times in 2 months between Nov 2025 and Oct 2026")
+
+
+# --- A price that is not in ZAR or NAD leaves the material out ----------------------------------------
+
+
+@pytest.mark.parametrize("currency", ["ZAR", "NAD"])
+def test_a_price_in_zar_or_nad_keeps_the_material(currency):
+    d = evaluate(inputs(price=Decimal("25.00"), currency=currency), POLICY)
+    assert d.category is not Cat.EXCLUDED
+
+
+@pytest.mark.parametrize("currency", ["USD", "EUR", "GBP", "", None])
+def test_a_price_in_another_currency_or_with_none_stated_leaves_the_material_out(currency):
+    d = evaluate(inputs(price=Decimal("25.00"), currency=currency), POLICY)
+    assert (d.category, d.reason, d.rule) == (Cat.EXCLUDED, Why.OUTSIDE_SCOPE, 1)
+    assert "ZAR or NAD" in d.detail
+
+
+@pytest.mark.parametrize("currency", ["ZAR", "USD", None])
+def test_a_material_with_no_price_is_kept_whatever_the_currency_says(currency):
+    # No price means no currency to judge: the material stays, and simply has no value.
+    d = evaluate(inputs(price=None, currency=currency), POLICY)
+    assert d.category is not Cat.EXCLUDED
+
+
+def test_the_currency_check_does_not_change_any_other_decision():
+    same = evaluate(inputs(price=Decimal("25.00"), currency="NAD"), POLICY)
+    assert (same.category, same.reason, same.rule) == (evaluate(inputs(price=None), POLICY).category, evaluate(inputs(price=None), POLICY).reason, evaluate(inputs(price=None), POLICY).rule)
+
+
+# --- The explanation never uses words a planner does not know -----------------------------------------
+
+
+def test_no_explanation_mentions_the_anchor_or_a_bare_latest_window():
+    cases = [
+        decide(criticality=None), decide(criticality="CRITICAL"), decide(criticality="OBSOLETE"),
+        decide(m=never_moved()), decide(m=metrics(issues=0, months=0, prior_issues=0, prior_months=0, lifetime=3)),
+        decide(m=metrics(issues=0, months=1, prior_issues=0, prior_months=0)),
+        decide(m=metrics(first=date(2026, 6, 1), last=date(2026, 8, 1))), decide(lead_time=None), decide(lead_time=120),
+        decide(m=metrics(issues=0, months=0, prior_issues=3, prior_months=3, last=date(2025, 6, 1))),
+        decide(m=metrics(issues=9, months=9)), decide(), decide(m=metrics(issues=3, months=3)),
+        decide(m=metrics(last=date(2025, 12, 1), since=10)),
+        decide(m=metrics(first=date(2024, 11, 1), last=date(2026, 9, 1), lifetime=2, age=24)),
+    ]
+    for d in cases:
+        assert "anchor" not in d.detail.lower(), d.detail
+        assert "latest 12 months" not in d.detail, d.detail
+
+
+def test_the_explanation_names_the_dates_it_counted():
+    d = decide(m=metrics(issues=1, months=1, last=date(2026, 4, 1), since=6))
+    assert "Nov 2025 and Oct 2026" in d.detail and "Apr 2026" in d.detail
+    stale = decide(m=metrics(last=date(2025, 12, 1), since=10))
+    assert "Dec 2025" in stale.detail and "Oct 2026" in stale.detail
+
+
+# --- The reason as three short labelled lines ------------------------------------------------------
+
+LABELS = ("What we saw", "What it means", "What to do")
+
+
+def _every_reason_case():
+    return {
+        "unknown_criticality": decide(criticality=None),
+        "protected": decide(criticality="CRITICAL"),
+        "obsolete": decide(criticality="OBSOLETE"),
+        "inconsistent": decide(m=metrics(issues=0, months=1, prior_issues=0, prior_months=0)),
+        "never_moved": decide(m=never_moved()),
+        "zero_24m": decide(m=metrics(issues=0, months=0, prior_issues=0, prior_months=0, lifetime=3)),
+        "history": decide(m=metrics(first=date(2026, 6, 1), last=date(2026, 8, 1))),
+        "lead_unknown": decide(lead_time=None),
+        "lead_long": decide(lead_time=120),
+        "lapsed": decide(m=metrics(issues=0, months=0, prior_issues=3, prior_months=3, last=date(2025, 6, 1))),
+        "frequent": decide(m=metrics(issues=9, months=9)),
+        "sparse": decide(),
+        "borderline": decide(m=metrics(issues=3, months=3)),
+        "stale": decide(m=metrics(last=date(2025, 12, 1), since=10)),
+        "lifetime": decide(m=metrics(first=date(2024, 11, 1), last=date(2026, 9, 1), lifetime=2, age=24)),
+    }
+
+
+@pytest.mark.parametrize("name", list(_every_reason_case()))
+def test_every_reason_is_three_labelled_lines_in_the_same_order(name):
+    d = _every_reason_case()[name]
+    assert tuple(label for label, _ in d.points) == LABELS, name
+    assert all(text.strip() for _, text in d.points), name
+
+
+def test_the_labelled_lines_never_mention_the_anchor_or_a_bare_window():
+    for name, d in _every_reason_case().items():
+        for _, text in d.points:
+            assert "anchor" not in text.lower() and "latest 12 months" not in text, (name, text)
+
+
+def test_what_we_saw_names_the_figures_and_the_dates_the_rule_used():
+    sparse = dict(_every_reason_case()["sparse"].points)
+    assert sparse["What we saw"] == "Issued 2 times in 2 months between Nov 2025 and Oct 2026. Last used Aug 2026."
+    assert sparse["What it means"] == "Demand is low and recent, so ordering only when needed fits."
+    assert sparse["What to do"] == "Convert it if you agree. The approvers confirm it."
+    stale = dict(_every_reason_case()["stale"].points)
+    assert "Dec 2025" in stale["What we saw"] and "Oct 2026" in stale["What we saw"]
+
+
+def test_a_count_of_one_reads_correctly_in_the_labelled_lines():
+    d = decide(m=metrics(issues=1, months=1, last=date(2026, 4, 1), since=6))
+    assert dict(d.points)["What we saw"].startswith("Issued 1 time in 1 month between Nov 2025 and Oct 2026.")
+
+
+def test_a_convert_row_tells_the_planner_to_decide_unless_the_rule_is_sure():
+    cases = _every_reason_case()
+    assert "approvers confirm" in dict(cases["sparse"].points)["What to do"]  # High
+    for name in ("borderline", "stale", "lifetime", "lapsed", "lead_unknown", "lead_long", "unknown_criticality", "obsolete", "inconsistent"):
+        assert dict(cases[name].points)["What to do"].startswith("A planner should"), name
+
+
+def test_a_not_eligible_row_says_it_stays_on_min_max():
+    cases = _every_reason_case()
+    for name in ("protected", "frequent", "history"):
+        assert dict(cases[name].points)["What to do"].startswith("Nothing"), name
+
+
+def test_the_labelled_lines_and_the_paragraph_describe_the_same_decision():
+    for name, d in _every_reason_case().items():
+        assert d.detail and d.points, name

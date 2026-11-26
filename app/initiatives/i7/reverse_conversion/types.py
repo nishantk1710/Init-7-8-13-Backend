@@ -52,6 +52,8 @@ class ReverseReason(StrEnum):
     """Why a material-plant got its category. The value is the label shown to a user."""
 
     OUTSIDE_SCOPE = "Outside scope"
+    RECENTLY_CHANGED = "Recently changed planning type"
+    """Moved between OAR and Min-Max within the cooldown: not recommended for conversion again yet."""
 
     UNKNOWN_CRITICALITY = "Unknown criticality"
     PROTECTED_CRITICALITY = "Protected criticality"
@@ -142,6 +144,13 @@ class MaterialPlantInputs:
 
     current_stock: Decimal | None = None
     unit_price: Decimal | None = None
+    group_changed_on: date | None = None
+    """The day the pipeline saw this material-plant change between Min-Max and OAR, or None if it never has."""
+    as_of: date | None = None
+    """Today, for the cooldown. Left out (None), no cooldown applies."""
+    price_currency: str | None = None
+    """The currency SAP stated for ``unit_price``. A material that HAS a price is in scope only when this is
+    ZAR or NAD (the currencies the OAR and Stock item money figures count); a material with no price is kept."""
     minbe: Decimal | None = None
     mabst: Decimal | None = None
 
@@ -160,6 +169,10 @@ class ReverseDecision:
 
     confidence: ReverseConfidence | None = None
     """High, Medium or Low for a Convert to OAR row; None for every other category."""
+
+    points: tuple[tuple[str, str], ...] = ()
+    """The reason as three short labelled lines a person can scan -- ``What we saw``, ``What it means``,
+    ``What to do`` -- as (label, text) pairs. ``detail`` is the same reason as one paragraph (kept for the CSV)."""
 
 
 @dataclass(frozen=True)

@@ -114,10 +114,10 @@ def test_no_consumption_rows_yield_nothing():
 def test_attributes_combine_plant_and_client_level_deletion_flags_and_the_description():
     material_rows = [("M1", "SULPHUR PRILLS", False), ("M1", None, True), ("M2", "HOSE", None), ("M3", "VALVE", False)]
     attribute_rows = [
-        # material, plant, mrp, criticality, lead, stock, price, minbe, mabst, plant-level deletion flag
-        ("M1", "1300", "VM", "NORMAL", Decimal(30), Decimal(5), Decimal(10), Decimal(3), Decimal(9), False),
-        ("M2", "1300", "VM", None, None, None, None, None, None, None),
-        ("M3", "1500", "VB", "CRITICAL", Decimal(120), Decimal(0), None, Decimal(1), Decimal(2), True),
+        # material, plant, mrp, criticality, lead, stock, price, currency, minbe, mabst, plant-level deletion flag
+        ("M1", "1300", "VM", "NORMAL", Decimal(30), Decimal(5), Decimal(10), "ZAR", Decimal(3), Decimal(9), False),
+        ("M2", "1300", "VM", None, None, None, None, None, None, None, None),
+        ("M3", "1500", "VB", "CRITICAL", Decimal(120), Decimal(0), None, None, Decimal(1), Decimal(2), True),
     ]
     rows = {(r.material, r.plant): r for r in repository.fetch_attributes(RecordingSession(material_rows, attribute_rows), POLICY)}
     m1, m2, m3 = rows[("M1", "1300")], rows[("M2", "1300")], rows[("M3", "1500")]
@@ -130,7 +130,7 @@ def test_attributes_combine_plant_and_client_level_deletion_flags_and_the_descri
 
 def test_a_flag_that_says_not_deleted_at_both_levels_is_false():
     rows = repository.fetch_attributes(
-        RecordingSession([("M1", "X", False)], [("M1", "1300", "VM", "NORMAL", None, None, None, None, None, False)]), POLICY
+        RecordingSession([("M1", "X", False)], [("M1", "1300", "VM", "NORMAL", None, None, None, None, None, None, False)]), POLICY
     )
     assert rows[0].deletion_flag is False
 
@@ -149,3 +149,26 @@ def test_latest_staged_month_is_the_max_period():
     session = RecordingSession([(date(2026, 11, 1),)])
     assert repository.latest_staged_month(session) == date(2026, 11, 1)
     assert "max(i7_staged_consumption.period)" in sql(session.statements[0]).lower()
+
+
+def test_the_alternatives_are_one_read_only_select_over_stock_item_recommendations_and_the_newest_wins():
+    rows = [
+        ("M1", "1300", Decimal(12), Decimal(10), Decimal(40), Decimal(30)),  # an older row
+        ("M1", "1300", Decimal(12), Decimal(8), Decimal(40), Decimal(24)),  # the newest
+        ("M2", "1500", Decimal(3), None, Decimal(9), None),
+        ("M9", "1300", Decimal(1), Decimal(1), Decimal(1), Decimal(1)),  # a material-plant nobody asked for
+    ]
+    session = RecordingSession(rows)
+    found = repository.fetch_alternatives(session, [("M1", "1300"), ("M2", "1500")])
+    assert set(found) == {("M1", "1300"), ("M2", "1500")}
+    assert found[("M1", "1300")] == repository.MinMaxAlternative(Decimal(12), Decimal(8), Decimal(40), Decimal(24))
+    assert found[("M2", "1500")].recommended_rop is None  # kept as None: never turned into 0
+    text = sql(session.statements[0])
+    assert text.startswith("SELECT") and "i7_recommendation" in text and "is_oar" in text
+    assert not any(word in text.upper() for word in ("INSERT", "UPDATE", "DELETE"))
+
+
+def test_asking_for_no_alternatives_asks_the_database_nothing():
+    session = RecordingSession()
+    assert repository.fetch_alternatives(session, []) == {}
+    assert session.statements == []

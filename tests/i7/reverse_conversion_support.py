@@ -28,6 +28,7 @@ def attr(
     mabst: float | None = 9,
     deleted: bool | None = False,
     description: str | None = "TEST PART",
+    currency: str | None = "ZAR",
 ) -> AttributeRow:
     def dec(value):
         return None if value is None else Decimal(str(value))
@@ -44,6 +45,7 @@ def attr(
         minbe=dec(minbe),
         mabst=dec(mabst),
         deletion_flag=deleted,
+        currency=currency,
     )
 
 
@@ -61,7 +63,9 @@ class FakeSource:
         *,
         latest_staged_month: date | None = date(2026, 11, 1),
         data_loaded_at: datetime | None = None,
+        changes: dict[tuple[str, str], date] | None = None,
     ) -> None:
+        self._changes = changes or {}
         self._attributes = attributes
         self._movements = movements or {}
         self._latest = latest_staged_month
@@ -82,6 +86,10 @@ class FakeSource:
     def material_consumption(self, material: str, plant: str, anchor: date, first_month: date) -> list[MonthlyMovement]:
         self.calls["material_consumption"] += 1
         return [m for m in self._movements.get((material, plant), []) if first_month <= m.period <= anchor]
+
+    def group_changes(self) -> dict[tuple[str, str], date]:
+        self.calls["group_changes"] += 1
+        return dict(self._changes)
 
     def latest_staged_month(self) -> date | None:
         self.calls["latest_staged_month"] += 1

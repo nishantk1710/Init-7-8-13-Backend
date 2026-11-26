@@ -1086,6 +1086,14 @@ class Settings(BaseSettings):
     i7_reverse_anchor_month: str | None = None
     i7_reverse_anchor_source: Literal["configured", "csv_extract"] = "configured"
 
+    # --- I07 conversion cooldown --------------------------------------------------------------
+    #
+    # Months a material is left alone after it changes between Min-Max and OAR: it is not recommended
+    # for conversion back during that time. The change is seen by the pipeline's reverse_conversion
+    # stage (the material's MRP type group differs from the last run's), so a change is dated from
+    # the run that saw it, not from SAP. 0 turns the cooldown off.
+    i7_conversion_cooldown_months: int = 12
+
     # --- I07 OAR donor similarity: retrieval -------------------------------
     #
     # Operational knobs for app/initiatives/i7/oar/retrieval.py. They decide how

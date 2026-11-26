@@ -12,7 +12,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
-from sqlalchemy import Select, and_, case, exists, func, or_, select
+from sqlalchemy import Select, and_, case, exists, func, not_, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,7 @@ from app.api.i7.actor import Actor, get_i7_actor
 from app.api.i7.deps import get_session, load_latest_recommendation
 from app.initiatives.i7.kpi_formulas.resolved import load_active
 from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql
+from app.initiatives.i7.kpi_formulas.stock_to_oar import eligible_for_oar, oar_release_positive, stock_item_row
 from app.initiatives.i7.kpi_formulas.working_capital import working_capital_impact
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations import oar_exclusions, routing
@@ -58,6 +59,20 @@ from app.schemas.i7.recommendations import (
 )
 
 router = APIRouter(tags=["i7-recommendations"])
+
+ValueChange = Literal["released", "tied_up", "released_stock_oar", "released_overlap"]
+"""The Overview's Value Change filter (Stock item only).
+
+* ``released`` / ``tied_up`` -- the stock recommendation's own value change releases / ties up capital. Unchanged.
+* ``released_stock_oar`` -- Release Value (Stock + Stock item to OAR): each stock item counted once. An eligible-to-convert
+  one at its release if converted to OAR, every other at its Stock item release.
+* ``released_overlap`` -- Release Up (Overlap): the Stock item release PLUS the release if converted to OAR for those
+  eligible, so a material in both counts twice (the card says how many).
+
+The two new ones need the Min-Max -> OAR run to say which materials are eligible; see ``kpi_formulas.stock_to_oar``."""
+
+#: How each of the two new views values its population in the Working Capital figure (see working_capital_impact).
+STOCK_TO_OAR_MODE: dict[str, Literal["replace", "add"]] = {"released_stock_oar": "replace", "released_overlap": "add"}
 
 MAX_PAGE_SIZE = 200
 """A safe upper bound: the frontend renders a table, not a bulk export. A
@@ -211,7 +226,7 @@ def _apply_filters(
     actionable: bool | None = None,
     has_recommended: bool | None = None,
     adopted_in_sap: bool | None = None,
-    value_change: Literal["released", "tied_up"] | None = None,
+    value_change: ValueChange | None = None,
 ) -> Select:
     """Every filter here maps to a real, persisted column or a keyed lookup.
     Nothing that would require loading rows into Python to evaluate.
@@ -262,6 +277,18 @@ def _apply_filters(
         statement = statement.where(VALUE_CHANGE > 0)
     elif value_change == "tied_up":
         statement = statement.where(VALUE_CHANGE < 0)
+    elif value_change in STOCK_TO_OAR_MODE:
+        # Stock item to OAR views: stock items only. "Eligible" = the newest Min-Max -> OAR run says Convert to OAR (any
+        # confidence) and its newest conversion request was not rejected. The same population every card of the Overview
+        # then reads, so the working capital, excess, stockout, plant cards and adoption counts speak about the same materials.
+        eligible = eligible_for_oar()
+        if value_change == "released_stock_oar":
+            # Each material once: an eligible one if converting it would release capital, any other if its own change releases.
+            wanted = or_(and_(eligible, oar_release_positive()), and_(not_(eligible), VALUE_CHANGE > 0))
+        else:
+            # Everything the existing release view has, plus the eligible ones whose conversion would release.
+            wanted = or_(VALUE_CHANGE > 0, and_(eligible, oar_release_positive()))
+        statement = statement.where(stock_item_row(), wanted)
     if consumption_above_threshold:
         # Issued more than the policy's own count in the policy's trailing window (12 months) -- the threshold
         # stored on the row, not a literal, so it follows the policy. A row with no count (never
@@ -604,7 +631,7 @@ def list_recommendations(
         ),
     ] = None,
     value_change: Annotated[
-        Literal["released", "tied_up"] | None,
+        ValueChange | None,
         Query(
             description="released: only recommendations whose Value change releases working capital (unit price x "
             "(current ROP - recommended ROP) > 0). tied_up: only those that tie more up (< 0). One with no figure "
@@ -745,7 +772,7 @@ def export_recommendations(
     actionable: bool | None = None,
     has_recommended: bool | None = None,
     adopted_in_sap: bool | None = None,
-    value_change: Literal["released", "tied_up"] | None = None,
+    value_change: ValueChange | None = None,
 ) -> Response:
     # The same narrowing as the list, so the file is exactly the rows the table's filters select
     # (all pages of them), in the table's default order: newest first.
@@ -839,7 +866,7 @@ def get_recommendation_summary(
         Query(description="The page's display level; Low is every material that is not CRITICAL, IMPACT or INSURANCE."),
     ] = None,
     value_change: Annotated[
-        Literal["released", "tied_up"] | None,
+        ValueChange | None,
         Query(
             description="released / tied_up: only recommendations whose Value change releases working capital "
             "(ROP goes down) or ties more up (ROP goes up) -- the same filter the list takes."
@@ -979,7 +1006,7 @@ def get_recommendation_summary(
     # One shared calculation with the Quarterly Report (kpi_formulas.working_capital): MBEW price and
     # currency, ZAR (and NAD at 1:1) only, stated in ZAR with how many material-plants it covers.
     formulas = load_active(session)
-    capital = working_capital_impact(session, base, formulas)
+    capital = working_capital_impact(session, base, formulas, stock_to_oar=STOCK_TO_OAR_MODE.get(value_change or ""))
     net_rop_value_row = capital.amount
 
     # --- High Stockout Risk: stock on hand < average daily consumption x lead time --
@@ -1033,6 +1060,7 @@ def get_recommendation_summary(
         working_capital_currency=capital.currency,
         working_capital_included_count=capital.included_count,
         working_capital_excluded_count=capital.excluded_count,
+        working_capital_overlap_count=capital.overlap_count,
         critical_stockout_risk_count=stockout_risk.at_risk,
         stockout_risk_evaluated_count=stockout_risk.evaluated,
         stockout_risk_insufficient_data_count=stockout_risk.insufficient_data,
