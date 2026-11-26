@@ -21,6 +21,7 @@ from app.api.i7 import (
     recommendations,
     reports,
     reverse_conversion,
+    reverse_conversion_requests,
     runs,
 )
 
@@ -60,3 +61,5 @@ router.include_router(kpi_formulas.router)
 # /reverse-conversion (Min-Max -> OAR recommendations) is its own prefix and shares no code with the
 # OAR -> Min-Max conversion, so registration order against recommendations.router does not matter.
 router.include_router(reverse_conversion.router)
+# Its requests and approvals: /reverse-conversion/requests, a literal sub-prefix of the same prefix.
+router.include_router(reverse_conversion_requests.router)

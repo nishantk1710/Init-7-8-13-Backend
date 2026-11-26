@@ -1,30 +1,28 @@
-"""Min-Max -> OAR recommendations: list and CSV export.
+"""Min-Max -> OAR recommendations: list, CSV export and a material's consumption.
 
-Read-only. Nothing is stored, approved, executed or written back to SAP: each request returns the
-recommendations computed from the staged consumption and the reverse-conversion policy, as of the
-calculation anchor (the latest complete month), and says which anchor and thresholds it used.
+Read-only toward SAP. The recommendations are the ones the pipeline's ``reverse_conversion`` stage stored (the
+newest run), as of the calculation month it recorded; every response says which month, which run and which
+thresholds. Before the first run there is nothing to show and the list answers 409 ``REVERSE_NOT_BUILT``.
 
 Independent of the OAR -> Min-Max conversion: this router shares no code with it and sits under its own
-prefix, ``/reverse-conversion``, so no ``/recommendations/{id}`` route can read it as an id.
-
-The ``anchor`` query parameter (``YYYY-MM``) re-runs the calculation as of an earlier complete month, for
-reproducible results (a planner-review sample, a regression check). It is validated: a month with no
-staged data, or one that had not ended when the data was loaded, is refused.
+prefix, ``/reverse-conversion``, so no ``/recommendations/{id}`` route can read it as an id. The requests to
+convert a material, and their approval, are in ``reverse_conversion_requests.py``.
 """
 
+from collections.abc import Callable
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.core.criticality import CriticalityTier
 from app.core.db import get_db
 from app.initiatives.i7.policy.reverse_conversion import current_reverse_conversion_policy
-from app.initiatives.i7.reverse_conversion.errors import AnchorError
 from app.initiatives.i7.reverse_conversion.export import rows_to_csv
 from app.initiatives.i7.reverse_conversion.metrics import add_months
+from app.initiatives.i7.reverse_conversion import repository
+from app.initiatives.i7.reverse_conversion.snapshot import latest_request_briefs, load_latest_report
 from app.initiatives.i7.reverse_conversion.service import (
     CATEGORY_BY_CODE,
     CONFIDENCE_BY_CODE,
@@ -36,16 +34,17 @@ from app.initiatives.i7.reverse_conversion.service import (
     SqlSource,
     apply_filters,
     consumption_series,
-    get_report,
     paginate,
 )
 from app.schemas.i7.errors import ApiError, bad_request
 from app.schemas.i7.reverse_conversion import (
     ReverseConsumptionMonth,
     ReverseConsumptionResponse,
+    ReverseMinMaxAlternative,
     ReversePolicyInfo,
     ReverseRecommendation,
     ReverseRecommendationsResponse,
+    ReverseRequestBrief,
     build_anchor,
     build_reconciliation,
     build_summary,
@@ -102,20 +101,58 @@ def _filters(
     )
 
 
-def _report(source: ReverseConversionSource, anchor: str | None) -> ReverseReport:
-    settings = get_settings()
-    try:
-        return get_report(
-            source,
-            current_reverse_conversion_policy(),
-            override_month=anchor,
-            configured_month=settings.i7_reverse_anchor_month,
-            anchor_source=settings.i7_reverse_anchor_source,
+def get_reverse_report(session: Annotated[Session, Depends(get_db)]) -> ReverseReport:
+    """The newest stored run as a report. A dependency so tests can hand in a calculated one."""
+    report = load_latest_report(session)
+    if report is None:
+        raise ApiError(
+            409,
+            "REVERSE_NOT_BUILT",
+            "The Min-Max to OAR recommendation has not been built yet. It is built by the pipeline after the OAR step; "
+            "if it has run, check that a calculation month is set (I7_REVERSE_ANCHOR_MONTH) and loaded.",
         )
-    except AnchorError as exc:
-        if anchor:
-            raise bad_request("REVERSE_ANCHOR_INVALID", str(exc), anchor=anchor) from exc
-        raise ApiError(409, "REVERSE_ANCHOR_UNAVAILABLE", str(exc)) from exc
+    return report
+
+
+BriefLookup = Callable[[list[tuple[str, str]]], dict[tuple[str, str], tuple[int, str, str | None]]]
+
+
+def get_brief_lookup(session: Annotated[Session, Depends(get_db)]) -> BriefLookup:
+    """How a list finds each material-plant's newest conversion request. A dependency so tests can hand in a fake."""
+    return lambda keys: latest_request_briefs(session, keys)
+
+
+AlternativeLookup = Callable[[list[tuple[str, str]]], dict[tuple[str, str], repository.MinMaxAlternative]]
+
+#: Confidence levels that show the Stock item recommendation beside Convert to OAR. High is sure enough to stand alone.
+ALTERNATIVE_SHOWN_FOR = frozenset({"Medium", "Low"})
+
+
+def get_alternative_lookup(session: Annotated[Session, Depends(get_db)]) -> AlternativeLookup:
+    """How a list finds the Stock item recommendation of a material-plant. A dependency so tests can hand in a fake."""
+    return lambda keys: repository.fetch_alternatives(session, keys)
+
+
+def _alternatives(lookup: AlternativeLookup, rows) -> dict[tuple[str, str], ReverseMinMaxAlternative]:
+    """The Stock item recommendation beside each Medium or Low confidence row of the page, in one query."""
+    wanted = [(row.material, row.plant) for row in rows if row.confidence is not None and row.confidence.value in ALTERNATIVE_SHOWN_FOR]
+    return {
+        key: ReverseMinMaxAlternative(
+            current_rop=found.current_rop,
+            recommended_rop=found.recommended_rop,
+            current_max_stock=found.current_max_stock,
+            recommended_max_stock=found.recommended_max_stock,
+        )
+        for key, found in lookup(wanted).items()
+    }
+
+
+def _briefs(lookup: BriefLookup, rows) -> dict[tuple[str, str], ReverseRequestBrief]:
+    """The newest conversion request of each listed material-plant, in one query."""
+    return {
+        key: ReverseRequestBrief(id=found[0], status=found[1], pending_role=found[2])
+        for key, found in lookup([(row.material, row.plant) for row in rows]).items()
+    }
 
 
 @router.get(
@@ -127,7 +164,9 @@ def _report(source: ReverseConversionSource, anchor: str | None) -> ReverseRepor
     "(High, Medium, Low); ranked inside its category by confidence then stock value. Read-only; returns the calculation anchor and the applied policy.",
 )
 def list_reverse_recommendations(
-    source: Annotated[ReverseConversionSource, Depends(get_reverse_source)],
+    report: Annotated[ReverseReport, Depends(get_reverse_report)],
+    lookup: Annotated[BriefLookup, Depends(get_brief_lookup)],
+    alternative_lookup: Annotated[AlternativeLookup, Depends(get_alternative_lookup)],
     category: CategoryCode | None = None,
     plant: str | None = None,
     reason: Annotated[str | None, Query(description="A reason code, e.g. `sparse_recurring_demand`.")] = None,
@@ -136,19 +175,23 @@ def list_reverse_recommendations(
     criticality: Annotated[str | None, Query(description="A criticality tier, or `unknown`.")] = None,
     lead_time_bucket: LeadTimeBucket | None = None,
     search: Annotated[str | None, Query(max_length=100, description="Part of a material number or description.")] = None,
-    anchor: Annotated[str | None, Query(max_length=7, description="Calculate as of this complete month, `YYYY-MM`.")] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 25,
 ) -> ReverseRecommendationsResponse:
     filters = _filters(category, plant, reason, criticality, lead_time_bucket, search, confidence, eligibility)
-    report = _report(source, anchor)
     matching = apply_filters(report.rows, filters)
+    page_rows = paginate(matching, page, page_size)
+    briefs = _briefs(lookup, page_rows)
+    alternatives = _alternatives(alternative_lookup, page_rows)
     return ReverseRecommendationsResponse(
         anchor=build_anchor(report),
         policy=ReversePolicyInfo(version=report.policy.policy_version, parameters=report.policy.parameters()),
         summary=build_summary(report),
         reconciliation=build_reconciliation(report),
-        items=[ReverseRecommendation.from_row(row) for row in paginate(matching, page, page_size)],
+        items=[
+            ReverseRecommendation.from_row(row, briefs.get((row.material, row.plant)), alternatives.get((row.material, row.plant)))
+            for row in page_rows
+        ],
         total=len(matching),
         page=page,
         page_size=page_size,
@@ -166,13 +209,12 @@ def list_reverse_recommendations(
 def reverse_recommendation_consumption(
     material: str,
     plant: str,
+    report: Annotated[ReverseReport, Depends(get_reverse_report)],
     source: Annotated[ReverseConversionSource, Depends(get_reverse_source)],
-    anchor: Annotated[str | None, Query(max_length=7, description="Calculate as of this complete month, `YYYY-MM`.")] = None,
 ) -> ReverseConsumptionResponse:
     policy = current_reverse_conversion_policy()
     if plant not in policy.plants:
         raise bad_request("REVERSE_PLANT_INVALID", f"Plant must be one of {', '.join(policy.plants)}.", plant=plant)
-    report = _report(source, anchor)
     if not any(row.material == material and row.plant == plant for row in report.rows):
         raise ApiError(404, "REVERSE_ROW_NOT_FOUND", "That material-plant is not in the Min-Max to OAR recommendation.")
     points = consumption_series(source, material, plant, report.anchor.month)
@@ -201,7 +243,7 @@ def reverse_recommendation_consumption(
     response_class=Response,
 )
 def export_reverse_recommendations(
-    source: Annotated[ReverseConversionSource, Depends(get_reverse_source)],
+    report: Annotated[ReverseReport, Depends(get_reverse_report)],
     category: CategoryCode | None = None,
     plant: str | None = None,
     reason: str | None = None,
@@ -210,10 +252,8 @@ def export_reverse_recommendations(
     criticality: str | None = None,
     lead_time_bucket: LeadTimeBucket | None = None,
     search: Annotated[str | None, Query(max_length=100)] = None,
-    anchor: Annotated[str | None, Query(max_length=7)] = None,
 ) -> Response:
     filters = _filters(category, plant, reason, criticality, lead_time_bucket, search, confidence, eligibility)
-    report = _report(source, anchor)
     content = rows_to_csv(apply_filters(report.rows, filters), report.anchor, report.policy)
     filename = f"i7-min-max-to-oar-{report.anchor.month:%Y-%m}.csv"
     return Response(

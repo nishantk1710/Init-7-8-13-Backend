@@ -75,6 +75,9 @@ STAGES: tuple[str, ...] = (
     "forecasting",
     "inventory",
     "oar",
+    # Min-Max -> OAR ("Convert to OAR"). After the OAR step and before the recommendations, as the business asked.
+    # Nothing downstream reads it, and it never fails the pipeline: a problem here is written to its own run row.
+    "reverse_conversion",
     "recommendations",
     # Last, and independent of the others: it rebuilds the usage table the High Stockout Risk card reads, so that
     # card is recalculated on every run like the rest. Last so that its failure cannot hold back a stage the
@@ -157,7 +160,7 @@ def _abandon_stale(session: Session, *, lock_held: bool) -> int:
 
 
 def _stage_callables() -> dict[str, Callable[[], object]]:
-    """The seven stage entry points, imported lazily.
+    """The eight stage entry points, imported lazily.
 
     Lazy because forecasting pulls in statsmodels and LightGBM: importing this
     module must stay cheap enough for the API process, which imports it to
@@ -169,6 +172,7 @@ def _stage_callables() -> dict[str, Callable[[], object]]:
     from app.initiatives.i7.inventory.service import run_inventory_calculations
     from app.initiatives.i7.oar.service import run_oar_similarity
     from app.initiatives.i7.recommendations.service import generate_recommendations
+    from app.initiatives.i7.reverse_conversion.snapshot import run_reverse_conversion
     from app.initiatives.i7.stockout_risk.stage import rebuild_stockout_risk_input
 
     return {
@@ -177,6 +181,7 @@ def _stage_callables() -> dict[str, Callable[[], object]]:
         "forecasting": run_forecasting,
         "inventory": run_inventory_calculations,
         "oar": run_oar_similarity,
+        "reverse_conversion": run_reverse_conversion,
         "recommendations": generate_recommendations,
         "stockout_risk": rebuild_stockout_risk_input,
     }
