@@ -51,13 +51,20 @@ def eligible_for_oar() -> Any:
             later.sap_material_number == Recommendation.sap_material_number,
             later.sap_plant_code == Recommendation.sap_plant_code,
         )
+        .correlate(Recommendation)
         .scalar_subquery()
     )
-    rejected = exists().where(
-        ReverseConversionRequest.sap_material_number == Recommendation.sap_material_number,
-        ReverseConversionRequest.sap_plant_code == Recommendation.sap_plant_code,
-        ReverseConversionRequest.status == REJECTED,
-        ReverseConversionRequest.id == newest_request,
+    # Correlated to the recommendation row of the outermost query. Left to auto-correlation, this nested EXISTS would pull
+    # in a fresh ``i7_recommendation`` of its own and be true for every row as soon as ANY material had a rejected request.
+    rejected = (
+        exists()
+        .where(
+            ReverseConversionRequest.sap_material_number == Recommendation.sap_material_number,
+            ReverseConversionRequest.sap_plant_code == Recommendation.sap_plant_code,
+            ReverseConversionRequest.status == REJECTED,
+            ReverseConversionRequest.id == newest_request,
+        )
+        .correlate(Recommendation)
     )
     return exists().where(
         ReverseRecommendation.run_id == newest_run,

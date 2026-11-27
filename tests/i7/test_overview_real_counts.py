@@ -26,13 +26,14 @@ from app.api.i7 import adoption as adoption_api
 from app.api.i7 import recommendations as recommendations_api
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun
 from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation, SapAdoptionResult
+from app.models.i7_reverse import ReverseConversionRequest, ReverseRecommendation, ReverseRun
 
 
 @pytest.fixture
 def db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     metadata = MetaData()
-    for model in (Recommendation, SapAdoptionResult, ApprovalLedgerEntry, ForecastRun, Forecast, ForecastBacktestPath):
+    for model in (Recommendation, SapAdoptionResult, ApprovalLedgerEntry, ForecastRun, Forecast, ForecastBacktestPath, ReverseRun, ReverseRecommendation, ReverseConversionRequest):
         copy = model.__table__.to_metadata(metadata)
         copy.indexes.clear()  # the models declare some indexes twice; SQLite refuses that
     metadata.create_all(engine)
