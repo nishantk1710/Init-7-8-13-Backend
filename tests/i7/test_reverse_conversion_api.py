@@ -431,6 +431,17 @@ def test_a_row_with_no_stock_item_recommendation_simply_has_no_alternative(clien
     assert items[medium]["min_max_alternative"] is None
 
 
+def test_a_stock_item_recommendation_with_no_recommended_values_shows_no_alternative(client):
+    """Nothing to compare with (recommended ROP and max stock both missing): the box is not shown at all."""
+    groups = _by_confidence(client)
+    empty, half = groups["medium"][0], groups["low"][0]
+    ALTERNATIVES[(empty, "1300")] = MinMaxAlternative(Decimal(1), None, Decimal(1), None)
+    ALTERNATIVES[(half, "1300")] = MinMaxAlternative(Decimal(1), Decimal(4), Decimal(1), None)  # one value is enough to compare
+    items = {(i["material"], i["plant"]): i for i in client.get(BASE, params={"page_size": 100}).json()["items"]}
+    assert items[(empty, "1300")]["min_max_alternative"] is None
+    assert items[(half, "1300")]["min_max_alternative"]["recommended_rop"] == "4"
+
+
 def test_a_not_eligible_row_has_no_alternative(client):
     for item in client.get(BASE, params={"eligibility": "not_eligible", "page_size": 100}).json()["items"]:
         assert item["min_max_alternative"] is None
