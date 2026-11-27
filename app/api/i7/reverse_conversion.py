@@ -134,7 +134,10 @@ def get_alternative_lookup(session: Annotated[Session, Depends(get_db)]) -> Alte
 
 
 def _alternatives(lookup: AlternativeLookup, rows) -> dict[tuple[str, str], ReverseMinMaxAlternative]:
-    """The Stock item recommendation beside each Medium or Low confidence row of the page, in one query."""
+    """The Stock item recommendation beside each Medium or Low confidence row of the page, in one query.
+
+    A Stock item recommendation with no recommended ROP and no recommended max stock (it could not be worked out) says
+    nothing to compare with, so no alternative is shown for it."""
     wanted = [(row.material, row.plant) for row in rows if row.confidence is not None and row.confidence.value in ALTERNATIVE_SHOWN_FOR]
     return {
         key: ReverseMinMaxAlternative(
@@ -144,6 +147,7 @@ def _alternatives(lookup: AlternativeLookup, rows) -> dict[tuple[str, str], Reve
             recommended_max_stock=found.recommended_max_stock,
         )
         for key, found in lookup(wanted).items()
+        if found.recommended_rop is not None or found.recommended_max_stock is not None
     }
 
 
