@@ -355,6 +355,14 @@ def _apply_filters(
             statement = statement.where(not_oar, _flagged_declining())
         else:
             statement = statement.where(not_oar, ~_flagged_declining())
+    stock_item_population = is_oar is False or demand_type in ("stock_item", "declining", "normal")
+    if stock_item_population and value_change not in STOCK_TO_OAR_MODE:
+        # A material eligible to convert to OAR is not a Stock item recommendation: its value would be released twice (once
+        # as a Stock item change, once as the conversion). Its recommended ROP and Max stock are still calculated and stored
+        # -- the Min-Max -> OAR page shows them as the alternative -- it is only left out of the Stock item lists and
+        # figures. Rejecting the conversion makes it not eligible, so it comes back. The Stock Item to OAR views above
+        # are the one place that reads these materials, so they are not narrowed here.
+        statement = statement.where(not_(eligible_for_oar()))
     return statement
 
 
@@ -1011,7 +1019,13 @@ def get_recommendation_summary(
     # One shared calculation with the Quarterly Report (kpi_formulas.working_capital): MBEW price and
     # currency, ZAR (and NAD at 1:1) only, stated in ZAR with how many material-plants it covers.
     formulas = load_active(session)
-    capital = working_capital_impact(session, base, formulas, stock_to_oar=STOCK_TO_OAR_MODE.get(value_change or ""))
+    stock_to_oar = STOCK_TO_OAR_MODE.get(value_change or "")
+    if stock_to_oar is None and is_oar is None:
+        # "All" (OAR + Stock item together): a stock item that is eligible to convert to OAR is counted once, as a Convert to
+        # OAR material -- at the release its conversion would give -- not as a Stock item. A Stock item or OAR request keeps
+        # its own calculation.
+        stock_to_oar = "replace"
+    capital = working_capital_impact(session, base, formulas, stock_to_oar=stock_to_oar)
     net_rop_value_row = capital.amount
 
     # --- High Stockout Risk: stock on hand < average daily consumption x lead time --
