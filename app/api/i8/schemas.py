@@ -866,6 +866,55 @@ class CodingCandidateResponse(I8Model):
 # --- Diagnostics ----------------------------------------------------------
 
 
+class SourceTableLoad(I8Model):
+    """One source table and when it last loaded successfully."""
+
+    table: str
+    loaded_at: datetime | None = None
+    """None for a table that has never loaded -- a different thing from one
+    that loaded long ago, and the reason this is served per table at all."""
+
+
+class FreshnessResponse(I8Model):
+    """How current the I08 screens are, answerable while a build is running.
+
+    Served apart from ``/snapshot`` because that route takes the snapshot as a
+    dependency and 503s until one exists. Every I08 screen asks for this on
+    page view, so it must answer during a cold start too -- which is precisely
+    when somebody wants to know why the numbers look odd.
+    """
+
+    reference_date: date
+    loaded_at: datetime | None = None
+    """The OLDEST source load behind the data on screen: everything is at
+    least this fresh.
+
+    Deliberately not the newest. One table loading this morning would
+    otherwise make the screen read "updated this morning" while another had
+    stopped loading weeks before -- a failure I08 has actually had
+    (raw_resb, 3-Nov-2026)."""
+
+    newest_loaded_at: datetime | None = None
+    """The newest source load. Equal to ``loaded_at`` when everything loaded
+    together, which is the healthy case; the gap between them is the finding."""
+
+    tables: list[SourceTableLoad] = []
+    """Every source table, oldest load first, so the screen can name the one
+    that is behind rather than only saying that one is."""
+
+    coverage_to: date | None = None
+    """The newest activity the data holds -- creations and postings only, so
+    it is not pushed into the future by dates something is merely WANTED by.
+    None until a snapshot has been built, because it is measured there.
+
+    The counterpart to ``loaded_at``, and it takes the newest where that takes
+    the oldest: each is the bound that cannot overstate freshness. A load time
+    says when we last pulled; this says how far what we pulled reaches."""
+
+    built_at: datetime | None = None
+    building_since: datetime | None = None
+
+
 class SnapshotInfo(I8Model):
     reference_date: date
     built_at: datetime
