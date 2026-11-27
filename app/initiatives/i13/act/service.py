@@ -548,7 +548,7 @@ def _detect_not_issued(
                 threshold_days=threshold_days,
                 final_issued=key in final_issued,
                 planned_start=plan.planned_use_date,
-                created_on=created_by_reservation.get(key),
+                created_on=created_by_reservation.get(key) or first.created_on,
             )
             if linked
             else None

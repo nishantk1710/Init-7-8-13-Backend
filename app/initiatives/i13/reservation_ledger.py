@@ -165,6 +165,7 @@ def _attach_reservation(
                 plant=plant,
                 reservation_quantity=reservation_quantity,
                 requirement_date=requirement_date,
+                created_on=reservation.get("Crdat"),
                 pr_number=banfn,
                 pr_item=bnfpo,
                 po_number=po_number,

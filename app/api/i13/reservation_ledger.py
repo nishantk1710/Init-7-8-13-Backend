@@ -29,7 +29,7 @@ from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.initiatives.i13.uat import SIMULATED_RANGE_START
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
-from app.integrations.sap.postgres_reservation import PostgresReservationRepository, reservation_created_dates
+from app.integrations.sap.postgres_reservation import PostgresReservationRepository
 from app.schemas.i13 import ReservationLedgerEntryResponse
 from app.shared.material_scope import MaterialScope
 
@@ -78,23 +78,21 @@ def _session_links(db: Session) -> tuple[dict[tuple[str, str], str], dict[str, s
 
 
 class _Dates:
-    """When each reservation on a page was made (RESB-CRDAT), and the planned
-    window of the assistant session it is linked to -- read for that page only.
-
-    SAP's requirement date (RESB-BDTER) was the day the reservation was made on
-    every assistant reservation on prod (25-Nov-2026), and on about half of all
-    2026 reservations, so the screen shows both, and the plan's window as the
-    date an assistant reservation is required by."""
+    """The planned window of the assistant session each reservation on a page
+    is linked to (read for that page only -- the plan table is small), and the
+    reservation's created date (RESB-CRDAT), which the ledger entry carries
+    from the build. SAP pre-fills its requirement date (RESB-BDTER) from the
+    created date: equal on every assistant reservation on prod (25-Nov-2026),
+    so the screen reads the plan's window for those."""
 
     def __init__(self, db: Session, entries, sessions: Mapping[tuple[str, str], str]):
         keys = [(e.reservation_number, e.reservation_item) for e in entries]
-        self.created = reservation_created_dates(db, keys)
         self.windows = session_plan_windows(db, {sessions[k] for k in keys if k in sessions})
 
-    def fields(self, key: tuple[str, str], session_id: str | None) -> dict:
+    def fields(self, entry: ReservationLedgerEntry, session_id: str | None) -> dict:
         window = self.windows.get(session_id) if session_id else None
         return {
-            "created_date": self.created.get(key),
+            "created_date": entry.created_on,
             "plan_recorded": window is not None,
             "planned_start": window[0] if window else None,
             "planned_end": window[1] if window else None,
@@ -129,7 +127,7 @@ def _to_response(
             else False,
             "issued_before_history": issued_before_history(entry, history_start),
             "movement_history_start": history_start,
-            **(dates.fields(key, session_id) if dates is not None else {}),
+            **(dates.fields(entry, session_id) if dates is not None else {}),
         }
     )
 
