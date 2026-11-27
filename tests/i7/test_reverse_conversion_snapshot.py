@@ -201,7 +201,7 @@ def test_a_reason_written_by_the_model_is_stored_and_read_back_as_ai_and_the_res
         rationale,
         "complete_with_prompt",
         lambda prompt_id, **values: Completion(
-            text="What we saw: Used rarely.\nWhat it means: Ordering when needed fits.\nWhat to do: Convert it.",
+            text="It was used rarely, so ordering only when needed suits it.",
             model="gpt-fake",
             provider="foundry",
         ),
@@ -213,7 +213,7 @@ def test_a_reason_written_by_the_model_is_stored_and_read_back_as_ai_and_the_res
     others = [r for r in report.rows if r.category is not Cat.RECOMMENDED_FOR_OAR]
     assert recommended and others
     assert {r.points_source for r in recommended} == {"AI_GENERATED"}
-    assert all(dict(r.points)["What we saw"] == "Used rarely." for r in recommended)
+    assert all(r.detail == "It was used rarely, so ordering only when needed suits it." and r.points == () for r in recommended)
     assert {r.points_source for r in others} == {"DETERMINISTIC_FALLBACK"}
 
 

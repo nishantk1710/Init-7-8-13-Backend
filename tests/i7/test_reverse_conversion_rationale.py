@@ -1,4 +1,4 @@
-"""Convert to OAR reasons written by a model, with the standard wording as the fallback.
+"""Convert to OAR reasons written by a model as one paragraph, with the standard wording as the fallback.
 
 No network: ``complete_with_prompt`` is replaced by a fake that answers (or fails) as a provider would."""
 
@@ -40,29 +40,30 @@ def answering(text, provider="foundry"):
 
 def good_text(row):
     """An answer that keeps only the facts the standard wording already holds."""
-    saw, means, todo = (dict(row.points)[label] for label in rationale.LABELS)
-    return f"What we saw: {saw}\nWhat it means: {means}\nWhat to do: {todo}"
+    points = dict(row.points)
+    return f"{points['What we saw']} {points['What it means']}"
 
 
 def recommended():
     return next(r for r in rows() if r.category is Cat.RECOMMENDED_FOR_OAR)
 
 
-def test_a_model_answer_in_the_three_line_shape_replaces_the_wording_and_is_labelled_ai(monkeypatch):
+def test_a_model_paragraph_becomes_the_reason_and_is_labelled_ai(monkeypatch):
     row = recommended()
-    reworded = "What we saw: Used on a few occasions this year.\nWhat it means: Ordering when needed fits.\nWhat to do: Convert it."
+    reworded = "The material was used only on a few occasions.\n It is not needed regularly, so ordering when required suits it."
     monkeypatch.setattr(rationale, "complete_with_prompt", answering(reworded))
     (out,) = rationale.explain_rows([row], workers=1)
     assert out.points_source == rationale.SOURCE_AI
-    assert [label for label, _ in out.points] == list(rationale.LABELS)
-    assert out.points[0][1] == "Used on a few occasions this year."
+    assert out.detail == "The material was used only on a few occasions. It is not needed regularly, so ordering when required suits it."
+    assert out.points == ()  # one paragraph, no labelled lines beside it
 
 
 def test_the_decision_itself_is_never_changed(monkeypatch):
     row = recommended()
     monkeypatch.setattr(rationale, "complete_with_prompt", answering(good_text(row)))
     (out,) = rationale.explain_rows([row], workers=1)
-    assert replace(out, points=row.points, points_source=row.points_source) == row
+    assert out.points_source == rationale.SOURCE_AI
+    assert replace(out, detail=row.detail, points=row.points, points_source=row.points_source) == row
 
 
 def test_the_stub_provider_is_not_labelled_ai(monkeypatch):
@@ -70,28 +71,31 @@ def test_the_stub_provider_is_not_labelled_ai(monkeypatch):
     monkeypatch.setattr(rationale, "complete_with_prompt", answering(good_text(row), provider="stub"))
     (out,) = rationale.explain_rows([row], workers=1)
     assert out.points_source == rationale.SOURCE_FALLBACK
-    assert out.points == row.points
+    assert out.points == row.points and out.detail == row.detail
 
 
 @pytest.mark.parametrize(
     "text",
     [
         "",
-        "Some paragraph that has none of the three labels.",
-        "What we saw: only one line",
+        "- a bullet\n- another bullet",
+        "# Heading\nSome text",
+        "What we saw: it still has the old label",
+        "It sat at the anchor month for a while.",
+        "A very long answer. " * 60,
     ],
 )
-def test_an_answer_not_in_the_shape_keeps_the_standard_wording(monkeypatch, text):
+def test_an_answer_that_is_not_one_plain_paragraph_keeps_the_standard_wording(monkeypatch, text):
     row = recommended()
     monkeypatch.setattr(rationale, "complete_with_prompt", answering(text))
     (out,) = rationale.explain_rows([row], workers=1)
     assert out.points_source == rationale.SOURCE_FALLBACK
-    assert out.points == row.points
+    assert out.points == row.points and out.detail == row.detail
 
 
 def test_an_answer_with_a_figure_that_was_not_given_is_not_trusted(monkeypatch):
     row = recommended()
-    invented = "What we saw: It was issued 987 times.\nWhat it means: Fine.\nWhat to do: Convert it."
+    invented = "It was issued 987 times, so ordering when needed suits it."
     monkeypatch.setattr(rationale, "complete_with_prompt", answering(invented))
     (out,) = rationale.explain_rows([row], workers=1)
     assert out.points_source == rationale.SOURCE_FALLBACK
@@ -140,4 +144,6 @@ def test_the_prompt_renders_with_the_variables_the_module_supplies():
     """A missing or extra placeholder raises at render time; this is the check that the two agree."""
     from app.core.prompts import get_prompt
 
-    get_prompt(rationale.PROMPT_ID).render(**rationale._context(recommended()))
+    prompt = get_prompt(rationale.PROMPT_ID)
+    assert prompt.version == 2
+    prompt.render(**rationale._context(recommended()))
