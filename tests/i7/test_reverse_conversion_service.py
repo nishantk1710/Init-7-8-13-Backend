@@ -255,6 +255,28 @@ def test_search_matches_the_description_too():
     assert [r.material for r in apply_filters(rows, ListFilters(search="sulphur"))] == ["A1"]
 
 
+def test_search_matches_each_word_in_any_order_ignoring_punctuation():
+    placed = {("A1", "1300"): sparse(month(2026, 5)), ("A2", "1300"): sparse(month(2026, 5)), ("A3", "1300"): sparse(month(2026, 5))}
+    source = FakeSource(
+        [
+            attr("A1", description='ORIFICE, PRESSURE 1 PLUG, 2MM 1/8"'),
+            attr("A2", description="GEAR GIRTH BALLMILL"),
+            attr("A3", description="HOSE"),
+        ],
+        placed,
+    )
+    rows = report_for(source).rows
+
+    def found(text):
+        return [r.material for r in apply_filters(rows, ListFilters(search=text))]
+
+    assert found("orifice pressure 1 plug 2mm") == ["A1"]
+    assert found("2mm plug") == ["A1"]
+    assert found("gear girth ball mill") == ["A2"]
+    assert found("orifice hose") == []
+    assert sorted(found(" , ")) == ["A1", "A2", "A3"]  # punctuation only: nothing to search for
+
+
 def test_no_filter_returns_everything():
     rows = report_for().rows
     assert len(apply_filters(rows, ListFilters())) == len(rows)

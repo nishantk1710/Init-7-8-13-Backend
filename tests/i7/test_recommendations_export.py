@@ -23,6 +23,7 @@ def _row(**over):
         "Recommended ROP": Decimal("12"),
         "Recommended Safety Stock": Decimal("3.250"),
         "Recommended Max Stock": Decimal("40"),
+        "Counted in Working Capital": "Yes",
         "Reason": "Sized from similar materials.",
     }
     base.update(over)
@@ -64,9 +65,21 @@ def test_control_characters_do_not_break_the_file():
 def test_header_is_frozen_and_filterable_and_reason_wraps():
     sheet = _sheet([_row(), _row()])
     assert sheet.freeze_panes == "A2"
-    assert sheet.auto_filter.ref == "A1:M3"
+    assert sheet.auto_filter.ref == "A1:N3"
     assert sheet.cell(2, len(COLUMNS)).alignment.wrap_text is True
     assert sheet.cell(1, 1).font.bold is True
+
+
+def test_counted_in_working_capital_says_yes_or_no_with_the_reason():
+    from app.initiatives.i7.reporting.recommendations_export import counted_label
+
+    assert counted_label(True) == "Yes"
+    assert counted_label(False, "no price") == "No - no price"
+    assert counted_label(False) == "No"
+    sheet = _sheet([_row(), _row(**{"Counted in Working Capital": counted_label(False, "no price")})])
+    column = COLUMNS.index("Counted in Working Capital") + 1
+    assert [sheet.cell(2, column).value, sheet.cell(3, column).value] == ["Yes", "No - no price"]
+    assert COLUMNS.index("Counted in Working Capital") < COLUMNS.index("Reason")  # the wide reason stays last
 
 
 def test_no_rows_still_gives_a_valid_workbook_with_headers():

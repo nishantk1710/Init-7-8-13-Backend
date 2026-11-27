@@ -17,6 +17,17 @@ from openpyxl.utils import get_column_letter
 
 SHEET_NAME = "Recommendations"
 
+COUNTED_YES = "Yes"
+"""The "Counted in Working Capital" cell of a row the Overview's Working Capital card includes. A row it leaves out
+reads ``No - <reason>`` (see :func:`counted_label`), so the column can be filtered on "Yes" or "No"."""
+
+
+def counted_label(counted: bool, why_not: str | None = None) -> str:
+    """The cell for "Counted in Working Capital": ``Yes``, or ``No - <reason>``."""
+    if counted:
+        return COUNTED_YES
+    return f"No - {why_not}" if why_not else "No"
+
 COLUMNS: tuple[str, ...] = (
     "Material Number",
     "Material Description",
@@ -30,11 +41,12 @@ COLUMNS: tuple[str, ...] = (
     "Recommended ROP",
     "Recommended Safety Stock",
     "Recommended Max Stock",
+    "Counted in Working Capital",
     "Reason",
 )
 
 # Column widths (characters), in COLUMNS order. The reason wraps inside its own wide column.
-_WIDTHS = (18, 38, 9, 16, 12, 18, 14, 16, 14, 14, 18, 16, 80)
+_WIDTHS = (18, 38, 9, 16, 12, 18, 14, 16, 14, 14, 18, 16, 34, 80)
 _FIRST_QUANTITY, _LAST_QUANTITY = 7, 12  # 1-based columns Current ROP .. Recommended Max Stock
 _REASON = len(COLUMNS)
 
