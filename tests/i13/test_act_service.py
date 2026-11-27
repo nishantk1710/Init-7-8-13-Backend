@@ -985,6 +985,16 @@ def test_a_plan_s_window_start_is_measured_not_sap_s_requirement_date() -> None:
     assert exception.reason.startswith("Planned use from 2026-10-20")
 
 
+def test_the_created_date_is_read_from_the_ledger_entry_itself() -> None:
+    """27-Nov-2026: RESB-CRDAT comes with the ledger entry from the build; detection
+    looks nothing up. Reserved 1 Oct, planned use from 20 Oct: measured from 20 Oct."""
+    entry = _ledger_entry(requirement_date=date(2026, 10, 1), created_on=date(2026, 10, 1))
+    plan = _request_line(planned_use_date=date(2026, 10, 20), window_end=date(2027, 10, 20))
+    repository, _ = _detect_not_issued([entry], plans=[plan], as_of=datetime(2026, 11, 19, tzinfo=UTC))
+    exception = repository.get(NOT_ISSUED_ID)
+    assert exception.evidence["basis"] == "PLANNED" and exception.evidence["since"] == "2026-10-20"
+
+
 def test_a_requirement_date_typed_in_sap_comes_before_the_plan_s_window() -> None:
     # Reserved 1 Oct with 15 Oct typed as the requirement date; the plan says 20 Oct.
     entry = _ledger_entry(requirement_date=date(2026, 10, 15))

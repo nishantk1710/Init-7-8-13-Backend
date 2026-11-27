@@ -160,7 +160,8 @@ def _statements(w: WorkTables) -> list[tuple[str, str, list[str]]]:
             (f"SELECT {_key('reservation')}, item_no_stock_transfer_reserv, item_deleted, final_issue, "
             f"{_key('material')}, {_key('plant')}, storage_location, requirement_date, requirement_quantity, "
             f"base_unit_of_measure, quantity_withdrawn, value_withdrawn, {_key('purchase_requisition')}, "
-            'item_of_requisition, "order", movement_type, receiving_plant, receiving_stor_loc, goods_recipient, text '
+            'item_of_requisition, "order", movement_type, receiving_plant, receiving_stor_loc, goods_recipient, text, '
+            "created_on "
             f"INTO {w.resb} "
             f"FROM n_resb WHERE material <> '' AND plant <> '' AND {plant}"),
             ["material, plant", "reservation", "purchase_requisition"],
