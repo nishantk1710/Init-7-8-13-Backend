@@ -43,6 +43,7 @@ from app.api.i8.mappers import (
     universe_meta,
 )
 from app.api.i8.schemas import (
+    FreshnessResponse,
     JobMovementItem,
     SessionJobRepair,
     SessionJobReservation,
@@ -61,6 +62,7 @@ from app.api.i8.schemas import (
     RepairEvidenceItem,
     RepairRequestEvidenceItem,
     SnapshotInfo,
+    SourceTableLoad,
     UniverseDetail,
     UniverseResponse,
 )
@@ -84,6 +86,7 @@ from app.initiatives.i8.service import (
     SnapshotBuilding,
     SnapshotFailed,
     cached_snapshot,
+    freshness,
     get_attestation_view,
     get_coding_screen,
     get_snapshot,
@@ -1070,6 +1073,34 @@ def get_coding_candidates(
 
 
 # --- Diagnostics -----------------------------------------------------------
+
+
+@router.get(
+    "/status",
+    response_model=FreshnessResponse,
+    summary="How current the I08 screens are",
+)
+def get_freshness(db: Session = Depends(get_db)) -> FreshnessResponse:
+    """When the data on the I08 screens was loaded, and how far it reaches.
+
+    Takes ``db``, NOT ``SnapshotDep``. Every I08 screen asks for this on page
+    view, and a route that waits for the snapshot would 503 for the ~90s a
+    build takes -- removing the freshness note from every screen at the one
+    moment it is worth reading. ``builtAt`` is null and ``buildingSince`` set
+    while that is happening, which is what the screen says instead.
+    """
+    state = freshness(db)
+    return FreshnessResponse(
+        reference_date=state.reference_date,
+        loaded_at=state.loaded_at,
+        newest_loaded_at=state.newest_loaded_at,
+        tables=[
+            SourceTableLoad(table=t.table, loaded_at=t.loaded_at) for t in state.tables
+        ],
+        coverage_to=state.coverage_to,
+        built_at=state.built_at,
+        building_since=state.building_since,
+    )
 
 
 @router.get(

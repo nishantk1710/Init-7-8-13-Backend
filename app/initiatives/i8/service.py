@@ -43,7 +43,8 @@ import time
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -122,6 +123,17 @@ SOURCE_TABLES: tuple[str, ...] = (
 
 
 @dataclass(frozen=True)
+class TableLoad:
+    """When one source table last loaded successfully."""
+
+    table: str
+    loaded_at: datetime | None
+    """None for a table that has never loaded at all -- which is not the same
+    as one that loaded long ago. ``criticality_current`` is None wherever no
+    ZMM065 report has been uploaded yet."""
+
+
+@dataclass(frozen=True)
 class SourceState:
     """What the raw layer looked like at one moment."""
 
@@ -129,9 +141,29 @@ class SourceState:
     """Opaque; only ever compared for equality."""
 
     loaded_at: datetime | None
-    """The newest successful load across :data:`SOURCE_TABLES`, or None when
-    none has ever run. Served to the UI so a screen can say how fresh its data
-    is instead of naming a source it has no way to see."""
+    """The NEWEST successful load across :data:`SOURCE_TABLES`, or None when
+    none has ever run.
+
+    Kept as the newest because that is what the fingerprint log reports: the
+    raw layer moved at this time. It is the wrong number to put in front of a
+    user on its own -- see :attr:`oldest_loaded_at`."""
+
+    oldest_loaded_at: datetime | None = None
+    """The OLDEST successful load across the tables that have ever loaded.
+
+    This is what a screen may say, because it is the only claim that cannot
+    overstate how fresh the data is: everything behind the screen is at least
+    this recent. :attr:`loaded_at` says the opposite -- one table loading this
+    morning makes it read "this morning" even where another stopped loading
+    weeks ago, which is a failure I08 has actually had (raw_resb, 3-Nov-2026).
+
+    Tables that have never loaded are left out rather than making this None:
+    on a deployment with no criticality report uploaded, counting it would
+    erase the answer for every other table."""
+
+    per_table: tuple[TableLoad, ...] = ()
+    """Every source table and when it last loaded, oldest first, so a screen
+    can name the one that is behind instead of only saying that one is."""
 
 
 def source_state(db: Session, *, reference_date: date) -> SourceState:
@@ -157,10 +189,82 @@ def source_state(db: Session, *, reference_date: date) -> SourceState:
     parts = [f"{table}:{run_id}:{finished}" for table, run_id, finished in rows]
     parts.append(f"date:{reference_date.isoformat()}")
     loaded = [finished for _, _, finished in rows if finished is not None]
+    seen = {table: finished for table, _, finished in rows}
+    # Every table in SOURCE_TABLES, not only the ones with a run: a table that
+    # has never loaded is the most interesting row in the list.
+    #
+    # Never-loaded sorts last rather than first. It is a different statement
+    # from "loaded long ago", and ordering None as the oldest would bury the
+    # real laggard under tables nobody has ever filled.
+    per_table = tuple(
+        sorted(
+            (TableLoad(table=table, loaded_at=seen.get(table)) for table in SOURCE_TABLES),
+            key=lambda t: (
+                t.loaded_at is None,
+                t.loaded_at or datetime.min.replace(tzinfo=timezone.utc),
+            ),
+        )
+    )
     return SourceState(
         fingerprint="|".join(parts),
         loaded_at=max(loaded) if loaded else None,
+        oldest_loaded_at=min(loaded) if loaded else None,
+        per_table=per_table,
     )
+
+
+# The dates that say something HAPPENED, by the view that carries them. Only
+# postings and creations belong here.
+#
+# Not every date in the data is an activity date, and the difference is not
+# cosmetic: measured on the production copy (27-Nov-2026), EKET.EINDT reaches
+# 2030-09-30 and RESB.BDTER 2028-04-30, because both are dates something is
+# WANTED by. A watermark over "the newest date in the data" would tell the
+# user the register covers activity into 2030. These three agree with each
+# other -- all 2026-11-05 on that same copy -- which is what makes the number
+# worth showing at all.
+ACTIVITY_DATES: tuple[tuple[str, str], ...] = (
+    ("v_ekko", "aedat"),  # purchase order created
+    ("v_eban", "badat"),  # requisition raised
+    ("v_mseg", "budat"),  # goods movement posted
+)
+
+
+def activity_coverage(db: Session, *, reference_date: date) -> date | None:
+    """The newest activity the data holds: nothing after this has reached us.
+
+    The counterpart to :attr:`SourceState.oldest_loaded_at`, and it takes the
+    newest where that takes the oldest, for the same reason -- each is the
+    bound that cannot overstate freshness. A load time says when we last
+    pulled; this says how far what we pulled actually reaches, and the two
+    come apart whenever the feed goes quiet: on 27-Nov-2026 nonprod had loaded
+    90 seconds earlier and held nothing newer than 5-Nov.
+
+    Capped at ``reference_date``: a creation date in the future is a data
+    fault, and coverage running past today would read as a promise.
+
+    Run once per snapshot build, never per request. ``MAX`` over these views
+    is a full scan -- 815,335 EKPO rows on the production copy -- and this
+    number is shown on every I08 screen.
+    """
+    newest: date | None = None
+    for view, column in ACTIVITY_DATES:
+        try:
+            value = db.execute(text(f"select max({column}) from {view}")).scalar()
+        except SQLAlchemyError:
+            # One unreadable view must not cost the whole watermark: the others
+            # still bound it, and a missing view is the normalise step's problem.
+            logger.warning("I08 coverage: could not read max(%s) from %s", column, view)
+            continue
+        if value is None:
+            continue
+        if isinstance(value, datetime):
+            value = value.date()
+        if value > reference_date:
+            continue
+        if newest is None or value > newest:
+            newest = value
+    return newest
 
 
 @dataclass(frozen=True)
@@ -189,6 +293,18 @@ class Snapshot:
 
     source_loaded_at: datetime | None = None
     """When the newest of those tables last loaded successfully."""
+
+    source_oldest_loaded_at: datetime | None = None
+    """When the OLDEST of them did -- what a screen may show. See
+    :attr:`SourceState.oldest_loaded_at` for why it is not the newest."""
+
+    source_tables: tuple[TableLoad, ...] = ()
+    """Every source table and its last load, oldest first, so a screen can
+    name the one that is behind."""
+
+    coverage_to: date | None = None
+    """The newest activity in the data (:func:`activity_coverage`). None when
+    no activity view could be read."""
 
     repair_requests: tuple[RepairRequest, ...] = ()
     """Open repair PRs with no PO yet (requisitions.py), ordered by PR date.
@@ -267,6 +383,10 @@ def build_snapshot(
     # a difference and rebuilds. Recorded afterwards it would claim to be the
     # new data, and the mixture would never be corrected.
     source = source_state(db, reference_date=reference_date)
+    # Here rather than in the status endpoint: a MAX over the activity views is
+    # a full scan, and the chip that shows this renders on every I08 screen.
+    with timed_step("activity coverage"):
+        coverage = activity_coverage(db, reference_date=reference_date)
 
     settings = get_settings()
     staged = settings.i8_snapshot_staged if staged is None else staged
@@ -340,6 +460,9 @@ def build_snapshot(
         acquisitions=tuple(acquisitions),
         source_fingerprint=source.fingerprint,
         source_loaded_at=source.loaded_at,
+        source_oldest_loaded_at=source.oldest_loaded_at,
+        source_tables=source.per_table,
+        coverage_to=coverage,
         repair_requests=repair_requests,
         repair_references=repair_references,
         session_jobs=session_jobs,
@@ -616,6 +739,82 @@ def check_source_fingerprint(db: Session, *, min_interval_seconds: float | None 
         snapshot.source_loaded_at,
     )
     return start_background_build("source data changed", force=True)
+
+
+@dataclass(frozen=True)
+class Freshness:
+    """How current the data on an I08 screen is.
+
+    Answerable WITHOUT a built snapshot, which is the whole point of it: the
+    screens ask on every page view, and ``GET /i8/snapshot`` cannot serve them
+    because it takes the snapshot as a dependency and 503s for the 90-odd
+    seconds a build takes. That is exactly when somebody wants to know.
+    """
+
+    reference_date: date
+    """The date the screens measure ages against."""
+
+    loaded_at: datetime | None
+    """The OLDEST source load behind what is on screen: everything is at
+    least this fresh. Never the newest -- see
+    :attr:`SourceState.oldest_loaded_at`."""
+
+    newest_loaded_at: datetime | None
+    """The newest source load, for the detail. Equal to :attr:`loaded_at`
+    when every table loaded together, which is the healthy case."""
+
+    tables: tuple[TableLoad, ...]
+    """Every source table, oldest load first."""
+
+    coverage_to: date | None
+    """The newest activity the data holds. None while no snapshot has been
+    built, because it is measured during the build."""
+
+    built_at: datetime | None
+    """When the snapshot on screen was built. None while the first one is
+    still building."""
+
+    building_since: datetime | None
+    """Set while a build is running, so a screen can say so rather than
+    showing a stale time with no explanation."""
+
+
+def freshness(db: Session) -> Freshness:
+    """What to tell the user about how current the screens are.
+
+    Load times come from the snapshot being served, not from a live read of
+    ``ingestion_run``: the question is how fresh THIS data is, and a raw layer
+    that has moved since the build describes data nobody is looking at yet.
+    The live read is the fallback only while no snapshot exists, so the chip
+    says something during a first build instead of nothing.
+    """
+    cfg = get_i8_settings()
+    reference_date = cfg.reference_date_value or date.today()
+    with _state_lock:
+        snapshot = _state.snapshot
+        building_since = _state.building_since
+
+    if snapshot is None:
+        live = source_state(db, reference_date=reference_date)
+        return Freshness(
+            reference_date=reference_date,
+            loaded_at=live.oldest_loaded_at,
+            newest_loaded_at=live.loaded_at,
+            tables=live.per_table,
+            coverage_to=None,
+            built_at=None,
+            building_since=building_since,
+        )
+
+    return Freshness(
+        reference_date=snapshot.reference_date,
+        loaded_at=snapshot.source_oldest_loaded_at,
+        newest_loaded_at=snapshot.source_loaded_at,
+        tables=snapshot.source_tables,
+        coverage_to=snapshot.coverage_to,
+        built_at=snapshot.built_at,
+        building_since=building_since,
+    )
 
 
 # --- The attestation view (W5.3) ------------------------------------------
