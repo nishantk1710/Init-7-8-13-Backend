@@ -7,14 +7,14 @@ import the forward ``recommendations`` package (an architecture test enforces it
     RecommendationRow (already decided)
         -> prompt variables (this module)
         -> app.core.prompts.complete_with_prompt   (prompt registry + model registry + provider gateway)
-        -> three labelled lines + source
+        -> one explanatory paragraph + source
 
 **The model explains; it does not decide.** The category, confidence and every figure are worked out by
 ``evaluate`` before this module runs. The prompt carries those facts and the model only rewords them; its text never
 changes a decision.
 
 **It never blocks or fails the run.** An unconfigured provider, a timeout, a malformed answer or a figure that was not
-among the facts all end in the standard wording (``row.points`` from ``evaluate``), never an exception. After a few
+among the facts all end in the standard wording (``row.points`` and ``row.detail`` from ``evaluate``), never an exception. After a few
 failures in a row the remaining rows skip the model, so a provider outage costs seconds, not one timeout per row.
 
 ``points_source`` says which it was: ``AI_GENERATED`` only when a real model wrote it. The stub provider
@@ -47,6 +47,10 @@ PROMPT_ID = "i07_reverse_conversion_rationale"
 _STUB_PROVIDER = "stub"  # matches app.integrations.ai.stub.StubProvider.name
 
 LABELS = ("What we saw", "What it means", "What to do")
+"""The labels of the standard wording; the model's paragraph has none."""
+
+#: A paragraph longer than this is not the two or three sentences asked for; the row keeps the standard wording.
+MAX_PARAGRAPH_CHARS = 700
 
 #: Consecutive model failures after which the rest of the run uses the standard wording without calling the model.
 MAX_CONSECUTIVE_FAILURES = 5
@@ -83,27 +87,24 @@ def _context(row: RecommendationRow) -> dict[str, str]:
     }
 
 
-def _parse(text: str) -> tuple[tuple[str, str], ...] | None:
-    """The three labelled lines out of the model's answer, or None when it is not in that shape."""
-    found: dict[str, str] = {}
-    for line in text.splitlines():
-        line = line.strip().lstrip("-*• ").strip()
-        for label in LABELS:
-            if line.lower().startswith(label.lower() + ":"):
-                body = line[len(label) + 1 :].strip()
-                if body and label not in found:
-                    found[label] = body
-    if len(found) != len(LABELS):
+def _parse(text: str) -> str | None:
+    """The one paragraph out of the model's answer, or None when it is not that (empty, a list, headed, too long)."""
+    paragraph = " ".join(text.split())
+    if not paragraph or len(paragraph) > MAX_PARAGRAPH_CHARS:
         return None
-    return tuple((label, found[label]) for label in LABELS)
+    if paragraph[0] in "-*•#" or paragraph.lower().startswith(tuple(label.lower() + ":" for label in LABELS)):
+        return None
+    if "anchor" in paragraph.lower():
+        return None
+    return paragraph
 
 
-def _only_given_figures(points: tuple[tuple[str, str], ...], allowed_text: str) -> bool:
+def _only_given_figures(paragraph: str, allowed_text: str) -> bool:
     """True when every number in the answer also appears in the facts the model was given (a month's year included).
 
     A model that writes a figure it was not given is not trusted at all: the row keeps the standard wording."""
     allowed = set(_NUMBER.findall(allowed_text))
-    return all(number in allowed for _, line in points for number in _NUMBER.findall(line))
+    return all(number in allowed for number in _NUMBER.findall(paragraph))
 
 
 def _written(row: RecommendationRow) -> RecommendationRow:
@@ -117,14 +118,15 @@ def _written(row: RecommendationRow) -> RecommendationRow:
     text = (completion.text or "").strip()
     if not text or completion.provider == _STUB_PROVIDER:
         return row  # not a real model's answer: never labelled AI
-    points = _parse(text)
-    if points is None:
-        logger.info("reverse conversion reason: answer not in the three-line shape for %s/%s", row.material, row.plant)
+    paragraph = _parse(text)
+    if paragraph is None:
+        logger.info("reverse conversion reason: answer is not one plain paragraph for %s/%s", row.material, row.plant)
         return row
-    if not _only_given_figures(points, " ".join(context.values())):
+    if not _only_given_figures(paragraph, " ".join(context.values())):
         logger.info("reverse conversion reason: answer holds a figure that was not given for %s/%s", row.material, row.plant)
         return row
-    return replace(row, points=points, points_source=SOURCE_AI)
+    # The paragraph is the reason: it replaces the one-paragraph detail, and there are no labelled lines beside it.
+    return replace(row, detail=paragraph[:1000], points=(), points_source=SOURCE_AI)
 
 
 def explain_rows(rows: list[RecommendationRow], workers: int = 8) -> list[RecommendationRow]:
