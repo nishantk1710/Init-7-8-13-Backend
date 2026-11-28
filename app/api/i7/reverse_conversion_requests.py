@@ -21,7 +21,8 @@ from app.core.db import get_db
 from app.core.security import APPROVAL_STAGE_ROLES, ALL_ROLES, CurrentUser, Roles, require_roles
 from app.initiatives.i7.notifications import APPROVAL_ROLE_TO_ENTRA
 from app.initiatives.i7.recommendations.types import WorkflowError
-from app.initiatives.i7.reverse_approval import service
+from app.initiatives.i7.reverse_approval import queue, service
+from app.initiatives.i7.reverse_approval.notifications import notify_request_transition
 from app.initiatives.i7.reverse_conversion.snapshot import find_stored
 from app.schemas.i7.errors import ApiError, conflict, forbidden
 from app.schemas.i7.reverse_requests import (
@@ -30,7 +31,10 @@ from app.schemas.i7.reverse_requests import (
     ReverseRequestCreate,
     ReverseRequestDecline,
     ReverseRequestDetail,
+    ReverseRequestList,
+    ReverseRequestListItem,
     ReverseRequestOut,
+    ReverseRequestStatusCount,
 )
 
 router = APIRouter(prefix="/reverse-conversion/requests", tags=["i7-reverse-conversion"])
@@ -60,6 +64,47 @@ def get_request(
     )
 
 
+@router.get(
+    "/list",
+    response_model=ReverseRequestList,
+    summary="Conversion requests across materials (for the Action Center and the Pipeline)",
+    description="The newest Min-Max to OAR conversion request of every material-plant, newest activity first, optionally "
+    "only those in one status (PENDING_APPROVAL, SENT_BACK, HELD, SAP_EXECUTION_PENDING or REJECTED). `counts` gives the "
+    "number per status over all of them. Read-only; calls no SAP API.",
+)
+def list_requests(
+    session: Annotated[Session, Depends(get_db)],
+    status: Annotated[str | None, Query(max_length=32, description="One request status.")] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> ReverseRequestList:
+    found = queue.list_requests(session, statuses=[status] if status else None, page=page, page_size=page_size)
+    return ReverseRequestList(
+        items=[
+            ReverseRequestListItem(
+                id=row.request.id,
+                material=row.request.sap_material_number,
+                plant=row.request.sap_plant_code,
+                description=row.description,
+                status=row.request.status,
+                pending_role=row.request.pending_role,
+                route=[role.value for role in service.ROUTE],
+                chain_index=row.request.chain_index,
+                confidence=row.request.confidence,
+                stock_value=row.request.stock_value,
+                submitted_by=row.request.submitted_by,
+                submitted_at=row.request.submitted_at,
+                updated_at=row.request.updated_at,
+            )
+            for row in found.rows
+        ],
+        total=found.total,
+        page=page,
+        page_size=page_size,
+        counts=[ReverseRequestStatusCount(status=name, count=count) for name, count in sorted(found.counts.items())],
+    )
+
+
 @router.post(
     "",
     response_model=ReverseRequestOut,
@@ -86,6 +131,7 @@ def create_request(
         raise conflict(exc.code, exc.message) from exc
     except WorkflowError as exc:
         raise conflict("INVALID_WORKFLOW_STATE", str(exc)) from exc
+    notify_request_transition(session, request)
     session.commit()
     return ReverseRequestOut.of(request)
 
@@ -116,6 +162,7 @@ def decline_request(
         raise conflict(exc.code, exc.message) from exc
     except WorkflowError as exc:
         raise conflict("INVALID_WORKFLOW_ACTION", str(exc)) from exc
+    notify_request_transition(session, request)
     session.commit()
     return ReverseRequestOut.of(request)
 
@@ -152,5 +199,6 @@ def apply_request_action(
         )
     except WorkflowError as exc:
         raise conflict("INVALID_WORKFLOW_ACTION", str(exc)) from exc
+    notify_request_transition(session, request)
     session.commit()
     return ReverseRequestOut.of(request)

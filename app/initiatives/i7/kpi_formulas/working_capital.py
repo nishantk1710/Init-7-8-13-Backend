@@ -51,7 +51,14 @@ REQUEST_COUNTED_STATUSES: tuple[str, ...] = tuple(
 """Where a manual conversion request counts: submitted and not rejected. READY_FOR_REVIEW and NOT_EVALUABLE are
 before any request (and a NOT_ELIGIBLE row there has none); REJECTED is a request that was turned down."""
 
-__all__ = ["REPORTING_CURRENCY", "WorkingCapitalImpact", "oar_rule", "working_capital_impact"]
+__all__ = [
+    "REPORTING_CURRENCY",
+    "WorkingCapitalImpact",
+    "counted_in_working_capital",
+    "oar_rule",
+    "why_not_counted",
+    "working_capital_impact",
+]
 
 
 @dataclass(frozen=True)
@@ -99,6 +106,47 @@ def _price_currency():
     )
 
 
+def counted_in_working_capital(formulas: Formulas):
+    """The rule that decides whether a recommendation counts in the Working Capital card, as SQL over
+    ``Recommendation``: priced in ZAR/NAD, a price above the placeholder floor, a formula that can be worked out, and
+    the OAR rule. The card and the Excel export's "Counted in Working Capital" column both use this one expression."""
+    rate = case(*[(_price_currency() == code, factor) for code, factor in TO_ZAR.items()], else_=None)
+    return and_(
+        rate.is_not(None),
+        Recommendation.unit_price > DEFAULT_TOKEN_MAX,
+        working_capital_sql(formulas).is_not(None),
+        oar_rule(),
+    )
+
+
+def why_not_counted(
+    *,
+    unit_price: Decimal | None,
+    currency: str | None,
+    current_rop: Decimal | None,
+    recommended_rop: Decimal | None,
+    conversion_eligibility: str | None,
+    status: str | None,
+    manually_converted: bool | None,
+) -> str:
+    """The reason a recommendation that :func:`counted_in_working_capital` leaves out is left out, in words a reader
+    of the Excel export understands. The first rule that applies is named; when none does (a saved formula that cannot
+    be worked out for the row) it says so."""
+    if unit_price is None:
+        return "no price"
+    if unit_price <= DEFAULT_TOKEN_MAX:
+        return f"placeholder price ({unit_price}, at or below {DEFAULT_TOKEN_MAX})"
+    if currency not in TO_ZAR:
+        return "price not in ZAR or NAD"
+    if current_rop is None or recommended_rop is None:
+        return "no current or recommended ROP"
+    if conversion_eligibility == ELIGIBLE and status == LifecycleStatus.REJECTED.value:
+        return "conversion request rejected"
+    if conversion_eligibility == NOT_ELIGIBLE and not (manually_converted and status in REQUEST_COUNTED_STATUSES):
+        return "not eligible to convert and no conversion request"
+    return "the formula could not be worked out"
+
+
 StockToOar = Literal["replace", "add"]
 """How the Overview's Stock item to OAR views value a population (see :func:`working_capital_impact`)."""
 
@@ -138,7 +186,7 @@ def working_capital_impact(
     currency = _price_currency()
     rate = case(*[(currency == code, factor) for code, factor in TO_ZAR.items()], else_=None)
     value = working_capital_sql(formulas)
-    included = and_(rate.is_not(None), Recommendation.unit_price > DEFAULT_TOKEN_MAX, value.is_not(None), oar_rule())
+    included = counted_in_working_capital(formulas)
     overlap = literal(0)
 
     if stock_to_oar is not None:

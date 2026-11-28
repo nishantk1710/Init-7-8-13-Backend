@@ -34,6 +34,7 @@ from app.core.criticality import CriticalityTier
 from app.initiatives.i7.kpi_formulas.currency import REPORTING_CURRENCY, TO_ZAR
 from app.initiatives.i7.policy.reverse_conversion import ReverseConversionPolicy
 from app.initiatives.i7.reverse_conversion import cooldown, repository
+from app.shared.search_words import matches_all_words, search_words
 from app.shared.valuation_price import DEFAULT_TOKEN_MAX
 from app.initiatives.i7.reverse_conversion.errors import AnchorError
 from app.initiatives.i7.reverse_conversion.evaluate import evaluate
@@ -531,12 +532,12 @@ class ListFilters:
     """A tier name (upper-cased), or ``"unknown"`` for none recorded."""
     lead_time_bucket: str | None = None
     search: str | None = None
-    """Part of a material number or description, case-insensitive."""
+    """Words of a material number or description, case-insensitive: every word must be found, in any order."""
 
 
 def apply_filters(rows: tuple[RecommendationRow, ...] | list[RecommendationRow], filters: ListFilters) -> list[RecommendationRow]:
     """The rows matching every filter that is set, in the report's ranked order."""
-    needle = filters.search.strip().lower() if filters.search and filters.search.strip() else None
+    words = search_words(filters.search)
     wanted_tier = filters.criticality.strip().upper() if filters.criticality else None
     chosen: list[RecommendationRow] = []
     for row in rows:
@@ -559,7 +560,7 @@ def apply_filters(rows: tuple[RecommendationRow, ...] | list[RecommendationRow],
                     continue
             elif tier != wanted_tier:
                 continue
-        if needle is not None and needle not in f"{row.material} {row.description or ''}".lower():
+        if words and not matches_all_words(f"{row.material} {row.description or ''}", words):
             continue
         chosen.append(row)
     return chosen
