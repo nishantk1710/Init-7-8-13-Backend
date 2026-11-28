@@ -15,8 +15,13 @@ counted, and ``price_currency`` is what SAP stated.
 
 import csv
 import io
-from collections.abc import Iterable
+import re
+from collections.abc import Iterable, Mapping
 from decimal import Decimal
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 from app.initiatives.i7.policy.reverse_conversion import ReverseConversionPolicy
 from app.initiatives.i7.reverse_conversion.service import RecommendationRow
@@ -123,3 +128,130 @@ def rows_to_csv(rows: Iterable[RecommendationRow], anchor: AnchorResolution, pol
     for row in rows:
         writer.writerow(_row(row, anchor, policy))
     return (BOM + buffer.getvalue()).encode("utf-8")
+
+
+# --- Excel ---------------------------------------------------------------------------------------------------------
+#
+# The same columns as the CSV, as a real workbook: numbers are numbers (Excel can sort, filter and sum them), a missing
+# value is an empty cell, and every text cell is stored as text, so a description can never run as a formula (no
+# apostrophe is needed there). One column is added, "Counted in Working Capital": whether the Overview's Stock item to
+# OAR figures count the material-plant (Yes, or No with the reason). It is worked out by the caller, who owns the
+# recommendations and prices; this module only places it.
+
+EXCEL_SHEET = "Stock item to OAR"
+COUNTED_COLUMN = "Counted in Working Capital"
+EXCEL_COLUMNS: tuple[str, ...] = COLUMNS[:7] + (COUNTED_COLUMN,) + COLUMNS[7:]
+"""The CSV's columns with the counted flag right after ``oar_conversion``, where it is seen without scrolling."""
+
+_NUMERIC_COLUMNS = frozenset(
+    {
+        "decision_rule",
+        "issues_latest_12m",
+        "months_with_consumption_12m",
+        "issues_prior_12m",
+        "months_since_last_movement",
+        "history_span_months",
+        "lifetime_months_with_use",
+        "lead_time_days",
+        "current_stock",
+        "minbe",
+        "mabst",
+        "unit_price",
+        "stock_value",
+    }
+)
+_ILLEGAL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+_EXCEL_CELL_LIMIT = 32767
+_QUANTITY_FORMAT = "#,##0.###"
+_WIDTHS = {"description": 38, "explanation": 60, COUNTED_COLUMN: 36, "reason": 28, "category": 20}
+
+
+def _text(value: str | None) -> str | None:
+    if value is None or value == "":
+        return None
+    return _ILLEGAL.sub("", value)[:_EXCEL_CELL_LIMIT]
+
+
+def _excel_values(row: RecommendationRow, anchor: AnchorResolution, policy: ReverseConversionPolicy, counted: str) -> list:
+    """One value per entry of :data:`EXCEL_COLUMNS`: numbers as numbers, text as text, nothing as ``None``."""
+    m = row.metrics
+    by_column = {
+        "material": row.material,
+        "description": row.description,
+        "plant": row.plant,
+        "mrp_type": row.mrp_type,
+        "criticality": row.criticality,
+        "category": row.category.value,
+        "oar_conversion": "Eligible" if row.category is ReverseCategory.RECOMMENDED_FOR_OAR else "Not eligible",
+        COUNTED_COLUMN: counted,
+        "reason": row.reason.value,
+        "confidence": row.confidence.value if row.confidence else None,
+        "explanation": row.detail,
+        "decision_rule": row.rule,
+        "issues_latest_12m": m.issues_latest_window,
+        "months_with_consumption_12m": m.months_with_use_latest_window,
+        "issues_prior_12m": m.issues_prior_window,
+        "first_valid_movement_month": _month(m.first_valid_month) or None,
+        "last_valid_movement_month": _month(m.last_valid_month) or None,
+        "months_since_last_movement": m.months_since_last_movement,
+        "history_span_months": m.history_span_months,
+        "lifetime_months_with_use": m.lifetime_months_with_use,
+        "lead_time_days": row.lead_time_days,
+        "lead_time_bucket": row.lead_time_bucket,
+        "current_stock": row.current_stock,
+        "minbe": row.minbe,
+        "mabst": row.mabst,
+        "unit_price": row.unit_price,
+        "stock_value": row.stock_value,
+        "currency": row.value_currency,
+        "price_currency": row.price_currency,
+        "anchor_month": _month(anchor.month),
+        "policy_version": policy.policy_version,
+    }
+    return [by_column[column] for column in EXCEL_COLUMNS]
+
+
+def rows_to_xlsx(
+    rows: Iterable[RecommendationRow],
+    anchor: AnchorResolution,
+    policy: ReverseConversionPolicy,
+    counted: Mapping[tuple[str, str], str],
+) -> io.BytesIO:
+    """The recommendations as one Excel workbook, positioned at 0.
+
+    ``counted`` says, for each ``(material, plant)``, what the "Counted in Working Capital" cell reads. A row it does
+    not name reads "No"."""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = EXCEL_SHEET
+    sheet.append(list(EXCEL_COLUMNS))
+
+    count = 0
+    for row in rows:
+        values = _excel_values(row, anchor, policy, counted.get((row.material, row.plant), "No"))
+        cleaned = [_text(v) if isinstance(v, str) else v for v in values]
+        sheet.append(cleaned)
+        count += 1
+        excel_row = sheet.max_row
+        for column, (name, value) in enumerate(zip(EXCEL_COLUMNS, cleaned), start=1):
+            cell = sheet.cell(row=excel_row, column=column)
+            if isinstance(value, str):
+                cell.data_type = "s"  # text stays text: openpyxl would turn a leading "=" into a formula
+            elif name in _NUMERIC_COLUMNS and value is not None:
+                cell.number_format = _QUANTITY_FORMAT
+
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="1F3864")
+        cell.border = Border(bottom=Side(style="thin", color="808080"))
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    sheet.row_dimensions[1].height = 32
+    for index, name in enumerate(EXCEL_COLUMNS, start=1):
+        sheet.column_dimensions[get_column_letter(index)].width = _WIDTHS.get(name, 16)
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = f"A1:{get_column_letter(len(EXCEL_COLUMNS))}{max(count + 1, 2)}"
+
+    out = io.BytesIO()
+    workbook.save(out)
+    out.seek(0)
+    return out

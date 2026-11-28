@@ -54,9 +54,11 @@ before any request (and a NOT_ELIGIBLE row there has none); REJECTED is a reques
 __all__ = [
     "REPORTING_CURRENCY",
     "WorkingCapitalImpact",
+    "counted_as_stock_to_oar",
     "counted_in_working_capital",
     "oar_rule",
     "why_not_counted",
+    "why_not_counted_as_stock_to_oar",
     "working_capital_impact",
 ]
 
@@ -119,6 +121,56 @@ def counted_in_working_capital(formulas: Formulas):
     )
 
 
+def _price_problem(unit_price: Decimal | None, currency: str | None) -> str | None:
+    """Why a price cannot be used, in words; ``None`` when it can."""
+    if unit_price is None:
+        return "no price"
+    if unit_price <= DEFAULT_TOKEN_MAX:
+        return f"placeholder price ({unit_price}, at or below {DEFAULT_TOKEN_MAX})"
+    if currency not in TO_ZAR:
+        return "price not in ZAR or NAD"
+    return None
+
+
+def counted_as_stock_to_oar(formulas: Formulas):
+    """Whether the Overview's Stock item to OAR views count a recommendation, as SQL over ``Recommendation``.
+
+    The same rule as the Working Capital card in ``stock_to_oar="replace"`` mode, for a row: eligible to convert to OAR
+    (the newest Min-Max -> OAR run says Convert to OAR and its newest request was not rejected), priced in ZAR/NAD above
+    the placeholder floor, the conversion's release (the saved formula with the recommended reorder point as 0) can be
+    worked out, and the OAR rule holds."""
+    from app.initiatives.i7.kpi_formulas.stock_to_oar import eligible_for_oar, oar_release_value
+
+    rate = case(*[(_price_currency() == code, factor) for code, factor in TO_ZAR.items()], else_=None)
+    return and_(
+        eligible_for_oar(),
+        rate.is_not(None),
+        Recommendation.unit_price > DEFAULT_TOKEN_MAX,
+        oar_release_value(formulas).is_not(None),
+        oar_rule(),
+    )
+
+
+def why_not_counted_as_stock_to_oar(
+    *,
+    unit_price: Decimal | None,
+    currency: str | None,
+    current_rop: Decimal | None,
+    eligible: bool,
+) -> str:
+    """The reason :func:`counted_as_stock_to_oar` leaves a recommendation out, in words for a reader of the export.
+
+    ``eligible`` is whether the material-plant is still eligible to convert (False: its conversion was rejected)."""
+    if not eligible:
+        return "conversion request rejected"
+    problem = _price_problem(unit_price, currency)
+    if problem is not None:
+        return problem
+    if current_rop is None:
+        return "no current ROP"
+    return "the formula could not be worked out"
+
+
 def why_not_counted(
     *,
     unit_price: Decimal | None,
@@ -132,12 +184,9 @@ def why_not_counted(
     """The reason a recommendation that :func:`counted_in_working_capital` leaves out is left out, in words a reader
     of the Excel export understands. The first rule that applies is named; when none does (a saved formula that cannot
     be worked out for the row) it says so."""
-    if unit_price is None:
-        return "no price"
-    if unit_price <= DEFAULT_TOKEN_MAX:
-        return f"placeholder price ({unit_price}, at or below {DEFAULT_TOKEN_MAX})"
-    if currency not in TO_ZAR:
-        return "price not in ZAR or NAD"
+    problem = _price_problem(unit_price, currency)
+    if problem is not None:
+        return problem
     if current_rop is None or recommended_rop is None:
         return "no current or recommended ROP"
     if conversion_eligibility == ELIGIBLE and status == LifecycleStatus.REJECTED.value:
