@@ -28,6 +28,7 @@ from app.models.i7_inventory import InventoryCalculation
 from app.models.i7_recommendation import Recommendation
 from app.models.i7_staging import StagedMaterial, StagedMaterialPlant, StagedStock
 from app.models.i7_stockout_risk import StockoutRiskInput
+from app.models.i7_reverse import ReverseConversionRequest, ReverseRecommendation, ReverseRun
 
 CLASSES = ("SMOOTH", "ERRATIC", "INTERMITTENT", "LUMPY")
 
@@ -46,6 +47,9 @@ def db():
         Recommendation,
         DecliningDemandEvaluation,
         StockoutRiskInput,
+        ReverseRun,
+        ReverseRecommendation,
+        ReverseConversionRequest,
     ):
         copy = model.__table__.to_metadata(metadata)
         copy.indexes.clear()

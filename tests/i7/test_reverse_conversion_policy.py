@@ -30,9 +30,9 @@ def test_current_policy_carries_the_approved_values():
 
 def test_policy_has_a_version_and_exposes_its_parameters():
     policy = current_reverse_conversion_policy()
-    assert policy.policy_version == "reverse-conversion-v1"
+    assert policy.policy_version == "reverse-conversion-v2"
     parameters = policy.parameters()
-    assert parameters["policy_version"] == "reverse-conversion-v1"
+    assert parameters["policy_version"] == "reverse-conversion-v2"
     assert parameters["recommended_max_issues"] == 2
     assert parameters["frequent_issues_above"] == 4
     assert parameters["maximum_lead_time_days"] == 90
