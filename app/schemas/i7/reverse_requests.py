@@ -118,3 +118,42 @@ class ReverseRequestDetail(BaseModel):
 
     current: ReverseRequestOut | None
     history: list[ReverseLedgerOut]
+
+
+class ReverseRequestListItem(BaseModel):
+    """One material-plant's newest conversion request, as the Action Center and the Pipeline list it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    material: str
+    plant: str
+    description: str | None
+    status: str
+    pending_role: str | None
+    route: list[str]
+    chain_index: int
+    confidence: str | None
+    stock_value: Decimal | None
+    submitted_by: str
+    submitted_at: datetime
+    updated_at: datetime
+
+
+class ReverseRequestStatusCount(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    status: str
+    count: int
+
+
+class ReverseRequestList(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: list[ReverseRequestListItem]
+    total: int
+    """Requests matching the status filter, across every page."""
+    page: int
+    page_size: int
+    counts: list[ReverseRequestStatusCount]
+    """Newest requests per status over every status, not narrowed by the filter."""

@@ -21,18 +21,19 @@ from app.api.i7.deps import get_session, load_latest_recommendation
 from app.initiatives.i7.kpi_formulas.resolved import load_active
 from app.initiatives.i7.kpi_formulas.sql import excess_condition_sql, excess_value_sql
 from app.initiatives.i7.kpi_formulas.stock_to_oar import eligible_for_oar, oar_release_positive, stock_item_row
-from app.initiatives.i7.kpi_formulas.working_capital import working_capital_impact
+from app.initiatives.i7.kpi_formulas.working_capital import counted_in_working_capital, why_not_counted, working_capital_impact
 from app.initiatives.i7.policy import PolicyDocument
 from app.initiatives.i7.recommendations import oar_exclusions, routing
 from app.initiatives.i7.smooth_demand import SMOOTH_DEMAND_CLASS
 from app.initiatives.i7.stockout_risk.counts import stockout_risk_counts
 from app.initiatives.i7.recommendations.consumption_history import monthly_consumption_history
-from app.initiatives.i7.reporting.recommendations_export import build_recommendations_workbook
+from app.initiatives.i7.reporting.recommendations_export import build_recommendations_workbook, counted_label
 from app.models.i7_features import DecliningDemandEvaluation
 from app.models.i7_forecast import Forecast, ForecastBacktestPath, ForecastRun
 from app.models.i7_oar import OarDonorExclusion, OarNeighbour
 from app.models.i7_recommendation import ApprovalLedgerEntry, Recommendation, SapAdoptionResult
 from app.models.i7_staging import StagedMaterial, StagedMaterialPlant
+from app.shared.search_words import search_words
 from app.schemas.i7.errors import ApiError, bad_request
 from app.schemas.i7.recommendations import (
     CircuitCount,
@@ -229,6 +230,7 @@ def _apply_filters(
     has_recommended: bool | None = None,
     adopted_in_sap: bool | None = None,
     value_change: ValueChange | None = None,
+    keep_oar_eligible: bool = False,
 ) -> Select:
     """Every filter here maps to a real, persisted column or a keyed lookup.
     Nothing that would require loading rows into Python to evaluate.
@@ -308,17 +310,26 @@ def _apply_filters(
         statement = statement.where(Recommendation.generated_at >= generated_from)
     if generated_to is not None:
         statement = statement.where(Recommendation.generated_at < generated_to)
-    if search is not None and search.strip():
-        # Free text over the whole catalogue: part of the material number (stored with its
-        # leading zeros, so "8000005029" is found inside it) or of its description.
-        text = search.strip()
-        by_description = select(StagedMaterial.sap_material_number).where(
-            StagedMaterial.description.icontains(text, autoescape=True)
+    words = search_words(search)
+    if words:
+        # Free text over the whole catalogue. Every word must be found, in any order, in the
+        # material number (stored with its leading zeros, so "8000005029" is found inside it)
+        # or in the description; a word may be in either, so "8000005029 plug" works too.
+        by_words = select(StagedMaterial.sap_material_number).where(
+            and_(
+                *(
+                    or_(
+                        StagedMaterial.sap_material_number.icontains(word, autoescape=True),
+                        StagedMaterial.description.icontains(word, autoescape=True),
+                    )
+                    for word in words
+                )
+            )
         )
         statement = statement.where(
             or_(
-                Recommendation.sap_material_number.icontains(text, autoescape=True),
-                Recommendation.sap_material_number.in_(by_description),
+                and_(*(Recommendation.sap_material_number.icontains(word, autoescape=True) for word in words)),
+                Recommendation.sap_material_number.in_(by_words),
             )
         )
     if criticality_level is not None:
@@ -356,12 +367,14 @@ def _apply_filters(
         else:
             statement = statement.where(not_oar, ~_flagged_declining())
     stock_item_population = is_oar is False or demand_type in ("stock_item", "declining", "normal")
-    if stock_item_population and value_change not in STOCK_TO_OAR_MODE:
+    if stock_item_population and not keep_oar_eligible and value_change not in STOCK_TO_OAR_MODE:
         # A material eligible to convert to OAR is not a Stock item recommendation: its value would be released twice (once
         # as a Stock item change, once as the conversion). Its recommended ROP and Max stock are still calculated and stored
         # -- the Min-Max -> OAR page shows them as the alternative -- it is only left out of the Stock item lists and
         # figures. Rejecting the conversion makes it not eligible, so it comes back. The Stock Item to OAR views above
-        # are the one place that reads these materials, so they are not narrowed here.
+        # are the one place that reads these materials, so they are not narrowed here. ``keep_oar_eligible`` is for the one
+        # figure that does not depend on recommendations at all -- High Stockout Risk (stock against consumption and lead
+        # time) -- which keeps counting them as it always did.
         statement = statement.where(not_(eligible_for_oar()))
     return statement
 
@@ -583,7 +596,7 @@ def list_recommendations(
     ] = None,
     search: Annotated[
         str | None,
-        Query(description="Part of a material number or description, matched across every recommendation."),
+        Query(description="Words of a material number or description, matched across every recommendation. Every word must be found, in any order."),
     ] = None,
     criticality_level: Annotated[
         Literal["Critical", "High", "Medium", "Low"] | None,
@@ -759,7 +772,8 @@ XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
     summary="Export the recommendations the list would show, as an Excel workbook",
     description="Takes the same filters as the list endpoint and returns every matching recommendation "
     "(no paging) as an .xlsx workbook, newest first, one row per material-plant: material, SAP's current "
-    "reorder point / safety stock / max stock, the recommended three, the criticality and the reason. With "
+    "reorder point / safety stock / max stock, the recommended three, the criticality, whether the Overview's "
+    "Working Capital card counts it (Yes, or No with the reason) and the reason. With "
     "no filters it is every recommendation that has at least one recommended value. Registered before "
     "/{recommendation_id} so 'export' is never read as an id.",
     response_class=Response,
@@ -815,6 +829,7 @@ def export_recommendations(
         ).where(_not_smooth())
     )
     ids = session.execute(base.order_by(Recommendation.generated_at.desc(), Recommendation.id.desc())).scalars().all()
+    counted_rule = counted_in_working_capital(load_active(session))
 
     def export_rows():
         # Rows carry long text (the reason), so they are loaded a chunk at a time, never all at once.
@@ -825,10 +840,38 @@ def export_recommendations(
                 for row in session.execute(select(Recommendation).where(Recommendation.id.in_(chunk_ids))).scalars()
             }
             descriptions = _display_fields_for(session, {row.sap_material_number for row in loaded.values()})
+            # Whether the Working Capital card counts each row: the card's own rule, evaluated in SQL.
+            counted = {
+                row_id: bool(flag)
+                for row_id, flag in session.execute(
+                    select(Recommendation.id, case((counted_rule, 1), else_=0)).where(Recommendation.id.in_(chunk_ids))
+                )
+            }
+            currencies = {
+                (material_number, plant_code): currency
+                for material_number, plant_code, currency in session.execute(
+                    select(
+                        StagedMaterialPlant.sap_material_number,
+                        StagedMaterialPlant.sap_plant_code,
+                        StagedMaterialPlant.currency,
+                    ).where(StagedMaterialPlant.sap_material_number.in_(sorted({row.sap_material_number for row in loaded.values()})))
+                )
+            }
             for row_id in chunk_ids:
                 row = loaded.get(row_id)
                 if row is None:
                     continue
+                why_not = None
+                if not counted.get(row_id, False):
+                    why_not = why_not_counted(
+                        unit_price=row.unit_price,
+                        currency=currencies.get((row.sap_material_number, row.sap_plant_code)),
+                        current_rop=row.current_rop,
+                        recommended_rop=row.recommended_rop,
+                        conversion_eligibility=row.conversion_eligibility,
+                        status=row.status,
+                        manually_converted=row.manually_converted,
+                    )
                 # One value per column of recommendations_export.COLUMNS; a quantity with no value stays None.
                 yield [
                     row.sap_material_number,
@@ -843,6 +886,7 @@ def export_recommendations(
                     row.recommended_rop,
                     row.recommended_safety_stock,
                     row.recommended_max_stock,
+                    counted_label(counted.get(row_id, False), why_not),
                     row.rationale_text,
                 ]
 
@@ -910,7 +954,7 @@ def get_recommendation_summary(
         .subquery()
     )
 
-    def _scope(statement: Select) -> Select:
+    def _scope(statement: Select, *, keep_oar_eligible: bool = False) -> Select:
         return _apply_filters(
             statement.join(
                 latest_per_material_plant,
@@ -927,6 +971,7 @@ def get_recommendation_summary(
             value_change=value_change,
             generated_from=None,
             generated_to=None,
+            keep_oar_eligible=keep_oar_eligible,
         ).where(_not_smooth())
 
     base = _scope(select(Recommendation))
@@ -1032,9 +1077,12 @@ def get_recommendation_summary(
     # Every Fast and Slow moving material-plant in the usage table, recommended or not, with the
     # usage read as of the configured anchor date -- see app.initiatives.i7.stockout_risk for the
     # rule and for how a missing or invalid figure is Insufficient Data, not safe.
+    #
+    # Its population is the usage table, not the recommendations, so a Stock item filter must not shrink it by the
+    # materials that can convert to OAR: they keep counting here as they always did.
     stockout_risk = stockout_risk_counts(
         session,
-        base,
+        _scope(select(Recommendation), keep_oar_eligible=True),
         plant=plant,
         material=material,
         demand_class=demand_class,
