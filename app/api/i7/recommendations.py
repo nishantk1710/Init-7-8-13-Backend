@@ -230,6 +230,7 @@ def _apply_filters(
     has_recommended: bool | None = None,
     adopted_in_sap: bool | None = None,
     value_change: ValueChange | None = None,
+    keep_oar_eligible: bool = False,
 ) -> Select:
     """Every filter here maps to a real, persisted column or a keyed lookup.
     Nothing that would require loading rows into Python to evaluate.
@@ -366,12 +367,14 @@ def _apply_filters(
         else:
             statement = statement.where(not_oar, ~_flagged_declining())
     stock_item_population = is_oar is False or demand_type in ("stock_item", "declining", "normal")
-    if stock_item_population and value_change not in STOCK_TO_OAR_MODE:
+    if stock_item_population and not keep_oar_eligible and value_change not in STOCK_TO_OAR_MODE:
         # A material eligible to convert to OAR is not a Stock item recommendation: its value would be released twice (once
         # as a Stock item change, once as the conversion). Its recommended ROP and Max stock are still calculated and stored
         # -- the Min-Max -> OAR page shows them as the alternative -- it is only left out of the Stock item lists and
         # figures. Rejecting the conversion makes it not eligible, so it comes back. The Stock Item to OAR views above
-        # are the one place that reads these materials, so they are not narrowed here.
+        # are the one place that reads these materials, so they are not narrowed here. ``keep_oar_eligible`` is for the one
+        # figure that does not depend on recommendations at all -- High Stockout Risk (stock against consumption and lead
+        # time) -- which keeps counting them as it always did.
         statement = statement.where(not_(eligible_for_oar()))
     return statement
 
@@ -951,7 +954,7 @@ def get_recommendation_summary(
         .subquery()
     )
 
-    def _scope(statement: Select) -> Select:
+    def _scope(statement: Select, *, keep_oar_eligible: bool = False) -> Select:
         return _apply_filters(
             statement.join(
                 latest_per_material_plant,
@@ -968,6 +971,7 @@ def get_recommendation_summary(
             value_change=value_change,
             generated_from=None,
             generated_to=None,
+            keep_oar_eligible=keep_oar_eligible,
         ).where(_not_smooth())
 
     base = _scope(select(Recommendation))
@@ -1073,9 +1077,12 @@ def get_recommendation_summary(
     # Every Fast and Slow moving material-plant in the usage table, recommended or not, with the
     # usage read as of the configured anchor date -- see app.initiatives.i7.stockout_risk for the
     # rule and for how a missing or invalid figure is Insufficient Data, not safe.
+    #
+    # Its population is the usage table, not the recommendations, so a Stock item filter must not shrink it by the
+    # materials that can convert to OAR: they keep counting here as they always did.
     stockout_risk = stockout_risk_counts(
         session,
-        base,
+        _scope(select(Recommendation), keep_oar_eligible=True),
         plant=plant,
         material=material,
         demand_class=demand_class,
