@@ -418,7 +418,7 @@ class BatchReservationRepository:
             "SELECT reservation, item_no_stock_transfer_reserv, item_deleted, final_issue, material, plant, "
             "storage_location, requirement_date, requirement_quantity, base_unit_of_measure, "
             'quantity_withdrawn, value_withdrawn, purchase_requisition, item_of_requisition, "order", '
-            "movement_type, receiving_plant, receiving_stor_loc, goods_recipient, text "
+            "movement_type, receiving_plant, receiving_stor_loc, goods_recipient, text, created_on "
             f"FROM {self.work.resb} WHERE {self.batch.predicate()} {extra}",
             {**self.batch.params(), **params},
             _to_reservation_row,

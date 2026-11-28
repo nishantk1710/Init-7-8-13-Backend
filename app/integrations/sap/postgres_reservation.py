@@ -48,6 +48,13 @@ def _date(raw: str | None) -> date | None:
     return date.fromisoformat(raw)
 
 
+def _any_date(raw: Any) -> date | None:
+    """A date column as either dialect hands it back: a date, or ISO text."""
+    if isinstance(raw, date):
+        return raw
+    return _date(_text_or_none(raw))
+
+
 def _flag(raw: str | None) -> bool:
     """SAP raw-extract checkbox convention: ``"X"`` true, blank/empty false."""
     return (raw or "").strip().upper() == "X"
@@ -71,6 +78,11 @@ def _to_reservation_row(record: Any) -> Row:
         "Werks": _text_or_none(record.plant),
         "Lgort": _text_or_none(record.storage_location),
         "Bdter": _date(record.requirement_date),
+        # RESB-CRDAT: the reservation's base date (RKPF-RSDAT) or its order's
+        # creation date. Read with the rest of the row at build time, never per
+        # request: n_resb is a view, and a lookup by reservation scans it whole
+        # (79 s a Ledger page on non-prod, 27-Nov-2026).
+        "Crdat": _any_date(getattr(record, "created_on", None)),
         "Bdmng": _decimal(record.requirement_quantity),
         "Meins": _text_or_none(record.base_unit_of_measure),
         "Enmng": _decimal(record.quantity_withdrawn),
@@ -108,7 +120,7 @@ _RESERVATION_FETCH_QUERY = """
         material, plant, storage_location, requirement_date, requirement_quantity,
         base_unit_of_measure, quantity_withdrawn, value_withdrawn,
         purchase_requisition, item_of_requisition, "order", movement_type,
-        receiving_plant, receiving_stor_loc, goods_recipient, text
+        receiving_plant, receiving_stor_loc, goods_recipient, text, created_on
     FROM n_resb
     WHERE material <> '' AND plant <> '' AND {plant_scope}
       {reservation_filter}
@@ -218,6 +230,8 @@ def _with_uat_overlay(
                 "Werks": u.plant,
                 "Lgort": None,
                 "Bdter": u.requirement_date,
+                # A simulated reservation is made the day it is simulated.
+                "Crdat": u.created_at.date() if u.created_at is not None else None,
                 "Bdmng": u.requirement_quantity,
                 "Meins": None,
                 "Enmng": None,

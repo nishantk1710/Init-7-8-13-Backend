@@ -27,6 +27,13 @@ from app.models.i7_recommendation import (
     SapExecutionEvidence,
 )
 from app.models.i7_pipeline import PipelineRun
+from app.models.i7_reverse import (
+    PlanningGroupObservation,
+    ReverseApprovalLedger,
+    ReverseConversionRequest,
+    ReverseRecommendation,
+    ReverseRun,
+)
 from app.models.i7_policy import PolicyVersion
 from app.models.i7_kpi_formula import KpiFormulaVersion
 from app.models.i7_kpi_snapshot import KpiSnapshot, KpiSnapshotLog
@@ -123,6 +130,11 @@ __all__ = [
     "QuantityJustificationRecord",
     "QuantitySuggestionRecord",
     "ReservationLinkJob",
+    "PlanningGroupObservation",
+    "ReverseApprovalLedger",
+    "ReverseConversionRequest",
+    "ReverseRecommendation",
+    "ReverseRun",
     "SessionReservationLink",
     "StockoutRiskInput",
     "UatReservationSgtxt",

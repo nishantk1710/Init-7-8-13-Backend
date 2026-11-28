@@ -31,8 +31,11 @@ from typing import Protocol
 from sqlalchemy.orm import Session
 
 from app.core.criticality import CriticalityTier
+from app.initiatives.i7.kpi_formulas.currency import REPORTING_CURRENCY, TO_ZAR
 from app.initiatives.i7.policy.reverse_conversion import ReverseConversionPolicy
-from app.initiatives.i7.reverse_conversion import repository
+from app.initiatives.i7.reverse_conversion import cooldown, repository
+from app.shared.search_words import matches_all_words, search_words
+from app.shared.valuation_price import DEFAULT_TOKEN_MAX
 from app.initiatives.i7.reverse_conversion.errors import AnchorError
 from app.initiatives.i7.reverse_conversion.evaluate import evaluate
 from app.initiatives.i7.reverse_conversion.metrics import (
@@ -105,6 +108,10 @@ class ReverseConversionSource(Protocol):
         """One material-plant's staged months from ``first_month`` to the anchor (for its detail chart)."""
         ...
 
+    def group_changes(self) -> dict[tuple[str, str], date]:
+        """The day each material-plant was seen to change between Min-Max and OAR (those that have)."""
+        ...
+
     def data_loaded_at(self) -> datetime | None:
         """When the staged data was loaded from SAP, or None. Called only when the configured anchor
         source asks for it."""
@@ -129,6 +136,9 @@ class SqlSource:
 
     def material_consumption(self, material: str, plant: str, anchor: date, first_month: date) -> list[MonthlyMovement]:
         return repository.fetch_material_consumption(self._session, material, plant, anchor, first_month)
+
+    def group_changes(self) -> dict[tuple[str, str], date]:
+        return cooldown.changed_days(self._session)
 
     def data_loaded_at(self) -> datetime | None:
         return repository.latest_extract_request_time(self._session)
@@ -184,11 +194,21 @@ def lead_time_bucket(value: object) -> str:
     return ">90d"
 
 
-def stock_value(stock: Decimal | None, price: Decimal | None) -> Decimal | None:
-    """Stock x unit price, or None when either is missing. The source gives no currency."""
-    if stock is None or price is None:
+def value_currency(price: Decimal | None, currency: str | None) -> str | None:
+    """``"ZAR"`` when this price can be counted in rand, else None -- the rule the OAR and Stock item money
+    figures use: a price in ZAR as it is, in NAD at 1:1 (the rand peg), and a price above the placeholder
+    ceiling. Another currency, or none stated, is left out -- never converted or guessed."""
+    if price is None or price <= DEFAULT_TOKEN_MAX:
         return None
-    return stock * price
+    return REPORTING_CURRENCY if currency in TO_ZAR else None
+
+
+def stock_value(stock: Decimal | None, price: Decimal | None, currency: str | None) -> Decimal | None:
+    """Stock x unit price in ZAR, or None when the stock is missing or the price cannot be counted in rand
+    (see :func:`value_currency`)."""
+    if stock is None or price is None or value_currency(price, currency) is None:
+        return None
+    return stock * price * TO_ZAR[currency]  # type: ignore[index]
 
 
 @dataclass(frozen=True)
@@ -203,14 +223,23 @@ class RecommendationRow:
     detail: str
     rule: int
     confidence: ReverseConfidence | None
+    points: tuple[tuple[str, str], ...]
+    """The reason as labelled lines: (label, text) pairs."""
     metrics: ConsumptionMetrics
     lead_time_days: Decimal | None
     lead_time_bucket: str
     current_stock: Decimal | None
     unit_price: Decimal | None
+    price_currency: str | None
+    """The currency SAP stated for the price, or None."""
+    value_currency: str | None
+    """``"ZAR"`` when the price is counted in rand (ZAR, or NAD at 1:1), else None."""
     stock_value: Decimal | None
     minbe: Decimal | None
     mabst: Decimal | None
+    points_source: str = "DETERMINISTIC_FALLBACK"
+    """Who wrote ``points``: ``AI_GENERATED`` when a model did, else ``DETERMINISTIC_FALLBACK`` (the standard wording
+    built from the figures). Set by ``rationale.explain_rows`` after the decision; never part of it."""
 
 
 @dataclass(frozen=True)
@@ -219,7 +248,7 @@ class CategoryTotals:
     with_stock: int = 0
     with_stock_missing_price: int = 0
     stock_value: Decimal = Decimal(0)
-    """Sum over rows whose price is known; rows with stock but no price are not in it."""
+    """Sum, in ZAR, over rows whose price can be counted in rand; the rest are not in it."""
 
 
 @dataclass(frozen=True)
@@ -227,7 +256,7 @@ class Reconciliation:
     source_population: int
     """Material-plants read for the scope."""
     excluded: int
-    """Left out at evaluation (a deletion flag set since the feature build)."""
+    """Left out at evaluation: a deletion flag set since the feature build, or a price not in ZAR or NAD."""
     categorised: int
     """Rows carrying one of the categories."""
     duplicate_keys: int
@@ -248,6 +277,10 @@ class ReverseReport:
     count_by_confidence: dict[ReverseConfidence, int]
     """Convert to OAR rows by confidence; every level is present, with 0 when none."""
     reconciliation: Reconciliation
+    generated_at: datetime | None = None
+    """When the pipeline stage that stored this report finished; None for one calculated on the spot."""
+    run_id: int | None = None
+    """The stored run it was read from; None for one calculated on the spot."""
 
 
 def _rank_key(row: RecommendationRow) -> tuple:
@@ -263,10 +296,17 @@ def _rank_key(row: RecommendationRow) -> tuple:
 
 
 def build_report(
-    source: ReverseConversionSource, policy: ReverseConversionPolicy, anchor: AnchorResolution
+    source: ReverseConversionSource,
+    policy: ReverseConversionPolicy,
+    anchor: AnchorResolution,
+    *,
+    as_of: date | None = None,
 ) -> ReverseReport:
-    """Measure and decide every in-scope material-plant, up to the anchor."""
+    """Measure and decide every in-scope material-plant, up to the anchor.
+
+    ``as_of`` is today, for the conversion cooldown; left out, no cooldown applies."""
     attributes = source.attributes()
+    changed_on = source.group_changes() if as_of is not None else {}
 
     metrics_by_key = {
         key: compute_consumption_metrics(months, anchor.month, policy)
@@ -297,6 +337,9 @@ def build_report(
                 metrics=metrics_by_key.get(key, never_moved),
                 current_stock=attribute.current_stock,
                 unit_price=attribute.unit_price,
+                group_changed_on=changed_on.get(key),
+                as_of=as_of,
+                price_currency=attribute.currency,
                 minbe=attribute.minbe,
                 mabst=attribute.mabst,
             ),
@@ -317,17 +360,47 @@ def build_report(
                 detail=decision.detail,
                 rule=decision.rule,
                 confidence=decision.confidence,
+                points=decision.points,
                 metrics=metrics_by_key.get(key, never_moved),
                 lead_time_days=attribute.lead_time_days,
                 lead_time_bucket=lead_time_bucket(attribute.lead_time_days),
                 current_stock=attribute.current_stock,
                 unit_price=attribute.unit_price,
-                stock_value=stock_value(attribute.current_stock, attribute.unit_price),
+                price_currency=attribute.currency,
+                value_currency=value_currency(attribute.unit_price, attribute.currency),
+                stock_value=stock_value(attribute.current_stock, attribute.unit_price, attribute.currency),
                 minbe=attribute.minbe,
                 mabst=attribute.mabst,
             )
         )
-    rows.sort(key=_rank_key)
+    return assemble_report(
+        rows,
+        anchor,
+        policy,
+        source_population=len(attributes),
+        excluded=excluded,
+        duplicate_keys=duplicates,
+        population_by_plant=dict(population_by_plant),
+    )
+
+
+def assemble_report(
+    rows: list[RecommendationRow],
+    anchor: AnchorResolution,
+    policy: ReverseConversionPolicy,
+    *,
+    source_population: int,
+    excluded: int,
+    duplicate_keys: int,
+    population_by_plant: dict[str, int],
+    generated_at: datetime | None = None,
+    run_id: int | None = None,
+) -> ReverseReport:
+    """Rank the rows and count them by category, plant, reason and confidence, with the reconciliation.
+
+    Shared by the calculation (:func:`build_report`) and by reading a stored run back
+    (``snapshot.load_latest_report``), so a report built either way carries the same totals."""
+    rows = sorted(rows, key=_rank_key)
 
     totals: dict[ReverseCategory, CategoryTotals] = {}
     for category in FINAL_CATEGORIES:
@@ -343,14 +416,13 @@ def build_report(
     categorised_by_plant: Counter[str] = Counter(row.plant for row in rows)
     categorised = len(rows)
     reconciliation = Reconciliation(
-        source_population=len(attributes),
+        source_population=source_population,
         excluded=excluded,
         categorised=categorised,
-        duplicate_keys=duplicates,
-        reconciled=len(attributes) == excluded + categorised and duplicates == 0,
+        duplicate_keys=duplicate_keys,
+        reconciled=source_population == excluded + categorised and duplicate_keys == 0,
         by_plant={
-            plant: (population_by_plant[plant], categorised_by_plant[plant])
-            for plant in sorted(population_by_plant)
+            plant: (population_by_plant[plant], categorised_by_plant[plant]) for plant in sorted(population_by_plant)
         },
     )
     return ReverseReport(
@@ -364,6 +436,8 @@ def build_report(
             level: sum(1 for row in rows if row.confidence is level) for level in CONFIDENCE_ORDER
         },
         reconciliation=reconciliation,
+        generated_at=generated_at,
+        run_id=run_id,
     )
 
 
@@ -458,12 +532,12 @@ class ListFilters:
     """A tier name (upper-cased), or ``"unknown"`` for none recorded."""
     lead_time_bucket: str | None = None
     search: str | None = None
-    """Part of a material number or description, case-insensitive."""
+    """Words of a material number or description, case-insensitive: every word must be found, in any order."""
 
 
 def apply_filters(rows: tuple[RecommendationRow, ...] | list[RecommendationRow], filters: ListFilters) -> list[RecommendationRow]:
     """The rows matching every filter that is set, in the report's ranked order."""
-    needle = filters.search.strip().lower() if filters.search and filters.search.strip() else None
+    words = search_words(filters.search)
     wanted_tier = filters.criticality.strip().upper() if filters.criticality else None
     chosen: list[RecommendationRow] = []
     for row in rows:
@@ -486,7 +560,7 @@ def apply_filters(rows: tuple[RecommendationRow, ...] | list[RecommendationRow],
                     continue
             elif tier != wanted_tier:
                 continue
-        if needle is not None and needle not in f"{row.material} {row.description or ''}".lower():
+        if words and not matches_all_words(f"{row.material} {row.description or ''}", words):
             continue
         chosen.append(row)
     return chosen

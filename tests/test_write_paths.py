@@ -255,6 +255,20 @@ EXPECTED_WRITES: dict[tuple[str, str], str] = {
         "says which version was live). When the usage window changed it also rebuilds the derived "
         "i7_stockout_risk_input, which is rebuilt whole by design."
     ),
+    ("/api/v1/i7/reverse-conversion/requests", "post"): (
+        "A planner asks for an eligible Min-Max material to be converted to OAR -> one i7_reverse_conversion_request row "
+        "(PENDING_APPROVAL, first role of the OAR approval chain) and one immutable i7_reverse_approval_ledger row. "
+        "Calls no SAP API."
+    ),
+    ("/api/v1/i7/reverse-conversion/requests/decline", "post"): (
+        "A planner declines to convert an eligible Min-Max material, with a required reason -> one REJECTED "
+        "i7_reverse_conversion_request row and one immutable i7_reverse_approval_ledger row. Calls no SAP API."
+    ),
+    ("/api/v1/i7/reverse-conversion/requests/{request_id}/actions", "post"): (
+        "An approval action (approve, reject, send back, hold, release hold) by the pending role of the OAR chain -> "
+        "updates that request's status and chain position and appends one immutable i7_reverse_approval_ledger row. "
+        "The last approval stops at SAP_EXECUTION_PENDING; calls no SAP API."
+    ),
     ("/api/v1/i7/kpi-formulas/reset", "post"): (
         "Go back to the built-in KPI formulas -> a new i7_kpi_formula_version row holding the defaults; "
         "never deletes the history."

@@ -133,6 +133,10 @@ class Resb(NamedTuple):
     receiving_stor_loc: str
     goods_recipient: str
     text: str
+    # RESB-CRDAT (27-Nov-2026): mostly the requirement date's own day (SAP
+    # pre-fills BDTER from it), earlier where a requirement date was typed,
+    # missing for a reservation SAP made itself.
+    created_on: str | None = None
 
 
 # A table is a function producing fresh rows each time it is read -- new
@@ -239,6 +243,7 @@ def _resb(rsnum: str, m: str, p: str, i: int, pr: str | None = None) -> Resb:
         _s("0001"), _day(i * 3 + 30), _s(f"{i % 5 + 1}.000"), _s("EA"), _s(f"{i % 5 + 1}.000" if i % 3 == 0 else "0.000"),
         _s(f"{(i % 5 + 1) * 120}.00"), _s(pr) if pr else None, _s("10" if pr else "0"), _s(f"7{i % 400:07d}"),
         _s("261"), _s(""), _s(""), _s(f"USER{i % 60}"), _s(f"S{i:09X}" if i % 11 == 0 else ""),
+        None if i % 13 == 0 else _day(i * 3 + 20) if i % 2 == 0 else _day(i * 3 + 30),
     )
 
 
@@ -471,7 +476,13 @@ ALL = Batch("0", "9999999999")
 # procurement_view, kinds.RECORD_LAYOUT 7). Same rows, same payloads.
 # "planvs" re-recorded 2026-11-18 in all three: statuses by issue -- not,
 # partially or fully issued (kinds.RECORD_LAYOUT 8). Same row counts.
+# "rledger" re-recorded 2026-11-27 in all three: each reservation's payload
+# carries created_on (RESB-CRDAT), read at build time (kinds.RECORD_LAYOUT 10).
+# Same row counts.
 EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
+    # mixed, 25-Nov-2026: usage +39, a row for each OAR position with no
+    # movement in the kept months (87 OAR rows = the 87 OAR positions;
+    # kinds.RECORD_LAYOUT 9). The giant tenants' one OAR position moved.
     # mixed, 7-Nov-2026: usage -12 (a reversal of an issue before the kept
     # months no longer makes a month); movement/oarkey/reclass/watch: 13
     # materials whose 262 took back only part of a 261 keep that issue as
@@ -481,14 +492,14 @@ EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
         "exception": (151, "46ce4895f8e71b5c"), "grni": (80, "cdbe217240794569"),
         "lledger": (286, "8df6d11e71eae704"), "movement": (186, "455ab3f7e52a194f"),
         "oarkey": (87, "2bdab53cb4c794cc"), "reclass": (87, "4a01e7d45b270f1e"),
-        "rledger": (294, "747cdb56819da766"), "usage": (122, "83e997f3ff745fac"),
+        "rledger": (294, "a8de54058d1c66e9"), "usage": (161, "c074e22ce42640d3"),
         "watch": (192, "2b87ac6dda0df2ba"), "planvs": (125, "cfa93fedea00d007"),
     },
     "giant_procurement": {
         "attrib": (3, "f77f2830ef44df9f"), "chain": (1483, "17e55edc51ed3706"),
         "exception": (2, "635263fdeb4ddacc"), "lledger": (1483, "11aedebaab7b4af0"),
         "movement": (1, "e888732abb0b5eb0"), "oarkey": (1, "34de90e00df89cf2"),
-        "reclass": (1, "796ae91ff3f6fa23"), "rledger": (3, "3e636498cefa3ea8"),
+        "reclass": (1, "796ae91ff3f6fa23"), "rledger": (3, "21940ab20246757a"),
         "usage": (1, "ed89b5283468661c"), "watch": (1, "5ed9bb4c2ae856d7"),
         "planvs": (2, "4c09732999600622"),
     },
@@ -497,7 +508,7 @@ EXPECTED: dict[str, dict[str, tuple[int, str]]] = {
         "exception": (4435, "2a46b5743a731d76"), "grni": (6, "9dd86a35f35ae9f6"),
         "lledger": (12, "82095c661447c011"),
         "movement": (1, "145d27f46ec8471e"), "oarkey": (1, "702ce6717c803e00"),
-        "reclass": (1, "99733b38e83d2030"), "rledger": (4481, "906ccc961d424b9e"),
+        "reclass": (1, "99733b38e83d2030"), "rledger": (4481, "4f1eb5029d468a8d"),
         "usage": (1, "4db03c5965f3dd07"), "watch": (1, "aff23366b80b2fe5"),
         "planvs": (4480, "9999314cdf33caea"),
     },

@@ -66,7 +66,11 @@ from app.initiatives.i13.snapshot_store import codec
 #: reservation raised (ledger_compat.procurement_view).
 #: 8 (18 Nov 2026): planvs statuses by issue: awaiting reservation, not,
 #: partially or fully issued. Overdue is a captured plan's only.
-RECORD_LAYOUT = 8
+#: 9 (25 Nov 2026): usage holds every OAR position, a never-issued one as a row
+#: of zero months, so the Usage pattern count is the dashboard's OAR count.
+#: 10 (27 Nov 2026): rledger payloads carry created_on (RESB-CRDAT), read at
+#: build time instead of from the n_resb view on every Ledger page.
+RECORD_LAYOUT = 10
 
 WATCH = "watch"
 MOVEMENT = "movement"

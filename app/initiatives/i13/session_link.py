@@ -283,6 +283,26 @@ def session_requesters(db: Session, session_ids: Iterable[str]) -> dict[str, str
     }
 
 
+def session_plan_windows(db: Session, session_ids: Iterable[str]) -> dict[str, tuple[date | None, date | None]]:
+    """The consumption plan's window (start, end) by session ID -- when the
+    part is needed, as the requester said in the assistant. The latest plan
+    when a session holds more than one. A session that recorded no plan is
+    left out; a plan given no window reads ``(None, None)``."""
+    from app.assistant.models import ConsumptionPlanRecord
+
+    wanted = list(session_ids)
+    if not wanted:
+        return {}
+    windows: dict[str, tuple[date | None, date | None]] = {}
+    for sid, start, end in db.execute(
+        select(ConsumptionPlanRecord.session_id, ConsumptionPlanRecord.window_start, ConsumptionPlanRecord.window_end)
+        .where(ConsumptionPlanRecord.session_id.in_(wanted))
+        .order_by(ConsumptionPlanRecord.captured_at, ConsumptionPlanRecord.id)
+    ).all():
+        windows[sid] = (start, end)
+    return windows
+
+
 def _links_wanted(
     rows: Iterable[Row],
     sessions: Mapping[str, SessionInfo],

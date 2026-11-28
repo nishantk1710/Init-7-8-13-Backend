@@ -157,6 +157,7 @@ class TestStageOrder:
             "forecasting",
             "inventory",
             "oar",
+            "reverse_conversion",
             "recommendations",
             "stockout_risk",
         )

@@ -209,6 +209,18 @@ class QuantityDecisionRecord:
     # to the requester to give it a second time.
     override_reason_category: str | None = None
     override_free_text: str | None = None
+    # The exception's business key when the source fixes it, overriding
+    # ``detection.quantity_override_business_key``'s reservation-first order. The
+    # assistant keys on its session ("SESSION-<id>"), one exception per request
+    # line, so the ID stays the same once SAP links a reservation to it (25-Nov-2026).
+    exception_key: str | None = None
+
+    @property
+    def reservation_linked(self) -> bool:
+        """Whether SAP has the reservation this decision was made for. Since
+        25-Nov-2026 an override is an exception only then: a request that never
+        became a reservation reserved no stock (``service.detect_exceptions``)."""
+        return bool(self.reservation_number) and bool(self.reservation_item)
 
 
 @dataclass(frozen=True)

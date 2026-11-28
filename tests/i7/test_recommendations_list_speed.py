@@ -23,6 +23,7 @@ from app.api.i7 import recommendations as api
 from app.models.i7_features import DecliningDemandEvaluation
 from app.models.i7_recommendation import Recommendation
 from app.models.i7_staging import StagedMaterial, StagedMaterialPlant
+from app.models.i7_reverse import ReverseConversionRequest, ReverseRecommendation, ReverseRun
 
 BASE = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
@@ -31,7 +32,7 @@ BASE = datetime(2026, 10, 1, tzinfo=timezone.utc)
 def db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     metadata = MetaData()
-    for model in (Recommendation, DecliningDemandEvaluation, StagedMaterial, StagedMaterialPlant):
+    for model in (Recommendation, DecliningDemandEvaluation, StagedMaterial, StagedMaterialPlant, ReverseRun, ReverseRecommendation, ReverseConversionRequest):
         copy = model.__table__.to_metadata(metadata)
         copy.indexes.clear()
     metadata.create_all(engine)

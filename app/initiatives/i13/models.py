@@ -308,6 +308,12 @@ class ReservationLedgerEntry:
     # the ledger as history, but no exception engine raises against it.
     reservation_deleted: bool = False
 
+    # RESB-CRDAT: the reservation's base date (RKPF-RSDAT) -- the day it was
+    # keyed in unless the person changed it -- or its order's creation date.
+    # SAP pre-fills ``requirement_date`` from it, so equal means nobody typed a
+    # requirement date (27-Nov-2026). None where SAP sends none.
+    created_on: date | None = None
+
 
 @dataclass(frozen=True)
 class AttributionResult:

@@ -9,7 +9,11 @@ THE TABLE (first match wins -- the order below is the business rule, so do not r
 There is no Manual Review category. A material a planner has to look at stays in Convert to OAR
 (``ReverseCategory.RECOMMENDED_FOR_OAR``) and carries a confidence; its reason says why.
 
- 1. Outside VM/VB, plant or deletion-flag scope        -> Excluded            Outside scope
+ 1. Outside VM/VB, plant or deletion-flag scope, or    -> Excluded            Outside scope
+    a price that is not in ZAR or NAD
+ 1b. Changed between OAR and Min-Max within the        -> Not Eligible        Recently changed planning type
+    cooldown (12 months to begin with, configurable)
+    (decision row 14 in the audit field; it is checked right after scope)
  2. Criticality unknown (NULL)                         -> Convert to OAR LOW  Unknown criticality
  3. CRITICAL, IMPACT or INSURANCE                      -> Not Eligible        Protected criticality
  4. OBSOLETE                                           -> Convert to OAR MED  Obsolete
@@ -38,8 +42,13 @@ Stock, price, MINBE and MABST are deliberately not read here. They rank material
 they never decide one, and a material with zero stock or no price is evaluated like any other.
 """
 
+from dataclasses import replace
+
 from app.core.criticality import CriticalityTier
+from app.initiatives.i7.kpi_formulas.currency import TO_ZAR
 from app.initiatives.i7.policy.reverse_conversion import ReverseConversionPolicy
+from app.initiatives.i7.reverse_conversion.cooldown import cooldown_ends, in_cooldown
+from app.initiatives.i7.reverse_conversion.metrics import add_months
 from app.initiatives.i7.reverse_conversion.types import (
     ConsumptionMetrics,
     MaterialPlantInputs,
@@ -56,7 +65,21 @@ def _in_scope(inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> b
     mrp_type = (inputs.mrp_type or "").strip().upper()
     plant = (inputs.plant or "").strip()
     # None (never maintained) is not deletion; only an explicit True is. The feature build treats it the same way.
-    return mrp_type in policy.mrp_types and plant in policy.plants and inputs.deletion_flag is not True
+    return (
+        mrp_type in policy.mrp_types
+        and plant in policy.plants
+        and inputs.deletion_flag is not True
+        and _price_currency_counted(inputs)
+    )
+
+
+def _price_currency_counted(inputs: MaterialPlantInputs) -> bool:
+    """A material with a price is considered only when the price is in ZAR or NAD -- the currencies the OAR and
+    Stock item money figures count. A price in any other currency, or with none stated, leaves the material out.
+    A material with no price at all is kept: it simply has no value."""
+    if inputs.unit_price is None:
+        return True
+    return inputs.price_currency in TO_ZAR
 
 
 def _tier(criticality: str | None) -> str | None:
@@ -85,6 +108,22 @@ def _is_new_with_short_record(metrics: ConsumptionMetrics, policy: ReverseConver
     )
 
 
+def _n(count: int | None, one: str, many: str | None = None) -> str:
+    """``1 month`` / ``2 months``: a count with its noun in the right number."""
+    shown = "unknown" if count is None else str(count)
+    return f"{shown} {one if count == 1 else (many or one + 's')}"
+
+
+def _mon(day) -> str:
+    """A month as a person writes it: ``Apr 2026``; ``unknown`` when there is none."""
+    return f"{day:%b %Y}" if day is not None else "unknown"
+
+
+def _between(anchor, months: int) -> str:
+    """The months a count covers, as dates: ``Nov 2025 and Oct 2026`` (read after "between") -- never "the anchor"."""
+    return f"{_mon(add_months(anchor, -(months - 1)))} and {_mon(anchor)}"
+
+
 def _decision(
     category: ReverseCategory,
     reason: ReverseReason,
@@ -100,19 +139,34 @@ def _convert(reason: ReverseReason, detail: str, rule: int, confidence: ReverseC
     return _decision(ReverseCategory.RECOMMENDED_FOR_OAR, reason, detail, rule, confidence)
 
 
-def evaluate(inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> ReverseDecision:
+def _decide(inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> ReverseDecision:
     """The category and reason for one material-plant, by the approved decision table."""
     m = inputs.metrics
     issues, months = m.issues_latest_window, m.months_with_use_latest_window
     window = policy.window_months
+    # Every sentence a planner reads names dates, not "the anchor" or "the latest 12 months".
+    recent_months = _between(m.anchor, window)
+    two_years = _between(m.anchor, policy.zero_use_window_months)
+    last_used = _mon(m.last_valid_month)
 
     # 1. Scope.
     if not _in_scope(inputs, policy):
         return _decision(
             ReverseCategory.EXCLUDED,
             ReverseReason.OUTSIDE_SCOPE,
-            "Outside the scope of this recommendation (MRP type, plant or deletion flag).",
+            "Outside the scope of this recommendation (MRP type, plant, deletion flag, or a price not in ZAR or NAD).",
             1,
+        )
+
+    # 1b. Cooldown: it moved between OAR and Min-Max recently, so it is left alone for now. Not a verdict on its
+    # usage -- only that converting it back so soon would just bounce it between the two.
+    if in_cooldown(inputs.group_changed_on, inputs.as_of, policy.cooldown_months):
+        return _decision(
+            ReverseCategory.NOT_ELIGIBLE,
+            ReverseReason.RECENTLY_CHANGED,
+            f"It changed between OAR and Min-Max in {_mon(inputs.group_changed_on)}. It is not recommended for "
+            f"conversion again before {_mon(cooldown_ends(inputs.group_changed_on, policy.cooldown_months))}.",
+            14,
         )
 
     # 2. Unknown criticality outranks every other condition below.
@@ -120,7 +174,7 @@ def evaluate(inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> Re
     if tier is None:
         return _convert(
             ReverseReason.UNKNOWN_CRITICALITY,
-            "Its criticality is not known, so a planner must evaluate it manually before converting.",
+            "Criticality is not recorded in SAP, so we cannot judge the risk of converting. A planner should check it first.",
             2,
             ReverseConfidence.LOW,
         )
@@ -130,7 +184,7 @@ def evaluate(inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> Re
         return _decision(
             ReverseCategory.NOT_ELIGIBLE,
             ReverseReason.PROTECTED_CRITICALITY,
-            f"Its criticality is {tier.title()}, which is never recommended for OAR.",
+            f"Criticality is {tier.title()}, which always stays on Min-Max.",
             3,
         )
 
@@ -138,8 +192,8 @@ def evaluate(inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> Re
     if tier == policy.obsolete_criticality_tier:
         return _convert(
             ReverseReason.OBSOLETE_CRITICALITY,
-            "Its criticality is Obsolete: SAP marks it as no longer needed in operation. Ordering it only when "
-            "required is a natural fit, but a planner must first decide whether the stock should be kept or disposed of.",
+            "Criticality is Obsolete: SAP marks it as no longer needed. Ordering it only when required fits, but a "
+            "planner should first decide whether to keep or dispose of the stock.",
             4,
             ReverseConfidence.MEDIUM,
         )
@@ -148,8 +202,8 @@ def evaluate(inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> Re
     if (issues == 0) != (months == 0):
         return _convert(
             ReverseReason.INCONSISTENT_MOVEMENT,
-            f"In the latest {window} months it shows {issues} net issue transactions but {months} months "
-            "with consumption; the two disagree, so a planner must check the movements before converting.",
+            f"Between {recent_months}, SAP shows {_n(issues, 'issue')} but {_n(months, 'active month')}, which do not "
+            "agree. A planner should check the movements first.",
             5,
             ReverseConfidence.LOW,
         )
@@ -159,13 +213,13 @@ def evaluate(inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> Re
         if m.lifetime_months_with_use == 0:
             return _convert(
                 ReverseReason.NEVER_MOVED,
-                f"Zero issues in {policy.zero_use_window_months} months and never moved.",
+                f"Zero issues between {two_years}, and it has never moved.",
                 6,
                 ReverseConfidence.MEDIUM,
             )
         return _convert(
             ReverseReason.ZERO_USE_24M,
-            f"Zero issues in {policy.zero_use_window_months} months but moved before.",
+            f"Zero issues between {two_years}. It last moved in {last_used}.",
             7,
             ReverseConfidence.MEDIUM,
         )
@@ -173,12 +227,17 @@ def evaluate(inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> Re
     # 8. Not enough history to judge.
     span = m.history_span_months
     if span is None or span < policy.minimum_history_span_months:
-        shown = "no" if span is None else f"only {span}"
+        if span is None:
+            history = "It has no consumption history yet, so we cannot judge it."
+        else:
+            history = (
+                f"Only {_n(span, 'month')} of history ({_mon(m.first_valid_month)} to {last_used}); "
+                f"at least {policy.minimum_history_span_months} are needed before we can judge it."
+            )
         return _decision(
             ReverseCategory.NOT_ELIGIBLE,
             ReverseReason.INSUFFICIENT_HISTORY,
-            f"It has {shown} months of consumption history; at least "
-            f"{policy.minimum_history_span_months} are needed.",
+            history,
             8,
         )
 
@@ -186,15 +245,16 @@ def evaluate(inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> Re
     if not _lead_time_known(inputs.lead_time_days):
         return _convert(
             ReverseReason.LEAD_TIME,
-            "Its lead time is not known, so a planner must evaluate it manually before converting.",
+            "Lead time is not recorded in SAP, so we cannot tell whether ordering only when needed is fast enough. "
+            "A planner should check it.",
             9,
             ReverseConfidence.LOW,
         )
     if float(inputs.lead_time_days) > policy.maximum_lead_time_days:  # type: ignore[arg-type]
         return _convert(
             ReverseReason.LEAD_TIME,
-            f"Its lead time is {float(inputs.lead_time_days):g} days, over the "  # type: ignore[arg-type]
-            f"{policy.maximum_lead_time_days} that OAR can be relied on for, so a planner must evaluate it manually.",
+            f"Lead time is {float(inputs.lead_time_days):g} days, longer than the "  # type: ignore[arg-type]
+            f"{policy.maximum_lead_time_days} days that ordering only when needed can safely wait. A planner should check it.",
             9,
             ReverseConfidence.LOW,
         )
@@ -203,8 +263,8 @@ def evaluate(inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> Re
     if issues == 0:
         return _convert(
             ReverseReason.LAPSED,
-            f"It had no issues in the latest {window} months but was used before, so a planner must "
-            "decide whether the demand has stopped.",
+            f"No issues between {recent_months}, but it was used before, last in {last_used}. "
+            "A planner should decide whether demand has stopped.",
             10,
             ReverseConfidence.MEDIUM,
         )
@@ -214,8 +274,8 @@ def evaluate(inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> Re
         return _decision(
             ReverseCategory.NOT_ELIGIBLE,
             ReverseReason.FREQUENT_CONSUMPTION,
-            f"It had {issues} issues across {months} months in the latest {window} months, which is "
-            "frequent enough to keep it on Min-Max.",
+            f"Issued {_n(issues, 'time')} in {_n(months, 'month')} between {recent_months}. That is too frequent to "
+            "order only when needed, so it stays on Min-Max.",
             11,
         )
 
@@ -229,8 +289,8 @@ def evaluate(inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> Re
     if sparse and recent and not short_record:
         return _convert(
             ReverseReason.SPARSE_RECURRING_DEMAND,
-            f"It had {issues} issues across {months} months in the latest {window} months, last used "
-            f"{m.months_since_last_movement} months before the anchor.",
+            f"Issued {_n(issues, 'time')} in {_n(months, 'month')} between {recent_months}, last in {last_used}. "
+            "Demand is low and recent, so ordering only when needed fits.",
             12,
             ReverseConfidence.HIGH,
         )
@@ -239,22 +299,109 @@ def evaluate(inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> Re
     confidence = ReverseConfidence.MEDIUM
     if not sparse:
         reason = ReverseReason.BORDERLINE_FREQUENCY
-        detail = f"It had {issues} issues across {months} months in the latest {window} months, between sparse and frequent."
+        detail = (
+            f"Issued {_n(issues, 'time')} in {_n(months, 'month')} between {recent_months}. More than a rare item but "
+            "not frequent, so a planner should decide."
+        )
     elif not recent:
         reason = ReverseReason.STALE_LAST_MOVEMENT
-        shown = "unknown" if m.months_since_last_movement is None else str(m.months_since_last_movement)
         detail = (
-            f"Its latest movement was {shown} months before the anchor, longer than the "
-            f"{policy.maximum_months_since_last_movement} allowed for a recommendation."
+            f"Last used in {last_used}, more than {policy.maximum_months_since_last_movement} months before "
+            f"{_mon(m.anchor)}. Demand may be fading, so a planner should decide."
         )
     elif short_record:
         reason = ReverseReason.LIFETIME_CRITERION
         detail = (
-            f"It is a new material with only {m.lifetime_months_with_use} months of use so far; at least "
-            f"{policy.new_material_minimum_lifetime_months} are needed to recommend it."
+            f"A new material, first used in {_mon(m.first_valid_month)} and used in only "
+            f"{_n(m.lifetime_months_with_use, 'month')} so far. It is too early to tell, so a planner should decide."
         )
     else:
         reason = ReverseReason.UNCLASSIFIED_ACTIVE
-        detail = "It is active but matches none of the review reasons; a planner must check it."
+        detail = "It is active but matches none of the usual reasons, so a planner should check it."
         confidence = ReverseConfidence.LOW
     return _convert(reason, detail, 13, confidence)
+
+
+SAW = "What we saw"
+MEANS = "What it means"
+TODO = "What to do"
+
+_PLANNER = "A planner should decide."
+
+
+def _points(decision: ReverseDecision, inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> tuple[tuple[str, str], ...]:
+    """The reason as three short labelled lines, for a person who scans rather than reads: what the data shows (with
+    dates), what that means for ordering, and what to do. Words only -- the decision is already made, and every
+    figure here is one the decision used."""
+    if decision.category is ReverseCategory.EXCLUDED:
+        return ()
+    m = inputs.metrics
+    issues, months = m.issues_latest_window, m.months_with_use_latest_window
+    recent = _between(m.anchor, policy.window_months)
+    two_years = _between(m.anchor, policy.zero_use_window_months)
+    last, first = _mon(m.last_valid_month), _mon(m.first_valid_month)
+    used = f"Issued {_n(issues, 'time')} in {_n(months, 'month')} between {recent}."
+    stays = "Nothing: it stays on Min-Max."
+    confirm = "A planner should confirm it can be ordered only when needed."
+
+    match decision.reason:
+        case ReverseReason.SPARSE_RECURRING_DEMAND:
+            saw, means, todo = f"{used} Last used {last}.", "Demand is low and recent, so ordering only when needed fits.", "Convert it if you agree. The approvers confirm it."
+        case ReverseReason.BORDERLINE_FREQUENCY:
+            saw, means, todo = used, "More than a rare item, but not frequent: it is not clearly one or the other.", _PLANNER
+        case ReverseReason.STALE_LAST_MOVEMENT:
+            saw = f"Last used {last}, more than {policy.maximum_months_since_last_movement} months before {_mon(m.anchor)}."
+            means, todo = "Demand may be fading.", _PLANNER
+        case ReverseReason.LIFETIME_CRITERION:
+            saw = f"First used {first}; used in only {_n(m.lifetime_months_with_use, 'month')} so far."
+            means, todo = "It is a new material, so it is too early to tell.", _PLANNER
+        case ReverseReason.LAPSED:
+            saw = f"No issues between {recent}. It was used before, last in {last}."
+            means, todo = "Demand may have stopped, so the Min-Max stock may no longer be needed.", "A planner should decide whether demand has stopped."
+        case ReverseReason.NEVER_MOVED:
+            saw, means, todo = f"No issues between {two_years}. It has never moved.", "There is no demand to hold stock for.", confirm
+        case ReverseReason.ZERO_USE_24M:
+            saw, means, todo = f"No issues between {two_years}. It last moved in {last}.", "There is no recent demand to hold stock for.", confirm
+        case ReverseReason.LEAD_TIME:
+            if not _lead_time_known(inputs.lead_time_days):
+                saw = "Lead time is not recorded in SAP."
+                means = "Without it we cannot tell whether ordering only when needed is fast enough."
+            else:
+                saw = f"Lead time is {float(inputs.lead_time_days):g} days; the limit is {policy.maximum_lead_time_days} days."  # type: ignore[arg-type]
+                means = "Ordering only when needed may be too slow."
+            todo = "A planner should check the lead time."
+        case ReverseReason.UNKNOWN_CRITICALITY:
+            saw, means, todo = "Criticality is not recorded in SAP.", "Without it we cannot judge the risk of converting.", "A planner should check it first."
+        case ReverseReason.OBSOLETE_CRITICALITY:
+            saw, means = "Criticality is Obsolete: SAP marks it as no longer needed.", "Ordering it only when required fits."
+            todo = "A planner should decide whether to keep or dispose of the stock."
+        case ReverseReason.INCONSISTENT_MOVEMENT:
+            saw = f"Between {recent}, SAP shows {_n(issues, 'issue')} but {_n(months, 'active month')}."
+            means, todo = "The two counts should agree, so the movements may be wrong.", "A planner should check the movements first."
+        case ReverseReason.PROTECTED_CRITICALITY:
+            saw = f"Criticality is {(inputs.criticality or '').strip().title()}."
+            means, todo = "These materials always stay on Min-Max.", stays
+        case ReverseReason.INSUFFICIENT_HISTORY:
+            span = m.history_span_months
+            saw = (
+                "It has no consumption history yet."
+                if span is None
+                else f"Only {_n(span, 'month')} of history ({first} to {last})."
+            )
+            means, todo = f"At least {policy.minimum_history_span_months} months are needed to judge it.", "Nothing yet: it stays on Min-Max."
+        case ReverseReason.FREQUENT_CONSUMPTION:
+            saw, means, todo = used, "Too frequent to order only when needed.", stays
+        case ReverseReason.RECENTLY_CHANGED:
+            saw = f"It changed between OAR and Min-Max in {_mon(inputs.group_changed_on)}."
+            ends = _mon(cooldown_ends(inputs.group_changed_on, policy.cooldown_months))
+            means, todo = "Converting it back so soon would just bounce it between the two.", f"Nothing before {ends}."
+        case _:
+            saw, means, todo = decision.detail, "It matches none of the usual reasons.", _PLANNER
+    return ((SAW, saw), (MEANS, means), (TODO, todo))
+
+
+def evaluate(inputs: MaterialPlantInputs, policy: ReverseConversionPolicy) -> ReverseDecision:
+    """The category, reason and confidence for one material-plant, by the approved decision table, with the reason
+    also written as three short labelled lines (``points``)."""
+    decision = _decide(inputs, policy)
+    return replace(decision, points=_points(decision, inputs, policy))

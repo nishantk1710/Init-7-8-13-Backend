@@ -25,8 +25,10 @@ that correctly names one unresolved condition --
   reservation_item)``, the natural grain of a W6.2 ``ReservationLedgerEntry``.
   (``NO_PLAN_GRNI`` used the same key; retired 5-Nov-2026,
   :func:`retire_no_plan_grni`.)
-* ``QUANTITY_OVERRIDE`` -- ``(reservation_number, reservation_item)`` when
-  known, else the session id, else ``(material, plant)`` as a last resort.
+* ``QUANTITY_OVERRIDE`` -- the assistant's session id (one per request line);
+  for the older quantity-suggestion API, ``(reservation_number,
+  reservation_item)``. Raised only once the decision has a reservation in SAP
+  (25-Nov-2026).
 
 A detection run is idempotent against ``ExceptionRepository.upsert`` keyed
 on this id: run 1 creates, run 2 against the same still-unresolved condition
@@ -64,7 +66,7 @@ import dataclasses
 import uuid
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from urllib.parse import quote
 
 from app.initiatives.i13.act.detection import (
@@ -113,6 +115,13 @@ from app.shared.material_scope import MaterialScope
 _AUTO_RESOLVABLE_STATUSES = frozenset(
     {ExceptionStatus.OPEN, ExceptionStatus.AWAITING_REQUESTER, ExceptionStatus.ESCALATED}
 )
+
+
+def has_reservation_key(entry: ReservationLedgerEntry) -> bool:
+    """Whether a ledger entry carries the reservation number and item that
+    the Non-AI and 30-day exceptions are keyed on. A line with either missing
+    is skipped by those two rules rather than crashing the run."""
+    return bool(entry.reservation_number) and bool(entry.reservation_item)
 
 
 @dataclass(frozen=True)
@@ -415,6 +424,24 @@ def _apply_detection(
     return (0, 1, 0, routed)
 
 
+def _fill_override_reservation(
+    exception_id: str, record: QuantityDecisionRecord, repository: ExceptionRepository
+) -> None:
+    """Show the reservation on an override raised before it was linked.
+
+    Overrides were raised at submit until 25-Nov-2026, with no reservation. The
+    one kept for a request line whose reservation SAP has since linked gets it
+    filled in, so the Exceptions screen shows which reservation it is."""
+    existing = repository.get(exception_id)
+    if existing is None or existing.reservation_number or not record.reservation_linked:
+        return
+    repository.upsert(
+        dataclasses.replace(
+            existing, reservation_number=record.reservation_number, reservation_item=record.reservation_item
+        )
+    )
+
+
 def _confirm_recorded_override(
     exception_id: str,
     record: QuantityDecisionRecord,
@@ -476,6 +503,7 @@ def _detect_not_issued(
     final_issued: Collection[tuple[str, str]],
     owner_for,
     response_period: timedelta,
+    created_by_reservation: Mapping[tuple[str, str], date] = {},
     repository: ExceptionRepository,
     notification_port: NotificationPort,
 ) -> tuple[int, int, int, int]:
@@ -487,9 +515,16 @@ def _detect_not_issued(
     Items already holding one are evaluated too, so an exception whose link
     has since gone (the R-ID removed, the material no longer OAR) is resolved
     rather than left open.
+
+    With nothing received, an item is measured from its plan's window start,
+    no earlier than the day SAP made the reservation (``created_by_reservation``,
+    RESB-CRDAT); SAP's requirement date only where the plan has no window
+    (:func:`detection.detect_not_issued`).
     """
     by_item: dict[tuple[str, str], list[ReservationLedgerEntry]] = {}
     for entry in ledger_entries:
+        if not has_reservation_key(entry):
+            continue
         by_item.setdefault((entry.reservation_number, entry.reservation_item), []).append(entry)
     held = {
         (exception.reservation_number, exception.reservation_item)
@@ -508,7 +543,12 @@ def _detect_not_issued(
             continue
         finding = (
             detect_not_issued(
-                entries, as_of=as_of_time.date(), threshold_days=threshold_days, final_issued=key in final_issued
+                entries,
+                as_of=as_of_time.date(),
+                threshold_days=threshold_days,
+                final_issued=key in final_issued,
+                planned_start=plan.planned_use_date,
+                created_on=created_by_reservation.get(key) or first.created_on,
             )
             if linked
             else None
@@ -517,11 +557,10 @@ def _detect_not_issued(
         reason = "n/a"
         if finding is not None:
             evidence.update(basis=finding.basis.value, since=str(finding.since), days=str(finding.days))
-            reason = (
-                f"Received {finding.since} for this reservation, nothing issued after {finding.days} days"
-                if finding.basis is NotIssuedBasis.RECEIVED
-                else f"Required by {finding.since}, nothing issued after {finding.days} days"
-            )
+            reason = {
+                NotIssuedBasis.RECEIVED: f"Received {finding.since} for this reservation, nothing issued after {finding.days} days",
+                NotIssuedBasis.PLANNED: f"Planned use from {finding.since}, nothing issued after {finding.days} days",
+            }.get(finding.basis, f"Required by {finding.since}, nothing issued after {finding.days} days")
         c, r, res, rt = _apply_detection(
             exception_id=build_exception_id("NOT_ISSUED_30_DAYS", *key),
             condition_holds=finding is not None,
@@ -590,6 +629,7 @@ def detect_exceptions(
     not_issued_days: int = 30,
     final_issued: Collection[tuple[str, str]] = frozenset(),
     no_plan_eligible: Collection[tuple[str, str]] | None = None,
+    created_by_reservation: Mapping[tuple[str, str], date] = {},
 ) -> DetectionRunResult:
     """Run PLAN_BREACH, NO_PLAN, NOT_ISSUED_30_DAYS and QUANTITY_OVERRIDE
     detection for the given already-fetched evidence, and persist/update/resolve
@@ -622,6 +662,9 @@ def detect_exceptions(
     :func:`app.initiatives.i13.act_runner.no_plan_eligible`). Anything older was
     reserved before the assistant existed and is not a breach; an open NO_PLAN
     on one is resolved. ``None`` is every reservation item.
+
+    ``created_by_reservation`` is the day SAP made each reservation (RESB-CRDAT),
+    where known: NOT_ISSUED_30_DAYS never measures a planned window from before it.
     """
 
     def wanted(exception_type: ExceptionType) -> bool:
@@ -700,6 +743,12 @@ def detect_exceptions(
     for entry in ledger_entries if wanted(ExceptionType.NO_PLAN) else ():
         if entry.material_scope is not MaterialScope.OAR:
             continue
+        if not has_reservation_key(entry):
+            # No reservation number or item: not "a reservation made without
+            # the assistant", and nothing to key its exception ID on. Before
+            # 25-Nov-2026 build_exception_id joined a None here, raised a
+            # TypeError and the whole nightly run saved nothing (22-25 Nov).
+            continue
         plan = matcher.plan_for(entry)
         no_plan_reason = classify_no_plan_reason(plan)
         if plan is None:
@@ -766,6 +815,7 @@ def detect_exceptions(
             response_period=response_period,
             repository=repository,
             notification_port=notification_port,
+            created_by_reservation=created_by_reservation,
         )
         created += c
         reused += r
@@ -773,6 +823,12 @@ def detect_exceptions(
         routed += rt
 
     for record in quantity_decision_records if wanted(ExceptionType.QUANTITY_OVERRIDE) else ():
+        if not record.reservation_linked:
+            # 25-Nov-2026: like every other exception, an override counts only
+            # once SAP has its reservation (the request ID in SGTXT). Until then
+            # it is left alone -- not raised, and an existing one is not closed,
+            # since a closed exception never reopens when the link appears.
+            continue
         evaluation = detect_quantity_override(record)
         evidence = {
             "requested_quantity": str(record.requested_quantity),
@@ -816,6 +872,9 @@ def detect_exceptions(
         reused += r
         resolved += res
         routed += rt
+        _fill_override_reservation(
+            build_exception_id("QUANTITY_OVERRIDE", quantity_override_business_key(record)), record, repository
+        )
         if evaluation.available and evaluation.override:
             _confirm_recorded_override(
                 build_exception_id("QUANTITY_OVERRIDE", quantity_override_business_key(record)),

@@ -43,7 +43,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.i7.deps import get_session, load_latest_recommendation
-from app.api.i7.recommendations import _apply_filters, _latest_only
+from app.api.i7.recommendations import ValueChange, _apply_filters, _latest_only
 from app.initiatives.i7.kpi_formulas.expression import evaluate
 from app.initiatives.i7.kpi_formulas.resolved import load_active
 from app.initiatives.i7.policy import PolicyDocument
@@ -628,7 +628,7 @@ def adoption_counts(
     demand_type: str | None = None,
     demand_class: str | None = None,
     criticality_level: str | None = None,
-    value_change: Literal["released", "tied_up"] | None = None,
+    value_change: ValueChange | None = None,
 ) -> AdoptionCounts:
     def tracked(*columns):
         """The newest recommendation per material-plant that has something to adopt -- the same
@@ -697,7 +697,7 @@ def get_adoption_summary(
         Query(description="The display level: CRITICAL / IMPACT / INSURANCE; Low is NORMAL, OBSOLETE or no tier."),
     ] = None,
     value_change: Annotated[
-        Literal["released", "tied_up"] | None,
+        ValueChange | None,
         Query(
             description="released / tied_up: count only recommendations whose Value change releases working capital "
             "(ROP goes down) or ties more up (ROP goes up)."

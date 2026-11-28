@@ -58,7 +58,10 @@ from app.initiatives.i13.snapshot_store.reader import SqlSnapshot
 from app.integrations.notifications.service import SharedNotificationPort
 from app.integrations.sap.postgres_material import fetch_material_scope_index
 from app.integrations.sap.postgres_procurement import PostgresProcurementRepository
-from app.integrations.sap.postgres_reservation import PostgresReservationRepository, reservation_keys_since
+from app.integrations.sap.postgres_reservation import (
+    PostgresReservationRepository,
+    reservation_keys_since,
+)
 
 
 logger = get_logger(__name__)

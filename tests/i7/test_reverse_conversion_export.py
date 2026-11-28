@@ -47,7 +47,7 @@ def test_every_row_carries_the_anchor_and_the_policy_version():
     report = make_report(FakeSource(*population()))
     rows = parse(rows_to_csv(report.rows, report.anchor, report.policy))
     assert {row["anchor_month"] for row in rows} == {"2026-10"}
-    assert {row["policy_version"] for row in rows} == {"reverse-conversion-v1"}
+    assert {row["policy_version"] for row in rows} == {"reverse-conversion-v2"}
 
 
 def test_category_reason_and_the_consumption_figures_are_exported():
@@ -62,13 +62,14 @@ def test_category_reason_and_the_consumption_figures_are_exported():
     assert by["NEVER"]["first_valid_movement_month"] == "" and by["NEVER"]["history_span_months"] == ""
 
 
-def test_stock_value_is_exported_and_the_currency_is_left_empty():
+def test_stock_value_is_exported_in_zar_and_an_unpriced_row_has_no_currency():
     report = make_report(FakeSource(*population()))
     by = {row["material"]: row for row in parse(rows_to_csv(report.rows, report.anchor, report.policy))}
     assert by["REC2"]["current_stock"] == "500" and by["REC2"]["unit_price"] == "10" and by["REC2"]["stock_value"] == "5000"
     assert by["REC3"]["stock_value"] == "" and by["REC3"]["unit_price"] == ""  # no price: no value, nothing invented
     assert by["REC4"]["current_stock"] == "0"  # zero stock stays visible
-    assert {row["currency"] for row in by.values()} == {""}
+    assert by["REC2"]["currency"] == "ZAR" and by["REC2"]["price_currency"] == "ZAR"
+    assert by["REC3"]["currency"] == "" and by["REC3"]["price_currency"] == "ZAR"  # a currency but no price: nothing counted
 
 
 def test_a_filtered_export_holds_only_the_rows_given():

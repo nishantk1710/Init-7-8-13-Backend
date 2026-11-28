@@ -28,13 +28,14 @@ from datetime import date, datetime
 from decimal import Decimal
 from itertools import groupby
 
-from sqlalchemy import and_, exists, func, select
+from sqlalchemy import and_, exists, false, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.initiatives.i7.policy.reverse_conversion import ReverseConversionPolicy
 from app.initiatives.i7.reverse_conversion.types import MonthlyMovement
 from app.models.csv_extract import STATUS_COMPLETE, CsvExtractRequest
 from app.models.i7_features import MaterialFeature
+from app.models.i7_recommendation import Recommendation
 from app.models.i7_staging import StagedConsumption, StagedMaterial, StagedMaterialPlant
 
 #: The SAP table whose extract the consumption comes from.
@@ -59,6 +60,8 @@ class AttributeRow:
     mabst: Decimal | None
     deletion_flag: bool | None
     """True when MARC (this plant) or MARA (client level) flags it for deletion; None when neither says."""
+    currency: str | None = None
+    """The currency SAP stated for ``unit_price`` (the feature store's own), or None when none was stated."""
 
 
 def _deleted(*flags: bool | None) -> bool | None:
@@ -101,6 +104,7 @@ def fetch_attributes(session: Session, policy: ReverseConversionPolicy) -> list[
             MaterialFeature.lead_time_days,
             MaterialFeature.current_stock,
             MaterialFeature.unit_price,
+            MaterialFeature.currency,
             MaterialFeature.current_reorder_point,
             MaterialFeature.current_maximum_stock,
             StagedMaterialPlant.deletion_flag,
@@ -117,7 +121,7 @@ def fetch_attributes(session: Session, policy: ReverseConversionPolicy) -> list[
         .order_by(MaterialFeature.sap_material_number, MaterialFeature.sap_plant_code)
     )
     rows: list[AttributeRow] = []
-    for number, plant, mrp, criticality, lead, stock, price, minbe, mabst, plant_deleted in session.execute(statement):
+    for number, plant, mrp, criticality, lead, stock, price, currency, minbe, mabst, plant_deleted in session.execute(statement):
         description, client_deleted = material_facts.get(number, (None, None))
         rows.append(
             AttributeRow(
@@ -132,6 +136,7 @@ def fetch_attributes(session: Session, policy: ReverseConversionPolicy) -> list[
                 minbe=minbe,
                 mabst=mabst,
                 deletion_flag=_deleted(plant_deleted, client_deleted),
+                currency=currency,
             )
         )
     return rows
@@ -177,6 +182,47 @@ def iter_consumption(
             MonthlyMovement(period=period, net_issued_quantity=quantity, issue_count=issues, reversal_count=reversals)
             for _material, _plant, period, quantity, issues, reversals in rows
         ]
+
+
+@dataclass(frozen=True)
+class MinMaxAlternative:
+    """What the Stock item recommendation says for a material-plant: the ROP and max stock it would keep it on Min-Max
+    with. Shown beside a Convert to OAR recommendation of Medium or Low confidence, for comparison only."""
+
+    current_rop: Decimal | None
+    recommended_rop: Decimal | None
+    current_max_stock: Decimal | None
+    recommended_max_stock: Decimal | None
+
+
+def fetch_alternatives(session: Session, keys: list[tuple[str, str]]) -> dict[tuple[str, str], MinMaxAlternative]:
+    """The newest Stock item (non-OAR) recommendation of each material-plant in ``keys`` that has one.
+
+    Read-only, and it reads the stored recommendation exactly as it is: nothing about it is recalculated or
+    changed here. A material-plant with no Stock item recommendation is simply absent."""
+    if not keys:
+        return {}
+    wanted = set(keys)
+    statement = (
+        select(
+            Recommendation.sap_material_number,
+            Recommendation.sap_plant_code,
+            Recommendation.current_rop,
+            Recommendation.recommended_rop,
+            Recommendation.current_max_stock,
+            Recommendation.recommended_max_stock,
+        )
+        .where(
+            Recommendation.sap_material_number.in_(sorted({material for material, _ in keys})),
+            or_(Recommendation.is_oar.is_(None), Recommendation.is_oar == false()),
+        )
+        .order_by(Recommendation.id)
+    )
+    newest: dict[tuple[str, str], MinMaxAlternative] = {}
+    for material, plant, current_rop, recommended_rop, current_max, recommended_max in session.execute(statement):
+        if (material, plant) in wanted:
+            newest[(material, plant)] = MinMaxAlternative(current_rop, recommended_rop, current_max, recommended_max)  # ascending ids: the last wins
+    return newest
 
 
 def fetch_material_consumption(
